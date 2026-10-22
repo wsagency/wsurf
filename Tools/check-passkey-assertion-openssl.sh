@@ -11,6 +11,7 @@ cd "$(dirname "$0")/.."
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 sources=WSurf/Web/Credentials
+vault=Packages/WSurfCore/Sources/WSurfVault
 
 cat > "$work/stubs.swift" <<'EOF'
 import Foundation
@@ -42,7 +43,7 @@ signed.append(Data(SHA256.hash(data: clientDataJSON)))
 try signed.write(to: URL(fileURLWithPath: arguments[2] + "/data.bin"))
 try key.signature(for: signed).derRepresentation.write(to: URL(fileURLWithPath: arguments[2] + "/sig.der"))
 EOF
-xcrun swiftc -O -o "$work/probe" "$work/stubs.swift" "$sources/PasskeyKeyEncoding.swift" "$sources/WebAuthnEncoding.swift" "$work/main.swift"
+xcrun swiftc -O -o "$work/probe" "$work/stubs.swift" "$vault/PasskeyKeyEncoding.swift" "$sources/WebAuthnEncoding.swift" "$work/main.swift"
 
 /usr/bin/openssl ecparam -name prime256v1 -genkey -noout -out "$work/sec1.pem"
 /usr/bin/openssl pkcs8 -topk8 -nocrypt -in "$work/sec1.pem" -outform DER -out "$work/openssl.p8"

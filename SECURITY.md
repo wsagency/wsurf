@@ -35,7 +35,7 @@ your report.
 - Credentials (`WSurf/Agent/Providers/CredentialStore.swift`). A key goes only
   in the Authorization header of the provider it belongs to.
 - The opt-in Credential Manager and credential-exchange extension
-  (`WSurf/Web/Credentials`, `WSurf/Web/Credentials/Store`,
+  (`WSurf/Web/Credentials`, `Packages/WSurfCore/Sources/WSurfVault`,
   `WSurfCredentialExchange`). Passwords, passkeys, and one-time codes belong
   to one profile, and any window leaving that profile revokes the
   authorization epoch for all of its windows. A request must pass the origin,
