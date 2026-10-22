@@ -5,6 +5,29 @@ This file preserves release notes inherited from the upstream
 describe upstream Linen releases, not releases published by WSurf. New WSurf
 release notes will be added above this provenance record.
 
+## 0.1.9 (build 9) — 2026-10-23
+
+Everything since 0.1.8 (build 8). None of the screens and prompts below has been checked by hand.
+
+### Passwords, passkeys and autofill
+
+- Importing a Passwords export again, from a CSV file or from the Passwords app, now changes only what changed since the last import. An entry that is the same on both sides is left alone, a change made only in Passwords is offered as an update (Use Incoming), a change made only in WSurf keeps your version, and a change made on both sides waits for your choice.
+- Entries you deleted in WSurf, still in the Trash or after you emptied it, and copies you merged into another entry no longer come back with the next import. The review lists them under Skipped as “Removed from this vault before…” or “Merged into “…” before…”, and Import Anyway brings one back on purpose. If a merged copy changed in Passwords and the entry it was merged into still holds what the copy brought, the review offers the change as an update of that entry; otherwise it asks you.
+- To recognize them, the vault keeps fingerprints of a deleted or merged entry’s website and user name and of the Passwords app’s own ids for it, made with the vault’s key and stored inside the encrypted vault. After you empty the Trash, nothing else of the entry is kept: not its password and not its note.
+
+### iCloud (not turned on yet)
+
+- This version contains iCloud sync between your Macs, switched off: the other Macs’ open tabs in the sidebar, and keeping a vault the same on your Macs, with every entry encrypted with the vault’s key before it leaves the Mac. Until it is turned on, nothing reaches iCloud and nothing in WSurf looks different. It is turned on after Apple’s iCloud setup for WSurf is finished and a check with two Macs has passed.
+
+### Under the hood
+
+- The vault’s store, encryption and Credential Exchange code now live in a shared package, ready for an iPhone app. Nothing changes in use.
+
+### Known issues
+
+- An entry imported before this version carries no record of what the import brought, so the first time it changes in Passwords the review still asks you about it once; from the import that saves it again on, it follows the rules above. Its deletes and merges are remembered, except an entry from a file import that was already emptied from the Trash before this version; an entry from the Passwords app stays remembered by its id.
+- The known issues of 0.1.8 are unchanged.
+
 ## 0.1.8 (build 8) — 2026-10-22
 
 Everything since 0.1.7 (build 7). None of the screens and prompts below has been checked by hand.
