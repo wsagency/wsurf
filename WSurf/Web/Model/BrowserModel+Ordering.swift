@@ -559,6 +559,80 @@ extension BrowserModel {
         scheduleSave()
     }
 
+    // MARK: - Sorting a folder
+
+    enum FolderSort {
+        case byName
+        case foldersFirst
+    }
+
+    /// The rows the sidebar draws in a folder. A split's other panes sit behind their leader and are not rows.
+    private func drawnRows(in folder: TabFolder) -> [SidebarItem] {
+        reconciledTree().rows(in: folder.id).filter {
+            guard case .tab(let id) = $0 else { return true }
+            return !splits.isFollower(id)
+        }
+    }
+
+    func canSortChildren(of folder: TabFolder) -> Bool {
+        drawnRows(in: folder).count > 1
+    }
+
+    /// One-time reorder of the folder's direct children. Subfolders keep their own order. Both sorts are stable.
+    func sortChildren(of folder: TabFolder, _ sort: FolderSort) {
+        guard foldersByID[folder.id] === folder else { return }
+        let rows = drawnRows(in: folder)
+        let sorted: [SidebarItem]
+        switch sort {
+        case .byName:
+            let names = rows.map { item -> String in
+                switch item {
+                case .tab(let id):
+                    tabsByID[id]?.title ?? ""
+                case .folder(let id):
+                    foldersByID[id]?.name ?? ""
+                }
+            }
+            sorted = rows.indices.sorted {
+                switch names[$0].localizedStandardCompare(names[$1]) {
+                case .orderedAscending:
+                    true
+                case .orderedDescending:
+                    false
+                case .orderedSame:
+                    $0 < $1
+                }
+            }.map { rows[$0] }
+        case .foldersFirst:
+            let isFolder: (SidebarItem) -> Bool = {
+                if case .folder = $0 {
+                    return true
+                }
+                return false
+            }
+            sorted = rows.filter(isFolder) + rows.filter { !isFolder($0) }
+        }
+        setChildOrder(of: folder.id, to: sorted)
+    }
+
+    /// Reorders a folder's children in place, as one undo step. A child that has left the folder since `order`
+    /// was recorded stays out, and one that joined keeps its place behind the others, so an undo cannot pull rows back.
+    private func setChildOrder(of folderID: UUID, to order: [SidebarItem]) {
+        let tree = reconciledTree()
+        let current = tree.rows(in: folderID)
+        let live = Set(current)
+        var placed: Set<SidebarItem> = []
+        let wanted = withSplitMembers(order).filter { live.contains($0) && placed.insert($0).inserted }
+        guard let next = tree.moving(wanted + current.filter { !placed.contains($0) }, into: folderID, before: nil)
+        else { return }
+        registerSidebarUndo(named: String(localized: "Sort Folder")) { model in
+            model.setChildOrder(of: folderID, to: current)
+        }
+        storedTree = next
+        syncTabOrder()
+        scheduleSave()
+    }
+
     func close(_ items: [SidebarItem]) {
         sidebarUndoManager.beginUndoGrouping()
         defer { sidebarUndoManager.endUndoGrouping() }

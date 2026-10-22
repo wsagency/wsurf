@@ -436,6 +436,7 @@ enum FolderContextMenu {
         menu.addItem(.separator())
 
         addFolderItems([.folder(folder.id)], to: menu, browser: browser)
+        menu.addItem(sortItem(for: folder, browser: browser))
         menu.addItem(.separator())
 
         let kept = browser.allTabs(in: folder).count
@@ -513,6 +514,35 @@ enum FolderContextMenu {
                 action: { [weak browser] in browser?.moveOut(items) }
             ))
         }
+    }
+
+    static func sortMenu(for folder: TabFolder, browser: BrowserModel) -> NSMenu {
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        let sorts: [(title: String, symbol: String, sort: BrowserModel.FolderSort)] = [
+            (String(localized: "By Name"), "textformat.abc", .byName),
+            (String(localized: "Folders First"), "folder", .foldersFirst),
+        ]
+        for entry in sorts {
+            let item = actionItem(
+                title: entry.title,
+                symbol: entry.symbol,
+                action: { [weak browser, weak folder] in
+                    guard let browser, let folder else { return }
+                    browser.sortChildren(of: folder, entry.sort)
+                }
+            )
+            item.isEnabled = browser.canSortChildren(of: folder)
+            menu.addItem(item)
+        }
+        return menu
+    }
+
+    private static func sortItem(for folder: TabFolder, browser: BrowserModel) -> NSMenuItem {
+        let item = NSMenuItem(title: String(localized: "Sort"), action: nil, keyEquivalent: "")
+        item.image = NSImage(systemSymbolName: "arrow.up.arrow.down", accessibilityDescription: nil)
+        item.submenu = sortMenu(for: folder, browser: browser)
+        return item
     }
 
     static func moveMenu(_ items: [SidebarItem], browser: BrowserModel) -> NSMenu {
