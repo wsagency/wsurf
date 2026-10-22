@@ -107,8 +107,9 @@ nonisolated enum PageDialogText {
         }
     }
 
-    /// Letters from other scripts that look like an ASCII letter, lower case because case folding runs first.
-    private static let confusables: [Unicode.Scalar: Unicode.Scalar] = {
+    /// Letters from other scripts that look like an ASCII letter, lower case because case folding runs first. The address
+    /// bar reads it too, to show a look-alike website name as punycode (`AddressText`).
+    static let confusables: [Unicode.Scalar: Unicode.Scalar] = {
         let pairs =
             "а:a е:e о:o р:p с:c х:x у:y і:i ј:j ѕ:s ԁ:d һ:h ӏ:l ԛ:q ԝ:w к:k "
             + "α:a ε:e ι:i κ:k ν:v ο:o ρ:p τ:t υ:u χ:x ω:w ɑ:a ɡ:g ı:i"

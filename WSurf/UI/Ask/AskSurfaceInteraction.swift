@@ -123,7 +123,8 @@ enum AskRestingContent: Equatable {
     case notice(String)
     case status(String)
     case placeholder(String)
-    case address(String)
+    /// The website name, or with the full address on also its scheme and the rest (port, path, query, fragment).
+    case address(String, scheme: String = "", rest: String = "")
 
     var isCentred: Bool {
         switch self {
@@ -144,8 +145,8 @@ enum AskRestingContent: Equatable {
             text
         case .placeholder:
             ""
-        case .address:
-            fallback
+        case .address(let host, let scheme, let rest):
+            scheme.isEmpty ? fallback : scheme + host + rest
         }
     }
 
@@ -177,13 +178,18 @@ enum AskRestingContent: Equatable {
             return .status(status)
         }
         guard mirrorsPageURL, !isFocused else { return nil }
-        let address = displayAddress(for: currentURL, full: showsFullAddress)
-        return address.isEmpty ? .placeholder(placeholder) : .address(address)
+        guard !currentURL.isEmpty else { return .placeholder(placeholder) }
+        if showsFullAddress, let full = AddressText(currentURL) {
+            return .address(full.host, scheme: full.scheme, rest: full.rest)
+        }
+        return .address(displayAddress(for: currentURL))
     }
 
-    /// The website name without “www.”, or the whole address when `full` is on.
-    static func displayAddress(for value: String, full: Bool = false) -> String {
-        guard !full, let url = URL(string: value), let host = url.host() else { return value }
+    /// The website name without “www.”, as `AddressText` shows it; an address without a host as it is.
+    static func displayAddress(for value: String) -> String {
+        guard let parts = URLComponents(string: value), let host = AddressText.host(of: parts), !host.isEmpty else {
+            return value
+        }
         return host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
     }
 }
