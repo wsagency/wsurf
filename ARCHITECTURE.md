@@ -150,6 +150,22 @@ state and is not touched. The script runs in the same content world, which answe
 with the view's JavaScript off. Leaving Reader, or a new article view, starts the
 article's translation over.
 
+## Reader read-aloud
+
+Each tab's `ReaderSession` makes a `ReaderListener` the first time Reader needs one,
+over its own `AppleSpeechOutput` (the on-device voice; no cloud voice is offered), so
+the assistant's output and an article never stop each other. The listener speaks one
+sentence at a time (`ReaderSpeech.sentences`, the system's boundaries) and, just
+before each block, asks `ReaderSession` for its text from the article's own view in
+the app's content world. That view holds the text as shown, so an article that is
+translated while it is read is heard translated, in the translation target's voice.
+The sentence being read is marked with a CSS highlight over a range: the article's
+DOM is not changed, which keeps a screen reader's place. Nothing starts without a
+command (View › Read Aloud, ⌥⌘P, or the bar's button). The speed, 0.5× to 1.5× in
+tenths, is the app-level `reader.speechRate`; the voice restarts what is left of the
+sentence at the new pace. Hiding Reader, a new page, a closed tab or a new view of the
+article (another tab brought to the front) stops it.
+
 ## Agent trust boundaries
 
 The model is not a security boundary. Page text is untrusted, even when the

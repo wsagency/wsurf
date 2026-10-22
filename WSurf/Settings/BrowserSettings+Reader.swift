@@ -29,6 +29,15 @@ extension BrowserSettings {
         }
     }
 
+    /// How fast Reader reads aloud, as a multiple of the voice's normal pace, between `ReaderSpeech.rateRange`, in tenths.
+    var readerSpeechRate: Float {
+        get { globalValue(\.readerSpeechRate, storage: storedReaderSpeechRate) }
+        set {
+            setGlobal(\BrowserSettings.readerSpeechRate, storage: \BrowserSettings.storedReaderSpeechRate,
+                      value: ReaderSpeech.clampedRate(newValue), key: Key.readerSpeechRate)
+        }
+    }
+
     var isReaderAppearanceDefault: Bool {
         readerTypeface == .system && readerPalette == .automatic && readerTextSize == ReaderAppearance.defaultTextSize
     }

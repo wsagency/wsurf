@@ -10,6 +10,11 @@ nonisolated enum ReaderPage {
     /// Images and media may come from the website; nothing else is fetched or run.
     static let contentSecurityPolicy = "default-src 'none'; img-src https: http: data:; media-src https: http:; style-src 'unsafe-inline'"
 
+    /// The headline is the first thing read aloud, and has an `id` so that it can be found; the blocks of the article carry
+    /// `data-reader-block`. `titleBlock` stands for the headline wherever a block is named by number.
+    static let titleID = "reader-title"
+    static let titleBlock = -1
+
     static func html(
         for article: ReaderArticle,
         typeface: ReaderAppearance.Typeface,
@@ -38,7 +43,7 @@ nonisolated enum ReaderPage {
         <main>
         <header>
         <p class="site">\(escape(site))</p>
-        <h1 class="title">\(escape(article.title))</h1>
+        <h1 class="title" id="\(titleID)">\(escape(article.title))</h1>
         <p class="meta">\(meta)</p>
         </header>
         <article>\(article.content)</article>
@@ -142,6 +147,12 @@ nonisolated enum ReaderPage {
     table { border-collapse: collapse; display: block; overflow-x: auto; }
     td, th { border: 1px solid var(--rule); padding: 0.3em 0.6em; }
     hr { border: 0; border-top: 1px solid var(--rule); margin: 2em 0; }
+    ::highlight(reader-speaking) { background-color: rgba(255, 204, 0, 0.4); }
+    html[data-palette="sepia"] ::highlight(reader-speaking) { background-color: rgba(201, 140, 40, 0.35); }
+    html[data-palette="dark"] ::highlight(reader-speaking) { background-color: rgba(255, 214, 10, 0.3); }
+    @media (prefers-color-scheme: dark) {
+      html[data-palette="automatic"] ::highlight(reader-speaking) { background-color: rgba(255, 214, 10, 0.3); }
+    }
     @media print {
       html[data-palette], html[data-palette] body {
         --bg: #ffffff; --fg: #000000; --muted: #444444; --link: #000000; --rule: rgba(0, 0, 0, 0.25);

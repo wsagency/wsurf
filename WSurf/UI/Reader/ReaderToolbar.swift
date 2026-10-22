@@ -5,14 +5,19 @@
 import AppKit
 import SwiftUI
 
-/// The floating controls over the article: its text appearance and the way out. It takes the colors of the article's page, not of
-/// the window, so it stays readable on a dark page in a light window and the other way round.
+/// The floating controls over the article: its text appearance, reading it aloud and the way out. It takes the colors of the
+/// article's page, not of the window, so it stays readable on a dark page in a light window and the other way round.
 struct ReaderToolbar: View {
     let tab: BrowserTab
     let palette: ReaderAppearance.Palette
 
     @State private var showsAppearance = false
+    @State private var showsSpeed = false
     @Environment(\.colorScheme) private var windowScheme
+
+    private var listener: ReaderListener {
+        tab.reader.listener
+    }
 
     private var scheme: ColorScheme {
         palette == .dark ? .dark : .light
@@ -41,6 +46,12 @@ struct ReaderToolbar: View {
                 .frame(height: 14)
                 .padding(.horizontal, 4)
 
+            listeningControls
+
+            Divider()
+                .frame(height: 14)
+                .padding(.horizontal, 4)
+
             Button("Done") { tab.reader.close() }
                 .font(Theme.Font.body)
                 .help("Hide Reader (⌥⌘R)")
@@ -52,6 +63,136 @@ struct ReaderToolbar: View {
         .glassSurface(in: shape)
         .environment(\.colorScheme, scheme)
         .shadow(color: .black.opacity(0.18), radius: 10, y: 3)
+    }
+}
+
+extension ReaderToolbar {
+    fileprivate static func speedLabel(_ rate: Float) -> String {
+        "\(rate.formatted(.number.precision(.fractionLength(0...1))))×"
+    }
+
+    private var playTitle: LocalizedStringResource {
+        listener.state == .playing ? "Pause Reading" : "Resume Reading"
+    }
+
+    /// The speed, and either Read Aloud or the controls of what is being read. Nothing is read until Read Aloud is chosen, and a
+    /// change of speed or a skip never starts it, so the bar does not speak over a screen reader unasked.
+    @ViewBuilder
+    fileprivate var listeningControls: some View {
+        Button {
+            showsSpeed.toggle()
+        } label: {
+            Text(Self.speedLabel(listener.rate))
+                .font(Theme.Font.label)
+                .monospacedDigit()
+        }
+        .help("Playback speed")
+        .accessibilityLabel(Text("Playback speed"))
+        .accessibilityValue(Text(Self.speedLabel(listener.rate)))
+        .popover(isPresented: $showsSpeed, arrowEdge: .bottom) {
+            ReaderSpeedPopover(listener: listener)
+                .environment(\.colorScheme, windowScheme)
+        }
+
+        if listener.state == .idle {
+            Button {
+                tab.reader.listen()
+            } label: {
+                Label("Read Aloud", systemImage: "play.fill")
+                    .font(Theme.Font.body)
+            }
+            .help("Read Aloud")
+        } else {
+            Button {
+                listener.skip(by: -1)
+            } label: {
+                Image(systemName: "backward.fill")
+                    .font(Theme.Font.label)
+            }
+            .disabled(!listener.canSkipBack)
+            .help("Previous Sentence")
+            .accessibilityLabel(Text("Previous Sentence"))
+
+            Button {
+                listener.togglePause()
+            } label: {
+                Image(systemName: listener.state == .playing ? "pause.fill" : "play.fill")
+                    .font(Theme.Font.control)
+                    .frame(width: 14)
+            }
+            .help(Text(playTitle))
+            .accessibilityLabel(Text(playTitle))
+
+            Button {
+                listener.skip(by: 1)
+            } label: {
+                Image(systemName: "forward.fill")
+                    .font(Theme.Font.label)
+            }
+            .disabled(!listener.canSkipForward)
+            .help("Next Sentence")
+            .accessibilityLabel(Text("Next Sentence"))
+
+            Button {
+                listener.stop()
+            } label: {
+                Image(systemName: "stop.fill")
+                    .font(Theme.Font.label)
+            }
+            .help("Stop Reading")
+            .accessibilityLabel(Text("Stop Reading"))
+        }
+    }
+}
+
+/// The speed of the voice, 0.5× to 1.5×. A drag changes the speed once, when it ends: each change makes the voice start the
+/// sentence again at the new pace, so the sentences in between would be heard as stutter. A step from the keyboard or a screen
+/// reader has no drag and applies at once.
+private struct ReaderSpeedPopover: View {
+    let listener: ReaderListener
+
+    @State private var draft: Float?
+    @State private var isDragging = false
+
+    private var shownRate: Float {
+        draft ?? listener.rate
+    }
+
+    var body: some View {
+        VStack(spacing: 8) {
+            Text(ReaderToolbar.speedLabel(shownRate))
+                .font(.system(size: 13, weight: .semibold))
+                .monospacedDigit()
+            Slider(value: Binding { shownRate } set: { draft = $0 }, in: ReaderSpeech.rateRange, step: 0.1) {
+                Text("Playback speed")
+            } minimumValueLabel: {
+                Image(systemName: "tortoise.fill")
+                    .foregroundStyle(.secondary)
+            } maximumValueLabel: {
+                Image(systemName: "hare.fill")
+                    .foregroundStyle(.secondary)
+            } onEditingChanged: { editing in
+                isDragging = editing
+                if !editing {
+                    commit()
+                }
+            }
+            .labelsHidden()
+            .accessibilityValue(Text(ReaderToolbar.speedLabel(shownRate)))
+            .frame(width: 200)
+        }
+        .padding(16)
+        .onChange(of: draft) {
+            if !isDragging {
+                commit()
+            }
+        }
+    }
+
+    private func commit() {
+        guard let draft else { return }
+        listener.setRate(draft)
+        self.draft = nil
     }
 }
 

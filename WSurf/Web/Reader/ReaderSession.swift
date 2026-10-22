@@ -32,9 +32,14 @@ final class ReaderSession {
         didSet {
             if presentedPage !== oldValue {
                 translation.documentChanged()
+                // The sentence being read is marked in the view that is gone, and the text comes from it.
+                stopListening()
             }
         }
     }
+    /// This tab's listener, with its own on-device voice. It is made when Reader first needs it, so a tab that never reads aloud
+    /// has no speech synthesizer. Tests put one in.
+    @ObservationIgnored var speaker: ReaderListener?
     @ObservationIgnored var retryDelay: Duration = .milliseconds(1500)
     @ObservationIgnored private var probing: Int?
 
@@ -45,6 +50,7 @@ final class ReaderSession {
     /// Ends Reader and forgets what was known about the page. Every navigation, a closed tab, a profile switch and the end of a
     /// private session come here.
     func pageChanged() {
+        stopListening()
         generation &+= 1
         availability = .unknown
         isOpening = false
@@ -106,6 +112,7 @@ final class ReaderSession {
 
     /// The article is not kept: the next time Reader opens, the page is read again.
     func close() {
+        stopListening()
         isActive = false
         article = nil
         translation.documentChanged()
@@ -117,5 +124,71 @@ final class ReaderSession {
         } else {
             Task { await open() }
         }
+    }
+
+    // MARK: Reading aloud
+
+    var listener: ReaderListener {
+        if let speaker {
+            return speaker
+        }
+        let made = ReaderListener(output: AppleSpeechOutput())
+        speaker = made
+        return made
+    }
+
+    /// Reads the article aloud from its headline, or pauses what is being read, or resumes it.
+    func toggleListening() {
+        guard isActive else { return }
+        switch listener.state {
+        case .idle:
+            listen()
+        case .playing, .paused:
+            listener.togglePause()
+        }
+    }
+
+    func listen() {
+        guard isActive, let article else { return }
+        let blocks = (article.title.isEmpty ? [] : [ReaderPage.titleBlock]) + Array(article.blocks.indices)
+        listener.mark = { [weak self] spot in self?.mark(spot) }
+        listener.start(blocks: blocks) { [weak self] block in await self?.passage(block) }
+    }
+
+    func stopListening() {
+        speaker?.stop()
+    }
+
+    /// Reading, paused or not, as far as the menu is concerned. Asking does not make a listener.
+    var isListening: Bool {
+        speaker.map { $0.state != .idle } ?? false
+    }
+
+    private func mark(_ spot: ReaderSpeech.Spot?) {
+        guard let page = presentedPage else { return }
+        Task { [weak page] in
+            guard let page else { return }
+            await ReaderSpeech.mark(spot, in: page)
+        }
+    }
+
+    /// The block as the article's view shows it, so a translated article is read translated.
+    private func passage(_ block: Int) async -> ReaderSpeech.Passage? {
+        guard isActive, let article else { return nil }
+        var shown: String?
+        if let page = presentedPage {
+            shown = await ReaderSpeech.shownText(ofBlock: block, in: page)
+        }
+        var original: String?
+        if block == ReaderPage.titleBlock {
+            original = article.title
+        } else if article.blocks.indices.contains(block) {
+            original = article.blocks[block]
+        }
+        return ReaderSpeech.passage(
+            shown: shown, original: original,
+            translatedTo: translation.isActive ? translation.target : nil,
+            articleLanguage: article.language
+        )
     }
 }

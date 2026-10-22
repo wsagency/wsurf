@@ -197,6 +197,8 @@ final class MainMenu: NSObject, NSMenuItemValidation {
         menu.addItem(.separator())
         menu.addItem(command("Translate Page", #selector(toggleTranslation)))
         menu.addItem(command("Show Reader", #selector(toggleReader), key: "r", modifiers: [.command, .option]))
+        menu.addItem(command("Read Aloud", #selector(toggleReadAloud), key: "p", modifiers: [.command, .option]))
+        menu.addItem(command("Stop Reading", #selector(stopReadAloud)))
         menu.addItem(.separator())
         menu.addItem(chain(
             "Enter Full Screen",
@@ -481,6 +483,14 @@ final class MainMenu: NSObject, NSMenuItemValidation {
         coordinator.toggleReader()
     }
 
+    @objc private func toggleReadAloud() {
+        coordinator.toggleReadAloud()
+    }
+
+    @objc private func stopReadAloud() {
+        coordinator.stopReadAloud()
+    }
+
     // MARK: - Validation
 
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {  // swiftlint:disable:this cyclomatic_complexity
@@ -520,6 +530,20 @@ final class MainMenu: NSObject, NSMenuItemValidation {
             let readerTitle: LocalizedStringResource = coordinator.readerTab?.reader.isActive == true ? "Hide Reader" : "Show Reader"
             menuItem.title = String(localized: readerTitle)
             return coordinator.readerTab?.reader.isAvailable ?? false
+        case #selector(toggleReadAloud):
+            let reader = coordinator.readerTab?.reader
+            let readTitle: LocalizedStringResource = switch reader?.speaker?.state ?? .idle {
+            case .idle:
+                "Read Aloud"
+            case .playing:
+                "Pause Reading"
+            case .paused:
+                "Resume Reading"
+            }
+            menuItem.title = String(localized: readTitle)
+            return reader?.isActive ?? false
+        case #selector(stopReadAloud):
+            return coordinator.readerTab?.reader.isListening ?? false
         case #selector(unloadTab):
             return coordinator.browser.activeTab != nil
         case #selector(stopLoading):
