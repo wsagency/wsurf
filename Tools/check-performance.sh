@@ -14,8 +14,10 @@
 # sample swings by tens of MB either way (a spike, or the release of an earlier pass's garbage) while time and behavior are fine,
 # so the mean of five flips sign on one outlier. 0.1.5, layout option sidebar: 3424/4129/4112/6275/21496 kB, mean 7887 against a
 # budget of 7019, median 4129. A fresh host does not show it. The median ignores a lone spike or dip; it cannot rescue a case that
-# is mostly high (0.1.6, autofilled password among 20,000: -1311/23478/-18743/20349/18580 kB, median 18580 against 4096), which is a
-# measurement problem in that test, and no budget is raised for it.
+# is mostly high (0.1.6, autofilled password among 20,000: -1311/23478/-18743/20349/18580 kB, median 18580 against 4096). That was
+# the measurement, not the budget: the step allocates and drops tens of MB of containers and the allocator kept or gave back the
+# free pages at whim. VaultScalePerformanceTests.measureWrite now drops what a pass prepared and returns the free pages before the
+# measurement starts and stops, so a sample is what the step retained. No budget is raised for it.
 #
 # Why the first sample is dropped: every budgeted case measures one pass more than it is judged on (XCTMeasureOptions.budgeted in
 # WSurfTests/Helpers/BudgetedMeasureOptions.swift, six iterations), and the first pass is the warm-up that pays for lazy setup and
@@ -133,7 +135,8 @@ self_test() {
   expect_statistic mean '3424 4129 4112 6275 21496' 7887.200000
   expect_statistic median '15000 3424 4129 4112 6275 21496' 4129.000000
   expect_verdict pass "$memory_metric" 7019 '15000 3424 4129 4112 6275 21496'
-  # The 0.1.6 autofilled password: mostly high samples, so the median is not below the mean here. Recorded, not excused.
+  # The 0.1.6 autofilled password, as measured before measureWrite trimmed the heap: mostly high samples, so the median is not
+  # below the mean here. Recorded, not excused.
   expect_statistic mean '-1311 23478 -18743 20349 18580' 8470.600000
   expect_statistic median '9 -1311 23478 -18743 20349 18580' 18580.000000
   # An even count, a lone sample and the warm-up drop.

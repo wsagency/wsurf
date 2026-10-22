@@ -368,8 +368,12 @@ Release requirements:
   lifts every sample and still fails. No budget is raised for noise: a case
   whose samples are mostly high, such as the 0.1.6 autofilled password among
   20,000 credentials (median 18580 kB against 4096), is a measurement problem
-  to fix in the test, not a budget to raise. If you change the iteration count,
-  change the rule in the script with it. `Tools/check-performance.sh
+  to fix in the test, not a budget to raise. That one was the allocator keeping
+  or returning the pages the step freed, so the large-vault write cases
+  (`VaultScalePerformanceTests.measureWrite`) drop what a pass prepared and
+  return the free pages just before the measurement starts and stops: a sample
+  is what the step retained. If you change the iteration count, change the rule
+  in the script with it. `Tools/check-performance.sh
   --self-test` checks the statistics on those sample sets and needs no metrics
   file.
 - **The release body supplies the “What’s New” sheet.** The workflow makes the

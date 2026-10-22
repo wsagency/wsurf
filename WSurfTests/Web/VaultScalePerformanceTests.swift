@@ -67,6 +67,14 @@ nonisolated final class VaultScalePerformanceTests: XCTestCase, @unchecked Senda
             vault.flatMap { coordinator.importReview(for: $0.manager, owner: owner) }
         }
 
+        /// Drops what the pass prepared (its vault read, payload and write), so the next pass starts without it in memory.
+        func dropPrepared() {
+            nextWrite = nil
+            nextPayload = nil
+            nextSave = nil
+            nextEntry = nil
+        }
+
         func cleanup() async {
             model = nil
             if let manager = vault?.manager {
@@ -103,8 +111,21 @@ nonisolated final class VaultScalePerformanceTests: XCTestCase, @unchecked Senda
         return options
     }
 
-    /// Measures `step` alone against a fresh 20,000-credential vault. `prepare` (the caller's own reads, given the pass number) runs
-    /// before each measured step, outside the measurement; `check` runs once on the vault after the last pass.
+    /// Hands the allocator's free pages back to the system, so the footprint holds what is live and not what was freed but kept.
+    private static func returnFreePages() {
+        _ = malloc_zone_pressure_relief(nil, 0)
+    }
+
+    /// Measures `step` alone against a fresh 20,000-credential vault, as the memory it retains. `prepare` (the caller's own reads,
+    /// given the pass number) runs before each measured step, outside the measurement; `check` runs once on the vault after the last
+    /// pass.
+    ///
+    /// A step reads the vault into new containers of 20,000 accounts, builds two more maps for its transaction and swaps the store's
+    /// cache for the new one, so it allocates and drops tens of MB. The allocator keeps some of what was freed in the footprint and
+    /// hands an earlier pass's back whenever it likes, which in a long-running host moved single samples by 20 MB either way while
+    /// the step kept nothing. So every pass starts from a released state and ends in one: what an earlier pass prepared is dropped
+    /// (`dropPrepared`), and the free pages are returned just before the measurement starts and just before it stops. What stays in
+    /// the footprint is what the step retained, and a leak still shows, because only free pages go back.
     @MainActor
     func measureWrite(
         prepare: @escaping @MainActor (Fixture, CredentialManager, Int) async throws -> Void,
@@ -118,10 +139,15 @@ nonisolated final class VaultScalePerformanceTests: XCTestCase, @unchecked Senda
         measure(metrics: [XCTClockMetric(), XCTMemoryMetric()], options: measuredOptions(manual: true)) {
             passes += 1
             let pass = passes
-            finish { try await prepare(fixture, manager, pass) }
-            startMeasuring()
-            finish { try await step(fixture, manager) }
-            stopMeasuring()
+            autoreleasepool {
+                finish { try await prepare(fixture, manager, pass) }
+                Self.returnFreePages()
+                startMeasuring()
+                finish { try await step(fixture, manager) }
+                Self.returnFreePages()
+                stopMeasuring()
+                fixture.dropPrepared()
+            }
         }
         let last = passes
         finish {
@@ -137,34 +163,19 @@ nonisolated final class VaultScalePerformanceTests: XCTestCase, @unchecked Senda
     /// account's stamp is the caller's and stays outside the measurement.
     func testEditingOneOfTwentyThousandCredentials() {
         MainActor.assumeIsolated {
-            let fixture = Fixture()
-            finish { try await fixture.makeVault() }
-            guard let manager = fixture.vault?.manager else { return XCTFail("The 20,000-credential vault was not made.") }
-            var edits = 0
-            measure(metrics: [XCTClockMetric(), XCTMemoryMetric()], options: measuredOptions(manual: true)) {
-                edits += 1
-                let password = "edited-\(edits)"
-                finish {
-                    let snapshot = try await manager.snapshot()
-                    var edited = try XCTUnwrap(snapshot.accounts.first)
-                    edited.password = password
-                    let stamp = try XCTUnwrap(snapshot.stamps[edited.id])
-                    fixture.nextWrite = AccountWrite(accountID: edited.id, expected: .stamp(stamp), replacement: edited)
-                }
-                startMeasuring()
-                finish {
-                    let write = try XCTUnwrap(fixture.nextWrite)
-                    _ = try await manager.commitAccounts([write], authorizedEpoch: try XCTUnwrap(manager.authorizationEpoch))
-                }
-                stopMeasuring()
-            }
-            let last = "edited-\(edits)"
-            finish {
+            measureWrite { fixture, manager, pass in
                 let snapshot = try await manager.snapshot()
+                var edited = try XCTUnwrap(snapshot.accounts.first)
+                edited.password = "edited-\(pass)"
+                let stamp = try XCTUnwrap(snapshot.stamps[edited.id])
+                fixture.nextWrite = AccountWrite(accountID: edited.id, expected: .stamp(stamp), replacement: edited)
+            } step: { fixture, manager in
+                let write = try XCTUnwrap(fixture.nextWrite)
+                _ = try await manager.commitAccounts([write], authorizedEpoch: try XCTUnwrap(manager.authorizationEpoch))
+            } check: { snapshot, last in
                 XCTAssertEqual(snapshot.accounts.count, Self.count)
-                XCTAssertEqual(snapshot.accounts.first?.password, last)
+                XCTAssertEqual(snapshot.accounts.first?.password, "edited-\(last)")
             }
-            finish { await fixture.cleanup() }
         }
     }
 
@@ -172,35 +183,20 @@ nonisolated final class VaultScalePerformanceTests: XCTestCase, @unchecked Senda
     /// stored row once. Every caller in the app names the accounts it edited (the tests below).
     func testSavingOneEditOfTwentyThousandCredentialsAsAWholeVault() {
         MainActor.assumeIsolated {
-            let fixture = Fixture()
-            finish { try await fixture.makeVault() }
-            guard let manager = fixture.vault?.manager else { return XCTFail("The 20,000-credential vault was not made.") }
-            var edits = 0
-            measure(metrics: [XCTClockMetric(), XCTMemoryMetric()], options: measuredOptions(manual: true)) {
-                edits += 1
-                let password = "edited-\(edits)"
-                finish {
-                    let snapshot = try await manager.snapshot()
-                    var accounts = snapshot.accounts
-                    accounts[0].password = password
-                    fixture.nextPayload = (accounts, snapshot.revision)
-                }
-                startMeasuring()
-                finish {
-                    let payload = try XCTUnwrap(fixture.nextPayload)
-                    _ = try await manager.commit(
-                        payload.accounts, expectedRevision: payload.revision, authorizedEpoch: try XCTUnwrap(manager.authorizationEpoch)
-                    )
-                }
-                stopMeasuring()
-            }
-            let last = "edited-\(edits)"
-            finish {
+            measureWrite { fixture, manager, pass in
                 let snapshot = try await manager.snapshot()
+                var accounts = snapshot.accounts
+                accounts[0].password = "edited-\(pass)"
+                fixture.nextPayload = (accounts, snapshot.revision)
+            } step: { fixture, manager in
+                let payload = try XCTUnwrap(fixture.nextPayload)
+                _ = try await manager.commit(
+                    payload.accounts, expectedRevision: payload.revision, authorizedEpoch: try XCTUnwrap(manager.authorizationEpoch)
+                )
+            } check: { snapshot, last in
                 XCTAssertEqual(snapshot.accounts.count, Self.count)
-                XCTAssertEqual(snapshot.accounts.first?.password, last)
+                XCTAssertEqual(snapshot.accounts.first?.password, "edited-\(last)")
             }
-            finish { await fixture.cleanup() }
         }
     }
 
