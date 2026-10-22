@@ -332,9 +332,11 @@ the sealed name and the profile's name and color) and one `Item` record per entr
 under a sync key that HKDF derives from the vault's key, so the record opens only on a Mac that opened the vault with the
 synced unlock passkey. Each Mac merges what arrives into its own store through its own commit, part by part against a sync
 base it keeps sealed in `Credentials.sync` in the profile's folder; it works only while the vault is unlocked and never
-prompts or touches a lease. Store rows, History, Trash, files, settings and Input History never sync. Nothing reaches
-CloudKit unless the feature's hidden flag (`experiments.iCloudTabs`, `experiments.iCloudVault`) is on and the signed binary
-carries the iCloud, CloudKit and push entitlements (`CloudSyncGate`); a build that is unsigned, staged or has a bundle ID
+prompts or touches a lease. A row is never sent over a record that was fetched and not merged, a record only a newer WSurf
+reads parks that one entry, a store older than the last state it synced reads and sends nothing, and a pass that would delete
+many entries at once waits for the owner. Store rows, History, Trash, files, settings and Input History never sync. Nothing
+reaches CloudKit unless the feature's hidden flag (`experiments.iCloudTabs`, `experiments.iCloudVault`) is on and the signed
+binary carries the iCloud, CloudKit and push entitlements (`CloudSyncGate`); a build that is unsigned, staged or has a bundle ID
 suffix never creates the container. Private windows, the private profile, page state, history, autofill, cookies, permissions
 and favicons never sync, and `NeverSyncTests` pins the record types and scans the sync sources for them.
 
