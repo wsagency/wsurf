@@ -28,7 +28,9 @@ nonisolated enum MCPToolCatalog {
         To check a page in both engines, call openComparison and then compareTabs. \
         Passwords, codes and card fields stay the user's to fill. The one exception is the Developer tier: there typeOnPage and \
         fillFields accept secret: true for test credentials you supply yourself, and WSurf hides every secret you typed from \
-        its results. Never type real credentials; WSurf never offers or reads saved passwords.
+        its results. Never type real credentials; WSurf never offers or reads saved passwords. \
+        Playwright MCP names (browser_snapshot, browser_click, browser_navigate and others) are aliases of these tools under the \
+        same rules: they act on the current shared tab (browser_tabs select), and their refs are the [ref] numbers browser_snapshot shows.
         """
 
     struct Parameter: Sendable {
@@ -76,6 +78,25 @@ nonisolated enum MCPToolCatalog {
                     ]),
                 ])
             }
+            if type == "strings" {
+                return .object([
+                    "type": "array", "maxItems": 32, "description": .string(description),
+                    "items": .object(["type": "string", "maxLength": 32768]),
+                ])
+            }
+            if type == "playwrightFields" {
+                let text: Value = .object(["type": "string", "maxLength": 32768])
+                return .object([
+                    "type": "array", "minItems": 1, "maxItems": 32, "description": .string(description),
+                    "items": .object([
+                        "type": "object", "additionalProperties": false, "required": ["ref", "value"],
+                        "properties": .object([
+                            "name": text, "ref": text, "value": text,
+                            "type": .object(["type": "string", "enum": ["textbox", "checkbox", "radio", "combobox", "slider"]]),
+                        ]),
+                    ]),
+                ])
+            }
             if type == "region" {
                 let edge: Value = .object(["type": "number", "minimum": -100000, "maximum": 100000])
                 let size: Value = .object(["type": "number", "exclusiveMinimum": 0, "maximum": 100000])
@@ -86,7 +107,7 @@ nonisolated enum MCPToolCatalog {
                 ])
             }
             var fields: [String: Value] = ["type": .string(type), "description": .string(description)]
-            if type == "integer" {
+            if type == "integer" || type == "number" {
                 fields["minimum"] = .int(minimum)
                 fields["maximum"] = .int(maximum)
             }
@@ -157,8 +178,15 @@ nonisolated enum MCPToolCatalog {
                         text.utf8.count <= 32_768 && (parameter.choices?.contains(text) ?? true)
                     case ("budget", .object(let box)):
                         FeedbackBudget.isValid(box)
-                    case ("integer", .int(let number)):
+                    case ("integer", .int(let number)), ("number", .int(let number)):
                         number >= parameter.minimum && number <= parameter.maximum
+                    case ("number", .double(let number)):
+                        number.isFinite && number >= Double(parameter.minimum) && number <= Double(parameter.maximum)
+                    case ("strings", .array(let items)):
+                        items.count <= 32 && items.allSatisfy { $0.stringValue.map { $0.utf8.count <= 32_768 } ?? false }
+                    case ("playwrightFields", .array(let items)):
+                        // Shape only: each item becomes a fillFields item, which that tool checks in full.
+                        (1...32).contains(items.count) && items.allSatisfy { $0.objectValue != nil }
                     case ("array", .array(let fields)):
                         (1...32).contains(fields.count)
                             && fields.allSatisfy { field in
@@ -216,7 +244,8 @@ nonisolated enum MCPToolCatalog {
     ]
     static let url = Parameter(name: "url", type: "string", description: "Full HTTP(S) URL. The user approves new websites in WSurf.")
 
-    /// Every tool, in the order `tools/list` reports them. A tool group adds one line here and defines its entries in its own file.
+    /// WSurf's own tools, in the order `tools/list` reports them before the Playwright aliases (`listed`). A tool group adds one
+    /// line here and defines its entries in its own file.
     static let entries: [Entry] =
         (coreEntries + developmentEntries + environmentEntries + navigationEntries).map(selectorTargeted)
         + dialogEntries

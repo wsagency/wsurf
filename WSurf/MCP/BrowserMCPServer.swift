@@ -326,7 +326,7 @@ final class BrowserMCPServer {
         )
         let task = Task { [weak self] in
             await server.withMethodHandler(ListTools.self) { _ in
-                ListTools.Result(tools: MCPToolCatalog.entries.map(\.tool))
+                ListTools.Result(tools: MCPToolCatalog.listed.map(\.tool))
             }
             await server.withMethodHandler(CallTool.self) { [weak self] params in
                 guard let self else { throw MCPError.connectionClosed }

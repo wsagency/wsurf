@@ -818,6 +818,48 @@ is stored in the profile's own file, which a process with a shell can edit; the 
 is the Developer tier, which is kept in the keychain with the pairing. The in-app assistant asks the same way and, like an app,
 never closes pinned tabs or asks about tabs it opened in the same task.
 
+### Playwright MCP compatibility
+
+An agent written for Microsoft's Playwright MCP (`@playwright/mcp`) can use WSurf without changes to its tool calls.
+`tools/list` also offers 19 Playwright MCP names, listed after WSurf's own tools. Each one is an alias: WSurf
+turns the call into a call of the WSurf tool in this table and runs that tool. Pairing, access levels, website settings,
+Developer-only tools, dialog and closing approvals, secret scrubbing and Agent Activity (which shows the WSurf tool name)
+are the same as for a direct call, and an alias is refused wherever its tool would be. They work in background tabs and on
+both engines. WSurf's own tool names are unchanged.
+
+| Playwright MCP name | WSurf tool | Differences |
+| --- | --- | --- |
+| `browser_navigate` | `navigate` | |
+| `browser_navigate_back` | `goBack` | Stays within the shared website. |
+| `browser_click` | `clickOnPage` | One left click: `doubleClick`, `button` other than `left`, and `modifiers` are refused. |
+| `browser_type` | `typeOnPage` | `slowly` is ignored. |
+| `browser_fill_form` | `fillFields` | `name` and `type` are accepted and not needed. |
+| `browser_press_key` | `pressKey` | Needs `ref` (an addition) and the tab on screen. |
+| `browser_hover` | `hoverOnPage` | Needs WSurf active with the tab on screen. |
+| `browser_select_option` | `selectOption` | Exactly one value. |
+| `browser_snapshot` | `readAccessibility` | WSurf's accessibility outline, not Playwright's ARIA snapshot. |
+| `browser_take_screenshot` | `screenshotPage` | Always JPEG in the reply; `type` and `filename` are ignored. |
+| `browser_evaluate` | `evaluateScript` | Developer tier only. `ref` (an element argument) is refused. |
+| `browser_wait_for` | `waitForPage` | `time` is at most 15 seconds; `text` and `textGone` wait up to 5 seconds, not together. |
+| `browser_tabs` | `listTabs`, `newTab`, `closeTab` | `new` needs `url`; `select` never shows the tab to the user (`switchTab` does). |
+| `browser_console_messages` | `readConsole` | Development access, and only after `startDiagnostics`. |
+| `browser_network_requests` | `readNetwork` | Development access, and only after `startDiagnostics`; `includeStatic` is ignored. |
+| `browser_close` | `closeTab` | Closes the current tab, asking the user as `closeTab` does. |
+| `browser_resize` | `setViewport` | Development access; undo with `resetDevelopment`. |
+| `browser_handle_dialog` | `handleDialog` | Answers the dialog open in the current tab. |
+| `browser_file_upload` | none | Always refused: WSurf never reads files from this Mac for a connection. |
+
+- **Access first.** A connection still starts with no access. The agent calls `requestAccess` (WSurf's instructions say
+  so); until something is shared, the aliases that act on a tab say "No tab is shared with this connection."
+- **The current tab.** Playwright names carry no tab ID. They act on the tab `browser_tabs` last selected or opened, or else
+  on the shared tab on screen, or else on the first shared tab. `index` counts the shared tabs in `listTabs` order, from 0.
+- **Refs.** A ref is the number in brackets that `browser_snapshot` shows, sent as text: `12`, or `e12` as Playwright writes it.
+  The refs are the ones `readPage` hands out, so either read works.
+- **Not offered.** Selectors, `secret`, and tab IDs are not accepted by the aliases; use WSurf's own tools for them.
+  Playwright tools that WSurf has no counterpart for (code generation, tracing, PDF, drag, installing browsers) are not listed.
+- **Updating.** A relay keeps the tool list of the WSurf version that started it, so reload the client's MCP connection once
+  after updating to see the new names.
+
 ## Verify with a real client
 
 The automated suites call the MCP server inside the test host. This procedure checks the whole path with a real client:
@@ -836,7 +878,7 @@ normal WSurf. Nothing here bypasses consent.
    ```
 
    It prints the fixture address. Open it in the Stage window, press Return, and choose **Allow Development** on the
-   access sheet. It then calls `initialize`, `tools/list` (39 tools), `requestAccess`, `listTabs`, `readPage`,
+   access sheet. It then calls `initialize`, `tools/list` (58 tools: 39 of its own and 19 Playwright MCP names), `requestAccess`, `listTabs`, `readPage`,
    `screenshotPage`, `getDevelopmentInfo`, `setViewport`, `emulateDevice` (`phone`), `startDiagnostics`, `readConsole` and
    `resetDevelopment`, closes stdin, and expects the relay to exit 0. Every step prints `PASS` or `FAIL`; the exit code is 1 if any failed.
 4. Repeat step 3 with the fixture page on Chromium: in the Stage app open **Settings → Websites**, choose `127.0.0.1`,
@@ -850,7 +892,7 @@ normal WSurf. Nothing here bypasses consent.
      -- /path/to/owned/WSurf.app/Contents/MacOS/WSurf --mcp
    ```
 
-   Start `claude` in that project, run `/mcp` and check that `wsurf-stage` is connected with 39 tools. With the fixture
+   Start `claude` in that project, run `/mcp` and check that `wsurf-stage` is connected with 58 tools. With the fixture
    page open in the Stage window, send:
 
    > Use the wsurf-stage MCP server. Call requestAccess with development true, then listTabs. For the tab on 127.0.0.1

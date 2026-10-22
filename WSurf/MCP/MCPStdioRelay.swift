@@ -27,7 +27,7 @@ actor MCPStdioRelay {
             capabilities: .init(tools: .init()), configuration: .strict
         )
         await server.withMethodHandler(ListTools.self) { _ in
-            ListTools.Result(tools: MCPToolCatalog.entries.map(\.tool))
+            ListTools.Result(tools: MCPToolCatalog.listed.map(\.tool))
         }
         await server.withMethodHandler(CallTool.self) { params in
             try await self.call(params)
@@ -59,7 +59,7 @@ actor MCPStdioRelay {
 
     private func call(_ params: CallTool.Parameters) async throws -> CallTool.Result {
         guard !stopped else { throw MCPError.connectionClosed }
-        guard let entry = MCPToolCatalog.entries.first(where: { $0.name == params.name }) else {
+        guard let entry = MCPToolCatalog.listed.first(where: { $0.name == params.name }) else {
             throw MCPError.invalidParams("Unknown tool.")
         }
         try entry.validate(params.arguments ?? [:])
