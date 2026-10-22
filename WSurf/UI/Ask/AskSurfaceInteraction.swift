@@ -178,19 +178,14 @@ enum AskRestingContent: Equatable {
             return .status(status)
         }
         guard mirrorsPageURL, !isFocused else { return nil }
-        guard !currentURL.isEmpty else { return .placeholder(placeholder) }
-        if showsFullAddress, let full = AddressText(currentURL) {
-            return .address(full.host, scheme: full.scheme, rest: full.rest)
-        }
-        return .address(displayAddress(for: currentURL))
+        // The tab's address is always a URL's absoluteString; one that does not parse back shows the placeholder.
+        guard let address = AddressText(URL(string: currentURL)) else { return .placeholder(placeholder) }
+        return showsFullAddress ? .address(address.host, scheme: address.scheme, rest: address.rest) : .address(address.name)
     }
 
-    /// The website name without “www.”, as `AddressText` shows it; an address without a host as it is.
-    static func displayAddress(for value: String) -> String {
-        guard let parts = URLComponents(string: value), let host = AddressText.host(of: parts), !host.isEmpty else {
-            return value
-        }
-        return host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
+    /// The website name without “www.”, as `AddressText` shows it; nil for an address that does not parse.
+    static func displayAddress(for value: String) -> String? {
+        AddressText(URL(string: value))?.name
     }
 }
 

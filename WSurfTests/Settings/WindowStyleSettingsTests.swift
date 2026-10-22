@@ -56,26 +56,42 @@ struct WindowStyleSettingsTests {
         #expect(!spoken.contains("user") && !spoken.contains("secret"), "VoiceOver hears the address that is drawn")
     }
 
-    @Test func aLookAlikeWebsiteNameShowsAsPunycode() throws {
-        // A Cyrillic "а" among Latin letters, a whole name of Cyrillic look-alikes, and a Latin dotless "ı".
-        for spoof in ["https://аpple.com/", "https://аррӏе.com/", "https://gıthub.com/"] {
-            let encoded = try #require(URLComponents(string: spoof)?.encodedHost)
-            #expect(encoded.hasPrefix("xn--"))
-            #expect(resting(spoof, full: true) == .address(encoded, scheme: "https://", rest: "/"), "\(spoof)")
-            #expect(resting(spoof, full: false) == .address(encoded), "\(spoof)")
-        }
-        #expect(resting("https://аpple.com/", full: false) == .address("xn--pple-43d.com"))
+    @Test func aRawAddressWithSignInDetailsAndInvalidCharactersIsRebuilt() {
+        let raw = "https://bank.com@evil.com/<x> y"
+        #expect(resting(raw, full: true) == .address("evil.com", scheme: "https://", rest: "/%3Cx%3E%20y"))
+        #expect(resting(raw, full: false) == .address("evil.com"))
     }
 
-    @Test func aWebsiteNameInOneScriptReadsAsWritten() {
-        #expect(resting("https://bücher.de/", full: false) == .address("bücher.de"))
-        #expect(resting("https://xn--bcher-kva.de/", full: false) == .address("bücher.de"), "punycode from the engine")
-        #expect(resting("https://пример.рф/", full: true) == .address("пример.рф", scheme: "https://", rest: "/"))
+    @Test func everyNonASCIIWebsiteNameShowsAsPunycode() throws {
+        // Latin Extended look-alikes (dotless "ı", IPA "ɡ"), a Cyrillic "а" among Latin letters, a whole name of Cyrillic
+        // look-alikes, and an ordinary German name: none is drawn in Unicode.
+        for url in ["https://gıthub.com/", "https://ɡoogle.com/", "https://аpple.com/", "https://аррӏе.com/", "https://bücher.de/"] {
+            let encoded = try #require(URLComponents(string: url)?.encodedHost)
+            #expect(encoded.allSatisfy(\.isASCII) && encoded.contains("xn--"), "\(url)")
+            #expect(resting(url, full: true) == .address(encoded, scheme: "https://", rest: "/"), "\(url)")
+            #expect(resting(url, full: false) == .address(encoded), "\(url)")
+        }
+        #expect(resting("https://аpple.com/", full: true) == .address("xn--pple-43d.com", scheme: "https://", rest: "/"))
+    }
+
+    @Test func anAddressThatDoesNotParseShowsThePlaceholderNotItsText() {
+        for raw in ["https://exa mple.com/", "http://[::1", "ht tp://bank.com", "https://bank.com%40evil.com/"] {
+            #expect(resting(raw, full: true) == .placeholder("Search"), "\(raw)")
+            #expect(resting(raw, full: false) == .placeholder("Search"), "\(raw)")
+            #expect(AskRestingContent.displayAddress(for: raw) == nil, "\(raw)")
+        }
     }
 
     @Test func invisibleAndReorderingCharactersInThePathStayEncoded() {
         let url = "https://example.com/%E2%80%AEtxt.exe"
         #expect(resting(url, full: true) == .address("example.com", scheme: "https://", rest: "/%E2%80%AEtxt.exe"))
+        #expect(resting("https://example.com/\u{202E}txt.exe", full: true)
+            == .address("example.com", scheme: "https://", rest: "/%E2%80%AEtxt.exe"))
+    }
+
+    @Test func anAddressWithoutAHostIsRebuiltToo() {
+        #expect(resting("about:blank", full: false) == .address("about:blank"))
+        #expect(resting("file:///Users/me/a.html", full: true) == .address("", scheme: "file://", rest: "/Users/me/a.html"))
     }
 
     @Test func aPageWithoutAnAddressStillShowsThePlaceholder() {
@@ -115,7 +131,8 @@ struct WindowStyleSettingsTests {
 @MainActor
 struct FullAddressLineTests {
     @Test func aLongPathIsCutBeforeTheWebsiteName() throws {
-        let address = try #require(AddressText("https://accounts.example.com/" + String(repeating: "very-long-path/", count: 20) + "?q=1"))
+        let long = "https://accounts.example.com/" + String(repeating: "very-long-path/", count: 20) + "?q=1"
+        let address = try #require(AddressText(URL(string: long)))
         var hostWidth: CGFloat = 0
         let line = FullAddressLine(address: address, fontSize: 12.5, onHostWidth: { hostWidth = $0 })
             .frame(width: 240, alignment: .leading)
