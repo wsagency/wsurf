@@ -68,7 +68,9 @@ enum ReaderExtractor {
 
     static func article(in page: BrowserPage, within ceiling: Duration = replyCeiling) async -> ReaderArticle? {
         guard let document = page.url, isEligible(document) else { return nil }
-        let value = await page.callAsyncJavaScript(extractScript, in: world, within: ceiling, as: String.self)
+        // Run in the translation's world, which holds what a translated page said before: Reader reads the website's own text,
+        // never a translation of it. A page that was never translated has no such record and is read as it is.
+        let value = await page.callAsyncJavaScript(extractScript, in: PageTranslationScript.world, within: ceiling, as: String.self)
         guard page.url == document,
               let json = value,
               let article = await decode(json),
@@ -172,6 +174,7 @@ enum ReaderExtractor {
     \(source("Readability"))
     if (typeof Readability !== 'function') return '';
     const copy = document.cloneNode(true);
+    globalThis.__wsurfTranslate?.untranslate(copy);
     const parsed = new Readability(copy, { charThreshold: 400 }).parse();
     if (!parsed || !parsed.content) return '';
     const holder = copy.createElement('div');

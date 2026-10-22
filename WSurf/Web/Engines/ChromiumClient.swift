@@ -134,6 +134,7 @@ final class ChromiumClient {
     nonisolated(unsafe) private var resourceHandlerClosed = false
 
     nonisolated let trackerPolicy: ChromiumTrackerPolicy
+    nonisolated let fileScope = ChromiumFileScope()
     let documentResponses = ChromiumDocumentResponses()
     private var pendingCallbacks: [UInt: UInt] = [:]
     private var certificateCallbacks: Set<UInt> = []
@@ -715,7 +716,8 @@ final class ChromiumClient {
         handler.pointee.on_before_resource_load = { handlerSelf, browser, frame, request, callback in
             defer { ChromiumClient.release(callback.map(UnsafeMutableRawPointer.init)) }
             ChromiumClient.releaseBrowser(browser)
-            ChromiumClient.releaseFrame(frame)
+            // Held until the check below has read the requesting frame's address.
+            defer { ChromiumClient.releaseFrame(frame) }
             defer { ChromiumClient.release(request.map(UnsafeMutableRawPointer.init)) }
             guard let client = ChromiumClient.owner(handlerSelf.map(UnsafeMutableRawPointer.init)),
                   let request,
@@ -723,8 +725,10 @@ final class ChromiumClient {
             else { return RV_CONTINUE }
             defer { cef_string_userfree_utf16_free(rawURL) }
             guard request.pointee.get_resource_type?(request) != RT_MAIN_FRAME else { return RV_CONTINUE }
-            guard let url = URL(string: ChromiumClient.string(UnsafePointer(rawURL))) else { return RV_CONTINUE }
-            return client.trackerPolicy.shouldBlock(url) ? RV_CANCEL : RV_CONTINUE
+            let text = ChromiumClient.string(UnsafePointer(rawURL))
+            // An address Foundation cannot read is still refused when it is a file.
+            guard let url = URL(string: text) else { return text.lowercased().hasPrefix("file:") ? RV_CANCEL : RV_CONTINUE }
+            return client.trackerPolicy.shouldBlock(url) || client.refusesFile(url, requestedBy: frame) ? RV_CANCEL : RV_CONTINUE
         }
         handler.pointee.on_resource_response = { handlerSelf, browser, frame, request, response in
             defer {
@@ -795,6 +799,8 @@ final class ChromiumClient {
                 ) != false else { return 1 }
                 guard ["http", "https", "file", "about", "data", "blob", "chrome-extension"].contains(url.scheme?.lowercased() ?? "") else { return 1 }
                 if isMain {
+                    // Before the request is sent, so before any subresource of the new document can ask.
+                    client.fileScope.mainFrameNavigation(to: url)
                     page.willNavigate(navigationRequest, isRedirect: redirect != 0)
                 }
                 return 0

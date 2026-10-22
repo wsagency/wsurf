@@ -126,7 +126,7 @@ struct DownloadOpeningTests {
     func aDownloadOpenedInATabMayReadOnlyItself(_ name: String) {
         let file = URL(fileURLWithPath: "/Users/someone/Downloads/\(name)")
 
-        #expect(BrowserTab.readAccess(forFile: file) == file)
+        #expect(FileAccessScope.readAccess(for: file) == file)
     }
 
     // MARK: - What is available

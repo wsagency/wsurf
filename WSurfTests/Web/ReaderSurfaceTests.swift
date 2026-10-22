@@ -447,6 +447,39 @@ struct ReaderSurfaceTests {
         }
     }
 
+    /// A page that is already translated (Always Translate, or Translate Page) is read by Reader as the website wrote it, so the
+    /// article is in the website's language, Translate Page has something to translate, and the page behind keeps its translation.
+    @Test(.boundedWebViews, arguments: BrowserEngine.allCases)
+    func readerOpenedOverATranslatedPageShowsTheOriginalTextAndOffersTheTranslation(engine: BrowserEngine) async throws {
+        try await withTab(engine: engine, routes: articleRoutes, start: "/news/tide") { tab, _ in
+            let pageTranslation = tab.translation
+            let pageRequest = pageTranslation.begin(to: Self.english)
+            pageTranslation.translate(pageRequest, in: tab.page) { Self.germanised($0) }
+            #expect(await waitUntil { ((try? await pageText(of: tab)) ?? "").contains("Hafen") }, "engine \(engine)")
+            #expect(await waitUntil { pageTranslation.phase == .translated })
+
+            try await withReader(on: tab) { article in
+                let extracted = try #require(tab.reader.article)
+                #expect(extracted.text.contains("harbour") && !extracted.text.contains("Hafen"), "Reader read the translation, engine \(engine)")
+                let shown = await shownText(of: article)
+                #expect(shown.contains("harbour") && !shown.contains("Hafen"))
+                #expect(!tab.shownTranslation.isActive, "the article starts untranslated")
+                #expect(tab.canToggleTranslation)
+
+                let translation = tab.shownTranslation
+                let request = translation.begin(to: Self.english)
+                translation.translate(request, in: article) { Self.germanised($0) }
+
+                #expect(await waitUntil { await shownText(of: article).contains("Hafen") }, "engine \(engine)")
+                AppCoordinator().showOriginal(tab)
+                #expect(await waitUntil { !(await shownText(of: article)).contains("Hafen") }, "engine \(engine)")
+                #expect(await shownText(of: article).contains("harbour"))
+                #expect(try await pageText(of: tab).contains("Hafen"), "the page behind Reader lost its translation")
+                #expect(pageTranslation.phase == .translated)
+            }
+        }
+    }
+
     /// Find counts the matches in the article, whose JavaScript is off, and clears its highlight; once Reader is left, Find
     /// searches the page again.
     @Test(.boundedWebViews, arguments: BrowserEngine.allCases)

@@ -242,6 +242,7 @@ final class BrowserPage: NSView {
         return chromium?.load(request)
     }
 
+    /// Chromium has no read-access parameter: `ChromiumFileScope` holds a `file:` page to the same scope, frame by frame.
     @discardableResult
     func loadFileURL(_ url: URL, allowingReadAccessTo directory: URL) -> PageNavigation? {
         guard !closed else { return nil }

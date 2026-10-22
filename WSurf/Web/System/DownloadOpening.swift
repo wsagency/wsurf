@@ -44,8 +44,8 @@ struct DownloadWorkspace {
     }
 
     /// Types WSurf's tabs show instead of handing off. Each is a type both engines render from a `file:` URL and
-    /// that runs no script of its own. HTML and SVG are left out on purpose: a downloaded page could read the
-    /// other files in the Downloads folder and send them out. A type a tab would only download (a Markdown file,
+    /// that runs no script of its own. HTML and SVG are left out on purpose: a downloaded page would run its own
+    /// script (it could not read its neighbours: see `FileAccessScope`). A type a tab would only download (a Markdown file,
     /// a code file, a Word document) is left out too, because opening it would make a second copy in Downloads.
     /// Preview and Open With still cover everything.
     static let browserTypes: [UTType] = [

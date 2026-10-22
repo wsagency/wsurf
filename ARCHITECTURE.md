@@ -148,7 +148,10 @@ control act on Reader's WebKit view and the `ReaderSession`'s own
 `PageTranslation` (`BrowserTab.shownTranslation`); the page behind keeps its own
 state and is not touched. The script runs in the same content world, which answers
 with the view's JavaScript off. Leaving Reader, or a new article view, starts the
-article's translation over.
+article's translation over. Reader reads a page that is already translated as the
+website wrote it: the extraction runs in that same world and sets every translated
+node of its copy back (`untranslate`), so the article starts in the page's language
+and Translate Page offers to translate it.
 
 ## Agent trust boundaries
 
