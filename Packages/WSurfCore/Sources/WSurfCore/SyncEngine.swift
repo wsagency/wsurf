@@ -152,13 +152,26 @@ public protocol SyncEngineDelegate: AnyObject, Sendable {
     func record(for id: SyncRecordID) -> SyncRecord?
 }
 
+/// What a full read of one zone returned.
+nonisolated public struct SyncZoneRead: Sendable {
+    public var records: [SyncRecord]
+    /// Records the server could not return.
+    public var skipped: Int
+
+    public init(records: [SyncRecord], skipped: Int = 0) {
+        self.records = records
+        self.skipped = skipped
+    }
+}
+
 /// A sync engine for one private database. The CloudKit adapter is the only conformance outside tests.
 public protocol SyncEngine: AnyObject {
     func add(_ changes: [SyncChange])
     func sendNow() async throws
     func fetchNow() async throws
     /// One full read of one zone, for a Mac that adds or rejoins a vault and so missed the records the engine fetched before. It
-    /// goes through the same allowlist as an engine fetch. Never call it from inside `handle`.
-    func fetchAll(zone: String) async throws -> [SyncRecord]
+    /// goes through the same allowlist as an engine fetch. A record the server could not return is skipped and counted, so one bad
+    /// record never fails the read. Never call it from inside `handle`.
+    func fetchAll(zone: String) async throws -> SyncZoneRead
     func accountIsAvailable() async -> Bool
 }

@@ -59,19 +59,29 @@ public final class CloudKitSyncEngine: SyncEngine {
         try await engine.fetchChanges()
     }
 
-    public func fetchAll(zone: String) async throws -> [SyncRecord] {
+    public func fetchAll(zone: String) async throws -> SyncZoneRead {
         let database = container.privateCloudDatabase
         var records: [SyncRecord] = []
+        var skipped = 0
         var token: CKServerChangeToken?
         while true {
             let page = try await database.recordZoneChanges(inZoneWith: CloudKitMapping.zoneID(zone), since: token)
             for (_, result) in page.modificationResultsByID {
-                // A record that failed to arrive is an error, never a silent gap: the caller reads the zone again later.
-                if let record = CloudKitMapping.syncRecord(try result.get().record) {
+                // A record that failed to arrive is skipped and counted: the read finishes, and one bad record never holds the rest.
+                guard let modification = try? result.get() else {
+                    skipped += 1
+                    continue
+                }
+                if let record = CloudKitMapping.syncRecord(modification.record) {
                     records.append(record)
                 }
             }
-            guard page.moreComing else { return records }
+            guard page.moreComing else {
+                if skipped > 0 {
+                    SyncLog.logger.error("sync: \(skipped) records of a zone could not be read")
+                }
+                return SyncZoneRead(records: records, skipped: skipped)
+            }
             token = page.changeToken
         }
     }

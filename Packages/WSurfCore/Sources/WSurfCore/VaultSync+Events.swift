@@ -419,10 +419,13 @@ extension VaultSync {
     func fetchAllNow(_ key: VaultKey) async throws {
         guard let engine, let (database, row) = runningRow(key), row.needsFetch else { return }
         let mine = token(key)
-        let records = try await engine.fetchAll(zone: key.zone)
+        let read = try await engine.fetchAll(zone: key.zone)
         guard mine == token(key) else { return }
         incomplete.remove(key)
-        applyFetched(modified: records, deleted: [])
+        applyFetched(modified: read.records, deleted: [])
+        if read.skipped > 0 {
+            tallies[key, default: (0, 0)].unreadable += read.skipped
+        }
         // A read that could not keep every record is still owed.
         if !incomplete.contains(key) {
             try? database.write { tx in

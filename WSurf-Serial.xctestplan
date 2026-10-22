@@ -216,6 +216,7 @@
         "VaultStoreUnlockTests",
         "VaultStoreWrapperTests",
         "VaultSyncCodecTests",
+        "VaultSyncEdgeTests",
         "VaultSyncParkingTests",
         "VaultSyncRaceTests",
         "VaultSyncRemovalGuardTests",

@@ -197,6 +197,8 @@ final class FakeSyncEngine: SyncEngine {
     var hangsOnSend = false
     /// No network: a fetch or a send throws.
     var offline = false
+    /// Names of records that cannot be read when a zone is read in full, as the server can fail one record of a page.
+    var unreadable: Set<String> = []
     private(set) var pending: [SyncChange] = []
     private(set) var sendCount = 0
     private(set) var fetchCount = 0
@@ -249,19 +251,23 @@ final class FakeSyncEngine: SyncEngine {
         if !changes.zones.isEmpty {
             await delegate?.handle(.zonesDeleted(changes.zones))
         }
-        if !changes.modified.isEmpty || !changes.deleted.isEmpty {
-            await delegate?.handle(.fetched(modified: changes.modified, deleted: changes.deleted))
+        // A record the server cannot return does not reach the model in a fetch either.
+        let modified = changes.modified.filter { !unreadable.contains($0.id.name) }
+        if !modified.isEmpty || !changes.deleted.isEmpty {
+            await delegate?.handle(.fetched(modified: modified, deleted: changes.deleted))
         }
         await publishState()
     }
 
-    /// The whole zone, as the real engine's full read returns it. A zone that is gone is an error.
-    func fetchAll(zone: String) async throws -> [SyncRecord] {
+    /// The whole zone, as the real engine's full read returns it: a record the server cannot return is skipped and counted. A zone
+    /// that is gone is an error.
+    func fetchAll(zone: String) async throws -> SyncZoneRead {
         if offline {
             throw URLError(.notConnectedToInternet)
         }
         guard let records = cloud.records(in: zone) else { throw URLError(.fileDoesNotExist) }
-        return records
+        let readable = records.filter { !unreadable.contains($0.id.name) }
+        return SyncZoneRead(records: readable, skipped: records.count - readable.count)
     }
 
     func accountIsAvailable() async -> Bool {
