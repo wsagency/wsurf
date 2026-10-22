@@ -99,7 +99,7 @@ extension BrowserTab {
         stopUncommittedStartPage()
         permitSystemPage(url)
         if url.isFileURL {
-            // Every `file:` load, typed, dragged, opened from Finder or from Downloads, reads only itself.
+            // Typed, dragged, opened from Finder or from Downloads: a downloaded file reads only itself, the person's own file its folder.
             return page.loadFileURL(url, allowingReadAccessTo: FileAccessScope.readAccess(for: url))
         }
         return page.load(URLRequest(url: url))
