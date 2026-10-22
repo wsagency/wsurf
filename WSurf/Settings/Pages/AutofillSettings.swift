@@ -26,7 +26,7 @@ enum AutofillDestination: Equatable {
 }
 
 /// Settings > Autofill. The page is the vault's (`CredentialSettings`): its Vault and Settings tabs also hold Input History, the
-/// autofill switches and the cards and addresses kept on this Mac.
+/// autofill switches and the move of the cards and addresses saved on this Mac into the vault.
 struct AutofillSettings: View {
     let coordinator: AppCoordinator
     var highlight: String?

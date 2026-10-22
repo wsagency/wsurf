@@ -21,9 +21,11 @@ nonisolated struct AutofillKeychainStorage: AutofillSecureStorage {
     }
 
     var access: Access = .userPresence
+    /// The item's account name; `nil` is the autofill stores' own ("records", or "records.when-unlocked").
+    var account: String?
 
-    private var account: String {
-        access == .whenUnlocked ? "records.when-unlocked" : "records"
+    private var itemAccount: String {
+        account ?? (access == .whenUnlocked ? "records.when-unlocked" : "records")
     }
 
     static func query(service: String, account: String = "records") -> [String: Any] {
@@ -34,7 +36,7 @@ nonisolated struct AutofillKeychainStorage: AutofillSecureStorage {
     }
 
     func read(service: String, context: LAContext) throws -> Data? {
-        var query = Self.query(service: service, account: account)
+        var query = Self.query(service: service, account: itemAccount)
         query[kSecUseAuthenticationContext as String] = context
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
@@ -48,7 +50,7 @@ nonisolated struct AutofillKeychainStorage: AutofillSecureStorage {
     }
 
     func write(_ data: Data, service: String, context: LAContext) throws {
-        var query = Self.query(service: service, account: account)
+        var query = Self.query(service: service, account: itemAccount)
         query[kSecUseAuthenticationContext as String] = context
         let status = SecItemUpdate(query as CFDictionary, [kSecValueData as String: data] as CFDictionary)
         if status == errSecSuccess {
@@ -65,7 +67,7 @@ nonisolated struct AutofillKeychainStorage: AutofillSecureStorage {
     }
 
     func erase(service: String) throws {
-        let status = SecItemDelete(Self.query(service: service, account: account) as CFDictionary)
+        let status = SecItemDelete(Self.query(service: service, account: itemAccount) as CFDictionary)
         guard status == errSecSuccess || status == errSecItemNotFound else { throw AutofillVaultError.keychain(status) }
     }
 
@@ -74,7 +76,7 @@ nonisolated struct AutofillKeychainStorage: AutofillSecureStorage {
     func exists(service: String) throws -> Bool {
         let context = LAContext()
         context.interactionNotAllowed = true
-        var query = Self.query(service: service, account: account)
+        var query = Self.query(service: service, account: itemAccount)
         query[kSecUseAuthenticationContext as String] = context
         query[kSecReturnAttributes as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
@@ -240,14 +242,15 @@ enum AutofillVaults {
     private static var contacts: [UUID: SecureAutofillVault<AutofillContact>] = [:]
     private static var legacyPasswords: [UUID: SecureAutofillVault<SavedPassword>] = [:]
 
+    /// The contacts and addresses saved before they moved into the vault. Read and erased only (by `AutofillVaultMigration`, by filling
+    /// one before the move is confirmed, and by erasing a profile): nothing writes this list any more.
     static func contacts(for id: UUID) -> SecureAutofillVault<AutofillContact> {
         if let vault = contacts[id] {
             return vault
         }
         let vault = SecureAutofillVault<AutofillContact>(
             profileID: id, kind: "contacts", reason: String(localized: "Access your saved contacts in WSurf."),
-            storage: AutofillKeychainStorage(access: .whenUnlocked),
-            saveKind: .contact, saveCandidates: { $0.map(AutofillSaveCandidate.contact) }
+            storage: AutofillKeychainStorage(access: .whenUnlocked)
         )
         contacts[id] = vault
         return vault

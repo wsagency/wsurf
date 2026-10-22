@@ -6,6 +6,7 @@ import Contacts
 import ContactsUI
 import SwiftUI
 
+/// Shows the system's contact picker beside the button; the chosen contact is handed to `onSelect` and nothing else is read.
 struct ContactImportButton: NSViewRepresentable {
     let onSelect: (CNContact) -> Void
 
@@ -14,7 +15,7 @@ struct ContactImportButton: NSViewRepresentable {
     }
 
     func makeNSView(context: Context) -> NSButton {
-        let button = NSButton(title: String(localized: "Import from Contacts…"), target: context.coordinator, action: #selector(Coordinator.show(_:)))
+        let button = NSButton(title: String(localized: "Choose Contact…"), target: context.coordinator, action: #selector(Coordinator.show(_:)))
         button.bezelStyle = .rounded
         return button
     }

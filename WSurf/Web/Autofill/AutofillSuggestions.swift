@@ -228,13 +228,16 @@ final class AutofillSuggestions {
         if kind == .password {
             records = await managerSuggestions(for: request, origin: origin, presentation: id)
         } else {
+            // A tab the assistant or a connected app controls is offered no card or address at all.
+            guard !isUnderAssistantControl(page) else { return false }
+            // The cards and addresses still in the old Keychain lists, until the person confirms their move into the vault.
             records = try? await Task.detached {
                 try AutofillSaveIndex.suggestions(kind: kind, origin: origin, profileID: profileID)
             }.value
         }
         var rows = records ?? []
         if kind != .password {
-            rows += await vaultItemSuggestions(for: request, presentation: id)
+            rows += await vaultItemSuggestions(for: request, origin: origin, presentation: id)
         }
         if kind == .password, request.isWebAuthnField,
            let passkey = Self.passkeyRow(origin: origin, in: page, frame: request.frame) {
@@ -357,14 +360,28 @@ final class AutofillSuggestions {
         return [AutofillSuggestion(id: rowID, title: String(localized: "Check other logins for *.\(site)"), detail: "", origin: origin)]
     }
 
-    /// Cards or addresses of the profile's unlocked vaults, after the ones saved in Keychain: titles only (a card's network and last
-    /// four digits), each row mapped to its vault, credential and item. A locked vault is never read, nothing is offered to unlock
-    /// one, and a tab the assistant or a connected app controls gets none, so no agent can have one filled into a page it reads.
-    private func vaultItemSuggestions(for request: Request, presentation: UUID) async -> [AutofillSuggestion] {
+    /// Cards or addresses of the profile's unlocked vaults, after the ones still in the old Keychain lists: titles only (a card's
+    /// network and last four digits), each row mapped to its vault, credential and item. A locked vault is never read: while every
+    /// vault is locked the field gets "Unlock Credentials…", which unlocks through the ordinary unlock and looks the field up again.
+    private func vaultItemSuggestions(for request: Request, origin: String, presentation: UUID) async -> [AutofillSuggestion] {
         let context = request.context
-        request.grants = [:]; request.itemRows = [:]
-        guard !context.profile.isPrivate, request.page.context === context, request.kind != .password,
-              !isUnderAssistantControl(request.page) else { return [] }
+        request.grants = [:]; request.itemRows = [:]; request.actions = [:]; request.isLocked = false
+        guard !context.profile.isPrivate, request.page.context === context else { return [] }
+        let allLocked = await Self.allVaultsLocked(of: context.profile)
+        guard request.page.context === context, presentation == presentationID, requests[ObjectIdentifier(request.page)] === request else {
+            return []
+        }
+        switch Self.vaultItemRows(kind: request.kind, underAssistantControl: isUnderAssistantControl(request.page), allVaultsLocked: allLocked) {
+        case .none:
+            return []
+        case .unlock:
+            let rowID = UUID()
+            request.isLocked = true
+            request.actions[rowID] = .unlock
+            return [AutofillSuggestion(id: rowID, title: String(localized: "Unlock Credentials…"), detail: "", origin: origin)]
+        case .items:
+            break
+        }
         let listing = (try? await CredentialManager.store(for: context.profile).listing()) ?? []
         let unlocked = CredentialManager.unlockedManagers(for: context.profile)
         var result: [AutofillSuggestion] = []
@@ -786,6 +803,7 @@ final class AutofillSuggestions {
                 // A login, or a card or address of the credentials vault, is not read here: it is read after the final checks below.
                 var fields: [String: Any] = [:]
                 if request.kind != .password, request.itemRows[id] == nil {
+                    guard !self.isUnderAssistantControl(page) else { throw ContactAutofillError.changedPage }
                     fields = try await self.keychainFields(id, request: request)
                 }
                 try await self.validate(request, in: page)
@@ -807,6 +825,7 @@ final class AutofillSuggestions {
                     prepare = { [weak self, weak page] in
                         guard let self, let page else { throw ContactAutofillError.changedPage }
                         try self.requireAuthority(request, in: page)
+                        guard !self.isUnderAssistantControl(page) else { throw ContactAutofillError.changedPage }
                         return Self.fillArguments(request, fields: values)
                     }
                 }
@@ -855,8 +874,8 @@ final class AutofillSuggestions {
         }
     }
 
-    /// A card or contact saved in Keychain (the stores of the Autofill settings), read before `fill`'s final checks. The card store asks
-    /// for Touch ID itself.
+    /// A card or contact still in the old Keychain lists (until their move into the vault is confirmed), read before `fill`'s final
+    /// checks. The card list asks for Touch ID itself.
     private func keychainFields(_ id: UUID, request: Request) async throws -> [String: Any] {
         switch request.kind {
         case .password:
@@ -928,6 +947,20 @@ final class AutofillSuggestions {
             "fields": fields,
             "documentID": request.documentID,
         ]
+    }
+}
+
+extension AutofillSuggestions {
+    /// What a card or address field is offered from the credentials vault, decided before anything is read: nothing in a tab the
+    /// assistant or a connected app controls (so no agent can have one filled into a page it reads), one row that only unlocks while
+    /// every vault of the profile is locked, and otherwise the unlocked vaults' cards or addresses.
+    nonisolated enum VaultItemRows: Equatable {
+        case none, unlock, items
+    }
+
+    nonisolated static func vaultItemRows(kind: AutofillSaveKind, underAssistantControl: Bool, allVaultsLocked: Bool) -> VaultItemRows {
+        guard kind != .password, !underAssistantControl else { return .none }
+        return allVaultsLocked ? .unlock : .items
     }
 }
 

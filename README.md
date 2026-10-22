@@ -136,8 +136,9 @@ versions.
   can be copied. Several credentials can be selected to move to Trash or merge,
   the last five actions can be undone, and a vault that is not the last can be
   deleted after you type its name and confirm with its passkey (an empty one is deleted at once).
-  Save payment cards and contact details in Settings › Autofill;
-  unlock cards with Touch ID or your Mac password.
+  Payment cards, contacts and addresses are saved in the vault (and can be
+  imported from a Safari export or from Contacts); filling or showing a card
+  asks for Touch ID or your Mac password.
 - **Add WebKit extensions:** install from the Chrome Web Store or Firefox Add-ons.
   An update that asks for more permissions or websites is held until you approve it.
 - Use profiles to keep cookies, history, tabs, permissions, and extensions

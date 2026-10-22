@@ -64,13 +64,27 @@ vault when there are several), then looks up the same field again. A lock,
 profile switch or a new field while the vault choice is open unlocks nothing.
 The unlock starts the vault's own lease and never extends one.
 
-A card or address field also lists the cards and addresses of the profile's unlocked credential vaults, after the ones saved in
-Settings › Autofill. A row shows only a card's network and last four digits, or a contact's title; the credential's item is read
-again on the pick under the same unlock, revision and write generation, and a card fills only after Touch ID or the Mac password,
-as a card saved in Keychain does. A locked vault is never read and offers no unlock row here. A credential's first address and
-first name fill as one contact; a card whose number fails the card check, or that has expired, is not offered. No vault card or
-address is offered in a tab the assistant or a connected app controls (`BrowserTab.isUnderAssistantControl`), so none is filled
-into a page an agent reads. Saving a typed card or address still writes to the Autofill settings' own stores.
+A card or address field lists the cards and addresses of the profile's unlocked credential vaults (and, until the person confirms
+their move into the vault, the ones still in the old Keychain lists). A row shows only a card's network and last four digits, or a
+contact's title; the credential's item is read again on the pick under the same unlock, revision and write generation, and a card
+fills only after Touch ID or the Mac password. Contacts and addresses need only the unlocked vault. While every vault of the profile
+is locked, the field gets one "Unlock Credentials…" row, as a login field does; nothing is read before the unlock. A credential's
+first address, first name and its custom fields with the ids `email` and `organization` fill as one contact; a card whose number
+fails the card check, or that has expired, is not offered. No card or address at all is offered in a tab the assistant or a
+connected app controls (`BrowserTab.isUnderAssistantControl`), so none is filled into a page an agent reads.
+
+Saving a typed card or address goes through the save offer, like a password: only Save writes, as a new entry (or, for a card an
+unlocked vault holds with other details, an update of its card item) in the vault the offer read, else the default vault, chosen and
+unlocked on Save when needed. A tab under assistant control is offered nothing. The old Keychain card and contact lists and the card
+and contact rows of the save index are never written again: the Vault tab's "Cards and addresses saved on this Mac" card moves them
+(`AutofillVaultMigration`). Review reads them, Move to Vault writes what the vault lacks in one commit (cause `autofill-migration`)
+and compares every entry with its old copy, Undo moves those entries to Trash, and only Erase Old Copies…, after a confirmation that
+names the counts, erases both Keychain items and the rows, and checks that nothing is left.
+
+Import & Export on the Settings tab imports payment cards from a Safari export (its ZIP or PaymentCards.json) and a contact chosen in
+Contacts, into the open vault only: a review lists titles only, Import writes what the vault lacks in one commit, and the notice
+offers Undo. A vault that changed since the review writes nothing. With no vault yet, the rows offer Create Vault…; with a locked
+one they stay off. Imported cards follow the vault's Touch ID rules.
 
 A field whose autocomplete includes `webauthn` also gets "Use a Passkey…" while
 its document has a pending conditional passkey request, whatever the vault
@@ -120,8 +134,8 @@ page layout. Closing it keeps the offer available from its icon until expiry or
 explicit dismissal. A login that repeats the account just filled in the tab is
 compared with that account in its own vault, also when other unlocked vaults
 hold the same username, so it is not offered again. Only explicit Save/Update
-writes a candidate to its store: a password goes to Credential Manager, a card
-or an address to its own vault. A profile with no vault gets one offer per run
+writes a candidate to its store: a password, a card or an address goes to
+Credential Manager. A profile with no vault gets one offer per run
 of the app to set one up, and nothing is saved by it.
 
 Native code binds messages to the WebKit or CEF frame identity and origin.

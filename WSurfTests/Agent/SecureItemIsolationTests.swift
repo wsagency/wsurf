@@ -13,7 +13,7 @@ struct SecureItemIsolationTests {
     private static let guarded = ["WSurf/MCP", "WSurf/Agent", "WSurf/Web/Assistant"]
     private static let needles = [
         "secureitem", "vaultitemautofill", "credentialmanager", "storesnapshot", "profilevaultstore", "paymentcardvault",
-        "autofillvaults", "credentialaccount",
+        "autofillvaults", "credentialaccount", "autofillvaultmigration", "autofillmigration", "autofillsaveindex",
     ]
 
     private var repositoryRoot: URL {

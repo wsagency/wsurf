@@ -3,8 +3,8 @@
 
 import SwiftUI
 
-/// The top of the Autofill page's Settings tab: what autofill offers to save and fill, which applies to every vault of the profile and
-/// to the cards and addresses kept on this Mac, then Apple Pay. A private profile shows the switches off.
+/// The top of the Autofill page's Settings tab: what autofill offers to save and fill, which applies to every vault of the profile, then
+/// Apple Pay. A private profile shows the switches off.
 struct AutofillOptions: View {
     @Bindable var settings: BrowserSettings
     let context: BrowserProfileContext

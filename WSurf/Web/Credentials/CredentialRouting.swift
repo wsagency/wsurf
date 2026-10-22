@@ -30,7 +30,8 @@ enum CredentialRouting {
         return await store.openState() == .firstRun
     }
 
-    static func route(profile: Profile, origin: String, username: String?) async -> VaultRoute {
+    /// `origin` nil routes a new entry that belongs to no website (a card or an address): straight to the default vault.
+    static func route(profile: Profile, origin: String?, username: String?) async -> VaultRoute {
         guard let store = try? CredentialManager.store(for: profile),
               case .provisional = await store.openState(),
               let listing = try? await store.listing(), !listing.isEmpty else { return .unavailable }
@@ -39,6 +40,7 @@ enum CredentialRouting {
 
         var holders: [CredentialManager] = []
         for manager in unlocked {
+            guard let origin else { break }
             guard let snapshot = try? await manager.snapshot() else { continue }
             if snapshot.accounts.contains(where: { $0.origins.contains(origin) && (username == nil || $0.username == username) }) {
                 holders.append(manager)

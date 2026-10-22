@@ -4,8 +4,8 @@
 import Observation
 import SwiftUI
 
-/// The two tabs of the Autofill page: everything the vault holds (and, until it moves into the vault, Input History and the cards and
-/// addresses kept on this Mac), and every setting.
+/// The two tabs of the Autofill page: everything the vault holds (and, until it moves into the vault, Input History), and every
+/// setting.
 enum CredentialPageTab: Hashable {
     case vault
     case settings
@@ -401,8 +401,7 @@ struct CredentialListView<Switcher: View>: View {
 }
 
 /// The Vault tab's sections: the vault's entries by kind (`CredentialListFilter.chips`), then Input History. Shown whether the vault
-/// is open, locked or not created yet, so Input History and the cards and addresses kept on this Mac stay reachable; the counts are
-/// shown only while it is open.
+/// is open, locked or not created yet, so Input History stays reachable; the counts are shown only while it is open.
 struct VaultSectionBar: View {
     let list: CredentialListState
     /// Only while the vault is open.

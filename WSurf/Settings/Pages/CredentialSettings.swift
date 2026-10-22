@@ -6,8 +6,9 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 /// Settings > Autofill: a vault picker, then two tabs. Vault holds every entry of the selected vault by section (Logins, Identities,
-/// Cards, Addresses, Contacts, Notes…) with Trash, plus Input History and, until they move into the vault, the cards and addresses
-/// kept on this Mac. Settings holds what autofill saves and fills, the vaults, unlock passkeys, import and export.
+/// Cards, Addresses, Contacts, Notes…) with Trash, plus Input History and, until they are moved, the offer to move the cards and
+/// addresses saved on this Mac into the vault. Settings holds what autofill saves and fills, the vaults, unlock passkeys, import and
+/// export.
 struct CredentialSettings: View {
     /// How many credentials of a finished import are listed by name; the transfer message has the totals.
     private static let listedResults = 50
@@ -23,8 +24,8 @@ struct CredentialSettings: View {
     @State var selection: CredentialSelection
     @State private var work: Task<Void, Never>?
     @State private var exportContext: CredentialExportContext?
-    /// The profile's autofill switches, Input History and the cards and addresses kept on this Mac, which share the page with the
-    /// vault. `nil` in the page's tests, which see the vault alone.
+    /// The profile's autofill switches, Input History and the move of the cards and addresses saved on this Mac, which share the page
+    /// with the vault. `nil` in the page's tests, which see the vault alone.
     private let context: BrowserProfileContext?
     /// The Settings search result or deep link the page was opened for (`AutofillDestination`).
     private let highlight: String?
@@ -210,13 +211,16 @@ struct CredentialSettings: View {
         }
     }
 
-    /// The sections, then the vault's entries (or Input History). The cards and addresses kept on this Mac follow their sections
-    /// whatever the vault's state, since they are not in it yet.
+    /// The sections, then the vault's entries (or Input History).
     @ViewBuilder
     private var vaultTab: some View {
         // The import of the passwords saved before Credential Manager is on the Settings tab; a locked vault says so in its own card.
+        // The cards and addresses saved on this Mac move into the open vault from their own card.
         if model.presentation == .content, !showsTrash, !list.showsInputHistory {
             LegacyPasswordCard(state: model.legacy.state) { open(.settings) }
+            if context != nil {
+                AutofillMigrationCard(model: model)
+            }
         }
         if !showsTrash {
             VaultSectionBar(list: list, showsCounts: model.presentation == .content, offersInputHistory: context != nil)
@@ -225,14 +229,6 @@ struct CredentialSettings: View {
             InputHistorySettings(context: context)
         } else {
             vaultContent { credentialsTab } locked: { lockedCredentials }
-            if let context, !showsTrash {
-                if list.filter == .cards {
-                    SavedPaymentCards(profileID: context.profile.id)
-                }
-                if list.filter == .addresses || list.filter == .contacts {
-                    SavedContactAddresses(profile: context.profile)
-                }
-            }
         }
     }
 
@@ -360,6 +356,7 @@ struct CredentialSettings: View {
         vaultsSection
         // The same entries as the unlocked tab, visible but off, so it is clear why nothing can be imported or exported yet.
         SettingsSection(title: "Import & Export", symbol: "arrow.up.arrow.down", footnote: lockedTransferReason) {
+            AutofillImportRows(model: model) { showsCreateWarning = true }
             DetailRow(title: "Import passwords from a CSV file") {
                 Button("Choose File…") {}.buttonStyle(.bordered).disabled(true)
             }
@@ -540,6 +537,7 @@ struct CredentialSettings: View {
                 """
         ) {
             legacyImportRows
+            AutofillImportRows(model: model) { showsCreateWarning = true }
             DetailRow(title: "Import passwords from a CSV file") {
                 Button("Choose File…") { importCSV() }
                     .buttonStyle(.bordered)
