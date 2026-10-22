@@ -311,14 +311,15 @@ struct InputHistoryVaultTests {
 
         try await fixture.store.keep(with: target, from: fixture.vault)
 
+        // Counted before the checks below: `storedPrivateKey()` reads the private item itself, which would count as a read here.
+        #expect(fixture.privateKeys.memory.readCount == reads.0 && fixture.privateKeys.memory.writeCount == reads.1, "no Touch ID")
+        #expect(fixture.publicKeys.promptableReads == reads.2)
         #expect(try await fixture.store.boundVault() == target.vaultID)
         let after = try #require(try fixture.storedBinding())
         #expect(after.dropFirst().prefix(36) == Data(target.vaultID.uuidString.utf8))
         #expect(after.dropFirst(37).prefix(32) == before.dropFirst(37).prefix(32), "the same inbox key: what is recorded next is sealed as before")
         #expect(try fixture.storedPrivateKey() == privateKey, "the private key and its Touch ID item are untouched")
         #expect(try fixture.files.map { try Data(contentsOf: $0) } == bodies, "no entry is encrypted again")
-        #expect(fixture.privateKeys.memory.readCount == reads.0 && fixture.privateKeys.memory.writeCount == reads.1, "no Touch ID")
-        #expect(fixture.publicKeys.promptableReads == reads.2)
 
         // The vault that kept it opens nothing now; the new one opens every entry.
         await #expect(throws: InputHistoryError.vaultLocked) { _ = try await fixture.store.unlock(reason: reason, vault: fixture.vault) }
