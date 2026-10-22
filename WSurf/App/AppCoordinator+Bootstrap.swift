@@ -264,6 +264,7 @@ extension AppCoordinator {
         media.isEnabled = settings.showsMediaPlayer
         applyPictureLending()
         sidePanel.setAvailable(settings.showsLyrics, for: .lyrics)
+        sidePanel.setAvailable(!context.profile.isPrivate, for: .watches)
         applySleepTimer()
         updateWindowAppearance()
         browser.downloads.webViewProvider = {

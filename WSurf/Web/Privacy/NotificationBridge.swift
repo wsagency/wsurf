@@ -227,10 +227,12 @@ final class NotificationBridge: NSObject {
 
 extension NotificationBridge {
     struct DeliveryStub: @unchecked Sendable {
+        var allowsAlerts = true
         let deliver: @MainActor (UNNotificationRequest) async -> Bool
     }
 
-    /// Replaces the system for a test: it receives each watch notification and answers whether it was shown.
+    /// Replaces the system for a test: it answers the permission question, receives each watch notification and answers
+    /// whether it was shown. No test ever reaches the system's permission prompt.
     @TaskLocal static var watchDeliveryForTesting: DeliveryStub?
 
     private static let watchedURLKey = "wsurf.watch.url"
@@ -239,6 +241,9 @@ extension NotificationBridge {
     /// Asked in context, right after the person agrees to a watch, and only while macOS has not asked yet. True when WSurf may
     /// show alerts.
     func requestAlerts() async -> Bool {
+        if let stub = Self.watchDeliveryForTesting {
+            return stub.allowsAlerts
+        }
         let center = UNUserNotificationCenter.current()
         if await center.notificationSettings().authorizationStatus == .notDetermined {
             _ = try? await center.requestAuthorization(options: [.alert, .sound])
@@ -250,19 +255,26 @@ extension NotificationBridge {
     static func request(for watch: PageWatch, _ notice: PageWatchCenter.Notice, profileID: UUID) -> UNNotificationRequest {
         let content = UNMutableNotificationContent()
         content.title = watch.place
-        switch notice {
-        case .met:
-            content.body = watch.condition.isEmpty
-                ? String(localized: "The page changed.")
-                : String(localized: "The page now shows what you were waiting for: \(watch.condition)")
+        content.body = body(for: watch, notice)
+        if notice == .met {
             content.sound = .default
-        case .unreachable:
-            content.body = String(localized: "WSurf can’t read this page anymore, so it paused the watch.")
-        case .expired:
-            content.body = String(localized: "WSurf stopped watching this page after 30 days.")
         }
         content.userInfo = [watchedURLKey: watch.url.absoluteString, watchedProfileKey: profileID.uuidString]
         return UNNotificationRequest(identifier: watch.id.uuidString, content: content, trigger: nil)
+    }
+
+    /// What a notice says, in the notification and in the Watches tab: the condition is the person's words, never page text.
+    static func body(for watch: PageWatch, _ notice: PageWatchCenter.Notice) -> String {
+        switch notice {
+        case .met where watch.condition.isEmpty:
+            String(localized: "The page changed.")
+        case .met:
+            String(localized: "The page now shows what you were waiting for: \(watch.condition)")
+        case .unreachable:
+            String(localized: "WSurf can’t read this page anymore, so it paused the watch.")
+        case .expired:
+            String(localized: "WSurf stopped watching this page after 30 days.")
+        }
     }
 
     /// Shows a watch's notice. False when notifications are off, so the Watches tab keeps it instead.

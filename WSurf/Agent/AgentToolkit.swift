@@ -993,8 +993,8 @@ extension AgentToolkit {
         }
     }
 
-    /// The profile's notes about the person, nil in a private window. Only the in-app assistant reads them.
-    var assistantFacts: AssistantFacts? {
-        browser.context.assistantFacts
+    /// The services of the window's profile, or of its private window. Memory and page watches live here.
+    var browserContext: BrowserProfileContext {
+        browser.context
     }
 }

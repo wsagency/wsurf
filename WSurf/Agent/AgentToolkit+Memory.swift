@@ -14,6 +14,11 @@ extension AgentToolkit {
         return String(utterance[end.upperBound...])
     }
 
+    /// The profile's notes about the person, nil in a private window. Only the in-app assistant reads them.
+    var assistantFacts: AssistantFacts? {
+        browserContext.assistantFacts
+    }
+
     /// The notes for the first prompt of a new task; empty while memory is off and in a private window.
     func rememberedContext() -> String {
         guard let facts = assistantFacts, facts.isEnabled else { return "" }

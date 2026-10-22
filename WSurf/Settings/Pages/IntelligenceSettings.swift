@@ -91,6 +91,8 @@ private struct AssistantOverview: View {
 
         AssistantMemoryPage.OverviewSection(facts: coordinator.context.assistantFacts) { model.showMemory() }
 
+        PageWatchesSettingsSection(center: coordinator.context.pageWatches) { coordinator.sidePanel.show(.watches) }
+
         AssistantExecutionSettings()
 
         SettingsSection(
@@ -961,6 +963,8 @@ private struct AgentToolsPage: View {
             "square.on.square"
         case .media:
             "play.rectangle"
+        case .watches:
+            "eye"
         }
     }
 }

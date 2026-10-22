@@ -228,6 +228,20 @@ final class PageWatchCenter {
         return removed
     }
 
+    /// Pausing keeps the watch and its place among the twenty; resuming reads it at its next interval, or now if that passed.
+    func setPaused(_ id: UUID, _ paused: Bool) {
+        guard let index = watches.firstIndex(where: { $0.id == id }), watches[index].isPausedByPerson != paused else { return }
+        watches[index].pausedByPerson = paused ? true : nil
+        save()
+        wake()
+    }
+
+    func setAllPaused(_ paused: Bool) {
+        for watch in watches {
+            setPaused(watch.id, paused)
+        }
+    }
+
     func noteMissed(_ watch: PageWatch, _ notice: Notice) {
         missed.append(Missed(watch: watch, notice: notice))
         if missed.count > PageWatch.limit {
@@ -353,9 +367,9 @@ final class PageWatchCenter {
     }
 
     private func failed(_ id: UUID) {
-        guard let watch = watches.first(where: { $0.id == id }), !watch.isPaused else { return }
+        guard let watch = watches.first(where: { $0.id == id }), !watch.isUnreachable else { return }
         update(id) { $0.failures += 1 }
-        if let paused = watches.first(where: { $0.id == id }), paused.isPaused {
+        if let paused = watches.first(where: { $0.id == id }), paused.isUnreachable {
             notify(paused, .unreachable)
         }
     }

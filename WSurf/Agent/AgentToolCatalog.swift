@@ -10,6 +10,7 @@ nonisolated struct AgentToolDescriptor: Identifiable, Sendable {
         case page
         case tabs
         case media
+        case watches
 
         var title: LocalizedStringResource {
             switch self {
@@ -21,6 +22,8 @@ nonisolated struct AgentToolDescriptor: Identifiable, Sendable {
                 "Tabs"
             case .media:
                 "Media"
+            case .watches:
+                "Page Watches"
             }
         }
     }
@@ -164,6 +167,27 @@ nonisolated enum AgentToolCatalog {
             title: "Picture in Picture",
             summary: "Move the video into Picture in Picture and back.",
             category: .media,
+            isCore: false
+        ),
+        AgentToolDescriptor(
+            id: "watchPage",
+            title: "Watch Pages",
+            summary: "Watch a page for a change you confirm.",
+            category: .watches,
+            isCore: false
+        ),
+        AgentToolDescriptor(
+            id: "listWatches",
+            title: "List Watches",
+            summary: "See which pages are watched.",
+            category: .watches,
+            isCore: false
+        ),
+        AgentToolDescriptor(
+            id: "stopWatch",
+            title: "Stop Watches",
+            summary: "Stop watching a page.",
+            category: .watches,
             isCore: false
         ),
     ]

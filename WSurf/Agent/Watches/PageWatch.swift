@@ -28,6 +28,8 @@ nonisolated struct PageWatch: Identifiable, Codable, Equatable, Sendable {
     var snapshot: String?
     var state: String?
     var failures = 0
+    /// The person paused this watch. Optional so a list stored before pausing existed still reads.
+    var pausedByPerson: Bool?
 
     static let intervals: ClosedRange<TimeInterval> = 300...86_400
     static let lifetime: TimeInterval = 30 * 86_400
@@ -60,10 +62,19 @@ nonisolated struct PageWatch: Identifiable, Codable, Equatable, Sendable {
         created + Self.lifetime
     }
 
-    /// Three failed readings in a row. A paused watch stays in the list and keeps its place among the twenty,
+    /// Three failed readings in a row. An unreachable watch stays in the list and keeps its place among the twenty,
     /// but nothing reads it until a check succeeds or its lifetime ends.
-    var isPaused: Bool {
+    var isUnreachable: Bool {
         failures >= Self.failureLimit
+    }
+
+    var isPausedByPerson: Bool {
+        pausedByPerson == true
+    }
+
+    /// Not read on schedule: unreachable, or paused by the person. Its lifetime still runs.
+    var isPaused: Bool {
+        isUnreachable || isPausedByPerson
     }
 
     /// When the scheduler next has something to do with this watch.
@@ -77,6 +88,10 @@ nonisolated struct PageWatch: Identifiable, Codable, Equatable, Sendable {
     }
 
     var place: String {
+        Self.place(of: url)
+    }
+
+    static func place(of url: URL) -> String {
         guard let host = url.host() else { return url.absoluteString }
         return host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
     }

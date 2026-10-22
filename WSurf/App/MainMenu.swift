@@ -197,6 +197,7 @@ final class MainMenu: NSObject, NSMenuItemValidation {
         menu.addItem(.separator())
         menu.addItem(command("Translate Page", #selector(toggleTranslation)))
         menu.addItem(command("Show Reader", #selector(toggleReader), key: "r", modifiers: [.command, .option]))
+        menu.addItem(command("Watch This Page…", #selector(watchPage)))
         menu.addItem(.separator())
         menu.addItem(chain(
             "Enter Full Screen",
@@ -481,6 +482,10 @@ final class MainMenu: NSObject, NSMenuItemValidation {
         coordinator.toggleReader()
     }
 
+    @objc private func watchPage() {
+        coordinator.watchCurrentPage()
+    }
+
     // MARK: - Validation
 
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {  // swiftlint:disable:this cyclomatic_complexity
@@ -520,6 +525,10 @@ final class MainMenu: NSObject, NSMenuItemValidation {
             let readerTitle: LocalizedStringResource = coordinator.readerTab?.reader.isActive == true ? "Hide Reader" : "Show Reader"
             menuItem.title = String(localized: readerTitle)
             return coordinator.readerTab?.reader.isAvailable ?? false
+        case #selector(watchPage):
+            let watching = coordinator.watchMenuState
+            menuItem.isHidden = !watching.isShown
+            return watching.isEnabled
         case #selector(unloadTab):
             return coordinator.browser.activeTab != nil
         case #selector(stopLoading):
