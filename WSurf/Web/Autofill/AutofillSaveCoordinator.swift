@@ -684,12 +684,12 @@ final class AutofillSaveCoordinator {
     static let shared = AutofillSaveCoordinator()
     private static let world = AutofillPage.world
     private let sessions = NSMapTable<BrowserPage, AutofillSaveSession>.weakToWeakObjects()
-    private var frames: [ObjectIdentifier: FrameList] = [:]
+    private(set) var frames: [ObjectIdentifier: FrameList] = [:]
     private var observers: [NSObjectProtocol] = []
     private var sessionIsActive = true
     private var screenIsLocked = false
 
-    private final class FrameList {
+    final class FrameList {
         var values: [String: BrowserFrame] = [:]
         var mainDocumentID: String?
     }
@@ -792,6 +792,24 @@ final class AutofillSaveCoordinator {
         page.installScript(AutofillFormScript.source + AutofillSuggestionScript.source, in: Self.world, injectionTime: .atDocumentStart, forMainFrameOnly: false)
         page.installScript(AutofillSaveScript.clientSource, in: Self.world, injectionTime: .atDocumentStart, forMainFrameOnly: false)
         page.addScriptMessageHandler(name: "wsurfAutofillSave", in: Self.world) { [weak self] message in self?.receive(message) }
+        // The page's own invalidation point: closing the page (a closed tab, a replaced engine) ends here, and so does a retired document.
+        page.addCredentialInvalidationObserver { [weak self] page, documentID in self?.forgetFrames(of: page, retiring: documentID) }
+    }
+
+    /// A page that closed, or one of its documents that is gone (`documentID`), is no longer tracked. The start of a navigation is
+    /// not that: it can fail or turn into a download and leave the document, and its registration, alive. The next main document
+    /// replaces the list in `receive`.
+    private func forgetFrames(of page: BrowserPage, retiring documentID: String?) {
+        let key = ObjectIdentifier(page)
+        guard let list = frames[key] else { return }
+        if let documentID, !documentID.isEmpty {
+            list.values[documentID] = nil
+            if list.values.isEmpty {
+                frames[key] = nil
+            }
+        } else if page.isClosed {
+            frames[key] = nil
+        }
     }
 
     func refreshPolicy() {
@@ -864,7 +882,7 @@ final class AutofillSaveCoordinator {
         }
         return known
     }
-    private func receive(_ message: BrowserScriptMessage) {
+    func receive(_ message: BrowserScriptMessage) {
         guard let session = sessions.object(forKey: message.page), let context = session.context, context === message.page.context,
               let body = message.body as? [String: Any], let action = body["action"] as? String else { return }
         let page = message.page, key = ObjectIdentifier(page)
