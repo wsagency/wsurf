@@ -33,6 +33,7 @@ extension BrowserSettings {
         static let pageZoom = "content.defaultZoom"
         static let linkPreview = "content.linkPreview"
         static let linkPeek = "content.linkPeek"
+        static let fullAddress = "content.fullAddress"
         static let searchEngine = "search.engine"
         static let customSearchName = "search.custom.name"
         static let customSearchTemplate = "search.custom.template"

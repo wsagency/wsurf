@@ -84,6 +84,7 @@ final class BrowserSettings {
     @ObservationIgnored lazy var storedReaderTextSize: Int? =
         (appDefaults.object(forKey: Key.readerTextSize) as? NSNumber).map { ReaderAppearance.clampedTextSize($0.doubleValue) }
         ?? ReaderAppearance.defaultTextSize
+    @ObservationIgnored lazy var storedShowsFullAddress: Bool? = appDefaults.object(forKey: Key.fullAddress) as? Bool ?? false
 
     @ObservationIgnored var onWebPreferencesChanged: (() -> Void)?
     @ObservationIgnored var onContentBlockingChanged: (() -> Void)?
@@ -633,6 +634,7 @@ final class BrowserSettings {
         translationTargetID = ""
         alwaysTranslatedLanguages = []
         resetReaderAppearance()
+        resetWindowStyle()
         onWebPreferencesChanged?()
     }
 }

@@ -160,7 +160,8 @@ enum AskRestingContent: Equatable {
         notice: String?,
         status: String?,
         placeholder: String,
-        currentURL: String
+        currentURL: String,
+        showsFullAddress: Bool = false
     ) -> AskRestingContent? {
         if isListening {
             return .transcript(transcript)
@@ -176,12 +177,13 @@ enum AskRestingContent: Equatable {
             return .status(status)
         }
         guard mirrorsPageURL, !isFocused else { return nil }
-        let address = displayAddress(for: currentURL)
+        let address = displayAddress(for: currentURL, full: showsFullAddress)
         return address.isEmpty ? .placeholder(placeholder) : .address(address)
     }
 
-    static func displayAddress(for value: String) -> String {
-        guard let url = URL(string: value), let host = url.host() else { return value }
+    /// The website name without “www.”, or the whole address when `full` is on.
+    static func displayAddress(for value: String, full: Bool = false) -> String {
+        guard !full, let url = URL(string: value), let host = url.host() else { return value }
         return host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
     }
 }

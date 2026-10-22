@@ -127,7 +127,8 @@ final class AskSurfaceModel {
             notice: coordinator.notice,
             status: coordinator.statusMessage,
             placeholder: placeholder,
-            currentURL: currentURL
+            currentURL: currentURL,
+            showsFullAddress: coordinator.context.settings.showsFullAddress
         )
     }
 
