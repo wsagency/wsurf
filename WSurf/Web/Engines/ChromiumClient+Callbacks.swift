@@ -7,6 +7,19 @@ import CefKit
 import Foundation
 
 extension ChromiumClient {
+    // MARK: File access
+
+    /// Whether `url`, a subresource, must be cancelled because it is a file the page may not read. The scope is judged by the
+    /// document of the frame that asks, never by the browser's last address; a frame that cannot say what it shows is refused.
+    nonisolated func refusesFile(_ url: URL, requestedBy frame: UnsafeMutablePointer<cef_frame_t>?) -> Bool {
+        guard url.isFileURL else { return false }
+        var document: URL?
+        if let frame, frame.pointee.is_valid?(frame) == 1 {
+            document = URL(string: ChromiumInterop.takeString(frame.pointee.get_url?(frame)))
+        }
+        return fileScope.refuses(url, requestedBy: document)
+    }
+
     // MARK: JavaScript dialogs
 
     func makeJSDialogHandler() {

@@ -275,10 +275,6 @@ final class ChromiumPage: NSView {
             throw ChromiumError.closed
         }
         defer { ChromiumInterop.release(UnsafeMutableRawPointer(frame)) }
-        if url.isFileURL {
-            // The file's own scope applies from its first subresource, not only after the commit that announces the address.
-            client?.trackerPolicy.updateTopLevelURL(url)
-        }
         if (request.httpMethod ?? "GET").uppercased() == "GET",
            request.httpBody == nil, request.httpBodyStream == nil,
            request.allHTTPHeaderFields?.isEmpty != false {

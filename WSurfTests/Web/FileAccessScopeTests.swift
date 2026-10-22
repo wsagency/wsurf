@@ -78,14 +78,103 @@ struct FileAccessScopeTests {
         #expect(try !allowed("file:///Users/me/site/../secret.txt"))
     }
 
-    @Test func onlyFileSubresourcesOfFilePagesAreJudged() throws {
+    @Test func aWebResourceIsNotAFileReadButAFileOnAWebPageIsRefused() throws {
         let file = try #require(URL(string: "file:///Users/me/site/index.html"))
         let web = try #require(URL(string: "https://example.test/a"))
         let sibling = try #require(URL(string: "file:///Users/me/site/style.css"))
 
         #expect(FileAccessScope.allows(web, from: file), "a web resource is not a file read")
-        #expect(FileAccessScope.allows(sibling, from: web), "a web page cannot load a file at all; Chromium refuses it")
-        #expect(FileAccessScope.allows(sibling, from: nil))
+        #expect(FileAccessScope.allows(web, from: web))
+        #expect(!FileAccessScope.allows(sibling, from: web), "only a file page may read a file")
+    }
+
+    // MARK: Chromium's gate
+
+    /// The gate of a Chromium page whose main frame is going to `address`, which is how CEF reports a navigation before any
+    /// subresource of it is asked for.
+    private func gate(navigatedTo address: String?) throws -> ChromiumFileScope {
+        let gate = ChromiumFileScope()
+        if let address {
+            gate.mainFrameNavigation(to: try #require(URL(string: address)))
+        }
+        return gate
+    }
+
+    private func refused(_ gate: ChromiumFileScope, _ resource: String, by document: String?) throws -> Bool {
+        gate.refuses(try #require(URL(string: resource)), requestedBy: try document.map { try #require(URL(string: $0)) })
+    }
+
+    @Test func aSubresourceFromASiblingFileIsRefused() throws {
+        let gate = try gate(navigatedTo: "file:///Users/me/site/index.html")
+        let page = "file:///Users/me/site/index.html"
+
+        #expect(try refused(gate, "file:///Users/me/site/style.css", by: page))
+        #expect(try refused(gate, "file:///Users/me/site/img/logo.png", by: page))
+        #expect(try refused(gate, "file:///Users/me/secret.txt", by: page))
+        #expect(try refused(gate, "file:///Users/me/site/../secret.txt", by: page))
+    }
+
+    @Test func thePagesOwnFileStillLoads() throws {
+        let gate = try gate(navigatedTo: "file:///Users/me/My%20Site/index.html?draft=1")
+        let page = "file:///Users/me/My%20Site/index.html#top"
+
+        #expect(try !refused(gate, "file:///Users/me/My%20Site/index.html", by: page))
+        #expect(try !refused(gate, "file:///Users/me/My%20Site/index.html?draft=2", by: page))
+    }
+
+    @Test func aSubresourceBeforeAnyNavigationIsRefused() throws {
+        let gate = try gate(navigatedTo: nil)
+
+        #expect(try refused(gate, "file:///Users/me/site/index.html", by: "file:///Users/me/site/index.html"))
+        #expect(try refused(gate, "file:///Users/me/site/style.css", by: nil))
+    }
+
+    @Test func aSubresourceDuringANavigationIsRefusedWhileTheFrameStillShowsTheOldDocument() throws {
+        let gate = try gate(navigatedTo: "file:///Users/me/site/old.html")
+        let old = "file:///Users/me/site/old.html"
+        #expect(try !refused(gate, old, by: old))
+
+        gate.mainFrameNavigation(to: try #require(URL(string: "file:///Users/me/site/new.html")))
+
+        #expect(try refused(gate, "file:///Users/me/site/new.html", by: old), "the new page's file, asked for by the old document")
+        #expect(try refused(gate, old, by: old), "the old page's own file, now outside the scope")
+        #expect(try !refused(gate, "file:///Users/me/site/new.html", by: "file:///Users/me/site/new.html"), "once the new document has committed")
+    }
+
+    @Test func aFrameWhoseDocumentIsUnknownOrNotAFileIsRefused() throws {
+        let gate = try gate(navigatedTo: "file:///Users/me/site/index.html")
+        let own = "file:///Users/me/site/index.html"
+
+        #expect(try refused(gate, own, by: nil))
+        #expect(try refused(gate, own, by: "about:blank"))
+        #expect(try refused(gate, own, by: "https://example.test/"))
+        #expect(try refused(gate, own, by: "chrome-extension://abcdef/index.html"))
+        #expect(try refused(gate, "file:///Users/me/site/other.html", by: "file:///Users/me/site/other.html"), "a document outside the scope")
+    }
+
+    @Test func navigatingToAWebPageLeavesNoScope() throws {
+        let gate = try gate(navigatedTo: "file:///Users/me/site/index.html")
+
+        gate.mainFrameNavigation(to: try #require(URL(string: "https://example.test/")))
+
+        #expect(try refused(gate, "file:///Users/me/site/index.html", by: "file:///Users/me/site/index.html"))
+    }
+
+    @Test func aFolderListingCoversItsFolderAndAFileInsideItReadsOnlyItself() throws {
+        let gate = try gate(navigatedTo: "file:///Users/me/site/")
+
+        #expect(try !refused(gate, "file:///Users/me/site/index.html", by: "file:///Users/me/site/"))
+        #expect(try refused(gate, "file:///Users/me/other/index.html", by: "file:///Users/me/site/"))
+        #expect(try !refused(gate, "file:///Users/me/site/index.html", by: "file:///Users/me/site/index.html"))
+        #expect(try refused(gate, "file:///Users/me/site/style.css", by: "file:///Users/me/site/index.html"))
+    }
+
+    @Test func aResourceThatIsNotAFileIsNeverRefused() throws {
+        let gate = try gate(navigatedTo: nil)
+
+        for resource in ["https://example.test/a.png", "data:text/plain,hello", "blob:https://example.test/1", "chrome-extension://abc/x.js"] {
+            #expect(try !refused(gate, resource, by: nil), "\(resource)")
+        }
     }
 
     // MARK: What a page can read
