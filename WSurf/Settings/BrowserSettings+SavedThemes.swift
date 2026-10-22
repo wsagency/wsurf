@@ -61,6 +61,44 @@ extension BrowserSettings {
         return true
     }
 
+    /// The built-in theme the shown theme goes back to on Reset Theme to Default: the one a custom theme was made
+    /// from. nil for a built-in theme, which has no colors of its own to restore, and for a custom theme that
+    /// names no built-in theme, whose colors then stay as they are.
+    var themeResetOrigin: ThemeDefinition? {
+        let theme = selectedTheme
+        guard !ThemeCatalog.isBuiltIn(theme.id) else { return nil }
+        return theme.basedOn.flatMap(ThemeCatalog.builtIn)
+    }
+
+    /// False when the shown theme already is its defaults: no knob moved and, for a custom theme, no color changed.
+    var canResetTheme: Bool {
+        if themeAdjustment != ThemeAdjustment() {
+            return true
+        }
+        guard let origin = themeResetOrigin else { return false }
+        let theme = previewedTheme
+        return theme.light.bounded() != origin.light.bounded() || theme.dark.bounded() != origin.dark.bounded()
+    }
+
+    /// Puts the selected theme back to its defaults, both appearances at once: every knob (brightness, glass opacity,
+    /// spacing, indent, edges, corners, icons) to the default, and for a custom theme its colors, including their
+    /// opacities, to those of the theme it was made from. A built-in theme only has its knobs to reset. The name
+    /// and the saved themes list stay. Settings have no undo, so the caller confirms first.
+    func resetSelectedTheme() {
+        cancelThemePreview()
+        let theme = selectedTheme
+        if let origin = themeResetOrigin {
+            var restored = theme
+            restored.light = origin.light
+            restored.dark = origin.dark
+            restored.ground = origin.ground
+            userThemes = userThemes.map { $0.id == theme.id ? restored : $0 }
+        }
+        var adjustments = themeAdjustments
+        adjustments[theme.id] = nil
+        themeAdjustments = adjustments
+    }
+
     /// Deletes a saved theme and its knobs. When it is the selected theme, the window moves to the built-in theme
     /// it came from, or to the default theme.
     func deleteTheme(_ id: String) {

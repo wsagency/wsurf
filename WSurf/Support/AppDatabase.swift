@@ -168,6 +168,12 @@ struct AppDatabase: Sendable {
                 t.add(column: "isPinned", .boolean).notNull().defaults(to: false)
             }
         }
+        // The size factor of the folder's own row. NULL (every row saved before sizes) is normal.
+        if try !db.columns(in: "sessionFolder").contains(where: { $0.name == "sizeFactor" }) {
+            try db.alter(table: "sessionFolder") { t in
+                t.add(column: "sizeFactor", .double)
+            }
+        }
     }
 
     private nonisolated static func defineSchema(in db: Database) throws {
@@ -331,6 +337,11 @@ struct AppDatabase: Sendable {
             guard try !db.columns(in: table).contains(where: { $0.name == "pinID" }) else { continue }
             try db.alter(table: table) { t in
                 t.add(column: "pinID", .blob)
+            }
+        }
+        if try !db.columns(in: "profilePin").contains(where: { $0.name == "sizeFactor" }) {
+            try db.alter(table: "profilePin") { t in
+                t.add(column: "sizeFactor", .double)
             }
         }
     }

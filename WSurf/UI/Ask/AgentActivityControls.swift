@@ -23,14 +23,14 @@ struct AgentInlineButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.system(size: 11, weight: .medium))
-            .foregroundStyle(Theme.accent)
+            .foregroundStyle(Theme.assistantText)
             .padding(.horizontal, 9)
             .padding(.vertical, 3)
             .background {
                 RoundedRectangle(cornerRadius: Theme.Radius.chip, style: .continuous)
                     .strokeBorder(Theme.Wash.strong, lineWidth: 1)
                     .background(
-                        Theme.accent.opacity(configuration.isPressed ? 0.12 : 0),
+                        Theme.assistant.opacity(configuration.isPressed ? 0.12 : 0),
                         in: RoundedRectangle(cornerRadius: Theme.Radius.chip, style: .continuous)
                     )
             }

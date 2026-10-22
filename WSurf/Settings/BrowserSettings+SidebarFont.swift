@@ -65,11 +65,30 @@ extension BrowserSettings {
         let native = Self.nativeSidebarFont(family: family, size: size, weight: weight)
         let resolved = Font(native)
         settings.sidebarFontCache = resolved
-        settings.sidebarLineHeightCache = (native.ascender - native.descender + native.leading).rounded(.up)
-        settings.sidebarTitleMidlineCache = native.capHeight > 0 && native.xHeight > 0
-            ? (native.capHeight + native.xHeight) / 4
-            : (native.ascender + native.descender) / 2
+        settings.sidebarLineHeightCache = Self.lineHeight(of: native)
+        settings.sidebarTitleMidlineCache = Self.titleMidline(of: native)
         return resolved
+    }
+
+    private static func lineHeight(of font: NSFont) -> CGFloat {
+        (font.ascender - font.descender + font.leading).rounded(.up)
+    }
+
+    /// The middle of a capital letter, above the baseline. SF Symbols, and the icons drawn to sit beside text, are
+    /// centered on that line, so a title that shares it reads as level with its icon. Centering the title halfway
+    /// between a capital and a lowercase letter put the capitals above the icon's middle: the icon looked low.
+    private static func titleMidline(of font: NSFont) -> CGFloat {
+        font.capHeight > 0 ? font.capHeight / 2 : (font.ascender + font.descender) / 2
+    }
+
+    /// The sidebar font at `scale` times its size, with the line height and title midline that go with it, for a
+    /// row that draws a larger title. A scale of 1 is the shared sidebar font.
+    func sidebarTitle(scale: CGFloat) -> (font: Font, lineHeight: CGFloat, midline: CGFloat) {
+        guard scale != 1 else { return (sidebarFont, sidebarLineHeight, sidebarTitleMidline) }
+        let native = Self.nativeSidebarFont(
+            family: sidebarFontFamily, size: CGFloat(sidebarFontSize) * scale, weight: sidebarFontWeight
+        )
+        return (Font(native), Self.lineHeight(of: native), Self.titleMidline(of: native))
     }
 
     /// The sidebar font one step heavier, for the title of a new tab. The metrics match, so rows keep their height.
@@ -89,8 +108,8 @@ extension BrowserSettings {
         return globalSettings.sidebarLineHeightCache
     }
 
-    /// How far above the baseline the middle of the sidebar's text sits: halfway between the middle of a capital
-    /// and the middle of a lowercase letter, which is where the weight of a title is.
+    /// How far above the baseline the middle of the sidebar's text sits: the middle of a capital letter, which is
+    /// the line an icon beside a title is centered on.
     var sidebarTitleMidline: CGFloat {
         _ = sidebarFont
         return globalSettings.sidebarTitleMidlineCache

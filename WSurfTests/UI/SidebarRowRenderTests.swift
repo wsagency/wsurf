@@ -338,6 +338,15 @@ struct SidebarRowRenderTests {
             return (top / scale)...(bottom / scale)
         }
 
+        /// The first column, in points, where the ink in the rows `ys` (points) reaches half of its strongest pixel.
+        func leftEdge(in ys: ClosedRange<CGFloat>) -> CGFloat? {
+            let rows = Int((ys.lowerBound * scale).rounded(.down))..<Int((ys.upperBound * scale).rounded(.up))
+            let columns = (0..<bitmap.pixelsWide).map { x in rows.map { distance(x, $0) }.max() ?? 0 }
+            guard let strongest = columns.max(), strongest > 0,
+                  let first = columns.firstIndex(where: { $0 >= 0.5 * strongest }) else { return nil }
+            return CGFloat(first) / scale
+        }
+
         /// The first column, in points, right of `x` where the ink reaches a quarter of its densest column.
         func leading(from x: CGFloat) -> CGFloat? {
             let start = Int(x * scale)
@@ -410,9 +419,8 @@ struct SidebarRowRenderTests {
         return (edges.lowerBound + edges.upperBound) / 2 - ink.height / 2
     }
 
-    /// The icon is as high as the row's middle, and so is the middle of the letters in the title: halfway between
-    /// the tops of capitals and of lowercase letters, above the baseline. `iconBias` is where the ink of the icon
-    /// sits in its own frame.
+    /// The icon is as high as the row's middle, and so is the middle of the capitals in the title: half a capital's
+    /// height above the baseline. `iconBias` is where the ink of the icon sits in its own frame.
     private func expectCentered(
         _ ink: Ink,
         icon: ClosedRange<CGFloat>,
@@ -428,7 +436,7 @@ struct SidebarRowRenderTests {
             "\(name): no title was drawn",
             sourceLocation: sourceLocation
         )
-        let midline = (font.capHeight + font.xHeight) / 4
+        let midline = font.capHeight / 2
         let iconOff = (iconEdges.lowerBound + iconEdges.upperBound) / 2 - center - iconBias
         let titleOff = title.upperBound - midline - center
         let capitals = title.upperBound - title.lowerBound
@@ -487,6 +495,167 @@ struct SidebarRowRenderTests {
                 icon: 10...20, font: font, "a split pane"
             )
         }
+    }
+
+    private struct RowOffsets {
+        let icon: CGFloat
+        let capitals: CGFloat
+    }
+
+    /// How far, in points, the middle of the icon and the middle of the capitals beside it are from the middle of
+    /// the row. A title of capitals has flat edges, so the middle of its ink is the middle of its capitals.
+    private func offsets(
+        of row: some View,
+        height: CGFloat,
+        iconSize: CGFloat,
+        font: NSFont,
+        _ name: String
+    ) throws -> RowOffsets {
+        let ink = try readInk(of: sidebar(row, height: height), baseAt: CGPoint(x: rowWidth - 60, y: height / 2))
+        let padding = SidebarMetrics.rowContentPadding(style: .full)
+        let titleStart = padding + iconSize + SidebarMetrics.rowIconSpacing
+        let icon = try #require(ink.vertical(in: padding...(padding + iconSize)), "\(name): no icon was drawn")
+        let title = try #require(
+            ink.vertical(in: titleStart...(titleStart + width(of: Self.measuredTitle, in: font))),
+            "\(name): no title was drawn"
+        )
+        let center = ink.height / 2
+        return RowOffsets(
+            icon: (icon.lowerBound + icon.upperBound) / 2 - center,
+            capitals: (title.lowerBound + title.upperBound) / 2 - center
+        )
+    }
+
+    /// The renderer draws at 1x, which puts an icon or a baseline on a whole point: each can sit half a point off
+    /// its true place, and a symbol is drawn a little low in its frame. The capitals are held to the row's middle
+    /// tighter than the icon, so the title cannot drift back towards the middle of the lowercase letters, which
+    /// puts the capitals a point above it.
+    private let capitalsTolerance: CGFloat = 0.6
+    private let iconTolerance: CGFloat = 1.0
+
+    @Test(arguments: [12.0, 16, 24])
+    func aTabIconMeetsTheCapitalsAtEveryThemeIconSize(iconSize: Double) throws {
+        let settings = BrowserSettings.application
+        let fixture = makeFixture()
+        defer { fixture.restoreTheme() }
+        settings.themeAdjustments["standard"] = ThemeAdjustment(tabIconSize: iconSize)
+        settings.refreshTheme()
+        let font = sidebarFont(size: settings.sidebarFontSize, family: settings.sidebarFontFamily)
+        let symbol = fixture.browser.newTab()
+        symbol.title = Self.measuredTitle
+        symbol.urlString = "https://example.com/"
+        let favicon = fixture.browser.newTab()
+        measurable(favicon)
+
+        for (name, tab) in [("a tab with a symbol", symbol), ("a tab with a favicon", favicon)] {
+            let row = SidebarTabRow(tab: tab, depth: 0, context: fixture.context)
+            let found = try offsets(of: row, height: rowHeight, iconSize: SidebarMetrics.rowIconSize, font: font, name)
+            #expect(
+                abs(found.capitals) <= capitalsTolerance && abs(found.icon) <= iconTolerance,
+                "\(name) at \(iconSize) pt: the capitals are \(found.capitals) pt and the icon \(found.icon) pt off the row's middle"
+            )
+        }
+    }
+
+    @Test(arguments: [12.0, 16, 24], TabFolderSize.allCases)
+    func aFolderIconMeetsTheCapitalsAtEveryIconAndFolderSize(iconSize: Double, size: TabFolderSize) throws {
+        let settings = BrowserSettings.application
+        let fixture = makeFixture()
+        defer { fixture.restoreTheme() }
+        settings.themeAdjustments["standard"] = ThemeAdjustment(tabIconSize: iconSize)
+        settings.refreshTheme()
+        let font = sidebarFont(size: settings.sidebarFontSize * size.factor, family: settings.sidebarFontFamily)
+        let inFolder = fixture.browser.newTab()
+        let folder = fixture.browser.createFolder(named: Self.measuredTitle, containing: [inFolder])
+        folder.isExpanded = false
+        folder.size = size
+        let row = FolderSection(folder: folder, depth: 0, context: fixture.context)
+        let height = SidebarMetrics.rowHeight(settings: settings, scale: size.factor)
+
+        let found = try offsets(
+            of: row, height: height, iconSize: SidebarMetrics.rowIconSize * size.factor, font: font, "a folder"
+        )
+        // A drawn symbol is a little low in its frame, in proportion to its size.
+        let bias = 0.02 * SidebarMetrics.rowIconSize * size.factor
+        #expect(
+            abs(found.capitals) <= capitalsTolerance + bias && abs(found.icon) <= iconTolerance + bias,
+            "a folder at \(size) with icons of \(iconSize) pt: the capitals are \(found.capitals) pt and the icon \(found.icon) pt off the middle of a row \(height) pt tall"
+        )
+    }
+
+    /// Three folders, each inside the one before, with the first two open. An open folder draws an outline 2 pt
+    /// inside its parent's, so the middle folder's icon starts 2 pt and one indent right of the outer one. The inner
+    /// folder is shut and has no outline, so it starts one indent right of the middle one. At indent 0 the rows are
+    /// where they were before the setting existed.
+    @Test(arguments: [0.0, 8, 16])
+    func eachLevelOfAnOpenFolderMovesItsRowsInByTheFolderIndent(indent: Double) throws {
+        let settings = BrowserSettings.application
+        let fixture = makeFixture()
+        defer { fixture.restoreTheme() }
+        settings.themeAdjustments["standard"] = ThemeAdjustment(folderIndent: indent)
+        settings.refreshTheme()
+        let outer = fixture.browser.createFolder(named: "Outer")
+        let middle = fixture.browser.createFolder(named: "Middle")
+        let inner = fixture.browser.createFolder(named: "Inner")
+        fixture.browser.move([.folder(inner.id)], into: middle)
+        fixture.browser.move([.folder(middle.id)], into: outer)
+        for folder in [outer, middle, inner] {
+            folder.color = .red
+        }
+        inner.isExpanded = false
+        let row = rowHeight
+        let spacing = SidebarMetrics.rowVerticalSpacing(settings: settings)
+        let outline = FolderSection.outlineInset
+        let total = 3 * row + 2 * spacing + 4 * outline
+        let middleTop = outline + row + spacing + outline
+        let centers = [
+            outline + row / 2,
+            middleTop + row / 2,
+            middleTop + row + spacing + row / 2,
+        ]
+
+        let ink = try readInk(
+            of: sidebar(FolderSection(folder: outer, depth: 0, context: fixture.context), height: total),
+            baseAt: CGPoint(x: rowWidth / 2 + 30, y: centers[0])
+        )
+        let edges = try centers.map { try #require(ink.leftEdge(in: ($0 - 3)...($0 + 3))) }
+
+        #expect(
+            abs((edges[1] - edges[0]) - (outline + indent)) <= 1,
+            "the middle folder starts \(edges[1] - edges[0]) pt right of the outer one at indent \(indent)"
+        )
+        #expect(
+            abs((edges[2] - edges[1]) - indent) <= 1,
+            "the inner folder starts \(edges[2] - edges[1]) pt right of the middle one at indent \(indent)"
+        )
+    }
+
+    @Test func aFolderIndentIsIgnoredInTheIconsOnlySidebar() throws {
+        let settings = BrowserSettings.application
+        let fixture = makeFixture()
+        defer { fixture.restoreTheme() }
+        func edge(indent: Double) throws -> CGFloat {
+            settings.themeAdjustments["standard"] = ThemeAdjustment(folderIndent: indent)
+            settings.refreshTheme()
+            let outer = fixture.browser.createFolder(named: "Outer")
+            let inner = fixture.browser.createFolder(named: "Inner")
+            fixture.browser.move([.folder(inner.id)], into: outer)
+            outer.color = .red
+            inner.color = .red
+            inner.isExpanded = false
+            let width = SidebarMetrics.iconsWidth
+            let total = 2 * rowHeight + SidebarMetrics.rowVerticalSpacing(settings: settings) + 4 * FolderSection.outlineInset
+            let ink = try readInk(
+                of: sidebar(FolderSection(folder: outer, depth: 0, context: fixture.context), width: width, height: total, style: .icons),
+                baseAt: CGPoint(x: 1, y: 1)
+            )
+            let innerCenter = FolderSection.outlineInset + rowHeight + SidebarMetrics.rowVerticalSpacing(settings: settings)
+                + FolderSection.outlineInset + rowHeight / 2
+            return try #require(ink.leftEdge(in: (innerCenter - 3)...(innerCenter + 3)))
+        }
+        let none = try edge(indent: 0)
+        let wide = try edge(indent: 24)
+        #expect(abs(none - wide) <= 0.6, "the inner folder is at \(none) pt with no indent and \(wide) pt with 24 pt")
     }
 
     @Test func aFolderTitleStartsWhereATabTitleStarts() throws {

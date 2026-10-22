@@ -71,6 +71,7 @@ struct ResolvedVariant {
     let systemAccent: RoleColor
     let assistant: RoleColor
     let accentText: Color
+    let assistantText: Color
     let onAccent: Color
     /// Text on the window ground, and on a floating sidebar's own ground.
     let loadedInk: Color
@@ -108,6 +109,9 @@ struct ResolvedVariant {
         let accentColor = accent.srgb(scheme: scheme)
         accentText = Color(nsColor: ThemeReadability.accentText(
             accentColor, onResolved: grounds, window: grounds[0], isDark: isDark
+        ))
+        assistantText = Color(nsColor: ThemeReadability.accentText(
+            assistant.srgb(scheme: scheme), onResolved: grounds, window: grounds[0], isDark: isDark
         ))
         onAccent = Color(nsColor: ThemeReadability.ink(on: [accentColor]))
         self.change = change
@@ -168,13 +172,15 @@ final class ResolvedTheme {
     let systemAccent: Color
     let assistant: Color
     let accentText: Color
+    let assistantText: Color
     let onAccent: Color
     private let controlInks: InkPair
     private let urlInks: InkPair
 
     init(_ definition: ThemeDefinition, adjustment: ThemeAdjustment) {
-        let light = ResolvedVariant(definition.light, isDark: false, brightness: adjustment.lightBrightness, ground: definition.ground)
-        let dark = ResolvedVariant(definition.dark, isDark: true, brightness: adjustment.darkBrightness, ground: definition.ground)
+        let ground = definition.drawnGround
+        let light = ResolvedVariant(definition.light, isDark: false, brightness: adjustment.lightBrightness, ground: ground)
+        let dark = ResolvedVariant(definition.dark, isDark: true, brightness: adjustment.darkBrightness, ground: ground)
         func dynamic(_ role: KeyPath<ResolvedVariant, RoleColor>) -> Color {
             let (lightRole, darkRole) = (light[keyPath: role], dark[keyPath: role])
             if !lightRole.change.isActive, !darkRole.change.isActive, lightRole.base == darkRole.base {
@@ -186,7 +192,7 @@ final class ResolvedTheme {
             })
         }
         id = definition.id
-        ground = definition.ground
+        self.ground = ground
         self.adjustment = adjustment
         self.light = light
         self.dark = dark
@@ -198,6 +204,8 @@ final class ResolvedTheme {
         assistant = definition.light.assistant == nil && definition.dark.assistant == nil ? accent : dynamic(\.assistant)
         accentText = light.accentText == dark.accentText ? light.accentText
             : Theme.adaptive(dark: NSColor(dark.accentText), light: NSColor(light.accentText))
+        assistantText = light.assistantText == dark.assistantText ? light.assistantText
+            : Theme.adaptive(dark: NSColor(dark.assistantText), light: NSColor(light.assistantText))
         onAccent = light.onAccent == dark.onAccent ? light.onAccent
             : Theme.adaptive(dark: NSColor(dark.onAccent), light: NSColor(light.onAccent))
         controlInks = InkPair(light: light.controlInk, dark: dark.controlInk)

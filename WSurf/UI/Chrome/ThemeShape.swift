@@ -4,8 +4,9 @@
 import SwiftUI
 
 /// The shape a theme gives the chrome: how the page and marked rows are edged, how round corners are, whether
-/// loaded tabs keep their favicon colors, how far the page and the sidebar sit from the window, and how roomy rows are. Rows and the page observe only this value, so a color or brightness change
-/// does not redraw their shapes, and a theme switch reassigns it only when it differs.
+/// loaded tabs keep their favicon colors, how far the page and the sidebar sit from the window, how roomy rows are,
+/// and how far an open folder moves its rows in. Rows and the page observe only this value, so a color or brightness
+/// change does not redraw their shapes, and a theme switch reassigns it only when it differs.
 struct ThemeShape: Equatable {
     var pageFrame = FrameStyle.standard
     var rowFrame = FrameStyle.standard
@@ -15,6 +16,7 @@ struct ThemeShape: Equatable {
     var sidebarMargin = LoomChrome.canvasInset
     var rowPadding: CGFloat = 9
     var tabIconSize: CGFloat = 16
+    var folderIndent: CGFloat = 0
 
     init() {}
 
@@ -27,6 +29,7 @@ struct ThemeShape: Equatable {
         sidebarMargin = CGFloat(adjustment.sidebarMargin)
         rowPadding = CGFloat(adjustment.rowPadding)
         tabIconSize = CGFloat(adjustment.tabIconSize)
+        folderIndent = CGFloat(adjustment.folderIndent)
     }
 
     /// Half the shortest sidebar row. A larger radius would leave a row no straight edge on its ends.

@@ -130,7 +130,7 @@ private struct AutofillSuggestionSearchRow: View {
                 if !query.isEmpty {
                     Text(verbatim: query).font(.system(size: 13)).lineLimit(1).truncationMode(.head)
                 }
-                Rectangle().fill(Color.accentColor).frame(width: 1.5, height: 15).accessibilityHidden(true)
+                Rectangle().fill(Theme.systemAccent).frame(width: 1.5, height: 15).accessibilityHidden(true)
                 if query.isEmpty {
                     Text("Search \(count) credentials").font(.system(size: 13)).foregroundStyle(.secondary).lineLimit(1)
                 }
@@ -169,7 +169,7 @@ private struct AutofillSuggestionRow: View {
             .padding(.horizontal, 9)
             .frame(height: AutofillSuggestionLayout.rowHeight)
             .contentShape(.rect)
-            .background(selected || hovered ? Color.accentColor.opacity(0.18) : .clear, in: .rect(cornerRadius: 6))
+            .background(selected || hovered ? Theme.systemAccent.opacity(0.18) : .clear, in: .rect(cornerRadius: 6))
         }
         .buttonStyle(.plain)
         .focusable(false)

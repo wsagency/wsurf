@@ -105,11 +105,11 @@ private struct SidebarNewMark: View {
     }
 }
 
-/// Holds one title so that the middle of its letters is the middle of the layout. An alignment guide would move the
+/// Holds one title so that the middle of its capitals is the middle of the layout. An alignment guide would move the
 /// title, but the row would still center the bounds of everything in it, and those are lopsided once the title is
-/// moved. Here the bounds are balanced around the middle of the letters, so the row centers that.
+/// moved. Here the bounds are balanced around the middle of the capitals, so the row centers that.
 private struct SidebarTitleLayout: Layout {
-    /// How far above the baseline the middle of the letters is. `nil` keeps the title centered on its own box.
+    /// How far above the baseline the middle of the capitals is. `nil` keeps the title centered on its own box.
     let midline: CGFloat?
 
     private func measure(_ subview: LayoutSubview, in proposal: ProposedViewSize) -> (size: CGSize, middle: CGFloat) {
@@ -135,11 +135,14 @@ private struct SidebarTitleLayout: Layout {
 }
 
 extension View {
-    /// Centers a title on the middle of its letters instead of on its line box, which is centered on the capitals
-    /// and leaves lowercase text low. Put it on the title in a row, so the icon beside it meets that middle.
+    /// Centers a title on the middle of its capitals instead of on its line box, whose middle follows the font's
+    /// ascent and descent and changes with the font. Put it on the title in a row, so the icon beside it, which is
+    /// centered on the row, meets the capitals' middle at every font and icon size.
     /// A column that grows a second line keeps the center of both lines (`applies: false`).
-    func sidebarTitleCentered(_ applies: Bool = true) -> some View {
-        SidebarTitleLayout(midline: applies ? BrowserSettings.application.sidebarTitleMidline : nil) { self }
+    func sidebarTitleCentered(_ applies: Bool = true, scale: CGFloat = 1) -> some View {
+        SidebarTitleLayout(
+            midline: applies ? BrowserSettings.application.sidebarTitle(scale: scale).midline : nil
+        ) { self }
     }
 
     /// The new-tab dot on the top trailing edge of an icon. A row that is not new is left as it is.

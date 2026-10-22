@@ -29,6 +29,17 @@ struct FolderSection: View {
     private var isSelected: Bool {
         context.isSelected(item)
     }
+    /// How far the rows inside this folder start to the right of its own row, from the theme's Folder indent. Each
+    /// level of folders adds one. The icons-only sidebar has no room for it.
+    private var childIndent: CGFloat {
+        sidebarStyle == .full ? BrowserSettings.application.chromeShape.folderIndent : 0
+    }
+
+    /// How much larger this folder's own row is drawn. The icons-only sidebar has no title and a fixed width, so
+    /// it keeps every folder at its normal size.
+    private var scale: CGFloat {
+        sidebarStyle == .full ? folder.size.factor : 1
+    }
     private var rowStyle: SidebarRowStyle {
         browser.rowStyle(
             of: folder,
@@ -93,17 +104,18 @@ struct FolderSection: View {
         let style = rowStyle
         let ink = inkSource.ink(for: style)
         let showsOutline = folder.isExpanded && !rows.isEmpty
+        let iconSize = SidebarMetrics.rowIconSize * scale
         VStack(spacing: SidebarMetrics.rowVerticalSpacing(settings: BrowserSettings.application)) {
             HStack(spacing: SidebarMetrics.rowIconSpacing) {
                 Image(systemName: audible == nil
                     ? (folder.isExpanded ? "folder" : "folder.fill")
                     : "speaker.wave.2.fill")
                     // Theme.Font.caption at the 16 pt icon size; the glyph grows with the theme's tab icons.
-                    .font(.system(size: 10.5 * SidebarMetrics.rowIconSize / 16))
+                    .font(.system(size: 10.5 * iconSize / 16))
                     .foregroundStyle(folder.color.tint)
                     .contentTransition(.symbolEffect(.replace))
                     .animation(Theme.Motion.settle, value: audible?.id)
-                    .frame(width: SidebarMetrics.rowIconSize, height: SidebarMetrics.rowIconSize)
+                    .frame(width: iconSize, height: iconSize)
                     .help(audible.map { Text("“\($0.title)” is playing") } ?? Text(verbatim: ""))
                     .overlay(alignment: .bottomTrailing) {
                         // Icons only has no count badge, so a small inverse dot carries the current tab instead.
@@ -121,16 +133,16 @@ struct FolderSection: View {
                     renameField
                 } else if sidebarStyle == .full {
                     Text(verbatim: folder.name)
-                        .font(BrowserSettings.application.sidebarFont)
+                        .font(BrowserSettings.application.sidebarTitle(scale: scale).font)
                         .foregroundStyle(ink.resting)
                         .lineLimit(1)
                         .sidebarRowAccessibility(style)
-                        .sidebarTitleCentered()
+                        .sidebarTitleCentered(scale: scale)
                 }
 
                 if sidebarStyle == .full {
                     Image(systemName: "chevron.right")
-                        .font(.system(size: 8, weight: .bold))
+                        .font(.system(size: 8 * scale, weight: .bold))
                         .rotationEffect(.degrees(folder.isExpanded ? 90 : 0))
                         .foregroundStyle(.tertiary)
 
@@ -159,7 +171,7 @@ struct FolderSection: View {
             }
             .padding(.horizontal, SidebarMetrics.rowContentPadding(style: sidebarStyle))
             .frame(maxWidth: .infinity, alignment: .leading)
-            .frame(height: SidebarMetrics.rowHeight(settings: BrowserSettings.application))
+            .frame(height: SidebarMetrics.rowHeight(settings: BrowserSettings.application, scale: scale))
             .sidebarRowSelectionEffect(
                 isSelected: style.emphasis != .resting,
                 isHovering: hovering,
@@ -213,6 +225,7 @@ struct FolderSection: View {
 
             if folder.isExpanded {
                 contents
+                    .padding(.leading, childIndent)
             }
         }
         .padding(showsOutline ? Self.outlineInset : 0)
@@ -251,7 +264,7 @@ struct FolderSection: View {
     private var renameField: some View {
         SidebarFolderNameField(
             text: $draftName,
-            fontSize: BrowserSettings.application.sidebarFontSize,
+            fontSize: BrowserSettings.application.sidebarFontSize * scale,
             onCommit: commitRename,
             onCancel: cancelRename
         )
@@ -436,6 +449,8 @@ enum FolderContextMenu {
         menu.addItem(.separator())
 
         addFolderItems([.folder(folder.id)], to: menu, browser: browser)
+        menu.addItem(sortItem(for: folder, browser: browser))
+        menu.addItem(sizeItem(for: folder, browser: browser))
         menu.addItem(.separator())
 
         let kept = browser.allTabs(in: folder).count
@@ -513,6 +528,60 @@ enum FolderContextMenu {
                 action: { [weak browser] in browser?.moveOut(items) }
             ))
         }
+    }
+
+    static func sortMenu(for folder: TabFolder, browser: BrowserModel) -> NSMenu {
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        let sorts: [(title: String, symbol: String, sort: BrowserModel.FolderSort)] = [
+            (String(localized: "By Name"), "textformat.abc", .byName),
+            (String(localized: "Folders First"), "folder", .foldersFirst),
+        ]
+        for entry in sorts {
+            let item = actionItem(
+                title: entry.title,
+                symbol: entry.symbol,
+                action: { [weak browser, weak folder] in
+                    guard let browser, let folder else { return }
+                    browser.sortChildren(of: folder, entry.sort)
+                }
+            )
+            item.isEnabled = browser.canSortChildren(of: folder)
+            menu.addItem(item)
+        }
+        return menu
+    }
+
+    static func sizeMenu(for folder: TabFolder, browser: BrowserModel) -> NSMenu {
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        for size in TabFolderSize.allCases {
+            let item = actionItem(
+                title: size.menuTitle,
+                symbol: nil,
+                action: { [weak browser, weak folder] in
+                    guard let browser, let folder else { return }
+                    browser.setFolderSize(size, for: folder)
+                }
+            )
+            item.state = folder.size == size ? .on : .off
+            menu.addItem(item)
+        }
+        return menu
+    }
+
+    private static func sizeItem(for folder: TabFolder, browser: BrowserModel) -> NSMenuItem {
+        let item = NSMenuItem(title: String(localized: "Size"), action: nil, keyEquivalent: "")
+        item.image = NSImage(systemSymbolName: "textformat.size", accessibilityDescription: nil)
+        item.submenu = sizeMenu(for: folder, browser: browser)
+        return item
+    }
+
+    private static func sortItem(for folder: TabFolder, browser: BrowserModel) -> NSMenuItem {
+        let item = NSMenuItem(title: String(localized: "Sort"), action: nil, keyEquivalent: "")
+        item.image = NSImage(systemSymbolName: "arrow.up.arrow.down", accessibilityDescription: nil)
+        item.submenu = sortMenu(for: folder, browser: browser)
+        return item
     }
 
     static func moveMenu(_ items: [SidebarItem], browser: BrowserModel) -> NSMenu {
@@ -615,7 +684,7 @@ enum FolderContextMenu {
 
     private static func actionItem(
         title: String,
-        symbol: String,
+        symbol: String?,
         action: @escaping () -> Void
     ) -> NSMenuItem {
         let target = FolderMenuAction(action)
@@ -624,7 +693,7 @@ enum FolderContextMenu {
             action: #selector(FolderMenuAction.runFolderMenuAction),
             keyEquivalent: ""
         )
-        item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: title)
+        item.image = symbol.flatMap { NSImage(systemSymbolName: $0, accessibilityDescription: title) }
         item.target = target
         item.representedObject = target
         item.isEnabled = true

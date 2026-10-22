@@ -47,7 +47,7 @@ struct ThemeResolutionTests {
             let copy = settings.selectedTheme
             #expect(copy.id != "nord" && !ThemeCatalog.isBuiltIn(copy.id))
             #expect(copy.basedOn == "nord")
-            #expect(copy.name == "Nord copy")
+            #expect(copy.name == "Nord Custom")
             #expect(copy.dark.accent == 0xFF8800)
             #expect(copy.light == ThemeCatalog.builtIn("nord")?.light, "the other variant is untouched")
             #expect(settings.userThemes.map(\.id) == [copy.id])
@@ -71,7 +71,7 @@ struct ThemeResolutionTests {
             settings.themeID = "calm"
             settings.editColors(scheme: .light) { $0.hue = 0.2 }
 
-            #expect(settings.userThemes.map(\.name) == ["Calm copy", "Calm copy 2"])
+            #expect(settings.userThemes.map(\.name) == ["Calm Custom", "Calm Custom 2"])
         }
     }
 
@@ -383,8 +383,9 @@ struct ThemeResolutionTests {
             #expect(grounds.contains {
                 SidebarRowStyle.contrast(ThemeReadability.composite(raw, on: $0), $0) < 3
             })
-            let channels = [controls.redComponent, controls.greenComponent, controls.blueComponent]
-            #expect(controls.alphaComponent == 1 && (channels.allSatisfy { $0 == 0 } || channels.allSatisfy { $0 == 1 }))
+            // Green at 40% cannot be read on a light window: it stays green, darker and no fainter than 40%.
+            #expect(controls.greenComponent > controls.redComponent + 0.2 && controls.greenComponent > controls.blueComponent + 0.2)
+            #expect(controls.alphaComponent >= 0.4)
             for ground in grounds {
                 #expect(SidebarRowStyle.contrast(ThemeReadability.composite(controls, on: ground), ground) >= 3)
             }

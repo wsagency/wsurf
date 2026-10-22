@@ -952,7 +952,7 @@ private struct AgentActivityLinkRow: View {
             HStack(spacing: 9) {
                 Image(systemName: "arrow.up.right")
                     .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(Theme.accent)
+                    .foregroundStyle(Theme.assistant)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(verbatim: link.title)
                         .font(Theme.Font.control)

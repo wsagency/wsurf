@@ -88,15 +88,16 @@ struct ThemeThumbnailPalette: Equatable {
     init(_ theme: ThemeDefinition, adjustment: ThemeAdjustment, scheme: ColorScheme) {
         let isDark = scheme == .dark
         let colors = theme.variant(scheme)
+        let ground = theme.drawnGround
         let variant = ResolvedVariant(
-            colors, isDark: isDark, brightness: adjustment.brightness(scheme), ground: theme.ground
+            colors, isDark: isDark, brightness: adjustment.brightness(scheme), ground: ground
         )
         let appearance = NSAppearance(named: isDark ? .darkAqua : .aqua) ?? NSApp.effectiveAppearance
         func color(_ role: RoleColor) -> Color {
             Color(nsColor: role.resolved(in: appearance))
         }
         let id = "\(theme.id).\(isDark ? "dark" : "light")"
-        if theme.ground == .solid {
+        if ground == .solid {
             self.init(
                 id: id, backdrop: color(variant.window), chrome: color(variant.window), canvas: color(variant.sidebar),
                 surface: color(variant.surface), primary: variant.controlInk ?? variant.loadedInk,
@@ -107,7 +108,7 @@ struct ThemeThumbnailPalette: Equatable {
             layout = ThemeShape(adjustment)
             return
         }
-        let base = switch (theme.ground, isDark) {
+        let base = switch (ground, isDark) {
         case (.softTinted, false):
             Self.lightCalm
         case (.softTinted, true):

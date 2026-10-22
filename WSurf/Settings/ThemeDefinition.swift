@@ -140,6 +140,26 @@ extension ThemeDefinition {
     }
 }
 
+extension ThemeVariant {
+    /// True when the window, sidebar or surface color is not `other`'s: the three colors that make a ground.
+    func groundColorsDiffer(from other: ThemeVariant) -> Bool {
+        window != other.window || sidebar != other.sidebar || surface != other.surface
+    }
+}
+
+extension ThemeDefinition {
+    /// The ground the window draws. A tinted theme (Standard, Calm) takes its look from the page, which would hide
+    /// the window, sidebar and surface colors a copy of it sets; such a copy draws them on a solid ground instead.
+    /// Nothing is stored for this, so putting the original colors back puts the tint back, and a copy that only
+    /// changed hue, text or accent keeps its tint.
+    var drawnGround: ThemeGround {
+        guard ground != .solid, let origin = basedOn.flatMap(ThemeCatalog.builtIn), origin.ground == ground else {
+            return ground
+        }
+        return light.groundColorsDiffer(from: origin.light) || dark.groundColorsDiffer(from: origin.dark) ? .solid : ground
+    }
+}
+
 /// The knobs of a theme. They are editable on any theme, built-in or not, and never make a copy: colors are the
 /// theme, knobs are yours. A saved or duplicated theme carries them along.
 struct ThemeAdjustment: Codable, Equatable {
@@ -162,6 +182,9 @@ struct ThemeAdjustment: Codable, Equatable {
     var rowPadding = 9.0
     /// Points.
     var tabIconSize = 16.0
+    /// Points an open folder moves its tabs and subfolders in from its own row, once for each level of folders. 0 keeps
+    /// them under the folder's icon, as folders always were.
+    var folderIndent = 0.0
 
     /// -100 % to 100 %. Text, icons and accent text keep their contrast through `ThemeReadability` at either end.
     static let brightnessRange = -1.0...1.0
@@ -170,6 +193,8 @@ struct ThemeAdjustment: Codable, Equatable {
     static let sidebarMarginRange = 1.0...8.0
     static let rowPaddingRange = 1.0...12.0
     static let tabIconSizeRange = 12.0...24.0
+    static let folderIndentRange = 0.0...24.0
+    static let folderIndentStep = 2.0
 
     func brightness(_ scheme: ColorScheme) -> Double {
         scheme == .dark ? darkBrightness : lightBrightness
@@ -197,6 +222,8 @@ struct ThemeAdjustment: Codable, Equatable {
         result.sidebarMargin = clamp(sidebarMargin.rounded(), Self.sidebarMarginRange, default: 6)
         result.rowPadding = clamp(rowPadding.rounded(), Self.rowPaddingRange, default: 9)
         result.tabIconSize = clamp(tabIconSize.rounded(), Self.tabIconSizeRange, default: 16)
+        let indent = clamp(folderIndent, Self.folderIndentRange, default: 0)
+        result.folderIndent = (indent / Self.folderIndentStep).rounded() * Self.folderIndentStep
         return result
     }
 }
@@ -216,7 +243,8 @@ extension ThemeAdjustment {
             pageSpacing: container.lenient(.pageSpacing, 6),
             sidebarMargin: container.lenient(.sidebarMargin, 6),
             rowPadding: container.lenient(.rowPadding, 9),
-            tabIconSize: container.lenient(.tabIconSize, 16)
+            tabIconSize: container.lenient(.tabIconSize, 16),
+            folderIndent: container.lenient(.folderIndent, 0)
         )
     }
 }

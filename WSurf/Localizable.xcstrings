@@ -1829,6 +1829,9 @@
     "By default, the assistant works until it finishes. Set a limit to pause and resume with Continue. The final summary may use one more request." : {
 
     },
+    "By Name" : {
+      "comment" : "Item in the Sort submenu of a sidebar folder's context menu. It reorders the folder's own tabs and subfolders alphabetically once, in Finder order, and does not keep them sorted. Title Case."
+    },
     "cached files" : {
       "comment" : "Lowercase name of one kind of browsing data, inserted mid-sentence into the confirmation before clearing, which reads roughly: browsing history and cached files will be cleared for the last hour. Deliberately lowercase — do not capitalise it, even in languages that capitalise nouns. The capitalised row label Cached files is a separate string."
     },
@@ -1876,6 +1879,9 @@
     },
     "Certificate exceptions" : {
 
+    },
+    "Change Folder Size" : {
+      "comment" : "Name of the undo step after choosing a size in the Size submenu of a sidebar folder's context menu. Title Case, same style as Delete Folder."
     },
     "Change the keyboard shortcut" : {
       "comment" : "Tooltip on the shortcut recorder in Settings > Voice while it is idle; pressing it starts listening for a new key combination."
@@ -2905,6 +2911,9 @@
     "Folder name" : {
       "comment" : "Placeholder in the inline rename field on a sidebar folder row. Sentence case, and very narrow — the field is only as wide as a sidebar row."
     },
+    "Folders First" : {
+      "comment" : "Item in the Sort submenu of a sidebar folder's context menu. It moves the folder's subfolders above its tabs once, and each group keeps its current order. Title Case."
+    },
     "For example, speak slowly or keep replies brief." : {
 
     },
@@ -3916,6 +3925,9 @@
     },
     "None installed" : {
       "comment" : "Shown under “Extensions” when a profile has none."
+    },
+    "Normal" : {
+      "comment" : "Item in the Size submenu of a sidebar folder's context menu: the folder's name and icon at the ordinary size of the sidebar. The other items are factors such as 1.5× and 2×. Title Case, one word."
     },
     "Not detected. Install the client or choose its configuration file." : {
       "comment" : "External MCP client setup in Advanced settings."
@@ -5305,6 +5317,9 @@
     "Sites get an address only when you choose it." : {
 
     },
+    "Size" : {
+      "comment" : "Submenu in the context menu of a sidebar folder that makes that one folder's row larger so it stands out: Normal, 1.5×, 2×, 2.5×. Title Case, one word."
+    },
     "Skip" : {
 
     },
@@ -5400,6 +5415,12 @@
     },
     "Something else…" : {
       "comment" : "Last entry in the search engine pop-up menu, chosen when the user wants an engine that is not listed and will type its address instead. Real ellipsis, promising that a field appears."
+    },
+    "Sort" : {
+      "comment" : "Submenu in the context menu of a sidebar folder that holds the one-time reorder commands By Name and Folders First. Title Case, one word."
+    },
+    "Sort Folder" : {
+      "comment" : "Name of the undo step for a one-time reorder of a sidebar folder, after the Sort submenu in its context menu. Title Case, same style as Delete Folder."
     },
     "Space" : {
       "comment" : "Legend printed on a key cap in the shortcut recorder in Settings, where the user records the key that activates the assistant. Use the word your language's Apple keyboards print on that key; the cap is only a few characters wide. This one is the space bar."

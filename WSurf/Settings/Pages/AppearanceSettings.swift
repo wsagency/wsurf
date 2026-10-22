@@ -9,6 +9,7 @@ struct AppearanceSettings: View {
     let coordinator: AppCoordinator
     @Bindable var settings: BrowserSettings
     @Environment(\.colorScheme) private var windowColorScheme
+    @State private var isColorsExpanded = false
 
     private var shownScheme: ColorScheme {
         if coordinator.profiles.isPrivate {
@@ -26,8 +27,8 @@ struct AppearanceSettings: View {
 
     var body: some View {
         SettingsPageHeader(title: "Appearance")
-        AppearanceThemeSection(settings: settings, scheme: shownScheme)
-        AppearanceColorsSection(settings: settings, scheme: shownScheme)
+        AppearanceThemeSection(settings: settings, scheme: shownScheme, onEditColors: { isColorsExpanded = true })
+        AppearanceColorsSection(settings: settings, scheme: shownScheme, isExpanded: $isColorsExpanded)
         AppearanceLayoutSection(settings: settings)
         AppearanceWindowSection(settings: settings)
         AppearanceDockIconSection(settings: settings)

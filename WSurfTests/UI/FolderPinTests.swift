@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 WSurf Agency
 // SPDX-License-Identifier: Apache-2.0
 
+import AppKit
 import CoreGraphics
 import Foundation
 import GRDB
@@ -104,6 +105,143 @@ struct FolderPinTests {
         #expect(first.pinnedURL == nil && last.pinnedURL == nil)
         #expect(kept.pinnedURL?.absoluteString == "https://kept.example/")
     }
+
+    /// A pinned folder holding, in this order: item 10, Zulu (a folder of y then x), Same, Item 2, apple (an empty
+    /// folder), Same, banana. The two Same tabs have equal titles, so a stable sort keeps them in order.
+    private struct SortFixture {
+        let folder: TabFolder
+        let zulu: TabFolder
+        let original: [SidebarItem]
+
+        init(_ browser: BrowserModel) {
+            func tab(_ title: String) -> BrowserTab {
+                let tab = browser.newTab(url: URL(string: "https://sort.example/"), activate: false)
+                tab.customTitle = title
+                return tab
+            }
+            folder = browser.createFolder(named: "Work")
+            zulu = browser.createFolder(named: "Zulu")
+            let apple = browser.createFolder(named: "apple")
+            let ten = tab("item 10")
+            let sameFirst = tab("Same")
+            let two = tab("Item 2")
+            let sameLast = tab("Same")
+            let banana = tab("banana")
+            browser.move([tab("y"), tab("x")].map { .tab($0.id) }, into: zulu, settlingPins: false)
+            original = [
+                .tab(ten.id), .folder(zulu.id), .tab(sameFirst.id), .tab(two.id),
+                .folder(apple.id), .tab(sameLast.id), .tab(banana.id),
+            ]
+            browser.move(original, into: folder, settlingPins: false)
+            browser.pin(folder)
+        }
+
+        static func names(in folder: TabFolder, of browser: BrowserModel) -> [String] {
+            browser.rows(in: folder).compactMap { item in
+                switch item {
+                case .tab(let id):
+                    browser.tab(id: id)?.title
+                case .folder(let id):
+                    browser.folder(id: id)?.name
+                }
+            }
+        }
+    }
+
+    @Test(.boundedWebViews) func sortingAPinnedFolderIsOneUndoStepPerAction() {
+        let browser = BrowserModel(database: .temporary())
+        defer { browser.closeAllTabs(saving: false) }
+        let fixture = SortFixture(browser)
+        let folder = fixture.folder
+        let inner = browser.rows(in: fixture.zulu)
+        func names() -> [String] {
+            SortFixture.names(in: folder, of: browser)
+        }
+        #expect(folder.isPinned && browser.canSortChildren(of: folder))
+
+        browser.sortChildren(of: folder, .foldersFirst)
+        #expect(names() == ["Zulu", "apple", "item 10", "Same", "Item 2", "Same", "banana"])
+        browser.sidebarUndoManager.undo()
+        #expect(browser.rows(in: folder) == fixture.original)
+        #expect(!browser.sidebarUndoManager.canUndo)
+        browser.sidebarUndoManager.redo()
+        #expect(names() == ["Zulu", "apple", "item 10", "Same", "Item 2", "Same", "banana"])
+        browser.sidebarUndoManager.undo()
+
+        browser.sortChildren(of: folder, .byName)
+        let byName = browser.rows(in: folder)
+        #expect(names() == ["apple", "banana", "Item 2", "item 10", "Same", "Same", "Zulu"])
+        #expect(byName.filter { [fixture.original[2], fixture.original[5]].contains($0) }
+            == [fixture.original[2], fixture.original[5]])
+
+        browser.sortChildren(of: folder, .foldersFirst)
+        #expect(names() == ["apple", "Zulu", "banana", "Item 2", "item 10", "Same", "Same"])
+        #expect(browser.rows(in: fixture.zulu) == inner)
+
+        browser.sidebarUndoManager.undo()
+        #expect(browser.rows(in: folder) == byName)
+        browser.sidebarUndoManager.undo()
+        #expect(browser.rows(in: folder) == fixture.original)
+        #expect(!browser.sidebarUndoManager.canUndo)
+    }
+
+    @Test(.boundedWebViews) func sortingNeedsTwoRowsAndUndoNeverPullsARowBackIn() throws {
+        let browser = BrowserModel(database: .temporary())
+        defer { browser.closeAllTabs(saving: false) }
+        let alone = browser.createFolder(named: "Alone")
+        let lone = browser.newTab(url: URL(string: "https://lone.example/"), activate: false)
+        browser.move([.tab(lone.id)], into: alone, settlingPins: false)
+        browser.sortChildren(of: alone, .byName)
+        #expect(!browser.canSortChildren(of: alone) && !browser.sidebarUndoManager.canUndo)
+
+        let fixture = SortFixture(browser)
+        let banana = try #require(fixture.original.last)
+        browser.sortChildren(of: fixture.folder, .byName)
+        browser.moveOut([banana])
+        browser.sidebarUndoManager.undo()
+
+        #expect(browser.rows(in: fixture.folder) == Array(fixture.original.dropLast()))
+        #expect(browser.sidebarTree.parent(of: banana) == nil)
+    }
+
+    @Test(.boundedWebViews) func theSortMenuIsDisabledBelowTwoRowsAndItsItemsSortTheFolder() {
+        let browser = BrowserModel(database: .temporary())
+        defer { browser.closeAllTabs(saving: false) }
+        let empty = browser.createFolder(named: "Empty")
+        #expect(FolderContextMenu.sortMenu(for: empty, browser: browser).items.allSatisfy { !$0.isEnabled })
+
+        let fixture = SortFixture(browser)
+        let menu = FolderContextMenu.sortMenu(for: fixture.folder, browser: browser)
+        #expect(menu.items.count == 2 && menu.items.allSatisfy(\.isEnabled))
+        menu.performActionForItem(at: 0)
+        #expect(SortFixture.names(in: fixture.folder, of: browser)
+            == ["apple", "banana", "Item 2", "item 10", "Same", "Same", "Zulu"])
+        menu.performActionForItem(at: 1)
+        #expect(SortFixture.names(in: fixture.folder, of: browser)
+            == ["apple", "Zulu", "banana", "Item 2", "item 10", "Same", "Same"])
+    }
+
+    @Test(.boundedWebViews) func aSortedFolderKeepsItsOrderAcrossRestart() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("FolderSort-\(UUID().uuidString).sqlite")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let browser = BrowserModel(database: AppDatabase(at: url))
+        defer { browser.closeAllTabs(saving: false) }
+        let fixture = SortFixture(browser)
+        browser.sortChildren(of: fixture.folder, .byName)
+        browser.sortChildren(of: fixture.folder, .foldersFirst)
+        let expected = SortFixture.names(in: fixture.folder, of: browser)
+        browser.saveBlocking()
+
+        let restored = BrowserModel(database: AppDatabase(at: url))
+        defer { restored.closeAllTabs(saving: false) }
+        restored.restoreSession()
+        let restoredFolder = try #require(restored.folder(id: fixture.folder.id))
+        let restoredZulu = try #require(restored.folder(id: fixture.zulu.id))
+        #expect(SortFixture.names(in: restoredFolder, of: restored) == expected)
+        #expect(SortFixture.names(in: restoredZulu, of: restored) == ["y", "x"])
+    }
+
     @Test func folderPinsKeepOrderAcrossRestartWithoutChangingChildBookmarks() throws {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("FolderPin-\(UUID().uuidString).sqlite")

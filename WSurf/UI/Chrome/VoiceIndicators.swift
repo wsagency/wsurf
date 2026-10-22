@@ -176,7 +176,7 @@ struct VoiceGlyph: View {
         case .listening:
             AnyShapeStyle(Color.red)
         case .executing:
-            AnyShapeStyle(Theme.accent)
+            AnyShapeStyle(Theme.assistant)
         case .idle:
             ChromeInk.glyph(onLight: chromeIsLight, windowScheme: windowColorScheme, hovering: isHighlighted)
         }

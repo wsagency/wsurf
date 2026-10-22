@@ -4,7 +4,7 @@
 import SwiftUI
 
 /// The shape knobs of the selected theme: page edge and spacing, row edges, corner rounding, sidebar margin, tab
-/// padding and tab icons. Like brightness, they belong to the theme, travel with a saved copy and never make one.
+/// padding, folder indent and tab icons. Like brightness, they belong to the theme, travel with a saved copy and never make one.
 struct AppearanceLayoutSection: View {
     @Bindable var settings: BrowserSettings
     @Environment(\.settingsHighlight) private var highlight
@@ -61,6 +61,11 @@ struct AppearanceLayoutSection: View {
                 pointSlider("Tab padding", caption: "The room between a tab’s edge and its icon.",
                             \.rowPadding, in: ThemeAdjustment.rowPaddingRange)
                 RowSeparator()
+                pointSlider(
+                    "Folder indent", caption: "Moves the tabs and folders inside an open folder in. Each level adds one step.",
+                    \.folderIndent, in: ThemeAdjustment.folderIndentRange, step: ThemeAdjustment.folderIndentStep, zero: "None"
+                )
+                RowSeparator()
                 DetailRow(title: "Tab icons", caption: "Unloaded tabs stay monochrome.") {
                     SegmentedControl(items: Self.favicons, selection: adjustment.loadedFavicons, onSelect: { update(\.loadedFavicons, $0) })
                 }
@@ -69,7 +74,7 @@ struct AppearanceLayoutSection: View {
                             \.tabIconSize, in: ThemeAdjustment.tabIconSizeRange)
             }
             .disclosureGroupStyle(ClickableDisclosureStyle())
-            .padding(SettingsMetrics.cardInset)
+            .padding(.vertical, SettingsMetrics.rowPaddingV)
         }
         .settingsAnchor("appearance.layout")
         .onChange(of: highlight, initial: true) { _, value in
@@ -99,6 +104,7 @@ struct AppearanceLayoutSection: View {
         caption: LocalizedStringResource,
         _ keyPath: WritableKeyPath<ThemeAdjustment, Double>,
         in range: ClosedRange<Double>,
+        step: Double = 1,
         zero: LocalizedStringResource? = nil
     ) -> some View {
         let points = settings.themeAdjustment[keyPath: keyPath]
@@ -109,7 +115,7 @@ struct AppearanceLayoutSection: View {
         }
         return DetailRow(title: title, caption: caption) {
             HStack(spacing: 8) {
-                Slider(value: binding(keyPath), in: range, step: 1, onEditingChanged: editingChanged)
+                Slider(value: binding(keyPath), in: range, step: step, onEditingChanged: editingChanged)
                     .frame(width: 140)
                     .accessibilityLabel(Text(title))
                     .accessibilityValue(label)

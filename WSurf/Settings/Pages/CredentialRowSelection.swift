@@ -69,7 +69,7 @@ struct CredentialRowSelection: ViewModifier {
     @ViewBuilder
     private var wash: some View {
         if isSelected {
-            RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Color.accentColor.opacity(0.14))
+            RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Theme.systemAccent.opacity(0.14))
         }
     }
 
@@ -77,7 +77,7 @@ struct CredentialRowSelection: ViewModifier {
     private var ring: some View {
         if state.isCursor {
             RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .strokeBorder(Color.accentColor.opacity(selection.ownsKeyboard ? 0.9 : 0.35), lineWidth: 1.5)
+                .strokeBorder(Theme.systemAccent.opacity(selection.ownsKeyboard ? 0.9 : 0.35), lineWidth: 1.5)
                 .allowsHitTesting(false)
         }
     }
@@ -87,7 +87,7 @@ struct CredentialRowSelection: ViewModifier {
     private var checkbox: some View {
         Image(systemName: isSelected ? "checkmark.square.fill" : "square")
             .font(.system(size: 14))
-            .foregroundStyle(isSelected ? Color.accentColor : Color.secondary)
+            .foregroundStyle(isSelected ? Theme.systemAccent : Color.secondary)
             .frame(width: 16, height: 16)
             .contentShape(.rect)
             .onTapGesture { selection.toggle(id) }

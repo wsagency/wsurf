@@ -34,6 +34,11 @@ enum Theme {
         resolved.accentText
     }
 
+    /// The assistant color for text, held to 4.5:1 like `accentText`. It is the accent's while no assistant color is set.
+    static var assistantText: Color {
+        resolved.assistantText
+    }
+
     static var onAccent: Color {
         resolved.onAccent
     }

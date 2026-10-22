@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 WSurf Agency
 // SPDX-License-Identifier: Apache-2.0
 
+import AppKit
 import Foundation
 import Observation
 import SwiftUI
@@ -200,7 +201,12 @@ struct ThemePreviewTests {
                     let floating = settings.sidebarTextColor(isDeferred: isDeferred, scheme: scheme, isFloating: true)
                     #expect(docked != floating)
                     #expect(SidebarRowStyle.srgb(docked, scheme: scheme).redComponent == 0)
-                    #expect(SidebarRowStyle.srgb(floating, scheme: scheme).redComponent == 1)
+                    // Black reads on the window (5.3:1) but not on the darker sidebar (4.2:1), so the floating ink
+                    // turns toward white by the least that reads there, and keeps the opacity it needs.
+                    let ink = SidebarRowStyle.srgb(floating, scheme: scheme)
+                    let sidebar = NSColor(srgbRed: 0x70 / 255, green: 0x70 / 255, blue: 0x70 / 255, alpha: 1)
+                    #expect(ink.redComponent > 0.5)
+                    #expect(SidebarRowStyle.contrast(ThemeReadability.composite(ink, on: sidebar), sidebar) >= 4.5)
                 }
             }
             #expect(settings.resolvedTheme === resolved)

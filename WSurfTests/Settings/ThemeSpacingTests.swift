@@ -83,6 +83,40 @@ struct ThemeSpacingTests {
         #expect(damaged.pageSpacing == 6 && damaged.tabIconSize == 20)
     }
 
+    @Test func theFolderIndentDefaultsToNoneAndOlderDataKeepsIt() throws {
+        #expect(ThemeAdjustment().folderIndent == 0)
+        #expect(ThemeShape().folderIndent == 0 && ThemeShape(ThemeAdjustment()).folderIndent == 0)
+
+        // A theme saved before the knob existed, or with a value of the wrong type, keeps folders as they were.
+        let older = try JSONDecoder().decode(ThemeAdjustment.self, from: Data(#"{"tabIconSize":20}"#.utf8))
+        #expect(older.folderIndent == 0 && older.tabIconSize == 20)
+        let damaged = try JSONDecoder().decode(ThemeAdjustment.self, from: Data(#"{"folderIndent":"deep"}"#.utf8))
+        #expect(damaged.folderIndent == 0)
+
+        let indented = ThemeAdjustment(folderIndent: 12)
+        let back = try JSONDecoder().decode(ThemeAdjustment.self, from: JSONEncoder().encode(indented))
+        #expect(back == indented && ThemeShape(back).folderIndent == 12)
+    }
+
+    @Test func theFolderIndentIsBoundedToEvenPointsFromNoneToTwentyFour() {
+        func bounded(_ points: Double) -> Double {
+            ThemeAdjustment(folderIndent: points).bounded().folderIndent
+        }
+        #expect(bounded(-5) == 0 && bounded(0) == 0 && bounded(24) == 24 && bounded(99) == 24)
+        #expect(bounded(5) == 6 && bounded(3) == 4 && bounded(4.9) == 4 && bounded(13) == 14)
+        #expect(bounded(.nan) == 0 && bounded(.infinity) == 0)
+        #expect(ThemeAdjustment.folderIndentRange == 0...24 && ThemeAdjustment.folderIndentStep == 2)
+    }
+
+    @Test func theFolderIndentIsStoredWithTheThemeAndReachesTheSidebarShape() throws {
+        try withSettings { settings, defaults in
+            settings.themeAdjustment = ThemeAdjustment(folderIndent: 9)
+            #expect(settings.themeAdjustment.folderIndent == 10, "stored in whole 2 pt steps")
+            #expect(settings.chromeShape.folderIndent == 10)
+            #expect(reopened(defaults).chromeShape.folderIndent == 10)
+        }
+    }
+
     @Test func boundedClampsToTheRangesAndWholePoints() {
         let low = ThemeAdjustment(pageSpacing: -3, sidebarMargin: 0, rowPadding: -1, tabIconSize: 2).bounded()
         #expect(low.pageSpacing == 0, "the page may sit flush")
@@ -279,7 +313,7 @@ struct ThemeSpacingTests {
     }
 
     @Test func searchFindsTheSpacingKnobs() {
-        for query in ["spacing", "margin", "padding", "flush"] {
+        for query in ["spacing", "margin", "padding", "flush", "indent", "nested", "subfolder"] {
             #expect(SettingsIndex.search(query).contains { $0.id == "appearance.layout" }, "\(query)")
         }
     }
