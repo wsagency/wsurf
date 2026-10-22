@@ -39,9 +39,14 @@ extension BrowserModel {
         sidebarUndoManager.removeAllActions()
         source.closedTabs.removeAll { $0.id == tab.id }
         closedTabs.removeAll { $0.id == tab.id }
+        func neighbor(in list: [BrowserTab]) -> BrowserTab? {
+            guard let index = list.firstIndex(where: { $0 === tab }) else { return nil }
+            return list.dropFirst(index + 1).first ?? list.prefix(index).last
+        }
+        // A neighbor in the space the source shows comes first, so the source window stays in that space.
         let survivor = source.splits.others(of: tab.id).first.flatMap { source.tabsByID[$0] }
-            ?? source.tabs.dropFirst(oldIndex + 1).first
-            ?? source.tabs.prefix(oldIndex).last
+            ?? neighbor(in: source.currentSpaceTabs)
+            ?? neighbor(in: source.tabs)
         let wasActive = source.activeTabID == tab.id
         let visitID = source.lastVisitID.removeValue(forKey: tab.id)
         source.splits = source.splits.removing(tab.id)

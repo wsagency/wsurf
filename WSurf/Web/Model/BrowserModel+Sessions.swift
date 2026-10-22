@@ -523,11 +523,7 @@ extension BrowserModel {
 
         var foldersByStoredID: [UUID: TabFolder] = [:]
         for record in stored.folders where record.pinID == nil || !profileHoldsPins {
-            let folder = TabFolder(id: record.id, name: record.name)
-            folder.color = record.color
-            folder.isExpanded = record.isExpanded
-            folder.isPinned = record.isPinned
-            folder.spaceID = record.spaceID
+            let folder = Self.restoredFolder(record)
             foldersByStoredID[record.id] = folder
             folders.append(folder)
         }
@@ -557,6 +553,8 @@ extension BrowserModel {
         sidebarDidChange()
         attachProfilePins()
 
+        // The active tab's space, or, when the active tab is a pin, the space of the tab used last.
+        landInLastUsedSpace()
         activeTabID = activeID
         for pane in activeTab.map({ splitOthers(of: $0) }) ?? [] {
             pane.realizeDeferredSession()
@@ -564,6 +562,15 @@ extension BrowserModel {
         Pipeline.log.notice(
             "session: restored \(self.tabs.count) of \(stored.tabs.count) stored tabs, \(self.folders.count) folders"
         )
+    }
+
+    private static func restoredFolder(_ record: FolderRecord) -> TabFolder {
+        let folder = TabFolder(id: record.id, name: record.name)
+        folder.color = record.color
+        folder.isExpanded = record.isExpanded
+        folder.isPinned = record.isPinned
+        folder.spaceID = record.spaceID
+        return folder
     }
 
     /// Time the window spent closed does not count as time unused, and a tab with no recorded use starts now.

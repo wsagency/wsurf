@@ -81,6 +81,7 @@ final class BrowserModel {
                 hasNoActiveTab = false
             }
             guard oldValue != activeTabID else { return }
+            followSpace(of: activeTab)
             sidebarSelection.dropMarks()
             noteUse(of: [oldValue, activeTabID])
             if let activeTabID {
@@ -123,9 +124,15 @@ final class BrowserModel {
     var onPictureReturnExpected: ((BrowserTab) -> Void)?
 
     var activeTab: BrowserTab? {
-        guard let activeTabID else { return hasNoActiveTab ? nil : tabs.first }
-        return tabsByID[activeTabID] ?? tabs.first
+        guard let activeTabID else { return hasNoActiveTab ? nil : firstShownTab }
+        return tabsByID[activeTabID] ?? firstShownTab
     }
+
+    /// The space this window shows. Nil shows every tab: private windows, and models that never adopted spaces.
+    /// Changed through `adoptSpaces(_:)`, `switchSpace(to:showing:)` and activation.
+    var currentSpaceID: UUID?
+    /// The spaces of the window's profile. A tab or folder naming any other space joins the current one.
+    var knownSpaceIDs: Set<UUID> = []
     // MARK: - Tab management
 
     func makeTab(
@@ -352,6 +359,10 @@ final class BrowserModel {
     }
 
     func insert(_ tab: BrowserTab, after opener: BrowserTab?) {
+        // A page opened from another page stays in that page's space, even when it is not the space on screen.
+        if tab.spaceID == nil, let space = opener?.spaceID {
+            tab.spaceID = space
+        }
         let keptRun = keptRunAtTop()
         if let anchor = opener.flatMap(insertionAnchor(after:)),
            !keptRun.contains(.tab(anchor.id)),

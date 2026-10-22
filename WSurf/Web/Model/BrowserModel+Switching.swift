@@ -23,7 +23,7 @@ extension BrowserModel {
     }
 
     func switchTab(forward: Bool, asTap: Bool = false) {
-        guard tabs.count > 1 else { return }
+        guard currentSpaceTabs.count > 1 else { return }
         let isFirstStep = !isSwitchingTabs
         if isFirstStep {
             switcherRecency = recentlyActive

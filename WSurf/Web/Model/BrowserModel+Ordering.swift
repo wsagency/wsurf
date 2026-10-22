@@ -301,12 +301,13 @@ extension BrowserModel {
     }
 
     private func neighbor(of tab: BrowserTab) -> BrowserTab? {
-        guard let index = tabs.firstIndex(where: { $0 === tab }) else {
-            return tabs.first { $0 !== tab }
+        let peers = currentSpaceID == nil ? tabs : tabs.filter { $0 === tab || isShown($0) }
+        guard let index = peers.firstIndex(where: { $0 === tab }) else {
+            return peers.first { $0 !== tab }
         }
         let hidden = hiddenSidebarTabIDs
-        let below = tabs[tabs.index(after: index)...]
-        let above = tabs[..<index].reversed()
+        let below = peers[peers.index(after: index)...]
+        let above = peers[..<index].reversed()
         return below.first { !hidden.contains($0.id) }
             ?? above.first { !hidden.contains($0.id) }
             ?? below.first
@@ -322,9 +323,9 @@ extension BrowserModel {
         return (try? await webView.evaluateJavaScript(script)) as? Bool ?? false
     }
 
-    /// Pins, and what a pinned folder holds, stay: the person removes those one by one.
+    /// Pins, and what a pinned folder holds, stay: the person removes those one by one. Other spaces stay too.
     func closeOthers(_ kept: BrowserTab) {
-        close(tabs.filter { $0 !== kept && $0.pinID == nil }.map { .tab($0.id) })
+        close(tabs.filter { $0 !== kept && $0.pinID == nil && isShown($0) }.map { .tab($0.id) })
     }
 
     func closeActiveTab() {
@@ -390,17 +391,19 @@ extension BrowserModel {
     }
 
     func activateTab(at index: Int) {
+        let tabs = currentSpaceTabs
         guard tabs.indices.contains(index) else { return }
         activate(tabs[index])
     }
 
     func activateLastTab() {
-        if let last = tabs.last {
+        if let last = currentSpaceTabs.last {
             activate(last)
         }
     }
 
     func cycleTab(forward: Bool) {
+        let tabs = currentSpaceTabs
         guard tabs.count > 1, let current = tabs.firstIndex(where: { $0.id == activeTab?.id }) else { return }
         let next = forward
             ? (current + 1) % tabs.count
@@ -617,7 +620,9 @@ extension BrowserModel {
     func sidebarDidChange() {
         tabsByID = Dictionary(tabs.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         foldersByID = Dictionary(folders.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        sidebarTree = reconciledTree()
+        let tree = reconciledTree()
+        settleSpaces(in: tree)
+        sidebarTree = currentSpaceID == nil ? tree : tree.keepingRoot(where: isShown)
         splits = splits.reconciled(against: Set(tabsByID.keys))
         reconcileAnchors()
     }
