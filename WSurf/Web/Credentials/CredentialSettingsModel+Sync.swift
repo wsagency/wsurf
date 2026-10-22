@@ -66,6 +66,12 @@ extension CredentialSettingsModel {
         vaultSync?.disable(profileID: profile.id, vaultID: id)
     }
 
+    /// The owner agreed to send the deletions that were held back; the next pass sends them.
+    func releaseSyncRemovals() {
+        guard let id = selectedVaultID else { return }
+        vaultSync?.releaseRemovals(profileID: profile.id, vaultID: id)
+    }
+
     /// Deletes the vault's zone in iCloud. Every Mac keeps its copy.
     func removeSelectedVaultFromICloud() {
         guard let id = selectedVaultID else { return }

@@ -13,6 +13,7 @@ struct CloudVaultRow: View {
 
     @State private var confirmsRemoval = false
     @State private var confirmsUpload = false
+    @State private var confirmsDeletion = false
 
     var body: some View {
         if let sync = model.vaultSync, let vaultID = model.selectedVaultID {
@@ -35,6 +36,22 @@ struct CloudVaultRow: View {
                 Button("Cancel", role: .cancel) {}
             } message: {
                 Text("This Mac’s copy is encrypted and uploaded. Entries that differ from iCloud wait for your review.")
+            }
+            if case .holdingRemovals(let count) = status {
+                RowSeparator()
+                DetailRow(title: "Delete on other devices") {
+                    Button("Delete on Other Devices…", role: .destructive) { confirmsDeletion = true }
+                        .buttonStyle(.bordered)
+                        .disabled(model.isBusy || !model.isUnlocked)
+                }
+                .confirmationDialog(
+                    Text("Delete \(count) entries on your other devices?"), isPresented: $confirmsDeletion
+                ) {
+                    Button("Delete on Other Devices", role: .destructive) { model.releaseSyncRemovals() }
+                    Button("Cancel", role: .cancel) {}
+                } message: {
+                    Text("WSurf moves them to Trash on your other devices that sync this vault. You can restore them there.")
+                }
             }
             if isOn {
                 RowSeparator()
@@ -76,7 +93,7 @@ struct CloudVaultRow: View {
         switch status {
         case .off, .removed, .accountChanged:
             false
-        case .synced, .sending, .waitingForUnlock, .needsReview, .iCloudFull, .signedOut, .needsUpdate, .rolledBack:
+        case .synced, .sending, .waitingForUnlock, .needsReview, .holdingRemovals, .iCloudFull, .signedOut, .needsUpdate, .rolledBack:
             true
         }
     }
@@ -130,6 +147,8 @@ struct CloudVaultRow: View {
             String(localized: "\(count) changes from your other devices will be added when you unlock this vault.")
         case .needsReview(let count):
             String(localized: "\(count) entries changed on this Mac and another device. Review them on the Vault tab.")
+        case .holdingRemovals(let count):
+            String(localized: "\(count) entries were deleted on this Mac. Delete them on your other devices too?")
         case .iCloudFull:
             String(localized: "Your iCloud storage is full. Changes stay on this Mac until there’s room.")
         case .signedOut:

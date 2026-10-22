@@ -933,6 +933,9 @@
     "%lld entries need a choice. They don’t sync until you choose." : {
       "comment" : "Caption of the card for entries that changed on two devices. %lld is a number of at least 1."
     },
+    "%lld entries were deleted on this Mac. Delete them on your other devices too?" : {
+      "comment" : "Caption of the Sync with iCloud switch when a large number of entries were deleted on this Mac and the deletion has not been sent yet. %lld is a number of at least 21. The next row asks for the answer."
+    },
     "%lld extensions, %lld running." : {
       "comment" : "Caption under the Extensions settings title. The first %lld is the total number of extensions available, the second is how many are switched on in this profile."
     },
@@ -2568,6 +2571,18 @@
     "Delete Folder…" : {
       "comment" : "Item in the context menu of a folder in the sidebar. The real ellipsis character (…) marks that it opens a confirmation first — keep it. Title Case."
     },
+    "Delete %lld entries on your other devices?" : {
+      "comment" : "Title of the confirmation for Delete on Other Devices. %lld is the number of entries deleted on this Mac, at least 21."
+    },
+    "Delete on other devices" : {
+      "comment" : "Title of the row, under the Sync with iCloud switch, that asks whether entries deleted on this Mac should also be deleted on the person’s other devices. Sentence case."
+    },
+    "Delete on Other Devices…" : {
+      "comment" : "Button that asks to send a large deletion of entries to the person’s other devices. Title Case for a command; the ellipsis means a confirmation follows."
+    },
+    "Delete on Other Devices" : {
+      "comment" : "Destructive button of the confirmation that sends a large deletion of entries to the person’s other devices. Title Case for a command."
+    },
     "Delete profile" : {
 
     },
@@ -3517,6 +3532,9 @@
     },
     "WSurf manages model, input, instructions, tools, output limits, storage, service tier, and continuation fields. Use the controls for these settings." : {
 
+    },
+    "WSurf moves them to Trash on your other devices that sync this vault. You can restore them there." : {
+      "comment" : "Message of the confirmation for Delete on Other Devices. Trash is the vault’s Trash."
     },
     "WSurf saves chat history on this Mac. Your messages are still sent to OpenAI to generate replies." : {
 

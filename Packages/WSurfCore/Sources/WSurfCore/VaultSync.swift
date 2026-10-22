@@ -48,6 +48,7 @@ nonisolated struct VaultSyncSummary: Equatable {
     var notSyncable = 0
     var unreadable = 0
     var parked = 0
+    var holding = 0
 }
 
 /// Sync of sealed vaults through the one engine (spec amendment 2026-10-22). Per vault, opt-in: this Mac seals each entry under the
@@ -63,6 +64,9 @@ public final class VaultSync: SyncEngineDelegate {
     public nonisolated static let vaultRecordName = "vault"
     static let drainBatch = 200
     static let produceBatch = 500
+    /// A pass that would send more removed states than this, or a quarter of the vault's synced entries if that is more, waits for
+    /// the owner.
+    static let removalFloor = 20
 
     public internal(set) var state: VaultSyncAppState
     /// Nil until the engine has answered.
@@ -97,6 +101,9 @@ public final class VaultSync: SyncEngineDelegate {
     /// Account id to the stamp a sum was computed for, and the sum (nil: the entry is not syncable).
     @ObservationIgnored var sumCache: [VaultKey: [UUID: StampedSum]] = [:]
     @ObservationIgnored var queued: [VaultKey: Set<UUID>] = [:]
+    /// Vaults whose last pass held back this many removed states, and the vaults whose owner agreed to send them in the next pass.
+    @ObservationIgnored var holding: [VaultKey: Int] = [:]
+    @ObservationIgnored var releasing: Set<VaultKey> = []
     @ObservationIgnored var tallies: [VaultKey: (notSyncable: Int, unreadable: Int)] = [:]
 
     nonisolated struct StampedSum {
@@ -209,6 +216,9 @@ public final class VaultSync: SyncEngineDelegate {
         }
         if summary.review > 0 {
             return .needsReview(summary.review)
+        }
+        if summary.holding > 0 {
+            return .holdingRemovals(summary.holding)
         }
         if !summary.isUnlocked, summary.inbox > 0 {
             return .waitingForUnlock(summary.inbox)
@@ -375,6 +385,16 @@ public final class VaultSync: SyncEngineDelegate {
         databases[profileID] = nil
     }
 
+    /// The owner confirmed the deletions held back: the next pass sends them, and only that pass.
+    public func releaseRemovals(profileID: UUID, vaultID: UUID) {
+        let key = VaultKey(profileID: profileID, vaultID: vaultID)
+        guard summaries[key]?.enabled == true, (holding[key] ?? 0) > 0 else { return }
+        releasing.insert(key)
+        enqueue(key) { [weak self] in
+            await self?.produce(key)
+        }
+    }
+
     /// The heartbeat: re-add what is still waiting to go up, finish a read that did not, and fetch (once, for every vault).
     public func beat() {
         guard engine != nil else { return }
@@ -521,6 +541,8 @@ public final class VaultSync: SyncEngineDelegate {
         sumCache[key] = nil
         queued[key] = nil
         tallies[key] = nil
+        holding[key] = nil
+        releasing.remove(key)
     }
 
     func refreshAll() {
@@ -540,7 +562,8 @@ public final class VaultSync: SyncEngineDelegate {
         let next = VaultSyncSummary(
             enabled: row.enabled, stored: row.status, outbox: counts.outbox, inbox: counts.inbox, review: counts.review,
             hasPendingVault: row.pendingVault != nil, isHeldBack: row.dirty, isReading: row.needsFetch,
-            isUnlocked: unlocked.contains(key), notSyncable: tally.notSyncable, unreadable: tally.unreadable, parked: counts.parked
+            isUnlocked: unlocked.contains(key), notSyncable: tally.notSyncable, unreadable: tally.unreadable, parked: counts.parked,
+            holding: holding[key] ?? 0
         )
         if summaries[key] != next {
             summaries[key] = next
@@ -576,12 +599,22 @@ public final class VaultSync: SyncEngineDelegate {
 
     /// What one pass over a vault does: read the zone again when it has to, take in what arrived, send what changed.
     func cycle(_ key: VaultKey, fetch: Bool) async {
+        guard await storeIsCurrent(key) else { return }
         if fetch {
             try? await engine?.fetchNow()
         }
         try? await fetchAllNow(key)
         await drain(key)
         await produce(key)
+    }
+
+    /// The first step of a pass: a store that is older than the last state this Mac synced from it (a restored backup) reads nothing
+    /// from iCloud and sends nothing. A vault that cannot be read now is not judged; the passes that read it judge it.
+    private func storeIsCurrent(_ key: VaultKey) async -> Bool {
+        let mine = token(key)
+        guard let (database, _) = runningRow(key), unlocked.contains(key), let snapshot = await snapshot(key) else { return true }
+        guard mine == token(key), let (_, row) = runningRow(key) else { return false }
+        return notRolledBack(key, snapshot, row, database)
     }
 
     /// Asks the engine to send everything the vault still has waiting.

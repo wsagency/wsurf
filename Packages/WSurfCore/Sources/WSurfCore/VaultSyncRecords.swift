@@ -107,6 +107,8 @@ nonisolated public enum VaultSyncStatus: Equatable, Sendable {
     case waitingForUnlock(Int)
     /// Entries changed here and on another device (or that differ with no common ground) wait for a choice.
     case needsReview(Int)
+    /// This many entries were deleted here at once; their deletion waits for the owner.
+    case holdingRemovals(Int)
     case iCloudFull
     case signedOut
     /// A newer WSurf wrote this vault's `Vault` record (a key generation this build does not know).

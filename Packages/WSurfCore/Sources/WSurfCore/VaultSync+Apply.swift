@@ -360,9 +360,17 @@ extension VaultSync {
             guard mine == token(key), runningRow(key) != nil else { return }
         }
 
-        // Entries that were synced and are gone from the vault: a removed state at the next version.
-        for (id, base) in inputs.bases.sorted(by: { $0.key.uuidString < $1.key.uuidString })
-        where !base.parts.removed && !live.contains(id) && !inputs.reviewed.contains(id) && !inputs.parked.contains(id) {
+        // Entries that were synced and are gone from the vault: a removed state at the next version. A pass that would send a large
+        // part of the vault's entries as removed sends none of them until the owner agrees.
+        let gone = inputs.bases.sorted { $0.key.uuidString < $1.key.uuidString }.filter { id, base in
+            !base.parts.removed && !live.contains(id) && !inputs.reviewed.contains(id) && !inputs.parked.contains(id)
+        }
+        let released = releasing.remove(key) != nil
+        let sending = gone.filter { id, _ in !(inputs.outgoing.contains(id) && pendingBases[key]?[id]?.parts.removed == true) }
+        let limit = max(Self.removalFloor, inputs.bases.values.filter { !$0.parts.removed }.count / 4)
+        let holds = sending.count > limit && !released
+        holding[key] = holds ? sending.count : nil
+        for (id, base) in gone where !holds {
             guard !(handedOut[key]?.contains(id) ?? false) else {
                 work.held = true
                 continue

@@ -661,7 +661,7 @@ struct VaultSyncDeviceTests {
         try await sync.enable(profileID: profile.id, vaultID: vault.vaultID)
         #expect(model.syncStatus != nil && controls().row > 40, "the switch with its Remove from iCloud row")
         let statuses: [VaultSyncStatus] = [
-            .off, .synced, .sending(2), .waitingForUnlock(2), .needsReview(1), .iCloudFull, .signedOut, .needsUpdate, .rolledBack,
+            .off, .synced, .sending(2), .waitingForUnlock(2), .needsReview(1), .holdingRemovals(2), .iCloudFull, .signedOut, .needsUpdate, .rolledBack,
             .removed(.deleted), .removed(.purged), .removed(.encryptedDataReset), .accountChanged,
         ]
         for status in statuses {
