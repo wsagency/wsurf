@@ -74,10 +74,11 @@ extension BrowserSettings {
         (font.ascender - font.descender + font.leading).rounded(.up)
     }
 
+    /// The middle of a capital letter, above the baseline. SF Symbols, and the icons drawn to sit beside text, are
+    /// centered on that line, so a title that shares it reads as level with its icon. Centering the title halfway
+    /// between a capital and a lowercase letter put the capitals above the icon's middle: the icon looked low.
     private static func titleMidline(of font: NSFont) -> CGFloat {
-        font.capHeight > 0 && font.xHeight > 0
-            ? (font.capHeight + font.xHeight) / 4
-            : (font.ascender + font.descender) / 2
+        font.capHeight > 0 ? font.capHeight / 2 : (font.ascender + font.descender) / 2
     }
 
     /// The sidebar font at `scale` times its size, with the line height and title midline that go with it, for a
@@ -107,8 +108,8 @@ extension BrowserSettings {
         return globalSettings.sidebarLineHeightCache
     }
 
-    /// How far above the baseline the middle of the sidebar's text sits: halfway between the middle of a capital
-    /// and the middle of a lowercase letter, which is where the weight of a title is.
+    /// How far above the baseline the middle of the sidebar's text sits: the middle of a capital letter, which is
+    /// the line an icon beside a title is centered on.
     var sidebarTitleMidline: CGFloat {
         _ = sidebarFont
         return globalSettings.sidebarTitleMidlineCache

@@ -410,9 +410,8 @@ struct SidebarRowRenderTests {
         return (edges.lowerBound + edges.upperBound) / 2 - ink.height / 2
     }
 
-    /// The icon is as high as the row's middle, and so is the middle of the letters in the title: halfway between
-    /// the tops of capitals and of lowercase letters, above the baseline. `iconBias` is where the ink of the icon
-    /// sits in its own frame.
+    /// The icon is as high as the row's middle, and so is the middle of the capitals in the title: half a capital's
+    /// height above the baseline. `iconBias` is where the ink of the icon sits in its own frame.
     private func expectCentered(
         _ ink: Ink,
         icon: ClosedRange<CGFloat>,
@@ -428,7 +427,7 @@ struct SidebarRowRenderTests {
             "\(name): no title was drawn",
             sourceLocation: sourceLocation
         )
-        let midline = (font.capHeight + font.xHeight) / 4
+        let midline = font.capHeight / 2
         let iconOff = (iconEdges.lowerBound + iconEdges.upperBound) / 2 - center - iconBias
         let titleOff = title.upperBound - midline - center
         let capitals = title.upperBound - title.lowerBound
@@ -487,6 +486,92 @@ struct SidebarRowRenderTests {
                 icon: 10...20, font: font, "a split pane"
             )
         }
+    }
+
+    private struct RowOffsets {
+        let icon: CGFloat
+        let capitals: CGFloat
+    }
+
+    /// How far, in points, the middle of the icon and the middle of the capitals beside it are from the middle of
+    /// the row. A title of capitals has flat edges, so the middle of its ink is the middle of its capitals.
+    private func offsets(
+        of row: some View,
+        height: CGFloat,
+        iconSize: CGFloat,
+        font: NSFont,
+        _ name: String
+    ) throws -> RowOffsets {
+        let ink = try readInk(of: sidebar(row, height: height), baseAt: CGPoint(x: rowWidth - 60, y: height / 2))
+        let padding = SidebarMetrics.rowContentPadding(style: .full)
+        let titleStart = padding + iconSize + SidebarMetrics.rowIconSpacing
+        let icon = try #require(ink.vertical(in: padding...(padding + iconSize)), "\(name): no icon was drawn")
+        let title = try #require(
+            ink.vertical(in: titleStart...(titleStart + width(of: Self.measuredTitle, in: font))),
+            "\(name): no title was drawn"
+        )
+        let center = ink.height / 2
+        return RowOffsets(
+            icon: (icon.lowerBound + icon.upperBound) / 2 - center,
+            capitals: (title.lowerBound + title.upperBound) / 2 - center
+        )
+    }
+
+    /// The renderer draws at 1x, which puts an icon or a baseline on a whole point: each can sit half a point off
+    /// its true place, and a symbol is drawn a little low in its frame. The capitals are held to the row's middle
+    /// tighter than the icon, so the title cannot drift back towards the middle of the lowercase letters, which
+    /// puts the capitals a point above it.
+    private let capitalsTolerance: CGFloat = 0.6
+    private let iconTolerance: CGFloat = 1.0
+
+    @Test(arguments: [12.0, 16, 24])
+    func aTabIconMeetsTheCapitalsAtEveryThemeIconSize(iconSize: Double) throws {
+        let settings = BrowserSettings.application
+        let fixture = makeFixture()
+        defer { fixture.restoreTheme() }
+        settings.themeAdjustments["standard"] = ThemeAdjustment(tabIconSize: iconSize)
+        settings.refreshTheme()
+        let font = sidebarFont(size: settings.sidebarFontSize, family: settings.sidebarFontFamily)
+        let symbol = fixture.browser.newTab()
+        symbol.title = Self.measuredTitle
+        symbol.urlString = "https://example.com/"
+        let favicon = fixture.browser.newTab()
+        measurable(favicon)
+
+        for (name, tab) in [("a tab with a symbol", symbol), ("a tab with a favicon", favicon)] {
+            let row = SidebarTabRow(tab: tab, depth: 0, context: fixture.context)
+            let found = try offsets(of: row, height: rowHeight, iconSize: SidebarMetrics.rowIconSize, font: font, name)
+            #expect(
+                abs(found.capitals) <= capitalsTolerance && abs(found.icon) <= iconTolerance,
+                "\(name) at \(iconSize) pt: the capitals are \(found.capitals) pt and the icon \(found.icon) pt off the row's middle"
+            )
+        }
+    }
+
+    @Test(arguments: [12.0, 16, 24], TabFolderSize.allCases)
+    func aFolderIconMeetsTheCapitalsAtEveryIconAndFolderSize(iconSize: Double, size: TabFolderSize) throws {
+        let settings = BrowserSettings.application
+        let fixture = makeFixture()
+        defer { fixture.restoreTheme() }
+        settings.themeAdjustments["standard"] = ThemeAdjustment(tabIconSize: iconSize)
+        settings.refreshTheme()
+        let font = sidebarFont(size: settings.sidebarFontSize * size.factor, family: settings.sidebarFontFamily)
+        let inFolder = fixture.browser.newTab()
+        let folder = fixture.browser.createFolder(named: Self.measuredTitle, containing: [inFolder])
+        folder.isExpanded = false
+        folder.size = size
+        let row = FolderSection(folder: folder, depth: 0, context: fixture.context)
+        let height = SidebarMetrics.rowHeight(settings: settings, scale: size.factor)
+
+        let found = try offsets(
+            of: row, height: height, iconSize: SidebarMetrics.rowIconSize * size.factor, font: font, "a folder"
+        )
+        // A drawn symbol is a little low in its frame, in proportion to its size.
+        let bias = 0.02 * SidebarMetrics.rowIconSize * size.factor
+        #expect(
+            abs(found.capitals) <= capitalsTolerance + bias && abs(found.icon) <= iconTolerance + bias,
+            "a folder at \(size) with icons of \(iconSize) pt: the capitals are \(found.capitals) pt and the icon \(found.icon) pt off the middle of a row \(height) pt tall"
+        )
     }
 
     @Test func aFolderTitleStartsWhereATabTitleStarts() throws {
