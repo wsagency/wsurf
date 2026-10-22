@@ -122,6 +122,8 @@ final class ConversationLog {
         var checkpoint: AgentCheckpoint?
         /// Tabs this task opened. The task shows in their Ask panel too.
         var openedTabIDs: [UUID] = []
+        /// The notes written from this task's words, for the "Remembered …" line. In memory only: never saved with the conversation.
+        var memoryUpdates: [AgentMemoryUpdate] = []
 
         var progressUpdates: [AgentProgressUpdate] {
             checkpoint?.progressUpdates ?? []
@@ -460,6 +462,12 @@ final class ConversationLog {
 
     func traces(forTab tabID: UUID) -> [TaskTrace] {
         traces.filter { $0.tabID == tabID || $0.openedTabIDs.contains(tabID) }
+    }
+
+    func noteMemoryUpdates(_ updates: [AgentMemoryUpdate], taskID: UUID) {
+        guard !updates.isEmpty, let index = traces.firstIndex(where: { $0.id == taskID }) else { return }
+        traces[index].memoryUpdates.removeAll { old in updates.contains { $0.factID == old.factID } }
+        traces[index].memoryUpdates += updates
     }
 
     func noteOpenedTab(_ tabID: UUID, taskID: UUID) {

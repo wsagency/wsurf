@@ -95,7 +95,9 @@ final class AnyLanguageModelAgent: AgentRunner {
         guard let pending = pendingFacts, pending.taskID == taskID else { return }
         pendingFacts = nil
         guard !Task.isCancelled, let model = factModel?() else { return }
-        await toolkit.writeFacts(from: pending.said, using: model)
+        let updates = await toolkit.writeFacts(from: pending.said, using: model)
+        // The "Remembered …" line under the answer, with Undo.
+        log.noteMemoryUpdates(updates, taskID: taskID)
     }
 
     func prepare() {

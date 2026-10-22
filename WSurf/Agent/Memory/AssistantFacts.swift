@@ -7,6 +7,15 @@ import GRDB
 import Observation
 import os
 
+/// One note the assistant wrote after a turn, for the "Remembered …" line under that answer (Linen's `AgentMemoryUpdate`): the note,
+/// and the value it replaced (nil for a new note), so Undo can put it back. It lives with the conversation in memory and is never saved.
+nonisolated struct AgentMemoryUpdate: Codable, Equatable, Hashable, Sendable {
+    let factID: UUID
+    let subject: String
+    let value: String
+    let previous: String?
+}
+
 /// Short notes the assistant keeps about the person, in the profile's database. History-class data: MCP never reads it, and a
 /// private window has no store. Nothing is kept while the profile's "Remember things about me" setting is off, which is the
 /// default.
@@ -95,6 +104,46 @@ final class AssistantFacts {
             _ = try Fact.deleteAll(db)
         }
         reload()
+    }
+
+    enum UpdateStatus: Equatable {
+        case kept
+        case changed
+        case forgotten
+    }
+
+    /// Whether the note still says what `update` wrote, was changed since (by the person, a later turn or Undo), or is gone.
+    func status(of update: AgentMemoryUpdate) -> UpdateStatus {
+        guard let fact = facts.first(where: { $0.id == update.factID }) else { return .forgotten }
+        return fact.value == update.value ? .kept : .changed
+    }
+
+    /// The "Remembered …" line's Undo: a new note is forgotten, a changed one gets its earlier value back. A note changed or forgotten
+    /// since is left alone. Like the person's own edits, it works with the setting off.
+    @discardableResult
+    func undo(_ update: AgentMemoryUpdate) -> Bool {
+        guard status(of: update) == .kept, let fact = facts.first(where: { $0.id == update.factID }) else { return false }
+        guard let previous = update.previous else {
+            forget(fact.id)
+            return true
+        }
+        return self.update(fact, to: previous) != nil
+    }
+
+    /// The note whose subject holds every word of `subject` that matters: "my usual colour" finds "usual colour". Nil when none does.
+    func fact(about subject: String) -> Fact? {
+        let wanted = Self.words(in: subject)
+        return facts.first { !wanted.isEmpty && Self.words(in: $0.subject).isSuperset(of: wanted) }
+    }
+
+    /// Linen's matching words: three letters or more, common words left out, a plural made singular and "color" spelled "colour".
+    nonisolated private static func words(in text: String) -> Set<String> {
+        let ignored: Set<String> = ["the", "and", "for", "you", "your", "this", "that", "with", "set", "use", "what", "are", "was"]
+        return Set(text.lowercased().split { !$0.isLetter && !$0.isNumber }.map(String.init).filter { $0.count >= 3 && !ignored.contains($0) }
+            .map { word in
+                let singular = word.hasSuffix("s") && word.count > 4 ? String(word.dropLast()) : word
+                return singular == "color" ? "colour" : singular
+            })
     }
 
     /// The notes for the first prompt of a task, newest first, labeled as the person's notes rather than instructions, and at
