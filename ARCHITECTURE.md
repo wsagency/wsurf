@@ -334,7 +334,10 @@ synced unlock passkey. Each Mac merges what arrives into its own store through i
 base it keeps sealed in `Credentials.sync` in the profile's folder; it works only while the vault is unlocked and never
 prompts or touches a lease. A row is never sent over a record that was fetched and not merged, a record only a newer WSurf
 reads parks that one entry, a store older than the last state it synced reads and sends nothing, and a pass that would delete
-many entries at once waits for the owner. Store rows, History, Trash, files, settings and Input History never sync. Nothing
+many entries at once waits for the owner. A removed entry's `Item` carries what the entry stood for as keyed digests (its
+import trace, HMAC under a vault-derived subkey), and entries removed before the vault synced are sent once as removed states, so a
+Mac that never held an entry keeps it as a tombstone and an import there does not bring it back; a merge is part of what an entry
+syncs. Store rows, History, Trash, files, settings and Input History never sync. Nothing
 reaches CloudKit unless the feature's hidden flag (`experiments.iCloudTabs`, `experiments.iCloudVault`) is on and the signed
 binary carries the iCloud, CloudKit and push entitlements (`CloudSyncGate`); a build that is unsigned, staged or has a bundle ID
 suffix never creates the container. Private windows, the private profile, page state, history, autofill, cookies, permissions
