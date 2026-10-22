@@ -356,6 +356,7 @@ struct CredentialSettings: View {
         vaultsSection
         // The same entries as the unlocked tab, visible but off, so it is clear why nothing can be imported or exported yet.
         SettingsSection(title: "Import & Export", symbol: "arrow.up.arrow.down", footnote: lockedTransferReason) {
+            AutofillImportRows(model: model) { showsCreateWarning = true }
             DetailRow(title: "Import passwords from a CSV file") {
                 Button("Choose File…") {}.buttonStyle(.bordered).disabled(true)
             }
@@ -536,6 +537,7 @@ struct CredentialSettings: View {
                 """
         ) {
             legacyImportRows
+            AutofillImportRows(model: model) { showsCreateWarning = true }
             DetailRow(title: "Import passwords from a CSV file") {
                 Button("Choose File…") { importCSV() }
                     .buttonStyle(.bordered)
