@@ -3,9 +3,9 @@
 
 import SwiftUI
 
-/// On the Autofill page while the passwords saved before Credential Manager have not been moved. The page reads `state` with
-/// `LegacyPasswordMigration.state()`, which asks the Keychain whether the old list exists and nothing more: no password is read
-/// and the system never prompts.
+/// On the Autofill page's Vault tab while the passwords saved before Credential Manager have not been moved. `state` is
+/// `LegacyPasswordImport.state`, which asks the Keychain whether the old list exists and nothing more: no password is read and the
+/// system never prompts. `open` shows the import rows on the Settings tab.
 struct LegacyPasswordCard: View {
     let state: LegacyPasswordMigration.State?
     let open: () -> Void
@@ -14,7 +14,7 @@ struct LegacyPasswordCard: View {
         if let state, state != .done {
             SettingsCard {
                 DetailRow(title: "Passwords saved before Credential Manager", caption: caption(state)) {
-                    Button("Open Credential Manager", action: open).buttonStyle(.bordered)
+                    Button("Show in Settings", action: open).buttonStyle(.bordered)
                 }
             }
         }

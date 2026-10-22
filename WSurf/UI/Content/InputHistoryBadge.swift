@@ -3,7 +3,7 @@
 
 import SwiftUI
 
-/// Beside the key: opens Settings > Autofill > Input History. It appears only while Input History is on.
+/// Beside the key: opens the Input History section of Settings > Autofill > Vault. It appears only while Input History is on.
 struct InputHistoryBadge: View {
     let browser: BrowserModel
     let coordinator: AppCoordinator

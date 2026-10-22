@@ -71,7 +71,7 @@ extension CredentialSettingsModel {
     }
 
     private static func holdsSensitiveItems(_ version: CredentialVersion) -> Bool {
-        version.account.secureItems?.contains { $0.kind.isSensitive } == true
+        version.account.secureItems?.contains(where: \.isSensitive) == true
     }
 
     func hideHistorySecrets() {

@@ -4,8 +4,9 @@
 import SwiftUI
 
 /// The editor's cards, addresses and other items. Each value is typed in place; a hidden one (a card number, a key) is masked until
-/// its eye button shows it. The editor was opened under Touch ID when it holds a card or an identity document, so nothing here asks
-/// again. It reads and writes only the open draft; nothing is stored before Save.
+/// its eye button shows it. A custom field's type (Text, Hidden, Date, Number, Email) is chosen from its menu, and a date can be
+/// picked from a calendar. The editor was opened under Touch ID when it holds a sensitive item (`SecureItem.isSensitive`), so
+/// nothing here asks again. It reads and writes only the open draft; nothing is stored before Save.
 struct CredentialSecureItemsSection: View {
     let model: CredentialSettingsModel
     /// The values shown unmasked, by item and position. View state only: closing the editor masks everything again.
@@ -118,6 +119,9 @@ struct CredentialSecureItemsSection: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             } else if concealed && !shown.contains(key) {
                 SecureField(title, text: value(index, position)).labelsHidden().privacySensitive()
+            } else if field.field?.fieldType == .date {
+                TextField(title, text: value(index, position), prompt: Text(verbatim: "YYYY-MM-DD")).labelsHidden()
+                SecureItemDateButton(text: value(index, position), title: title)
             } else {
                 TextField(title, text: value(index, position)).labelsHidden().privacySensitive(concealed)
             }
@@ -137,7 +141,17 @@ struct CredentialSecureItemsSection: View {
                 .accessibilityLabel(shown.contains(key) ? "Hide \(title)" : "Show \(title)")
             }
             if item.kind == .customFields {
-                Toggle("Hidden", isOn: hidden(index, position)).toggleStyle(.checkbox).controlSize(.small)
+                Picker("Type", selection: fieldType(index, position)) {
+                    ForEach(typeChoices(field), id: \.self) { type in
+                        Text(verbatim: type.label).tag(type)
+                    }
+                }
+                .labelsHidden()
+                .pickerStyle(.menu)
+                .controlSize(.small)
+                .fixedSize()
+                .help("Type")
+                .accessibilityLabel("Type of \(title)")
             }
             CredentialCopyButton(label: "Copy \(title)") { copy(.secureField(item: index, field: position)) }
                 .disabled(field.value.isEmpty)
@@ -172,16 +186,18 @@ struct CredentialSecureItemsSection: View {
         )
     }
 
-    private func hidden(_ index: Int, _ position: Int) -> Binding<Bool> {
+    private func fieldType(_ index: Int, _ position: Int) -> Binding<CredentialEditableFieldType> {
         Binding(
-            get: { field(index, position)?.field?.fieldType == .concealedString },
-            set: { isHidden in
-                guard let current = field(index, position) else { return }
-                var metadata = current.field ?? CredentialEditableFieldMetadata(id: nil, label: nil, fieldType: .string)
-                metadata.fieldType = isHidden ? .concealedString : .string
-                model.draft?.secureItems[index].fields[position].field = metadata
-            }
+            get: { field(index, position)?.field?.fieldType ?? .string },
+            set: { model.draft?.setCustomFieldType($0, item: index, field: position) }
         )
+    }
+
+    /// The menu's types, and the field's own when an import gave it another one, so it shows as it is.
+    private func typeChoices(_ field: SecureItemField) -> [CredentialEditableFieldType] {
+        let current = field.field?.fieldType ?? .string
+        let choices = CredentialEditableFieldType.customFieldChoices
+        return choices.contains(current) ? choices : choices + [current]
     }
 
     private func itemLabel(_ index: Int) -> Binding<String> {
@@ -199,5 +215,41 @@ struct CredentialSecureItemsSection: View {
             return nil
         }
         return items[index].fields[position]
+    }
+}
+
+/// Picks a date for a date value from a calendar. The text stays the value: a date is written as the Credential Exchange's
+/// "YYYY-MM-DD", read and shown in UTC so no time zone moves it by a day.
+private struct SecureItemDateButton: View {
+    @Binding var text: String
+    let title: String
+    @State private var isPicking = false
+
+    private static let style = Date.ISO8601FormatStyle().year().month().day()
+
+    var body: some View {
+        Button {
+            isPicking = true
+        } label: {
+            Image(systemName: "calendar").frame(width: 24, height: 24).contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.secondary)
+        .help("Choose Date")
+        .accessibilityLabel("Choose \(title)")
+        .popover(isPresented: $isPicking) {
+            DatePicker(title, selection: date, displayedComponents: .date)
+                .datePickerStyle(.graphical)
+                .labelsHidden()
+                .environment(\.timeZone, .gmt)
+                .padding(12)
+        }
+    }
+
+    private var date: Binding<Date> {
+        Binding(
+            get: { (try? Self.style.parse(text)) ?? .now },
+            set: { text = $0.formatted(Self.style) }
+        )
     }
 }

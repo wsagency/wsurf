@@ -29,7 +29,8 @@ extension InputHistoryRetention {
     }
 }
 
-/// Settings > Autofill > Input History: the switch, how long entries stay, the excluded websites, and the entries themselves.
+/// The Input History section of the Autofill page's Vault tab: the switch, how long entries stay, the excluded websites, and the
+/// entries themselves. It belongs to the profile, not to a vault, so it works whether or not a vault exists or is unlocked.
 ///
 /// Opening the page asks for nothing. The entries stay encrypted until the person asks to see them, which needs Touch ID or the
 /// Mac password. They are dropped two minutes after the page closes, and at once on any vault lock event.
@@ -83,7 +84,6 @@ struct InputHistorySettings: View {
     }
 
     var body: some View {
-        SettingsPageHeader(title: "Input History", caption: "Find text you typed on websites, including passwords you didn’t save.")
         SettingsCard {
             DetailRow(
                 title: "Remember what I type",

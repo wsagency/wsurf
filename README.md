@@ -153,8 +153,8 @@ Passwords PIN, fill, save, OTP, 15-minute idle, lock, and sleep behavior has
 not been verified in an own signed WSurf build.
 
 Credential Manager is WSurf’s only built-in password store. Passwords saved by
-earlier builds are imported once, after you review them, in Settings › Autofill
-› Credential Manager. The old list is deleted only after that import and your
+earlier builds are imported once, after you review them, on the Settings tab of
+Settings › Autofill. The old list is deleted only after that import and your
 confirmation. Installed extensions still act until you turn them off in
 Extensions, and Settings warns you. Credential Manager keeps passwords, ES256
 passkeys, and one-time codes in an encrypted per-profile store unlocked by a

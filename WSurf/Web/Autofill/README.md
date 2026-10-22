@@ -153,7 +153,7 @@ exercised end to end:
 - An installed password extension can still act until the user turns it off;
   Settings warns about it.
 - Passwords saved by earlier builds are imported once through the reviewed
-  import in Settings › Autofill › Credential Manager. The Keychain list is
+  import on the Settings tab of Settings › Autofill. The Keychain list is
   read only after the user chooses Review, and erased only after a successful
   import and an explicit confirmation that names every password the vault does
   not hold. Detection at launch asks the Keychain whether the list exists and
@@ -173,7 +173,7 @@ exercised end to end:
 
 ## Input History
 
-Input History (`WSurf/Web/InputHistory`, Settings › Autofill › Input History)
+Input History (`WSurf/Web/InputHistory`, the Input History section of Settings › Autofill › Vault)
 keeps what the person typed so a password that was never saved can be found
 again. It is off by default. Source behavior:
 
@@ -197,7 +197,7 @@ again. It is off by default. Source behavior:
   and unlocked on the click; nothing is written until the person confirms, and
   a vault that changed since writes nothing and shows the new plan once.
 - While the switch is on, the toolbar shows a clipboard button beside the key
-  (`InputHistoryBadge`). It opens Settings › Autofill › Input History through
+  (`InputHistoryBadge`). It opens Settings › Autofill › Vault › Input History through
   `AppCoordinator.openSettings(revealing:)` and `pendingSettingsAnchor`. It is
   hidden in private profiles and on internal pages. Opening the page never
   unlocks the list.

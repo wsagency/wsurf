@@ -109,12 +109,12 @@ struct CredentialCopyParts {
         items = draft.secureItems
     }
 
-    /// Whether `part` is a hidden value of a card or an identity document, which needs Touch ID before it leaves the vault.
+    /// Whether `part` is a hidden value of a sensitive item (`SecureItem.isSensitive`), which needs Touch ID before it leaves the vault.
     func isSensitive(_ part: CredentialCopyPart) -> Bool {
         guard case let .secureField(index, position) = part, items.indices.contains(index),
               items[index].fields.indices.contains(position) else { return false }
         let item = items[index]
-        return item.kind.isSensitive && item.isConcealed(item.fields[position])
+        return item.isSensitive && item.isConcealed(item.fields[position])
     }
 
     /// The editor's website lines in the order `CredentialCopyPart.website` counts them.

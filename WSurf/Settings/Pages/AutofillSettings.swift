@@ -4,104 +4,42 @@
 
 import SwiftUI
 
-enum AutofillDestination: String {
-    case credentials, cards, contacts, inputHistory
+/// Where a Settings search result or a deep link lands on the Autofill page: a tab, and on the Vault tab a section. Every Autofill
+/// entry of `SettingsIndex` resolves to one; the anchor itself is on the row it names, so the row is highlighted there.
+enum AutofillDestination: Equatable {
+    case vault(CredentialListFilter)
+    case inputHistory
+    case settings
 
     init?(anchor: String?) {
-        guard let anchor else { return nil }
-        self.init(rawValue: anchor == "autofill.applePay" ? "cards" : anchor.replacingOccurrences(of: "autofill.", with: ""))
+        switch anchor {
+        case "autofill.credentials":
+            self = .vault(.all)
+        case "autofill.inputHistory":
+            self = .inputHistory
+        case "autofill.passwords", "autofill.cards", "autofill.applePay", "autofill.contacts":
+            self = .settings
+        default:
+            return nil
+        }
     }
 }
 
+/// Settings > Autofill. The page is the vault's (`CredentialSettings`): its Vault and Settings tabs also hold Input History, the
+/// autofill switches and the cards and addresses kept on this Mac.
 struct AutofillSettings: View {
     let coordinator: AppCoordinator
     var highlight: String?
-    @State private var destination: AutofillDestination?
-    @State private var legacyState: LegacyPasswordMigration.State?
-
-    private var fillsPasswords: Binding<Bool> {
-        Binding(
-            get: { coordinator.context.settings.fillsPasswords },
-            set: { coordinator.context.settings.fillsPasswords = $0 }
-        )
-    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: SettingsMetrics.sectionSpacing) {
-            if let destination {
-                SubPageHeader(backTitle: "Autofill", onBack: { self.destination = nil }) {}
-                switch destination {
-                case .credentials:
-                    CredentialSettings(profile: coordinator.context.profile) { url in
-                        // The window this page is in: the same profile, so a private window never opens a normal one.
-                        coordinator.browser.newTab(url: url, activate: true, after: coordinator.browser.activeTab)
-                    }
-                case .cards:
-                    PaymentCardSettings(context: coordinator.context)
-                case .contacts:
-                    ContactAutofillSettings(context: coordinator.context)
-                case .inputHistory:
-                    InputHistorySettings(context: coordinator.context)
-                }
-            } else {
-                SettingsPageHeader(title: "Autofill", caption: "WSurf stores saved details on this Mac.")
-                LegacyPasswordCard(state: legacyState) { destination = .credentials }
-                SettingsCard {
-                    DrillInRow(
-                        title: "Credential Manager",
-                        symbol: "lock.shield",
-                        tint: .indigo,
-                        caption: "Passwords, passkeys, verification codes, notes, cards and other items in an encrypted vault."
-                    ) {
-                        destination = .credentials
-                    }
-                    RowSeparator()
-                    DrillInRow(title: "Payment cards", symbol: "creditcard", tint: .blue, caption: "Save and fill payment cards.") { destination = .cards }
-                    RowSeparator()
-                    DrillInRow(title: "Contacts and addresses", symbol: "person.crop.rectangle", tint: .green, caption: "Save and fill contact details.") { destination = .contacts }
-                    RowSeparator()
-                    DrillInRow(
-                        title: "Input History",
-                        symbol: "list.clipboard",
-                        tint: .orange,
-                        caption: "Find text you typed on websites, encrypted on this Mac. Off until you turn it on."
-                    ) {
-                        destination = .inputHistory
-                    }
-                    .disabled(coordinator.context.profile.isPrivate)
-                }
-                SettingsCard {
-                    DetailRow(title: "Save and fill passwords", caption: "Offer to save new logins after you sign in.") {
-                        SettingsToggle(fillsPasswords)
-                    }
-                }
-                .disabled(coordinator.context.profile.isPrivate)
-                .settingsAnchor("autofill.passwords")
-                if let installed = PasswordExtensionPolicy.provider(
-                    in: coordinator.context.extensions.installed + coordinator.context.extensions.systemExtensions
-                ) {
-                    Text("\(installed.displayName) is also enabled and may still fill passwords on its own. Turn it off in Extensions to use only Credential Manager.")
-                        .font(Theme.Font.label).foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
+            CredentialSettings(context: coordinator.context, highlight: highlight) { url in
+                // The window this page is in: the same profile, so a private window never opens a normal one.
+                coordinator.browser.newTab(url: url, activate: true, after: coordinator.browser.activeTab)
             }
         }
         .environment(\.settingsDescriptionLineLimit, 1)
         .id(coordinator.context.contextID)
-        // Read again whenever a page is left, so the card goes away once the old list is removed.
-        .task(id: destination) { legacyState = await LegacyPasswordMigration(profile: coordinator.context.profile).state() }
-        .onChange(of: highlight, initial: true) { _, anchor in
-            if let target = AutofillDestination(anchor: anchor) {
-                destination = target
-            }
-        }
-        // A queued system import opens the credential page of the profile this window shows. Showing it fetches
-        // nothing and unlocks nothing; the import is claimed only when the user reviews it from a profile's page.
-        .onChange(of: CredentialExchangeCoordinator.shared.pendingToken, initial: true) { _, token in
-            if token != nil {
-                destination = .credentials
-            }
-        }
     }
 }
 

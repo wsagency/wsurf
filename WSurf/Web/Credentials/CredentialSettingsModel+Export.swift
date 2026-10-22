@@ -21,7 +21,7 @@ extension CredentialSettingsModel {
             // A card's or an ID document's values leave the vault only after Touch ID, asked before the system's sheet. The summaries
             // are the ones the stamps vouch for: an account that changed since is refused by the export itself.
             if CredentialExportSelection.sendsSensitiveItems(selection, in: self.summaries) {
-                try await self.verifyUser(String(localized: "export saved cards and documents"))
+                try await self.verifyUser(String(localized: "export saved cards, documents and hidden fields"))
                 try Task.checkCancellation()
             }
             outcome = try await self.exchange.exportCredentials(

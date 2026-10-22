@@ -19,6 +19,16 @@ nonisolated enum SecureItemKind: String, Codable, Sendable, CaseIterable {
         }
     }
 
+    /// A person's name or an identity document: what makes an entry without a sign-in an identity.
+    var isIdentity: Bool {
+        switch self {
+        case .personName, .driversLicense, .passport, .identityDocument:
+            true
+        case .creditCard, .address, .wifi, .apiKey, .sshKey, .customFields:
+            false
+        }
+    }
+
     /// The Credential Exchange members of this kind, in the SDK's order. `customFields` has none: its fields are positional.
     var members: [SecureItemMember] {
         typealias Member = SecureItemMember
@@ -123,6 +133,12 @@ nonisolated struct SecureItem: Codable, Sendable, Equatable {
     /// Hidden until revealed: a field the exporter marked hidden, or one of a member that is always hidden (a card number, a key).
     func isConcealed(_ field: SecureItemField) -> Bool {
         field.field?.fieldType == .concealedString || kind.member(field.name)?.isSecret == true
+    }
+
+    /// Showing or copying its hidden values, and opening the editor of a credential holding it, asks for Touch ID: a card, an
+    /// identity document, or custom fields with a hidden value (an SSN, an OIB). A Wi-Fi password or an API key does not.
+    var isSensitive: Bool {
+        kind.isSensitive || kind == .customFields && fields.contains(where: isConcealed)
     }
 
     /// The first value of `member`, or nil when the item has none.

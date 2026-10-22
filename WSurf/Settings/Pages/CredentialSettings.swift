@@ -5,7 +5,9 @@ import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// Account, passkey and verification-code management for one profile's vault. Reached from `AutofillSettings`.
+/// Settings > Autofill: a vault picker, then two tabs. Vault holds every entry of the selected vault by section (Logins, Identities,
+/// Cards, Addresses, Contacts, Notes…) with Trash, plus Input History and, until they move into the vault, the cards and addresses
+/// kept on this Mac. Settings holds what autofill saves and fills, the vaults, unlock passkeys, import and export.
 struct CredentialSettings: View {
     /// How many credentials of a finished import are listed by name; the transfer message has the totals.
     private static let listedResults = 50
@@ -14,41 +16,46 @@ struct CredentialSettings: View {
     @State var showsCreateWarning = false
     @State var showsMigrationConfirmation = false
     @State var showsTrash = false
-    /// Always the Credentials tab when the page opens.
-    @State private var tab = CredentialPageTab.credentials
+    /// Always the Vault tab when the page opens, unless a Settings search result or a deep link names another place.
+    @State private var tab = CredentialPageTab.vault
     @State var list: CredentialListState
     /// Which rows are selected and where the keyboard cursor is, for the credential list and the Trash.
     @State var selection: CredentialSelection
     @State private var work: Task<Void, Never>?
     @State private var exportContext: CredentialExportContext?
+    /// The profile's autofill switches, Input History and the cards and addresses kept on this Mac, which share the page with the
+    /// vault. `nil` in the page's tests, which see the vault alone.
+    private let context: BrowserProfileContext?
+    /// The Settings search result or deep link the page was opened for (`AutofillDestination`).
+    private let highlight: String?
 
     /// `openWebsite` opens an address in a new tab of the window that shows this page.
-    init(profile: Profile, openWebsite: @escaping @MainActor (URL) -> Void) {
-        let model = CredentialSettingsModel(profile: profile)
+    init(context: BrowserProfileContext, highlight: String?, openWebsite: @escaping @MainActor (URL) -> Void) {
+        let model = CredentialSettingsModel(profile: context.profile)
         model.websiteOpener = openWebsite
-        self.init(model: model)
+        self.init(model: model, context: context, highlight: highlight)
     }
 
     /// Test seam: a page over a model that already has its own manager, and the list state and selection a test can drive.
     init(
         model: CredentialSettingsModel, list: CredentialListState = CredentialListState(),
-        selection: CredentialSelection = CredentialSelection()
+        selection: CredentialSelection = CredentialSelection(), context: BrowserProfileContext? = nil, highlight: String? = nil
     ) {
         _model = State(initialValue: model)
         _list = State(initialValue: list)
         _selection = State(initialValue: selection)
+        self.context = context
+        self.highlight = highlight
     }
 
     var body: some View {
         // Kept by every state below. On the branching `Group` the modifier applied to each child of the current branch,
         // and the weak anchor kept whichever view updated last, which could be one already removed from the window.
-        SettingsPageHeader(title: "Credentials")
+        SettingsPageHeader(title: "Autofill", caption: "WSurf stores saved details on this Mac.")
             .background(CredentialWindowAnchorView(anchor: anchor))
         scratchWarnings
         Group {
-            if let failClosed = model.failClosed {
-                failClosedContent(failClosed)
-            } else if !model.isAvailable {
+            if !model.isAvailable {
                 SettingsCard {
                     SettingsEmptyState(
                         symbol: "lock",
@@ -56,11 +63,25 @@ struct CredentialSettings: View {
                         caption: "Private Browsing and removed profiles don’t keep a credential vault."
                     )
                 }
+                if let context {
+                    AutofillOptions(context: context)
+                }
             } else {
                 tabs
             }
         }
         .settingsAnchor("autofill.credentials")
+        .onChange(of: highlight, initial: true) { _, anchor in
+            if let destination = AutofillDestination(anchor: anchor) {
+                open(destination)
+            }
+        }
+        // A queued system import is reviewed from the Vault tab. Showing it fetches nothing and unlocks nothing.
+        .onChange(of: model.pendingImportToken, initial: true) { _, token in
+            if token != nil {
+                open(.vault(.all))
+            }
+        }
         .task(id: model.authorizationEpoch) { await model.load() }
         .task { await model.legacy.refresh() }
         .onDisappear {
@@ -156,36 +177,103 @@ struct CredentialSettings: View {
 
     // MARK: Tabs
 
-    /// The tab bar, then what the chosen tab shows for the vault's state. The transfer ending sits above both tabs, so it is
-    /// seen wherever the user is when an import or export finishes.
+    /// The tab bar with the vault picker beside it, then what the chosen tab shows. The transfer ending sits above both tabs, so it
+    /// is seen wherever the user is when an import or export finishes.
     @ViewBuilder
     private var tabs: some View {
-        SegmentedControl(
-            items: [.init(value: .credentials, label: "Credentials"), .init(value: .settings, label: "Settings")],
-            selection: tab,
-            onSelect: { next in
-                if next != .credentials {
-                    leaveTrash()
+        HStack(spacing: 10) {
+            SegmentedControl(
+                items: [.init(value: .vault, label: "Vault"), .init(value: .settings, label: "Settings")],
+                selection: tab,
+                onSelect: { next in
+                    if next != .vault {
+                        leaveTrash()
+                    }
+                    tab = next
                 }
-                tab = next
-            }
-        )
-        .frame(width: 260)
-        .frame(maxWidth: .infinity, alignment: .leading)
+            )
+            .frame(width: 260)
+            Spacer(minLength: 0)
+            CredentialVaultPicker(model: model, run: run)
+        }
         if model.isLoaded {
             transferEnding
         }
-        switch (tab, model.presentation) {
-        case (_, .opening):
-            openingPlaceholder
-        case (.credentials, .content):
-            credentialsTab
-        case (.credentials, .locked):
-            lockedCredentials
-        case (.settings, .content):
-            settingsTab
-        case (.settings, .locked):
-            lockedSettings
+        switch tab {
+        case .vault:
+            vaultTab
+        case .settings:
+            if let context {
+                AutofillOptions(context: context)
+            }
+            vaultContent { settingsTab } locked: { lockedSettings }
+        }
+    }
+
+    /// The sections, then the vault's entries (or Input History). The cards and addresses kept on this Mac follow their sections
+    /// whatever the vault's state, since they are not in it yet.
+    @ViewBuilder
+    private var vaultTab: some View {
+        // The import of the passwords saved before Credential Manager is on the Settings tab; a locked vault says so in its own card.
+        if model.presentation == .content, !showsTrash, !list.showsInputHistory {
+            LegacyPasswordCard(state: model.legacy.state) { open(.settings) }
+        }
+        if !showsTrash {
+            VaultSectionBar(list: list, showsCounts: model.presentation == .content, offersInputHistory: context != nil)
+        }
+        if list.showsInputHistory, let context {
+            InputHistorySettings(context: context)
+        } else {
+            vaultContent { credentialsTab } locked: { lockedCredentials }
+            if let context, !showsTrash {
+                if list.filter == .cards {
+                    SavedPaymentCards(profileID: context.profile.id)
+                }
+                if list.filter == .addresses || list.filter == .contacts {
+                    SavedContactAddresses(profile: context.profile)
+                }
+            }
+        }
+    }
+
+    /// What a tab shows of the vault for its state; only the branch shown is built. A store that refused to open shows only its paths
+    /// and a re-check, on both tabs, while the rest of Autofill stays usable.
+    @ViewBuilder
+    private func vaultContent<Content: View, Locked: View>(
+        @ViewBuilder content: () -> Content, @ViewBuilder locked: () -> Locked
+    ) -> some View {
+        if let failClosed = model.failClosed {
+            failClosedContent(failClosed)
+        } else {
+            switch model.presentation {
+            case .opening:
+                openingPlaceholder
+            case .content:
+                content()
+            case .locked:
+                locked()
+            }
+        }
+    }
+
+    /// Opens the tab and section a Settings search result, a deep link or a queued import names. Leaving the Trash deletes what was
+    /// marked there, as its Active switch does.
+    private func open(_ destination: AutofillDestination) {
+        if showsTrash {
+            leaveTrash()
+            selection.reset()
+            showsTrash = false
+        }
+        switch destination {
+        case .vault(let filter):
+            tab = .vault
+            list.showsInputHistory = false
+            list.filter = filter
+        case .inputHistory:
+            tab = .vault
+            list.showsInputHistory = true
+        case .settings:
+            tab = .settings
         }
     }
 
@@ -206,14 +294,10 @@ struct CredentialSettings: View {
 
     // MARK: Locked
 
-    /// A locked vault shows no content, so this tab holds only the way in. A profile with several vaults picks which one to open here.
+    /// A locked vault shows no content, so this tab holds only the way in. A profile with several vaults picks which one to open with
+    /// the picker beside the tabs.
     @ViewBuilder
     private var lockedCredentials: some View {
-        if model.vaults.count > 1 {
-            SettingsCard {
-                DetailRow(title: "Vault") { CredentialVaultPicker(model: model, run: run) }
-            }
-        }
         SettingsCard {
             VStack(spacing: 12) {
                 if model.isBusy {
@@ -327,8 +411,7 @@ struct CredentialSettings: View {
             EmptyView()
         case .checkSavedCredentials:
             Button("Show Credentials") {
-                tab = .credentials
-                showsTrash = false
+                open(.vault(.all))
                 model.dismissTransferMessage()
             }
         }

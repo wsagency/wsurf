@@ -4,9 +4,10 @@
 import Observation
 import SwiftUI
 
-/// The two tabs of the Credentials page.
+/// The two tabs of the Autofill page: everything the vault holds (and, until it moves into the vault, Input History and the cards and
+/// addresses kept on this Mac), and every setting.
 enum CredentialPageTab: Hashable {
-    case credentials
+    case vault
     case settings
 }
 
@@ -17,6 +18,8 @@ enum CredentialPageTab: Hashable {
 final class CredentialListState {
     var query = ""
     var filter = CredentialListFilter.all
+    /// The Vault tab's Input History section instead of the entries. It is the profile's, not a vault's, so `reset()` keeps it.
+    var showsInputHistory = false
     /// "By Site": the rows under a heading per site. A way of looking, so it stays across vaults and unlocks.
     var bySite = false
     /// The rows by site while `bySite` is on, `nil` otherwise; `rowsByID` holds the rows they name.
@@ -48,7 +51,7 @@ final class CredentialListState {
         rowsByID = Dictionary(shown.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
     }
 
-    /// Back to the whole list, for another vault or another unlock.
+    /// Back to the whole list, for another vault or another unlock. Input History stays open: it belongs to no vault.
     func reset() {
         query = ""
         filter = .all
@@ -79,14 +82,20 @@ extension CredentialListFilter {
             "Verification codes"
         case .notes:
             "Notes"
+        case .identities:
+            "Identities"
         case .cards:
             "Cards"
         case .addresses:
             "Addresses"
+        case .contacts:
+            "Contacts"
         case .documents:
             "IDs"
         case .otherItems:
             "Other"
+        case .files:
+            "Files"
         }
     }
 }
@@ -323,23 +332,16 @@ struct CredentialListView<Switcher: View>: View {
                     actions
                 }
             }
-            HStack(spacing: 10) {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 6) {
-                        ForEach(CredentialListFilter.allCases.filter(showsChip), id: \.self) { kind in
-                            chip(kind)
-                        }
-                        Toggle("By Site", isOn: $list.bySite)
-                            .toggleStyle(.button)
-                            .controlSize(.small)
-                        if merge.suggestionCount > 0 {
-                            Button("Suggested Merges (\(merge.suggestionCount.formatted()))") { merge.route = .suggestions }
-                                .controlSize(.small)
-                                .disabled(model.isBusy)
-                        }
-                    }
+            // The kind chips are the Vault tab's sections, above this list (`VaultSectionBar`); the vault picker is beside the tabs.
+            HStack(spacing: 6) {
+                Toggle("By Site", isOn: $list.bySite)
+                    .toggleStyle(.button)
+                    .controlSize(.small)
+                if merge.suggestionCount > 0 {
+                    Button("Suggested Merges (\(merge.suggestionCount.formatted()))") { merge.route = .suggestions }
+                        .controlSize(.small)
+                        .disabled(model.isBusy)
                 }
-                CredentialVaultPicker(model: model, run: run)
             }
         }
     }
@@ -347,9 +349,23 @@ struct CredentialListView<Switcher: View>: View {
     private var actions: some View {
         HStack(spacing: 10) {
             switcher
-            ToolbarChip(symbol: "plus", label: "Add Credential") {
+            // A click adds a login, as before; the arrow offers the other templates (an identity, a card, an address, a note).
+            Menu {
+                ForEach(CredentialTemplate.allCases, id: \.self) { template in
+                    Button {
+                        run { try await model.beginEditing(accountID: nil, template: template) }
+                    } label: {
+                        Label(template.title, systemImage: template.symbol)
+                    }
+                }
+            } label: {
+                Label("Add", systemImage: "plus")
+            } primaryAction: {
                 run { try await model.beginEditing(accountID: nil) }
             }
+            .fixedSize()
+            .help("Add a login, or choose what to add from the menu")
+            .accessibilityLabel("Add Credential")
             .disabled(model.isBusy)
             ToolbarChip(symbol: "lock", label: "Lock") { model.lock() }
         }
@@ -382,16 +398,49 @@ struct CredentialListView<Switcher: View>: View {
             }
         }
     }
+}
 
-    /// An item kind's chip is shown while some credential holds one, or while it is the filter in use.
-    private func showsChip(_ kind: CredentialListFilter) -> Bool {
-        !kind.isItemKind || list.filter == kind || (list.counts?[kind] ?? 0) > 0
+/// The Vault tab's sections: the vault's entries by kind (`CredentialListFilter.chips`), then Input History. Shown whether the vault
+/// is open, locked or not created yet, so Input History and the cards and addresses kept on this Mac stay reachable; the counts are
+/// shown only while it is open.
+struct VaultSectionBar: View {
+    let list: CredentialListState
+    /// Only while the vault is open.
+    let showsCounts: Bool
+    let offersInputHistory: Bool
+
+    /// Read here, not by the page, so a refresh of the counts (every keystroke of a search) redraws only this bar.
+    private var counts: [CredentialListFilter: Int]? {
+        showsCounts ? list.counts : nil
+    }
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                ForEach(CredentialListFilter.chips(counts: counts, selected: list.filter), id: \.self, content: chip)
+                if offersInputHistory {
+                    Toggle("Input History", isOn: Binding(get: { list.showsInputHistory }, set: { _ in list.showsInputHistory = true }))
+                        .toggleStyle(.button)
+                        .controlSize(.small)
+                }
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Sections")
     }
 
     private func chip(_ kind: CredentialListFilter) -> some View {
         let name = String(localized: kind.title)
-        return Toggle(isOn: Binding(get: { list.filter == kind }, set: { _ in list.filter = kind })) {
-            Text(verbatim: list.counts?[kind].map { "\(name) \($0.formatted())" } ?? name)
+        return Toggle(
+            isOn: Binding(
+                get: { list.filter == kind && !list.showsInputHistory },
+                set: { _ in
+                    list.filter = kind
+                    list.showsInputHistory = false
+                }
+            )
+        ) {
+            Text(verbatim: counts?[kind].map { "\(name) \($0.formatted())" } ?? name)
         }
         .toggleStyle(.button)
         .controlSize(.small)

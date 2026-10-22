@@ -106,6 +106,28 @@ extension CredentialExchangeTests {
         #expect(candidate.displayName == "Every kind")
     }
 
+    /// An identity's custom fields keep the type the editor's menu gave them (and any other an import brought) on the wire and back.
+    @Test func eachCustomFieldTypeOfAnIdentityLeavesAndComesBackAsItself() throws {
+        let types: [CredentialEditableFieldType] = [
+            .string, .concealedString, .date, .number, .email, .boolean, .yearMonth, .wifiNetworkSecurityType, .countryCode, .subdivisionCode,
+        ]
+        let fields = types.enumerated().map { index, type in
+            SecureItemField(name: "", value: sample(type, index), field: .init(id: nil, label: type.label, fieldType: type))
+        }
+        let custom = SecureItem(kind: .customFields, id: Data([0xC0, 0x03]), label: nil, fields: fields)
+        let identity = SecureItemFixtures.account([SecureItemFixtures.name(), custom], name: "Synthetic Child")
+        try identity.validate()
+
+        let exported = try CredentialExchangeCodec.export(snapshot([identity]), selection: [itemsOnly(identity)], format: .v1)
+        let wire = credentials(in: exported).compactMap(CredentialExchangeCodec.secureItemSource)
+        #expect(wire.map(\.kind) == [.personName, .customFields])
+        #expect(wire.last?.fields.map { CredentialEditableFieldType(exchange: $0.field.fieldType) } == types.map(Optional.some))
+
+        let candidate = try #require(try CredentialExchangeCodec.preview(exported, against: snapshot([])).candidates.first)
+        #expect(candidate.secureItems == identity.secureItems)
+        #expect(candidate.username.isEmpty && candidate.password == nil, "an identity comes back without a sign-in")
+    }
+
     @Test func itemsLeaveOnlyWhenSelectedAndAlone() throws {
         var stored = account(username: "ada", password: "pw")
         stored.secureItems = [SecureItemFixtures.card(), SecureItemFixtures.wifi()]
