@@ -286,12 +286,13 @@ struct PageWatchCenterTests {
     }
 
     @Test func twoStartsOfTheSameWatchKeepOnlyOne() async {
-        let harness = Harness(date: start)
+        let queue = PageWatchQueue()
+        let harness = Harness(date: start, queue: queue)
         let gate = Gate()
         harness.fetchGate = gate
         let first = Task { await harness.center.start(url: page, title: "", condition: "price below $50", everyMinutes: 60) }
         let second = Task { await harness.center.start(url: page, title: "", condition: "price below $50", everyMinutes: 60) }
-        #expect(await waitUntil { gate.waiters == 2 })
+        #expect(await waitUntil { gate.waiters == 1 && queue.pending == 1 })
         gate.open()
         let results = [await first.value, await second.value]
 
@@ -314,7 +315,8 @@ struct PageWatchCenterTests {
     }
 
     @Test func twoStartsForTheLastPlaceKeepOnlyOne() async throws {
-        let harness = Harness(date: start)
+        let queue = PageWatchQueue()
+        let harness = Harness(date: start, queue: queue)
         for index in 0..<(PageWatch.limit - 1) {
             _ = try #require(await watching(harness, condition: "condition \(index)"))
         }
@@ -322,7 +324,7 @@ struct PageWatchCenterTests {
         harness.fetchGate = gate
         let first = Task { await harness.center.start(url: page, title: "", condition: "left", everyMinutes: 60) }
         let second = Task { await harness.center.start(url: page, title: "", condition: "right", everyMinutes: 60) }
-        #expect(await waitUntil { gate.waiters == 2 })
+        #expect(await waitUntil { gate.waiters == 1 && queue.pending == 1 })
         gate.open()
         let results = [await first.value, await second.value]
 

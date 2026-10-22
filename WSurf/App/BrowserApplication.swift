@@ -126,6 +126,10 @@ final class BrowserApplication {
             showCredentialExchange()
         }
         mcpServer.resume()
+        // Every regular profile's watches, whether or not a window of it is open. Each waits a minute before its first reading.
+        for profile in catalog.profiles {
+            BrowserProfileContext.shared(for: profile).pageWatches?.resume()
+        }
         if let coordinator = activeCoordinator {
             Task { await coordinator.offerLegacyPasswordImport() }
         }

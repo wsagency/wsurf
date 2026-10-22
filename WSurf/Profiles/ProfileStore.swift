@@ -165,6 +165,8 @@ final class ProfileStore {
         if launchProfileID == profile.id {
             launchProfileID = nil
         }
+        // Stops the profile's watches and waits for their last write, so nothing lands in the folder the erase removes.
+        await BrowserProfileContext.existing(for: profile.id)?.pageWatches?.close()
         BrowserProfileContext.forget(profile.id)
         save()
         await Profile.erase(profile)

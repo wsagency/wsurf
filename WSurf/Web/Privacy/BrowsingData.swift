@@ -203,6 +203,7 @@ enum BrowsingData {
                 context.tabArchive.removeEntries(since: range.since)
             }
             context.conversationLog.clearAll()
+            context.pageWatches?.forgetPageText()
         }
 
         if kinds.contains(.cookies) {
@@ -241,6 +242,7 @@ enum BrowsingData {
             context: context
         )
         context.conversationLog.clearAll()
+        context.pageWatches?.forgetPageText()
     }
 
 }

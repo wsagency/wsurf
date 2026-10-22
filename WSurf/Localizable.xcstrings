@@ -6715,6 +6715,9 @@
     },
     "Notes about you that the assistant keeps on this Mac. See, edit or forget them." : {
       "comment" : "Settings search result detail for the Remember things about me switch."
+    },
+    "Watches read this page with WebKit. Your Chromium sign-ins are not used." : {
+      "comment" : "Note shown when a page watch is created or listed for a website set to open in Chromium: watches always read pages with WebKit, so the person's Chromium sign-ins are not used."
     }
   },
   "version" : "1.0"
