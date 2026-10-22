@@ -217,6 +217,7 @@
         "VaultSyncRaceTests",
         "VaultSyncRemovalGuardTests",
         "VaultSyncResurrectionTests",
+        "VaultSyncReviewSheetTests",
         "VaultSyncScaleTests",
         "VaultSyncTests",
         "VaultTablesTests",

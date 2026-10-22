@@ -2649,6 +2649,9 @@
     "Dismiss Error" : {
 
     },
+    "Dismiss keeps this Mac’s version. Your next change here replaces the version on your other devices; theirs stays in its History." : {
+      "comment" : "Caption under the list in the Review Sync Changes sheet, shown when a row has only a Dismiss button (information only). It says what Dismiss leaves: this Mac keeps its version of the entry, and the next change made here goes up as the new version in iCloud, replacing the one on the other devices, which that entry’s History on those devices keeps. “History” is the entry’s list of earlier versions."
+    },
     "Don’t Allow" : {
       "comment" : "Button in the permission panel that refuses the website's request, beside “Allow Once” and “Always Allow”. Keep the curly apostrophe. Title Case, and the three buttons share one narrow row."
     },

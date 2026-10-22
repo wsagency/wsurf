@@ -7,7 +7,8 @@ import WSurfVault
 
 /// The entries that changed on this Mac and on another device, differ with no common ground, or cannot be added here, one row each.
 /// Nothing is applied or sent for a row until a choice is made, and the version not kept stays in that entry's History or Trash on the
-/// Mac that had it. A row that is only information has one button, Dismiss, which changes nothing.
+/// Mac that had it. A row that is only information has one button, Dismiss, which changes nothing, and a line under the list says what it
+/// leaves.
 struct VaultSyncReviewSheet: View {
     let conflicts: [VaultSyncConflict]
     let isBusy: Bool
@@ -37,6 +38,12 @@ struct VaultSyncReviewSheet: View {
                 .font(Theme.Font.label)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
+            if Self.explainsDismissal(conflicts) {
+                Text(Self.dismissalNote)
+                    .font(Theme.Font.label)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             HStack(spacing: 8) {
                 if isBusy {
                     Spinner(size: 14)
@@ -51,6 +58,16 @@ struct VaultSyncReviewSheet: View {
         }
         .padding(20)
         .frame(width: 520)
+    }
+
+    /// What Dismiss leaves, said once under the list: this Mac keeps its version, and the next change made here goes up over the other
+    /// device's, which stays in that entry's History.
+    static let dismissalNote: LocalizedStringResource =
+        "Dismiss keeps this Mac’s version. Your next change here replaces the version on your other devices; theirs stays in its History."
+
+    /// Whether a row in `conflicts` has Dismiss as its only button, so the line about it is shown.
+    static func explainsDismissal(_ conflicts: [VaultSyncConflict]) -> Bool {
+        conflicts.contains { !asksForChoice($0.kind) }
     }
 
     static func asksForChoice(_ kind: SyncConflictKind) -> Bool {
