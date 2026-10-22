@@ -8,7 +8,8 @@ import Testing
 
 @testable import WSurf
 
-/// The app-wide window choices: the full address. Every case owns its settings and a throwaway defaults suite.
+/// The app-wide window choices: the full address and the window style. Every case owns its settings and a throwaway
+/// defaults suite.
 @MainActor
 struct WindowStyleSettingsTests {
     private func withSettings(_ test: (BrowserSettings, UserDefaults) throws -> Void) throws {
@@ -113,6 +114,55 @@ struct WindowStyleSettingsTests {
             #expect(!settings.showsFullAddress)
             #expect(!profile.showsFullAddress)
         }
+    }
+
+    // MARK: - Window style
+
+    @Test func standardStaysTheDefaultWithTheBarAtTheBottom() throws {
+        try withSettings { settings, _ in
+            #expect(settings.windowStyle == .standard)
+            #expect(settings.minimalBarEdge == .bottom)
+            #expect(!settings.hidesMinimalBar)
+        }
+    }
+
+    @Test func theWindowStyleIsOneAppWideChoiceThatSurvivesARestartAndResets() throws {
+        try withSettings { settings, defaults in
+            let profile = BrowserSettings(defaults: defaults, appliesAppearanceGlobally: false, application: settings)
+            profile.windowStyle = .minimal
+            profile.minimalBarEdge = .top
+            profile.hidesMinimalBar = true
+            #expect(settings.windowStyle == .minimal && settings.minimalBarEdge == .top && settings.hidesMinimalBar)
+            #expect(defaults.string(forKey: BrowserSettings.Key.windowStyle) == "minimal")
+            #expect(defaults.string(forKey: BrowserSettings.Key.minimalBarEdge) == "top")
+
+            let reopened = BrowserSettings(defaults: defaults, appliesAppearanceGlobally: false)
+            #expect(reopened.windowStyle == .minimal && reopened.minimalBarEdge == .top && reopened.hidesMinimalBar)
+
+            settings.resetToDefaults()
+            #expect(settings.windowStyle == .standard && settings.minimalBarEdge == .bottom && !settings.hidesMinimalBar)
+        }
+    }
+
+    @Test func anUnknownStoredStyleFallsBackToStandard() throws {
+        try withSettings { _, defaults in
+            defaults.set("floating", forKey: BrowserSettings.Key.windowStyle)
+            defaults.set("left", forKey: BrowserSettings.Key.minimalBarEdge)
+            let settings = BrowserSettings(defaults: defaults, appliesAppearanceGlobally: false)
+            #expect(settings.windowStyle == .standard)
+            #expect(settings.minimalBarEdge == .bottom)
+        }
+    }
+
+    @Test func searchFindsTheWindowCard() {
+        for (query, id) in [
+            ("minimal", "appearance.window"), ("window style", "appearance.window"),
+            ("bar position", "appearance.minimalBar"), ("auto hide", "appearance.minimalBarAutoHide"),
+        ] {
+            #expect(SettingsIndex.search(query).contains { $0.id == id }, "\(query)")
+        }
+        #expect(SettingsIndex.all.filter { $0.id.hasPrefix("appearance.minimal") || $0.id == "appearance.window" }
+            .allSatisfy { $0.category == .appearance })
     }
 
     @Test func searchFindsTheFullAddressRowInGeneral() throws {

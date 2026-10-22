@@ -208,6 +208,8 @@ final class MainMenu: NSObject, NSMenuItemValidation {
         menu.addItem(submenu(splitViewMenu(), titled: "Split View"))
         menu.addItem(.separator())
         menu.addItem(command("Hide Sidebar", #selector(toggleSidebar), key: "s", modifiers: [.command, .control]))
+        menu.addItem(command("Use Minimal Window Style", #selector(toggleWindowStyle), key: "m", modifiers: [.command, .shift]))
+        menu.addItem(command("Move Bar to Top", #selector(moveMinimalBar)))
         menu.addItem(command(
             "Show Assistant",
             #selector(toggleAgentInspector),
@@ -387,6 +389,12 @@ final class MainMenu: NSObject, NSMenuItemValidation {
     @objc private func toggleSidebar() {
         coordinator.toggleSidebar()
     }
+    @objc private func toggleWindowStyle() {
+        coordinator.toggleWindowStyle()
+    }
+    @objc private func moveMinimalBar() {
+        coordinator.moveMinimalBar()
+    }
     @objc private func toggleAgentInspector() {
         coordinator.toggleAgentInspector()
     }
@@ -553,11 +561,8 @@ final class MainMenu: NSObject, NSMenuItemValidation {
             return coordinator.browser.history.count > 0
         case #selector(checkForUpdates):
             return coordinator.updates.canCheck
-        case #selector(toggleSidebar):
-            let sidebarTitle: LocalizedStringResource = coordinator.sidebar.isVisible
-                ? "Hide Sidebar" : "Show Sidebar"
-            menuItem.title = String(localized: sidebarTitle)
-            return true
+        case #selector(toggleSidebar), #selector(toggleWindowStyle), #selector(moveMinimalBar):
+            return validateWindowStyleItem(menuItem)
         case #selector(toggleAgentInspector):
             let activityTitle: LocalizedStringResource = coordinator.sidePanel.isShowing(.activity)
                 ? "Hide Assistant"
@@ -579,6 +584,26 @@ final class MainMenu: NSObject, NSMenuItemValidation {
         default:
             return true
         }
+    }
+
+    /// Hide Sidebar, which shows and hides the tab list in the Minimal window, the window style and the Minimal bar's edge.
+    private func validateWindowStyleItem(_ menuItem: NSMenuItem) -> Bool {
+        let isMinimal = coordinator.isMinimal
+        let title: LocalizedStringResource
+        switch menuItem.action {
+        case #selector(toggleWindowStyle):
+            title = isMinimal ? "Use Standard Window Style" : "Use Minimal Window Style"
+        case #selector(moveMinimalBar):
+            title = coordinator.settings.minimalBarEdge == .top ? "Move Bar to Bottom" : "Move Bar to Top"
+        default:
+            if isMinimal {
+                title = coordinator.isMinimalTabListOpen ? "Hide Tabs" : "Show Tabs"
+            } else {
+                title = coordinator.sidebar.isVisible ? "Hide Sidebar" : "Show Sidebar"
+            }
+        }
+        menuItem.title = String(localized: title)
+        return menuItem.action != #selector(moveMinimalBar) || isMinimal
     }
 
     // MARK: - Building blocks

@@ -87,7 +87,7 @@ struct ContentNavBar: View {
 
     private var barContent: some View {
         HStack(spacing: 6) {
-            navigationControls
+            ToolbarNavigationControls(browser: browser, coordinator: coordinator)
 
             Spacer(minLength: 8)
 
@@ -127,11 +127,33 @@ struct ContentNavBar: View {
             .holdsWindowStillOnHover()
     }
 
+    private var trailingControls: some View {
+        HStack(spacing: 6) {
+            ExternalConnectionBadge(server: coordinator.mcpServer, browser: browser)
+            if !coordinator.isShowingSettings {
+                StoreInstallButton(manager: coordinator.extensions, browser: browser)
+            }
+            ExtensionActionsCluster(
+                manager: coordinator.extensions,
+                browser: browser,
+                availableWidth: extensionBudget
+            )
+
+            SidePanelToggle(coordinator: coordinator)
+        }
+    }
+}
+
+/// Back, Forward and Reload, with their hold menus. The toolbar and the Minimal bar share them.
+struct ToolbarNavigationControls: View {
+    let browser: BrowserModel
+    let coordinator: AppCoordinator
+
     private var reloadHelp: LocalizedStringResource {
         (browser.activeTab?.isLoading ?? false) ? "Stop" : "Reload"
     }
 
-    private var navigationControls: some View {
+    var body: some View {
         HStack(spacing: 6) {
             ToolbarButton(
                 symbol: "chevron.left",
@@ -144,6 +166,7 @@ struct ContentNavBar: View {
             ) {
                 browser.activeTab?.goBack()
             }
+            .accessibilityLabel(Text("Back"))
             ToolbarButton(
                 symbol: "chevron.right",
                 enabled: browser.activeTab?.canGoForward ?? false,
@@ -155,6 +178,7 @@ struct ContentNavBar: View {
             ) {
                 browser.activeTab?.goForward()
             }
+            .accessibilityLabel(Text("Forward"))
             ToolbarButton(
                 symbol: (browser.activeTab?.isLoading ?? false) ? "xmark" : "arrow.clockwise",
                 enabled: browser.activeTab.map { $0.isLoading || $0.canReload } ?? false,
@@ -171,22 +195,7 @@ struct ContentNavBar: View {
                     tab.reload()
                 }
             }
-        }
-    }
-
-    private var trailingControls: some View {
-        HStack(spacing: 6) {
-            ExternalConnectionBadge(server: coordinator.mcpServer, browser: browser)
-            if !coordinator.isShowingSettings {
-                StoreInstallButton(manager: coordinator.extensions, browser: browser)
-            }
-            ExtensionActionsCluster(
-                manager: coordinator.extensions,
-                browser: browser,
-                availableWidth: extensionBudget
-            )
-
-            SidePanelToggle(coordinator: coordinator)
+            .accessibilityLabel(Text(reloadHelp))
         }
     }
 }

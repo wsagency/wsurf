@@ -85,6 +85,11 @@ final class BrowserSettings {
         (appDefaults.object(forKey: Key.readerTextSize) as? NSNumber).map { ReaderAppearance.clampedTextSize($0.doubleValue) }
         ?? ReaderAppearance.defaultTextSize
     @ObservationIgnored lazy var storedShowsFullAddress: Bool? = appDefaults.object(forKey: Key.fullAddress) as? Bool ?? false
+    @ObservationIgnored lazy var storedWindowStyle: BrowserWindowStyle? =
+        appDefaults.string(forKey: Key.windowStyle).flatMap(BrowserWindowStyle.init(rawValue:)) ?? .standard
+    @ObservationIgnored lazy var storedMinimalBarEdge: MinimalBarEdge? =
+        appDefaults.string(forKey: Key.minimalBarEdge).flatMap(MinimalBarEdge.init(rawValue:)) ?? .bottom
+    @ObservationIgnored lazy var storedHidesMinimalBar: Bool? = appDefaults.object(forKey: Key.minimalBarAutoHide) as? Bool ?? false
 
     @ObservationIgnored var onWebPreferencesChanged: (() -> Void)?
     @ObservationIgnored var onContentBlockingChanged: (() -> Void)?

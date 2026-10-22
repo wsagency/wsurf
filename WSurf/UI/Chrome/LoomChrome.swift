@@ -359,15 +359,19 @@ struct LoomPanelFill<S: InsettableShape>: View {
 struct LoomPageCanvas<Content: View>: View {
     let trailingInset: CGFloat
     let showsPanelFill: Bool
+    /// Under the toolbar by default; the Minimal window, which has none, passes the page spacing.
+    let topInset: CGFloat
     @ViewBuilder let content: Content
 
     init(
         trailingInset: CGFloat = 0,
         showsPanelFill: Bool = false,
+        topInset: CGFloat = LoomChrome.canvasTop,
         @ViewBuilder content: () -> Content
     ) {
         self.trailingInset = trailingInset
         self.showsPanelFill = showsPanelFill
+        self.topInset = topInset
         self.content = content()
     }
 
@@ -402,7 +406,7 @@ struct LoomPageCanvas<Content: View>: View {
                 radius: hasShadow ? 12 : 0,
                 y: hasShadow ? 4 : 0
             )
-            .padding(.top, LoomChrome.canvasTop)
+            .padding(.top, topInset)
             .padding(.leading, chrome.pageSpacing)
             .padding(.trailing, chrome.pageSpacing + trailingInset)
             .padding(.bottom, chrome.pageSpacing)

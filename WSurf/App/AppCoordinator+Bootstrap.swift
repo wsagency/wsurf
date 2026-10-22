@@ -411,6 +411,10 @@ extension AppCoordinator {
             isProfileSwitcherOpen = false
             return true
         }
+        if isMinimalTabListOpen {
+            isMinimalTabListOpen = false
+            return true
+        }
         if closePeek() {
             return true
         }
