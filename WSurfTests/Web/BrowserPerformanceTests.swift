@@ -416,7 +416,7 @@ nonisolated final class BrowserPerformanceTests: XCTestCase, @unchecked Sendable
     }
 
     /// Ten switches between the Standard and Minimal window styles in a 300-tab window, each laid out and drawn. The
-    /// style is an input of the view, so nothing is written to the test host's defaults. No budget until a native baseline.
+    /// style is an input of the view, so nothing is written to the test host's defaults. Budgeted in Tools/check-performance.sh.
     func testSwitchingWindowStyles() {
         MainActor.assumeIsolated {
             let coordinator = AppCoordinator(browser: BrowserModel(database: .temporary()))

@@ -200,18 +200,47 @@ check_average \
   '8192' \
   'Tab activation memory growth' \
   'kB'
-# Provisional (no native run when added): replace with twice the five-sample Pro mean, memory at least 4096 kB.
+# Six-sample Pro baseline (Xcode 27.1, 0.1.7 targeted run): time mean 0.10585 s, memory median of samples 2-6 49.152 kB. Budgets are twice
+# the time mean; memory is the larger of 4096 kB and twice the median.
 check_average \
   'BrowserPerformanceTests/testSwitchingSpacesInACrowdedSession()' \
   'com.apple.dt.XCTMetric_Clock.time.monotonic' \
-  '0.400' \
+  '0.212' \
   '50 space switches among 300 tabs' \
   's'
 check_average \
   'BrowserPerformanceTests/testSwitchingSpacesInACrowdedSession()' \
   'com.apple.dt.XCTMetric_Memory.physical' \
-  '8192' \
+  '4096' \
   'Space switching memory growth' \
+  'kB'
+# Six-sample Pro baseline (Xcode 27.1, 0.1.7 targeted run): ten Standard/Minimal window style switches in a 300-tab window; time mean
+# 1.1497 s, memory median of samples 2-6 2228.224 kB.
+check_average \
+  'BrowserPerformanceTests/testSwitchingWindowStyles()' \
+  'com.apple.dt.XCTMetric_Clock.time.monotonic' \
+  '2.300' \
+  'Ten window style switches in a 300-tab window' \
+  's'
+check_average \
+  'BrowserPerformanceTests/testSwitchingWindowStyles()' \
+  'com.apple.dt.XCTMetric_Memory.physical' \
+  '4457' \
+  'Window style switching memory growth' \
+  'kB'
+# Six-sample Pro baseline (Xcode 27.1, 0.1.7 targeted run): the Minimal bar with its tab list open over 300 tabs; time mean 1.1210 s,
+# memory median of samples 2-6 6144 kB.
+check_average \
+  'BrowserPerformanceTests/testLayingOutTheMinimalShell()' \
+  'com.apple.dt.XCTMetric_Clock.time.monotonic' \
+  '2.242' \
+  'Minimal shell layout with its tab list open' \
+  's'
+check_average \
+  'BrowserPerformanceTests/testLayingOutTheMinimalShell()' \
+  'com.apple.dt.XCTMetric_Memory.physical' \
+  '12288' \
+  'Minimal shell layout memory growth' \
   'kB'
 # Five-sample Pro baseline: 0.123550 s to archive 50 stale tabs among 500; memory growth was not above zero.
 check_average \
