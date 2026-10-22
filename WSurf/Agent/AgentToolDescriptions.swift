@@ -59,5 +59,13 @@ extension AgentToolkit {
         static let playVideo = "Find a video by topic and play it in a background tab."
         static let closeVideo = "Pause the video and close the media player. Keep its tab open."
         static let controlMedia = "Use pip to enter Picture in Picture, or exitPip to leave it."
+        static let watchPage = """
+            Watch the page on screen and notify the person once it shows what they are waiting for, \
+            or once it changes. The browser asks the person to confirm every watch, and they choose \
+            whether it uses their sign-ins. Up to 20 watches; pages are judged on this Mac only. \
+            Not available in private windows.
+            """
+        static let listWatches = "List the watched pages with each watch's ID, address, condition and interval."
+        static let stopWatch = "Stop a page watch by its ID, or by part of its title, address or condition."
     }
 }

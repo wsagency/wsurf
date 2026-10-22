@@ -126,6 +126,10 @@ final class BrowserApplication {
             showCredentialExchange()
         }
         mcpServer.resume()
+        // Every regular profile's watches, whether or not a window of it is open. Each waits a minute before its first reading.
+        for profile in catalog.profiles {
+            BrowserProfileContext.shared(for: profile).pageWatches?.resume()
+        }
         if let coordinator = activeCoordinator {
             Task { await coordinator.offerLegacyPasswordImport() }
         }
@@ -315,6 +319,9 @@ final class BrowserApplication {
             self?.coordinator(for: page)?.browser.tabs.first { $0.liveView === page }
         }
         NotificationBridge.shared.tabResolver = GeolocationBridge.shared.tabResolver
+        NotificationBridge.shared.openWatchedPage = { [weak self] url, profileID in
+            self?.openWatchedPage(url, profileID: profileID)
+        }
         TabWebView.refreshHoverShield = { [weak self] in
             self?.windows.forEach { $0.applyHoverShield() }
         }

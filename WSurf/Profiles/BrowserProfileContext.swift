@@ -52,6 +52,8 @@ final class BrowserProfileContext {
     /// Nil in a private window: notes about the person are never kept there.
     lazy var assistantFacts: AssistantFacts? = profile.isPrivate ? nil : AssistantFacts(database: database, settings: modelSettings)
     lazy var conversationLog = ConversationLog(database: database)
+    /// Nil in a private window: nothing is watched there.
+    lazy var pageWatches: PageWatchCenter? = profile.isPrivate ? nil : PageWatchCenter.live(for: self)
     lazy var extensions = ExtensionManager(profile: profile, dataStore: dataStore)
 
     private var browsers = NSHashTable<BrowserModel>.weakObjects()

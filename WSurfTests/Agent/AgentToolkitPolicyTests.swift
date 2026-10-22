@@ -59,6 +59,7 @@ struct AgentToolkitPolicyTests {
             "listFrames", "readFrame", "actInFrame", "chooseFilesOnPage", "inspectDownloads",
             "typeAtPointer", "hoverOnPage", "pressKey",
             "playVideo", "closeVideo", "controlMedia",
+            "watchPage", "listWatches", "stopWatch",
         ])
     }
 

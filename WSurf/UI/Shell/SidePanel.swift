@@ -8,6 +8,7 @@ import SwiftUI
 nonisolated enum SidePanelKind: String, CaseIterable, Sendable {
     case activity
     case lyrics
+    case watches
 
     var title: LocalizedStringResource {
         switch self {
@@ -15,6 +16,8 @@ nonisolated enum SidePanelKind: String, CaseIterable, Sendable {
             "Assistant"
         case .lyrics:
             "Lyrics"
+        case .watches:
+            "Watches"
         }
     }
 
@@ -24,6 +27,8 @@ nonisolated enum SidePanelKind: String, CaseIterable, Sendable {
             "sparkle"
         case .lyrics:
             "quote.bubble"
+        case .watches:
+            "eye"
         }
     }
 

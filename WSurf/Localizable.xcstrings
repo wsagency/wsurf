@@ -6766,6 +6766,266 @@
     },
     "Removing a website lets the extension run there again and reloads its open tabs." : {
       "comment" : "Footnote under an extension's Blocked websites list in Settings > Extensions. Removing a website from the list lets the extension run on it again, and WSurf reloads that website's open WebKit tabs so the extension's page scripts start. One sentence."
+    },
+    "Watches read this page with WebKit. Your Chromium sign-ins are not used." : {
+      "comment" : "Note shown when a page watch is created or listed for a website set to open in Chromium: watches always read pages with WebKit, so the person's Chromium sign-ins are not used."
+    },
+    "The page changed." : {
+      "comment" : "Body of the notification when a watched page changed, for a watch that waits for any change. Also what the watch reports when Apple Intelligence cannot describe the change."
+    },
+    "The page now shows what you were waiting for: %@" : {
+      "comment" : "Body of the notification when a watched page meets its condition. %@ is what the person is waiting for, in their own words, for example price below $50. The page's own text is never shown."
+    },
+    "WSurf can’t read this page anymore, so it paused the watch." : {
+      "comment" : "Body of the notification when a watched page failed to load three times in a row and its watch was paused."
+    },
+    "WSurf stopped watching this page after 30 days." : {
+      "comment" : "Body of the notification when a page watch ended because it reached its 30-day lifetime."
+    },
+    "Page Watches" : {
+      "comment" : "Section title on the Tools settings page, above the tools that let the assistant watch a page for a change. Title Case."
+    },
+    "Watch Pages" : {
+      "comment" : "Tool name in assistant settings: watching a page for a change the person confirms."
+    },
+    "Watch a page for a change you confirm." : {
+      "comment" : "Caption for the Watch Pages tool in assistant settings."
+    },
+    "List Watches" : {
+      "comment" : "Tool name in assistant settings: listing the watched pages."
+    },
+    "See which pages are watched." : {
+      "comment" : "Caption for the List Watches tool in assistant settings."
+    },
+    "Stop Watches" : {
+      "comment" : "Tool name in assistant settings: stopping a page watch."
+    },
+    "Stop watching a page." : {
+      "comment" : "Caption for the Stop Watches tool in assistant settings."
+    },
+    "Watch page" : {
+      "comment" : "Label in the assistant's activity details for a step where it set up a page watch. Sentence case, short verb phrase."
+    },
+    "List watches" : {
+      "comment" : "Label in the assistant's activity details for a step where it listed the watched pages. Sentence case, short verb phrase."
+    },
+    "Stop watch" : {
+      "comment" : "Label in the assistant's activity details for a step where it stopped a page watch. Sentence case, short verb phrase."
+    },
+    "Every day" : {
+      "comment" : "Interval choice in the sheet that starts a page watch: check the page once a day."
+    },
+    "Every hour" : {
+      "comment" : "Interval choice in the sheet that starts a page watch: check the page once an hour."
+    },
+    "Every %lld hours" : {
+      "comment" : "Interval choice in the sheet that starts a page watch. %lld is a number of hours, at least 2.",
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Every %lld hour"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Every %lld hours"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "Every %lld minutes" : {
+      "comment" : "Interval choice in the sheet that starts a page watch. %lld is a number of minutes, from 5 to 59 or a value that is not a whole number of hours.",
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Every %lld minute"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Every %lld minutes"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "WSurf reads this page in the background while it’s open and tells you once. The page is judged on this Mac, never by an online model. A watch ends after 30 days." : {
+      "comment" : "Explanation in the sheet that asks whether to watch a page."
+    },
+    "Without your sign-ins, WSurf reads the page as a visitor would." : {
+      "comment" : "Explanation in the sheet that asks whether to watch a page, about the Use my sign-ins for this page checkbox."
+    },
+    "The assistant asked for this watch. Webpages can carry hidden instructions aimed at the assistant. Allow this only if it’s what you asked for." : {
+      "comment" : "Warning in the sheet that asks whether to watch a page, when the assistant asked for the watch."
+    },
+    "Waiting for: any change" : {
+      "comment" : "Placeholder of the text field in the page watch sheet where the person types what they are waiting for. Empty means any change."
+    },
+    "What you’re waiting for" : {
+      "comment" : "Accessibility label of the text field in the page watch sheet where the person types what they are waiting for."
+    },
+    "How often to check" : {
+      "comment" : "Accessibility label of the interval menu in the page watch sheet."
+    },
+    "Use my sign-ins for this page" : {
+      "comment" : "Checkbox in the page watch sheet. On: the watch reads the page with the person's signed-in session. Off by default."
+    },
+    "Watch %@?" : {
+      "comment" : "Title of the sheet that asks whether to watch a page. %@ is the website, for example shop.example."
+    },
+    "Watch" : {
+      "comment" : "Button in the page watch sheet that starts the watch."
+    },
+    "Watching %@." : {
+      "comment" : "Notice in the window after a page watch started. %@ is the website, for example shop.example."
+    },
+    "The page already shows that, so no watch was set." : {
+      "comment" : "Notice when a page watch was not started because the page already shows what the person waits for."
+    },
+    "WSurf couldn’t read this page in the background, so it can’t watch it." : {
+      "comment" : "Notice when a page watch could not start because the page could not be read in the background."
+    },
+    "Waiting for something specific needs Apple Intelligence on this Mac. Leave it empty to watch for any change." : {
+      "comment" : "Notice when a page watch with a condition could not start because Apple Intelligence is not available."
+    },
+    "Apple Intelligence couldn’t check this page right now. Try again later." : {
+      "comment" : "Notice when a page watch could not start because Apple Intelligence failed to check the page."
+    },
+    "This page is already watched for that." : {
+      "comment" : "Notice when the same page is already watched for the same condition."
+    },
+    "WSurf watches up to %lld pages. Stop one in the Watches tab first." : {
+      "comment" : "Notice when the person already has the most page watches. %lld is the limit, 20."
+    },
+    "This website’s Assistant Access is No Access, so WSurf doesn’t read it." : {
+      "comment" : "Notice when a page watch was refused because the website's Assistant Access setting is No Access."
+    },
+    "A private window watches no pages." : {
+      "comment" : "Caption of the Watches tab of the side panel in a private window."
+    },
+    "No pages watched" : {
+      "comment" : "Title of the empty Watches tab of the side panel."
+    },
+    "Choose View › Watch This Page…, or ask the assistant to watch a page." : {
+      "comment" : "Caption of the empty Watches tab of the side panel."
+    },
+    "While notifications were off" : {
+      "comment" : "Heading in the Watches tab above page watch notices WSurf could not show because notifications are off."
+    },
+    "Open Page" : {
+      "comment" : "Context menu item and tooltip of a page watch in the Watches tab: opens the watched page in a new tab."
+    },
+    "Resume Watching" : {
+      "comment" : "Button and context menu item of a paused page watch in the Watches tab."
+    },
+    "Pause Watching" : {
+      "comment" : "Button and context menu item of a page watch in the Watches tab."
+    },
+    "Stop Watching" : {
+      "comment" : "Button and context menu item of a page watch in the Watches tab: ends the watch."
+    },
+    "Check Now" : {
+      "comment" : "Context menu item of a page watch in the Watches tab: reads the page now."
+    },
+    "Waiting for any change" : {
+      "comment" : "Line of a page watch in the Watches tab that waits for any change on the page."
+    },
+    "Waiting for %@" : {
+      "comment" : "Line of a page watch in the Watches tab. %@ is what the person waits for, in their own words, for example price below $50."
+    },
+    "Every %@ · Checked %@" : {
+      "comment" : "Line of a page watch in the Watches tab. The first %@ is the interval, for example 1 hour; the second is when it was last checked, for example 5 minutes ago."
+    },
+    "Every %@" : {
+      "comment" : "Line of a page watch in the Watches tab that was not checked yet. %@ is the interval, for example 1 hour."
+    },
+    "Can’t be read, so it’s paused. Check Now tries again." : {
+      "comment" : "Label of a page watch whose page failed to load three times in a row, in the Watches tab."
+    },
+    "Uses your sign-ins" : {
+      "comment" : "Label of a page watch that reads the page with the person's signed-in session, in the Watches tab."
+    },
+    "Reads with WebKit" : {
+      "comment" : "Label of a page watch on a website set to Chromium, in the Watches tab. Its tooltip explains that Chromium sign-ins are not used."
+    },
+    "Watched pages" : {
+      "comment" : "Row on Settings › Assistant › Page Watches that opens the Watches tab."
+    },
+    "Pages WSurf reads in the background to tell you when they change. Checked on this Mac only." : {
+      "comment" : "Caption of the Watched pages row on Settings › Assistant."
+    },
+    "%lld pages" : {
+      "comment" : "Detail of the Watched pages row on Settings › Assistant: how many pages are watched. %lld is at least 1.",
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld page"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld pages"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "Pause all watches" : {
+      "comment" : "Switch on Settings › Assistant › Page Watches that pauses every page watch."
+    },
+    "Paused watches keep their place and still end after 30 days." : {
+      "comment" : "Caption of the Pause all watches switch on Settings › Assistant."
+    },
+    "Watches" : {
+      "comment" : "Title of the Watches tab of the side panel, which lists page watches."
+    },
+    "%lld missed notices" : {
+      "comment" : "Accessibility label of the count on the Watches tab of the side panel: page watch notices WSurf could not show. %lld is at least 1.",
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld missed notice"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld missed notices"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "Watch This Page…" : {
+      "comment" : "Menu command in View that starts a page watch for the page on screen. Hidden in private windows. Title Case."
     }
   },
   "version" : "1.0"

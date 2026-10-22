@@ -73,7 +73,15 @@ final class PageWatchCenter {
         case denied
     }
 
+    /// A notice WSurf could not show because its notifications are off. Kept in memory for the Watches tab, never stored.
+    struct Missed: Identifiable, Equatable {
+        let id = UUID()
+        let watch: PageWatch
+        let notice: Notice
+    }
+
     private(set) var watches: [PageWatch] = []
+    private(set) var missed: [Missed] = []
 
     static let classifyLimit = 16
     static let longestSleep: TimeInterval = 900
@@ -84,6 +92,7 @@ final class PageWatchCenter {
     private let canJudge: () -> Bool
     private let notify: (PageWatch, Notice) -> Void
     private let allows: (URL) -> Bool
+    private let canRead: () -> Bool
     private let now: () -> Date
     private let sleep: (TimeInterval) async -> Void
     private let launchHold: TimeInterval
@@ -99,6 +108,7 @@ final class PageWatchCenter {
     @ObservationIgnored private var holdUntil: Date?
 
     /// `file` is where the watches are kept. Pass nil for a center that must not write anything (private windows, tests).
+    /// `canRead` false (Low Power Mode, memory pressure) makes a scheduled pass skip its readings without counting a failure.
     init(
         file: URL?,
         schedules: Bool = true,
@@ -111,7 +121,8 @@ final class PageWatchCenter {
         classify: @escaping (PageWatch, PageWatchChange.Pair) async -> PageWatchVerdict?,
         canJudge: @escaping () -> Bool = { true },
         notify: @escaping (PageWatch, Notice) -> Void,
-        allows: @escaping (URL) -> Bool = { _ in true }
+        allows: @escaping (URL) -> Bool = { _ in true },
+        canRead: @escaping () -> Bool = { true }
     ) {
         self.file = file
         self.schedules = schedules
@@ -125,6 +136,7 @@ final class PageWatchCenter {
         self.canJudge = canJudge
         self.notify = notify
         self.allows = allows
+        self.canRead = canRead
         if let file, let data = try? Data(contentsOf: file),
            let stored = try? JSONDecoder().decode([PageWatch].self, from: data) {
             watches = Array(stored.prefix(PageWatch.limit))
@@ -178,7 +190,11 @@ final class PageWatchCenter {
             created: date,
             nextCheck: date
         )
-        guard let reading = await fetch(watch)?.bounded(), !reading.text.isEmpty else { return .unreadable }
+        // The first reading takes its turn like any check, so WSurf still reads one page at a time.
+        guard await queue.enter() else { return .unreadable }
+        let fetched = await fetch(watch)
+        queue.leave()
+        guard let reading = fetched?.bounded(), !reading.text.isEmpty else { return .unreadable }
         if let landed = reading.url, !PageWatch.isSamePage(landed, url) {
             return .unreadable
         }
@@ -212,6 +228,31 @@ final class PageWatchCenter {
         return removed
     }
 
+    /// Pausing keeps the watch and its place among the twenty; resuming reads it at its next interval, or now if that passed.
+    func setPaused(_ id: UUID, _ paused: Bool) {
+        guard let index = watches.firstIndex(where: { $0.id == id }), watches[index].isPausedByPerson != paused else { return }
+        watches[index].pausedByPerson = paused ? true : nil
+        save()
+        wake()
+    }
+
+    func setAllPaused(_ paused: Bool) {
+        for watch in watches {
+            setPaused(watch.id, paused)
+        }
+    }
+
+    func noteMissed(_ watch: PageWatch, _ notice: Notice) {
+        missed.append(Missed(watch: watch, notice: notice))
+        if missed.count > PageWatch.limit {
+            missed.removeFirst(missed.count - PageWatch.limit)
+        }
+    }
+
+    func dismissMissed() {
+        missed = []
+    }
+
     func matching(_ reference: String) -> [PageWatch] {
         let needle = reference.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !needle.isEmpty else { return watches }
@@ -232,6 +273,17 @@ final class PageWatchCenter {
         let due = watches
             .filter { $0.nextWake <= date && !checking.contains($0.id) }
             .sorted { $0.nextWake < $1.nextWake }
+        guard canRead() else {
+            // Skipped, not failed: each moves to its next interval. An expired watch needs no reading and ends now.
+            for watch in due {
+                if date >= watch.expires {
+                    finish(watch.id, with: .expired)
+                } else {
+                    postpone(watch.id)
+                }
+            }
+            return
+        }
         for watch in due {
             guard !Task.isCancelled else { return }
             // A check that ran while this pass waited has already moved the watch on.
@@ -315,9 +367,9 @@ final class PageWatchCenter {
     }
 
     private func failed(_ id: UUID) {
-        guard let watch = watches.first(where: { $0.id == id }), !watch.isPaused else { return }
+        guard let watch = watches.first(where: { $0.id == id }), !watch.isUnreachable else { return }
         update(id) { $0.failures += 1 }
-        if let paused = watches.first(where: { $0.id == id }), paused.isPaused {
+        if let paused = watches.first(where: { $0.id == id }), paused.isUnreachable {
             notify(paused, .unreachable)
         }
     }
@@ -339,6 +391,16 @@ final class PageWatchCenter {
         change(&watches[index])
         watches[index].lastChecked = date
         watches[index].nextCheck = date + watches[index].period
+        save()
+    }
+
+    /// Clear History: the stored page text and last state go. The fingerprint stays, so an unchanged page still reads as unchanged.
+    func forgetPageText() {
+        guard watches.contains(where: { $0.snapshot != nil || $0.state != nil }) else { return }
+        for index in watches.indices {
+            watches[index].snapshot = nil
+            watches[index].state = nil
+        }
         save()
     }
 

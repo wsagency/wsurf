@@ -127,7 +127,7 @@ struct SidePanelTests {
 
         panel.setAvailable(false, for: .lyrics)
 
-        #expect(panel.tabs.map(\.kind) == [.activity])
+        #expect(panel.tabs.map(\.kind) == [.activity, .watches])
     }
 
     @Test func turningOffTheTabYouAreLookingAtStepsToTheNextOne() {

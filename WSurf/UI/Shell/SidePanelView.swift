@@ -54,6 +54,8 @@ struct SidePanelSurface: View {
             AgentInspector(browser: browser, coordinator: coordinator)
         case .lyrics:
             LyricsSurface(coordinator: coordinator)
+        case .watches:
+            WatchesPanelSurface(coordinator: coordinator)
         case nil:
             Spacer(minLength: 0)
         }
@@ -125,6 +127,7 @@ private struct SidePanelHeader: View {
                     tab: tab,
                     isSelected: panel.selection == tab.id,
                     mark: tab.kind == .activity ? coordinator.agentMark : nil,
+                    badge: tab.kind == .watches ? PageWatchRow.badge(for: coordinator.context.pageWatches) : 0,
                     onSelect: { panel.select(tab.id) }
                 )
             }
@@ -253,6 +256,8 @@ private struct SidePanelTabChip: View {
     let tab: SidePanelTab
     let isSelected: Bool
     let mark: AgentActivityDot.State?
+    /// Notices waiting in the tab, shown as a count.
+    var badge = 0
     let onSelect: () -> Void
 
     @State private var hovering = false
@@ -271,6 +276,15 @@ private struct SidePanelTabChip: View {
             Text(tab.kind.title)
                 .font(.system(size: 11.5, weight: isSelected ? .semibold : .medium))
                 .lineLimit(1)
+
+            if badge > 0 {
+                Text(verbatim: "\(badge)")
+                    .font(Theme.Font.badge)
+                    .foregroundStyle(Theme.onAccent)
+                    .padding(.horizontal, 5)
+                    .background(Capsule().fill(Theme.accent))
+                    .accessibilityLabel(Text("\(badge) missed notices"))
+            }
         }
         .foregroundStyle(isSelected ? Color.primary : Color.secondary)
         .padding(.horizontal, 9)
