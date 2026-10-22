@@ -5,6 +5,41 @@ This file preserves release notes inherited from the upstream
 describe upstream Linen releases, not releases published by WSurf. New WSurf
 release notes will be added above this provenance record.
 
+## 0.1.8 (build 8) — 2026-10-22
+
+Everything since 0.1.7 (build 7). None of the screens and prompts below has been checked by hand.
+
+### Window
+
+- In full screen, the toolbar, the sidebar and the Minimal bar now start below the strip macOS slides in at the top of the screen (the title bar with the window buttons), so it no longer covers the address field or the Minimal bar. This works with the menu bar set to hide or to stay. While the strip is hidden, a narrow band of the window's background stays empty at the top.
+- The Minimal window can keep its tab list open: click the pin at the top of the list, or choose View › Keep Sidebar Open. The page and the bar move over to sit beside the list. The choice applies to every window and is remembered after you quit. Hide Tabs, ⌃⌘S and Hide Sidebar let go of the pin and hide the list.
+
+### Tabs and sidebar
+
+- ⌘W now closes the active tab, as the X in the sidebar does; Undo or ⇧⌘T brings it back. A pinned tab, a favorite or a page in a pinned folder is unloaded instead, as before. The File menu item says Close Tab or Unload Tab, depending on the tab. Like the X, ⌘W does not ask about a form you were filling in, a download or playing media; Undo brings the tab back.
+- Right-click a folder › Sort › By Name or Folders First to sort what is in it. One Undo puts the order back, and a pinned folder's new order shows in every window of the profile.
+- Right-click a folder › Size makes that folder's row larger: Normal, 1.5×, 2× or 2.5×. Its name keeps your sidebar font, and the tabs inside stay their usual size. The size is remembered, and a pinned folder's size shows in every window. The icons-only sidebar draws every folder at its normal size.
+- Tab and folder titles now line up with their icons on the capital letters, so a title no longer sits a little above its icon. A title in lowercase letters only sits slightly lower than before.
+
+### Themes and appearance
+
+- Settings › Appearance › Layout › Folder indent moves what is inside an open folder to the right, from None to 24 pt, once for each level. None, the default, looks as before.
+- Tab text, Unloaded tab text and Icons colors that would be hard to read are now darkened or lightened only as much as needed and keep their hue and as much of their transparency as still reads, instead of turning plain black or white. The row says so when this happens, for example “Shown at 72% so it stays readable.” Each color row has a short description, the opacity slider shows its percentage, and the panel says whether you are editing the light or the dark appearance.
+- A theme's accent color now reaches the switches, sliders and progress bars in the window and in Settings, the address bar's loading bar, the autofill list and the selection in the credential and Input History lists. A theme without an accent keeps the macOS accent color.
+- A theme's assistant color now colors the assistant's questions, buttons, status and voice indicator, not only the small marker shown while it works. A theme without one uses the accent color.
+- Make your own theme: Settings › Appearance › Theme › Customize… copies the current theme as “Nord Custom” (or whichever theme you are on) and opens its colors. Set the Window background, Sidebar, Surface, Primary text, Secondary text, Accent and Assistant colors, for light and for dark. Secondary text is the former Unloaded tab text row. Changing the window, sidebar or surface color of a copy of Standard or Calm draws it as a solid color without the website tint; putting the original color back brings the tint back. Text under 4.5:1 contrast shows a warning with its ratio, and your color is kept as you picked it. The copy WSurf makes when you first recolor a built-in theme is now named “… Custom” too.
+- Settings › Appearance › Theme › Reset Theme to Default puts a theme back as it came: every slider (brightness, glass, spacing, edges, corners, icons, folder indent and the rest) and, for a theme you made, its colors, taken from the theme it was copied from. Its name and your other themes stay as they are. WSurf asks first, and a reset can't be undone.
+- Settings is denser: options sit closer together on every page, including the Colors and Layout groups on the Appearance page, which now line up with the other cards.
+
+### iCloud and importing
+
+- PLACEHOLDER, to be written when the iCloud phase 3 stack merges into 0.1.8: iCloud sync and the import memory for Passwords. Remove this section if that stack is not in the build.
+
+### Known issues
+
+- Calm in its light appearance and Nord in its dark appearance show the low-contrast warning for Secondary text as they come: their sleeping-tab text is dimmer than 4.5:1 on the window or the sidebar.
+- The known issues of 0.1.7 are unchanged.
+
 ## 0.1.7 (build 7) — 2026-10-22
 
 Everything since 0.1.6 (build 6). None of the screens and prompts below has been checked by hand.
