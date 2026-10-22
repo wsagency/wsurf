@@ -47,6 +47,7 @@ nonisolated struct VaultSyncSummary: Equatable {
     var isUnlocked: Bool
     var notSyncable = 0
     var unreadable = 0
+    var parked = 0
 }
 
 /// Sync of sealed vaults through the one engine (spec amendment 2026-10-22). Per vault, opt-in: this Mac seals each entry under the
@@ -86,7 +87,7 @@ public final class VaultSync: SyncEngineDelegate {
     @ObservationIgnored var unlocked: Set<VaultKey> = []
     /// Vaults this run stopped syncing because a write of that decision failed, so nothing re-creates what the server removed.
     @ObservationIgnored var halted: Set<VaultKey> = []
-    /// Vaults whose last fetched records were not all kept (or not all readable): a full read of the zone is still owed.
+    /// Vaults whose last fetched records were not all kept: a full read of the zone is still owed.
     @ObservationIgnored var incomplete: Set<VaultKey> = []
     /// Item records the engine asked for and has not answered: they are never resealed (spec: next version after the `.sent`).
     @ObservationIgnored var handedOut: [VaultKey: Set<UUID>] = [:]
@@ -128,6 +129,7 @@ public final class VaultSync: SyncEngineDelegate {
         for key in enabledKeys {
             retryAfterUpdate(key)
             readd(key)
+            oweReadOfParked(key)
             if needsFetch(key) {
                 enqueue(key) { [weak self] in
                     try? await self?.fetchAllNow(key)
@@ -153,6 +155,15 @@ public final class VaultSync: SyncEngineDelegate {
         enqueue(key) { [weak self] in
             await self?.cycle(key, fetch: false)
         }
+    }
+
+    /// A record parked for a newer WSurf is read from the zone again at launch: this build may be the one that can read it.
+    private func oweReadOfParked(_ key: VaultKey) {
+        guard (summaries[key]?.parked ?? 0) > 0, let (database, row) = enabledRow(key), !row.needsFetch else { return }
+        var next = row
+        next.needsFetch = true
+        try? database.write { try $0.save(next) }
+        refresh(key)
     }
 
     /// Settles every step queued so far. A test waits on it; the app never needs to.
@@ -219,10 +230,13 @@ public final class VaultSync: SyncEngineDelegate {
         summaries.contains { $0.key.profileID == profileID && $0.value.enabled }
     }
 
-    /// Entries that stay on this Mac (too large, or only files) and changes that could not be read, counted this run.
-    public func tally(profileID: UUID, vaultID: UUID) -> (notSyncable: Int, unreadable: Int) {
+    /// Entries that stay on this Mac (too large, or only files), changes that could not be read this run, and entries a newer
+    /// WSurf wrote that wait for an update.
+    public func tally(profileID: UUID, vaultID: UUID) -> VaultSyncTally {
         let key = VaultKey(profileID: profileID, vaultID: vaultID)
-        return (summaries[key]?.notSyncable ?? 0, summaries[key]?.unreadable ?? 0)
+        return VaultSyncTally(
+            notSyncable: summaries[key]?.notSyncable ?? 0, unreadable: summaries[key]?.unreadable ?? 0, newer: summaries[key]?.parked ?? 0
+        )
     }
 
     /// The vaults other Macs synced for this profile; the interface leaves out the ones this Mac already holds.
@@ -392,9 +406,10 @@ public final class VaultSync: SyncEngineDelegate {
         guard let account = Self.accountID(id.name),
               let outgoing = (try? database.read { try $0.outbox(key.vaultID, account) }) ?? nil
         else { return nil }
-        // A record from another Mac that is fetched and not yet merged is newer than the tag this row would be sent on, or as new:
-        // sending over it would overwrite it. The row waits; the merge decides what happens to it.
-        if let waiting = (try? database.read { try $0.inboxVersion(key.vaultID, account) }) ?? nil, waiting >= outgoing.version {
+        // A record from another Mac that is fetched and not yet merged is as new as this row or newer, and one parked for a newer WSurf
+        // is of a version nobody here can tell: sending over either would overwrite it. The row waits; the merge decides.
+        if let waiting = (try? database.read { try $0.inboxVersion(key.vaultID, account) }) ?? nil,
+           waiting == 0 || waiting >= outgoing.version {
             return nil
         }
         handedOut[key, default: []].insert(account)
@@ -525,7 +540,7 @@ public final class VaultSync: SyncEngineDelegate {
         let next = VaultSyncSummary(
             enabled: row.enabled, stored: row.status, outbox: counts.outbox, inbox: counts.inbox, review: counts.review,
             hasPendingVault: row.pendingVault != nil, isHeldBack: row.dirty, isReading: row.needsFetch,
-            isUnlocked: unlocked.contains(key), notSyncable: tally.notSyncable, unreadable: tally.unreadable
+            isUnlocked: unlocked.contains(key), notSyncable: tally.notSyncable, unreadable: tally.unreadable, parked: counts.parked
         )
         if summaries[key] != next {
             summaries[key] = next

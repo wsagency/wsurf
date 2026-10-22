@@ -79,8 +79,8 @@ public nonisolated struct SyncableAccount: Equatable, Sendable {
 /// Sealing and opening of everything the sync writes (spec amendment 2026-10-22): the `Item` envelope, the vault name beside its
 /// wrapper list, the sync base kept at rest, and the marker of what was last uploaded. Every value is AES-256-GCM (combined: 12-byte
 /// nonce, ciphertext, 16-byte tag) under a `VaultSyncKey`, and its AAD, built with `StoreWriter`, binds the record kind, the profile,
-/// the vault, the account, the state, the version and the key generation, so a value opens only as itself and a lower version is
-/// rejected.
+/// the vault, the account, the format, the state, the version and the key generation, so a value opens only as itself and a lower
+/// version is rejected.
 public nonisolated enum VaultSyncCodec {
     /// The one key generation. The vault's key never rotates (`removeUnlock` keeps it); a record with another generation is left alone.
     public static let generation: UInt64 = 1
@@ -133,7 +133,8 @@ public nonisolated enum VaultSyncCodec {
         envelope.u8(itemFormat)
         envelope.u8(state)
         envelope.u64(item.version)
-        let sealed = try seal(plaintext, key: key, aad: itemAAD(key: key, accountID: item.accountID, state: state, version: item.version))
+        let aad = itemAAD(key: key, accountID: item.accountID, format: itemFormat, state: state, version: item.version)
+        let sealed = try seal(plaintext, key: key, aad: aad)
         return envelope.data + sealed
     }
 
@@ -143,7 +144,8 @@ public nonisolated enum VaultSyncCodec {
     public static func openItem(_ envelope: Data, accountID: UUID, key: VaultSyncKey) throws -> SyncItem {
         try requireGeneration(key)
         let (state, version, sealed) = try header(of: envelope)
-        let plaintext = try open(sealed, key: key, aad: itemAAD(key: key, accountID: accountID, state: state, version: version))
+        let aad = itemAAD(key: key, accountID: accountID, format: itemFormat, state: state, version: version)
+        let plaintext = try open(sealed, key: key, aad: aad)
         guard state == liveState else {
             guard plaintext.isEmpty else { throw VaultSyncError.malformed }
             return SyncItem(accountID: accountID, version: version, account: nil)
@@ -215,14 +217,15 @@ public nonisolated enum VaultSyncCodec {
 
     // MARK: AAD
 
-    /// `text(label) ‖ u8(2) ‖ uuid(profile) ‖ uuid(vault) ‖ uuid(account) ‖ u8(state) ‖ u64(version) ‖ u64(generation)`
-    static func itemAAD(key: VaultSyncKey, accountID: UUID, state: UInt8, version: UInt64) -> Data {
+    /// `text(label) ‖ u8(2) ‖ uuid(profile) ‖ uuid(vault) ‖ uuid(account) ‖ u8(format) ‖ u8(state) ‖ u64(version) ‖ u64(generation)`
+    static func itemAAD(key: VaultSyncKey, accountID: UUID, format: UInt8, state: UInt8, version: UInt64) -> Data {
         var aad = StoreWriter()
         aad.text(label)
         aad.u8(2)
         aad.uuid(key.profileID)
         aad.uuid(key.vaultID)
         aad.uuid(accountID)
+        aad.u8(format)
         aad.u8(state)
         aad.u64(version)
         aad.u64(key.generation)

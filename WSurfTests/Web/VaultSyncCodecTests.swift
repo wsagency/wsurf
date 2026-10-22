@@ -36,7 +36,7 @@ private nonisolated func forged(
     header.u8(format)
     header.u8(state)
     header.u64(version)
-    let aad = VaultSyncCodec.itemAAD(key: key, accountID: accountID, state: state, version: version)
+    let aad = VaultSyncCodec.itemAAD(key: key, accountID: accountID, format: format, state: state, version: version)
     let sealed = try #require(try AES.GCM.seal(plaintext, using: key.key, authenticating: aad).combined)
     return header.data + sealed
 }
@@ -144,17 +144,21 @@ struct VaultSyncCodecTests {
         }
     }
 
-    @Test func theAADBindsKindProfileVaultAccountStateVersionAndGeneration() {
+    @Test func theAADBindsKindProfileVaultAccountFormatStateVersionAndGeneration() {
         let key = syncKey()
         let account = UUID()
-        let item = VaultSyncCodec.itemAAD(key: key, accountID: account, state: 1, version: 1)
+        let format = VaultSyncCodec.itemFormat
+        let item = VaultSyncCodec.itemAAD(key: key, accountID: account, format: format, state: 1, version: 1)
         let variants = [
-            VaultSyncCodec.itemAAD(key: syncKey(profile: key.profileID, vault: key.vaultID, generation: 2), accountID: account, state: 1, version: 1),
-            VaultSyncCodec.itemAAD(key: key, accountID: UUID(), state: 1, version: 1),
-            VaultSyncCodec.itemAAD(key: key, accountID: account, state: 2, version: 1),
-            VaultSyncCodec.itemAAD(key: key, accountID: account, state: 1, version: 2),
-            VaultSyncCodec.itemAAD(key: syncKey(profile: UUID(), vault: key.vaultID), accountID: account, state: 1, version: 1),
-            VaultSyncCodec.itemAAD(key: syncKey(profile: key.profileID, vault: UUID()), accountID: account, state: 1, version: 1),
+            VaultSyncCodec.itemAAD(
+                key: syncKey(profile: key.profileID, vault: key.vaultID, generation: 2), accountID: account, format: format, state: 1, version: 1
+            ),
+            VaultSyncCodec.itemAAD(key: key, accountID: UUID(), format: format, state: 1, version: 1),
+            VaultSyncCodec.itemAAD(key: key, accountID: account, format: format + 1, state: 1, version: 1),
+            VaultSyncCodec.itemAAD(key: key, accountID: account, format: format, state: 2, version: 1),
+            VaultSyncCodec.itemAAD(key: key, accountID: account, format: format, state: 1, version: 2),
+            VaultSyncCodec.itemAAD(key: syncKey(profile: UUID(), vault: key.vaultID), accountID: account, format: format, state: 1, version: 1),
+            VaultSyncCodec.itemAAD(key: syncKey(profile: key.profileID, vault: UUID()), accountID: account, format: format, state: 1, version: 1),
         ]
         #expect(Set(variants + [item]).count == variants.count + 1)
         // The three kinds never share a layout: a value sealed for one kind does not open as another.

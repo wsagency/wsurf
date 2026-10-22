@@ -109,7 +109,7 @@ nonisolated public enum VaultSyncStatus: Equatable, Sendable {
     case needsReview(Int)
     case iCloudFull
     case signedOut
-    /// A newer WSurf wrote this vault's records.
+    /// A newer WSurf wrote this vault's `Vault` record (a key generation this build does not know).
     case needsUpdate
     /// This Mac's store is older than the last state it synced.
     case rolledBack
@@ -130,6 +130,22 @@ nonisolated public enum VaultSyncStatus: Equatable, Sendable {
                 .removedEncryptedDataReset
             }
         }
+    }
+}
+
+/// What the interface says about entries the vault sync leaves alone, beside the status.
+nonisolated public struct VaultSyncTally: Equatable, Sendable {
+    /// Entries that stay on this Mac: too large to sync, or only files.
+    public var notSyncable: Int
+    /// Changes from iCloud that could not be read and were skipped this run.
+    public var unreadable: Int
+    /// Entries a newer WSurf wrote that this build cannot read yet: they wait, and nothing is sent over them.
+    public var newer: Int
+
+    public init(notSyncable: Int, unreadable: Int, newer: Int) {
+        self.notSyncable = notSyncable
+        self.unreadable = unreadable
+        self.newer = newer
     }
 }
 

@@ -549,24 +549,26 @@ struct VaultSyncTests {
 
         let (b, vb) = try await rig.addedMac()
 
-        #expect(rig.status(b) == .needsUpdate)
-        #expect(vb.accounts.isEmpty && vb.trash.isEmpty && vb.commitCount == 0, "the vault is left alone")
+        #expect(rig.status(b) == .synced, "the vault goes on without that one entry")
+        #expect(Set(vb.accounts.keys) == [held[0].id] && vb.trash.isEmpty, "the entry this build can read arrived")
+        #expect(b.sync.tally(profileID: rig.profile, vaultID: rig.vaultID).newer == 1)
         // A launch of the same build tries again and meets the same row.
         b.sync.attach(b.engine)
         await b.sync.settle()
-        #expect(rig.status(b) == .needsUpdate && vb.accounts.isEmpty)
+        #expect(Set(vb.accounts.keys) == [held[0].id] && b.sync.tally(profileID: rig.profile, vaultID: rig.vaultID).newer == 1)
         let writes = rig.cloud.writeCount
         vb.add(SyncVaultFixtures.account(username: "made here"))
         await b.wrote(vb)
         try await b.pump()
-        #expect(rig.cloud.writeCount == writes, "nothing goes up meanwhile")
+        #expect(rig.cloud.writeCount == writes + 1, "other entries keep syncing meanwhile")
+        #expect(rig.cloud.record(newer)?.payload == unknown, "the record this build cannot read is left as it is")
 
         // The build that can read it reads the zone again: nothing was lost to the engine having moved on.
         rig.cloud.overwrite(newer, payload: original)
         b.sync.attach(b.engine)
         try await b.pump()
         #expect(Set(vb.accounts.keys).isSuperset(of: held.map(\.id)))
-        #expect(rig.status(b) == .synced)
+        #expect(rig.status(b) == .synced && b.sync.tally(profileID: rig.profile, vaultID: rig.vaultID).newer == 0)
     }
 
     @Test func quotaExceededKeepsChangesQueued() async throws {

@@ -28,8 +28,6 @@ nonisolated struct SyncPass {
     var unreadable = 0
     /// Accounts whose record came back as the very row this Mac sealed: the send is done, whether or not its `.sent` arrived.
     var own: Set<UUID> = []
-    /// A newer WSurf wrote a row: it stays in the inbox, and the vault says it needs an update.
-    var newerFormat: Set<UUID> = []
 
     /// The vault cannot take this entry on this Mac: it waits as information, and its base stays.
     mutating func refuse(_ id: UUID) {
@@ -66,17 +64,12 @@ extension VaultSync {
             guard mine == token(key), let (_, row) = runningRow(key), notRolledBack(key, snapshot, row, database) else { return }
             var pass = SyncPass()
             decide(batch, key: key, snapshot: snapshot, syncKey: syncKey, database: database, into: &pass)
-            pass.processed = batch.filter { !pass.newerFormat.contains($0.accountID) }
-            if !pass.newerFormat.isEmpty {
-                stopForNewerFormat(key, database: database)
-            }
+            pass.processed = batch
             switch await commit(&pass, key: key, snapshot: snapshot) {
             case .done(let revision):
                 guard mine == token(key), record(pass, key: key, database: database, syncKey: syncKey, revision: max(revision ?? 0, snapshot.revision)) else {
                     return
                 }
-                // Rows this build cannot read stay in the inbox: going round again would meet them again.
-                guard pass.newerFormat.isEmpty else { return }
                 staleRetries = 0
             case .stale:
                 staleRetries += 1
@@ -107,9 +100,6 @@ extension VaultSync {
             let item: SyncItem
             do {
                 item = try VaultSyncCodec.openItem(inbound.envelope, accountID: id, key: syncKey)
-            } catch VaultSyncError.unsupportedFormat, VaultSyncError.unsupportedGeneration {
-                pass.newerFormat.insert(id)
-                continue
             } catch {
                 pass.unreadable += 1
                 continue
@@ -254,17 +244,6 @@ extension VaultSync {
         return .stop
     }
 
-    /// Rows this build cannot read are kept as they are, and the vault stops until WSurf is updated.
-    private func stopForNewerFormat(_ key: VaultKey, database: VaultSyncDatabase) {
-        try? database.write { tx in
-            if var current = try tx.vault(key.vaultID), current.status == .active || current.status == .iCloudFull {
-                current.status = .needsUpdate
-                try tx.save(current)
-            }
-        }
-        refresh(key)
-    }
-
     /// Records a pass that was committed: the bases, the rows taken in, the review rows. One transaction.
     @discardableResult
     private func record(_ pass: SyncPass, key: VaultKey, database: VaultSyncDatabase, syncKey: VaultSyncKey, revision: UInt64) -> Bool {
@@ -335,7 +314,7 @@ extension VaultSync {
         while start < snapshot.accounts.count {
             let chunk = snapshot.accounts[start..<min(start + Self.produceBatch, snapshot.accounts.count)]
             start += Self.produceBatch
-            for account in chunk where !inputs.reviewed.contains(account.id) {
+            for account in chunk where !inputs.reviewed.contains(account.id) && !inputs.parked.contains(account.id) {
                 let stamp = snapshot.stamps[account.id]
                 var syncable: SyncableAccount?
                 let sum: Data?
@@ -383,7 +362,7 @@ extension VaultSync {
 
         // Entries that were synced and are gone from the vault: a removed state at the next version.
         for (id, base) in inputs.bases.sorted(by: { $0.key.uuidString < $1.key.uuidString })
-        where !base.parts.removed && !live.contains(id) && !inputs.reviewed.contains(id) {
+        where !base.parts.removed && !live.contains(id) && !inputs.reviewed.contains(id) && !inputs.parked.contains(id) {
             guard !(handedOut[key]?.contains(id) ?? false) else {
                 work.held = true
                 continue
@@ -421,15 +400,27 @@ extension VaultSync {
         var versions: [UUID: UInt64]
         var outgoing: Set<UUID>
         var reviewed: Set<UUID>
+        /// Accounts whose record a newer WSurf wrote: nothing is sealed for them until this build reads it.
+        var parked: Set<UUID>
+    }
+
+    private nonisolated struct ProduceRows {
+        var versions: [UUID: UInt64]
+        var outgoing: Set<UUID>
+        var reviewed: Set<UUID>
+        var parked: Set<UUID>
     }
 
     private func produceState(_ key: VaultKey, database: VaultSyncDatabase, syncKey: VaultSyncKey) -> ProduceState {
         let loaded = try? database.read { tx in
-            (try tx.baseVersions(key.vaultID), try tx.outbox(key.vaultID).map(\.accountID), try tx.conflicts(key.vaultID).map(\.accountID))
+            ProduceRows(
+                versions: try tx.baseVersions(key.vaultID), outgoing: Set(try tx.outbox(key.vaultID).map(\.accountID)),
+                reviewed: Set(try tx.conflicts(key.vaultID).map(\.accountID)), parked: try tx.parkedAccounts(key.vaultID)
+            )
         }
         return ProduceState(
-            bases: openedBases(key, database: database, syncKey: syncKey), versions: loaded?.0 ?? [:],
-            outgoing: Set(loaded?.1 ?? []), reviewed: Set(loaded?.2 ?? [])
+            bases: openedBases(key, database: database, syncKey: syncKey), versions: loaded?.versions ?? [:],
+            outgoing: loaded?.outgoing ?? [], reviewed: loaded?.reviewed ?? [], parked: loaded?.parked ?? []
         )
     }
 

@@ -35,6 +35,8 @@ nonisolated struct VaultCounts: Equatable {
     var outbox: Int
     var inbox: Int
     var review: Int
+    /// Inbox rows parked because a newer WSurf wrote them (version 0).
+    var parked: Int
 }
 
 /// An account's sync base: the version and sealed parts the Mac and iCloud last agreed on (`VaultSyncCodec.sealParts`).
@@ -52,7 +54,8 @@ nonisolated struct OutboxRow: Equatable {
     var parts: Data
 }
 
-/// A fetched envelope not yet applied: the highest version of the account.
+/// A fetched envelope not yet applied: the highest version of the account. Version 0 parks a record in a format this build cannot
+/// read: it is kept as it came, no pass takes it in, and nothing is sent over it, until a build that reads it reads the zone again.
 nonisolated struct InboxRow: Equatable {
     var accountID: UUID
     var version: UInt64
@@ -247,10 +250,11 @@ nonisolated final class VaultSyncDatabase: Sendable {
 
         // MARK: Inbox
 
-        /// The oldest `limit` rows by account id: a stable order, so a batch that goes round again meets the same rows.
+        /// The oldest `limit` rows by account id: a stable order, so a batch that goes round again meets the same rows. Parked rows
+        /// (version 0) are not in it.
         func inbox(_ vault: UUID, limit: Int) throws -> [InboxRow] {
             try Row.fetchAll(
-                db, sql: "SELECT accountID, version, envelope FROM inbox WHERE vaultID = ? ORDER BY accountID LIMIT ?",
+                db, sql: "SELECT accountID, version, envelope FROM inbox WHERE vaultID = ? AND version > 0 ORDER BY accountID LIMIT ?",
                 arguments: [vault.sqlText, limit]
             ).compactMap { row in
                 UUID(uuidString: row["accountID"]).map { InboxRow(accountID: $0, version: Self.version(row), envelope: row["envelope"]) }
@@ -261,7 +265,14 @@ nonisolated final class VaultSyncDatabase: Sendable {
             try versions("inbox", vault)
         }
 
-        /// The version waiting in the inbox for one account, or nil when none waits.
+        /// The accounts whose newer-format record is parked.
+        func parkedAccounts(_ vault: UUID) throws -> Set<UUID> {
+            Set(try String.fetchAll(
+                db, sql: "SELECT accountID FROM inbox WHERE vaultID = ? AND version = 0", arguments: [vault.sqlText]
+            ).compactMap { UUID(uuidString: $0) })
+        }
+
+        /// The version waiting in the inbox for one account (0: parked), or nil when none waits.
         func inboxVersion(_ vault: UUID, _ account: UUID) throws -> UInt64? {
             try Int64.fetchOne(
                 db, sql: "SELECT version FROM inbox WHERE vaultID = ? AND accountID = ?", arguments: [vault.sqlText, account.sqlText]
@@ -331,8 +342,10 @@ nonisolated final class VaultSyncDatabase: Sendable {
         /// The vault row with the counts the status is derived from.
         func summary(_ vault: UUID) throws -> (row: VaultRow, counts: VaultCounts)? {
             guard let row = try self.vault(vault) else { return nil }
+            let parked = try parkedAccounts(vault).count
             return (row, VaultCounts(
-                outbox: try count("outbox", vault), inbox: try count("inbox", vault), review: try reviewCount(vault)
+                outbox: try count("outbox", vault), inbox: try count("inbox", vault) - parked, review: try reviewCount(vault),
+                parked: parked
             ))
         }
 

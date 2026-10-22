@@ -875,6 +875,9 @@
         }
       }
     },
+    "%lld entries are from a newer version of WSurf. Update WSurf to sync them." : {
+      "comment" : "Added to the Sync with iCloud caption. %lld is a number of at least 1. Entries another device saved in a format only a newer version of WSurf reads; they stay as they are until WSurf is updated."
+    },
     "%lld entries are too large to sync or hold only files, so they stay on this Mac." : {
       "comment" : "Added to the Sync with iCloud caption. %lld is a number of at least 1. Files are never synced."
     },

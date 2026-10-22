@@ -95,7 +95,7 @@ struct CloudVaultRow: View {
         }
     }
 
-    private func caption(status: VaultSyncStatus, isUnlocked: Bool, tally: (notSyncable: Int, unreadable: Int)) -> String {
+    private func caption(status: VaultSyncStatus, isUnlocked: Bool, tally: VaultSyncTally) -> String {
         var parts = [Self.statusText(status, isUnlocked: isUnlocked)]
         if Self.isOn(status) {
             if tally.notSyncable > 0 {
@@ -103,6 +103,9 @@ struct CloudVaultRow: View {
             }
             if tally.unreadable > 0 {
                 parts.append(String(localized: "\(tally.unreadable) changes from iCloud couldn’t be read and were skipped."))
+            }
+            if tally.newer > 0 {
+                parts.append(String(localized: "\(tally.newer) entries are from a newer version of WSurf. Update WSurf to sync them."))
             }
         }
         return parts.joined(separator: " ")

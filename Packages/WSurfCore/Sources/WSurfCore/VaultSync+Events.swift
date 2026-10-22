@@ -63,12 +63,11 @@ extension VaultSync {
         refresh(key)
     }
 
-    /// Stores each record's change tag and queues its envelope when it is newer than what this Mac agreed on. Returns whether
-    /// anything was queued.
+    /// Stores each record's change tag and queues its envelope when it is newer than what this Mac agreed on. A record in a format
+    /// only a newer WSurf reads is parked, as it came. Returns whether anything was queued or parked.
     private func takeItems(_ records: [SyncRecord], key: VaultKey) -> Bool {
         guard !records.isEmpty, let (database, _) = enabledRow(key) else { return false }
         var queuedAny = false
-        var newer = false
         do {
             try database.write { tx in
                 let bases = try tx.baseVersions(key.vaultID)
@@ -81,24 +80,23 @@ extension VaultSync {
                     do {
                         version = try VaultSyncCodec.version(of: record.payload)
                     } catch VaultSyncError.unsupportedFormat {
-                        newer = true
+                        // This one entry waits for an update; the vault goes on.
+                        try tx.save(InboxRow(accountID: account, version: 0, envelope: record.payload), vault: key.vaultID)
+                        waiting[account] = 0
+                        queuedAny = true
                         continue
                     } catch {
                         continue
+                    }
+                    if waiting[account] == 0 {
+                        // A record this build reads replaces the one it could not.
+                        try tx.deleteInbox(key.vaultID, account, upTo: 0)
+                        waiting[account] = nil
                     }
                     guard version > (bases[account] ?? 0), version > (waiting[account] ?? 0), version > (reviewed[account] ?? 0) else { continue }
                     try tx.save(InboxRow(accountID: account, version: version, envelope: record.payload), vault: key.vaultID)
                     waiting[account] = version
                     queuedAny = true
-                }
-                if newer, var current = try tx.vault(key.vaultID) {
-                    // A newer WSurf wrote a row this build cannot even date: the vault waits for an update and reads the zone
-                    // again afterwards, so the row is not lost to the engine having moved on.
-                    if current.status == .active || current.status == .iCloudFull {
-                        current.status = .needsUpdate
-                    }
-                    current.needsFetch = true
-                    try tx.save(current)
                 }
             }
         } catch {
@@ -111,9 +109,6 @@ extension VaultSync {
                     try tx.save(current)
                 }
             }
-        }
-        if newer {
-            incomplete.insert(key)
         }
         return queuedAny
     }
@@ -243,16 +238,31 @@ extension VaultSync {
         switch failure.failure {
         case .serverRecordChanged(let server):
             // Whether the server holds a version this Mac has not agreed on: it is merged, and this Mac's row never goes up over it.
+            // A record this build cannot read is parked and waits the same way.
             var ahead = false
+            var parked = false
             try? database.write { tx in
                 try tx.setSystemFields(server.systemFields, vault: key.vaultID, name: failure.id.name)
-                guard let account, let version = try? VaultSyncCodec.version(of: server.payload),
-                      version > (try tx.base(key.vaultID, account)?.version ?? 0)
-                else { return }
+                guard let account else { return }
+                let version: UInt64
+                do {
+                    version = try VaultSyncCodec.version(of: server.payload)
+                } catch VaultSyncError.unsupportedFormat {
+                    try tx.save(InboxRow(accountID: account, version: 0, envelope: server.payload), vault: key.vaultID)
+                    parked = true
+                    return
+                } catch {
+                    return
+                }
+                guard version > (try tx.base(key.vaultID, account)?.version ?? 0) else { return }
                 ahead = true
                 if version > (try tx.inboxVersions(key.vaultID)[account] ?? 0) {
                     try tx.save(InboxRow(accountID: account, version: version, envelope: server.payload), vault: key.vaultID)
                 }
+            }
+            if parked {
+                refresh(key)
+                return false
             }
             if isVaultRecord {
                 // This Mac's list wins on the server's tag: every list in it was sealed by a holder of the vault's key.
@@ -413,7 +423,7 @@ extension VaultSync {
         guard mine == token(key) else { return }
         incomplete.remove(key)
         applyFetched(modified: records, deleted: [])
-        // A read that could not keep or date every record is still owed.
+        // A read that could not keep every record is still owed.
         if !incomplete.contains(key) {
             try? database.write { tx in
                 if var current = try tx.vault(key.vaultID) {
