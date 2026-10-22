@@ -386,6 +386,13 @@ public actor ProfileVaultStore {
         return InputHistoryVaultKey(vaultID: vaultID, key: HKDF<SHA256>.deriveKey(inputKeyMaterial: grant.dek, info: info, outputByteCount: 32))
     }
 
+    /// The import memory key of `vaultID` under its current grant (`ImportMemoryKey`): HKDF-SHA256 of the DEK under its own label, bound to
+    /// the profile and the vault, so every Mac that holds the vault makes the same one. Only this subkey leaves the store, never the DEK.
+    public func importMemoryKey(vaultID: UUID, using access: VaultAccess) throws -> ImportMemoryKey {
+        let grant = try authorizedGrant(vaultID, access)
+        return ImportMemoryKey.derive(dek: grant.dek, profileID: grant.ids.profileID, vaultID: vaultID)
+    }
+
     /// Permanent lifecycle guard, then drops every grant; idempotent. An operation that has not yet taken the operation lock refuses once
     /// `closed` is set, but only after its lock wait ends: it acquires the flock and gives it back at once, or `lockWait` runs out with
     /// `storeBusy`. An operation already holding the lock runs to completion, so a caller about to erase the directory must first drain

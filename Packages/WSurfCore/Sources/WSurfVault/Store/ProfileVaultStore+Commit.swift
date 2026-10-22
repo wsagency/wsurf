@@ -68,15 +68,39 @@ private nonisolated struct LedgerRequired: Error {}
 /// per-account and restore paths all route through it).
 extension ProfileVaultStore {
     /// `changing` names the accounts the caller edited in `accounts` (`Proposal.changing`); `nil` compares every account on its bytes.
-    /// `merging` maps each account a merge takes away to the one it was merged into (`Proposal.merging`).
+    /// `merging` maps each account a merge takes away to the one it was merged into (`Proposal.merging`); the survivor's link to each
+    /// remembers what the absorbed account stood for (`remembering`).
     public func commit(
         vaultID: UUID, _ accounts: [CredentialAccount], expectedRevision: UInt64, cause: String?, changing: Set<UUID>? = nil,
         merging: [UUID: UUID] = [:], using access: VaultAccess
     ) async throws -> VaultCommitReceipt {
         let intent = CommitIntent(vaultID: vaultID, access: access, expectedRevision: expectedRevision, cause: cause, isCommit: true)
-        let receipt = try await perform(intent) { _ in Proposal(accounts: accounts, requires: nil, changing: changing, merging: merging) }
+        let memory = merging.isEmpty ? nil : try importMemoryKey(vaultID: vaultID, using: access)
+        let receipt = try await perform(intent) { old in
+            let proposed = memory.map { Self.remembering(merging, in: accounts, from: old, memory: $0) } ?? accounts
+            return Proposal(accounts: proposed, requires: nil, changing: changing, merging: merging)
+        }
         settleBlobs(in: accounts)
         return receipt
+    }
+
+    /// `accounts` with each survivor's link to an account `merging` takes into it remembering what that account stood for as the
+    /// transaction read it (`ImportMemoryKey.trace`), so an import of it finds the survivor once its Trash entry is purged, and on a Mac
+    /// that only receives the survivor. A link that remembers already, or whose account the vault does not hold, is left as it is.
+    nonisolated static func remembering(
+        _ merging: [UUID: UUID], in accounts: [CredentialAccount], from old: [CredentialAccount], memory: ImportMemoryKey
+    ) -> [CredentialAccount] {
+        let absorbed = Dictionary(old.filter { merging[$0.id] != nil }.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let survivors = Set(merging.values)
+        return accounts.map { account in
+            guard survivors.contains(account.id), var links = account.mergedFrom else { return account }
+            for index in links.indices where links[index].trace == nil && merging[links[index].accountID] == account.id {
+                links[index].trace = absorbed[links[index].accountID].map(memory.trace)
+            }
+            var result = account
+            result.mergedFrom = links
+            return result
+        }
     }
 
     /// The files `accounts` now refer to are no longer an editor's unsaved ones: from here on only a sweep's reference check keeps them.

@@ -212,24 +212,26 @@ extension ProfileVaultStore {
     // MARK: Removed identifiers
 
     /// Ids only, one Trash row at a time, never a secret (§13.3). One account-level row per removed account plus one row per passkey
-    /// of it; a stored empty exchange id is invalid data, never `nil`.
+    /// of it; a stored empty exchange id is invalid data, never `nil`. The account-level row also carries what the account stood for as
+    /// keyed digests (`RemovedIdentifier.trace`), never a value.
     public func removedIdentifiers(vaultID: UUID, using access: VaultAccess) async throws -> RemovedIdentifiers {
         let items = try await readHistory(vaultID, access) { db, grant, opened -> [RemovedIdentifier] in
             let trash = try Self.openTrash(db, grant: grant, opened: opened)
+            let memory = ImportMemoryKey.derive(dek: grant.dek, profileID: grant.ids.profileID, vaultID: vaultID)
             var items: [RemovedIdentifier] = []
             try mapIntegrity(grant.ordinal) {
                 try StoreTables.forEachHistoryRecord(db, vaultID: trash.side.vaultID) { row in
                     switch row.kind {
                     case .trashEntry:
                         let body = try JSONDecoder().decode(TrashEntryBody.self, from: row.opened(key: trash.side.key, ids: grant.ids))
-                        items += try Self.identifiers(of: body, entryID: row.recordID)
+                        items += try Self.identifiers(of: body, entryID: row.recordID, memory: memory)
                     case .tombstone:
                         let body = try JSONDecoder().decode(TombstoneBody.self, from: row.opened(key: trash.side.key, ids: grant.ids))
                         items.append(
                             RemovedIdentifier(
                                 entryID: body.entryID, isTombstone: true, accountID: body.ownerID, exchangeAccountID: body.exchangeAccountID,
                                 exchangeItemID: body.exchangeItemID, passkeyCredentialID: body.passkeyCredentialID, rpID: body.rpID,
-                                removedAt: body.purgedAt
+                                removedAt: body.purgedAt, trace: body.trace
                             )
                         )
                     case .account, .revision:
@@ -245,7 +247,7 @@ extension ProfileVaultStore {
         return RemovedIdentifiers(items: items)
     }
 
-    nonisolated private static func identifiers(of body: TrashEntryBody, entryID: UUID) throws -> [RemovedIdentifier] {
+    nonisolated private static func identifiers(of body: TrashEntryBody, entryID: UUID, memory: ImportMemoryKey) throws -> [RemovedIdentifier] {
         func row(accountID: Data?, itemID: Data?, passkey: WebsitePasskey?) -> RemovedIdentifier {
             RemovedIdentifier(
                 entryID: entryID, isTombstone: false, accountID: body.ownerID, exchangeAccountID: accountID, exchangeItemID: itemID,
@@ -256,7 +258,9 @@ extension ProfileVaultStore {
         case (.account, _):
             guard let snapshot = body.snapshot else { throw CredentialStoreError.malformed }
             let ids = (snapshot.exchangeAccountID, snapshot.exchangeItemID)
-            return [row(accountID: ids.0, itemID: ids.1, passkey: nil)] + snapshot.passkeys.map { row(accountID: ids.0, itemID: ids.1, passkey: $0) }
+            var account = row(accountID: ids.0, itemID: ids.1, passkey: nil)
+            account.trace = memory.removedTrace(of: snapshot)
+            return [account] + snapshot.passkeys.map { row(accountID: ids.0, itemID: ids.1, passkey: $0) }
         case (.credential, .passkey?):
             guard let value = body.credentialValue else { throw CredentialStoreError.malformed }
             let passkey = try JSONDecoder().decode(WebsitePasskey.self, from: value)

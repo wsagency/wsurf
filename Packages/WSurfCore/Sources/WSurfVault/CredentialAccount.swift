@@ -96,11 +96,13 @@ nonisolated extension CredentialAccount {
         result.passwordBase = old.passwordBase
         result.totpBase = old.totpBase
         result.secureItemsBase = old.secureItemsBase
+        result.importTrace = old.importTrace
         result.mergedFrom = mergedFrom?.map { link in
             var restored = link
             if let before = old.mergedFrom?.first(where: { $0.identity == link.identity }) {
                 restored.passwordBase = before.passwordBase
                 restored.totpBase = before.totpBase
+                restored.trace = before.trace
             }
             return restored
         }
@@ -115,11 +117,14 @@ nonisolated extension CredentialAccount {
 /// its own id gives.
 public nonisolated struct MergedItemLink: Codable, Sendable, Equatable {
     /// The merged credential's own id, which names its entry in the Trash.
-    var accountID: UUID
+    public var accountID: UUID
     var exchangeAccountID: Data
     var exchangeItemID: Data
     var passwordBase: ExchangeBase?
     var totpBase: ExchangeBase?
+    /// What the merged credential stood for when it was merged (`ImportMemoryKey.trace`), so an import of it finds this credential even
+    /// after its Trash entry is gone, and on a Mac that never held it. Set by the store in the merge's commit.
+    public var trace: ImportTrace?
 
     public init(
         accountID: UUID,
@@ -139,6 +144,12 @@ public nonisolated struct MergedItemLink: Codable, Sendable, Equatable {
         guard !exchangeAccountID.isEmpty, !exchangeItemID.isEmpty,
               exchangeAccountID.count <= CredentialVaultLimits.payloadBytes,
               exchangeItemID.count <= CredentialVaultLimits.payloadBytes else { throw CredentialVaultError.invalidData }
+        try trace?.validate()
+    }
+
+    /// The merged credential had no item of another app (saved here or from a file): its identity is the one its own id gives.
+    public var hasNoExporterItem: Bool {
+        exchangeItemID == (try? CredentialExchangeCodec.externalID(nil, fallback: accountID))
     }
 
     public var identity: CredentialExchangeCodec.ExternalItemID {
@@ -195,6 +206,9 @@ public nonisolated struct CredentialAccount: Codable, Sendable, Identifiable, Eq
     /// Files kept with the entry, in order: references to encrypted files in the vault's folder, never the bytes. `nil` means none: an
     /// empty array is never stored. A store holding any is `StoreFormat.fileSchema`, so a build that would drop them refuses it.
     public var attachments: [CredentialAttachment]?
+    /// What an import last brought for this credential, as keyed digests (`ImportTrace`). `nil` for one no import has written since
+    /// imports began to record it. Not content: it raises no History version and no sync upload, and travels with the login and notes.
+    public var importTrace: ImportTrace?
 
     public init(
         id: UUID,
@@ -301,6 +315,7 @@ public nonisolated struct CredentialAccount: Codable, Sendable, Identifiable, Eq
         try passwordEvents?.validate()
         try totpEvents?.validate()
         try validateMergedFrom()
+        try importTrace?.validate()
         for data in [exchangeAccountID, exchangeItemID].compactMap({ $0 }) where data.count > CredentialVaultLimits.payloadBytes {
             throw CredentialVaultError.invalidData
         }
