@@ -275,6 +275,18 @@ enum PageTranslationScript {
           });
         },
 
+        // The text the website wrote: `copy`, a fresh clone of this document, with every node this run translated set back. The
+        // clone is exact, so the two documents' text nodes pair up in order; a node the page changed since is left as it is.
+        untranslate(copy) {
+          if (!originals.size) return;
+          const live = document.createTreeWalker(document, NodeFilter.SHOW_TEXT);
+          const clone = copy.createTreeWalker(copy, NodeFilter.SHOW_TEXT);
+          for (let a = live.nextNode(), b = clone.nextNode(); a && b; a = live.nextNode(), b = clone.nextNode()) {
+            const entry = originals.get(a);
+            if (entry && a.nodeValue === entry.translated && b.nodeValue === entry.translated) b.nodeValue = entry.original;
+          }
+        },
+
         restore() {
           active = false;
           observer?.disconnect();
