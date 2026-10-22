@@ -74,7 +74,19 @@ extension ProfileVaultStore {
         merging: [UUID: UUID] = [:], using access: VaultAccess
     ) async throws -> VaultCommitReceipt {
         let intent = CommitIntent(vaultID: vaultID, access: access, expectedRevision: expectedRevision, cause: cause, isCommit: true)
-        return try await perform(intent) { _ in Proposal(accounts: accounts, requires: nil, changing: changing, merging: merging) }
+        let receipt = try await perform(intent) { _ in Proposal(accounts: accounts, requires: nil, changing: changing, merging: merging) }
+        settleBlobs(in: accounts)
+        return receipt
+    }
+
+    /// The files `accounts` now refer to are no longer an editor's unsaved ones: from here on only a sweep's reference check keeps them.
+    func settleBlobs(in accounts: [CredentialAccount]) {
+        guard !pendingBlobs.isEmpty else { return }
+        for account in accounts {
+            for file in account.attachments ?? [] {
+                pendingBlobs.remove(file.id)
+            }
+        }
     }
 
     func delete(vaultID: UUID, scope: RemovalScope, expectedRevision: UInt64, using access: VaultAccess) async throws -> VaultCommitReceipt {
@@ -202,7 +214,7 @@ extension ProfileVaultStore {
     }
 
     /// The payload rules at the boundary: distinct ids, `CredentialAccount.validate()`, the live byte budgets (blocked origins
-    /// included). A live limit names itself. `unchanged` accounts are byte for byte stored rows, checked when they were written: they
+    /// included) and the vault's file budget. A live limit names itself. `unchanged` accounts are byte for byte stored rows, checked when they were written: they
     /// count towards every total and uniqueness rule, but are not checked one by one again.
     nonisolated static func validate(_ accounts: [CredentialAccount], blockedOrigins: [String], unchanged: Set<UUID> = []) throws {
         do {
@@ -212,6 +224,8 @@ extension ProfileVaultStore {
         } catch CredentialVaultError.oversized {
             throw CredentialStoreError.limit(overLimit(accounts))
         }
+        // The files themselves are outside the rows; their sizes (sealed in the rows) count towards the vault's 2 GB.
+        guard CredentialAttachment.liveBytes(of: accounts) <= CredentialAttachment.vaultBytes else { throw VaultFileError.vaultFull }
     }
 
     /// Which live limit `accounts` is over: the count, else one account's bytes (raw or encoded), else the total.
@@ -255,12 +269,12 @@ extension ProfileVaultStore {
                 guard let passkeyID, account.passkeys.contains(where: { $0.id == passkeyID }) else { throw CredentialVaultError.invalidData }
                 account.passkeys.removeAll { $0.id == passkeyID }
                 required = .credential(ownerID: ownerID, subject: .passkey, passkeyID: passkeyID)
-            case .account, .metadata:
+            case .account, .metadata, .attachment:
                 throw CredentialVaultError.invalidData
             }
             // ponytail-merge: kinds' `secureItems` emptiness check plus vault-scale's `changing`; an items delete names its owner too.
             if account.username.isEmpty, account.password == nil, account.passkeys.isEmpty, account.totp == nil, account.notes == nil,
-               account.secureItems == nil {
+               account.secureItems == nil, account.attachments == nil {
                 return Proposal(accounts: old.filter { $0.id != ownerID }, requires: .account(ownerID), changing: [ownerID])
             }
             var accounts = old
@@ -342,6 +356,8 @@ nonisolated final class CommitTransaction {
     let previous: [UUID: CredentialAccount]
     /// What the transaction's read decoded from each live row.
     let decoded: [UUID: DecodedRow]
+    /// A live row this transaction wrote holds a file: `finish` raises the store to `StoreFormat.fileSchema`.
+    var storesFiles = false
 
     var ids: StoreIDs {
         grant.ids
@@ -416,6 +432,9 @@ nonisolated final class CommitTransaction {
         var account = proposed
         if stampsModifiedAt {
             account.modifiedAt = wall
+        }
+        if account.attachments != nil {
+            storesFiles = true
         }
         let plaintext = try CredentialContent.canonicalJSON(account)
         let version = (live[account.id]?.version ?? 0) + 1
@@ -496,7 +515,13 @@ nonisolated final class CommitTransaction {
             trashEntry = moved
             entries.append(moved)
         }
-        try ProfileVaultStore.storeRegistry(db, grant: grant, catalog: opened.catalog, replacing: entries)
+        var catalog = opened.catalog
+        if storesFiles, catalog.schema < StoreFormat.fileSchema {
+            // Owner decision 8, in the same transaction as the first file: from here on a build without files refuses the store.
+            catalog.schema = StoreFormat.fileSchema
+            try StoreTables.raiseSchema(db, to: StoreFormat.fileSchema)
+        }
+        try ProfileVaultStore.storeRegistry(db, grant: grant, catalog: catalog, replacing: entries)
         return CommitOutcome(receipt: VaultCommitReceipt(revision: next.revision), entry: entry, trashEntry: trashEntry, decoded: decoded)
     }
 

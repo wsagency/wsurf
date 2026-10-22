@@ -110,6 +110,9 @@ actor ProfileVaultStore {
     var grants: [UUID: VaultGrant] = [:]
     /// Vaults whose verification succeeded in this session (stays true after `lock`).
     var verified: Set<UUID> = []
+    /// Files an editor added in this run that it has neither saved nor discarded: a sweep never removes them, though nothing refers to
+    /// them yet. In memory only, so a file left by a quit or a crash is swept by a later run.
+    var pendingBlobs: Set<UUID> = []
     /// Set by `close()`, never cleared: this instance serves no operation afterwards.
     private var closed = false
 

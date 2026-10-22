@@ -202,7 +202,7 @@ struct CredentialListView<Switcher: View>: View {
             SettingsSection(
                 title: LocalizedStringResource("\(title)"),
                 symbol: "key",
-                footnote: "Passwords, passkeys and verification codes stay hidden until you reveal or copy them.",
+                footnote: list.filter == .files ? filesFootnote : "Passwords, passkeys and verification codes stay hidden until you reveal or copy them.",
                 isLongList: true
             ) {
                 let rows = list.rows(of: model.summaries)
@@ -240,6 +240,14 @@ struct CredentialListView<Switcher: View>: View {
                 CredentialMergeFlow(model: model, merge: merge, route: route, close: { merge.route = nil })
             }
         }
+    }
+
+    /// The Files section's use of the vault's room. Earlier versions and the Trash keep their files until the Trash is emptied.
+    private var filesFootnote: LocalizedStringResource {
+        let usage = model.fileUsage
+        let used = ByteCountFormatter.string(fromByteCount: usage.bytes, countStyle: .file)
+        let limit = ByteCountFormatter.string(fromByteCount: CredentialAttachment.vaultBytes, countStyle: .file)
+        return "\(usage.count) files use \(used) of this vault’s \(limit). Files are encrypted in the vault and open only while it is unlocked."
     }
 
     /// The rows in the order the list shows them, for the selection.

@@ -155,9 +155,13 @@ nonisolated struct CredentialAccount: Codable, Sendable, Identifiable, Equatable
     var secureItemsBase: ExchangeBase?
     /// The other app's items that were merged into this credential. `nil` means none: an empty array is never stored.
     var mergedFrom: [MergedItemLink]?
+    /// Files kept with the entry, in order: references to encrypted files in the vault's folder, never the bytes. `nil` means none: an
+    /// empty array is never stored. A store holding any is `StoreFormat.fileSchema`, so a build that would drop them refuses it.
+    var attachments: [CredentialAttachment]?
 
     func validate() throws {
-        guard !username.isEmpty || password != nil || !passkeys.isEmpty || totp != nil || notes != nil || secureItems != nil,
+        guard !username.isEmpty || password != nil || !passkeys.isEmpty || totp != nil || notes != nil || secureItems != nil
+                || attachments != nil,
               username.utf8.count <= CredentialVaultLimits.payloadBytes,
               (displayName?.utf8.count ?? 0) <= CredentialVaultLimits.payloadBytes,
               (password?.utf8.count ?? 0) <= 4_096,
@@ -204,11 +208,22 @@ nonisolated struct CredentialAccount: Codable, Sendable, Identifiable, Equatable
                 try item.validate()
             }
         }
+        try validateAttachments()
         try passwordEvents?.validate()
         try totpEvents?.validate()
         try validateMergedFrom()
         for data in [exchangeAccountID, exchangeItemID].compactMap({ $0 }) where data.count > CredentialVaultLimits.payloadBytes {
             throw CredentialVaultError.invalidData
+        }
+    }
+
+    /// At most 64 distinct files, each a valid record.
+    private func validateAttachments() throws {
+        guard let attachments else { return }
+        guard !attachments.isEmpty, attachments.count <= CredentialAttachment.entryLimit,
+              Set(attachments.map(\.id)).count == attachments.count else { throw CredentialVaultError.invalidData }
+        for file in attachments {
+            try file.validate()
         }
     }
 

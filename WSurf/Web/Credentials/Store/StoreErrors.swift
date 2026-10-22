@@ -14,6 +14,8 @@ nonisolated enum UndeleteBlock: Equatable, Sendable {
 nonisolated enum StoreFailCause: Equatable, Sendable {
     case foreignStore, v1AfterMigration, storeMissing, leftoversWithoutAuthority, unreadableVault, unreadableStore
     case cutoverV1Present, witnessMismatch, wrongProfile, migrationLeftover
+    /// The store says a newer format than this build knows (`StoreFormat.fileSchema`): a newer WSurf saved it.
+    case newerVersion
 }
 
 nonisolated struct StoreFailClosed: Equatable, Sendable {

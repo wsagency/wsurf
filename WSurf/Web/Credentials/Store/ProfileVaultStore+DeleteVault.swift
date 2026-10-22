@@ -8,8 +8,9 @@ import GRDB
 /// secure erasure, and it needs a fresh assertion of a passkey enrolled in THIS vault on top of the unlock: a cached lease alone, or
 /// another vault's passkey, never deletes. The one exception is a vault that holds nothing to lose (`deleteEmptyVault`). One
 /// `BEGIN IMMEDIATE` transaction removes every row of the vault and of its linked Trash and rewrites the registry without them; a
-/// failure or cancellation before the commit leaves the store as it was. The other vaults' rows and wrappers, the registry key
-/// (sealed in every active head), the stub, the A3 witness and every other file are not touched.
+/// failure or cancellation before the commit leaves the store as it was. After the commit the vault's folder of encrypted files
+/// (`VaultBlob`) is removed. The other vaults' rows, wrappers and files, the registry key (sealed in every active head), the stub, the
+/// A3 witness and every other file are not touched.
 extension ProfileVaultStore {
     func deleteVault(vaultID: UUID, authorization: FreshAuthorization, using access: VaultAccess) async throws {
         try await authorize(vaultID: vaultID, authorization, using: access)
@@ -35,6 +36,8 @@ extension ProfileVaultStore {
                 }
             }
             try? pool.writeWithoutTransaction { try $0.execute(sql: "PRAGMA wal_checkpoint(TRUNCATE)") }
+            // The rows that held the keys of the vault's files are gone; the encrypted files of the vault and its Trash go with them.
+            try? FileManager.default.removeItem(at: blobFolder(vaultID))
         }
         // Committed: nothing below throws. The grant goes with the vault, and so do the preferences keyed by its id.
         lock(vaultID: vaultID)

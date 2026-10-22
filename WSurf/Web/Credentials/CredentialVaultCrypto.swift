@@ -412,6 +412,12 @@ nonisolated enum CredentialVaultCrypto {
                 try add(field.field?.label?.utf8.count ?? 0)
             }
         }
+        for file in account.attachments ?? [] {
+            try add(file.name.utf8.count)
+            try add(file.contentType.utf8.count)
+            try add(file.sha256.count)
+            try add(file.wrappedKey.count)
+        }
         for passkey in account.passkeys {
             try add(passkey.credentialID.count)
             try add(passkey.rpID.utf8.count)

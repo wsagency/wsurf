@@ -60,6 +60,10 @@ final class CredentialSettingsModel {
     @ObservationIgnored let verifyUser: @MainActor (String) async throws -> Void
     /// Opens an address in a new tab of the window that shows this page (`openWebsite`); `nil` where there is none, such as a test.
     @ObservationIgnored var websiteOpener: (@MainActor (URL) -> Void)?
+    /// Where decrypted copies of vault files go for Quick Look and Open With; a seam so a test keeps them in its own folder.
+    @ObservationIgnored var previewFolder = VaultFilePreviewFolder.shared
+    /// The last removal of an editor's unsaved files, kept so a test can wait for it.
+    @ObservationIgnored var fileDiscard: Task<Void, Never>?
     @ObservationIgnored private var noticeGeneration = 0
     /// What the last copy or list action did, for a moment ("Password Copied", "Moved 3 credentials to Trash."): the name of the
     /// part or a count, never a value.
@@ -266,7 +270,8 @@ final class CredentialSettingsModel {
     }
 
     func cancelEditing() {
-        if live != nil {
+        if let draft = live?.draft {
+            discardAddedFiles(of: draft, keeping: nil)
             session?.draft = nil
         }
     }
@@ -501,12 +506,14 @@ final class CredentialSettingsModel {
         // meanwhile has nothing to conflict with. The receipt names the revision the draft was made against.
         if draft.changesNothing {
             try? update(session.epoch) { $0.draft = nil }
+            discardAddedFiles(of: draft, keeping: draft.original)
             return VaultCommitReceipt(revision: draft.revision)
         }
         let saved = try draft.account()
         let started = session.knownStamps?[saved.id]
         let receipt = try await save(saved, expectedRevision: draft.revision)
         try? update(session.epoch) { $0.draft = nil }
+        discardAddedFiles(of: draft, keeping: saved)
         await recordSave(of: saved, from: draft.original, started: started, receipt: receipt, epoch: session.epoch)
         return receipt
     }

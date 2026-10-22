@@ -41,6 +41,8 @@ extension CredentialMergeError {
             String(localized: "The merged credential would have more than \(SecureItem.itemLimit) cards and other items. Remove some first.")
         case .linkLimit:
             String(localized: "Too many credentials were already merged into one of these. Keep a different credential instead.")
+        case .fileLimit:
+            String(localized: "The merged credential would have more than \(CredentialAttachment.entryLimit) files. Remove some files first.")
         }
     }
 }

@@ -45,6 +45,9 @@ nonisolated struct CredentialSummary: Identifiable, Equatable, Sendable {
     let hasSensitiveItems: Bool
     /// The hidden values of its items that the row's menu offers to copy, by name.
     let hiddenItemFields: [SecureFieldReference]
+    /// How many files it holds and their bytes: the counts the Files section and the 2 GB limit read. Never a name or a key.
+    let fileCount: Int
+    let fileBytes: Int64
     let passkeys: [PasskeySummary]
     /// What "Open Website" opens: the first login address, else the first website, else the first passkey's site. Always HTTPS.
     let website: URL?
@@ -78,6 +81,8 @@ nonisolated struct CredentialSummary: Identifiable, Equatable, Sendable {
                 item.isConcealed(field) ? SecureFieldReference(item: index, field: position, label: item.label(of: field)) : nil
             }
         }
+        fileCount = account.attachments?.count ?? 0
+        fileBytes = account.attachments?.reduce(Int64(0)) { $0 + $1.size } ?? 0
         passkeys = account.passkeys.map { PasskeySummary($0) }
         website = account.loginURLs.first ?? account.origins.first.flatMap(URL.init(string:))
             ?? account.passkeys.first.flatMap { URL(string: "https://\($0.rpID)") }
@@ -100,7 +105,8 @@ nonisolated struct CredentialSummary: Identifiable, Equatable, Sendable {
               lhs.displayName == rhs.displayName, lhs.origins == rhs.origins, lhs.hasPassword == rhs.hasPassword,
               lhs.hasLogin == rhs.hasLogin, lhs.hasTOTP == rhs.hasTOTP, lhs.hasNotes == rhs.hasNotes,
               lhs.itemKinds == rhs.itemKinds, lhs.itemTitles == rhs.itemTitles, lhs.hasSensitiveItems == rhs.hasSensitiveItems,
-              lhs.hiddenItemFields == rhs.hiddenItemFields, lhs.website == rhs.website else { return false }
+              lhs.hiddenItemFields == rhs.hiddenItemFields, lhs.website == rhs.website, lhs.fileCount == rhs.fileCount,
+              lhs.fileBytes == rhs.fileBytes else { return false }
         return lhs.passkeys == rhs.passkeys
     }
 

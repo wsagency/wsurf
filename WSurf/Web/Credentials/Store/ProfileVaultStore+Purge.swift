@@ -11,7 +11,8 @@ nonisolated struct PurgeReceipt: Equatable, Sendable {
 
 /// §11.4: a logical row purge, not secure erasure. Explicit only, and only on a fresh assertion of an enrolled credential: a cached
 /// grant alone never purges. One store transaction (never the ordinary commit, never the wrappers): each selected Trash entry and its
-/// revision rows are deleted and replaced by non-secret tombstones, journalled `remove`/`add`. Logical capacity never blocks it.
+/// revision rows are deleted and replaced by non-secret tombstones, journalled `remove`/`add`. Logical capacity never blocks it. After
+/// the commit the encrypted files that no remaining row names are removed (`sweepAttachments`).
 extension ProfileVaultStore {
     /// `emptyAll` purges every entry (`entryIDs` is then ignored). An unknown id is `invalidData` with nothing written; nothing to
     /// purge writes nothing. `.diskFull` leaves the logical state unchanged.
@@ -27,6 +28,11 @@ extension ProfileVaultStore {
             let result = try Self.purging(db, request, requested: requested)
             removed = result.removed
             return result.outcome
+        }
+        if removed > 0 {
+            // The purged rows held the keys of their files; the files nothing else names go too. The purge has committed whatever
+            // happens here: a file this misses is removed by the next sweep.
+            _ = try? await sweepAttachments(vaultID: vaultID, using: access)
         }
         return PurgeReceipt(removedEntries: removed, revision: outcome.receipt.revision)
     }

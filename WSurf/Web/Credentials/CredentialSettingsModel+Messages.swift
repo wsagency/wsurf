@@ -72,6 +72,8 @@ extension CredentialSettingsModel {
             return String(localized: "That passkey can’t protect the vault. Choose a passkey provider that supports the PRF extension.")
         case is CancellationError:
             return nil
+        case let error as VaultFileError:
+            return error.message
         default:
             return storeMessage(for: error)
         }

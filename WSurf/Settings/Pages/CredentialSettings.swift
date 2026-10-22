@@ -623,6 +623,11 @@ struct CredentialRow: View {
         if summary.hasTOTP { parts.append(String(localized: "Verification code")) }
         if summary.hasNotes { parts.append(String(localized: "Notes")) }
         parts += summary.itemTitles
+        if summary.fileCount == 1 {
+            parts.append(String(localized: "1 file"))
+        } else if summary.fileCount > 1 {
+            parts.append(String(localized: "\(summary.fileCount) files"))
+        }
         return parts.joined(separator: " · ")
     }
 

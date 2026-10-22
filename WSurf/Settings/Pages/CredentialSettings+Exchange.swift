@@ -103,6 +103,12 @@ struct CredentialExportSheet: View {
                 if !kinds.isEmpty {
                     itemsNotice(kinds)
                 }
+                let files = CredentialExportSelection.fileCount(selection, in: model.summaries)
+                if files > 0 {
+                    Text("The \(files) attached files stay in WSurf: other apps can’t receive files. To copy one, open its entry and choose Save Copy….")
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
             if attempted, let message = model.transferMessage {
                 Text(verbatim: message.text)
