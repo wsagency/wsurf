@@ -6,7 +6,7 @@ import Contacts
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// The Import & Export rows that bring payment cards from a Safari export, or a contact from Contacts, into the open vault. A review
+/// The Import & Export rows that bring payment cards from a Safari export, or contacts from Contacts, into the open vault. A review
 /// lists titles only; Import writes in one commit and the notice offers Undo. With no vault yet the rows offer to create one; with a
 /// locked vault they stay off, and the section's footnote says why.
 struct AutofillImportRows: View {
@@ -45,16 +45,16 @@ struct AutofillImportRows: View {
             }
         }
         RowSeparator()
-        DetailRow(title: "Import a contact from Contacts") {
+        DetailRow(title: "Import contacts from Contacts", caption: contactsCaption) {
             switch action {
             case .importItems:
-                ContactImportButton { contact in review(contact) }
+                ContactImportButton { contacts in review(contacts) }
                     .fixedSize()
                     .disabled(model.isBusy)
             case .createVault:
                 Button("Create Vault…", action: createVault).buttonStyle(.bordered)
             case .unavailable:
-                Button("Choose Contact…") {}.buttonStyle(.bordered).disabled(true)
+                Button("Choose Contacts…") {}.buttonStyle(.bordered).disabled(true)
             }
         }
         if let problem {
@@ -81,6 +81,18 @@ struct AutofillImportRows: View {
         action == .createVault ? "Cards and addresses are saved in a vault. Create one to import them." : nil
     }
 
+    private var contactsCaption: LocalizedStringResource? {
+        action == .importItems ? "Click each contact you want, then close the list: they are reviewed together." : nil
+    }
+
+    /// The contacts autofill can use, each once: a contact without such details, or with the same details as one before it, is left
+    /// out. Nil when none is left.
+    static func contactSources(_ contacts: [CNContact]) -> AutofillVaultMigration.Sources? {
+        var seen = Set<[String]>()
+        let usable = contacts.map(AutofillContact.init(contact:)).filter { $0.isValid && seen.insert(AutofillSaveCandidate.contact($0).values).inserted }
+        return usable.isEmpty ? nil : AutofillVaultMigration.Sources(cards: [], contacts: usable)
+    }
+
     private func chooseSafariExport() {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [.zip, .json]
@@ -99,14 +111,16 @@ struct AutofillImportRows: View {
         }
     }
 
-    private func review(_ contact: CNContact) {
-        let imported = AutofillContact(contact: contact)
-        guard imported.isValid else {
-            problem = String(localized: "This contact has no details autofill can use.")
+    /// One review for every contact chosen in one opening of the picker; Import writes them in one commit with one Undo.
+    private func review(_ contacts: [CNContact]) {
+        guard let sources = Self.contactSources(contacts) else {
+            problem = contacts.count == 1
+                ? String(localized: "This contact has no details autofill can use.")
+                : String(localized: "These contacts have no details autofill can use.")
             return
         }
         problem = nil
-        Task { plan = await model.planAutofillImport(AutofillVaultMigration.Sources(cards: [], contacts: [imported])) }
+        Task { plan = await model.planAutofillImport(sources) }
     }
 }
 
