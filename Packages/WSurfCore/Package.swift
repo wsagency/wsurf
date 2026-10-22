@@ -24,6 +24,7 @@ let package = Package(
     products: [
         // Static on purpose: a dynamic library would add a framework bundle to the app and its signature.
         .library(name: "WSurfVault", targets: ["WSurfVault"]),
+        .library(name: "WSurfCore", targets: ["WSurfCore"]),
     ],
     dependencies: [
         .package(url: "https://github.com/groue/GRDB.swift", from: "7.11.1"),
@@ -34,6 +35,8 @@ let package = Package(
             dependencies: [.product(name: "GRDB", package: "GRDB.swift")],
             swiftSettings: coreSettings
         ),
+        // CloudKit tab sync. Foundation, CloudKit, Security, Observation and os only, no other target.
+        .target(name: "WSurfCore", swiftSettings: coreSettings),
     ],
     swiftLanguageModes: [.v6]
 )
