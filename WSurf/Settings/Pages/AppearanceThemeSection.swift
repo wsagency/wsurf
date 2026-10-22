@@ -13,6 +13,7 @@ struct AppearanceThemeSection: View {
     @State private var isEditing = false
     @State private var naming: ThemeNaming?
     @State private var deleting: ThemeDefinition?
+    @State private var isConfirmingReset = false
 
     private var themes: [ThemeDefinition] {
         let selected = settings.previewedTheme
@@ -50,6 +51,25 @@ struct AppearanceThemeSection: View {
             return "Edit this theme’s base colors, text and accent under Colors."
         }
         return "Makes a copy named “\(settings.customThemeName(for: settings.selectedTheme))” that you can recolor and rename."
+    }
+
+    private var resetCaption: LocalizedStringResource {
+        guard settings.canResetTheme else { return "This theme is already at its defaults." }
+        if let origin = settings.themeResetOrigin {
+            return "Puts this theme’s colors and settings back to “\(origin.name)”, the theme it was made from."
+        }
+        return "Puts this theme’s brightness, transparency and layout settings back to how WSurf ships them."
+    }
+
+    private var resetTitle: Text {
+        Text("Reset “\(settings.selectedTheme.name)” to its defaults?")
+    }
+
+    private var resetMessage: Text {
+        if let origin = settings.themeResetOrigin {
+            return Text("Its colors, brightness, transparency, spacing, folder indent and layout go back to “\(origin.name)”, the theme it was made from. You can’t undo this.")
+        }
+        return Text("Its brightness, transparency, spacing, folder indent and layout go back to how WSurf ships them. You can’t undo this.")
     }
 
     private var confirmsDeletion: Binding<Bool> {
@@ -164,6 +184,19 @@ struct AppearanceThemeSection: View {
                     }
                 }
                 .settingsAnchor("appearance.manageTheme")
+            }
+            RowSeparator()
+            DetailRow(title: "Reset theme", caption: resetCaption) {
+                SettingsButton(title: "Reset Theme to Default") { isConfirmingReset = true }
+                    .disabled(!settings.canResetTheme)
+            }
+            .settingsAnchor("appearance.resetTheme")
+            // On the row, not the section: two dialogs on one view can shadow each other.
+            .confirmationDialog(resetTitle, isPresented: $isConfirmingReset, titleVisibility: .visible) {
+                Button("Reset Theme", role: .destructive) { settings.resetSelectedTheme() }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                resetMessage
             }
         }
         .onDisappear { settings.commitThemePreview() }

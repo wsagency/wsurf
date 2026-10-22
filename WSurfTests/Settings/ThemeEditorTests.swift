@@ -288,6 +288,107 @@ struct ThemeEditorTests {
         }
     }
 
+    // MARK: - Reset
+
+    @Test func resettingABuiltInThemeRestoresItsKnobsAndNothingElse() throws {
+        try withSettings { settings, defaults in
+            settings.themeID = "gruvbox"
+            settings.themeAdjustment = knobs
+            settings.themeAdjustments["nord"] = ThemeAdjustment(material: .glass)
+            #expect(settings.canResetTheme && settings.themeResetOrigin == nil)
+
+            settings.resetSelectedTheme()
+
+            #expect(settings.themeID == "gruvbox" && settings.themeAdjustment == ThemeAdjustment())
+            #expect(settings.themeAdjustments["gruvbox"] == nil && !settings.canResetTheme)
+            #expect(settings.themeAdjustments["nord"] == ThemeAdjustment(material: .glass), "another theme keeps its knobs")
+            #expect(settings.userThemes.isEmpty, "a reset makes no copy")
+            #expect(settings.resolvedTheme.adjustment == ThemeAdjustment())
+            #expect(reopened(defaults).themeAdjustment == ThemeAdjustment())
+        }
+    }
+
+    @Test func resettingACustomThemeRestoresTheThemeItCameFrom() throws {
+        try withSettings { settings, defaults in
+            settings.themeID = "nord"
+            settings.themeAdjustment = ThemeAdjustment(material: .glass)
+            let custom = try #require(settings.saveTheme(named: "Mine"))
+            let neighbor = try #require(settings.duplicateTheme("nord"))
+            settings.themeID = custom.id
+            for scheme in schemes {
+                paint(settings, scheme)
+                settings.editColors(scheme: scheme) {
+                    $0.hue = 0.2
+                    $0.primary = 0x336699
+                    $0.sidebarText = SidebarTextStyle(colorRGB: 0x123456, opacity: 0.3)
+                    $0.icons = SidebarTextStyle(colorRGB: 0x654321, opacity: 0.5)
+                }
+            }
+            settings.themeAdjustment = knobs
+            #expect(settings.canResetTheme)
+            let before = try #require(settings.userThemes.first { $0.id == neighbor.id })
+            #expect(settings.themeResetOrigin?.id == "nord")
+
+            settings.resetSelectedTheme()
+
+            let nord = try #require(ThemeCatalog.builtIn("nord"))
+            let restored = settings.selectedTheme
+            #expect(restored.id == custom.id && restored.name == "Mine" && restored.basedOn == "nord")
+            #expect(restored.light == nord.light && restored.dark == nord.dark && restored.ground == nord.ground)
+            #expect(settings.themeAdjustment == ThemeAdjustment() && settings.themeAdjustments[custom.id] == nil)
+            #expect(!settings.canResetTheme)
+            #expect(settings.themeID == custom.id, "the theme stays selected")
+            #expect(settings.userThemes.first { $0.id == neighbor.id } == before, "another custom theme is untouched")
+            #expect(settings.themeAdjustments["nord"] == ThemeAdjustment(material: .glass), "so are the knobs of the built-in theme")
+
+            let again = reopened(defaults)
+            #expect(again.selectedTheme == restored && again.themeAdjustment == ThemeAdjustment())
+        }
+    }
+
+    @Test func resettingACopyOfACopyGoesBackToTheBuiltInTheme() throws {
+        try withSettings { settings, _ in
+            settings.themeID = "catppuccin"
+            let first = try #require(settings.saveTheme(named: "First"))
+            paint(settings, .light)
+            let second = try #require(settings.duplicateTheme(first.id))
+            #expect(second.basedOn == "catppuccin" && second.light.window == 0xFFF8E7)
+
+            settings.resetSelectedTheme()
+
+            #expect(settings.selectedTheme.light == ThemeCatalog.builtIn("catppuccin")?.light)
+            #expect(settings.userThemes.first { $0.id == first.id }?.light.window == 0xFFF8E7, "the first copy keeps its colors")
+        }
+    }
+
+    @Test func resettingACustomThemeWithNoOriginResetsOnlyItsKnobs() throws {
+        try withSettings { settings, _ in
+            let loose = ThemeDefinition(id: "loose", name: "Loose", ground: .solid, light: ThemeVariant(window: 0x112233))
+            settings.userThemes = [loose]
+            settings.themeID = "loose"
+            #expect(!settings.canResetTheme, "nothing to restore: the colors have no origin and the knobs are at default")
+
+            settings.themeAdjustment = ThemeAdjustment(rowPadding: 3)
+            #expect(settings.canResetTheme && settings.themeResetOrigin == nil)
+            settings.resetSelectedTheme()
+
+            #expect(settings.themeAdjustment == ThemeAdjustment() && settings.selectedTheme == loose)
+        }
+    }
+
+    @Test func aResetDropsADragStillInFlight() throws {
+        try withSettings { settings, _ in
+            settings.themeID = "nord"
+            settings.beginThemePreview()
+            settings.previewThemeAdjustment(ThemeAdjustment(darkBrightness: 0.4))
+            #expect(settings.themePreview != nil)
+
+            settings.resetSelectedTheme()
+
+            #expect(settings.themePreview == nil && settings.resolvedTheme.adjustment == ThemeAdjustment())
+        }
+    }
+
     // MARK: - Delete
 
     @Test func deletingTheSelectedCustomThemeFallsBackToItsOrigin() throws {
@@ -412,14 +513,17 @@ struct ThemeEditorTests {
 
     // MARK: - Search
 
-    @Test func searchFindsCustomizeAndTheBaseColors() throws {
+    @Test func searchFindsCustomizeAndResetTheme() throws {
         for query in ["customize", "custom theme", "own theme"] {
             #expect(SettingsIndex.search(query).contains { $0.id == "appearance.customize" }, "\(query)")
+        }
+        for query in ["reset theme", "restore", "defaults"] {
+            #expect(SettingsIndex.search(query).contains { $0.id == "appearance.resetTheme" }, "\(query)")
         }
         for query in ["secondary text", "window background", "surface"] {
             #expect(SettingsIndex.search(query).contains { $0.id == "appearance.colors" }, "\(query)")
         }
-        let customize = try #require(SettingsIndex.all.first { $0.id == "appearance.customize" })
-        #expect(customize.targetAnchor == "appearance.customize")
+        let reset = try #require(SettingsIndex.all.first { $0.id == "appearance.resetTheme" })
+        #expect(reset.targetAnchor == "appearance.resetTheme")
     }
 }
