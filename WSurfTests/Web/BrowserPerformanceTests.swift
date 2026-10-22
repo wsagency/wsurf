@@ -14,7 +14,7 @@ import XCTest
 nonisolated final class BrowserPerformanceTests: XCTestCase, @unchecked Sendable {
     func testCreatingAUsableStartPageTab() {
         MainActor.assumeIsolated {
-            measure(metrics: [XCTClockMetric(), XCTMemoryMetric()]) {
+            measure(metrics: [XCTClockMetric(), XCTMemoryMetric()], options: .budgeted) {
                 let browser = BrowserModel(database: .temporary())
                 let tab = browser.newTab()
 
@@ -39,7 +39,7 @@ nonisolated final class BrowserPerformanceTests: XCTestCase, @unchecked Sendable
             }
             _ = browser.importBookmarksFolder(named: "Performance fixtures", entries: entries)
 
-            measure(metrics: [XCTClockMetric(), XCTMemoryMetric()]) {
+            measure(metrics: [XCTClockMetric(), XCTMemoryMetric()], options: .budgeted) {
                 for _ in 0..<250 {
                     browser.activate(first)
                     browser.activate(second)
@@ -59,7 +59,7 @@ nonisolated final class BrowserPerformanceTests: XCTestCase, @unchecked Sendable
                 browser.addPage("https://fixture-\(index).example/")
             }
             let now = Date()
-            let options = XCTMeasureOptions()
+            let options = XCTMeasureOptions.budgeted
             options.invocationOptions = [.manuallyStart]
 
             measure(metrics: [XCTClockMetric(), XCTMemoryMetric()], options: options) {
@@ -96,7 +96,7 @@ nonisolated final class BrowserPerformanceTests: XCTestCase, @unchecked Sendable
             XCTAssertEqual(archive.entries.count, TabArchive.capacity)
             var section: OmniboxSection?
 
-            measure(metrics: [XCTClockMetric(), XCTMemoryMetric()]) {
+            measure(metrics: [XCTClockMetric(), XCTMemoryMetric()], options: .budgeted) {
                 section = Omnibox.archivedSection(
                     query: "archived page 2",
                     entries: archive.entries,
@@ -123,7 +123,7 @@ nonisolated final class BrowserPerformanceTests: XCTestCase, @unchecked Sendable
                 )
             }
 
-            measure(metrics: [XCTClockMetric(), XCTMemoryMetric()]) {
+            measure(metrics: [XCTClockMetric(), XCTMemoryMetric()], options: .budgeted) {
                 _ = Omnibox.historySection(
                     query: "project 42",
                     store: history,
@@ -158,7 +158,7 @@ nonisolated final class BrowserPerformanceTests: XCTestCase, @unchecked Sendable
                 var projected: [OmniboxSection] = []
                 XCTAssertTrue(tabs.allSatisfy { !$0.isMaterialised })
 
-                measure(metrics: [XCTClockMetric(), XCTMemoryMetric()]) {
+                measure(metrics: [XCTClockMetric(), XCTMemoryMetric()], options: .budgeted) {
                     projected = CommandPaletteProjection.sections(
                         query: "project",
                         agentName: "Assistant",
@@ -197,7 +197,7 @@ nonisolated final class BrowserPerformanceTests: XCTestCase, @unchecked Sendable
             }
 
             let settings = BrowserSettings(defaults: UserDefaults(suiteName: AppDatabase.defaultsSuite("BrowserPerformanceTests.\(UUID())"))!)
-            measure(metrics: [XCTClockMetric(), XCTMemoryMetric()]) {
+            measure(metrics: [XCTClockMetric(), XCTMemoryMetric()], options: .budgeted) {
                 let sites = StartPageSnapshot.frequentSites(
                     from: visits,
                     hiddenHosts: [],
@@ -229,7 +229,7 @@ nonisolated final class BrowserPerformanceTests: XCTestCase, @unchecked Sendable
                 var projected: [OmniboxSection] = []
                 XCTAssertFalse(tab.isMaterialised)
 
-                measure(metrics: [XCTClockMetric(), XCTMemoryMetric()]) {
+                measure(metrics: [XCTClockMetric(), XCTMemoryMetric()], options: .budgeted) {
                     projected = AskSurfaceResults.sections(
                         placement: .startPage,
                         query: "project 42",
@@ -284,7 +284,7 @@ nonisolated final class BrowserPerformanceTests: XCTestCase, @unchecked Sendable
             .environment(\.colorScheme, .dark)
             .environment(\.windowColorScheme, .dark)
 
-            measure(metrics: [XCTClockMetric(), XCTMemoryMetric()]) {
+            measure(metrics: [XCTClockMetric(), XCTMemoryMetric()], options: .budgeted) {
                 let host = NSHostingView(rootView: rows)
                 let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 220, height: 800), styleMask: [.borderless], backing: .buffered, defer: false)
                 window.isReleasedWhenClosed = false
@@ -378,7 +378,7 @@ nonisolated final class BrowserPerformanceTests: XCTestCase, @unchecked Sendable
             layOut()
 
             var footprints: [UInt64] = []
-            measure(metrics: [XCTClockMetric(), XCTMemoryMetric()]) {
+            measure(metrics: [XCTClockMetric(), XCTMemoryMetric()], options: .budgeted) {
                 layOut()
                 footprints.append(Self.physicalFootprint())
             }
@@ -413,7 +413,7 @@ nonisolated final class BrowserPerformanceTests: XCTestCase, @unchecked Sendable
                 $0.icons = SidebarTextStyle(colorRGB: 0xFFAA00, opacity: 0.6)
                 $0.url = SidebarTextStyle(colorRGB: 0x88DDFF, opacity: 0.8)
             }
-            measure(metrics: [XCTClockMetric(), XCTMemoryMetric()]) {
+            measure(metrics: [XCTClockMetric(), XCTMemoryMetric()], options: .budgeted) {
                 var colors = 0
                 for _ in 0..<10 {
                     for _ in 0..<300 {
@@ -438,7 +438,7 @@ nonisolated final class BrowserPerformanceTests: XCTestCase, @unchecked Sendable
             defer { defaults.removePersistentDomain(forName: suite) }
             let settings = BrowserSettings(defaults: defaults)
             let ids = ThemeCatalog.builtIn.map(\.id)
-            measure(metrics: [XCTClockMetric(), XCTMemoryMetric()]) {
+            measure(metrics: [XCTClockMetric(), XCTMemoryMetric()], options: .budgeted) {
                 var switched = 0
                 for _ in 0..<10 {
                     for id in ids {

@@ -75,8 +75,7 @@ nonisolated final class ReaderPerformanceTests: XCTestCase, @unchecked Sendable 
             XCTAssertGreaterThan(first.blocks.count, 400)
             XCTAssertGreaterThan(first.content.utf8.count, 150_000)
 
-            let options = XCTMeasureOptions()
-            options.iterationCount = 5
+            let options = XCTMeasureOptions.budgeted
             measure(metrics: [XCTClockMetric(), XCTMemoryMetric()], options: options) {
                 fixture.article = nil
                 finish { fixture.article = await ReaderExtractor.article(in: page) }

@@ -73,8 +73,7 @@ nonisolated final class ThemePerformanceTests: XCTestCase, @unchecked Sendable {
                 )
             }
             settings.beginThemePreview()
-            let options = XCTMeasureOptions()
-            options.iterationCount = 5
+            let options = XCTMeasureOptions.budgeted
 
             measure(metrics: [XCTClockMetric(), XCTMemoryMetric()], options: options) {
                 for step in 0..<30 {
@@ -118,8 +117,7 @@ nonisolated final class ThemePerformanceTests: XCTestCase, @unchecked Sendable {
             )
             .frame(width: 468, alignment: .top)
             .environment(\.colorScheme, .light)
-            let options = XCTMeasureOptions()
-            options.iterationCount = 5
+            let options = XCTMeasureOptions.budgeted
 
             measure(metrics: [XCTClockMetric(), XCTMemoryMetric()], options: options) {
                 let host = NSHostingView(rootView: gallery)

@@ -355,6 +355,27 @@ Release requirements:
   counts of the three runs must add up to the merged total. A new suite is
   serial until someone shows it is safe in parallel; see CONTRIBUTING.md,
   "Parallel and serial tests".
+- **Memory budgets are judged on the median, time budgets on the mean.**
+  `XCTMemoryMetric` is the change of the test host's physical footprint over one
+  pass, and in a long-running host a single sample swings by tens of MB either
+  way while time and behavior are fine, so the mean of five flipped sign on one
+  outlier (0.1.5, layout option sidebar: 3424, 4129, 4112, 6275 and 21496 kB,
+  mean 7887 against a budget of 7019). `Tools/check-performance.sh` holds the
+  median of the memory samples to the budget and the mean of all the time
+  samples, as before. Every budgeted case measures six iterations
+  (`XCTMeasureOptions.budgeted`), and the gate drops the first memory sample as
+  the warm-up, so the median is taken over the other five. A real regression
+  lifts every sample and still fails. No budget is raised for noise: a case
+  whose samples are mostly high, such as the 0.1.6 autofilled password among
+  20,000 credentials (median 18580 kB against 4096), is a measurement problem
+  to fix in the test, not a budget to raise. That one was the allocator keeping
+  or returning the pages the step freed, so the large-vault write cases
+  (`VaultScalePerformanceTests.measureWrite`) drop what a pass prepared and
+  return the free pages just before the measurement starts and stops: a sample
+  is what the step retained. If you change the iteration count, change the rule
+  in the script with it. `Tools/check-performance.sh
+  --self-test` checks the statistics on those sample sets and needs no metrics
+  file.
 - **The release body supplies the “What’s New” sheet.** The workflow makes the
   body from two parts. `CHANGELOG.md` is optional: make it only when a release
   needs notes of its own. If it contains a `## 1.1` section, that section comes

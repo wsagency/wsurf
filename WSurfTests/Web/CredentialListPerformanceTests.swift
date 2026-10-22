@@ -13,7 +13,6 @@ import XCTest
 // healthy build takes and far below what the page took when it built every row at once, so a regression to eager rows fails them.
 nonisolated final class CredentialListPerformanceTests: XCTestCase, @unchecked Sendable {
     private static let count = 3_000
-    private static let iterations = 5
 
     // MARK: Fixtures
 
@@ -127,12 +126,11 @@ nonisolated final class CredentialListPerformanceTests: XCTestCase, @unchecked S
     @MainActor
     func testLayingOutThreeThousandCredentials() async throws {
         try await withLargeVault { profile, vault in
+            let options = XCTMeasureOptions.budgeted
             var models: [CredentialSettingsModel] = []
-            for _ in 0..<(Self.iterations + 3) {
+            for _ in 0..<(options.iterationCount + 3) {
                 try await models.append(loadedModel(profile, vault))
             }
-            let options = XCTMeasureOptions()
-            options.iterationCount = Self.iterations
             measure(metrics: [XCTClockMetric(), XCTMemoryMetric()], options: options) {
                 let (host, window) = Self.mount(Self.page(models.removeLast()))
                 Self.settle(host)
