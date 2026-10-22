@@ -138,9 +138,10 @@ enum SidebarPeekShield {
         isPeeking: Bool,
         viewMaxX: CGFloat,
         width: CGFloat,
-        isMediaPicture: Bool
+        isMediaPicture: Bool,
+        isPointerOverPlayer: Bool = false
     ) -> Bool {
-        if isMediaPicture {
+        if isMediaPicture || isPointerOverPlayer {
             return true
         }
         return !isVisible && isPeeking && viewMaxX > width
