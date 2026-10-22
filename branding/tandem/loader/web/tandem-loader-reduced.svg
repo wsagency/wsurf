@@ -1,0 +1,6 @@
+<!-- SPDX-FileCopyrightText: 2026 WSurf Agency
+     SPDX-License-Identifier: Apache-2.0 -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-672 -672 1344 1344" role="img" aria-label="Loading"><title>Loading</title><style>.tl-lead{fill:#3B1FD1}.tl-follower{fill:#14C79A}.tl-ring{fill:#F5F5F7}
+@media (prefers-color-scheme:dark){.tl-lead{fill:#6D55FF}.tl-follower{fill:#2FE0B2}.tl-ring{fill:#1C1C1E}}
+.tl-small{display:none}@media (max-width:24px){.tl-full{display:none}.tl-small{display:inline}}
+@keyframes tl-pulse{to{opacity:.6}}.tl-disc{animation:tl-pulse 1.4s ease-in-out infinite alternate}</style><defs><clipPath id="tl-clip-full"><circle r="348.3"/></clipPath><clipPath id="tl-clip-small"><circle r="344.44"/></clipPath></defs><g class="tl-full" transform="scale(1.0429)"><circle class="tl-lead" r="348.3"/><g clip-path="url(#tl-clip-full)"><circle class="tl-ring" cx="-268.52" cy="181.12" r="223.18"/></g><circle class="tl-follower tl-disc" cx="-268.52" cy="181.12" r="167.18"/></g><g class="tl-small" transform="scale(1.0825)"><circle class="tl-lead" r="344.44"/><g clip-path="url(#tl-clip-small)"><circle class="tl-ring" cx="-253.56" cy="158.44" r="286"/></g><circle class="tl-follower tl-disc" cx="-253.56" cy="158.44" r="186"/></g></svg>

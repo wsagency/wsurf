@@ -1,0 +1,191 @@
+<!-- SPDX-FileCopyrightText: 2026 WSurf Agency
+     SPDX-License-Identifier: Apache-2.0
+     WSurf brand artwork. Provenance: branding/DESIGN.md, section Provenance and legal. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1400 1190" width="1400" height="1190"><rect width="1400" height="1190" fill="#fff"/>
+<text x="40" y="50" font-family="-apple-system, system-ui, sans-serif" font-size="18" font-weight="700" fill="#1d1d1f" text-anchor="start">WSurf palettes: [track deep, track bright, knob start, knob end]; contrast vs #F5F5F7 (light) / #1C1C1E (dark), WCAG 2.x ratio</text>
+<text x="40" y="114" font-family="-apple-system, system-ui, sans-serif" font-size="18" font-weight="700" fill="#1d1d1f" text-anchor="start">Flux</text>
+<text x="40" y="136" font-family="-apple-system, system-ui, sans-serif" font-size="12" font-weight="400" fill="#6e6e73" text-anchor="start">adaptability (default)</text>
+<rect x="250" y="82" width="540" height="130" rx="10" fill="#F5F5F7" stroke="#d2d2d7"/>
+<rect x="260" y="90" width="110" height="60" rx="8" fill="#3B1FD1"/>
+<text x="260" y="170" font-family="-apple-system, system-ui, sans-serif" font-size="12" font-weight="600" fill="#555" text-anchor="start">#3B1FD1</text>
+<text x="260" y="188" font-family="-apple-system, system-ui, sans-serif" font-size="11" font-weight="400" fill="#555" text-anchor="start">track deep 8.38:1</text>
+<rect x="390" y="90" width="110" height="60" rx="8" fill="#8A63FF"/>
+<text x="390" y="170" font-family="-apple-system, system-ui, sans-serif" font-size="12" font-weight="600" fill="#555" text-anchor="start">#8A63FF</text>
+<text x="390" y="188" font-family="-apple-system, system-ui, sans-serif" font-size="11" font-weight="400" fill="#555" text-anchor="start">track bright 3.63:1</text>
+<rect x="520" y="90" width="110" height="60" rx="8" fill="#14C79A"/>
+<text x="520" y="170" font-family="-apple-system, system-ui, sans-serif" font-size="12" font-weight="600" fill="#555" text-anchor="start">#14C79A</text>
+<text x="520" y="188" font-family="-apple-system, system-ui, sans-serif" font-size="11" font-weight="400" fill="#555" text-anchor="start">knob start 2.00:1</text>
+<rect x="650" y="90" width="110" height="60" rx="8" fill="#D9FFF0"/>
+<text x="650" y="170" font-family="-apple-system, system-ui, sans-serif" font-size="12" font-weight="600" fill="#555" text-anchor="start">#D9FFF0</text>
+<text x="650" y="188" font-family="-apple-system, system-ui, sans-serif" font-size="11" font-weight="400" fill="#555" text-anchor="start">knob end 1.01:1</text>
+<rect x="810" y="82" width="540" height="130" rx="10" fill="#1C1C1E" stroke="#d2d2d7"/>
+<rect x="820" y="90" width="110" height="60" rx="8" fill="#6D55FF"/>
+<text x="820" y="170" font-family="-apple-system, system-ui, sans-serif" font-size="12" font-weight="600" fill="#aaa" text-anchor="start">#6D55FF</text>
+<text x="820" y="188" font-family="-apple-system, system-ui, sans-serif" font-size="11" font-weight="400" fill="#aaa" text-anchor="start">track deep 3.56:1</text>
+<rect x="950" y="90" width="110" height="60" rx="8" fill="#B49CFF"/>
+<text x="950" y="170" font-family="-apple-system, system-ui, sans-serif" font-size="12" font-weight="600" fill="#aaa" text-anchor="start">#B49CFF</text>
+<text x="950" y="188" font-family="-apple-system, system-ui, sans-serif" font-size="11" font-weight="400" fill="#aaa" text-anchor="start">track bright 7.41:1</text>
+<rect x="1080" y="90" width="110" height="60" rx="8" fill="#2FE0B2"/>
+<text x="1080" y="170" font-family="-apple-system, system-ui, sans-serif" font-size="12" font-weight="600" fill="#aaa" text-anchor="start">#2FE0B2</text>
+<text x="1080" y="188" font-family="-apple-system, system-ui, sans-serif" font-size="11" font-weight="400" fill="#aaa" text-anchor="start">knob start 10.07:1</text>
+<rect x="1210" y="90" width="110" height="60" rx="8" fill="#EFFFF9"/>
+<text x="1210" y="170" font-family="-apple-system, system-ui, sans-serif" font-size="12" font-weight="600" fill="#aaa" text-anchor="start">#EFFFF9</text>
+<text x="1210" y="188" font-family="-apple-system, system-ui, sans-serif" font-size="11" font-weight="400" fill="#aaa" text-anchor="start">knob end 16.48:1</text>
+<text x="40" y="264" font-family="-apple-system, system-ui, sans-serif" font-size="18" font-weight="700" fill="#1d1d1f" text-anchor="start">Ember</text>
+<text x="40" y="286" font-family="-apple-system, system-ui, sans-serif" font-size="12" font-weight="400" fill="#6e6e73" text-anchor="start">momentum</text>
+<rect x="250" y="232" width="540" height="130" rx="10" fill="#F5F5F7" stroke="#d2d2d7"/>
+<rect x="260" y="240" width="110" height="60" rx="8" fill="#A3153A"/>
+<text x="260" y="320" font-family="-apple-system, system-ui, sans-serif" font-size="12" font-weight="600" fill="#555" text-anchor="start">#A3153A</text>
+<text x="260" y="338" font-family="-apple-system, system-ui, sans-serif" font-size="11" font-weight="400" fill="#555" text-anchor="start">track deep 7.08:1</text>
+<rect x="390" y="240" width="110" height="60" rx="8" fill="#F0502F"/>
+<text x="390" y="320" font-family="-apple-system, system-ui, sans-serif" font-size="12" font-weight="600" fill="#555" text-anchor="start">#F0502F</text>
+<text x="390" y="338" font-family="-apple-system, system-ui, sans-serif" font-size="11" font-weight="400" fill="#555" text-anchor="start">track bright 3.27:1</text>
+<rect x="520" y="240" width="110" height="60" rx="8" fill="#FFB02E"/>
+<text x="520" y="320" font-family="-apple-system, system-ui, sans-serif" font-size="12" font-weight="600" fill="#555" text-anchor="start">#FFB02E</text>
+<text x="520" y="338" font-family="-apple-system, system-ui, sans-serif" font-size="11" font-weight="400" fill="#555" text-anchor="start">knob start 1.68:1</text>
+<rect x="650" y="240" width="110" height="60" rx="8" fill="#FFF1CC"/>
+<text x="650" y="320" font-family="-apple-system, system-ui, sans-serif" font-size="12" font-weight="600" fill="#555" text-anchor="start">#FFF1CC</text>
+<text x="650" y="338" font-family="-apple-system, system-ui, sans-serif" font-size="11" font-weight="400" fill="#555" text-anchor="start">knob end 1.03:1</text>
+<rect x="810" y="232" width="540" height="130" rx="10" fill="#1C1C1E" stroke="#d2d2d7"/>
+<rect x="820" y="240" width="110" height="60" rx="8" fill="#E0476A"/>
+<text x="820" y="320" font-family="-apple-system, system-ui, sans-serif" font-size="12" font-weight="600" fill="#aaa" text-anchor="start">#E0476A</text>
+<text x="820" y="338" font-family="-apple-system, system-ui, sans-serif" font-size="11" font-weight="400" fill="#aaa" text-anchor="start">track deep 4.28:1</text>
+<rect x="950" y="240" width="110" height="60" rx="8" fill="#FF8A5B"/>
+<text x="950" y="320" font-family="-apple-system, system-ui, sans-serif" font-size="12" font-weight="600" fill="#aaa" text-anchor="start">#FF8A5B</text>
+<text x="950" y="338" font-family="-apple-system, system-ui, sans-serif" font-size="11" font-weight="400" fill="#aaa" text-anchor="start">track bright 7.32:1</text>
+<rect x="1080" y="240" width="110" height="60" rx="8" fill="#FFC24D"/>
+<text x="1080" y="320" font-family="-apple-system, system-ui, sans-serif" font-size="12" font-weight="600" fill="#aaa" text-anchor="start">#FFC24D</text>
+<text x="1080" y="338" font-family="-apple-system, system-ui, sans-serif" font-size="11" font-weight="400" fill="#aaa" text-anchor="start">knob start 10.59:1</text>
+<rect x="1210" y="240" width="110" height="60" rx="8" fill="#FFF6DC"/>
+<text x="1210" y="320" font-family="-apple-system, system-ui, sans-serif" font-size="12" font-weight="600" fill="#aaa" text-anchor="start">#FFF6DC</text>
+<text x="1210" y="338" font-family="-apple-system, system-ui, sans-serif" font-size="11" font-weight="400" fill="#aaa" text-anchor="start">knob end 15.77:1</text>
+<text x="40" y="414" font-family="-apple-system, system-ui, sans-serif" font-size="18" font-weight="700" fill="#1d1d1f" text-anchor="start">Tide</text>
+<text x="40" y="436" font-family="-apple-system, system-ui, sans-serif" font-size="12" font-weight="400" fill="#6e6e73" text-anchor="start">calm, ocean heritage</text>
+<rect x="250" y="382" width="540" height="130" rx="10" fill="#F5F5F7" stroke="#d2d2d7"/>
+<rect x="260" y="390" width="110" height="60" rx="8" fill="#0B3A8C"/>
+<text x="260" y="470" font-family="-apple-system, system-ui, sans-serif" font-size="12" font-weight="600" fill="#555" text-anchor="start">#0B3A8C</text>
+<text x="260" y="488" font-family="-apple-system, system-ui, sans-serif" font-size="11" font-weight="400" fill="#555" text-anchor="start">track deep 9.65:1</text>
+<rect x="390" y="390" width="110" height="60" rx="8" fill="#3C8CFF"/>
+<text x="390" y="470" font-family="-apple-system, system-ui, sans-serif" font-size="12" font-weight="600" fill="#555" text-anchor="start">#3C8CFF</text>
+<text x="390" y="488" font-family="-apple-system, system-ui, sans-serif" font-size="11" font-weight="400" fill="#555" text-anchor="start">track bright 3.02:1</text>
+<rect x="520" y="390" width="110" height="60" rx="8" fill="#00B8E6"/>
+<text x="520" y="470" font-family="-apple-system, system-ui, sans-serif" font-size="12" font-weight="600" fill="#555" text-anchor="start">#00B8E6</text>
+<text x="520" y="488" font-family="-apple-system, system-ui, sans-serif" font-size="11" font-weight="400" fill="#555" text-anchor="start">knob start 2.14:1</text>
+<rect x="650" y="390" width="110" height="60" rx="8" fill="#EAFBFF"/>
+<text x="650" y="470" font-family="-apple-system, system-ui, sans-serif" font-size="12" font-weight="600" fill="#555" text-anchor="start">#EAFBFF</text>
+<text x="650" y="488" font-family="-apple-system, system-ui, sans-serif" font-size="11" font-weight="400" fill="#555" text-anchor="start">knob end 1.02:1</text>
+<rect x="810" y="382" width="540" height="130" rx="10" fill="#1C1C1E" stroke="#d2d2d7"/>
+<rect x="820" y="390" width="110" height="60" rx="8" fill="#4C8DFF"/>
+<text x="820" y="470" font-family="-apple-system, system-ui, sans-serif" font-size="12" font-weight="600" fill="#aaa" text-anchor="start">#4C8DFF</text>
+<text x="820" y="488" font-family="-apple-system, system-ui, sans-serif" font-size="11" font-weight="400" fill="#aaa" text-anchor="start">track deep 5.32:1</text>
+<rect x="950" y="390" width="110" height="60" rx="8" fill="#8DBFFF"/>
+<text x="950" y="470" font-family="-apple-system, system-ui, sans-serif" font-size="12" font-weight="600" fill="#aaa" text-anchor="start">#8DBFFF</text>
+<text x="950" y="488" font-family="-apple-system, system-ui, sans-serif" font-size="11" font-weight="400" fill="#aaa" text-anchor="start">track bright 8.94:1</text>
+<rect x="1080" y="390" width="110" height="60" rx="8" fill="#4FD8FF"/>
+<text x="1080" y="470" font-family="-apple-system, system-ui, sans-serif" font-size="12" font-weight="600" fill="#aaa" text-anchor="start">#4FD8FF</text>
+<text x="1080" y="488" font-family="-apple-system, system-ui, sans-serif" font-size="11" font-weight="400" fill="#aaa" text-anchor="start">knob start 10.21:1</text>
+<rect x="1210" y="390" width="110" height="60" rx="8" fill="#F2FDFF"/>
+<text x="1210" y="470" font-family="-apple-system, system-ui, sans-serif" font-size="12" font-weight="600" fill="#aaa" text-anchor="start">#F2FDFF</text>
+<text x="1210" y="488" font-family="-apple-system, system-ui, sans-serif" font-size="11" font-weight="400" fill="#aaa" text-anchor="start">knob end 16.42:1</text>
+<text x="40" y="564" font-family="-apple-system, system-ui, sans-serif" font-size="18" font-weight="700" fill="#1d1d1f" text-anchor="start">Grove</text>
+<text x="40" y="586" font-family="-apple-system, system-ui, sans-serif" font-size="12" font-weight="400" fill="#6e6e73" text-anchor="start">growth</text>
+<rect x="250" y="532" width="540" height="130" rx="10" fill="#F5F5F7" stroke="#d2d2d7"/>
+<rect x="260" y="540" width="110" height="60" rx="8" fill="#0E4D3A"/>
+<text x="260" y="620" font-family="-apple-system, system-ui, sans-serif" font-size="12" font-weight="600" fill="#555" text-anchor="start">#0E4D3A</text>
+<text x="260" y="638" font-family="-apple-system, system-ui, sans-serif" font-size="11" font-weight="400" fill="#555" text-anchor="start">track deep 9.01:1</text>
+<rect x="390" y="540" width="110" height="60" rx="8" fill="#2E9E6B"/>
+<text x="390" y="620" font-family="-apple-system, system-ui, sans-serif" font-size="12" font-weight="600" fill="#555" text-anchor="start">#2E9E6B</text>
+<text x="390" y="638" font-family="-apple-system, system-ui, sans-serif" font-size="11" font-weight="400" fill="#555" text-anchor="start">track bright 3.10:1</text>
+<rect x="520" y="540" width="110" height="60" rx="8" fill="#8FCB1F"/>
+<text x="520" y="620" font-family="-apple-system, system-ui, sans-serif" font-size="12" font-weight="600" fill="#555" text-anchor="start">#8FCB1F</text>
+<text x="520" y="638" font-family="-apple-system, system-ui, sans-serif" font-size="11" font-weight="400" fill="#555" text-anchor="start">knob start 1.80:1</text>
+<rect x="650" y="540" width="110" height="60" rx="8" fill="#F7FFD9"/>
+<text x="650" y="620" font-family="-apple-system, system-ui, sans-serif" font-size="12" font-weight="600" fill="#555" text-anchor="start">#F7FFD9</text>
+<text x="650" y="638" font-family="-apple-system, system-ui, sans-serif" font-size="11" font-weight="400" fill="#555" text-anchor="start">knob end 1.05:1</text>
+<rect x="810" y="532" width="540" height="130" rx="10" fill="#1C1C1E" stroke="#d2d2d7"/>
+<rect x="820" y="540" width="110" height="60" rx="8" fill="#2FAE80"/>
+<text x="820" y="620" font-family="-apple-system, system-ui, sans-serif" font-size="12" font-weight="600" fill="#aaa" text-anchor="start">#2FAE80</text>
+<text x="820" y="638" font-family="-apple-system, system-ui, sans-serif" font-size="11" font-weight="400" fill="#aaa" text-anchor="start">track deep 6.07:1</text>
+<rect x="950" y="540" width="110" height="60" rx="8" fill="#6FD6A4"/>
+<text x="950" y="620" font-family="-apple-system, system-ui, sans-serif" font-size="12" font-weight="600" fill="#aaa" text-anchor="start">#6FD6A4</text>
+<text x="950" y="638" font-family="-apple-system, system-ui, sans-serif" font-size="11" font-weight="400" fill="#aaa" text-anchor="start">track bright 9.59:1</text>
+<rect x="1080" y="540" width="110" height="60" rx="8" fill="#B6E64A"/>
+<text x="1080" y="620" font-family="-apple-system, system-ui, sans-serif" font-size="12" font-weight="600" fill="#aaa" text-anchor="start">#B6E64A</text>
+<text x="1080" y="638" font-family="-apple-system, system-ui, sans-serif" font-size="11" font-weight="400" fill="#aaa" text-anchor="start">knob start 11.67:1</text>
+<rect x="1210" y="540" width="110" height="60" rx="8" fill="#FBFFE6"/>
+<text x="1210" y="620" font-family="-apple-system, system-ui, sans-serif" font-size="12" font-weight="600" fill="#aaa" text-anchor="start">#FBFFE6</text>
+<text x="1210" y="638" font-family="-apple-system, system-ui, sans-serif" font-size="11" font-weight="400" fill="#aaa" text-anchor="start">knob end 16.65:1</text>
+<text x="40" y="714" font-family="-apple-system, system-ui, sans-serif" font-size="18" font-weight="700" fill="#1d1d1f" text-anchor="start">Bloom</text>
+<text x="40" y="736" font-family="-apple-system, system-ui, sans-serif" font-size="12" font-weight="400" fill="#6e6e73" text-anchor="start">playful, punchy</text>
+<rect x="250" y="682" width="540" height="130" rx="10" fill="#F5F5F7" stroke="#d2d2d7"/>
+<rect x="260" y="690" width="110" height="60" rx="8" fill="#8F1480"/>
+<text x="260" y="770" font-family="-apple-system, system-ui, sans-serif" font-size="12" font-weight="600" fill="#555" text-anchor="start">#8F1480</text>
+<text x="260" y="788" font-family="-apple-system, system-ui, sans-serif" font-size="11" font-weight="400" fill="#555" text-anchor="start">track deep 7.48:1</text>
+<rect x="390" y="690" width="110" height="60" rx="8" fill="#F5309F"/>
+<text x="390" y="770" font-family="-apple-system, system-ui, sans-serif" font-size="12" font-weight="600" fill="#555" text-anchor="start">#F5309F</text>
+<text x="390" y="788" font-family="-apple-system, system-ui, sans-serif" font-size="11" font-weight="400" fill="#555" text-anchor="start">track bright 3.32:1</text>
+<rect x="520" y="690" width="110" height="60" rx="8" fill="#00C2E0"/>
+<text x="520" y="770" font-family="-apple-system, system-ui, sans-serif" font-size="12" font-weight="600" fill="#555" text-anchor="start">#00C2E0</text>
+<text x="520" y="788" font-family="-apple-system, system-ui, sans-serif" font-size="11" font-weight="400" fill="#555" text-anchor="start">knob start 1.97:1</text>
+<rect x="650" y="690" width="110" height="60" rx="8" fill="#E6FCFF"/>
+<text x="650" y="770" font-family="-apple-system, system-ui, sans-serif" font-size="12" font-weight="600" fill="#555" text-anchor="start">#E6FCFF</text>
+<text x="650" y="788" font-family="-apple-system, system-ui, sans-serif" font-size="11" font-weight="400" fill="#555" text-anchor="start">knob end 1.02:1</text>
+<rect x="810" y="682" width="540" height="130" rx="10" fill="#1C1C1E" stroke="#d2d2d7"/>
+<rect x="820" y="690" width="110" height="60" rx="8" fill="#D43FC0"/>
+<text x="820" y="770" font-family="-apple-system, system-ui, sans-serif" font-size="12" font-weight="600" fill="#aaa" text-anchor="start">#D43FC0</text>
+<text x="820" y="788" font-family="-apple-system, system-ui, sans-serif" font-size="11" font-weight="400" fill="#aaa" text-anchor="start">track deep 4.27:1</text>
+<rect x="950" y="690" width="110" height="60" rx="8" fill="#FF7FC8"/>
+<text x="950" y="770" font-family="-apple-system, system-ui, sans-serif" font-size="12" font-weight="600" fill="#aaa" text-anchor="start">#FF7FC8</text>
+<text x="950" y="788" font-family="-apple-system, system-ui, sans-serif" font-size="11" font-weight="400" fill="#aaa" text-anchor="start">track bright 7.39:1</text>
+<rect x="1080" y="690" width="110" height="60" rx="8" fill="#2FD6F0"/>
+<text x="1080" y="770" font-family="-apple-system, system-ui, sans-serif" font-size="12" font-weight="600" fill="#aaa" text-anchor="start">#2FD6F0</text>
+<text x="1080" y="788" font-family="-apple-system, system-ui, sans-serif" font-size="11" font-weight="400" fill="#aaa" text-anchor="start">knob start 9.72:1</text>
+<rect x="1210" y="690" width="110" height="60" rx="8" fill="#EEFDFF"/>
+<text x="1210" y="770" font-family="-apple-system, system-ui, sans-serif" font-size="12" font-weight="600" fill="#aaa" text-anchor="start">#EEFDFF</text>
+<text x="1210" y="788" font-family="-apple-system, system-ui, sans-serif" font-size="11" font-weight="400" fill="#aaa" text-anchor="start">knob end 16.31:1</text>
+<text x="40" y="864" font-family="-apple-system, system-ui, sans-serif" font-size="18" font-weight="700" fill="#1d1d1f" text-anchor="start">Graphite</text>
+<text x="40" y="886" font-family="-apple-system, system-ui, sans-serif" font-size="12" font-weight="400" fill="#6e6e73" text-anchor="start">focus, neutral</text>
+<rect x="250" y="832" width="540" height="130" rx="10" fill="#F5F5F7" stroke="#d2d2d7"/>
+<rect x="260" y="840" width="110" height="60" rx="8" fill="#1D1F24"/>
+<text x="260" y="920" font-family="-apple-system, system-ui, sans-serif" font-size="12" font-weight="600" fill="#555" text-anchor="start">#1D1F24</text>
+<text x="260" y="938" font-family="-apple-system, system-ui, sans-serif" font-size="11" font-weight="400" fill="#555" text-anchor="start">track deep 15.14:1</text>
+<rect x="390" y="840" width="110" height="60" rx="8" fill="#5A6170"/>
+<text x="390" y="920" font-family="-apple-system, system-ui, sans-serif" font-size="12" font-weight="600" fill="#555" text-anchor="start">#5A6170</text>
+<text x="390" y="938" font-family="-apple-system, system-ui, sans-serif" font-size="11" font-weight="400" fill="#555" text-anchor="start">track bright 5.71:1</text>
+<rect x="520" y="840" width="110" height="60" rx="8" fill="#9AA3B2"/>
+<text x="520" y="920" font-family="-apple-system, system-ui, sans-serif" font-size="12" font-weight="600" fill="#555" text-anchor="start">#9AA3B2</text>
+<text x="520" y="938" font-family="-apple-system, system-ui, sans-serif" font-size="11" font-weight="400" fill="#555" text-anchor="start">knob start 2.34:1</text>
+<rect x="650" y="840" width="110" height="60" rx="8" fill="#FFFFFF"/>
+<text x="650" y="920" font-family="-apple-system, system-ui, sans-serif" font-size="12" font-weight="600" fill="#555" text-anchor="start">#FFFFFF</text>
+<text x="650" y="938" font-family="-apple-system, system-ui, sans-serif" font-size="11" font-weight="400" fill="#555" text-anchor="start">knob end 1.09:1</text>
+<rect x="810" y="832" width="540" height="130" rx="10" fill="#1C1C1E" stroke="#d2d2d7"/>
+<rect x="820" y="840" width="110" height="60" rx="8" fill="#7F8797"/>
+<text x="820" y="920" font-family="-apple-system, system-ui, sans-serif" font-size="12" font-weight="600" fill="#aaa" text-anchor="start">#7F8797</text>
+<text x="820" y="938" font-family="-apple-system, system-ui, sans-serif" font-size="11" font-weight="400" fill="#aaa" text-anchor="start">track deep 4.71:1</text>
+<rect x="950" y="840" width="110" height="60" rx="8" fill="#C3C9D4"/>
+<text x="950" y="920" font-family="-apple-system, system-ui, sans-serif" font-size="12" font-weight="600" fill="#aaa" text-anchor="start">#C3C9D4</text>
+<text x="950" y="938" font-family="-apple-system, system-ui, sans-serif" font-size="11" font-weight="400" fill="#aaa" text-anchor="start">track bright 10.23:1</text>
+<rect x="1080" y="840" width="110" height="60" rx="8" fill="#D5DAE3"/>
+<text x="1080" y="920" font-family="-apple-system, system-ui, sans-serif" font-size="12" font-weight="600" fill="#aaa" text-anchor="start">#D5DAE3</text>
+<text x="1080" y="938" font-family="-apple-system, system-ui, sans-serif" font-size="11" font-weight="400" fill="#aaa" text-anchor="start">knob start 12.13:1</text>
+<rect x="1210" y="840" width="110" height="60" rx="8" fill="#FFFFFF"/>
+<text x="1210" y="920" font-family="-apple-system, system-ui, sans-serif" font-size="12" font-weight="600" fill="#aaa" text-anchor="start">#FFFFFF</text>
+<text x="1210" y="938" font-family="-apple-system, system-ui, sans-serif" font-size="11" font-weight="400" fill="#aaa" text-anchor="start">knob end 17.01:1</text>
+<text x="40" y="1014" font-family="-apple-system, system-ui, sans-serif" font-size="18" font-weight="700" fill="#1d1d1f" text-anchor="start">Mono</text>
+<text x="40" y="1036" font-family="-apple-system, system-ui, sans-serif" font-size="12" font-weight="400" fill="#6e6e73" text-anchor="start">one flat ink, no gradient</text>
+<text x="40" y="1056" font-family="-apple-system, system-ui, sans-serif" font-size="12" font-weight="400" fill="#6e6e73" text-anchor="start">(Graphite is not mono)</text>
+<rect x="250" y="982" width="540" height="130" rx="10" fill="#F5F5F7" stroke="#d2d2d7"/>
+<rect x="260" y="990" width="110" height="60" rx="8" fill="#1D1D1F" stroke="#999"/>
+<text x="260" y="1070" font-family="-apple-system, system-ui, sans-serif" font-size="12" font-weight="600" fill="#555" text-anchor="start">#1D1D1F</text>
+<text x="260" y="1088" font-family="-apple-system, system-ui, sans-serif" font-size="11" font-weight="400" fill="#555" text-anchor="start">positive ink 15.46:1</text>
+<rect x="520" y="990" width="110" height="60" rx="8" fill="#6E6E73"/>
+<text x="520" y="1070" font-family="-apple-system, system-ui, sans-serif" font-size="12" font-weight="600" fill="#555" text-anchor="start">#6E6E73</text>
+<text x="520" y="1088" font-family="-apple-system, system-ui, sans-serif" font-size="11" font-weight="400" fill="#555" text-anchor="start">ICO ink 4.66:1</text>
+<rect x="810" y="982" width="540" height="130" rx="10" fill="#1C1C1E" stroke="#d2d2d7"/>
+<rect x="820" y="990" width="110" height="60" rx="8" fill="#F5F5F7" stroke="#999"/>
+<text x="820" y="1070" font-family="-apple-system, system-ui, sans-serif" font-size="12" font-weight="600" fill="#aaa" text-anchor="start">#F5F5F7</text>
+<text x="820" y="1088" font-family="-apple-system, system-ui, sans-serif" font-size="11" font-weight="400" fill="#aaa" text-anchor="start">reverse ink 15.63:1</text>
+<rect x="1080" y="990" width="110" height="60" rx="8" fill="#6E6E73"/>
+<text x="1080" y="1070" font-family="-apple-system, system-ui, sans-serif" font-size="12" font-weight="600" fill="#aaa" text-anchor="start">#6E6E73</text>
+<text x="1080" y="1088" font-family="-apple-system, system-ui, sans-serif" font-size="11" font-weight="400" fill="#aaa" text-anchor="start">ICO ink 3.36:1</text>
+</svg>

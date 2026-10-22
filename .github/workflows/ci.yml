@@ -129,6 +129,7 @@ jobs:
             -project "$PROJECT" -scheme "$SCHEME" \
             -destination 'platform=macOS,arch=arm64' \
             -derivedDataPath "$DD" \
+            -skipMacroValidation \
             -enableCodeCoverage YES \
             -disableAutomaticPackageResolution \
             CODE_SIGN_STYLE=Manual \

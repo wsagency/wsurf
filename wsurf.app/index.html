@@ -4,23 +4,24 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="WSurf is an open-source macOS browser with a built-in assistant. Organize your tabs, choose your model, and keep control of your browsing.">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; img-src 'self'; media-src 'self'; base-uri 'none'; form-action 'none'">
   <meta name="color-scheme" content="light">
-  <meta name="theme-color" content="#f6f9fd">
+  <meta name="theme-color" content="#F5F5F7">
   <link rel="canonical" href="https://wsurf.app/">
-  <link rel="icon" href="/mark.svg" type="image/svg+xml">
+  <link rel="icon" href="/favicon.ico" sizes="16x16 32x32 48x48">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
   <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/tandem-loader.css">
   <title>WSurf — A macOS browser with a built-in assistant</title>
 </head>
 <body>
   <a class="skip-link" href="#main">Skip to content</a>
   <header class="site-header wrap">
-    <a class="brand" href="/" aria-label="WSurf home">
-      <img src="/mark.svg" width="48" height="48" alt="">
-      <span>WSurf</span>
-    </a>
-    <nav aria-label="Main navigation">
+    <a class="brand" href="/" aria-label="WSurf home"><img src="/brand/lockup-light.svg" width="146" height="32" alt=""></a>
+    <nav class="site-nav" aria-label="Main navigation">
       <a href="#features">Features</a>
+      <a href="/changelog/">Changelog</a>
       <a href="#build">Build</a>
       <a href="https://github.com/wsagency/wsurf">GitHub <span aria-hidden="true">↗</span></a>
     </nav>
@@ -33,82 +34,146 @@
         <h1 id="hero-title">Your browser.<br>Your assistant.<br><span>Your call.</span></h1>
         <p class="lede">An open-source macOS browser with an assistant built in. Ask it to work with your tabs. Take over whenever you want.</p>
         <div class="actions">
-          <a class="button primary" href="https://github.com/wsagency/wsurf">Explore the source <span aria-hidden="true">↗</span></a>
-          <a class="button secondary" href="#build">Build WSurf</a>
+          <a class="button button-primary" href="https://github.com/wsagency/wsurf">See the source on GitHub <span aria-hidden="true">↗</span></a>
+          <a class="button button-secondary" href="#build">Build WSurf</a>
         </div>
-        <p class="release-note">In development. No verified public signed release yet.</p>
+        <p class="caption">In development. No verified public signed release yet.</p>
       </div>
-      <div class="hero-art" aria-hidden="true">
-        <div class="orbit orbit-one"></div>
-        <div class="orbit orbit-two"></div>
-        <img class="hero-mark" src="/mark.svg" width="440" height="440" alt="">
-        <span class="art-caption">A little help. A lot of control.</span>
+      <div class="hero-art">
+        <video class="hero-video" autoplay muted loop playsinline poster="/media/hero-clay.jpg" width="720" height="720" aria-hidden="true">
+          <source src="/media/hero-clay.mp4" type="video/mp4">
+        </video>
+        <img class="hero-still" src="/media/hero-clay.jpg" width="1080" height="1080" alt="">
       </div>
     </section>
 
-    <section class="features wrap" id="features" aria-labelledby="features-title">
+    <section class="section wrap" id="features" aria-labelledby="features-title">
       <div class="section-heading">
         <p class="eyebrow">Made for everyday browsing</p>
         <h2 id="features-title">Keep your flow.</h2>
-        <p>Familiar browser tools, with an assistant when you need one.</p>
+        <p class="lede">Familiar browser tools, with an assistant when you need one. This is what the current source does.</p>
       </div>
       <div class="feature-grid">
-        <article class="feature-card">
-          <span class="feature-number" aria-hidden="true">01</span>
-          <h3>A place for every tab</h3>
-          <p>Organize tabs with folders and pins. Use split view, separate profiles, and private browsing. Unload page content without losing the link.</p>
+        <article class="card">
+          <h3>Tabs and windows</h3>
+          <p>Open separate windows with tabs, folders, pins, Favorites, and split view. Move a live tab to another window of the same profile without reloading it. Windows restore after relaunch.</p>
+          <p>Search your history, resume downloads, and import bookmarks from an HTML export.</p>
         </article>
-        <article class="feature-card">
-          <span class="feature-number" aria-hidden="true">02</span>
-          <h3>Help, in context</h3>
-          <p>Ask the assistant to search, read websites, and use the tabs you share. Review its actions in Agent Activity. Click the page to stop it and take over.</p>
+        <article class="card">
+          <h3>Unload, undo, and folders</h3>
+          <p>X removes an unpinned tab and its link. ⌘-click unloads it instead and keeps the link. Unload a whole folder in one click.</p>
+          <p>Undo or ⌘Z brings back deleted folders and removed links. Pin a folder on its own.</p>
         </article>
-        <article class="feature-card">
-          <span class="feature-number" aria-hidden="true">03</span>
+        <article class="card">
+          <h3>Command palette and previews</h3>
+          <p>Type a site name or domain, then press Tab to search that site. Enter opens the results in a new tab. Option-Enter uses the current tab.</p>
+          <p>Hold Shift over a link for a summary. Shift-click it to open a preview.</p>
+        </article>
+        <article class="card">
+          <h3>The assistant</h3>
+          <p>Ask in the address field, or hold ⌥Space to speak. Use @ to include a tab, and attach files. In the tabs you share, it can search, read, click, type, and scroll. Review each step in Agent Activity. Click the page to stop it.</p>
+          <p>It fills up to 32 non-sensitive fields at a time, without submitting the form. If a provider rate limit pauses it, wait, then choose Continue.</p>
+          <div class="status-line">
+            <span class="tandem-loader tandem-loader--24 status-loader" role="status"><svg viewBox="-672 -672 1344 1344" aria-hidden="true" focusable="false"><defs><clipPath id="tl-clip-full"><circle r="348.3"/></clipPath><clipPath id="tl-clip-small"><circle r="344.44"/></clipPath></defs><g class="tl-full" transform="scale(1.0429)"><g class="tl-orbit tl-back"><circle class="tl-follower" r="167.18"/></g><circle class="tl-lead" r="348.3"/><g class="tl-front"><g clip-path="url(#tl-clip-full)"><g class="tl-orbit"><circle class="tl-ring" r="223.18"/></g></g><g class="tl-orbit"><circle class="tl-follower tl-disc" r="167.18"/></g></g></g><g class="tl-small" transform="scale(1.0825)"><g class="tl-orbit tl-back"><circle class="tl-follower" r="186"/></g><circle class="tl-lead" r="344.44"/><g class="tl-front"><g clip-path="url(#tl-clip-small)"><g class="tl-orbit"><circle class="tl-ring" r="286"/></g></g><g class="tl-orbit"><circle class="tl-follower tl-disc" r="186"/></g></g></g></svg><span class="tandem-loader__label">Loading</span></span>
+            <span>Reading 2 tabs</span>
+          </div>
+        </article>
+        <article class="card">
           <h3>Choose your model</h3>
-          <p>Use your own provider credentials, or run a local model with Ollama or LM Studio. Switch providers in Settings instead of switching browsers.</p>
+          <p>Use Apple Intelligence on your Mac, add a provider key, or connect a local server such as Ollama or LM Studio. Providers include OpenAI, Anthropic, Gemini, DeepSeek, Groq, Mistral, OpenRouter, and xAI.</p>
+          <p>External assistants can use WSurf's MCP server. They see only the tabs you share.</p>
+        </article>
+        <article class="card">
+          <h3>Two engines</h3>
+          <p>WebKit is the default. For any website, choose embedded Chromium in Website Settings&nbsp;› Browser Engine.</p>
+          <p>Changing the engine reloads the website and resets its Back and Forward history. Cookies, storage, and sign-ins stay separate for each engine.</p>
+        </article>
+        <article class="card">
+          <h3>Themes and sidebar</h3>
+          <p>Pick Auto, Light, Dark, Light Calm, or Dark Calm. Customize a theme and watch it update live.</p>
+          <p>Set the sidebar font, size, weight, row spacing, and folder tint. Colors are saved for each theme.</p>
+        </article>
+        <article class="card">
+          <h3>Passwords and sign-in</h3>
+          <p>Fill passwords with macOS Passwords-compatible autofill. Save cards and contacts in Settings&nbsp;› Autofill. Unlock them with Touch ID or your Mac password. Passkeys use the macOS prompt.</p>
+          <p>You can also opt in to a Credential Manager. It keeps passwords, passkeys, and one-time codes in an encrypted store for each profile.</p>
+          <p class="card-note">In the current source. Not yet verified in a signed build.</p>
+        </article>
+        <article class="card">
+          <h3>Extensions and profiles</h3>
+          <p>Add WebKit extensions from the Chrome Web Store and Firefox Add-ons.</p>
+          <p>Profiles keep cookies, history, tabs, permissions, and extensions apart. Press ⇧⌘N for a private window. Closing it ends only that private session.</p>
         </article>
       </div>
     </section>
 
-    <section class="access wrap" aria-labelledby="access-title">
-      <div>
-        <p class="eyebrow">Know what you share</p>
-        <h2 id="access-title">Browser access.<br>Not a blank check.</h2>
-      </div>
-      <div class="access-copy">
-        <p>The assistant asks before purchases, sending, or signing in. Password and payment autofill are separate from the assistant.</p>
-        <p>Provider API keys are stored in macOS Keychain. Messages, shared page content, and attachments go to the model you select. A local model is an option.</p>
-        <a class="text-link" href="https://github.com/wsagency/wsurf/blob/main/SECURITY.md">Read the security boundaries <span aria-hidden="true">↗</span></a>
+    <section class="section wrap" aria-labelledby="access-title">
+      <div class="access">
+        <div class="access-head">
+          <p class="eyebrow">Know what you share</p>
+          <h2 id="access-title">Browser access.<br>Not a blank check.</h2>
+          <p>The assistant uses AI and can make mistakes. Check important information.</p>
+          <a class="text-link" href="https://github.com/wsagency/wsurf/blob/main/SECURITY.md">Read the security boundaries <span aria-hidden="true">↗</span></a>
+        </div>
+        <ul class="access-list">
+          <li><strong class="access-term">Per-site access</strong> Set assistant access for each website, and turn on its tools in Settings&nbsp;› Assistant.</li>
+          <li><strong class="access-term">It asks first</strong> The assistant asks before purchases, sending information, or signing in. It cannot fill passwords or card numbers. Browser autofill does that.</li>
+          <li><strong class="access-term">Your keys</strong> API keys stay in Keychain and go only to their provider. Messages, shared page content, and attachments go to the model you select.</li>
+          <li><strong class="access-term">Voice</strong> On-device voice turns speech into text on your Mac. OpenAI dictation and voice conversations send microphone audio to OpenAI.</li>
+          <li><strong class="access-term">Private windows</strong> Each has its own temporary website storage and permissions. Private browsing does not save history, tabs, or assistant transcripts.</li>
+          <li><strong class="access-term">Trackers</strong> WSurf blocks known third-party trackers by default. WebKit extensions can block more.</li>
+        </ul>
       </div>
     </section>
 
-    <section class="build wrap" id="build" aria-labelledby="build-title">
-      <div class="section-heading">
-        <p class="eyebrow">Open source · Apache 2.0</p>
-        <h2 id="build-title">Make it yours.</h2>
-        <p>Build the current source with macOS 26 or later, Apple silicon, and Xcode 26.5 or later.</p>
+    <section class="section section-quiet wrap" aria-labelledby="limits-title">
+      <div class="quiet">
+        <h2 id="limits-title">Good to know</h2>
+        <ul class="quiet-list">
+          <li>There is no separate bookmarks manager. Pins and folders replace it. You can import bookmarks from an HTML export, but not history.</li>
+          <li>Website notifications need WSurf to be running. There is no background web push.</li>
+          <li>Chromium stays loaded until you quit. It does not promise lower RAM or CPU use, or faster websites.</li>
+          <li>Extensions and native Picture in Picture work with WebKit only.</li>
+          <li>Native passkeys are not guaranteed in legacy or private tabs.</li>
+        </ul>
       </div>
-      <div class="build-panel">
-        <pre aria-label="Clone the repository and open the Xcode project"><code>git clone https://github.com/wsagency/wsurf.git
+    </section>
+
+    <section class="section wrap" id="build" aria-labelledby="build-title">
+      <div class="build-layout">
+        <div>
+          <div class="section-heading">
+            <p class="eyebrow">Open source · Apache 2.0</p>
+            <h2 id="build-title">Make it yours.</h2>
+            <p class="lede">Build the current source with macOS 26 or later, Apple silicon, and Xcode 27.0 or later.</p>
+          </div>
+          <div class="build-panel">
+            <pre tabindex="0" aria-label="Clone the repository and open the Xcode project"><code>git clone https://github.com/wsagency/wsurf.git
 cd wsurf
 open WSurf.xcodeproj</code></pre>
-        <p>Select the WSurf target and set your team in Signing &amp; Capabilities. Some system features require additional entitlements and provisioning.</p>
-        <a class="button primary" href="https://github.com/wsagency/wsurf#building">Full build instructions <span aria-hidden="true">↗</span></a>
+            <p>Select the WSurf target and set your team in Signing &amp; Capabilities. Some system features require additional entitlements and provisioning.</p>
+            <a class="button button-primary" href="https://github.com/wsagency/wsurf#building">Full build instructions <span aria-hidden="true">↗</span></a>
+          </div>
+        </div>
+        <img class="build-mark" src="/media/mark-3d.png" width="720" height="720" alt="" loading="lazy">
       </div>
     </section>
   </main>
 
   <footer class="site-footer wrap">
-    <div>
-      <a class="brand" href="/" aria-label="WSurf home"><img src="/mark.svg" width="40" height="40" alt=""><span>WSurf</span></a>
+    <div class="footer-brand">
+      <a class="brand" href="/" aria-label="WSurf home"><img src="/brand/lockup-light.svg" width="109" height="24" alt=""></a>
+      <p>We love open source. Made by <a href="https://lukacin.com">Kristijan Lukacin</a> @ <a href="https://ws.agency">ws.agency</a></p>
+    </div>
+    <div class="footer-legal">
+      <nav aria-label="Project links">
+        <a href="https://github.com/wsagency/wsurf/blob/main/LICENSE">License</a>
+        <a href="https://github.com/wsagency/wsurf/blob/main/NOTICE">Attributions</a>
+        <a href="/changelog/">Changelog</a>
+        <a href="https://github.com/wsagency/wsurf/blob/main/CONTRIBUTING.md">Contribute</a>
+      </nav>
       <p>An independent fork of <a href="https://github.com/kavoye/linen-browser">Linen by Kavoye</a>.</p>
     </div>
-    <nav aria-label="Project links">
-      <a href="https://github.com/wsagency/wsurf/blob/main/LICENSE">License</a>
-      <a href="https://github.com/wsagency/wsurf/blob/main/NOTICE">Attributions</a>
-      <a href="https://github.com/wsagency/wsurf/blob/main/CONTRIBUTING.md">Contribute</a>
-    </nav>
   </footer>
 </body>
 </html>
