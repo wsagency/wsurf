@@ -46,28 +46,27 @@ extension BrowserTab {
         guard !isPrivate, canTranslate, !translation.isActive else { return false }
         let document = translation.document
         let settings = context.settings
-        Task { [weak self] in
+        translation.scheduleOffer(Task { [weak self] in
             var detected: Locale.Language?
-            // A page often fills in its text after the load finishes; look again a few times before giving up.
+            // A page often fills in its text after the load finishes; look again a few times before giving up. The first look
+            // waits too, so a new document, a same-document move or a closed tab cancels it before anything is read.
             for attempt in 0..<3 {
-                if attempt > 0 {
-                    try? await Task.sleep(for: .seconds(1.5))
-                }
-                guard let self, translation.document == document, !isClosed, let page = liveView else { return }
+                try? await Task.sleep(for: attempt == 0 ? PageTranslation.offerDelay : .seconds(1.5))
+                guard !Task.isCancelled, let self, translation.document == document, !isClosed, let page = liveView else { return }
                 detected = await translation.detectLanguage(in: page)
                 if detected != nil {
                     break
                 }
             }
-            guard let self, let source = detected, translation.document == document else { return }
+            guard !Task.isCancelled, let self, let source = detected, translation.document == document else { return }
             let candidates = TranslationLanguage.targets(for: source, preferring: settings.translationTargetID)
             let targets = await TranslationLanguage.translatable(candidates, from: source)
-            guard translation.document == document, !isClosed else { return }
+            guard !Task.isCancelled, translation.document == document, !isClosed else { return }
             translation.offer(targets)
             // Asked after the detection, which takes a while: an app can have taken the tab meanwhile.
             guard let target = targets.first, settings.alwaysTranslates(source), translatesAutomatically else { return }
             await translate(to: target, downloading: nil)
-        }
+        })
         return true
     }
 

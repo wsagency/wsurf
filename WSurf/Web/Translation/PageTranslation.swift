@@ -22,6 +22,10 @@ final class PageTranslation {
     /// Blocks asked for per round trip. The first batch is what is on screen, so it is small enough to show quickly.
     static let batchSize = 6
 
+    /// How long a finished load waits before its language is read. A tab that closes or moves on sooner never reaches the
+    /// Translation framework, so opening and closing tabs quickly does not start and stop its status streams.
+    static let offerDelay: Duration = .milliseconds(500)
+
     private(set) var phase: Phase = .original
     private(set) var target: Locale.Language?
     private(set) var detectedLanguage: Locale.Language?
@@ -32,6 +36,7 @@ final class PageTranslation {
     @ObservationIgnored private var request = 0
     @ObservationIgnored private var job: Task<Void, Never>?
     @ObservationIgnored private var detection: Task<Locale.Language?, Never>?
+    @ObservationIgnored private var offering: Task<Void, Never>?
 
     var isActive: Bool {
         phase != .original
@@ -42,6 +47,8 @@ final class PageTranslation {
         request += 1
         job?.cancel()
         job = nil
+        offering?.cancel()
+        offering = nil
         detection?.cancel()
         detection = nil
         phase = .original
@@ -53,6 +60,12 @@ final class PageTranslation {
 
     func offer(_ targets: [Locale.Language]) {
         self.targets = targets
+    }
+
+    /// Replaces the pending offer for this document with `task`.
+    func scheduleOffer(_ task: Task<Void, Never>) {
+        offering?.cancel()
+        offering = task
     }
 
     func detectLanguage(in page: BrowserPage) async -> Locale.Language? {
@@ -81,6 +94,8 @@ final class PageTranslation {
     func pageMoved() {
         guard !isActive else { return }
         document += 1
+        offering?.cancel()
+        offering = nil
         detection?.cancel()
         detection = nil
         detectedLanguage = nil
@@ -184,7 +199,7 @@ final class PageTranslation {
 
 /// The installed on-device model a run uses. Nothing here reaches a network service: a missing language pack is offered through
 /// the system's own download sheet, and only the language pair and the outcome are logged.
-enum TranslationModel: Equatable {
+enum TranslationModel: Hashable {
     case fast
     case accurate
 
@@ -219,13 +234,19 @@ enum TranslationModel: Equatable {
     }
 
     func status(from source: Locale.Language, to target: Locale.Language) async -> LanguageAvailability.Status {
-        if #available(macOS 26.4, *) {
-            return await LanguageAvailability(preferredStrategy: strategy).status(from: source, to: target)
-        }
-        return await LanguageAvailability().status(from: source, to: target)
+        await TranslationServices.shared.status(from: source, to: target, using: self)
     }
 
-    func session(from source: Locale.Language, to target: Locale.Language) -> TranslationSession {
+    /// Made once per strategy by `TranslationServices`, which keeps it.
+    func makeAvailability() -> LanguageAvailability {
+        if #available(macOS 26.4, *) {
+            return LanguageAvailability(preferredStrategy: strategy)
+        }
+        return LanguageAvailability()
+    }
+
+    /// Made once per language pair by `TranslationServices`, which keeps it.
+    func makeSession(from source: Locale.Language, to target: Locale.Language) -> TranslationSession {
         if #available(macOS 26.4, *) {
             return TranslationSession(installedSource: source, target: target, preferredStrategy: strategy)
         }
@@ -239,13 +260,12 @@ enum TranslationModel: Equatable {
         return TranslationSession.Configuration(source: source, target: target)
     }
 
-    /// A translator over one session for a whole run, skipping blocks that are already in the target language.
+    /// A translator over the pair's shared session, skipping blocks that are already in the target language.
     func translator(from source: Locale.Language, to target: Locale.Language) -> PageTranslator {
-        let session = session(from: source, to: target)
         let skipper = TranslationLanguage.Skipper(source: source, target: target)
         return { segments in
             guard await !skipper.isAlreadyTarget(segments) else { return [:] }
-            return await PageTranslationRuns.translate(segments, with: session)
+            return await TranslationServices.shared.translate(segments, using: self, from: source, to: target)
         }
     }
 

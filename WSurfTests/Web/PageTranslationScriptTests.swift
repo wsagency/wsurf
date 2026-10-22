@@ -271,6 +271,72 @@ struct PageTranslationScriptTests {
         }
     }
 
+    /// Tabs that open and close while their language is read, with other availability checks running, must not tear the
+    /// Translation framework's objects down under it: the shared owner keeps every one it made, through idle and after.
+    @Test(arguments: BrowserEngine.allCases)
+    func manyTabsOpeningAndClosingDuringDetectionKeepTheFrameworkObjects(engine: BrowserEngine) async throws {
+        let server = try await HTTPFixtureServer.start(routes: ["/news": .html(Self.german)])
+        defer { withExtendedLifetime(server) {} }
+        let url = try server.url("/news")
+        if engine == .chromium {
+            try ChromiumRuntime.shared.ensureInitialized()
+        }
+        let services = TranslationServices.shared
+        let german = Locale.Language(identifier: "de")
+        _ = await services.status(from: german, to: Locale.Language(identifier: "en"), using: nil)
+        let before = services.liveObjects
+        #expect(!before.isEmpty)
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 800, height: 600),
+            styleMask: .borderless, backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 800, height: 600))
+        window.contentView = container
+        window.orderBack(nil)
+        defer {
+            window.contentView = nil
+            window.close()
+        }
+        var checks: [Task<Void, Never>] = []
+        for round in 0..<3 {
+            let tabs = (0..<4).map { _ in
+                let tab = BrowserTab(opensBlank: false)
+                tab.engineOverride = engine
+                tab.load(url)
+                return tab
+            }
+            let pages = tabs.map(\.page)
+            for page in pages {
+                page.frame = container.bounds
+                container.addSubview(page)
+            }
+            // Checks from elsewhere keep the queue busy while tabs come and go.
+            for target in ["en", "fr", "ja", "uk"] {
+                let model: TranslationModel = round.isMultiple(of: 2) ? .fast : .accurate
+                checks.append(Task { _ = await services.status(from: german, to: Locale.Language(identifier: target), using: model) })
+            }
+            // Half close while loading, before their offer runs; the rest as soon as their language is read.
+            for index in 0..<2 {
+                tabs[index].detach()
+                pages[index].removeFromSuperview()
+                await pages[index].close()
+            }
+            for index in 2..<4 {
+                #expect(await waitUntil(timeout: .seconds(20)) { tabs[index].translation.hasDetected }, "engine \(engine), round \(round)")
+                tabs[index].detach()
+                pages[index].removeFromSuperview()
+                await pages[index].close()
+            }
+        }
+        for check in checks {
+            await check.value
+        }
+        await services.waitUntilIdle()
+
+        #expect(services.pending == 0)
+        #expect(before.isSubset(of: services.liveObjects), "an availability made earlier was released")
+    }
+
     // MARK: Pages
 
     private func withPage(engine: BrowserEngine, html: String, body: (BrowserPage) async throws -> Void) async throws {
@@ -342,13 +408,19 @@ struct PageTranslationScriptTests {
             try #require(await waitUntil { page.url == url && !page.isLoading && !tab.isLoading })
             try await body(tab)
         } catch {
-            tab.detach()
-            await page.close()
+            await close(tab, page)
             await context?.endPrivateSession()
             throw error
         }
-        tab.detach()
-        await page.close()
+        await close(tab, page)
         await context?.endPrivateSession()
+    }
+
+    /// Closes a tab the way the app does, after the shared Translation owner has finished every call, so no framework call
+    /// started by this test is still running when the next one starts.
+    private func close(_ tab: BrowserTab, _ page: BrowserPage) async {
+        tab.detach()
+        await TranslationServices.shared.waitUntilIdle()
+        await page.close()
     }
 }

@@ -4,7 +4,6 @@
 
 import Foundation
 import NaturalLanguage
-@preconcurrency import Translation
 
 /// Which language a page is in and which languages the person reads. Detection runs on device with NaturalLanguage.
 nonisolated enum TranslationLanguage {
@@ -42,13 +41,13 @@ nonisolated enum TranslationLanguage {
         return candidates.filter { !matches($0, source) && seen.insert(key($0)).inserted }
     }
 
+    @MainActor
     static func translatable(
         _ targets: [Locale.Language],
         from source: Locale.Language
     ) async -> [Locale.Language] {
-        let availability = LanguageAvailability()
         var result: [Locale.Language] = []
-        for target in targets where await availability.status(from: source, to: target) != .unsupported {
+        for target in targets where await TranslationServices.shared.isSupported(from: source, to: target) {
             result.append(target)
         }
         return result

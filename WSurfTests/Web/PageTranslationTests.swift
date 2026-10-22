@@ -228,6 +228,70 @@ struct PageTranslationTests {
         #expect(!reset.alwaysTranslates(japanese))
     }
 
+    // MARK: - The shared framework owner
+
+    /// Counts how many queued calls run at once.
+    private final class Overlap {
+        var running = 0
+        var most = 0
+        var finished = 0
+    }
+
+    @Test func frameworkCallsRunOneAtATime() async {
+        let services = TranslationServices()
+        let overlap = Overlap()
+
+        let calls = (0..<20).map { index in
+            Task {
+                await services.serially {
+                    overlap.running += 1
+                    overlap.most = max(overlap.most, overlap.running)
+                    try? await Task.sleep(for: .milliseconds(2))
+                    overlap.running -= 1
+                    overlap.finished += 1
+                    return index
+                }
+            }
+        }
+        var answers: [Int] = []
+        for call in calls {
+            answers.append(await call.value)
+        }
+        await services.waitUntilIdle()
+
+        #expect(overlap.most == 1)
+        #expect(overlap.finished == 20)
+        #expect(answers == Array(0..<20))
+        #expect(services.pending == 0)
+    }
+
+    /// A tab that closes stops waiting for its answer, but the framework call it started is never cut off half way.
+    @Test func aCancelledCallerLetsItsFrameworkCallFinish() async {
+        let services = TranslationServices()
+        let overlap = Overlap()
+        let caller = Task {
+            await services.serially {
+                try? await Task.sleep(for: .milliseconds(50))
+                overlap.finished += 1
+                return true
+            }
+        }
+
+        caller.cancel()
+        _ = await caller.value
+        await services.waitUntilIdle()
+
+        #expect(overlap.finished == 1)
+        #expect(services.pending == 0)
+    }
+
+    @Test func anIdleOwnerReturnsAtOnce() async {
+        let services = TranslationServices()
+        await services.waitUntilIdle()
+        #expect(services.pending == 0)
+        #expect(services.liveObjects.isEmpty)
+    }
+
     // MARK: - Downloads
 
     @Test func requestsForTheSamePairShareOneDownload() async {

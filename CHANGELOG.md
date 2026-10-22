@@ -80,6 +80,7 @@ Everything since 0.1.6 (build 6). None of the screens and prompts below has been
 - The Sidebar margin setting also applies to the icons-only and floating sidebars; at the default margin nothing changes.
 - The experimental video player no longer lets the page under it react to the pointer.
 - Closing a tab no longer leaves password saving and password filling holding on to that page's frames, which used to add up the longer WSurf stayed open.
+- Opening and closing tabs while WSurf works out a page's language can no longer crash it inside macOS's translation service. WSurf keeps one set of translation objects for as long as it runs, asks the service one question at a time, and waits half a second after a page loads before reading its language.
 - The memory checks of the performance tests now judge the middle of five samples after a warm-up run instead of the average, and the vault-scale write cases hand freed memory back before and after each measured step, so one noisy sample no longer fails a run. No budget changed.
 
 ### Known issues

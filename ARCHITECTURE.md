@@ -143,6 +143,13 @@ sending a block's segments as one attributed request, and writes the batch back 
 one call. Show Original restores only text the page did not change itself. A new
 document, a new engine page or a closed tab ends the run.
 
+`TranslationServices` owns the process's only `LanguageAvailability` objects (one
+per strategy) and `TranslationSession`s (one per model and language pair). It never
+releases them and runs every framework call one at a time: releasing an
+availability while its language-status stream was still replying crashed the app
+inside the framework. A load waits `PageTranslation.offerDelay` before its
+language is read, so tabs that open and close quickly never reach the framework.
+
 While Reader shows an article, Translate Page, Show Original and the translate
 control act on Reader's WebKit view and the `ReaderSession`'s own
 `PageTranslation` (`BrowserTab.shownTranslation`); the page behind keeps its own
