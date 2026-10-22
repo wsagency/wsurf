@@ -314,13 +314,22 @@ or an adjustment changes. The appearance keys from before themes stay in place:
 
 ## Shared packages
 
-`Packages/WSurfCore` holds platform-neutral code that an iOS app can share with the Mac app. Its one target, `WSurfVault`,
+`Packages/WSurfCore` holds platform-neutral code that an iOS app can share with the Mac app. Its first target, `WSurfVault`,
 holds the profile vault: the store, its crypto, the Credential Exchange codec, TOTP and passkey key encoding. It imports no
 AppKit, SwiftUI, WebKit or CefKit, and it builds for iOS. It uses the app target's Swift settings (Main Actor default
 isolation, Member Import Visibility), so code behaves the same on either side of the boundary. The app links the product
 statically, which adds no framework to the bundle. The tests stay in `WSurfTests` and use `@testable import WSurfVault`
 without linking it, so the app is the only copy of the vault code in a test process. A resource the package reads through
 `Bundle.main`, such as the public suffix list, stays in the app.
+
+The second target, `WSurfCore`, holds the CloudKit tab sync. One `CKSyncEngine` on the account's private database sits behind
+the `SyncEngine` protocol, and `CloudKitSyncEngine` is the only place that creates a `CKContainer`. There are two record
+types, `Device` and `DeviceSession`, each with a version number and one encrypted payload. A device publishes the Favorites,
+pins and open tabs of its Personal profile's regular windows and lists the other devices' in the sidebar, read-only. Nothing
+reaches CloudKit unless the hidden `experiments.iCloudTabs` flag is on and the signed binary carries the iCloud, CloudKit and
+push entitlements (`CloudTabsGate`); a build that is unsigned, staged or has a bundle ID suffix never creates the container.
+Private windows, the private profile, page state, history, Input History, autofill, credentials, cookies, permissions and
+favicons never sync, and `NeverSyncTests` pins the record types and scans the sync sources for them.
 
 ## Tests
 
