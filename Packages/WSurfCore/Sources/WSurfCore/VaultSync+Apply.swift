@@ -122,7 +122,7 @@ extension VaultSync {
                 guard stillOpen(key, mine), let (_, row) = runningRow(key), notRolledBack(key, snapshot, row, database) else { return }
                 open = (VaultView(snapshot), syncKey)
             }
-            guard var (view, syncKey) = open else { return }
+            guard var view = open?.view, let syncKey = open?.syncKey else { return }
             var pass = SyncPass()
             decide(batch, key: key, view: view, syncKey: syncKey, database: database, settling: settling, into: &pass)
             pass.processed = batch.filter { !pass.deferred.contains($0.accountID) }
