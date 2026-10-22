@@ -1880,6 +1880,9 @@
     "Certificate exceptions" : {
 
     },
+    "Change Folder Size" : {
+      "comment" : "Name of the undo step after choosing a size in the Size submenu of a sidebar folder's context menu. Title Case, same style as Delete Folder."
+    },
     "Change the keyboard shortcut" : {
       "comment" : "Tooltip on the shortcut recorder in Settings > Voice while it is idle; pressing it starts listening for a new key combination."
     },
@@ -3920,6 +3923,9 @@
     "None installed" : {
       "comment" : "Shown under “Extensions” when a profile has none."
     },
+    "Normal" : {
+      "comment" : "Item in the Size submenu of a sidebar folder's context menu: the folder's name and icon at the ordinary size of the sidebar. The other items are factors such as 1.5× and 2×. Title Case, one word."
+    },
     "Not detected. Install the client or choose its configuration file." : {
       "comment" : "External MCP client setup in Advanced settings."
     },
@@ -5307,6 +5313,9 @@
     },
     "Sites get an address only when you choose it." : {
 
+    },
+    "Size" : {
+      "comment" : "Submenu in the context menu of a sidebar folder that makes that one folder's row larger so it stands out: Normal, 1.5×, 2×, 2.5×. Title Case, one word."
     },
     "Skip" : {
 

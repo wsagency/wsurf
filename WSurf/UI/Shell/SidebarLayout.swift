@@ -36,11 +36,12 @@ enum SidebarMetrics {
     }
 
     /// A row is at least as tall as its icon plus 4 pt above and below, which a 16 pt icon in the 24 pt floor has.
-    static func rowHeight(settings: BrowserSettings) -> CGFloat {
+    /// A folder row drawn at `scale` times its size grows with its icon and title.
+    static func rowHeight(settings: BrowserSettings, scale: CGFloat = 1) -> CGFloat {
         max(
             24,
-            settings.globalSettings.chromeShape.tabIconSize + 8,
-            settings.sidebarLineHeight + CGFloat(settings.sidebarRowSpacing * 2 + 8)
+            settings.globalSettings.chromeShape.tabIconSize * scale + 8,
+            settings.sidebarTitle(scale: scale).lineHeight + CGFloat(settings.sidebarRowSpacing * 2 + 8)
         )
     }
 

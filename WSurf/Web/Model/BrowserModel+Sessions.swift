@@ -108,6 +108,8 @@ extension BrowserModel {
         /// Marks a folder the migration moved to the profile. A window never writes it.
         var pinID: UUID?
         var spaceID: UUID?
+        /// nil is normal; see `TabFolderSize`.
+        var sizeFactor: Double?
     }
 
     private nonisolated struct ItemRecord: Codable, FetchableRecord, PersistableRecord, Sendable {
@@ -294,7 +296,8 @@ extension BrowserModel {
                 isExpanded: folder.isExpanded,
                 isPinned: folder.isPinned,
                 pinID: nil,
-                spaceID: folder.spaceID
+                spaceID: folder.spaceID,
+                sizeFactor: folder.size.storedFactor
             )
         }
         let known = Set(persisted.map(\.id))
@@ -569,6 +572,7 @@ extension BrowserModel {
         folder.color = record.color
         folder.isExpanded = record.isExpanded
         folder.isPinned = record.isPinned
+        folder.size = .stored(record.sizeFactor)
         folder.spaceID = record.spaceID
         return folder
     }

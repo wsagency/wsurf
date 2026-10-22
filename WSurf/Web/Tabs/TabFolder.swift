@@ -21,6 +21,34 @@ nonisolated enum TabFolderColor: String, CaseIterable, Codable, Identifiable, Se
     }
 }
 
+/// How large a folder's own row is drawn: its name, icon and disclosure arrow scale together. Rows inside it are
+/// not affected. The raw value is the factor, and it is what is stored.
+nonisolated enum TabFolderSize: Double, CaseIterable, Sendable {
+    case normal = 1
+    case large = 1.5
+    case larger = 2
+    case largest = 2.5
+
+    var factor: CGFloat {
+        CGFloat(rawValue)
+    }
+
+    /// Normal, or the factor in the reader's number format: 1.5×, 2×, 2.5×.
+    var menuTitle: String {
+        self == .normal ? String(localized: "Normal") : rawValue.formatted(.number) + "×"
+    }
+
+    /// A stored factor that is missing, or that no size has, reads as normal.
+    static func stored(_ factor: Double?) -> Self {
+        factor.flatMap(Self.init(rawValue:)) ?? .normal
+    }
+
+    /// What a row of the stored form holds: nil for normal, so rows saved before sizes existed read the same.
+    var storedFactor: Double? {
+        self == .normal ? nil : rawValue
+    }
+}
+
 @MainActor
 @Observable
 final class TabFolder: Identifiable {
@@ -30,6 +58,7 @@ final class TabFolder: Identifiable {
     var color = TabFolderColor.gray
     var isExpanded = true
     var isPinned = false
+    var size = TabFolderSize.normal
     /// The space the folder and everything in it belong to; nil while the folder is pinned or inside a pinned folder.
     var spaceID: UUID?
 

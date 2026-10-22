@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 WSurf Agency
 // SPDX-License-Identifier: Apache-2.0
 
+import AppKit
 import CoreGraphics
 import Foundation
 import GRDB
@@ -201,6 +202,23 @@ struct FolderPinTests {
 
         #expect(browser.rows(in: fixture.folder) == Array(fixture.original.dropLast()))
         #expect(browser.sidebarTree.parent(of: banana) == nil)
+    }
+
+    @Test(.boundedWebViews) func theSortMenuIsDisabledBelowTwoRowsAndItsItemsSortTheFolder() {
+        let browser = BrowserModel(database: .temporary())
+        defer { browser.closeAllTabs(saving: false) }
+        let empty = browser.createFolder(named: "Empty")
+        #expect(FolderContextMenu.sortMenu(for: empty, browser: browser).items.allSatisfy { !$0.isEnabled })
+
+        let fixture = SortFixture(browser)
+        let menu = FolderContextMenu.sortMenu(for: fixture.folder, browser: browser)
+        #expect(menu.items.count == 2 && menu.items.allSatisfy(\.isEnabled))
+        menu.performActionForItem(at: 0)
+        #expect(SortFixture.names(in: fixture.folder, of: browser)
+            == ["apple", "banana", "Item 2", "item 10", "Same", "Same", "Zulu"])
+        menu.performActionForItem(at: 1)
+        #expect(SortFixture.names(in: fixture.folder, of: browser)
+            == ["apple", "Zulu", "banana", "Item 2", "item 10", "Same", "Same"])
     }
 
     @Test(.boundedWebViews) func aSortedFolderKeepsItsOrderAcrossRestart() throws {

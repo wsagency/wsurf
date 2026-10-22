@@ -138,8 +138,10 @@ extension View {
     /// Centers a title on the middle of its letters instead of on its line box, which is centered on the capitals
     /// and leaves lowercase text low. Put it on the title in a row, so the icon beside it meets that middle.
     /// A column that grows a second line keeps the center of both lines (`applies: false`).
-    func sidebarTitleCentered(_ applies: Bool = true) -> some View {
-        SidebarTitleLayout(midline: applies ? BrowserSettings.application.sidebarTitleMidline : nil) { self }
+    func sidebarTitleCentered(_ applies: Bool = true, scale: CGFloat = 1) -> some View {
+        SidebarTitleLayout(
+            midline: applies ? BrowserSettings.application.sidebarTitle(scale: scale).midline : nil
+        ) { self }
     }
 
     /// The new-tab dot on the top trailing edge of an icon. A row that is not new is left as it is.

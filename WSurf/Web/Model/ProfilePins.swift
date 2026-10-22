@@ -33,6 +33,8 @@ nonisolated struct ProfilePin: Codable, Equatable, FetchableRecord, PersistableR
     var color: TabFolderColor?
     var isExpanded = true
     var isPinned = false
+    /// A folder's size factor; nil is normal.
+    var sizeFactor: Double?
 
     /// Parents before children, siblings by key. This is the order to insert rows in, because a child
     /// references its parent.

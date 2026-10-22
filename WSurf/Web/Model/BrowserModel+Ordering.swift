@@ -488,6 +488,19 @@ extension BrowserModel {
         scheduleSave()
     }
 
+    /// One undo step. A pinned folder's size goes to the profile with the rest of its row.
+    func setFolderSize(_ size: TabFolderSize, for folder: TabFolder) {
+        guard foldersByID[folder.id] === folder, folder.size != size else { return }
+        let previous = folder.size
+        let id = folder.id
+        registerSidebarUndo(named: String(localized: "Change Folder Size")) { model in
+            guard let folder = model.folder(id: id) else { return }
+            model.setFolderSize(previous, for: folder)
+        }
+        folder.size = size
+        scheduleSave()
+    }
+
     func deleteFolder(_ folder: TabFolder) {
         let tree = reconciledTree()
         guard foldersByID[folder.id] === folder else { return }
