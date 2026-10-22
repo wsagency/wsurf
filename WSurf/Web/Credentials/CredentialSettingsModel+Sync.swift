@@ -6,12 +6,11 @@ import Foundation
 import WSurfCore
 import WSurfVault
 
-/// Why adding a vault that another Mac synced did not work, in the two ways the card explains.
+/// Why adding a vault that another Mac synced did not work, where the card explains it. (A missing authority is not kept: the card
+/// reads it from the page again every time, so it goes as soon as a vault is unlocked.)
 enum SyncAddFailure: Equatable {
     /// The passkey gave a key that opens no copy of this vault on this Mac. `keyCheck` is the non-secret value to compare.
     case keyDiffers(vaultID: UUID, keyCheck: String)
-    /// No vault of this profile is unlocked to approve it, and none enrolls the passkey.
-    case noAuthority(vaultID: UUID)
 }
 
 // The page's side of iCloud vault sync. All of it is gone, and every control with it, unless `CloudSync.shared?.vaults` exists: the
@@ -76,7 +75,7 @@ extension CredentialSettingsModel {
     // MARK: Adding a vault from another Mac
 
     /// Opens the synced passkey (one user-verified prompt), adds the vault to this profile's store, locked, and starts syncing it. Its
-    /// entries arrive at its first unlock. A key that differs, or no authority, is told on the card and changes nothing.
+    /// entries arrive at its first unlock. A key that differs is told on the card and changes nothing; no authority is told there too, before any prompt.
     func addSyncedVault(_ remote: RemoteVault, in anchor: @autoclosure () -> ASPresentationAnchor) async {
         guard let sync = vaultSync else { return }
         syncAddFailure = nil
@@ -86,8 +85,6 @@ extension CredentialSettingsModel {
                 added = try await CredentialManager.adoptSyncedVault(profile: profile, remote: remote, in: anchor(), native: native)
             } catch CredentialManagerError.syncKeyDiffers(let keyCheck) {
                 syncAddFailure = .keyDiffers(vaultID: remote.vaultID, keyCheck: keyCheck)
-            } catch CredentialStoreError.noAuthority {
-                syncAddFailure = .noAuthority(vaultID: remote.vaultID)
             }
         }
         guard finished, let added else { return }

@@ -49,7 +49,7 @@ struct VaultSyncCard: View {
                     Button("Try Again…") { add(remote) }
                         .buttonStyle(.bordered)
                         .disabled(model.isBusy)
-                } else if model.canAddSyncedVault(remote), !isMissingAuthority(remote) {
+                } else if model.canAddSyncedVault(remote) {
                     Button("Add to This Mac…") { add(remote) }
                         .buttonStyle(.bordered)
                         .disabled(model.isBusy)
@@ -58,19 +58,10 @@ struct VaultSyncCard: View {
         }
     }
 
+    /// Only a passkey that gave a different key is remembered; a missing authority is read afresh from the page every time.
     private func failure(for remote: RemoteVault) -> SyncAddFailure? {
-        guard let failure = model.syncAddFailure else { return nil }
-        switch failure {
-        case .keyDiffers(let id, _), .noAuthority(let id):
-            return id == remote.vaultID ? failure : nil
-        }
-    }
-
-    private func isMissingAuthority(_ remote: RemoteVault) -> Bool {
-        if case .noAuthority = failure(for: remote) {
-            return true
-        }
-        return false
+        guard case .keyDiffers(let id, _)? = model.syncAddFailure, id == remote.vaultID else { return nil }
+        return model.syncAddFailure
     }
 
     private func caption(for remote: RemoteVault) -> LocalizedStringResource {
@@ -80,7 +71,7 @@ struct VaultSyncCard: View {
                 Key check on this Mac: \(check)
                 """
         }
-        if isMissingAuthority(remote) || !model.canAddSyncedVault(remote) {
+        if !model.canAddSyncedVault(remote) {
             return "Unlock one of this profile’s vaults first, then add this vault."
         }
         return "Add it to this Mac with your unlock passkey. Its entries download when you unlock it."

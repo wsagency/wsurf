@@ -1,9 +1,12 @@
 // SPDX-FileCopyrightText: 2026 WSurf Agency
 // SPDX-License-Identifier: Apache-2.0
 
+import AppKit
 import CryptoKit
 import Foundation
+import SwiftUI
 import Testing
+import WebKit
 import WSurfCore
 
 @testable import WSurf
@@ -593,9 +596,77 @@ struct VaultSyncDeviceTests {
         #expect(cloud.zones[zone(second)] == nil && cloud.zones[zone(first)] != nil)
         #expect(sync.status(profileID: profile.id, vaultID: second.vaultID) == .off)
 
-        // Erasing the profile deletes the zones of the vaults it synced.
+        // Erasing the profile deletes the zones of the vaults it synced. Erasure removes the profile's WebKit data store, and WebKit's
+        // removal crashes when it is the first WebKit call of the process (its main run loop is not set up yet): start WebKit first.
+        _ = WKWebsiteDataStore.nonPersistent()
         await VaultManagerFixture.erase(profile)
         try await send()
         #expect(cloud.zones[zone(first)] == nil)
+    }
+
+    // MARK: The controls
+
+    @Test func syncControlsAreAbsentWithoutSyncAndDrawnWithIt() async throws {
+        let profile = try await VaultManagerFixture.newProfile("Controls")
+        let made: (profile: Profile, passkeys: VaultPasskeys, vaults: [FixtureVault])
+        do {
+            made = try await VaultManagerFixture.make(profile: profile, vaults: [.unlocked])
+        } catch {
+            await VaultManagerFixture.cleanup(profile)
+            throw error
+        }
+        defer { CloudSync.shared = nil }
+        let directory = FileManager.default.temporaryDirectory.appending(path: "cloud-sync-\(UUID().uuidString)", directoryHint: .isDirectory)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let vault = made.vaults[0]
+        let model = CredentialSettingsModel(profile: profile, manager: vault.manager)
+        await model.load()
+        func height(_ view: some View) -> CGFloat {
+            let host = NSHostingView(rootView: view.frame(width: 600))
+            host.layoutSubtreeIfNeeded()
+            return host.fittingSize.height
+        }
+        func controls() -> (row: CGFloat, card: CGFloat) {
+            (
+                height(CloudVaultRow(model: model, run: { _ in })),
+                height(VaultSyncCard(model: model, withWindow: { _ in }, showSettings: {}))
+            )
+        }
+
+        CloudSync.shared = nil
+        #expect(controls().row < 1 && controls().card < 1, "flag off: not one control")
+
+        let started = CloudSync.start(
+            gate: Self.gate(tabs: false, vaults: true), installIDs: MemoryInstallIDStorage(), stateFile: directory.appending(path: "iCloudSync.json"),
+            profiles: [profile], host: { CredentialVaultSyncHost(profiles: { [profile] }) }, clock: TestClock(),
+            makeEngine: { delegate, _ in FakeSyncEngine(cloud: FakeSyncCloud(), delegate: delegate) }
+        )
+        let cloudSync = try #require(started)
+        CloudSync.shared = cloudSync
+        let sync = try #require(cloudSync.vaults)
+        #expect(controls().row > 20 && controls().card < 1, "the switch is there, nothing else yet")
+
+        // Another Mac's vault of this profile is offered, and a synced vault says what it is doing.
+        let list = try VaultWrapperList.encode(try SyncVaultFixtures.wrappers(SymmetricKey(size: .bits256), profile: profile.id, vault: UUID()))
+        let payload = VaultRecordPayload(
+            keyGeneration: 1, profile: VaultProfileCard(name: "Work", symbol: "briefcase", color: "blue"), wrappers: list, sealed: Data(count: 40)
+        )
+        let remote = SyncRecord(
+            id: SyncRecordID(zone: SyncZone.vault(profileID: profile.id, vaultID: UUID()), name: "vault"), type: .vault, schema: 1,
+            payload: try JSONEncoder().encode(payload)
+        )
+        await sync.handle(.fetched(modified: [remote], deleted: []))
+        #expect(model.addableSyncedVaults.count == 1)
+        #expect(controls().card > 20)
+        try await sync.enable(profileID: profile.id, vaultID: vault.vaultID)
+        #expect(model.syncStatus != nil && controls().row > 40, "the switch with its Remove from iCloud row")
+        let statuses: [VaultSyncStatus] = [
+            .off, .synced, .sending(2), .waitingForUnlock(2), .needsReview(1), .iCloudFull, .signedOut, .needsUpdate, .rolledBack,
+            .removed(.deleted), .removed(.purged), .removed(.encryptedDataReset), .accountChanged,
+        ]
+        for status in statuses {
+            #expect(!CloudVaultRow.statusText(status, isUnlocked: true).isEmpty)
+        }
+        await VaultManagerFixture.cleanup(profile)
     }
 }
