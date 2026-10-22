@@ -102,6 +102,11 @@ struct Sidebar: View {
             ),
             contentInsets: contentInsets
         )
+        .background {
+            if coordinator.showsSpaceSwitcher {
+                SpaceSwipeCatcher { coordinator.switchSpace(by: $0) }
+            }
+        }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(.bottom, 12)
         .padding(.top, topPadding)
@@ -184,6 +189,9 @@ private struct SidebarBottomChrome: View {
 
             if sidebarStyle == .icons {
                 VStack(spacing: 6) {
+                    if coordinator.showsSpaceSwitcher {
+                        SidebarSpaceSwitcher(coordinator: coordinator, axis: .vertical)
+                    }
                     SidebarProfileControl(coordinator: coordinator)
                     downloadsButton
                     SidebarSettingsRow(coordinator: coordinator)
@@ -193,7 +201,11 @@ private struct SidebarBottomChrome: View {
                     SidebarProfileControl(coordinator: coordinator)
                         .padding(.leading, SidebarMetrics.profileLeading)
 
-                    Spacer(minLength: 0)
+                    if coordinator.showsSpaceSwitcher {
+                        SidebarSpaceSwitcher(coordinator: coordinator)
+                    } else {
+                        Spacer(minLength: 0)
+                    }
 
                     downloadsButton
                     SidebarSettingsRow(coordinator: coordinator)

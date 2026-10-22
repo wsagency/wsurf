@@ -158,6 +158,7 @@ struct SidebarFolderMenuItems: View {
         } label: {
             Label("Move to Folder", systemImage: "folder")
         }
+        SidebarSpaceMenuItems(items: items, browser: browser)
         if isFiled {
             Button {
                 browser.moveOut(items)
@@ -166,6 +167,33 @@ struct SidebarFolderMenuItems: View {
             }
         }
         Divider()
+    }
+}
+
+/// Move to Space: the other spaces of the window's profile, for rows that belong to a space (pins belong to all).
+struct SidebarSpaceMenuItems: View {
+    let items: [SidebarItem]
+    let browser: BrowserModel
+
+    var body: some View {
+        let targets = browser.spaceMoveTargets
+        if !targets.isEmpty, items.contains(where: { browser.spaceID(ofItem: $0) != nil }) {
+            Menu {
+                ForEach(targets) { space in
+                    Button {
+                        browser.move(items, toSpace: space.id)
+                    } label: {
+                        Label {
+                            Text(verbatim: space.name)
+                        } icon: {
+                            Image(systemName: space.symbol)
+                        }
+                    }
+                }
+            } label: {
+                Label("Move to Space", systemImage: "square.on.square")
+            }
+        }
     }
 }
 

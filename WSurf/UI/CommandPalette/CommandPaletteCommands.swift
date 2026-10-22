@@ -19,6 +19,7 @@ struct CommandPaletteContext {
     var isAwayFromPin = false
     var canReopenClosedTab = false
     var archivedCount = 0
+    var hasSpaces = false
     var canSplit = false
     var isSplit = false
     var canSwapPanes = false
@@ -44,6 +45,7 @@ enum CommandPaletteAction: String, CaseIterable {
     case openStartPage
     case openLocation
     case privateBrowsing
+    case newSpace
     case unloadTab
     case freeMemory
     case reopenTab
@@ -298,6 +300,14 @@ enum CommandPaletteCatalog {
                     symbol: "eyeglasses",
                     shortcut: "⇧⌘N",
                     aliases: ["incognito", "private window"]
+                ),
+                make(
+                    .newSpace,
+                    group: .tabs,
+                    title: "New Space…",
+                    symbol: "rectangle.stack.badge.plus",
+                    aliases: ["space", "workspace", "add space"],
+                    isAvailable: context.hasSpaces
                 ),
                 make(
                     .reopenTab,

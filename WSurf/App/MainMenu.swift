@@ -282,6 +282,10 @@ final class MainMenu: NSObject, NSMenuItemValidation {
             menu.items.last?.tag = slot - 1
         }
         menu.addItem(hidden(command("Show Last Tab", #selector(showLastTab), key: "9")))
+        for slot in SpaceShortcut.slots {
+            menu.addItem(hidden(command("Show Space \(slot)", #selector(showSpaceAtIndex(_:)), key: "\(slot)", modifiers: SpaceShortcut.modifiers)))
+            menu.items.last?.tag = slot - 1
+        }
         menu.addItem(.separator())
         menu.addItem(chain("Bring All to Front", #selector(NSApplication.arrangeInFront(_:))))
         return menu
@@ -453,6 +457,9 @@ final class MainMenu: NSObject, NSMenuItemValidation {
     @objc private func showLastTab() {
         coordinator.browser.activateLastTab()
     }
+    @objc private func showSpaceAtIndex(_ sender: NSMenuItem) {
+        coordinator.switchToSpace(at: sender.tag)
+    }
 
     @objc private func clearHistory() {
         coordinator.confirmClearHistory()
@@ -546,9 +553,11 @@ final class MainMenu: NSObject, NSMenuItemValidation {
             return coordinator.browser.canReopenClosedTab
         case #selector(nextTab), #selector(previousTab), #selector(showLastTab),
              #selector(switchToNextTab), #selector(switchToPreviousTab):
-            return coordinator.browser.tabs.count > 1
+            return coordinator.browser.currentSpaceTabs.count > 1
         case #selector(showTabAtIndex(_:)):
-            return coordinator.browser.tabs.indices.contains(menuItem.tag)
+            return coordinator.browser.currentSpaceTabs.indices.contains(menuItem.tag)
+        case #selector(showSpaceAtIndex(_:)):
+            return coordinator.spaceEntries.indices.contains(menuItem.tag)
         case #selector(clearHistory):
             return coordinator.browser.history.count > 0
         case #selector(checkForUpdates):

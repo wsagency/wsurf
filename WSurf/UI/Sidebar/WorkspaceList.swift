@@ -262,7 +262,11 @@ struct WorkspaceList<TopBar: View, BottomBar: View>: View {
         if overShelf != pinDrop.isArmed {
             withAnimation(Theme.Motion.quick) { pinDrop.isArmed = overShelf }
         }
-        guard !overButton, !overShelf else {
+        let overSpace = overButton || overShelf ? nil : model.spaceDot(at: inWindow)
+        if overSpace != model.armedSpaceID {
+            model.armedSpaceID = overSpace
+        }
+        guard !overButton, !overShelf, overSpace == nil else {
             rest()
             return
         }
@@ -287,6 +291,7 @@ struct WorkspaceList<TopBar: View, BottomBar: View>: View {
             rest()
             newFolderDrop.isArmed = false
             pinDrop.isArmed = false
+            model.armedSpaceID = nil
             for id in reopening {
                 browser.folder(id: id)?.isExpanded = true
             }
@@ -311,6 +316,9 @@ struct WorkspaceList<TopBar: View, BottomBar: View>: View {
             settled = true
         } else if pinDrop.isArmed {
             browser.pinAtTop(drag.items)
+            settled = true
+        } else if let space = model.armedSpaceID.flatMap({ id in coordinator.spaceMoveTargets.first { $0.id == id } }) {
+            coordinator.moveToSpace(drag.items, space: space)
             settled = true
         }
 

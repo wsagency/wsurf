@@ -62,6 +62,14 @@ struct ProfileSwitcher: View {
             }
             .disabled(coordinator.isSwitchingProfile)
 
+            if coordinator.spaceStore != nil {
+                ProfileActionRow(title: "New Space…", symbol: "rectangle.stack.badge.plus") {
+                    dismiss()
+                    coordinator.showNewSpaceEditor()
+                }
+                .disabled(coordinator.isSwitchingProfile)
+            }
+
             ProfileActionRow(title: "Manage Profiles…", symbol: "person.2") {
                 dismiss()
                 coordinator.openSettings(.profiles)

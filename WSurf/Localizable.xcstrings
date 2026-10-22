@@ -6715,6 +6715,45 @@
     },
     "Notes about you that the assistant keeps on this Mac. See, edit or forget them." : {
       "comment" : "Settings search result detail for the Remember things about me switch."
+    },
+    "Spaces" : {
+      "comment" : "Accessibility label of the row of space icons at the bottom of the sidebar. A space is a named set of tabs and folders within one profile. Plural noun."
+    },
+    "Edit Space…" : {
+      "comment" : "Context-menu item on a space icon in the sidebar. Opens a small dialog to rename the space or change its icon. Title Case, ends with an ellipsis."
+    },
+    "New Space…" : {
+      "comment" : "Command in the profile menu, the ⌘K palette and the space icons' context menu. Opens a dialog that names a new space (a named set of tabs and folders). Title Case, ends with an ellipsis."
+    },
+    "Delete Space…" : {
+      "comment" : "Destructive context-menu item on a space icon in the sidebar. Asks before closing the space's tabs and removing it. Title Case, ends with an ellipsis."
+    },
+    "Move to Space" : {
+      "comment" : "Submenu in the sidebar's tab and folder context menus listing the other spaces of the profile. Choosing one moves the selected rows there. Title Case."
+    },
+    "New Space" : {
+      "comment" : "Title of the dialog that names a new space, and the name a space gets when its name is left empty. Title Case."
+    },
+    "Edit Space" : {
+      "comment" : "Title of the dialog that renames a space or changes its icon. Title Case."
+    },
+    "Create Space" : {
+      "comment" : "Default button of the New Space dialog. Title Case."
+    },
+    "Space Name" : {
+      "comment" : "Placeholder and accessibility label of the name field in the New Space and Edit Space dialogs. Title Case."
+    },
+    "Icon" : {
+      "comment" : "Accessibility label of the icon picker in the New Space and Edit Space dialogs. Noun."
+    },
+    "Show Space %lld" : {
+      "comment" : "Hidden menu commands under Window bound to ⌃1 through ⌃9. %lld is the space's position in the sidebar's row of space icons, a number from 1 to 9. Title Case."
+    },
+    "A space shows its own tabs and folders. Pins, Favorites, sign-ins, history and passwords stay with the profile." : {
+      "comment" : "Explanation in the New Space and Edit Space dialogs. A space only changes which tabs and folders the window lists; the profile's pinned tabs, Favorites, website sign-ins, browsing history and passwords are shared by all its spaces."
+    },
+    "Its tabs and folders close. Pins, Favorites, sign-ins, history and passwords stay with the profile." : {
+      "comment" : "Detail of the confirmation shown before deleting a space. Deleting closes the space's tabs and folders; it never deletes the profile or its passwords."
     }
   },
   "version" : "1.0"

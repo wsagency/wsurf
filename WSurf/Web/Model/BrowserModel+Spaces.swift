@@ -126,6 +126,12 @@ extension BrowserModel {
 
     // MARK: - Moving and closing
 
+    /// Where Move to Space can take rows: the other spaces of this profile. Rows never change profile.
+    var spaceMoveTargets: [Space] {
+        guard let currentSpaceID, let store = context.spaces else { return [] }
+        return store.spaces.filter { $0.id != currentSpaceID && knownSpaceIDs.contains($0.id) }
+    }
+
     /// Moves rows of the space on screen to the top of space `id`, out of any folder. Both panes of a split go
     /// together; pins and what pinned folders hold stay, since every space shows them. Sidebar Undo forgets its steps:
     /// they name places in the space the rows left.
