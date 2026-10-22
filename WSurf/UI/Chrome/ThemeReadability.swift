@@ -110,6 +110,28 @@ enum ThemeReadability {
         return ink(onResolved: grounds)
     }
 
+    /// Accent text on one ground. It always reaches 4.5:1, because the better of black and white does (at least
+    /// 4.58:1 on any ground). The accent's own hue stays: its lightness moves toward the usual end (white in dark,
+    /// black in light), or toward the other end when brightness left the ground too mid-toned for the usual one.
+    static func accentText(_ accent: NSColor, on ground: Ground, isDark: Bool) -> NSColor {
+        let usualEnd: CGFloat = isDark ? 1 : 0
+        let usualEndReads = SidebarRowStyle.contrast(usualEnd, ground.luminance) >= 4.5
+        return accentText(accent, onResolved: [ground], isDark: usualEndReads ? isDark : !isDark)
+    }
+
+    /// The accent text a theme variant draws: one color for every ground while one reads on all of them. A big
+    /// brightness change can spread the grounds too far for any single color (a mid-toned sidebar beside a lighter
+    /// surface); the window's own color is used then, since accent text sits on the window. Other grounds ask
+    /// `accentText(_:on:isDark:)`.
+    static func accentText(_ accent: NSColor, onResolved grounds: [Ground], window: Ground, isDark: Bool) -> NSColor {
+        let shared = accentText(accent, onResolved: grounds, isDark: isDark)
+        let luminance = SidebarRowStyle.luminance(shared)
+        if grounds.allSatisfy({ SidebarRowStyle.contrast(luminance, $0.luminance) >= 4.5 }) {
+            return shared
+        }
+        return accentText(accent, on: window, isDark: isDark)
+    }
+
     static func composite(_ ink: NSColor, on ground: NSColor) -> NSColor {
         let alpha = ink.alphaComponent
         guard alpha != 1 else { return ink }
