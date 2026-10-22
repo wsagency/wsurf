@@ -47,10 +47,13 @@ struct CredentialFilesModelTests {
             try #require(try await vault.manager.snapshot().accounts.first { $0.id == id })
         }
 
-        /// A new entry named `name` holding the files `names`, saved.
-        @MainActor func saveEntry(_ name: String, files names: [String]) async throws -> UUID {
+        /// A new entry named `name` holding the files `names` (and `note`, when given), saved.
+        @MainActor func saveEntry(_ name: String, files names: [String], note: String? = nil) async throws -> UUID {
             try await model.beginEditing(accountID: nil)
             model.draft?.displayName = name
+            if let note {
+                model.draft?.notes = [CredentialNote(text: note, field: nil)]
+            }
             try await model.addFiles(try names.map(source))
             _ = try await model.commitDraft()
             return try #require(model.summaries.first { $0.displayName == name }).id
@@ -69,9 +72,36 @@ struct CredentialFilesModelTests {
         await fixture.cleanup()
     }
 
+    /// End to end: an entry that holds only a name and a file saves, stores the record (schema 3), and reads the file back. Removing
+    /// that only file would leave an entry with nothing to keep, which `CredentialAccount.validate()` refuses like any other empty entry:
+    /// the save fails before anything is written, the draft stays open, and the stored entry and its file are unchanged.
+    @Test func anEntryHoldingOnlyAFileSavesAndKeepsItsLastFile() async throws {
+        try await withFixture { f in
+            let id = try await f.saveEntry("Synthetic scan", files: ["scan.pdf"])
+            let saved = try await f.stored(id)
+            let file = try #require(saved.attachments?.first)
+            #expect(saved.attachments?.count == 1 && file.name == "scan.pdf" && file.size == Int64("synthetic scan.pdf".utf8.count))
+            #expect(saved.username.isEmpty && saved.password == nil && saved.notes == nil && saved.secureItems == nil)
+            #expect(f.blobs == [file.id])
+            #expect(try Data(contentsOf: try await f.model.temporaryCopy(of: file)) == Data("synthetic scan.pdf".utf8))
+
+            try await f.model.beginEditing(accountID: id)
+            f.model.removeFile(file.id)
+            await #expect(throws: CredentialVaultError.invalidData) {
+                _ = try await f.model.commitDraft()
+            }
+            #expect(f.model.draft?.attachments.isEmpty == true, "the editor stays open with the change")
+            #expect(try await f.stored(id).attachments == [file])
+            f.model.cancelEditing()
+            await f.model.fileDiscard?.value
+            #expect(f.blobs == [file.id], "Cancel removes only files this editor added")
+        }
+    }
+
     @Test func aFileIsAddedSavedPreviewedCopiedRemovedAndBroughtBackFromHistory() async throws {
         try await withFixture { f in
-            let id = try await f.saveEntry("Synthetic deed", files: ["deed.pdf"])
+            // A note too, so the entry still holds something once its file is removed.
+            let id = try await f.saveEntry("Synthetic deed", files: ["deed.pdf"], note: "Synthetic land registry number")
             let saved = try await f.stored(id)
             let file = try #require(saved.attachments?.first)
             #expect(saved.attachments?.count == 1 && file.name == "deed.pdf" && saved.username.isEmpty)
