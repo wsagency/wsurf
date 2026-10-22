@@ -35,6 +35,7 @@ struct FileAccessScopeTests {
     }
 
     private static let imageProbe = """
+    document.documentElement.setAttribute('data-ran', 'yes');
     const image = new Image();
     image.onload = () => document.documentElement.setAttribute('data-sibling', 'read');
     image.onerror = () => document.documentElement.setAttribute('data-sibling', 'blocked');
@@ -185,6 +186,46 @@ struct FileAccessScopeTests {
 
         #expect(try agent(site.mailedPage) == "Mail")
         #expect(try agent(site.page) == nil, "reading the scope put quarantine on a file")
+    }
+
+    // MARK: Script in a downloaded page (WebKit)
+
+    @Test(arguments: ["mailed.html", "MAILED.HTM", "mailed.xhtml", "mailed.svg", "Mailed.SVG"])
+    func aDownloadedPageOrDrawingRunsNoScript(_ name: String) throws {
+        let site = try makeSite()
+        defer { site.remove() }
+        let downloaded = site.folder.appendingPathComponent(name)
+        try Data("<html></html>".utf8).write(to: downloaded)
+        try mailed(downloaded)
+
+        #expect(!FileAccessScope.allowsScript(inFile: downloaded))
+        let typed = try #require(Omnibox.location(for: downloaded.absoluteString + "?draft=1#top"))
+        #expect(!FileAccessScope.allowsScript(inFile: typed), "an address with a query and a fragment")
+    }
+
+    @Test func thePersonsOwnPagesRunScriptAndOtherFilesAreLeftAlone() throws {
+        let site = try makeSite()
+        defer { site.remove() }
+        let other = site.folder.appendingPathComponent("mailed.pdf")
+        try Data("%PDF".utf8).write(to: other)
+        try mailed(other)
+        let script = site.folder.appendingPathComponent("mailed.js")
+        try Data("1".utf8).write(to: script)
+        try mailed(script)
+
+        #expect(FileAccessScope.allowsScript(inFile: site.page))
+        #expect(FileAccessScope.allowsScript(inFile: site.drawing))
+        #expect(FileAccessScope.allowsScript(inFile: other), "a downloaded PDF runs no script of the page's")
+        #expect(FileAccessScope.allowsScript(inFile: script))
+        #expect(FileAccessScope.allowsScript(inFile: site.folder), "a folder listing")
+        #expect(FileAccessScope.allowsScript(inFile: URL(string: "https://example.test/mailed.html")!), "a web address")
+    }
+
+    @Test func aPageThatCannotBeInspectedRunsNoScript() throws {
+        let site = try makeSite()
+        defer { site.remove() }
+
+        #expect(!FileAccessScope.allowsScript(inFile: site.folder.appendingPathComponent("gone.html")))
     }
 
     // MARK: What a document may load
@@ -395,36 +436,82 @@ struct FileAccessScopeTests {
         await context.endPrivateSession()
     }
 
-    /// What `attribute` of the document's root element says once the document has recorded anything.
+    /// What the document in `page` has on its root element under `attribute`, nil if nothing. `inClientWorld` reads where a page
+    /// without script still answers.
+    private func read(_ attribute: String, in page: BrowserPage, inClientWorld: Bool = false) async -> String? {
+        let script = "document.documentElement.getAttribute('\(attribute)')"
+        let value: Any?
+        if inClientWorld {
+            value = try? await page.evaluateJavaScript(script, in: nil, contentWorld: .defaultClient)
+        } else {
+            value = try? await page.evaluateJavaScript(script)
+        }
+        return value as? String
+    }
+
+    /// What the document in `page` has recorded under `attribute` once it has recorded anything.
     private func recorded(_ attribute: String, in page: BrowserPage) async -> String? {
         var result: String?
         _ = await waitUntil {
-            result = (try? await page.evaluateJavaScript("document.documentElement.getAttribute('\(attribute)')")) as? String
+            result = await read(attribute, in: page)
             return result?.isEmpty == false
         }
         return result
     }
 
-    /// What the document recorded about the image beside it and, for a page, the stylesheet.
-    private func outcome(in page: BrowserPage, of document: URL) async -> (image: String?, style: String?) {
-        let image = await recorded("data-sibling", in: page)
-        return (image, document.pathExtension == "html" ? await recorded("data-style", in: page) : nil)
+    private struct Outcome {
+        var loaded = true
+        var ran: String?
+        var image: String?
+        var style: String?
     }
 
-    private func opened(_ document: URL, engine: BrowserEngine, dragged: Bool) async throws -> (image: String?, style: String?) {
-        var found: (image: String?, style: String?) = (nil, nil)
+    /// What the document `document`, shown in `page`, did: whether its script ran, and what it found about the image beside it
+    /// and, for a page, the stylesheet. A document that is held back from running script records nothing, so it is looked at
+    /// once, after it has loaded, instead of waited for.
+    private func outcome(in page: BrowserPage, of document: URL, scripted: Bool) async -> Outcome {
+        let isPage = document.pathExtension == "html"
+        guard scripted else {
+            let root = isPage ? "html" : "svg"
+            let loaded = await waitUntil {
+                guard page.url?.lastPathComponent == document.lastPathComponent, !page.isLoading else { return false }
+                let state = try? await page.evaluateJavaScript(
+                    "document.readyState + ':' + document.documentElement.localName", in: nil, contentWorld: .defaultClient
+                )
+                return state as? String == "complete:" + root
+            }
+            return Outcome(
+                loaded: loaded,
+                ran: await read("data-ran", in: page, inClientWorld: true),
+                image: await read("data-sibling", in: page, inClientWorld: true),
+                style: await read("data-style", in: page, inClientWorld: true)
+            )
+        }
+        let image = await recorded("data-sibling", in: page)
+        let style = isPage ? await recorded("data-style", in: page) : nil
+        return Outcome(ran: await read("data-ran", in: page), image: image, style: style)
+    }
+
+    /// Whether script runs in a downloaded page or drawing in `engine`: Chromium confines it by its gate and lets it run, WebKit
+    /// holds it back from running script (see `FileAccessScope`).
+    private func runsScript(_ document: URL, in engine: BrowserEngine) -> Bool {
+        engine == .chromium || !document.lastPathComponent.hasPrefix("mailed")
+    }
+
+    private func opened(_ document: URL, engine: BrowserEngine, dragged: Bool) async throws -> Outcome {
+        var found = Outcome()
         try await withTab(engine: engine) { tab in
             if dragged {
                 #expect(ContentNavBar.openDropped([NSItemProvider(object: document as NSURL)]) { tab.load($0) })
             } else {
                 tab.load(document)
             }
-            found = await outcome(in: tab.page, of: document)
+            found = await outcome(in: tab.page, of: document, scripted: runsScript(document, in: engine))
         }
         return found
     }
 
-    private func typed(_ document: URL) async throws -> (image: String?, style: String?) {
+    private func typed(_ document: URL) async throws -> Outcome {
         let model = BrowserModel(database: .temporary())
         let tab = model.newTab()
         let view = tab.page
@@ -441,25 +528,31 @@ struct FileAccessScopeTests {
 
         model.handleAddressInput(document.absoluteString)
 
-        let found = await outcome(in: view, of: document)
+        let found = await outcome(in: view, of: document, scripted: runsScript(document, in: .webKit))
         tab.detach()
         await view.close()
         return found
     }
 
-    /// WebKit keeps a single-file grant to the one file for every document type but HTML, which it lets read its folder (see
-    /// `FileAccessScope`). That one case is recorded as a known issue, so the day WebKit or WSurf closes it the run says so.
-    private func expectBlocked(_ found: (image: String?, style: String?), _ document: URL, engine: BrowserEngine) {
-        let isHTML = document.pathExtension == "html"
-        let expectation = {
-            #expect(found.image == "blocked", "\(document.lastPathComponent) read the image beside it, engine \(engine)")
-            #expect(!isHTML || found.style == "blocked", "\(document.lastPathComponent) loaded the stylesheet beside it, engine \(engine)")
-        }
-        if engine == .webKit && isHTML {
-            withKnownIssue("WebKit lets an HTML file read its folder whatever it was granted", isIntermittent: true, expectation)
+    /// A downloaded document cannot read its neighbours: Chromium lets its script run and refuses the files, WebKit does not
+    /// run its script at all.
+    private func expectHeldBack(_ found: Outcome, _ document: URL, engine: BrowserEngine) {
+        let name = "\(document.lastPathComponent), engine \(engine)"
+        if engine == .webKit {
+            #expect(found.loaded, "\(name) did not load")
+            #expect(found.ran == nil, "\(name) ran its script")
+            #expect(found.image == nil && found.style == nil, "\(name) read a file beside it")
         } else {
-            expectation()
+            #expect(found.image == "blocked", "\(name) read the image beside it")
+            #expect(document.pathExtension != "html" || found.style == "blocked", "\(name) loaded the stylesheet beside it")
         }
+    }
+
+    private func expectReads(_ found: Outcome, _ document: URL, engine: BrowserEngine) {
+        let name = "\(document.lastPathComponent), engine \(engine)"
+        #expect(found.ran == "yes", "\(name) did not run its script")
+        #expect(found.image == "read", "\(name) could not read the image beside it")
+        #expect(document.pathExtension != "html" || found.style == "read", "\(name) could not load the stylesheet beside it")
     }
 
     @Test(arguments: BrowserEngine.allCases)
@@ -468,7 +561,7 @@ struct FileAccessScopeTests {
         defer { site.remove() }
 
         for document in [site.mailedPage, site.mailedDrawing] {
-            expectBlocked(try await opened(document, engine: engine, dragged: false), document, engine: engine)
+            expectHeldBack(try await opened(document, engine: engine, dragged: false), document, engine: engine)
         }
     }
 
@@ -478,10 +571,7 @@ struct FileAccessScopeTests {
         defer { site.remove() }
 
         for document in [site.page, site.drawing] {
-            let found = try await opened(document, engine: engine, dragged: false)
-
-            #expect(found.image == "read", "\(document.lastPathComponent) could not read the image beside it, engine \(engine)")
-            #expect(document.pathExtension != "html" || found.style == "read", "\(document.lastPathComponent) could not load the stylesheet beside it, engine \(engine)")
+            expectReads(try await opened(document, engine: engine, dragged: false), document, engine: engine)
         }
     }
 
@@ -491,11 +581,10 @@ struct FileAccessScopeTests {
         defer { site.remove() }
 
         for document in [site.mailedPage, site.mailedDrawing] {
-            expectBlocked(try await opened(document, engine: engine, dragged: true), document, engine: engine)
+            expectHeldBack(try await opened(document, engine: engine, dragged: true), document, engine: engine)
         }
         for document in [site.page, site.drawing] {
-            let found = try await opened(document, engine: engine, dragged: true)
-            #expect(found.image == "read", "\(document.lastPathComponent) could not read the image beside it, engine \(engine)")
+            expectReads(try await opened(document, engine: engine, dragged: true), document, engine: engine)
         }
     }
 
@@ -503,10 +592,8 @@ struct FileAccessScopeTests {
         let site = try makeSite()
         defer { site.remove() }
 
-        expectBlocked(try await typed(site.mailedPage), site.mailedPage, engine: .webKit)
-
-        let saved = try await typed(site.page)
-        #expect(saved.image == "read" && saved.style == "read")
+        expectHeldBack(try await typed(site.mailedPage), site.mailedPage, engine: .webKit)
+        expectReads(try await typed(site.page), site.page, engine: .webKit)
     }
 
     @Test func droppingNothingOpensNothing() {

@@ -15,9 +15,10 @@ import Foundation
 /// WebKit takes the scope as `allowingReadAccessTo`. Chromium has no such parameter, so `ChromiumFileScope` applies it to every
 /// `file:` subresource. Quarantine is only read here, never changed.
 ///
-/// Known gap, measured with a standalone WKWebView outside the temporary directory: given a single file, WebKit holds a PDF, an
-/// image, a text file, an SVG and an XHTML document to it, but it still lets an `.html` document load the files in its folder.
-/// So on WebKit a quarantined HTML file is not confined yet (`FileAccessScopeTests` records it as a known issue); Chromium is.
+/// WebKit, measured with a standalone web view outside the temporary directory, holds a PDF, an image, a text file, an SVG and an
+/// XHTML document to a single-file grant, but still lets an `.html` document load the files in its folder. So on WebKit a
+/// quarantined HTML-type document also runs without script (`allowsScript(inFile:)`): static siblings may still render, but the
+/// page cannot read them into data or send them anywhere. Chromium's gate confines it fully.
 nonisolated enum FileAccessScope {
     static let quarantineAttribute = "com.apple.quarantine"
 
@@ -34,6 +35,16 @@ nonisolated enum FileAccessScope {
             guard let path else { return true }
             return getxattr(path, quarantineAttribute, nil, 0, 0, 0) >= 0 || errno != ENOATTR
         }
+    }
+
+    /// File types that are documents with script of their own.
+    private static let scriptedDocumentExtensions: Set<String> = ["html", "htm", "xhtml", "svg"]
+
+    /// Whether a page loaded from `url` may run script on WebKit: not when it is a quarantined HTML, XHTML or SVG file, which WebKit
+    /// may let read its folder. The person's own file, a file of another type, a folder and a web address are not held back.
+    static func allowsScript(inFile url: URL) -> Bool {
+        guard url.isFileURL, scriptedDocumentExtensions.contains(url.pathExtension.lowercased()) else { return true }
+        return !isQuarantined(URL(fileURLWithPath: url.path(percentEncoded: false)).standardizedFileURL)
     }
 
     /// Whether the document at `document` may load `resource`. A resource that is not a `file:` URL is not a file read and is

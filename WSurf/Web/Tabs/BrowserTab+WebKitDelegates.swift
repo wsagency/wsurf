@@ -31,6 +31,11 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
                 to: preferences
             )
         }
+        // WebKit lets an HTML file read its folder whatever it was granted, so a downloaded page runs no script of its own.
+        if navigationAction.targetFrame?.isMainFrame == true, let url = navigationAction.request.url,
+           !FileAccessScope.allowsScript(inFile: url) {
+            preferences.allowsContentJavaScript = false
+        }
         self.webView(webView, decidePolicyFor: navigationAction) { decisionHandler($0, preferences) }
     }
 
