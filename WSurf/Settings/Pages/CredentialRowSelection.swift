@@ -82,13 +82,19 @@ struct CredentialRowSelection: ViewModifier {
         }
     }
 
+    /// Drawn, not an AppKit control: select all shows one in every built row at once, and creating a native checkbox per row was the
+    /// largest part of that change. A click on it toggles the row; VoiceOver gets a button with the same action.
     private var checkbox: some View {
-        Toggle(isOn: Binding(get: { isSelected }, set: { _ in selection.toggle(id) })) {
-            Text(verbatim: title)
-        }
-        .toggleStyle(.checkbox)
-        .labelsHidden()
-        .accessibilityLabel(isSelected ? String(localized: "Deselect \(title)") : String(localized: "Select \(title)"))
+        Image(systemName: isSelected ? "checkmark.square.fill" : "square")
+            .font(.system(size: 14))
+            .foregroundStyle(isSelected ? Color.accentColor : Color.secondary)
+            .frame(width: 16, height: 16)
+            .contentShape(.rect)
+            .onTapGesture { selection.toggle(id) }
+            .accessibilityElement()
+            .accessibilityLabel(isSelected ? Text("Deselect \(title)") : Text("Select \(title)"))
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAction { selection.toggle(id) }
     }
 }
 

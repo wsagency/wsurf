@@ -661,49 +661,9 @@ struct CredentialRow: View {
         )
         .accessibilityAction(named: "Open", open)
         .accessibilityAction(named: "Open Website") { model.openWebsite(summary.website) }
+        // A view of its own: the selection state the menu reads redraws the menu, never this row (its detail, dates and buttons).
         .contextMenu {
-            ForEach(selection.menu(for: summary), id: \.self, content: menuItem)
-        }
-    }
-
-    /// One entry of the right-click menu (`CredentialSelection.menu(for:)` decides which, and on which credentials).
-    @ViewBuilder
-    private func menuItem(_ item: CredentialRowMenuItem) -> some View {
-        switch item {
-        case .openWebsite(let url):
-            Button("Open Website") { model.openWebsite(url) }
-        case .copyUsername:
-            Button("Copy Username") { run { try await model.copy(.username, of: .stored(summary.id)) } }
-        case .copyPassword:
-            Button("Copy Password") { run { try await model.copyPassword(accountID: summary.id) } }
-        case .edit:
-            Divider()
-            Button("Edit…", action: open).disabled(model.isBusy)
-        // The targets are read on click, so the menu costs the same however many credentials are selected.
-        case .merge(let ofSelection):
-            Group {
-                if ofSelection {
-                    Button("Merge Selected Credentials…") { merge(selection.menuTargets(for: summary.id)) }
-                } else {
-                    Button("Merge…") { merge([summary.id]) }
-                }
-            }
-            .disabled(model.isBusy)
-        case .moveToTrash(let ofSelection):
-            Group {
-                if ofSelection {
-                    Button("Move Selected Credentials to Trash", role: .destructive) { trash(selection.menuTargets(for: summary.id)) }
-                } else {
-                    Button("Move to Trash", role: .destructive) { trash([summary.id]) }
-                }
-            }
-            .disabled(model.isBusy)
-        case .select:
-            Divider()
-            Button("Select") { selection.beginSelecting(with: summary.id) }
-        case .deselect:
-            Divider()
-            Button("Deselect") { selection.toggle(summary.id) }
+            CredentialRowMenu(model: model, summary: summary, selection: selection, run: run, trash: trash, merge: merge, open: open)
         }
     }
 
@@ -836,6 +796,65 @@ struct CredentialRow: View {
         }
         .font(Theme.Font.label)
         .accessibilityElement(children: .combine)
+    }
+}
+
+// MARK: - Row menu
+
+/// The right-click menu of one credential row (`CredentialSelection.menu(for:)` decides which entries, and on which credentials). It reads
+/// the row's selection state itself, so selecting rows redraws this menu and not the row that owns it.
+private struct CredentialRowMenu: View {
+    let model: CredentialSettingsModel
+    let summary: CredentialSummary
+    let selection: CredentialSelection
+    let run: (@escaping () async throws -> Void) -> Void
+    let trash: ([UUID]) -> Void
+    let merge: ([UUID]) -> Void
+    let open: () -> Void
+
+    var body: some View {
+        ForEach(selection.menu(for: summary), id: \.self, content: menuItem)
+    }
+
+    /// One entry of the menu.
+    @ViewBuilder
+    private func menuItem(_ item: CredentialRowMenuItem) -> some View {
+        switch item {
+        case .openWebsite(let url):
+            Button("Open Website") { model.openWebsite(url) }
+        case .copyUsername:
+            Button("Copy Username") { run { try await model.copy(.username, of: .stored(summary.id)) } }
+        case .copyPassword:
+            Button("Copy Password") { run { try await model.copyPassword(accountID: summary.id) } }
+        case .edit:
+            Divider()
+            Button("Edit…", action: open).disabled(model.isBusy)
+        // The targets are read on click, so the menu costs the same however many credentials are selected.
+        case .merge(let ofSelection):
+            Group {
+                if ofSelection {
+                    Button("Merge Selected Credentials…") { merge(selection.menuTargets(for: summary.id)) }
+                } else {
+                    Button("Merge…") { merge([summary.id]) }
+                }
+            }
+            .disabled(model.isBusy)
+        case .moveToTrash(let ofSelection):
+            Group {
+                if ofSelection {
+                    Button("Move Selected Credentials to Trash", role: .destructive) { trash(selection.menuTargets(for: summary.id)) }
+                } else {
+                    Button("Move to Trash", role: .destructive) { trash([summary.id]) }
+                }
+            }
+            .disabled(model.isBusy)
+        case .select:
+            Divider()
+            Button("Select") { selection.beginSelecting(with: summary.id) }
+        case .deselect:
+            Divider()
+            Button("Deselect") { selection.toggle(summary.id) }
+        }
     }
 }
 

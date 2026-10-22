@@ -22,7 +22,8 @@ struct CredentialBulkBar: View {
     }
 
     private func bar(_ ids: [UUID]) -> some View {
-        let canMerge = CredentialMerge.mayMerge(summaries(of: ids))
+        // The count first: a selection of thousands is never mergeable, and is not looked up row by row to say so.
+        let canMerge = (2...CredentialAccount.mergedFromLimit).contains(ids.count) && CredentialMerge.mayMerge(summaries(of: ids))
         return ViewThatFits(in: .horizontal) {
             HStack(spacing: 8) {
                 count(ids.count)
