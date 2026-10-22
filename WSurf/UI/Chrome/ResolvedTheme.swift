@@ -106,7 +106,9 @@ struct ResolvedVariant {
         let scheme: ColorScheme = isDark ? .dark : .light
         let grounds = [window, sidebar, surface].map { ThemeReadability.Ground($0.srgb(scheme: scheme)) }
         let accentColor = accent.srgb(scheme: scheme)
-        accentText = Color(nsColor: ThemeReadability.accentText(accentColor, onResolved: grounds, isDark: isDark))
+        accentText = Color(nsColor: ThemeReadability.accentText(
+            accentColor, onResolved: grounds, window: grounds[0], isDark: isDark
+        ))
         onAccent = Color(nsColor: ThemeReadability.ink(on: [accentColor]))
         self.change = change
 

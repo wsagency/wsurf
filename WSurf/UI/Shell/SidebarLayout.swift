@@ -61,20 +61,17 @@ enum SidebarMetrics {
             - rowContentPadding(style: style)
     }
 
-    /// A docked full sidebar sits `margin` from the window edge, and its rows keep at least that much room from the
-    /// page: the page spacing already gives them some. Icons only and a floating sidebar keep their fixed insets.
+    /// A docked sidebar, full or icons only, sits `margin` from the window edge, and its rows keep at least that much
+    /// room from the page: the page spacing already gives them some. A floating one keeps `margin` on both sides.
+    /// The style no longer changes the insets (the icons column keeps its width, so its icons take what is left).
     nonisolated static func contentInsets(
-        style: SidebarStyle,
+        style _: SidebarStyle,
         isFloating: Bool,
         margin: CGFloat = LoomChrome.canvasInset,
         pageSpacing: CGFloat = LoomChrome.canvasInset
     ) -> EdgeInsets {
         if isFloating {
-            let inset = LoomChrome.canvasInset
-            return EdgeInsets(top: 0, leading: inset, bottom: 0, trailing: inset)
-        }
-        guard style == .full else {
-            return EdgeInsets(top: 0, leading: LoomChrome.canvasInset, bottom: 0, trailing: 0)
+            return EdgeInsets(top: 0, leading: margin, bottom: 0, trailing: margin)
         }
         return EdgeInsets(top: 0, leading: margin, bottom: 0, trailing: max(0, margin - pageSpacing))
     }
@@ -141,9 +138,10 @@ enum SidebarPeekShield {
         isPeeking: Bool,
         viewMaxX: CGFloat,
         width: CGFloat,
-        isMediaPicture: Bool
+        isMediaPicture: Bool,
+        isPointerOverPlayer: Bool = false
     ) -> Bool {
-        if isMediaPicture {
+        if isMediaPicture || isPointerOverPlayer {
             return true
         }
         return !isVisible && isPeeking && viewMaxX > width

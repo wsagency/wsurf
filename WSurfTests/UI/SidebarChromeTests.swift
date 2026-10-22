@@ -355,6 +355,37 @@ struct SidebarPeekShieldTests {
         ))
     }
 
+    /// A floating player panel rests over the page. The page under the pointer must not hear hover or mouse moves
+    /// there, wherever the sidebar is; the rest of the page keeps them.
+    @Test func thePlayerPanelUnderThePointerSuppressesThePagesHover() {
+        #expect(SidebarPeekShield.suppressesHover(
+            isVisible: true, isPeeking: false, viewMaxX: pageMaxX, width: width,
+            isMediaPicture: false, isPointerOverPlayer: true
+        ))
+        #expect(!SidebarPeekShield.suppressesHover(
+            isVisible: true, isPeeking: false, viewMaxX: pageMaxX, width: width,
+            isMediaPicture: false, isPointerOverPlayer: false
+        ))
+        // Callers that know of no player ask as before.
+        #expect(!SidebarPeekShield.suppressesHover(
+            isVisible: true, isPeeking: false, viewMaxX: pageMaxX, width: width, isMediaPicture: false
+        ))
+    }
+
+    /// The panel reports the pointer entering and leaving, once each, so the shield is applied and lifted exactly
+    /// when the pointer crosses the panel's edge.
+    @Test func thePointerCrossingThePlayerPanelAsksForTheShieldOnce() {
+        let media = MediaCenter()
+        var asked = 0
+        media.onPointerOverPlayerChanged = { asked += 1 }
+        media.isPointerOverPlayer = true
+        media.isPointerOverPlayer = true
+        #expect(asked == 1 && media.isPointerOverPlayer)
+        media.isPointerOverPlayer = false
+        media.isPointerOverPlayer = false
+        #expect(asked == 2 && !media.isPointerOverPlayer)
+    }
+
     /// The mechanism itself: parking removes every tracking area WebKit owns
     /// (AppKit cannot deliver to an unregistered area), keeps areas added
     /// mid-park off the view, and restores the very same instances after.

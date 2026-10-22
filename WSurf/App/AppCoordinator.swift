@@ -310,7 +310,8 @@ final class AppCoordinator {
                     isPeeking: sidebar.isPeeking,
                     viewMaxX: viewMaxX,
                     width: width,
-                    isMediaPicture: view === media.model.picturePage?.webKit
+                    isMediaPicture: view === media.model.picturePage?.webKit,
+                    isPointerOverPlayer: media.isPointerOverPlayer
                 )
                     || shell.panelCoversPage
             )

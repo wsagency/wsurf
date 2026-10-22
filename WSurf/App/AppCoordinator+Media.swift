@@ -101,6 +101,7 @@ extension AppCoordinator {
 
     func wireMedia() {
         media.onPictureChanged = { [weak self] in self?.applyHoverShield() }
+        media.onPointerOverPlayerChanged = { [weak self] in self?.applyHoverShield() }
         media.onControlledTabChanged = { [weak self] previousID, currentID in
             guard let self else { return }
             if let previousID, let tab = browser.tabs.first(where: { $0.id == previousID }) {

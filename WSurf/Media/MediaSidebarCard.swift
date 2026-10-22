@@ -418,6 +418,10 @@ struct MediaSidebarCard: View {
             }
         }
         .gesture(carry, including: isMovable ? .all : .subviews)
+        // The whole frame, gaps included, takes the pointer: the page below hears neither hover nor clicks there.
+        // The controls keep working: parking only unregisters the page's tracking areas.
+        .contentShape(.rect)
+        .onHover { media.isPointerOverPlayer = $0 }
         .onGeometryChange(for: CGSize.self) { $0.size } action: { panelSize = $0 }
         .offset(displacement)
         .opacity(isUndocked && !hasMeasured ? 0 : 1)
@@ -433,7 +437,10 @@ struct MediaSidebarCard: View {
             }
             return panelHeight + 8
         } action: { obscuredHeight = $0 }
-        .onDisappear { obscuredHeight = 0 }
+        .onDisappear {
+            obscuredHeight = 0
+            media.isPointerOverPlayer = false
+        }
     }
 
     private var panelWidth: CGFloat {

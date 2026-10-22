@@ -69,6 +69,13 @@ final class MediaCenter {
     var onControlledTabChanged: ((UUID?, UUID?) -> Void)?
     var onPictureChanged: (() -> Void)?
 
+    /// The pointer is over the player panel, wherever it rests. A page under a floating panel must not hear it: its
+    /// web view takes hover through its own tracking areas, whatever is drawn on top.
+    var isPointerOverPlayer = false {
+        didSet { if isPointerOverPlayer != oldValue { onPointerOverPlayerChanged?() } }
+    }
+    var onPointerOverPlayerChanged: (() -> Void)?
+
     nonisolated static var frameScriptSource: String {
         MediaScript.source
     }

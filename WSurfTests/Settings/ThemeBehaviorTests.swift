@@ -107,6 +107,32 @@ struct ThemeBehaviorTests {
         }
     }
 
+    /// At +50 % the grounds of Calm, Catppuccin and Rosé Pine are mid-toned, and no single color reads on all three
+    /// (it was 4.0 to 4.3:1 on one). The guard moves the ink's lightness, per ground, and never the accent swatch.
+    /// Light themes get the mirrored change (brightness −b), where the same spread happens.
+    @Test(arguments: [0.0, 0.5, 1.0])
+    func accentTextReadsOnItsGroundAtAnyBrightness(_ brightness: Double) {
+        let adjustment = ThemeAdjustment(lightBrightness: -brightness, darkBrightness: brightness)
+        for definition in ThemeCatalog.builtIn {
+            let theme = ResolvedTheme(definition, adjustment: adjustment)
+            for scheme in [ColorScheme.dark, .light] {
+                let variant = theme.variant(scheme)
+                let backgrounds = grounds(variant, scheme: scheme)
+                let label = "\(definition.id), \(scheme), \(brightness)"
+                // The color the app draws reads on the window, where accent text sits.
+                #expect(contrast(theme.accentText, on: backgrounds[0], scheme: scheme) >= 4.5, "\(label)")
+                // Any one ground gets a color of its own that reads there, whatever the other grounds are.
+                let accent = variant.accent.srgb(scheme: scheme)
+                for ground in backgrounds {
+                    let text = ThemeReadability.accentText(
+                        accent, on: ThemeReadability.Ground(ground), isDark: scheme == .dark
+                    )
+                    #expect(SidebarRowStyle.contrast(text, ground) >= 4.5, "\(label)")
+                }
+            }
+        }
+    }
+
     @Test func accentTextKeepsTheFirstReadableOnePercentStep() {
         func expectFirstStep(_ accent: NSColor, on backgrounds: [NSColor], isDark: Bool) {
             let target: CGFloat = isDark ? 1 : 0
