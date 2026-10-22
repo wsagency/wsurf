@@ -374,7 +374,7 @@ struct VaultSyncTests {
         #expect(rig.status(b) == .synced)
     }
 
-    @Test func changesToDifferentPartsAreMergedAndSentAgainOnTheNewTag() async throws {
+    @Test func staleChangeTagIsMergedAndResent() async throws {
         let rig = Rig()
         defer { rig.finish() }
         let split = try await divergent(rig, a: { changing($0, password: "from A") }, b: { changing($0, note: "from B") })

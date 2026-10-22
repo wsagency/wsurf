@@ -404,11 +404,16 @@ struct VaultSyncDeviceTests {
         }
     }
 
-    @Test func filesStayOnTheMacThatHasThem() async throws {
+    @Test func inputHistoryAndFilesStayOnTheMac() async throws {
         try await withPair { pair in
             let source = FileManager.default.temporaryDirectory.appending(path: "scan-\(UUID().uuidString).txt")
             try Data("body-\(UUID().uuidString)".utf8).write(to: source)
             defer { try? FileManager.default.removeItem(at: source) }
+            // Input History is a file beside the vault in the profile's folder: sync neither reads nor touches it.
+            let history = pair.envA.directory.appending(path: "InputHistory/\(pair.vaultID.uuidString).wih")
+            let historyMarker = Data("typed-\(UUID().uuidString)".utf8)
+            try FileManager.default.createDirectory(at: history.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try historyMarker.write(to: history)
             let file = try await pair.managerA.addAttachment(from: source)
             var entry = pair.account("one")
             entry.attachments = [file]
@@ -427,6 +432,12 @@ struct VaultSyncDeviceTests {
             #expect(try await pair.accounts(managerB)[entry.id]?.attachments == nil, "the added vault has no files")
             #expect(try await pair.accounts(pair.managerA)[entry.id]?.attachments == [file], "this Mac keeps its own")
             #expect(pair.statusA == .synced && pair.statusB == .synced)
+            for record in pair.cloud.records(in: zone) ?? [] {
+                #expect(record.payload.range(of: historyMarker) == nil)
+            }
+            #expect(try Data(contentsOf: history) == historyMarker, "this Mac's Input History is untouched")
+            let onB = VaultManagerFixture.image(of: pair.profile.supportDirectory)
+            #expect(onB.keys.allSatisfy { !$0.hasPrefix("InputHistory") }, "and the other Mac got none")
         }
     }
 
