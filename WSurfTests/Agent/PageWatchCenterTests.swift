@@ -983,8 +983,7 @@ nonisolated final class PageWatchPerformanceTests: XCTestCase, @unchecked Sendab
             }
         }
 
-        let options = XCTMeasureOptions()
-        options.iterationCount = 5
+        let options = XCTMeasureOptions.budgeted
         measure(metrics: [XCTClockMetric(), XCTMemoryMetric()], options: options) {
             let before = MainActor.assumeIsolated {
                 pass.number += 1

@@ -14,7 +14,6 @@ import XCTest
 // was 5.1 s for one edit at 20,000. `Tools/check-performance.sh` holds the measured steps to budgets set from the Pro's samples.
 nonisolated final class VaultScalePerformanceTests: XCTestCase, @unchecked Sendable {
     static let count = 20_000
-    private static let iterations = 5
 
     /// The stored credentials: usernames and passwords no import item of `ExchangeScale` repeats, so an import against them is new.
     static func storedAccounts() throws -> [CredentialAccount] {
@@ -97,8 +96,7 @@ nonisolated final class VaultScalePerformanceTests: XCTestCase, @unchecked Senda
 
     @MainActor
     func measuredOptions(manual: Bool = false) -> XCTMeasureOptions {
-        let options = XCTMeasureOptions()
-        options.iterationCount = Self.iterations
+        let options = XCTMeasureOptions.budgeted
         if manual {
             options.invocationOptions = [.manuallyStart, .manuallyStop]
         }

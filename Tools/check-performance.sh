@@ -1,20 +1,61 @@
 #!/bin/sh
 # Modified for WSurf by wsagency in 2026; based on Linen by Kavoye.
+#
+# Holds the budgeted performance cases to their budgets.
+#
+#   Tools/check-performance.sh [metrics.json]   judge build/performance-metrics.json (xcresulttool get test-results metrics)
+#   Tools/check-performance.sh --self-test      check the statistics on fixed sample sets; reads no metrics file
+#
+# What a budget is compared with:
+#   time    the MEAN of all samples (XCTMetric_Clock.time.monotonic). Unchanged.
+#   memory  the MEDIAN of the samples after the first (XCTMetric_Memory.physical).
+#
+# Why the median: XCTMemoryMetric is the change of the host's physical footprint over one pass. In a long-running test host one
+# sample swings by tens of MB either way (a spike, or the release of an earlier pass's garbage) while time and behavior are fine,
+# so the mean of five flips sign on one outlier. 0.1.5, layout option sidebar: 3424/4129/4112/6275/21496 kB, mean 7887 against a
+# budget of 7019, median 4129. A fresh host does not show it. The median ignores a lone spike or dip; it cannot rescue a case that
+# is mostly high (0.1.6, autofilled password among 20,000: -1311/23478/-18743/20349/18580 kB, median 18580 against 4096), which is a
+# measurement problem in that test, and no budget is raised for it.
+#
+# Why the first sample is dropped: every budgeted case measures one pass more than it is judged on (XCTMeasureOptions.budgeted in
+# WSurfTests/Helpers/BudgetedMeasureOptions.swift, six iterations), and the first pass is the warm-up that pays for lazy setup and
+# caches. A single sample, as in an old metrics file, is kept. Keep the iteration count and this rule together.
+#
+# A real regression still fails: it lifts every sample, so it lifts the median.
 
 set -eu
-
-metrics_file="${1:-build/performance-metrics.json}"
-
-if [ ! -f "$metrics_file" ]; then
-  echo "error: performance metrics not found: $metrics_file" >&2
-  exit 1
-fi
 
 if ! command -v jq >/dev/null 2>&1; then
   echo "error: jq is required to read performance metrics" >&2
   exit 1
 fi
 
+memory_metric='com.apple.dt.XCTMetric_Memory.physical'
+
+# summarize KIND: reads one sample per line and prints the mean (KIND mean), or the median of the samples after the first
+# (KIND median), to six decimals.
+summarize() {
+  awk -v kind="$1" '
+    { sample[NR] = $1 + 0 }
+    END {
+      if (kind == "mean") {
+        for (i = 1; i <= NR; i++) { total += sample[i] }
+        printf "%.6f", total / NR
+        exit
+      }
+      n = 0
+      for (i = (NR > 1 ? 2 : 1); i <= NR; i++) {
+        value = sample[i]
+        for (j = n; j > 0 && sorted[j] > value; j--) { sorted[j + 1] = sorted[j] }
+        sorted[j + 1] = value
+        n += 1
+      }
+      printf "%.6f", (n % 2 ? sorted[(n + 1) / 2] : (sorted[n / 2] + sorted[n / 2 + 1]) / 2)
+    }'
+}
+
+# check_average TEST METRIC MAXIMUM LABEL UNIT: the name is historical (Tools/check-test-partition.py reads the calls). The
+# statistic is the median for the memory metric and the mean for every other.
 check_average() {
   test_id="$1"
   metric_id="$2"
@@ -38,18 +79,95 @@ check_average() {
     exit 1
   fi
 
-  average="$(printf '%s\n' "$values" | awk '{ total += $1; count += 1 } END { printf "%.6f", total / count }')"
-  if ! awk -v value="$average" -v maximum="$maximum" 'BEGIN { exit !(value <= maximum) }'; then
-    echo "error: $label averaged $average $unit; budget is $maximum $unit" >&2
+  kind=mean
+  if [ "$metric_id" = "$memory_metric" ]; then
+    kind=median
+  fi
+  statistic="$(printf '%s\n' "$values" | summarize "$kind")"
+  if ! awk -v value="$statistic" -v maximum="$maximum" 'BEGIN { exit !(value <= maximum) }'; then
+    echo "error: $label $kind $statistic $unit; budget is $maximum $unit (samples: $(printf '%s\n' "$values" | tr '\n' ' '))" >&2
     exit 1
   fi
 
-  echo "$label: $average $unit (budget: $maximum $unit)"
+  echo "$label: $statistic $unit ($kind; budget: $maximum $unit)"
   if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
-    printf '%s: **%s %s** (budget: %s %s)\n' \
-      "$label" "$average" "$unit" "$maximum" "$unit" >> "$GITHUB_STEP_SUMMARY"
+    printf '%s: **%s %s** (%s; budget: %s %s)\n' \
+      "$label" "$statistic" "$unit" "$kind" "$maximum" "$unit" >> "$GITHUB_STEP_SUMMARY"
   fi
 }
+
+# --self-test: the statistics and the verdicts on fixed sample sets. A set of six is a warm-up sample and the five that are judged.
+self_test() {
+  unset GITHUB_STEP_SUMMARY
+  fixture="$(mktemp "${TMPDIR:-/tmp}/check-performance.XXXXXX")"
+  metrics_file="$fixture"
+  clock_metric='com.apple.dt.XCTMetric_Clock.time.monotonic'
+  failures=0
+
+  # expect_statistic KIND SAMPLES EXPECTED
+  expect_statistic() {
+    actual="$(echo "$2" | tr ' ' '\n' | summarize "$1")"
+    if [ "$actual" != "$3" ]; then
+      echo "self-test FAILED: $1 of [$2] is $actual, expected $3" >&2
+      failures=$((failures + 1))
+    fi
+  }
+
+  # expect_verdict pass|fail METRIC MAXIMUM SAMPLES
+  expect_verdict() {
+    jq -n --arg metric "$2" --arg samples "$4" \
+      '[{testIdentifier: "Fixture/test()", testRuns: [{metrics: [{identifier: $metric, measurements: ($samples | split(" ") | map(tonumber))}]}]}]' \
+      > "$fixture"
+    if (check_average 'Fixture/test()' "$2" "$3" fixture kB) >/dev/null 2>&1; then
+      actual=pass
+    else
+      actual=fail
+    fi
+    if [ "$actual" != "$1" ]; then
+      echo "self-test FAILED: $2 [$4] against $3 is $actual, expected $1" >&2
+      failures=$((failures + 1))
+    fi
+  }
+
+  # The 0.1.5 layout option sidebar: the mean flips on the spike, the median does not.
+  expect_statistic mean '3424 4129 4112 6275 21496' 7887.200000
+  expect_statistic median '15000 3424 4129 4112 6275 21496' 4129.000000
+  expect_verdict pass "$memory_metric" 7019 '15000 3424 4129 4112 6275 21496'
+  # The 0.1.6 autofilled password: mostly high samples, so the median is not below the mean here. Recorded, not excused.
+  expect_statistic mean '-1311 23478 -18743 20349 18580' 8470.600000
+  expect_statistic median '9 -1311 23478 -18743 20349 18580' 18580.000000
+  # An even count, a lone sample and the warm-up drop.
+  expect_statistic median '0 1 2 3 10' 2.500000
+  expect_statistic median '7' 7.000000
+  expect_statistic median '999999 -5 -5 -5 -5 -5' -5.000000
+  # A quiet host passes; growth that lifts every sample still fails.
+  expect_verdict pass "$memory_metric" 4096 '0 100 -200 300 50 -50'
+  expect_verdict fail "$memory_metric" 4096 '0 5000 5100 4900 5050 5200'
+  expect_verdict pass "$memory_metric" 4096 '100'
+  expect_verdict fail "$memory_metric" 4096 '5000'
+  # Time stays on the mean of every sample: the first counts, and a median would have passed.
+  expect_statistic mean '0.5 0.1 0.1 0.1 0.1 0.1' 0.166667
+  expect_verdict fail "$clock_metric" 0.15 '0.5 0.1 0.1 0.1 0.1 0.1'
+  expect_verdict pass "$clock_metric" 0.2 '0.5 0.1 0.1 0.1 0.1 0.1'
+
+  rm -f "$fixture"
+  if [ "$failures" -ne 0 ]; then
+    exit 1
+  fi
+  echo "check-performance self-test: ok"
+}
+
+if [ "${1:-}" = "--self-test" ]; then
+  self_test
+  exit 0
+fi
+
+metrics_file="${1:-build/performance-metrics.json}"
+
+if [ ! -f "$metrics_file" ]; then
+  echo "error: performance metrics not found: $metrics_file" >&2
+  exit 1
+fi
 
 if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
   printf '### Performance budgets\n\n' >> "$GITHUB_STEP_SUMMARY"
