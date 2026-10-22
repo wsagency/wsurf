@@ -9,6 +9,32 @@ release notes will be added above this provenance record.
 
 Everything since 0.1.6 (build 6). None of the screens and prompts below has been checked by hand.
 
+### Window
+
+- New Minimal window style: the page gets the whole window, with a floating bar at the bottom (or top) and a tab list that slides in from the left. Choose it in Settings › Appearance › Window, with View › Use Minimal Window Style (⇧⌘M) or from the command palette. Standard stays the default.
+- The Minimal bar keeps everything the address bar has: asking the assistant and its questions, the engine badge, password and passkey saving, Input History, Reader, translation and site controls, plus the AI mark and Stop for connected apps, downloads, extensions and the side panel.
+- The tab list is the full sidebar: open it from the bar, with ⌃⌘S or by pointing at the left edge. Your Standard sidebar settings are untouched.
+- Optional: hide the Minimal bar while scrolling, and move it to the top (View › Move Bar to Top). Your theme’s spacing, corners and glass apply, and Reduce Transparency, Increase Contrast and Reduce Motion are respected.
+- Setup asks whether you want Standard or Minimal. Existing installs stay Standard.
+
+### Address bar
+
+- Settings › General › Show full website address shows the whole page address instead of only the website name. The website name is never cut first, sign-in details in an address are never shown, and names in other scripts appear as punycode so look-alike addresses can’t pose as another site.
+
+### Spaces
+
+- A space is a named set of tabs and folders. Once a profile has a second space, its icons sit at the bottom of the sidebar: click one, press ⌃1–⌃9 or swipe sideways with two fingers over the sidebar to switch. Pins, pinned folders and Favorites belong to the profile and show in every space.
+- New Space… is in the profile menu, the ⌘K palette and the icons' menu. A new space either shares the sign-ins, history and passwords of an existing profile, or gets its own: “Separate sign-ins and data” creates a profile for it.
+- Choosing a space of another profile switches the window to that profile, as the profile menu does: this profile's passwords lock, connected apps lose the window, the assistant stops and the tabs reload. WSurf explains this the first time.
+- Move to Space in a tab's or folder's menu, or dragging it onto a space icon, moves it to another space of the same profile. Deleting a space closes its tabs; it never deletes a profile or its passwords, and a profile always keeps one space. Profiles are still deleted only in Settings › Profiles.
+- Each existing profile starts with one space named after it. With one profile nothing changes until you add a space; with several, each profile shows as a space in the switcher.
+
+### Browsing
+
+- Reader can read the article aloud. View › Read Aloud (⌥⌘P), or the Read Aloud button in Reader's bar, starts at the headline with your Mac's own voice, one sentence at a time, and marks the sentence it is on; the same command pauses and resumes, and the bar can skip by sentence. The speed button sets 0.5× to 1.5× for every article, and a sentence in progress carries on at the new speed. A translated article is read in its translated text, in the voice for the language it was translated to. Hide Reader, a new page, another tab or View › Stop Reading ends it. Reading aloud uses only the voice built into your Mac, never a cloud service, and starts only when you ask.
+- Reader opened over a page that is already translated (Always Translate or Translate Page) now reads the text the website wrote, so Translate Page can translate the article and Show Original brings its text back; the page behind keeps its translation.
+- A local file that carries the macOS quarantine mark (anything fetched with a browser, mail or chat, whether typed by its `file:` address, dropped on the toolbar or opened from Finder or Downloads) can now read only itself. In WebKit a downloaded page, drawing or any other file that is not an image, PDF, text, audio or video file also runs without JavaScript and cannot open other local files in frames; in Chromium its other files are refused. Your own saved pages and project folders keep their scripts and still load their stylesheets, scripts and images from their folder, and a folder you open still lists its files. Pages that WSurf saved itself carry the mark, so they open without scripts.
+
 ### Passwords, passkeys and autofill
 
 - Settings › Autofill is one page with a vault picker and two tabs. **Vault** shows everything in the vault by section (Logins, Passkeys, Codes, Identities, Cards, Addresses, Contacts, Notes, and Files while an entry holds one) with Trash, and Input History. **Settings** holds what autofill saves and fills, Apple Pay, your vaults, unlock passkeys, import and export.
@@ -24,16 +50,45 @@ Everything since 0.1.6 (build 6). None of the screens and prompts below has been
 - Files aren't included when you export credentials to another app; use Save Copy… for each file.
 - Once any vault of a profile holds a file, WSurf 0.1.6 and older, 0.1.5 included, can't open that profile's credentials: they say “Couldn’t access credentials.” and change nothing, so they can't lose the files. Removing the files doesn't undo this. If a newer WSurf saved your credentials, this version says so and changes nothing.
 - Input History is now kept with your vault. Once a profile has a vault, showing the entries needs that vault unlocked as well as Touch ID or your Mac password, and recording goes on while it is locked. The first time you open it with your default vault unlocked, the existing key moves under the vault without losing or re-encrypting any entry. Deleting that vault deletes what Input History kept with it, and Delete Vault lists those entries first. Profiles without a vault work as before.
+- Settings › Autofill › Vault › Input History can keep Input History in the vault the picker shows: choose Keep Here with both vaults unlocked. Only the key that opens it moves. No entry is lost or encrypted again, and nothing is asked for. The page now says that showing the entries needs that vault unlocked, then Touch ID or your Mac password.
+- Importing from Contacts takes several contacts at once: click each one you want, close the list, and review them together. Import adds them in one step, and one Undo takes them all back.
+
+### Extensions
+
+- Website Settings (the sliders button beside the address) lists the extensions that run on the page, each with Block on this site, or Allow on this site while it is blocked there. An extension blocked on a whole website, such as example.com, is allowed again from any of its pages. An extension's toolbar button menu has the same Block and Allow for the website in front.
+- Settings › Extensions lists, under each extension, the websites it is blocked on; Remove lets it run there again and reloads that website's open tabs.
+- Extensions run only in WebKit tabs; in a Chromium tab, Website Settings and the toolbar menu say so instead of offering a control. Blocks made in a private window are forgotten when it closes.
+
+### Page watches
+
+- Watch a page and get one notification when it shows what you're waiting for, or when it changes: View › Watch This Page…, or ask the assistant. Up to 20 watches per profile, checked every 15 minutes to once a day, for up to 30 days, while WSurf is open. Find them in the side panel's Watches tab, where you can open, check, pause or stop each one, and in Settings › Assistant › Page Watches.
+- Watches read pages without your sign-ins unless you tick "Use my sign-ins for this page" for that watch. Sites you set to Chromium are read with WebKit, and the watch says so.
+- Pages are judged by Apple Intelligence on this Mac, never by an online model. Without it, a watch for any change still works; waiting for something specific needs it.
+- Notifications name the site and what you're waiting for, never the page's text. With notifications off, the Watches tab keeps the notice and shows a count.
+- The assistant asks you every time before it watches a page. Private windows can't watch pages, connected apps have no access to watches, a site set to No Access is never read, and Clear History forgets the stored page text.
+
+### Assistant and MCP
+
+- When the assistant remembers something about you, the answer shows "Remembered …" with Undo, which forgets a new note or puts back the earlier value.
+- When you ask for something that depends on a preference only you know, such as "my usual colour", and no note answers it, the assistant asks you before it changes the page. Memory stays off until you turn it on, and its notes are written on this Mac.
+- Connected apps written for Playwright MCP work with WSurf unchanged: browser_navigate, browser_click, browser_snapshot, browser_tabs and 15 other Playwright tool names are accepted as aliases of WSurf's own tools, with the same access rules, in background tabs and on both engines. A tab an app controls now counts as seen even while its window is covered, so pages that wait to be looked at, such as bot checks, keep going; your own tabs are unchanged.
 
 ### Fixes
 
 - The native History test for merged credentials gives the primary its own verification code, so it checks that another credential's password and code never show as one version.
+- Accent-coloured text stays readable on the window, sidebar and control surfaces at any theme Brightness. In some dark themes at +50 % and above (Calm, Catppuccin, Rosé Pine) it fell to about 4:1.
+- The Sidebar margin setting also applies to the icons-only and floating sidebars; at the default margin nothing changes.
+- The experimental video player no longer lets the page under it react to the pointer.
+- Closing a tab no longer leaves password saving and password filling holding on to that page's frames, which used to add up the longer WSurf stayed open.
+- The memory checks of the performance tests now judge the middle of five samples after a warm-up run instead of the average, and the vault-scale write cases hand freed memory back before and after each measured step, so one noisy sample no longer fails a run. No budget changed.
 
 ### Known issues
 
-- With the vault locked, Input History's Show Entries asks you to unlock it in Settings › Autofill; it doesn't unlock on the click. Input History stays with the vault that was the default when it was first opened: picking another vault on the page or making another vault the default doesn't move it.
+- With the vault locked, Input History's Show Entries asks you to unlock it in Settings › Autofill; it doesn't unlock on the click. Input History stays with the vault it is kept in until you choose Keep Here on another vault; making another vault the default doesn't move it.
 - A removed file stays on disk, encrypted, while History names it. History never empties by itself, so that room comes back only when the entry is moved to the Trash and the Trash is emptied.
-- The known issues of 0.1.6 are unchanged.
+- Reading aloud and VoiceOver speak at the same time if both are on.
+- The new performance cases for the Minimal window (switching window styles, laying out the Minimal bar) have no budget yet, and the budget for switching spaces (0.4 s, 8,192 kB) is provisional; both wait for a baseline from a native test run.
+- The noisy memory checks described under 0.1.6 are addressed by the new gating above; it has not yet been confirmed in a native test run. While the sidebar is peeking, the experimental video player's shadow can still show around it.
 
 ## 0.1.6 (build 6) — 2026-10-21
 
