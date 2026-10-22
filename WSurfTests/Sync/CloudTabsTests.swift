@@ -218,6 +218,33 @@ struct CloudTabsTests {
         #expect(urls(in: window0.nodes).sorted() == ["https://loose.test/", "https://one.test/", "https://two.test/"])
     }
 
+    /// A space is a view of the window: every tab stays in `tabs`, so the session lists the rows of all spaces, in tree order.
+    @Test func rowsOfEverySpaceArePublishedNotOnlyTheOneOnScreen() throws {
+        let launch = Launch()
+        defer { launch.finish() }
+        let cloudTabs = try #require(launch.start(optedIn: true))
+        let window = regularWindow()
+        let home = UUID()
+        let recipes = UUID()
+        window.adoptSpaces([home, recipes])
+        let first = window.addPage("https://home.test/one")
+        let second = window.addPage("https://home.test/two")
+        let dinner = window.createFolder(named: "Dinner", containing: [second])
+        let pasta = window.addPage("https://recipes.test/pasta")
+        pasta.spaceID = recipes
+        window.currentSpaceID = recipes
+        window.sidebarDidChange()
+        launch.models = [window]
+
+        let payload = try #require(cloudTabs.payload(for: Profile.originalID, running: true))
+
+        let nodes = try #require(payload.windows.first).nodes
+        #expect(window.sidebarItems == [.tab(pasta.id)])
+        #expect(Set(nodes.map(\.id)) == [first.id, dinner.id, pasta.id])
+        #expect(urls(in: nodes).sorted() == ["https://home.test/one", "https://home.test/two", "https://recipes.test/pasta"])
+        #expect(nodes.allSatisfy { $0.title.isEmpty == false })
+    }
+
     @Test func privateWindowsAreNeverPublished() throws {
         let launch = Launch()
         defer { launch.finish() }
