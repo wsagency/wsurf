@@ -142,6 +142,8 @@ nonisolated public enum SyncEvent: Sendable {
     case zonesDeleted([String: SyncZoneDeletionReason])
     case fetched(modified: [SyncRecord], deleted: [SyncRecordID])
     case sent(saved: [SyncRecord], deleted: [SyncRecordID], failed: [SyncFailedSave])
+    /// The engine could not delete these zones.
+    case zoneDeletesFailed([String])
 }
 
 /// The model side of an engine. Both requirements run on the main actor; an engine hops there.

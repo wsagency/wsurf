@@ -353,11 +353,9 @@ nonisolated final class VaultSyncDatabase: Sendable {
             try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM \(table) WHERE vaultID = ?", arguments: [vault.sqlText]) ?? 0
         }
 
-        /// Conflicts that wait for a choice, not the information-only kinds.
+        /// Rows that wait for the person, information-only kinds included: none of them lets its entry sync.
         func reviewCount(_ vault: UUID) throws -> Int {
-            try Int.fetchOne(
-                db, sql: "SELECT COUNT(*) FROM conflict WHERE vaultID = ? AND kind NOT IN ('ambiguous', 'refused')", arguments: [vault.sqlText]
-            ) ?? 0
+            try count("conflict", vault)
         }
 
         private static func version(_ row: Row) -> UInt64 {

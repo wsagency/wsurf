@@ -116,11 +116,13 @@ nonisolated public enum VaultSyncStatus: Equatable, Sendable {
     /// This Mac's store is older than the last state it synced.
     case rolledBack
     case removed(SyncZoneDeletionReason)
+    /// The owner removed the vault from iCloud and the engine could not delete the zone: it is still there.
+    case removalFailed
     case accountChanged
 
     /// What survives a relaunch, in `Credentials.sync`. The rest is derived from counts, the lock and the account.
     nonisolated enum Stored: String, Sendable {
-        case active, iCloudFull, needsUpdate, rolledBack, removedDeleted, removedPurged, removedEncryptedDataReset, accountChanged
+        case active, iCloudFull, needsUpdate, rolledBack, removedDeleted, removedPurged, removedEncryptedDataReset, removalFailed, accountChanged
 
         static func removed(_ reason: SyncZoneDeletionReason) -> Stored {
             switch reason {

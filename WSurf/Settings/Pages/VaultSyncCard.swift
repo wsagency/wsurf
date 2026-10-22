@@ -22,10 +22,7 @@ struct VaultSyncCard: View {
                 switch status {
                 case .needsReview(let count):
                     SettingsCard {
-                        DetailRow(
-                            title: "Changed on this Mac and another device",
-                            caption: "\(count) entries need a choice. They don’t sync until you choose."
-                        ) {
+                        DetailRow(title: "Entries need a choice", caption: "\(count) entries don’t sync until you choose.") {
                             Button("Review…") { Task { await model.openSyncReview() } }
                                 .buttonStyle(.bordered)
                                 .disabled(model.isBusy || !model.isUnlocked)

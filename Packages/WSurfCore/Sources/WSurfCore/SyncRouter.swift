@@ -62,6 +62,11 @@ public final class SyncRouter: SyncEngineDelegate {
             if !vaultModified.isEmpty || !vaultDeleted.isEmpty {
                 await vaults?.handle(.fetched(modified: vaultModified, deleted: vaultDeleted))
             }
+        case .zoneDeletesFailed(let zones):
+            let vaultZones = zones.filter(SyncZone.isVault)
+            if !vaultZones.isEmpty {
+                await vaults?.handle(.zoneDeletesFailed(vaultZones))
+            }
         case .sent(let saved, let deleted, let failed):
             let tabSaved = saved.filter { isTabZone($0.id.zone) }
             let tabDeleted = deleted.filter { isTabZone($0.zone) }

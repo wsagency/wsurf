@@ -126,4 +126,80 @@ struct VaultSyncEdgeTests {
 
         #expect(rig.status(a) == .synced, "an empty listing is not trusted as 'every vault is gone'")
     }
+
+    // MARK: Rows that wait for the owner
+
+    @Test func informationRowsCountAsWaitingAndAreDismissedFromTheSheet() async throws {
+        let rig = Rig()
+        defer { rig.finish() }
+        _ = try await rig.syncedMac(holding: syncAccounts(2))
+        let (b, vb) = try await rig.addedMac(unlock: false)
+        vb.unlock()
+        vb.commitFailure = CredentialVaultError.invalidData
+        await b.unlock(vb)
+        try await b.pump()
+
+        let waiting = try await b.sync.conflicts(profileID: rig.profile, vaultID: rig.vaultID)
+        #expect(waiting.map(\.kind) == [.refused, .refused])
+        #expect(rig.status(b) == .needsReview(2), "rows that stop an entry from syncing are not “up to date”")
+
+        vb.commitFailure = nil
+        try await b.sync.resolve(profileID: rig.profile, vaultID: rig.vaultID, accountIDs: waiting.map(\.id), keepLocal: true)
+        #expect(try await b.sync.conflicts(profileID: rig.profile, vaultID: rig.vaultID).isEmpty)
+        #expect(rig.status(b) == .synced)
+        #expect(vb.accounts.isEmpty && vb.trash.isEmpty, "dismissing writes nothing here and deletes nothing anywhere")
+    }
+
+    @Test(arguments: [true, false])
+    func aReviewRowWhoseEntryWasDeletedMeanwhileCanStillBeAnswered(keepLocal: Bool) async throws {
+        let rig = Rig()
+        defer { rig.finish() }
+        let entry = syncAccounts(1)[0]
+        let (a, va) = try await rig.syncedMac(holding: [entry])
+        let (b, vb) = try await rig.addedMac()
+        try await converge([a, b])
+        va.edit(syncChanging(entry, password: "from A"))
+        await a.wrote(va)
+        try await a.pump()
+        vb.edit(syncChanging(entry, password: "from B"))
+        await b.wrote(vb)
+        try await b.pump()
+        #expect(rig.status(b) == .needsReview(1))
+        // The owner deletes the entry on B before answering.
+        vb.remove(entry.id)
+        await b.wrote(vb)
+
+        try await b.sync.resolve(profileID: rig.profile, vaultID: rig.vaultID, accountIDs: [entry.id], keepLocal: keepLocal)
+        try await converge([a, b])
+
+        #expect(rig.status(b) == .synced && rig.status(a) == .synced)
+        #expect(try await b.sync.conflicts(profileID: rig.profile, vaultID: rig.vaultID).isEmpty)
+        if keepLocal {
+            #expect(vb.account(entry.id) == nil && va.account(entry.id) == nil, "kept deleted, on both")
+        } else {
+            #expect(vb.account(entry.id)?.password == "from A", "iCloud’s version came back")
+        }
+    }
+
+    // MARK: A removal from iCloud that did not happen
+
+    @Test func aRemovalFromICloudThatFailedStaysVisibleUntilItWorks() async throws {
+        let rig = Rig()
+        defer { rig.finish() }
+        let (a, _) = try await rig.syncedMac(holding: syncAccounts(2))
+        a.engine.failsZoneDeletes = true
+
+        a.sync.removeFromICloud(profileID: rig.profile, vaultID: rig.vaultID)
+        try await a.pump()
+
+        #expect(rig.cloud.zones[rig.zone] != nil, "the zone is still in iCloud")
+        #expect(rig.status(a) == .removalFailed, "and the vault says so, instead of “removed”")
+
+        a.engine.failsZoneDeletes = false
+        a.sync.removeFromICloud(profileID: rig.profile, vaultID: rig.vaultID)
+        try await a.pump()
+
+        #expect(rig.cloud.zones[rig.zone] == nil)
+        #expect(rig.status(a) == .removed(.deleted))
+    }
 }

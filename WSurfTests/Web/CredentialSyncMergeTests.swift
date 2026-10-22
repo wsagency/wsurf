@@ -542,13 +542,42 @@ struct CredentialSyncMergeTests {
         }
     }
 
-    @Test func informationRowsHaveNoAnswer() throws {
+    @Test func informationRowsAreDismissedByAnyAnswerAndChangeNothing() throws {
         let account = entry()
         for kind in [SyncConflictKind.ambiguous, .refused] {
             for keepLocal in [true, false] {
                 let answer = try CredentialSyncMerge.resolve(live(account), kind: kind, local: nil, base: nil, keepLocal: keepLocal, index: index())
-                #expect(answer == .review(kind, parts: []))
+                // Nothing is written and the base stays, so the dismissal can never turn into a deletion elsewhere.
+                #expect(answer == .ignore)
             }
+        }
+    }
+
+    @Test(arguments: [true, false])
+    func everyRowCanBeAnsweredWhateverHappenedToTheEntryMeanwhile(keepLocal: Bool) throws {
+        let agreed = entry()
+        let theirs = changed(agreed, .password)
+        let mine = changed(agreed, .notes)
+        let accepted = SyncBase(version: 2, parts: try parts(theirs))
+        let removed = SyncBase(version: 2, parts: .removedParts)
+        // Both changed, and then the entry was deleted here: the answer is the one for a change there and a deletion here.
+        let deletedHere = try CredentialSyncMerge.resolve(
+            live(theirs), kind: .bothChanged, local: nil, base: try base(agreed), keepLocal: keepLocal, index: index()
+        )
+        #expect(deletedHere == (keepLocal ? .keep(accepted) : .write(theirs, accepted)))
+        // Deleted there and changed here, and then deleted here too: nothing is left to move.
+        let goneBoth = try CredentialSyncMerge.resolve(
+            gone(agreed.id), kind: .deletedThereChangedHere, local: nil, base: try base(agreed), keepLocal: keepLocal, index: index()
+        )
+        #expect(goneBoth == .keep(removed))
+        // Changed there and deleted here, and then the entry came back here: the two versions are the ones to choose from.
+        let restored = try CredentialSyncMerge.resolve(
+            live(theirs), kind: .changedThereDeletedHere, local: mine, base: try base(agreed), keepLocal: keepLocal, index: index([mine])
+        )
+        if keepLocal {
+            #expect(restored == .keep(accepted))
+        } else {
+            #expect(try #require(restored.written).password == theirs.password)
         }
     }
 }

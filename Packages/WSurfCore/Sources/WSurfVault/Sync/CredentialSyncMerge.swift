@@ -126,7 +126,7 @@ public nonisolated struct SyncBase: Equatable, Sendable {
     }
 }
 
-/// Why an incoming item waits for the person. `ambiguous` and `refused` are information only.
+/// Why an incoming item waits for the person. `ambiguous` and `refused` are information only: the person can dismiss them.
 public nonisolated enum SyncConflictKind: String, Codable, CaseIterable, Sendable {
     /// Changed here and on another device (some part, or the same part).
     case bothChanged
@@ -289,28 +289,31 @@ public nonisolated enum CredentialSyncMerge {
     }
 
     /// The decision for a review row the person answered: keep this Mac's version or take iCloud's. `base` is the base the row was
-    /// made against. A kind that is only information has no answer and stays a review.
+    /// made against. The answer follows what is there now, not only what the row was made for, so an entry deleted or restored since
+    /// still has one. A row that is only information is dismissed by either answer: nothing is written and the base stays, so a
+    /// dismissal never turns into a deletion elsewhere.
     public static func resolve(
         _ item: SyncItem, kind: SyncConflictKind, local: CredentialAccount?, base: SyncBase?, keepLocal: Bool, index: SyncLocalIndex
     ) throws -> SyncDecision {
+        if kind == .ambiguous || kind == .refused {
+            return .ignore
+        }
         let incoming = try item.parts()
         let accepted = SyncBase(version: item.version, parts: incoming)
-        switch kind {
-        case .bothChanged, .noCommonBase:
-            guard let local, let account = item.account else { return .review(kind, parts: []) }
+        switch (item.account, local) {
+        case (nil, nil):
+            // Deleted there and not here: nothing is left to move.
+            return .keep(accepted)
+        case (nil, _?):
+            return keepLocal ? .keep(accepted) : .moveToTrash(accepted)
+        case (let account?, nil):
+            return keepLocal ? .keep(accepted) : adding(account, incoming: incoming, version: item.version, index: index)
+        case (let account?, let local?):
             guard !keepLocal else { return .keep(accepted) }
             let own = try SyncParts.of(local)
             var found = plan(incoming: account, parts: incoming, own: own, base: base.flatMap { $0.parts.removed ? nil : $0.parts }, index: index)
             found.taking.parts.formUnion(found.conflicts)
             return applying(found, incoming: account, parts: incoming, local: local, own: own, version: item.version, index: index)
-        case .deletedThereChangedHere:
-            guard item.account == nil, local != nil else { return .review(kind, parts: []) }
-            return keepLocal ? .keep(accepted) : .moveToTrash(accepted)
-        case .changedThereDeletedHere, .previouslyRemoved:
-            guard let account = item.account, local == nil else { return .review(kind, parts: []) }
-            return keepLocal ? .keep(accepted) : adding(account, incoming: incoming, version: item.version, index: index)
-        case .ambiguous, .refused:
-            return .review(kind, parts: [])
         }
     }
 

@@ -228,6 +228,8 @@ public final class VaultSync: SyncEngineDelegate {
                 return .removed(.purged)
             case .removedEncryptedDataReset:
                 return .removed(.encryptedDataReset)
+            case .removalFailed:
+                return .removalFailed
             case .accountChanged:
                 return .accountChanged
             case .active, .iCloudFull, .needsUpdate, .rolledBack:
@@ -324,9 +326,24 @@ public final class VaultSync: SyncEngineDelegate {
     public func removeFromICloud(profileID: UUID, vaultID: UUID) {
         let key = VaultKey(profileID: profileID, vaultID: vaultID)
         guard !excluded.contains(profileID) else { return }
+        if retryRemoval(key) {
+            return
+        }
         deleteZone(key)
         state.remote[key.zone] = nil
         persist(state)
+    }
+
+    /// A removal that failed is asked for again, from the status that said so.
+    private func retryRemoval(_ key: VaultKey) -> Bool {
+        guard let database = database(key.profileID), var row = (try? database.read { try $0.vault(key.vaultID) }) ?? nil,
+              !row.enabled, row.status == .removalFailed
+        else { return false }
+        row.status = .removedDeleted
+        try? database.write { try $0.save(row) }
+        engine?.add([.deleteZone(key.zone)])
+        refresh(key)
+        return true
     }
 
     /// The app added the vault from a `Vault` record: it syncs here now. It stays locked, so nothing is applied until the first unlock.
@@ -487,6 +504,10 @@ public final class VaultSync: SyncEngineDelegate {
             applyFetched(modified: modified, deleted: deleted)
         case .sent(let saved, let deleted, let failed):
             applySent(saved: saved, deleted: deleted, failed: failed)
+        case .zoneDeletesFailed(let zones):
+            for zone in zones.sorted() {
+                zoneDeleteFailed(zone)
+            }
         }
         persist(state)
     }

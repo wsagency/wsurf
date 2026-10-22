@@ -136,6 +136,9 @@ private nonisolated final class Bridge: CKSyncEngineDelegate {
             if !sent.failedZoneSaves.isEmpty || !sent.failedZoneDeletes.isEmpty {
                 SyncLog.logger.error("sync: \(sent.failedZoneSaves.count + sent.failedZoneDeletes.count) zone changes failed")
             }
+            if !sent.failedZoneDeletes.isEmpty {
+                await delegate.handle(.zoneDeletesFailed(sent.failedZoneDeletes.keys.map(\.zoneName).sorted()))
+            }
         case .willFetchChanges, .willFetchRecordZoneChanges, .didFetchRecordZoneChanges, .didFetchChanges,
              .willSendChanges, .didSendChanges:
             break

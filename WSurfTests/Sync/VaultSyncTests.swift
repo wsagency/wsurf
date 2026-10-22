@@ -740,7 +740,7 @@ struct VaultSyncTests {
         #expect(vb.accounts.isEmpty && vb.commitCount == 0)
         let waiting = try await b.sync.conflicts(profileID: rig.profile, vaultID: rig.vaultID)
         #expect(waiting.map(\.kind) == [.refused, .refused])
-        #expect(rig.status(b) == .synced, "information rows are not a reason to review")
+        #expect(rig.status(b) == .needsReview(2), "an entry that cannot sync is not “up to date”")
     }
 
     @Test func aFailedCommitThatIsNotAboutOneEntryLeavesTheRowsWaiting() async throws {

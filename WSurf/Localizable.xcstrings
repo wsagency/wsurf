@@ -881,8 +881,8 @@
     "%lld entries are too large to sync or hold only files, so they stay on this Mac." : {
       "comment" : "Added to the Sync with iCloud caption. %lld is a number of at least 1. Files are never synced."
     },
-    "%lld entries changed on this Mac and another device. Review them on the Vault tab." : {
-      "comment" : "Caption of the Sync with iCloud switch when entries changed here and on another device and wait for a choice. %lld is a number of at least 1. Vault tab is the tab of the Autofill page."
+    "%lld entries don’t sync until you choose." : {
+      "comment" : "Caption of the card for entries that wait for a choice about sync. %lld is a number of at least 1."
     },
     "%lld entries, each kept for %@" : {
       "comment" : "Footnote under the Entries list in Settings, Autofill, Input History, shown while the list is unlocked. The first number is how many entries the list holds. %@ is how long each entry is kept, such as “30 minutes” or “1 week”. A mid-sentence time span, not a sentence of its own.",
@@ -930,8 +930,8 @@
         }
       }
     },
-    "%lld entries need a choice. They don’t sync until you choose." : {
-      "comment" : "Caption of the card for entries that changed on two devices. %lld is a number of at least 1."
+    "%lld entries need a choice. Review them on the Vault tab." : {
+      "comment" : "Caption of the Sync with iCloud switch when entries wait for a choice: they changed on two devices, differ with no common ground, are deleted on one, or cannot be added on this Mac. %lld is a number of at least 1. Vault tab is the tab of the Autofill page."
     },
     "%lld entries were deleted on this Mac. Delete them on your other devices too?" : {
       "comment" : "Caption of the Sync with iCloud switch when a large number of entries were deleted on this Mac and the deletion has not been sent yet. %lld is a number of at least 21. The next row asks for the answer."
@@ -1972,9 +1972,6 @@
     "Changed on another device, deleted here." : {
       "comment" : "Row caption in the Review Sync Changes sheet."
     },
-    "Changed on this Mac and another device" : {
-      "comment" : "Title of the card on the Vault tab for entries that changed here and on another device. Sentence case."
-    },
     "Change…" : {
       "comment" : "Button that reopens the API key popover once a key is stored; it reads Add Key… when none is. A verb, with a real ellipsis (…) promising a popover."
     },
@@ -2490,6 +2487,9 @@
     "Couldn’t remove this address. Try again." : {
 
     },
+    "Couldn’t remove this vault from iCloud. It’s still there, and this Mac no longer syncs it." : {
+      "comment" : "Caption of the Sync with iCloud switch when removing a vault from iCloud did not finish. The next row has Try Again."
+    },
     "Couldn’t Reset Save Suggestions" : {
 
     },
@@ -2642,6 +2642,9 @@
     },
     "Discovering OAuth settings…" : {
 
+    },
+    "Dismiss" : {
+      "comment" : "Button that clears a notice about a vault removed from iCloud, or an entry in the Review Sync Changes sheet that cannot sync, without changing anything. Title Case for a command."
     },
     "Dismiss Error" : {
 
@@ -2836,6 +2839,9 @@
     },
     "Enter the model ID as the provider lists it." : {
 
+    },
+    "Entries need a choice" : {
+      "comment" : "Title of the card on the Vault tab for entries that wait for a choice about sync. Sentence case."
     },
     "Esc" : {
       "comment" : "Legend printed on a key cap in the shortcut recorder in Settings, where the user records the key that activates the assistant. Use the word your language's Apple keyboards print on that key; the cap is only a few characters wide. This one is the Escape key, abbreviated the way the key itself is printed."

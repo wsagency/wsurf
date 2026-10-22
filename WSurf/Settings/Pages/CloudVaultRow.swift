@@ -53,6 +53,14 @@ struct CloudVaultRow: View {
                     Text("WSurf moves them to Trash on your other devices that sync this vault. You can restore them there.")
                 }
             }
+            if status == .removalFailed {
+                RowSeparator()
+                DetailRow(title: "Remove from iCloud") {
+                    Button("Try Again") { model.removeSelectedVaultFromICloud() }
+                        .buttonStyle(.bordered)
+                        .disabled(model.isBusy)
+                }
+            }
             if isOn {
                 RowSeparator()
                 DetailRow(title: "Remove from iCloud") {
@@ -91,7 +99,7 @@ struct CloudVaultRow: View {
     /// On means this Mac syncs the vault, whatever it is doing right now.
     static func isOn(_ status: VaultSyncStatus) -> Bool {
         switch status {
-        case .off, .removed, .accountChanged:
+        case .off, .removed, .removalFailed, .accountChanged:
             false
         case .synced, .sending, .waitingForUnlock, .needsReview, .holdingRemovals, .iCloudFull, .signedOut, .needsUpdate, .rolledBack:
             true
@@ -146,7 +154,7 @@ struct CloudVaultRow: View {
         case .waitingForUnlock(let count):
             String(localized: "\(count) changes from your other devices will be added when you unlock this vault.")
         case .needsReview(let count):
-            String(localized: "\(count) entries changed on this Mac and another device. Review them on the Vault tab.")
+            String(localized: "\(count) entries need a choice. Review them on the Vault tab.")
         case .holdingRemovals(let count):
             String(localized: "\(count) entries were deleted on this Mac. Delete them on your other devices too?")
         case .iCloudFull:
@@ -166,6 +174,8 @@ struct CloudVaultRow: View {
             String(localized: "WSurf’s iCloud data was deleted in iCloud settings. This Mac keeps its copy. Turn on Sync with iCloud to upload it again.")
         case .removed(.encryptedDataReset):
             String(localized: "Your iCloud encrypted data was reset. This Mac keeps its copy. Turn on Sync with iCloud to upload it again.")
+        case .removalFailed:
+            String(localized: "Couldn’t remove this vault from iCloud. It’s still there, and this Mac no longer syncs it.")
         case .accountChanged:
             String(localized: """
                 You’re signed in with a different Apple Account. This Mac keeps its copy. Turn on Sync with iCloud to upload it to this \

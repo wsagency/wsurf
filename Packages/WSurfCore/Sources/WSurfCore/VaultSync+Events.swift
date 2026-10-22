@@ -309,6 +309,16 @@ extension VaultSync {
         leave(key, database: database, row: row, status: .removed(reason))
     }
 
+    /// The engine could not delete a zone. For a vault this Mac removed from iCloud, the status says it is still there.
+    func zoneDeleteFailed(_ zone: String) {
+        guard let ids = SyncZone.vaultIDs(zone), !excluded.contains(ids.profileID), let database = database(ids.profileID) else { return }
+        let key = VaultKey(ids)
+        guard var row = (try? database.read { try $0.vault(key.vaultID) }) ?? nil, !row.enabled, row.status == .removedDeleted else { return }
+        row.status = .removalFailed
+        try? database.write { try $0.save(row) }
+        refresh(key)
+    }
+
     /// Ends this Mac's syncing of the vault with `status` as the reason, and drops everything it kept for it.
     func leave(_ key: VaultKey, database: VaultSyncDatabase, row: VaultRow, status: VaultSyncStatus.Stored) {
         var next = VaultRow(vaultID: key.vaultID, enabled: false, status: status)

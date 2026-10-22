@@ -662,7 +662,7 @@ struct VaultSyncDeviceTests {
         #expect(model.syncStatus != nil && controls().row > 40, "the switch with its Remove from iCloud row")
         let statuses: [VaultSyncStatus] = [
             .off, .synced, .sending(2), .waitingForUnlock(2), .needsReview(1), .holdingRemovals(2), .iCloudFull, .signedOut, .needsUpdate, .rolledBack,
-            .removed(.deleted), .removed(.purged), .removed(.encryptedDataReset), .accountChanged,
+            .removed(.deleted), .removed(.purged), .removed(.encryptedDataReset), .removalFailed, .accountChanged,
         ]
         for status in statuses {
             #expect(!CloudVaultRow.statusText(status, isUnlocked: true).isEmpty)

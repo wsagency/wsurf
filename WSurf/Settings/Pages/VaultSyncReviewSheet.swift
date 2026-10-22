@@ -5,15 +5,16 @@ import SwiftUI
 import WSurfCore
 import WSurfVault
 
-/// The entries that changed on this Mac and on another device, or differ with no common ground, one row each. Nothing is applied or sent
-/// for a row until a choice is made, and the version not kept stays in that entry's History or Trash on the Mac that had it.
+/// The entries that changed on this Mac and on another device, differ with no common ground, or cannot be added here, one row each.
+/// Nothing is applied or sent for a row until a choice is made, and the version not kept stays in that entry's History or Trash on the
+/// Mac that had it. A row that is only information has one button, Dismiss, which changes nothing.
 struct VaultSyncReviewSheet: View {
     let conflicts: [VaultSyncConflict]
     let isBusy: Bool
     let resolve: ([UUID], Bool) -> Void
     let done: () -> Void
 
-    /// Rows that ask for a choice; the information-only kinds have no button.
+    /// Rows that ask for a choice; the information-only kinds are dismissed one by one.
     private var actionable: [VaultSyncConflict] {
         conflicts.filter { Self.asksForChoice($0.kind) }
     }
@@ -76,6 +77,8 @@ struct VaultSyncReviewSheet: View {
                     Button(labels.keep) { resolve([conflict.id], true) }.disabled(isBusy)
                     Button(labels.take) { resolve([conflict.id], false) }.disabled(isBusy)
                 }
+            } else {
+                Button("Dismiss") { resolve([conflict.id], true) }.disabled(isBusy)
             }
         }
         .padding(.vertical, 8)

@@ -230,6 +230,8 @@ public final class TabSync: SyncEngineDelegate {
             applyFetched(modified: modified, deleted: deleted)
         case .sent(let saved, let deleted, let failed):
             applySent(saved: saved, deleted: deleted, failed: failed)
+        case .zoneDeletesFailed:
+            return
         case .zonesDeleted(let zones):
             applyZonesDeleted(zones.keys.sorted())
         case .account(let change):

@@ -197,6 +197,8 @@ final class FakeSyncEngine: SyncEngine {
     var hangsOnSend = false
     /// No network: a fetch or a send throws.
     var offline = false
+    /// The server refuses to delete a zone: the engine reports the failure and keeps the change.
+    var failsZoneDeletes = false
     /// Names of records that cannot be read when a zone is read in full, as the server can fail one record of a page.
     var unreadable: Set<String> = []
     private(set) var pending: [SyncChange] = []
@@ -284,15 +286,23 @@ final class FakeSyncEngine: SyncEngine {
     }
 
     private func send(_ batch: [SyncChange]) async {
+        var refused: [String] = []
         for change in batch {
             switch change {
             case .saveZone(let zone):
                 cloud.createZone(zone)
             case .deleteZone(let zone):
-                cloud.deleteZone(zone, reason: .deleted)
+                if failsZoneDeletes {
+                    refused.append(zone)
+                } else {
+                    cloud.deleteZone(zone, reason: .deleted)
+                }
             case .saveRecord, .deleteRecord:
                 break
             }
+        }
+        if !refused.isEmpty {
+            await delegate?.handle(.zoneDeletesFailed(refused))
         }
         var saved: [SyncRecord] = []
         var deleted: [SyncRecordID] = []
