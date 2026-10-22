@@ -112,7 +112,8 @@ struct AutofillVaultMigrationTests {
         try entry.validate()
         #expect(entry.secureItems?.map(\.kind) == [.creditCard] && entry.username.isEmpty && entry.origins.isEmpty)
         #expect(entry.secureItems?.first?.value("expiryDate") == "2031-07")
-        let filled = try #require(VaultItemAutofill.paymentCard(try #require(entry.secureItems?.first)))
+        let storedCard = try #require(entry.secureItems?.first)
+        let filled = try #require(VaultItemAutofill.paymentCard(storedCard))
         #expect(VaultItemAutofill.sameCard(filled, card))
         #expect(VaultItemAutofill.cards(in: [entry]).map(\.value.number) == [Self.visa])
 

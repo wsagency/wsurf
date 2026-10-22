@@ -642,7 +642,8 @@ struct InputHistoryVaultTests {
 
     @Test func aProfileWithoutAVaultKeepsTodaysKey() async throws {
         try await VaultManagerFixture.with(vaults: []) { profile, _, _ in
-            #expect(try await InputHistory.liveVaultKey(for: profile, bound: nil)?.vaultID == nil)
+            let kept = try await InputHistory.liveVaultKey(for: profile, bound: nil)
+            #expect(kept?.vaultID == nil)
             // A key already kept with a vault is never given up for lost on this: it waits.
             await #expect(throws: InputHistoryError.vaultLocked) { _ = try await InputHistory.liveVaultKey(for: profile, bound: UUID()) }
         }

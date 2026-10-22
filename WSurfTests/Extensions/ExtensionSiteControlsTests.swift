@@ -18,7 +18,7 @@ struct ExtensionSiteControlsTests {
     private static let everywhere = "everywhere"
     private static let narrow = "narrow"
 
-    private final class Flag: @unchecked Sendable {
+    private nonisolated final class Flag: @unchecked Sendable {
         var isSet = false
     }
 

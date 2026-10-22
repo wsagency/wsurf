@@ -170,7 +170,7 @@ private final class Upkeep {
         file: nil,
         schedules: false,
         now: { [unowned self] in date },
-        fetch: { [unowned self] _ in
+        fetch: { @MainActor [unowned self] _ in
             reads += 1
             return PageWatchReading(title: "Kettle", text: "Kettle $54.99, reading \(reads)", url: nil)
         },

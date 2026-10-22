@@ -49,7 +49,7 @@ private final class JudgeModel: LanguageModel, @unchecked Sendable {
 }
 
 /// A page whose text the test changes between readings.
-private final class Versions: @unchecked Sendable {
+private nonisolated final class Versions: @unchecked Sendable {
     private let lock = NSLock()
     private var html = "<!doctype html><title>Kettle</title><main><p>Kettle $54.99</p></main>"
 

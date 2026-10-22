@@ -687,7 +687,7 @@ struct FileAccessScopeTests {
             let page = tab.page
             _ = await waitUntil { page.url?.lastPathComponent == document.lastPathComponent && !page.isLoading }
             try await Task.sleep(for: .seconds(1.5))
-            func ask(_ script: String) async -> String? {
+            @MainActor func ask(_ script: String) async -> String? {
                 (try? await page.evaluateJavaScript(script, in: nil, contentWorld: .defaultClient)) as? String
             }
             found = (
