@@ -301,7 +301,7 @@ private struct ProviderRow: View {
 
                 DrillInChevron()
             }
-            .padding(.vertical, 9)
+            .padding(.vertical, SettingsMetrics.rowPaddingV)
             .settingsRowTarget()
         }
         .buttonStyle(.plain)

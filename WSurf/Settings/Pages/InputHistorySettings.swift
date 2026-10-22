@@ -444,7 +444,7 @@ private struct InputHistoryRowView: View {
             .buttonStyle(.bordered)
             .fixedSize()
         }
-        .padding(.vertical, 9)
+        .padding(.vertical, SettingsMetrics.rowPaddingV)
         .padding(.horizontal, 6)
         .background(
             isSelected ? Color.accentColor.opacity(0.12) : Color.clear,

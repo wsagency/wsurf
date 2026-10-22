@@ -57,7 +57,7 @@ struct OpenAIMCPSettingsView: View {
                             Button("Remove connection", role: .destructive) { remove(server) }
                         } label: { Image(systemName: "ellipsis") }
                         .menuStyle(.borderlessButton).fixedSize().accessibilityLabel("Connection actions")
-                    }.padding(.vertical, 14)
+                    }.padding(.vertical, SettingsMetrics.rowPaddingV)
                     if server.id != servers.last?.id {
                         RowSeparator()
                     }

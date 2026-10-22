@@ -32,7 +32,8 @@ enum SettingsMetrics {
     static let headerGap: CGFloat = 7
 
     static let controlWidth: CGFloat = 250
-    static let rowPaddingV: CGFloat = 14
+    /// Space above and below a row's content. Two neighbouring rows are `2 * rowPaddingV` apart, plus the hairline.
+    static let rowPaddingV: CGFloat = 7
     static let cardInset: CGFloat = 16
     static var separatorInset: CGFloat {
         rowContentInset
@@ -43,8 +44,11 @@ enum SettingsMetrics {
     static let rowContentInset: CGFloat = 8
     static let pickerHorizontalInset: CGFloat = 0
     static let pickerLabelGap: CGFloat = 6
-    static let pickerVerticalInset: CGFloat = 9
-    static let pickerItemPaddingV: CGFloat = 5
+    static let pickerItemPaddingV: CGFloat = 3
+    /// What is left of `rowPaddingV` once the first and last option's own padding counts.
+    static var pickerVerticalInset: CGFloat {
+        rowPaddingV - pickerItemPaddingV
+    }
 
     static var controlRadius: CGFloat {
         Theme.Radius.control
@@ -339,7 +343,7 @@ struct DetailRow<Content: View>: View {
                     trailingContent
                 }
             case .stacked:
-                VStack(alignment: .leading, spacing: 10) {
+                VStack(alignment: .leading, spacing: 6) {
                     label
 
                     content
