@@ -55,12 +55,12 @@ final class CredentialExchangeCoordinator {
         }
 
         /// The rows of a CSV file or of the old list, staged against the vault. A system import is staged by the codec instead.
-        func stagedRows(against snapshot: StoreSnapshot) throws -> CredentialCSVImport.Staged {
+        func stagedRows(against snapshot: StoreSnapshot, memory: CredentialCSVImport.Memory) throws -> CredentialCSVImport.Staged {
             switch self {
             case let .csv(data):
-                try CredentialCSVImport.stage(data, against: snapshot)
+                try CredentialCSVImport.stage(data, against: snapshot, memory: memory)
             case let .legacy(records):
-                try CredentialCSVImport.stage(legacy: records, against: snapshot)
+                try CredentialCSVImport.stage(legacy: records, against: snapshot, memory: memory)
             case .system:
                 throw CredentialCSVError.missingColumns
             }
@@ -79,6 +79,10 @@ final class CredentialExchangeCoordinator {
         var csvLines: [CredentialIdentity: Int] = [:]
         /// What was changed in WSurf since the last import and is kept (`CredentialImportReport`); a system import only.
         var keptChanges: [CredentialImportReview.KeptChange] = []
+        /// What each CSV row brought, for the vault to remember once imported (`CredentialCSVImport.RowTrace`), by candidate.
+        var traces: [UUID: CredentialCSVImport.RowTrace] = [:]
+        /// The saved credential each item that was merged away into it before now stands beside, by candidate.
+        var mergedInto: [UUID: UUID] = [:]
     }
 
     /// The staged import. Internal for `CredentialExchangeCoordinator+Review`, which keeps its choices and its review in step.
@@ -247,6 +251,7 @@ final class CredentialExchangeCoordinator {
         session = nil
         let snapshot = try await manager.snapshot()
         let removed = try await manager.removedIdentifiers()
+        let memory = CredentialCSVImport.Memory(key: try await manager.importMemoryKey(), removed: removed)
         let names = try await manager.displayNames()
         var revisions: [UUID: [RevisionItem]] = [:]
         if source.origin == .system {
@@ -263,6 +268,8 @@ final class CredentialExchangeCoordinator {
         var needsChoice: Set<CredentialIdentity> = []
         var csvLines: [CredentialIdentity: Int] = [:]
         var keptChanges: [CredentialImportReview.KeptChange] = []
+        var traces: [UUID: CredentialCSVImport.RowTrace] = [:]
+        var mergedInto: [UUID: UUID] = [:]
         switch source {
         case let .system(data):
             do {
@@ -276,17 +283,20 @@ final class CredentialExchangeCoordinator {
                     classes[incoming] = try CredentialExchangeCodec.classify(incoming, of: candidate, destination: destination)
                 }
             }
+            mergedInto = CredentialCSVImport.remember(preview.candidates, in: snapshot.accounts, memory: memory, classes: &classes)
             keptChanges = CredentialImportReport.keptChanges(
                 candidates: preview.candidates, accounts: snapshot.accounts, classes: classes, revisions: revisions, removed: removed
             )
         case .csv, .legacy:
             do {
-                let staged = try source.stagedRows(against: snapshot)
+                let staged = try source.stagedRows(against: snapshot, memory: memory)
                 preview = staged.preview
                 classes = staged.classes
                 needsChoice = staged.needsChoice
                 csvLines = staged.lines
                 csvReport = staged.report
+                traces = staged.traces
+                mergedInto = staged.mergedInto
             } catch let error as CredentialCSVError {
                 // The old list has no file to be unreadable; what it can fail on is the vault's room (`tooManyAccounts`).
                 guard source.origin != .legacyPasswords else { throw end(.applyFailed(operation: String(localized: "Import"), .legacyPasswords)) }
@@ -298,7 +308,7 @@ final class CredentialExchangeCoordinator {
         }
         let context = ReviewContext(
             classes: classes, profileName: names.profile, vaultName: names.vault, csvReport: csvReport, origin: source.origin,
-            needsChoice: needsChoice, csvLines: csvLines, keptChanges: keptChanges
+            needsChoice: needsChoice, csvLines: csvLines, keptChanges: keptChanges, traces: traces, mergedInto: mergedInto
         )
         generation += 1
         let index = ReviewIndex(preview, context)

@@ -160,7 +160,10 @@ extension CredentialImportReview.Candidate {
     /// One sentence on why the item is where it is and what will happen to it. For a duplicate, the websites of the item that the
     /// merge leaves out are named, so what is added and what is not can be read before Import.
     var statusLine: String {
-        let line = baseStatusLine
+        var line = baseStatusLine
+        if let mergedInto, effect != .skipped {
+            line = String(localized: "Merged into “\(mergedInto)” before.") + " " + line
+        }
         guard let duplicate, !duplicate.notAdded.isEmpty, duplicate.isApplied(by: records) || !duplicate.isMergeable else { return line }
         return line + " " + String(localized: "Not added, as they are on other sites: \(notAddedHosts(of: duplicate)).")
     }
@@ -233,6 +236,9 @@ extension CredentialImportReview.Candidate {
                 return String(localized: "A passkey with the same ID but another key is already saved, so it isn’t imported.")
             }
             if records.contains(where: { if case .previouslyRemoved = $0.classification { true } else { false } }) {
+                if let mergedInto {
+                    return String(localized: "Merged into “\(mergedInto)” before, so it isn’t imported unless you choose to.")
+                }
                 return String(localized: "Removed from this vault before, so it isn’t imported unless you choose to.")
             }
             return String(localized: "Won’t be imported.")

@@ -92,12 +92,14 @@ extension CredentialExchangeCoordinator {
         return merges
     }
 
+    /// `traces` are what each CSV row brought (`CredentialCSVImport.RowTrace`); they are remembered in the credentials the import writes.
     static func plan(
         _ preview: CredentialImportPreview,
         choices: [CredentialIdentity: CredentialImportChoice],
         required: Set<CredentialIdentity>,
         duplicates: [UUID: CredentialImportReview.Duplicate] = [:],
-        inputsValidated: Bool = false
+        inputsValidated: Bool = false,
+        traces: [UUID: CredentialCSVImport.RowTrace] = [:]
     ) throws -> (touched: [CredentialAccount], outcome: CredentialImportOutcome) {
         guard let decisions = decisions(preview, choices, required: required) else {
             throw CredentialExchangeCoordinatorError.unresolvedConflicts
@@ -107,7 +109,8 @@ extension CredentialExchangeCoordinator {
             throw CredentialVaultError.invalidData
         }
         let merges = duplicateMerges(choices, duplicates)
-        let accounts = try CredentialExchangeCodec.apply(preview, decisions: decisions, duplicates: merges, inputsValidated: inputsValidated)
+        var accounts = try CredentialExchangeCodec.apply(preview, decisions: decisions, duplicates: merges, inputsValidated: inputsValidated)
+        remember(traces, in: &accounts, choices: choices)
         let duplicated = Set(merges.values.map(\.target))
         let before = Dictionary(preview.base.accounts.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         var touched: [CredentialAccount] = []
@@ -145,12 +148,51 @@ extension CredentialExchangeCoordinator {
         return (touched, CredentialImportOutcome(added: added, updated: updated))
     }
 
+    /// Each CSV row's trace in the credential its login went to: the saved one it replaced or kept (that credential's link to the entry
+    /// merged into it, for a row of that entry), else the new one it became, which keeps the row's id. A row merged into another
+    /// credential, or skipped with nothing saved for it, leaves none. A trace is not content (`withBases`): it is written only with a
+    /// credential the import writes anyway.
+    static func remember(
+        _ traces: [UUID: CredentialCSVImport.RowTrace], in accounts: inout [CredentialAccount],
+        choices: [CredentialIdentity: CredentialImportChoice]
+    ) {
+        guard !traces.isEmpty else { return }
+        let position = Dictionary(accounts.enumerated().map { ($1.id, $0) }, uniquingKeysWith: { first, _ in first })
+        for (candidate, row) in traces {
+            let target: UUID?
+            switch choices[.password(accountID: candidate)] {
+            case nil, .addSeparately?:
+                target = candidate
+            case .replace?, .skip?:
+                target = row.target
+            case .merge?:
+                target = nil
+            }
+            guard let target, let at = position[target] else { continue }
+            func updated(_ old: ImportTrace?) -> ImportTrace {
+                ImportTrace(logins: old?.adding(row.trace.logins) ?? row.trace.logins, password: row.trace.password, note: row.trace.note)
+            }
+            var account = accounts[at]
+            if let link = row.link {
+                if var links = account.mergedFrom, let index = links.firstIndex(where: { $0.accountID == link }) {
+                    let old = links[index].trace
+                    links[index].trace = updated(old)
+                    account.mergedFrom = links
+                }
+            } else {
+                let old = account.importTrace
+                account.importTrace = updated(old)
+            }
+            accounts[at] = account
+        }
+    }
+
     /// The plan the codec makes of the session's choices, with what became of every incoming credential. The one place a staged
     /// import is turned into writes, for the success message and for the commit alike.
     static func planned(_ session: Session) throws -> (touched: [CredentialAccount], outcome: CredentialImportOutcome) {
         var planned = try plan(
             session.preview, choices: session.choices, required: session.index.mustDecide, duplicates: session.index.duplicates,
-            inputsValidated: session.inputsValidated
+            inputsValidated: session.inputsValidated, traces: session.context.traces
         )
         let changed = Set(planned.touched.map(\.id))
         planned.outcome.results = session.review.candidates.flatMap(\.records).map { record in
