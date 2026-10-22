@@ -216,7 +216,7 @@ struct AskRestingLine: View {
                     .font(.system(size: placement.textSize))
                     .foregroundStyle(.tertiary)
 
-            case .address(let host):
+            case .address(let host, let scheme, let rest):
                 if let symbol = security.symbol {
                     Image(systemName: symbol)
                         .font(.system(size: 9.5, weight: .medium))
@@ -231,18 +231,63 @@ struct AskRestingLine: View {
                         .background(.quaternary, in: .rect(cornerRadius: 3))
                         .fixedSize()
                 }
-                Text(verbatim: host)
-                    .font(.system(size: placement.textSize))
-                    .foregroundStyle(
-                        placement == .toolbar
-                            ? Theme.urlOverride.map { AnyShapeStyle($0) }
-                                ?? (security == .insecure ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
-                            : (security == .insecure ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
+                if scheme.isEmpty {
+                    Text(verbatim: host)
+                        .font(.system(size: placement.textSize))
+                        .foregroundStyle(hostStyle)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                } else {
+                    FullAddressLine(
+                        address: AddressText(scheme: scheme, host: host, rest: rest),
+                        fontSize: placement.textSize,
+                        hostStyle: urlInk.map { AnyShapeStyle($0) } ?? AnyShapeStyle(.primary),
+                        detailStyle: urlInk.map { AnyShapeStyle($0.opacity(0.6)) } ?? AnyShapeStyle(.tertiary)
                     )
-                    .lineLimit(1)
-                    .truncationMode(.tail)
+                }
             }
         }
+    }
+}
+
+extension AskRestingLine {
+    /// The theme's own address ink, which only the toolbar wears.
+    private var urlInk: Color? {
+        placement == .toolbar ? Theme.urlOverride : nil
+    }
+
+    private var hostStyle: AnyShapeStyle {
+        urlInk.map { AnyShapeStyle($0) } ?? (security == .insecure ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
+    }
+}
+
+/// The whole address on one line with the website name drawn strongest. When the line is short, the path and query give
+/// way first, so the host is never cut while there is room for it.
+struct FullAddressLine: View {
+    let address: AddressText
+    let fontSize: CGFloat
+    var hostStyle = AnyShapeStyle(.primary)
+    var detailStyle = AnyShapeStyle(.tertiary)
+    /// Tests read the host's laid-out width here.
+    var onHostWidth: ((CGFloat) -> Void)?
+
+    var body: some View {
+        HStack(spacing: 0) {
+            Group {
+                Text(verbatim: address.scheme)
+                    .foregroundStyle(detailStyle)
+                Text(verbatim: address.host)
+                    .foregroundStyle(hostStyle)
+                    .fontWeight(.medium)
+                    .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { onHostWidth?($0) }
+            }
+            .layoutPriority(1)
+            Text(verbatim: address.rest)
+                .foregroundStyle(detailStyle)
+                .truncationMode(.tail)
+        }
+        .font(.system(size: fontSize))
+        .lineLimit(1)
     }
 }
 

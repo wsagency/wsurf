@@ -405,11 +405,16 @@ extension AppCoordinator {
             return false
         }
         if onboarding.isPresented {
+            onboarding.applyChoices(to: settings)
             onboarding.finish()
             return true
         }
         if isProfileSwitcherOpen {
             isProfileSwitcherOpen = false
+            return true
+        }
+        if isMinimalTabListOpen {
+            isMinimalTabListOpen = false
             return true
         }
         if closePeek() {

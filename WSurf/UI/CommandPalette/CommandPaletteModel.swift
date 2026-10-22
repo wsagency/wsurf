@@ -711,13 +711,14 @@ final class CommandPaletteModel {
             canSwapPanes: browser.activeTabID.flatMap { split?.sibling(of: $0) } != nil,
             isStacked: split?.axis == .stacked,
             hasSplitAxis: split?.axis != nil,
-            isSidebarVisible: coordinator.sidebar.isVisible,
+            isSidebarVisible: coordinator.isMinimal ? coordinator.isMinimalTabListOpen : coordinator.sidebar.isVisible,
             isActivityVisible: coordinator.sidePanel.isShowing(.activity),
             isLyricsVisible: coordinator.sidePanel.isShowing(.lyrics),
             canShowLyrics: BrowserSettings.application.showsLyrics,
             isFullScreen: window?.styleMask.contains(.fullScreen) ?? false,
             canCheckForUpdates: coordinator.updates.canCheck,
-            hasExternalConnections: coordinator.hasExternalConnections
+            hasExternalConnections: coordinator.hasExternalConnections,
+            isMinimal: coordinator.isMinimal
         )
     }
 
@@ -863,7 +864,7 @@ final class CommandPaletteModel {
             coordinator.exitSplit()
         case .closeOtherPanes:
             coordinator.closeOtherPanes()
-        case .toggleSidebar, .toggleActivity, .toggleLyrics, .toggleFullScreen, .closeWindow, .minimizeWindow,
+        case .toggleSidebar, .toggleWindowStyle, .toggleActivity, .toggleLyrics, .toggleFullScreen, .closeWindow, .minimizeWindow,
             .toggleSpeech, .toggleListening, .stopExternalConnections, .showHistory, .showDownloads, .clearHistory,
             .settings, .extensions, .checkForUpdates, .releaseNotes, .aboutWSurf, .quitWSurf:
             performApplicationAction(action)
@@ -875,6 +876,8 @@ final class CommandPaletteModel {
         switch action {
         case .toggleSidebar:
             coordinator.toggleSidebar()
+        case .toggleWindowStyle:
+            coordinator.toggleWindowStyle()
         case .toggleActivity:
             coordinator.toggleAgentInspector()
         case .toggleLyrics:

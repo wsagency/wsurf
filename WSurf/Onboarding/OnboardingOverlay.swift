@@ -62,9 +62,15 @@ enum OnboardingUI {
     }
 
     static func finish(model: OnboardingModel, coordinator: AppCoordinator) {
+        let style = coordinator.settings.windowStyle
+        model.applyChoices(to: coordinator.settings)
         model.finish()
-        if !coordinator.isShowingSettings {
+        guard !coordinator.isShowingSettings else { return }
+        if coordinator.settings.windowStyle == style {
             coordinator.focusAddressBar()
+        } else {
+            // The other style's address field is created by this change; focus it once it is on screen.
+            Task { @MainActor in coordinator.focusAddressBar() }
         }
     }
 
@@ -140,6 +146,8 @@ extension OnboardingUI {
                 WelcomeScreen(coordinator: coordinator, model: model, clock: clock)
             case .model:
                 ModelScreen(coordinator: coordinator, model: model, clock: clock)
+            case .layout:
+                LayoutScreen(coordinator: coordinator, model: model, clock: clock)
             case .extensions:
                 ExtensionsScreen(coordinator: coordinator, model: model, clock: clock)
             case .bookmarks:

@@ -29,6 +29,7 @@ struct AppearanceSettings: View {
         AppearanceThemeSection(settings: settings, scheme: shownScheme)
         AppearanceColorsSection(settings: settings, scheme: shownScheme)
         AppearanceLayoutSection(settings: settings)
+        AppearanceWindowSection(settings: settings)
         AppearanceDockIconSection(settings: settings)
         AppearanceSidebarSection(settings: settings, sidebar: coordinator.sidebar)
         AppearanceZoomSection(settings: settings)

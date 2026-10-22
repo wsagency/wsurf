@@ -1272,6 +1272,9 @@
     "A new profile starts with no history, tabs, or sign-ins." : {
       "comment" : "Caption on the new-profile page, saying what the profile will contain."
     },
+    "A sidebar for tabs and a toolbar above the page." : {
+      "comment" : "Description of the Standard window style, shown as a tooltip on its miniature in Settings and under it in setup."
+    },
     "A website may open pop-ups by itself." : {
       "comment" : "Caption for the Allow pop-up choice. One sentence."
     },
@@ -1748,6 +1751,9 @@
     "balanced · default" : {
       "comment" : "Short note beside one suggested model in the model pop-up menu, marking it as the balanced choice and the one used unless another is picked. The middle dot separates the two words and should be kept. Lowercase, and the space is very tight."
     },
+    "Bar position" : {
+      "comment" : "Title of a setting in Settings › Appearance › Window: whether the Minimal window’s floating bar sits at the top or the bottom."
+    },
     "Base URL" : {
       "comment" : "Title of the field on the custom endpoint page where the model server's address is typed. Technical term — the address a client sends requests to."
     },
@@ -1789,6 +1795,9 @@
     },
     "Bookmarks" : {
       "comment" : "Title of the row that imports bookmarks, in the Import section of the General settings page and on the last onboarding screen. A noun."
+    },
+    "Bottom" : {
+      "comment" : "Segment of Bar position in Settings › Appearance › Window: the Minimal window’s floating bar sits at the bottom of the window."
     },
     "Bottom Left" : {
       "comment" : "Item in the View menu’s Move Player to Corner submenu and in the media player’s context menu; it moves the player to the bottom left of the window, where it sits docked at the foot of the sidebar. Title Case."
@@ -1939,6 +1948,9 @@
     },
     "Choose a Different Match" : {
       "comment" : "Tooltip on the ⋯ button at the top of the lyrics view. Its menu lists the other entries the lyrics library holds for this song, so the user can pick a better one. Title Case."
+    },
+    "Choose a layout" : {
+      "comment" : "Title of the setup screen that chooses the window style, Standard or Minimal."
     },
     "Choose a location every time." : {
       "comment" : "Caption for the “Ask where to save each file” row in Settings search results. “Location” means a folder on disk."
@@ -2980,6 +2992,12 @@
     "Hide Sidebar" : {
       "comment" : "View menu item that hides the tab sidebar; the same item reads “Show Sidebar” while it is hidden. Title Case."
     },
+    "Hide Tabs" : {
+      "comment" : "The same command once the Minimal window’s list of tabs is open; it closes the list. Title Case."
+    },
+    "Hide the bar while scrolling" : {
+      "comment" : "Title of a switch in Settings › Appearance › Window: the Minimal window’s floating bar slides away while the page scrolls down."
+    },
     "Hide Video" : {
       "comment" : "Tooltip on the eye button in the media dock; it hides the picture while playback and the controls carry on. Title Case, narrow dock."
     },
@@ -3297,6 +3315,9 @@
     "Latest action: %@" : {
       "comment" : "Most recent tool used by an external MCP connection. The inserted action name is already localized."
     },
+    "Layout" : {
+      "comment" : "Title of the Layout card in Settings › Appearance (a theme’s edges, corners and spacing), and VoiceOver name of the two window style choices on the setup screen. A noun."
+    },
     "Leave blank to keep the saved token" : {
 
     },
@@ -3537,6 +3558,9 @@
     "Minimal" : {
 
     },
+    "Minimal hides the sidebar and the toolbar. Its bar carries the address and the page controls." : {
+      "comment" : "Caption under the two window style miniatures in Settings › Appearance › Window."
+    },
     "Minimal reasoning before responding." : {
 
     },
@@ -3622,6 +3646,12 @@
     },
     "Move a visible pointer over the page." : {
 
+    },
+    "Move Bar to Bottom" : {
+      "comment" : "The same View menu command when the floating bar is at the top; it moves the bar to the bottom. Title Case."
+    },
+    "Move Bar to Top" : {
+      "comment" : "View menu command, available in the Minimal window style, that moves the floating bar to the top of the window. Title Case."
     },
     "Move between the tabs in the conversation." : {
       "comment" : "Caption for the Switch Tabs tool in assistant settings."
@@ -4939,6 +4969,9 @@
     "Scroll page" : {
 
     },
+    "Scroll up or point at the edge to bring it back." : {
+      "comment" : "Caption of the Hide the bar while scrolling switch: how the hidden Minimal bar comes back."
+    },
     "search" : {
       "comment" : "Hint word printed beside a ↩ key cap under the address field, reading “↩ search”, shown when what is typed is not an address: pressing Return searches the web for it. One lowercase verb, tiny type."
     },
@@ -5146,6 +5179,9 @@
     "Show Extension" : {
       "comment" : "Command in the right-click menu of an extension’s toolbar button, which puts the button back on the toolbar. The same item reads Hide Extension when it is already there, so the two should stay parallel. Title Case, Show is a verb."
     },
+    "Show full website address" : {
+      "comment" : "Title of a switch in the Browsing section of the General settings page. When on, the address bar shows the whole page address instead of only the website name."
+    },
     "Show in Finder" : {
       "comment" : "Tooltip on the small folder button beside a finished download, which reveals the file in the Finder. Finder is Apple’s app name — use Apple’s own name for it, and match Apple’s standard wording for this command."
     },
@@ -5199,6 +5235,12 @@
     },
     "Show Tab %lld" : {
       "comment" : "Hidden menu commands under Window bound to ⌘1 through ⌘8. %lld is the tab’s position in the row, a number from 1 to 8. Title Case and established platform terminology."
+    },
+    "Show Tabs" : {
+      "comment" : "In the Minimal window style: the View menu item, command palette command and tooltip of the bar’s tab button that slide in the list of tabs. Title Case."
+    },
+    "Show the whole address of the page in the address bar, not just the website name." : {
+      "comment" : "Caption under the Show full website address switch on the General settings page."
     },
     "Show Video" : {
       "comment" : "Tooltip on the same eye button once the picture is hidden; it brings the picture back. Title Case, narrow dock."
@@ -5394,6 +5436,9 @@
     },
     "Standard" : {
       "comment" : "Name of the conventional non-Liquid Glass window style in Appearance settings. It follows the selected light or dark theme and can optionally use Website tint."
+    },
+    "Standard has a sidebar and a toolbar. Minimal gives the page the window, with a floating bar." : {
+      "comment" : "Search result description in Settings for the window style choice."
     },
     "Start Browsing" : {
       "comment" : "Primary button on the last onboarding screen; it closes onboarding and hands the reader the browser. Title Case."
@@ -5679,6 +5724,9 @@
     "The list shows the known tracker domains this page refers to. A request that is stopped before it loads can be missing." : {
 
     },
+    "The Minimal window’s bar slides away while the page scrolls down." : {
+      "comment" : "Search result description in Settings for the Hide the bar while scrolling switch."
+    },
     "The model couldn’t group the tabs. Try again." : {
       "comment" : "Message shown when the Organize Tabs command asked the language model to sort the open tabs into folders and the reply could not be used. The model is the AI; try again is addressed to the person. Curly apostrophe."
     },
@@ -5702,6 +5750,9 @@
     },
     "The page couldn’t be saved." : {
       "comment" : "Message of the warning shown when the web archive file could not be written. The reason supplied by macOS follows below it. Curly apostrophe."
+    },
+    "The page fills the window, with a floating bar." : {
+      "comment" : "Description of the Minimal window style, shown as a tooltip on its miniature in Settings and under it in setup."
     },
     "The page moved to another website. Use Read Page before the assistant reads or controls it." : {
       "comment" : "Message shown in the agent activity panel when the page navigated away before the assistant could act. Read Page is the name of one of the assistant’s tools — keep its capitalisation."
@@ -5919,8 +5970,14 @@
     "Tool result hidden." : {
 
     },
+    "Toolbar" : {
+      "comment" : "VoiceOver name of the Minimal window’s floating bar, which holds the address and the page controls. A noun."
+    },
     "Tools" : {
       "comment" : "Title of the Tools settings page, and its row on the Assistant page."
+    },
+    "Top" : {
+      "comment" : "Segment of Bar position in Settings › Appearance › Window: the Minimal window’s floating bar sits at the top of the window."
     },
     "Top Left" : {
       "comment" : "Item in the View menu’s Move Player to Corner submenu and in the media player’s context menu; it moves the player to the top left of the page, beside the sidebar. Title Case."
@@ -6126,8 +6183,14 @@
     "Use keyboard controls on a page." : {
 
     },
+    "Use Minimal Window Style" : {
+      "comment" : "Command in the View menu and the command palette (⇧⌘M) that switches every window to the Minimal style. Title Case."
+    },
     "Use recommended" : {
 
+    },
+    "Use Standard Window Style" : {
+      "comment" : "The same View menu and command palette command once the Minimal style is on; it switches back to Standard. Title Case."
     },
     "Use the current website’s color in the toolbar and sidebar." : {
 
@@ -6320,6 +6383,12 @@
     },
     "Whether WSurf is your default browser." : {
       "comment" : "Description of the Open links from other apps row, shown only in the Settings search results. WSurf is the application name and is never translated. Sentence case with a final full stop."
+    },
+    "Where the Minimal window’s bar floats." : {
+      "comment" : "Caption of the Bar position setting in Settings › Appearance › Window."
+    },
+    "Where the Minimal window’s bar floats: at the bottom or the top." : {
+      "comment" : "Search result description in Settings for the Bar position setting."
     },
     "Whether video and sound may start on their own." : {
       "comment" : "Caption describing the Autoplay setting in the Settings search results. A sentence fragment naming what the setting decides."

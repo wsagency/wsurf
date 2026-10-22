@@ -170,6 +170,10 @@ final class AppCoordinator {
     private(set) var isPaletteOpen = false
     private(set) var isNewTabPaletteOpen = false
     var isProfileSwitcherOpen = false
+    /// The Minimal window's tab list. It never touches the Standard sidebar's `isVisible` or `isPeeking`.
+    var isMinimalTabListOpen = false {
+        didSet { if isMinimalTabListOpen != oldValue { applyHoverShield() } }
+    }
     var profileButtonFrame: CGRect?
     private(set) var paletteToken = 0
     var sidebarDestination: SidebarDestination? {
@@ -307,13 +311,14 @@ final class AppCoordinator {
             view.setHoverParked(
                 SidebarPeekShield.suppressesHover(
                     isVisible: sidebar.isVisible,
-                    isPeeking: sidebar.isPeeking,
+                    isPeeking: sidebar.isPeeking && !isMinimal,
                     viewMaxX: viewMaxX,
                     width: width,
                     isMediaPicture: view === media.model.picturePage?.webKit,
                     isPointerOverPlayer: media.isPointerOverPlayer
                 )
                     || shell.panelCoversPage
+                    || (isMinimal && isMinimalTabListOpen)
             )
         }
     }
@@ -731,13 +736,6 @@ final class AppCoordinator {
             showBrowser()
         }
         sidePanel.toggle(.activity)
-    }
-
-    func toggleSidebar() {
-        if !browserVisible {
-            showBrowser()
-        }
-        sidebar.toggleVisible()
     }
 
     func useProvider(_ provider: Provider) {

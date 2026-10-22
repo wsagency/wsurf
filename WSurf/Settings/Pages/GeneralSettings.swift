@@ -108,6 +108,16 @@ struct GeneralSettings: View {
                 SettingsToggle($settings.showsLinkPreview)
             }
             .settingsAnchor("general.linkPreview")
+
+            RowSeparator()
+
+            DetailRow(
+                title: "Show full website address",
+                caption: "Show the whole address of the page in the address bar, not just the website name."
+            ) {
+                SettingsToggle($settings.showsFullAddress)
+            }
+            .settingsAnchor("general.fullAddress")
         }
 
         CommandPaletteSettings(settings: settings)

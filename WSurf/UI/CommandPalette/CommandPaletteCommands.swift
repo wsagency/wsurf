@@ -31,6 +31,7 @@ struct CommandPaletteContext {
     var isFullScreen = false
     var canCheckForUpdates = false
     var hasExternalConnections = false
+    var isMinimal = false
 }
 
 enum CommandPaletteAction: String, CaseIterable {
@@ -87,6 +88,7 @@ enum CommandPaletteAction: String, CaseIterable {
     case closeOtherPanes
 
     case toggleSidebar
+    case toggleWindowStyle
     case toggleActivity
     case toggleLyrics
     case toggleFullScreen
@@ -597,7 +599,12 @@ enum CommandPaletteCatalog {
         }
 
         var view: [CommandPaletteCommand] {
-            let sidebarTitle: LocalizedStringResource = context.isSidebarVisible ? "Hide Sidebar" : "Show Sidebar"
+            let sidebarTitle: LocalizedStringResource = context.isMinimal
+                ? (context.isSidebarVisible ? "Hide Tabs" : "Show Tabs")
+                : (context.isSidebarVisible ? "Hide Sidebar" : "Show Sidebar")
+            let windowStyleTitle: LocalizedStringResource = context.isMinimal
+                ? "Use Standard Window Style"
+                : "Use Minimal Window Style"
             let activityTitle: LocalizedStringResource = context.isActivityVisible
                 ? "Hide Assistant"
                 : "Show Assistant"
@@ -613,6 +620,14 @@ enum CommandPaletteCatalog {
                     symbol: "sidebar.left",
                     shortcut: "⌃⌘S",
                     aliases: ["tabs list", "panel"]
+                ),
+                make(
+                    .toggleWindowStyle,
+                    group: .view,
+                    title: windowStyleTitle,
+                    symbol: "macwindow",
+                    shortcut: "⇧⌘M",
+                    aliases: ["minimal", "standard", "layout", "island", "floating bar", "full screen page"]
                 ),
                 make(
                     .toggleActivity,

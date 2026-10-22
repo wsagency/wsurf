@@ -15,6 +15,8 @@ struct Sidebar: View {
 
     @Environment(\.windowControlsInset) private var windowControlsInset
     @Environment(\.sidebarStyle) private var sidebarStyle
+    /// A peeking sidebar, or the Minimal window's tab list: it draws its own ground over the page.
+    @Environment(\.sidebarIsFloating) private var isFloating
     @Environment(\.colorScheme) private var scheme
     @State private var bottomObscuredHeight: CGFloat = 0
     @State private var newFolderDrop = SidebarNewFolderDrop()
@@ -44,7 +46,7 @@ struct Sidebar: View {
         LoomChrome.sampledColor(
             ChromeBand.measuredColor(browser: browser, coordinator: coordinator),
             scheme: scheme,
-            isFloating: sidebar.isFloating
+            isFloating: isFloating
         )
     }
 
@@ -74,7 +76,7 @@ struct Sidebar: View {
         let shape = BrowserSettings.application.chromeShape
         return SidebarMetrics.contentInsets(
             style: sidebarStyle,
-            isFloating: sidebar.isFloating,
+            isFloating: isFloating,
             margin: shape.sidebarMargin,
             pageSpacing: shape.pageSpacing
         )
@@ -107,7 +109,7 @@ struct Sidebar: View {
         .padding(.top, topPadding)
         .background {
             ZStack {
-                if sidebar.isFloating {
+                if isFloating {
                     LoomFloatingFill(
                         sampledPageColor: ChromeBand.pageColor(
                             browser: browser,
@@ -257,6 +259,7 @@ struct SidebarTopRow: View {
     let newFolderDrop: SidebarNewFolderDrop
 
     @Environment(\.sidebarStyle) private var sidebarStyle
+    @Environment(\.sidebarIsFloating) private var isFloating
 
     private var sidebar: SidebarLayout {
         coordinator.sidebar
@@ -286,7 +289,7 @@ struct SidebarTopRow: View {
             }
         }
         .padding(.bottom, 2)
-        .opacity(SidebarMetrics.topControlsOpacity(isShowing: sidebar.isShowing))
+        .opacity(SidebarMetrics.topControlsOpacity(isShowing: sidebar.isShowing || isFloating))
     }
 }
 

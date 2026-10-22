@@ -388,6 +388,64 @@ nonisolated final class BrowserPerformanceTests: XCTestCase, @unchecked Sendable
         }
     }
 
+    /// Ten switches between the Standard and Minimal window styles in a 300-tab window, each laid out and drawn. The
+    /// style is an input of the view, so nothing is written to the test host's defaults. No budget until a native baseline.
+    func testSwitchingWindowStyles() {
+        MainActor.assumeIsolated {
+            let coordinator = AppCoordinator(browser: BrowserModel(database: .temporary()))
+            let browser = coordinator.browser
+            for index in 0..<300 {
+                browser.newTab(activate: false).urlString = "https://fixture-\(index).example/"
+            }
+            let count = browser.tabs.count
+            let host = NSHostingView(rootView: AnyView(BrowserView(browser: browser, coordinator: coordinator, style: .standard)))
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1_280, height: 800), styleMask: [.borderless], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false
+            window.contentView = host
+            host.layoutSubtreeIfNeeded()
+
+            measure(metrics: [XCTClockMetric(), XCTMemoryMetric()]) {
+                for _ in 0..<5 {
+                    for style in [BrowserWindowStyle.minimal, .standard] {
+                        host.rootView = AnyView(BrowserView(browser: browser, coordinator: coordinator, style: style))
+                        host.layoutSubtreeIfNeeded()
+                        host.displayIfNeeded()
+                    }
+                }
+                XCTAssertEqual(browser.tabs.count, count)
+            }
+            window.contentView = nil
+            window.close()
+            browser.cancelPendingSave()
+        }
+    }
+
+    /// The Minimal bar with its tab list open over a 300-tab window. Each run builds and frees its own window.
+    func testLayingOutTheMinimalShell() {
+        MainActor.assumeIsolated {
+            let coordinator = AppCoordinator(browser: BrowserModel(database: .temporary()))
+            let browser = coordinator.browser
+            for index in 0..<300 {
+                browser.newTab(activate: false).urlString = "https://fixture-\(index).example/"
+            }
+
+            measure(metrics: [XCTClockMetric(), XCTMemoryMetric()]) {
+                autoreleasepool {
+                    coordinator.isMinimalTabListOpen = true
+                    let host = NSHostingView(rootView: MinimalShell(browser: browser, coordinator: coordinator))
+                    let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1_280, height: 800), styleMask: [.borderless], backing: .buffered, defer: false)
+                    window.isReleasedWhenClosed = false
+                    window.contentView = host
+                    host.layoutSubtreeIfNeeded()
+                    host.displayIfNeeded()
+                    window.contentView = nil
+                    window.close()
+                }
+            }
+            browser.cancelPendingSave()
+        }
+    }
+
     /// The test host's physical footprint, the figure XCTMemoryMetric samples.
     private static func physicalFootprint() -> UInt64 {
         var usage = rusage_info_current()

@@ -10,6 +10,10 @@ struct ContentArea: View {
     let coordinator: AppCoordinator
     let settingsWorkspace: SettingsWorkspace
     let canvasTrailingInset: CGFloat
+    /// The Minimal window has no toolbar: the page starts at the theme's page spacing.
+    var isFullHeight = false
+    /// How far below the page's top edge the find bar sits; lower under a Minimal bar at the top.
+    var findBarTop: CGFloat = 10
 
     @State private var pull = PullToRefreshMonitor()
     @State private var pullState = PullState.idle
@@ -28,7 +32,8 @@ struct ContentArea: View {
     var body: some View {
         LoomPageCanvas(
             trailingInset: canvasTrailingInset,
-            showsPanelFill: showsPagePanelFill
+            showsPanelFill: showsPagePanelFill,
+            topInset: isFullHeight ? BrowserSettings.application.chromeShape.pageSpacing : LoomChrome.canvasTop
         ) {
             page
         }
@@ -125,7 +130,7 @@ struct ContentArea: View {
                     FindBar(session: tab.find)
                 }
                 .id(tab.id)
-                .padding(.top, 10)
+                .padding(.top, findBarTop)
                 .padding(.trailing, 14)
                 .zIndex(5)
                 .transition(.move(edge: .top).combined(with: .opacity))

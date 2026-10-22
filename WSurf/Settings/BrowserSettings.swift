@@ -87,6 +87,12 @@ final class BrowserSettings {
     @ObservationIgnored lazy var storedReaderSpeechRate: Float? =
         (appDefaults.object(forKey: Key.readerSpeechRate) as? NSNumber).map { ReaderSpeech.clampedRate($0.floatValue) }
         ?? ReaderSpeech.defaultRate
+    @ObservationIgnored lazy var storedShowsFullAddress: Bool? = appDefaults.object(forKey: Key.fullAddress) as? Bool ?? false
+    @ObservationIgnored lazy var storedWindowStyle: BrowserWindowStyle? =
+        appDefaults.string(forKey: Key.windowStyle).flatMap(BrowserWindowStyle.init(rawValue:)) ?? .standard
+    @ObservationIgnored lazy var storedMinimalBarEdge: MinimalBarEdge? =
+        appDefaults.string(forKey: Key.minimalBarEdge).flatMap(MinimalBarEdge.init(rawValue:)) ?? .bottom
+    @ObservationIgnored lazy var storedHidesMinimalBar: Bool? = appDefaults.object(forKey: Key.minimalBarAutoHide) as? Bool ?? false
 
     @ObservationIgnored var onWebPreferencesChanged: (() -> Void)?
     @ObservationIgnored var onContentBlockingChanged: (() -> Void)?
@@ -637,6 +643,7 @@ final class BrowserSettings {
         alwaysTranslatedLanguages = []
         resetReaderAppearance()
         readerSpeechRate = ReaderSpeech.defaultRate
+        resetWindowStyle()
         onWebPreferencesChanged?()
     }
 }
