@@ -679,21 +679,22 @@ struct CredentialRow: View {
         case .edit:
             Divider()
             Button("Edit…", action: open).disabled(model.isBusy)
-        case .merge(let ids):
+        // The targets are read on click, so the menu costs the same however many credentials are selected.
+        case .merge(let ofSelection):
             Group {
-                if ids.count > 1 {
-                    Button("Merge \(ids.count) Credentials…") { merge(ids) }
+                if ofSelection {
+                    Button("Merge Selected Credentials…") { merge(selection.menuTargets(for: summary.id)) }
                 } else {
-                    Button("Merge…") { merge(ids) }
+                    Button("Merge…") { merge([summary.id]) }
                 }
             }
             .disabled(model.isBusy)
-        case .moveToTrash(let ids):
+        case .moveToTrash(let ofSelection):
             Group {
-                if ids.count > 1 {
-                    Button("Move \(ids.count) Credentials to Trash", role: .destructive) { trash(ids) }
+                if ofSelection {
+                    Button("Move Selected Credentials to Trash", role: .destructive) { trash(selection.menuTargets(for: summary.id)) }
                 } else {
-                    Button("Move to Trash", role: .destructive) { trash(ids) }
+                    Button("Move to Trash", role: .destructive) { trash([summary.id]) }
                 }
             }
             .disabled(model.isBusy)

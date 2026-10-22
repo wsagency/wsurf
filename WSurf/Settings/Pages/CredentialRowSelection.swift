@@ -5,8 +5,8 @@ import AppKit
 import SwiftUI
 
 /// How a row of the credential list or of the Trash shows and takes the selection: a wash when it is selected, a ring on the keyboard
-/// cursor, a leading checkbox while selecting, and its clicks. The row reads `selection.selected` and `selection.cursor` itself, so a
-/// change redraws only the rows that are built.
+/// cursor, a leading checkbox while selecting, and its clicks. The row reads only its own `CredentialRowState` and the checkbox flag,
+/// so a cursor move or a toggle redraws only the rows it changes, not every row that is built.
 struct CredentialRowSelection: ViewModifier {
     let selection: CredentialSelection
     let id: UUID
@@ -18,8 +18,12 @@ struct CredentialRowSelection: ViewModifier {
     let remove: () -> Void
     let removeName: LocalizedStringKey
 
+    private var state: CredentialRowState {
+        selection.state(of: id)
+    }
+
     private var isSelected: Bool {
-        selection.selected.contains(id)
+        state.isSelected
     }
 
     private var selectName: LocalizedStringKey {
@@ -71,7 +75,7 @@ struct CredentialRowSelection: ViewModifier {
 
     @ViewBuilder
     private var ring: some View {
-        if selection.cursor == id {
+        if state.isCursor {
             RoundedRectangle(cornerRadius: 6, style: .continuous)
                 .strokeBorder(Color.accentColor.opacity(selection.ownsKeyboard ? 0.9 : 0.35), lineWidth: 1.5)
                 .allowsHitTesting(false)

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import AppKit
+import Observation
 import SwiftUI
 import XCTest
 
@@ -88,6 +89,10 @@ nonisolated final class CredentialListPerformanceTests: XCTestCase, @unchecked S
         window.isReleasedWhenClosed = false
         window.contentView = host
         return (host, window)
+    }
+
+    private nonisolated final class Touched: @unchecked Sendable {
+        var value = false
     }
 
     @MainActor
@@ -204,6 +209,14 @@ nonisolated final class CredentialListPerformanceTests: XCTestCase, @unchecked S
             selection.takeKeyboard()
             selection.selectAll()
             Self.settle(host)
+            // A row the cursor never reaches (it moves over rows 1 to 20): no cursor move may invalidate what its body reads.
+            let bystander = selection.state(of: selection.order[40])
+            let touched = Touched()
+            withObservationTracking {
+                _ = (bystander.isSelected, bystander.isCursor, selection.showsCheckboxes, selection.hasSeveralSelected)
+            } onChange: {
+                touched.value = true
+            }
             for _ in 0..<20 {
                 selection.moveCursor(by: 1, extending: false)
                 Self.settle(host)
@@ -213,6 +226,7 @@ nonisolated final class CredentialListPerformanceTests: XCTestCase, @unchecked S
             print("[credential-list] select all and 20 cursor moves, \(Self.count) credentials: \(elapsed)")
             XCTAssertEqual(selection.selected.count, Self.count)
             XCTAssertEqual(selection.cursor, selection.order[20])
+            XCTAssertFalse(touched.value, "a cursor move redraws only the row it leaves and the row it reaches")
             XCTAssertLessThan(elapsed, .milliseconds(250))
         }
     }
