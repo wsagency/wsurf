@@ -489,6 +489,72 @@ struct VaultSyncDeviceTests {
         }
     }
 
+    /// What an import remembers about entries merged away or deleted travels to the other Mac inside sealed bytes only: not in a record,
+    /// not in a sync file at rest, not in the router’s file, and neither the digests nor the values they stand for.
+    @Test func theImportMemoryTravelsAndRestsOnlyInsideSealedBytes() async throws {
+        try await withPair { pair in
+            let coordinator = CredentialExchangeCoordinator()
+            let owner = UUID()
+            let file = CredentialCSV.encode([
+                ["Title", "URL", "Username", "Password", "Notes", "OTPAuth"],
+                ["Ada", "https://ada.test/login", "ada", "pw-ada-4711", "", ""],
+                ["Ada", "https://ada.test/login", "ada (1)", "pw-copy-4712", "", ""],
+                ["Grace", "https://grace.test/login", "grace", "pw-grace-4713", "note-grace-4714", ""],
+            ])
+            try await coordinator.beginCSVImport(file, into: pair.managerA, owner: owner) { _ in }
+            _ = try await coordinator.commitImport(into: pair.managerA, owner: owner)
+            let onA = try await pair.managerA.snapshot()
+            let ada = try #require(onA.accounts.first { $0.username == "ada" })
+            let copy = try #require(onA.accounts.first { $0.username == "ada (1)" })
+            let grace = try #require(onA.accounts.first { $0.username == "grace" })
+            let picks = try #require(CredentialMerge.defaultPicks(for: [ada, copy], survivor: ada.id))
+            let merged = try CredentialMerge.merged([ada, copy], picks: picks)
+            let epoch = try #require(pair.managerA.authorizationEpoch)
+            let mergedRevision = try await pair.managerA.commit(
+                onA.accounts.compactMap { $0.id == copy.id ? nil : ($0.id == ada.id ? merged : $0) }, expectedRevision: onA.revision,
+                authorizedEpoch: epoch, cause: "merge", changing: [ada.id, copy.id], merging: [copy.id: ada.id]
+            ).revision
+            _ = try await pair.managerA.delete(.account(grace.id), expectedRevision: mergedRevision, authorizedEpoch: epoch)
+            try await pair.enableA()
+            try await pair.addToB()
+            try await pair.unlockB()
+            try await pair.converge()
+
+            // The digests the vault holds for what was merged away and deleted, and the values they stand for.
+            let managerB = try #require(pair.managerB)
+            var traces = Array(try await pair.managerA.removedIdentifiers().traces.values)
+            let survivor = try #require(try await pair.accounts(managerB)[ada.id])
+            traces += (survivor.mergedFrom ?? []).compactMap(\.trace)
+            var digests: [Data] = []
+            for trace in traces {
+                digests += trace.logins
+                digests += [trace.password, trace.note].compactMap { $0 }
+            }
+            #expect(digests.count >= 4, "there is something to look for")
+            let words = ["pw-ada-4711", "pw-copy-4712", "pw-grace-4713", "note-grace-4714", "ada (1)", "grace"]
+            let values: [Data] = words.map { Data($0.utf8) }
+            let searched: [Data] = digests + values
+
+            let zone = SyncZone.vault(profileID: pair.profile.id, vaultID: pair.vaultID)
+            let records = try #require(pair.cloud.records(in: zone))
+            #expect(records.count >= 4)
+            for record in records {
+                #expect(SyncNeedles.firstFound(of: searched, in: record.payload) == nil, "\(record.type) record \(record.id.name)")
+            }
+            for sync in [pair.syncA, pair.syncB] {
+                let state = try JSONEncoder().encode(SyncRouterState(engineState: Data("engine".utf8), vaults: sync.state))
+                #expect(SyncNeedles.firstFound(of: searched, in: state) == nil, "the router’s file")
+            }
+            for directory in [pair.envA.directory, pair.profile.supportDirectory] {
+                let files = (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? []
+                for file in files where file.lastPathComponent.hasPrefix("Credentials.sync") {
+                    let bytes = try Data(contentsOf: file)
+                    #expect(SyncNeedles.firstFound(of: searched, in: bytes) == nil, Comment(rawValue: file.lastPathComponent))
+                }
+            }
+        }
+    }
+
     @Test func syncNeverPromptsOrExtendsTheLease() async throws {
         try await withPair { pair in
             let target = pair.account("one")
