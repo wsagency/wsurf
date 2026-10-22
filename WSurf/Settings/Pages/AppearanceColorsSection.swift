@@ -7,29 +7,99 @@ import SwiftUI
 struct AppearanceColorsSection: View {
     @Bindable var settings: BrowserSettings
     let scheme: ColorScheme
+    /// Owned by the page, so that Customize can open the card.
+    @Binding var isExpanded: Bool
     @Environment(\.settingsHighlight) private var highlight
-    @State private var isExpanded = false
     @State private var isEditing = false
+
+    private var isDark: Bool {
+        scheme == .dark
+    }
 
     private var introduction: LocalizedStringResource {
         ThemeCatalog.isBuiltIn(settings.selectedTheme.id)
-            ? "Built-in themes don’t change. Your first edit makes a copy you can rename."
+            ? "Built-in themes don’t change. Your first edit makes a copy named “\(settings.selectedTheme.name) Custom” that you can rename."
             : "Changes are saved to this theme as you make them."
+    }
+
+    private var appearanceNote: LocalizedStringResource {
+        isDark
+            ? "These colors are for the dark appearance, which is showing now."
+            : "These colors are for the light appearance, which is showing now."
+    }
+
+    /// Standard and Calm take their look from the page. Their copies draw their own base colors as a solid ground.
+    private var groundNote: LocalizedStringResource? {
+        let theme = settings.previewedTheme
+        guard theme.ground != .solid else { return nil }
+        let note: LocalizedStringResource = theme.drawnGround == .solid
+            ? "This theme draws its window, sidebar and surface colors as a solid ground, without the website tint."
+            : "Changing the window, sidebar or surface color draws this theme as a solid ground, without the website tint."
+        return note
+    }
+
+    private var paletteChangeNote: LocalizedStringResource? {
+        let variant = settings.previewedTheme.variant(scheme)
+        guard variant.hue != 0 || variant.primary != nil || settings.themeAdjustment.brightness(scheme) != 0 else { return nil }
+        let note: LocalizedStringResource =
+            "Hue, primary color and brightness are applied on top of these colors, so what you see can differ from what you pick."
+        return note
+    }
+
+    private func shortfall(_ role: ThemeContrast.Role) -> ThemeContrast.Shortfall? {
+        let theme = settings.previewedTheme
+        return ThemeContrast.shortfall(
+            role, in: theme.variant(scheme), isDark: isDark,
+            brightness: settings.themeAdjustment.brightness(scheme), ground: theme.drawnGround
+        )
+    }
+
+    private func caption(_ text: LocalizedStringResource) -> some View {
+        Text(text)
+            .font(Theme.Font.label)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
     }
 
     var body: some View {
         SettingsCard {
             DisclosureGroup("Colors", isExpanded: $isExpanded) {
-                Text(introduction)
-                    .font(Theme.Font.label)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                Text(scheme == .dark
-                    ? "These colors are for the dark appearance, which is showing now."
-                    : "These colors are for the light appearance, which is showing now.")
-                    .font(Theme.Font.label)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                caption(introduction)
+                caption(appearanceNote)
+                if let groundNote {
+                    caption(groundNote)
+                }
+                if let paletteChangeNote {
+                    caption(paletteChangeNote)
+                }
+                DetailRow(title: "Window background", caption: "Behind the tabs and the page, and under the side panel.") {
+                    paletteColor(\.window, label: "Window background", fallback: Color(nsColor: StandardPalette.window(isDark: isDark)))
+                }
+                RowSeparator()
+                DetailRow(
+                    title: "Sidebar",
+                    caption: "The floating sidebar and the Minimal bar. The docked sidebar uses the window color."
+                ) {
+                    paletteColor(\.sidebar, label: "Sidebar", fallback: Color(nsColor: StandardPalette.sidebar(isDark: isDark)))
+                }
+                RowSeparator()
+                DetailRow(title: "Surface", caption: "Toolbar controls, buttons and the highlight of the selected tab.") {
+                    paletteColor(\.surface, label: "Surface", fallback: Color(nsColor: StandardPalette.surface(isDark: isDark)))
+                }
+                RowSeparator()
+                DetailRow(
+                    title: "Primary text", caption: "Tab titles, icons and the address, unless one is colored below."
+                ) {
+                    warned(paletteColor(\.text, label: "Primary text", fallback: isDark ? .white : .black), .primary)
+                }
+                RowSeparator()
+                DetailRow(title: "Secondary text", caption: "The titles of tabs that are asleep (unloaded), dimmer than primary text.") {
+                    inkControls(
+                        \.unloadedText, label: "Secondary text", opacityLabel: "Secondary text opacity",
+                        drawn: { $0.unloadedInk }, role: .secondary
+                    )
+                }
+                RowSeparator()
                 DetailRow(title: "Accent color", caption: "Buttons, highlights, drop targets and the new-tab dot.") {
                     paletteColor(\.accent, label: "Accent color")
                 }
@@ -45,13 +115,6 @@ struct AppearanceColorsSection: View {
                     inkControls(
                         \.sidebarText, label: "Tab text", opacityLabel: "Tab text opacity",
                         drawn: { $0.loadedInk }
-                    )
-                }
-                RowSeparator()
-                DetailRow(title: "Unloaded tab text", caption: "The title of tabs that are asleep (unloaded).") {
-                    inkControls(
-                        \.unloadedText, label: "Unloaded tab text", opacityLabel: "Unloaded tab text opacity",
-                        drawn: { $0.unloadedInk }
                     )
                 }
                 RowSeparator()
@@ -114,12 +177,14 @@ struct AppearanceColorsSection: View {
         )
     }
 
+    /// A color well for a color the theme may leave unset: it shows `fallback` (the accent when there is none), the
+    /// color drawn without it, before the hue, primary color and brightness are laid over it.
     private func paletteColor(
-        _ keyPath: WritableKeyPath<ThemeVariant, UInt32?>, label: LocalizedStringResource
+        _ keyPath: WritableKeyPath<ThemeVariant, UInt32?>, label: LocalizedStringResource, fallback: Color? = nil
     ) -> some View {
         let binding = colorBinding(keyPath)
         return ColorPicker(String(localized: label), selection: Binding(
-            get: { binding.wrappedValue.map(Color.init(hex:)) ?? Theme.accent },
+            get: { binding.wrappedValue.map(Color.init(hex:)) ?? fallback ?? Theme.accent },
             set: { color in
                 guard let rgb = SidebarTextStyle.rgb(of: color) else { return }
                 binding.wrappedValue = rgb
@@ -129,15 +194,29 @@ struct AppearanceColorsSection: View {
         .accessibilityLabel(Text(label))
     }
 
+    /// `control` with a warning under it when `role`'s text is under 4.5:1 on a ground it is drawn on. The warning
+    /// only says so: the picked color is neither blocked nor changed.
+    private func warned(_ control: some View, _ role: ThemeContrast.Role) -> some View {
+        VStack(alignment: .trailing, spacing: 4) {
+            control
+            if let shortfall = shortfall(role) {
+                ContrastWarning(shortfall: shortfall)
+            }
+        }
+    }
+
     private func inkControls(
         _ keyPath: WritableKeyPath<ThemeVariant, SidebarTextStyle>,
         label: LocalizedStringResource, opacityLabel: LocalizedStringResource,
-        drawn: (ResolvedVariant) -> Color?
+        drawn: (ResolvedVariant) -> Color?, role: ThemeContrast.Role? = nil
     ) -> some View {
         let style = colorBinding(keyPath)
         let note = readabilityNote(style.wrappedValue, drawn: drawn(settings.resolvedTheme.variant(scheme)))
         return VStack(alignment: .trailing, spacing: 4) {
             inkRow(style: style, label: label, opacityLabel: opacityLabel)
+            if let role, let shortfall = shortfall(role) {
+                ContrastWarning(shortfall: shortfall)
+            }
             if let note {
                 note
                     .font(Theme.Font.label)
@@ -203,5 +282,36 @@ struct AppearanceColorsSection: View {
         } else {
             settings.commitThemePreview()
         }
+    }
+}
+
+/// The inline warning of a text color that reads under 4.5:1 on one of its grounds.
+private struct ContrastWarning: View {
+    let shortfall: ThemeContrast.Shortfall
+
+    private var message: LocalizedStringResource {
+        let ratio = shortfall.shownRatio.formatted(.number.precision(.fractionLength(1)))
+        switch shortfall.ground {
+        case .window:
+            return "Low contrast: \(ratio):1 on the window color. Aim for 4.5:1 or more."
+        case .sidebar:
+            return "Low contrast: \(ratio):1 on the sidebar color. Aim for 4.5:1 or more."
+        case .surface:
+            return "Low contrast: \(ratio):1 on the surface color. Aim for 4.5:1 or more."
+        }
+    }
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 4) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(Theme.warning)
+                .accessibilityHidden(true)
+            Text(message)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.trailing)
+        }
+        .font(Theme.Font.label)
+        .fixedSize(horizontal: false, vertical: true)
+        .accessibilityElement(children: .combine)
     }
 }

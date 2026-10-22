@@ -178,8 +178,9 @@ final class ResolvedTheme {
     private let urlInks: InkPair
 
     init(_ definition: ThemeDefinition, adjustment: ThemeAdjustment) {
-        let light = ResolvedVariant(definition.light, isDark: false, brightness: adjustment.lightBrightness, ground: definition.ground)
-        let dark = ResolvedVariant(definition.dark, isDark: true, brightness: adjustment.darkBrightness, ground: definition.ground)
+        let ground = definition.drawnGround
+        let light = ResolvedVariant(definition.light, isDark: false, brightness: adjustment.lightBrightness, ground: ground)
+        let dark = ResolvedVariant(definition.dark, isDark: true, brightness: adjustment.darkBrightness, ground: ground)
         func dynamic(_ role: KeyPath<ResolvedVariant, RoleColor>) -> Color {
             let (lightRole, darkRole) = (light[keyPath: role], dark[keyPath: role])
             if !lightRole.change.isActive, !darkRole.change.isActive, lightRole.base == darkRole.base {
@@ -191,7 +192,7 @@ final class ResolvedTheme {
             })
         }
         id = definition.id
-        ground = definition.ground
+        self.ground = ground
         self.adjustment = adjustment
         self.light = light
         self.dark = dark

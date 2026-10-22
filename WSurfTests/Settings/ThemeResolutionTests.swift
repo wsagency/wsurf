@@ -47,7 +47,7 @@ struct ThemeResolutionTests {
             let copy = settings.selectedTheme
             #expect(copy.id != "nord" && !ThemeCatalog.isBuiltIn(copy.id))
             #expect(copy.basedOn == "nord")
-            #expect(copy.name == "Nord copy")
+            #expect(copy.name == "Nord Custom")
             #expect(copy.dark.accent == 0xFF8800)
             #expect(copy.light == ThemeCatalog.builtIn("nord")?.light, "the other variant is untouched")
             #expect(settings.userThemes.map(\.id) == [copy.id])
@@ -71,7 +71,7 @@ struct ThemeResolutionTests {
             settings.themeID = "calm"
             settings.editColors(scheme: .light) { $0.hue = 0.2 }
 
-            #expect(settings.userThemes.map(\.name) == ["Calm copy", "Calm copy 2"])
+            #expect(settings.userThemes.map(\.name) == ["Calm Custom", "Calm Custom 2"])
         }
     }
 

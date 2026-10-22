@@ -6,6 +6,8 @@ import SwiftUI
 struct AppearanceThemeSection: View {
     @Bindable var settings: BrowserSettings
     let scheme: ColorScheme
+    /// Opens the Colors card, where a custom theme's base colors are edited.
+    var onEditColors: () -> Void = {}
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.colorSchemeContrast) private var contrast
     @State private var isEditing = false
@@ -41,6 +43,13 @@ struct AppearanceThemeSection: View {
 
     private var deleteTitle: Text {
         Text("Delete “\(deleting?.name ?? "")”?")
+    }
+
+    private var customizeCaption: LocalizedStringResource {
+        if selectedThemeIsSaved {
+            return "Edit this theme’s base colors, text and accent under Colors."
+        }
+        return "Makes a copy named “\(settings.customThemeName(for: settings.selectedTheme))” that you can recolor and rename."
     }
 
     private var confirmsDeletion: Binding<Bool> {
@@ -123,6 +132,19 @@ struct AppearanceThemeSection: View {
             }
             .settingsAnchor("appearance.refraction")
             RowSeparator()
+            DetailRow(title: "Customize", caption: customizeCaption) {
+                if selectedThemeIsSaved {
+                    SettingsButton(title: "Edit Colors") { onEditColors() }
+                } else {
+                    SettingsButton(title: "Customize…") {
+                        settings.commitThemePreview()
+                        naming = .customize(name: settings.customThemeName(for: settings.selectedTheme))
+                    }
+                    .disabled(!settings.canSaveAnotherTheme)
+                }
+            }
+            .settingsAnchor("appearance.customize")
+            RowSeparator()
             DetailRow(title: "Save as Theme", caption: saveCaption) {
                 SettingsButton(title: "Save as Theme…") {
                     settings.commitThemePreview()
@@ -154,6 +176,10 @@ struct AppearanceThemeSection: View {
                 switch request {
                 case .save:
                     _ = settings.saveTheme(named: name)
+                case .customize:
+                    if settings.saveTheme(named: name) != nil {
+                        onEditColors()
+                    }
                 case .rename(let theme):
                     _ = settings.renameTheme(theme.id, to: name)
                 }

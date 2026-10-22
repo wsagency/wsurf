@@ -142,8 +142,13 @@ extension BrowserSettings {
 
     // MARK: - Editing
 
+    /// The name a custom theme made from `theme` starts with: "<Theme> Custom", made different from every other name.
+    func customThemeName(for theme: ThemeDefinition) -> String {
+        ThemeNames.unique(String(localized: "\(theme.name) Custom"), among: allThemes.map(\.name))
+    }
+
     /// Applies `edit` to the colors the window shows for `scheme`. A built-in theme is read-only, so the first edit
-    /// copies it, with its knobs, selects the copy and edits that. The copy limit makes an edit a no-op.
+    /// copies it as a custom theme, with its knobs, selects the copy and edits that. The copy limit makes an edit a no-op.
     func editColors(scheme: ColorScheme, _ edit: (inout ThemeVariant) -> Void) {
         var theme = selectedTheme
         let wasBuiltIn = ThemeCatalog.isBuiltIn(theme.id)
@@ -151,7 +156,7 @@ extension BrowserSettings {
             guard userThemes.count < Self.userThemeLimit else { return }
             theme.basedOn = theme.id
             theme.id = UUID().uuidString
-            theme.name = ThemeNames.unique(String(localized: "\(theme.name) copy"), among: allThemes.map(\.name))
+            theme.name = customThemeName(for: theme)
         }
         var variant = theme.variant(scheme)
         edit(&variant)

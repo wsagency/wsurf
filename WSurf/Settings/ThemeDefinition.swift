@@ -140,6 +140,26 @@ extension ThemeDefinition {
     }
 }
 
+extension ThemeVariant {
+    /// True when the window, sidebar or surface color is not `other`'s: the three colors that make a ground.
+    func groundColorsDiffer(from other: ThemeVariant) -> Bool {
+        window != other.window || sidebar != other.sidebar || surface != other.surface
+    }
+}
+
+extension ThemeDefinition {
+    /// The ground the window draws. A tinted theme (Standard, Calm) takes its look from the page, which would hide
+    /// the window, sidebar and surface colors a copy of it sets; such a copy draws them on a solid ground instead.
+    /// Nothing is stored for this, so putting the original colors back puts the tint back, and a copy that only
+    /// changed hue, text or accent keeps its tint.
+    var drawnGround: ThemeGround {
+        guard ground != .solid, let origin = basedOn.flatMap(ThemeCatalog.builtIn), origin.ground == ground else {
+            return ground
+        }
+        return light.groundColorsDiffer(from: origin.light) || dark.groundColorsDiffer(from: origin.dark) ? .solid : ground
+    }
+}
+
 /// The knobs of a theme. They are editable on any theme, built-in or not, and never make a copy: colors are the
 /// theme, knobs are yours. A saved or duplicated theme carries them along.
 struct ThemeAdjustment: Codable, Equatable {
