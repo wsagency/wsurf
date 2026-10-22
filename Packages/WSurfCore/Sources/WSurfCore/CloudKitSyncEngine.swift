@@ -8,7 +8,7 @@ import os
 /// The `SyncEngine` over `CKSyncEngine` and the account's private database. This is the only `CKContainer` in the code base.
 ///
 /// Creating a container in a process whose signed entitlements lack the iCloud keys raises an Objective-C exception that Swift
-/// cannot catch, so the owner creates this object only after `CloudTabsGate` has read the entitlements.
+/// cannot catch, so the owner creates this object only after `CloudSyncGate` has read the entitlements.
 public final class CloudKitSyncEngine: SyncEngine {
     private let container: CKContainer
     private let bridge: Bridge
@@ -57,6 +57,23 @@ public final class CloudKitSyncEngine: SyncEngine {
 
     public func fetchNow() async throws {
         try await engine.fetchChanges()
+    }
+
+    public func fetchAll(zone: String) async throws -> [SyncRecord] {
+        let database = container.privateCloudDatabase
+        var records: [SyncRecord] = []
+        var token: CKServerChangeToken?
+        while true {
+            let page = try await database.recordZoneChanges(inZoneWith: CloudKitMapping.zoneID(zone), since: token)
+            for (_, result) in page.modificationResultsByID {
+                // A record that failed to arrive is an error, never a silent gap: the caller reads the zone again later.
+                if let record = CloudKitMapping.syncRecord(try result.get().record) {
+                    records.append(record)
+                }
+            }
+            guard page.moreComing else { return records }
+            token = page.changeToken
+        }
     }
 
     public func accountIsAvailable() async -> Bool {
@@ -222,6 +239,8 @@ private nonisolated enum CloudKitMapping {
             failure = .zoneNotFound
         case .unknownItem:
             failure = .unknownItem
+        case .quotaExceeded:
+            failure = .quotaExceeded
         default:
             failure = .other
         }

@@ -273,7 +273,8 @@ final class CloudTabs {
         guard sync.needsEngine else { return }
         if !hasEngine {
             hasEngine = true
-            sync.attach(makeEngine(sync, sync.state.engineState))
+            // The engine's state moves to `SyncRouter` with the engine itself; until then a launch reads everything again.
+            sync.attach(makeEngine(sync, nil))
         }
         startHeartbeat()
     }

@@ -88,6 +88,7 @@ public nonisolated enum VaultSyncCodec {
     public static let maxItemBytes = 786_432
 
     static let label = "WSurf vault sync v1"
+    static let markLabel = "WSurf vault sync mark v1"
     static let itemFormat: UInt8 = 1
     static let liveState: UInt8 = 1
     static let removedState: UInt8 = 2
@@ -179,13 +180,21 @@ public nonisolated enum VaultSyncCodec {
         return payload.name
     }
 
-    /// `HMAC-SHA256(syncKey, text(name) ‖ bytes(wrappers))`: what was last uploaded, kept on this Mac to see that the name or the
-    /// wrapper list changed. It reveals neither.
+    /// `HMAC-SHA256(markKey, text(name) ‖ bytes(wrappers))`: what was last uploaded, kept on this Mac to see that the name or the
+    /// wrapper list changed. It reveals neither. `markKey` is its own HKDF subkey of the sync key, so the sealing key never keys
+    /// the HMAC as well.
     public static func vaultMark(name: String, wrappers: Data, key: VaultSyncKey) -> Data {
         var message = StoreWriter()
         message.text(name)
         message.bytes(wrappers)
-        return Data(HMAC<SHA256>.authenticationCode(for: message.data, using: key.key))
+        return Data(HMAC<SHA256>.authenticationCode(for: message.data, using: markKey(key)))
+    }
+
+    /// HKDF-SHA256 of the sync key under its own info label. Never the sealing key itself.
+    static func markKey(_ key: VaultSyncKey) -> SymmetricKey {
+        var info = StoreWriter()
+        info.text(markLabel)
+        return HKDF<SHA256>.deriveKey(inputKeyMaterial: key.key, salt: Data(), info: info.data, outputByteCount: 32)
     }
 
     // MARK: Sync base at rest

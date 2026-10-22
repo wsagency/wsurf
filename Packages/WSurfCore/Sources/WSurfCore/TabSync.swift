@@ -26,9 +26,9 @@ nonisolated public struct MirroredSession: Codable, Equatable, Sendable {
 }
 
 /// Everything `TabSync` keeps between runs. It caches what the account's private database holds, so a launch lists the other
-/// devices at once. It holds no profile identity beyond zone names, and nothing from a private window.
+/// devices at once. It holds no profile identity beyond zone names, and nothing from a private window. The engine's own state
+/// belongs to `SyncRouter`.
 nonisolated public struct TabSyncState: Codable, Equatable, Sendable {
-    public var engineState: Data?
     /// The `recordName` of the last signed-in user record.
     public var accountUser: String?
     public var seq: Int64 = 0
@@ -223,8 +223,9 @@ public final class TabSync: SyncEngineDelegate {
 
     public func handle(_ event: SyncEvent) async {
         switch event {
-        case .state(let data):
-            state.engineState = data
+        case .state:
+            // The router owns the engine's state; a bare device in a test sees the event and has nothing to keep.
+            return
         case .fetched(let modified, let deleted):
             applyFetched(modified: modified, deleted: deleted)
         case .sent(let saved, let deleted, let failed):
@@ -260,6 +261,9 @@ public final class TabSync: SyncEngineDelegate {
                 state.sessions[record.id.zone, default: [:]][record.id.name] = MirroredSession(
                     payload: payload, modifiedAt: modifiedAt
                 )
+            case .vault, .item:
+                // The router never hands vault records to a tab zone; one that arrives anyway is not ours.
+                continue
             }
         }
         for id in deleted {
@@ -318,7 +322,7 @@ public final class TabSync: SyncEngineDelegate {
         case .unknownItem:
             state.ownSystemFields[id.zone] = nil
             add([.saveRecord(id)])
-        case .other:
+        case .quotaExceeded, .other:
             SyncLog.logger.error("sync: a record save failed; the next heartbeat tries again")
         }
     }
