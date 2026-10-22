@@ -85,6 +85,10 @@ extension Profile {
         supportDirectory.appendingPathComponent("SitePermissions.json")
     }
 
+    var spacesFile: URL {
+        supportDirectory.appendingPathComponent("Spaces.json")
+    }
+
     @MainActor
     func makeDataStore() -> WKWebsiteDataStore {
         if isPrivate {

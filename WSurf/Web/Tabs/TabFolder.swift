@@ -30,6 +30,8 @@ final class TabFolder: Identifiable {
     var color = TabFolderColor.gray
     var isExpanded = true
     var isPinned = false
+    /// The space the folder and everything in it belong to; nil while the folder is pinned or inside a pinned folder.
+    var spaceID: UUID?
 
     init(id: UUID = UUID(), name: String) {
         self.id = id

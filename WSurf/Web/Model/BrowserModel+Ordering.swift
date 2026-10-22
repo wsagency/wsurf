@@ -351,6 +351,7 @@ extension BrowserModel {
         let pinnedTitle: String
         let isFavorite: Bool
         let pinID: UUID?
+        let spaceID: UUID?
         let wasActive: Bool
         let folderID: UUID?
         let before: SidebarItem?
@@ -368,6 +369,7 @@ extension BrowserModel {
             pinnedTitle = tab.pinnedTitle
             isFavorite = tab.isFavorite
             pinID = tab.pinID
+            spaceID = tab.spaceID
             wasActive = model.activeTabID == tab.id
             folderID = model.folder(containing: tab)?.id
             before = model.sidebarTree.successor(of: .tab(tab.id))

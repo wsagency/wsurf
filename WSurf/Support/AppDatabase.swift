@@ -370,6 +370,14 @@ struct AppDatabase: Sendable {
             }
         }
 
+        // The space a window shows a row in. NULL (rows saved before spaces, pins) joins the space on screen.
+        for table in ["sessionTab", "sessionFolder"] {
+            guard try !db.columns(in: table).contains(where: { $0.name == "spaceID" }) else { continue }
+            try db.alter(table: table) { t in
+                t.add(column: "spaceID", .blob)
+            }
+        }
+
         try db.create(table: "sessionItem", options: .ifNotExists) { t in
             t.primaryKey("position", .integer)
             t.column("tabID", .blob).references("sessionTab", onDelete: .cascade)

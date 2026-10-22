@@ -166,6 +166,7 @@ final class ProfileStore {
             launchProfileID = nil
         }
         BrowserProfileContext.forget(profile.id)
+        SpaceStore.forget(profile.id)
         save()
         await Profile.erase(profile)
     }

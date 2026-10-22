@@ -64,6 +64,8 @@ extension BrowserModel {
             page.removeFromSuperview()
         }
         bindCallbacks(to: tab)
+        // The page joins the space this window shows, whatever space it had in the other window.
+        tab.spaceID = nil
         insert(tab, after: nil)
         lastVisitID[tab.id] = visitID
         writtenStateGeneration[tab.id] = nil

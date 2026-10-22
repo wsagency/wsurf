@@ -92,6 +92,7 @@ extension BrowserModel {
         var isFavorite: Bool
         var pinID: UUID?
         var lastActiveAt: Date?
+        var spaceID: UUID?
     }
 
     private nonisolated struct FolderRecord: Codable, FetchableRecord, PersistableRecord, Sendable {
@@ -106,6 +107,7 @@ extension BrowserModel {
         var isPinned: Bool
         /// Marks a folder the migration moved to the profile. A window never writes it.
         var pinID: UUID?
+        var spaceID: UUID?
     }
 
     private nonisolated struct ItemRecord: Codable, FetchableRecord, PersistableRecord, Sendable {
@@ -273,7 +275,8 @@ extension BrowserModel {
                 isActive: tab.id == activeTabID,
                 isFavorite: tab.isFavorite,
                 pinID: tab.pinID,
-                lastActiveAt: tab.lastActiveAt
+                lastActiveAt: tab.lastActiveAt,
+                spaceID: tab.spaceID
             )
         }
         writtenStateGeneration = writtenStateGeneration.filter { id, _ in
@@ -290,7 +293,8 @@ extension BrowserModel {
                 color: folder.color,
                 isExpanded: folder.isExpanded,
                 isPinned: folder.isPinned,
-                pinID: nil
+                pinID: nil,
+                spaceID: folder.spaceID
             )
         }
         let known = Set(persisted.map(\.id))
@@ -366,8 +370,8 @@ extension BrowserModel {
                 sql: """
                     INSERT INTO sessionTab
                         (id, windowID, title, customTitle, url, state, pinnedURL, pinnedTitle,
-                         internalPage, isActive, isFavorite, pinID, lastActiveAt)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         internalPage, isActive, isFavorite, pinID, lastActiveAt, spaceID)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(id) DO UPDATE SET
                         windowID = excluded.windowID,
                         title = excluded.title,
@@ -380,12 +384,13 @@ extension BrowserModel {
                         isActive = excluded.isActive,
                         isFavorite = excluded.isFavorite,
                         pinID = excluded.pinID,
-                        lastActiveAt = excluded.lastActiveAt
+                        lastActiveAt = excluded.lastActiveAt,
+                        spaceID = excluded.spaceID
                     """,
                 arguments: [
                     tab.id, tab.windowID, tab.title, tab.customTitle, tab.url, tab.state,
                     tab.pinnedURL, tab.pinnedTitle,
-                    tab.internalPage?.rawValue, tab.isActive, tab.isFavorite, tab.pinID, tab.lastActiveAt,
+                    tab.internalPage?.rawValue, tab.isActive, tab.isFavorite, tab.pinID, tab.lastActiveAt, tab.spaceID,
                 ]
             )
         }
@@ -502,6 +507,7 @@ extension BrowserModel {
             tab.pinnedTitle = record.pinnedTitle ?? ""
             tab.isFavorite = record.isFavorite
             tab.pinID = record.pinID
+            tab.spaceID = record.spaceID
             tab.lastActiveAt = Self.restoredUse(record.lastActiveAt, savedAt: stored.savedAt, now: now)
             tab.deferRestore(state: record.state, url: restoredURL)
             if let host = URL(string: record.url)?.host() {
@@ -521,6 +527,7 @@ extension BrowserModel {
             folder.color = record.color
             folder.isExpanded = record.isExpanded
             folder.isPinned = record.isPinned
+            folder.spaceID = record.spaceID
             foldersByStoredID[record.id] = folder
             folders.append(folder)
         }

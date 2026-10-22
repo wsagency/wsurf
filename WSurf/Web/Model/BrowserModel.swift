@@ -443,6 +443,7 @@ final class BrowserModel {
         copy.realizeDeferredSession()
         copy.pinnedURL = tab.pinnedURL
         copy.pinnedTitle = tab.pinnedTitle
+        copy.spaceID = tab.spaceID
 
         let at = (tabs.firstIndex { $0 === tab }).map { $0 + 1 } ?? tabs.endIndex
         tabs.insert(copy, at: at)

@@ -52,6 +52,10 @@ final class BrowserProfileContext {
     /// Nil in a private window: notes about the person are never kept there.
     lazy var assistantFacts: AssistantFacts? = profile.isPrivate ? nil : AssistantFacts(database: database, settings: modelSettings)
     lazy var conversationLog = ConversationLog(database: database)
+    /// Nil in a private window, which has no spaces.
+    var spaces: SpaceStore? {
+        SpaceStore.shared(for: profile)
+    }
     lazy var extensions = ExtensionManager(profile: profile, dataStore: dataStore)
 
     private var browsers = NSHashTable<BrowserModel>.weakObjects()
