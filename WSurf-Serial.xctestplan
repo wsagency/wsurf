@@ -221,6 +221,7 @@
         "VaultSyncParkingTests",
         "VaultSyncRaceTests",
         "VaultSyncRemovalGuardTests",
+        "VaultSyncResurrectionTests",
         "VaultSyncScaleTests",
         "VaultSyncTests",
         "VaultTablesTests",

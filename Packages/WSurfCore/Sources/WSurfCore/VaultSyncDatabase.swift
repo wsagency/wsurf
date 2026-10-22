@@ -277,13 +277,15 @@ nonisolated final class VaultSyncDatabase: Sendable {
 
         /// The oldest `limit` rows by account id: a stable order, so a batch that goes round again meets the same rows. Parked rows
         /// (version 0) are not in it.
-        func inbox(_ vault: UUID, limit: Int) throws -> [InboxRow] {
-            try Row.fetchAll(
+        func inbox(_ vault: UUID, limit: Int, excluding: Set<UUID> = []) throws -> [InboxRow] {
+            // ponytail: the excluded rows are read and dropped here; a drain with thousands of them waiting pays for that each batch.
+            let rows = try Row.fetchAll(
                 db, sql: "SELECT accountID, version, envelope FROM inbox WHERE vaultID = ? AND version > 0 ORDER BY accountID LIMIT ?",
-                arguments: [vault.sqlText, limit]
+                arguments: [vault.sqlText, limit + excluding.count]
             ).compactMap { row in
                 UUID(uuidString: row["accountID"]).map { InboxRow(accountID: $0, version: Self.version(row), envelope: row["envelope"]) }
             }
+            return Array(rows.filter { !excluding.contains($0.accountID) }.prefix(limit))
         }
 
         /// The accounts whose newer-format record is parked.
@@ -322,6 +324,11 @@ nonisolated final class VaultSyncDatabase: Sendable {
                 guard let id = UUID(uuidString: row["accountID"]), let kind = SyncConflictKind(rawValue: row["kind"]) else { return nil }
                 return ConflictRow(accountID: id, version: Self.version(row), kind: kind, envelope: row["envelope"])
             }
+        }
+
+        /// The rows of one kind.
+        func conflicts(_ vault: UUID, kind: SyncConflictKind) throws -> [ConflictRow] {
+            try conflicts(vault).filter { $0.kind == kind }
         }
 
         func conflictVersion(_ vault: UUID, _ account: UUID) throws -> UInt64? {

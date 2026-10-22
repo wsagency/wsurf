@@ -30,6 +30,9 @@ nonisolated struct SyncPass {
     var own: Set<UUID> = []
     /// The account each write puts in the vault, for the view that follows the commit.
     var replacements: [UUID: CredentialAccount] = [:]
+    /// Accounts whose entry another entry still holds the item of: left in the inbox until the rest of the drain is in, because the
+    /// holder may be on its way out in a record that comes later.
+    var deferred: Set<UUID> = []
 
     /// The vault cannot take this entry on this Mac: it waits as information, and its base stays.
     mutating func refuse(_ id: UUID) {
@@ -92,12 +95,19 @@ extension VaultSync {
     func drain(_ key: VaultKey) async {
         var staleRetries = 0
         var open: (view: VaultView, syncKey: VaultSyncKey)?
+        var deferred = Set<UUID>()
+        var settling = false
         while true {
             let mine = token(key)
-            guard let (database, _) = runningRow(key),
-                  let batch = try? database.read({ try $0.inbox(key.vaultID, limit: Self.drainBatch) }), !batch.isEmpty,
-                  stillOpen(key, mine)
-            else { return }
+            guard let (database, _) = runningRow(key), stillOpen(key, mine) else { return }
+            var batch = (try? database.read { try $0.inbox(key.vaultID, limit: Self.drainBatch, excluding: deferred) }) ?? []
+            if batch.isEmpty, !deferred.isEmpty {
+                // Everything else is in: what waited for it is decided now, and a clash that is still there is real.
+                settling = true
+                deferred = []
+                batch = (try? database.read { try $0.inbox(key.vaultID, limit: Self.drainBatch) }) ?? []
+            }
+            guard !batch.isEmpty else { return }
             if open == nil || batch.contains(where: { open?.view.changed.contains($0.accountID) == true }) {
                 guard let syncKey = await host.syncKey(profileID: key.profileID, vaultID: key.vaultID) else {
                     locked(key)
@@ -109,8 +119,9 @@ extension VaultSync {
             }
             guard var (view, syncKey) = open else { return }
             var pass = SyncPass()
-            decide(batch, key: key, view: view, syncKey: syncKey, database: database, into: &pass)
-            pass.processed = batch
+            decide(batch, key: key, view: view, syncKey: syncKey, database: database, settling: settling, into: &pass)
+            pass.processed = batch.filter { !pass.deferred.contains($0.accountID) }
+            deferred.formUnion(pass.deferred)
             switch await commit(&pass, key: key, lease: view.lease) {
             case .done(let revision):
                 guard mine == token(key), record(pass, key: key, database: database, syncKey: syncKey, revision: max(revision ?? 0, view.revision)) else {
@@ -132,7 +143,8 @@ extension VaultSync {
 
     /// One decision per inbox row (§4.4), from the vault as `view` shows it.
     private func decide(
-        _ batch: [InboxRow], key: VaultKey, view: VaultView, syncKey: VaultSyncKey, database: VaultSyncDatabase, into pass: inout SyncPass
+        _ batch: [InboxRow], key: VaultKey, view: VaultView, syncKey: VaultSyncKey, database: VaultSyncDatabase, settling: Bool,
+        into pass: inout SyncPass
     ) {
         let rows = (try? database.read { tx in
             try batch.map { (try tx.base(key.vaultID, $0.accountID), try tx.outbox(key.vaultID, $0.accountID)) }
@@ -164,6 +176,12 @@ extension VaultSync {
             } catch {
                 pass.conflicts[id] = ConflictRow(accountID: id, version: inbound.version, kind: .refused, envelope: inbound.envelope)
                 pass.decided.insert(id)
+                continue
+            }
+            // A merge arrives as the survivor, which holds the identity of the entry merged away, and a removed state for that entry,
+            // in records that can come in any order and any batch: the survivor waits until the removal has been applied.
+            if !settling, case .review(.ambiguous, _) = decision {
+                pass.deferred.insert(id)
                 continue
             }
             apply(decision, id: id, version: inbound.version, envelope: inbound.envelope, view: view, into: &pass)
@@ -309,6 +327,15 @@ extension VaultSync {
                 }
                 for id in pass.answered where pass.conflicts[id] == nil {
                     try tx.deleteConflict(key.vaultID, id)
+                }
+                if !pass.removing.isEmpty {
+                    // An entry moved to the Trash may be what held the item another entry's record needs: those rows are decided again.
+                    for row in try tx.conflicts(key.vaultID, kind: .ambiguous) where pass.conflicts[row.accountID] == nil {
+                        if try tx.inboxVersion(key.vaultID, row.accountID) == nil {
+                            try tx.save(InboxRow(accountID: row.accountID, version: row.version, envelope: row.envelope), vault: key.vaultID)
+                        }
+                        try tx.deleteConflict(key.vaultID, row.accountID)
+                    }
                 }
                 for id in pass.conflicts.keys.sorted(by: { $0.uuidString < $1.uuidString }) {
                     if let conflict = pass.conflicts[id] {
@@ -598,8 +625,10 @@ extension VaultSync {
                 let decision = try CredentialSyncMerge.resolve(
                     item, kind: conflict.kind, local: view.local[id], base: base, keepLocal: keepLocal, index: view.index
                 )
-                if case .review = decision {
-                    pass.answered.remove(id)
+                if case .review(let kind, _) = decision {
+                    // The answer would put a second holder of an item beside the first: the row says that now, and the person can
+                    // dismiss it, instead of a button that does nothing.
+                    pass.conflicts[id] = ConflictRow(accountID: id, version: conflict.version, kind: kind, envelope: conflict.envelope)
                     continue
                 }
                 apply(decision, id: id, version: conflict.version, envelope: conflict.envelope, view: view, into: &pass)
@@ -607,6 +636,8 @@ extension VaultSync {
             switch await commit(&pass, key: key, lease: view.lease) {
             case .done(let revision):
                 record(pass, key: key, database: database, syncKey: syncKey, revision: max(revision ?? 0, snapshot.revision))
+                // An answer that moved an entry to the Trash can free a record that waited for it.
+                await drain(key)
                 await produce(key)
                 return
             case .stale:

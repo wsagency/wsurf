@@ -240,6 +240,41 @@ struct VaultSyncDeviceTests {
         }
     }
 
+    @Test func aMergeOnOneMacReachesTheOtherAsARemovedStateAndASurvivorUpdate() async throws {
+        try await withPair { pair in
+            let survivor = VaultFixtures.account(username: "ada", password: "newer", origin: "https://one.test")
+            let absorbed = VaultFixtures.account(username: "ada", password: "older", origin: "https://one.test")
+            try await pair.save([survivor, absorbed], in: pair.managerA)
+            try await pair.enableA()
+            try await pair.addToB()
+            try await pair.unlockB()
+            try await pair.converge()
+            let managerB = try #require(pair.managerB)
+            #expect(try await pair.accounts(managerB).count == 2)
+
+            // The merge as the Merge sheet commits it: the survivor replaced, the other credential away in the same commit.
+            let picks = try #require(CredentialMerge.defaultPicks(for: [survivor, absorbed], survivor: survivor.id))
+            let result = try CredentialMerge.merged([survivor, absorbed], picks: picks)
+            let epoch = try #require(pair.managerA.authorizationEpoch)
+            let revision = try await pair.managerA.snapshot().revision
+            _ = try await pair.managerA.commit(
+                [result], expectedRevision: revision, authorizedEpoch: epoch, cause: "merge", changing: [survivor.id, absorbed.id],
+                merging: [absorbed.id: result.id]
+            )
+            await pair.wrote(pair.syncA, pair.clockA)
+
+            for _ in 0..<3 {
+                try await pair.converge()
+                let onB = try await pair.accounts(managerB)
+                #expect(onB[absorbed.id] == nil, "the credential merged away does not come back on B")
+                #expect(onB[survivor.id]?.mergedFrom?.map(\.accountID) == [absorbed.id], "B’s survivor carries the link")
+                #expect(try await managerB.trashPage(after: nil).items.contains { $0.ownerID == absorbed.id }, "and it is in B’s Trash")
+                #expect(try await pair.accounts(pair.managerA)[absorbed.id] == nil)
+                #expect(pair.statusA == .synced && pair.statusB == .synced)
+            }
+        }
+    }
+
     @Test func differentPRFLeavesTheMacLockedAndUndamaged() async throws {
         try await withPair { pair in
             try await pair.save([pair.account("one")], in: pair.managerA)

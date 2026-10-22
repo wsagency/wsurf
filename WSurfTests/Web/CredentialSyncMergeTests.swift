@@ -437,6 +437,21 @@ struct CredentialSyncMergeTests {
         #expect(try parts(moved) == parts(agreed))
     }
 
+    @Test func theItemsMergedIntoAnEntryAreItsMetadataButTheirObservedBasesAreNot() throws {
+        let agreed = entry()
+        var merged = agreed
+        merged.mergedFrom = [MergedItemLink(accountID: UUID(), exchangeAccountID: Data([1]), exchangeItemID: Data([2]))]
+        // A merge that changes nothing else is still a change, or the other Macs never learn that the entry merged away is in it.
+        #expect(try parts(merged).metadata != parts(agreed).metadata)
+        #expect(try parts(merged).password == parts(agreed).password && parts(merged).notes == parts(agreed).notes)
+        #expect(try decide(live(merged), local: agreed, base: try base(agreed)).written?.mergedFrom == merged.mergedFrom)
+
+        // What the other app last sent for a link is not.
+        var observed = merged
+        observed.mergedFrom?[0].passwordBase = ExchangeBase(contentHash: Data(repeating: 1, count: 32), itemID: Data([4]))
+        #expect(try parts(observed) == parts(merged))
+    }
+
     @Test func appleBasesTravelWithTheirPart() throws {
         let agreed = entry()
         var incoming = changed(agreed, .password)

@@ -34,8 +34,10 @@ public nonisolated struct PasskeyPart: Codable, Equatable, Sendable {
 }
 
 /// What an account is, part by part, as `CredentialContent.hash` sees it. These are plain SHA-256 of secrets: they are stored and
-/// uploaded only sealed (`VaultSyncCodec.sealParts`). Dates, events, the Apple observed bases, `mergedFrom`, a passkey's `lastSignedAt`
-/// and files are not parts: they never raise an upload or a conflict, and they travel with the part they belong to.
+/// uploaded only sealed (`VaultSyncCodec.sealParts`). Dates, events, the Apple observed bases, a passkey's `lastSignedAt` and files are
+/// not parts: they never raise an upload or a conflict, and they travel with the part they belong to. The items merged into an account
+/// (`mergedFrom`) are part of the metadata, by identity: a merge that changes nothing else must still reach the other Macs, or a later
+/// import there would find the entry that was merged away in the Trash and add it again.
 public nonisolated struct SyncParts: Codable, Equatable, Sendable {
     public var removed: Bool
     public var password: Data
@@ -93,9 +95,23 @@ public nonisolated struct SyncParts: Codable, Equatable, Sendable {
             totp: try CredentialContent.hash(.totp(account)),
             notes: try CredentialContent.hash(.note(account)),
             secureItems: try CredentialContent.hash(.secureItems(account)),
-            metadata: try CredentialContent.hash(.metadata(account)),
+            metadata: try metadataHash(account),
             passkeys: passkeys.sorted { $0.identity.lexicographicallyPrecedes($1.identity) }
         )
+    }
+
+    /// The metadata hash with the identity of every item merged into the account, in a fixed order. The other app's observed bases that
+    /// come with each link are not in it.
+    private static func metadataHash(_ account: CredentialAccount) throws -> Data {
+        var writer = StoreWriter()
+        writer.bytes(try CredentialContent.hash(.metadata(account)))
+        let links = (account.mergedFrom ?? []).sorted { $0.accountID.uuidString < $1.accountID.uuidString }
+        writer.array(links) { writer, link in
+            writer.uuid(link.accountID)
+            writer.bytes(link.exchangeAccountID)
+            writer.bytes(link.exchangeItemID)
+        }
+        return Data(SHA256.hash(data: writer.data))
     }
 
     func hash(of part: SyncPart) -> Data {
