@@ -44,6 +44,8 @@ final class FakeSyncCloud {
     /// How many records were written. It does not move when a save fails or is dropped.
     private(set) var writeCount = 0
     private(set) var clock = 0
+    /// The account's iCloud storage is full: every save fails with `quotaExceeded`.
+    var quotaFull = false
     var now: () -> Date
 
     private var zoneDeletions: [ZoneDeletion] = []
@@ -62,6 +64,11 @@ final class FakeSyncCloud {
 
     func tag(of id: SyncRecordID) -> Int? {
         zones[id.zone]?[id.name]?.tag
+    }
+
+    /// Every record of a zone, sorted by name. The zone must exist.
+    func records(in zone: String) -> [SyncRecord]? {
+        zones[zone].map { $0.values.map(\.record).sorted { $0.id.name < $1.id.name } }
     }
 
     /// The names of the records in a zone, sorted.
@@ -127,6 +134,7 @@ final class FakeSyncCloud {
 
     func save(_ record: SyncRecord) -> SaveResult {
         guard zones[record.id.zone] != nil else { return .failed(.zoneNotFound) }
+        guard !quotaFull else { return .failed(.quotaExceeded) }
         let held = Self.tag(in: record.systemFields)
         if let existing = zones[record.id.zone]?[record.id.name] {
             guard held == existing.tag else { return .failed(.serverRecordChanged(existing.record)) }
@@ -187,6 +195,8 @@ final class FakeSyncEngine: SyncEngine {
     var available = true
     /// A send that waits until it is cancelled, for the limit on quit.
     var hangsOnSend = false
+    /// No network: a fetch or a send throws.
+    var offline = false
     private(set) var pending: [SyncChange] = []
     private(set) var sendCount = 0
     private(set) var fetchCount = 0
@@ -207,6 +217,9 @@ final class FakeSyncEngine: SyncEngine {
 
     func sendNow() async throws {
         sendCount += 1
+        if offline {
+            throw URLError(.notConnectedToInternet)
+        }
         if hangsOnSend {
             try await Task.sleep(for: .seconds(86_400))
         }
@@ -221,6 +234,9 @@ final class FakeSyncEngine: SyncEngine {
 
     func fetchNow() async throws {
         fetchCount += 1
+        if offline {
+            throw URLError(.notConnectedToInternet)
+        }
         let changes = cloud.changes(since: fetchedAt)
         fetchedAt = cloud.clock
         if !changes.zones.isEmpty {
@@ -230,6 +246,15 @@ final class FakeSyncEngine: SyncEngine {
             await delegate?.handle(.fetched(modified: changes.modified, deleted: changes.deleted))
         }
         await publishState()
+    }
+
+    /// The whole zone, as the real engine's full read returns it. A zone that is gone is an error.
+    func fetchAll(zone: String) async throws -> [SyncRecord] {
+        if offline {
+            throw URLError(.notConnectedToInternet)
+        }
+        guard let records = cloud.records(in: zone) else { throw URLError(.fileDoesNotExist) }
+        return records
     }
 
     func accountIsAvailable() async -> Bool {

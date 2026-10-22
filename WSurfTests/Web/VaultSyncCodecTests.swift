@@ -331,6 +331,23 @@ struct VaultSyncCodecTests {
         #expect(mark != VaultSyncCodec.vaultMark(name: "Personal", wrappers: Data([1, 2]), key: syncKey()))
     }
 
+    @Test func theMarkHasItsOwnKeyAndStaysStable() {
+        let key = syncKey()
+        let markKey = VaultSyncCodec.markKey(key)
+        var message = StoreWriter()
+        message.text("Personal")
+        message.bytes(Data([1, 2]))
+
+        #expect(bytes(markKey).count == 32)
+        #expect(bytes(markKey) != bytes(key.key), "the HMAC never uses the sealing key")
+        #expect(bytes(markKey) == bytes(VaultSyncCodec.markKey(key)))
+        #expect(bytes(markKey) != bytes(VaultSyncCodec.markKey(syncKey())))
+        let mark = VaultSyncCodec.vaultMark(name: "Personal", wrappers: Data([1, 2]), key: key)
+        #expect(mark == VaultSyncCodec.vaultMark(name: "Personal", wrappers: Data([1, 2]), key: key))
+        #expect(mark == Data(HMAC<SHA256>.authenticationCode(for: message.data, using: markKey)))
+        #expect(mark != Data(HMAC<SHA256>.authenticationCode(for: message.data, using: key.key)))
+    }
+
     // MARK: Keys
 
     @Test func syncKeyDependsOnVaultKeyProfileVaultAndGenerationOnly() {

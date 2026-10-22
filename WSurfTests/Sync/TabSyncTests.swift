@@ -338,7 +338,7 @@ struct TabSyncTests {
         let listed = relaunched.remoteSessions(profileID: personal, fallbackLabel: "Device")
         #expect(listed.map(\.id) == ["install-b"])
         #expect(listed.first?.label == "iPad")
-        #expect(relaunched.state.engineState == saved.engineState)
+        #expect(relaunched.state == saved)
     }
 
     @Test func recordProviderAnswersOnlyForOwnRecords() async throws {
