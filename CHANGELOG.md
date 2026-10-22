@@ -5,6 +5,36 @@ This file preserves release notes inherited from the upstream
 describe upstream Linen releases, not releases published by WSurf. New WSurf
 release notes will be added above this provenance record.
 
+## 0.1.7 (build 7) — 2026-10-22
+
+Everything since 0.1.6 (build 6). None of the screens and prompts below has been checked by hand.
+
+### Passwords, passkeys and autofill
+
+- Settings › Autofill is one page with a vault picker and two tabs. **Vault** shows everything in the vault by section (Logins, Passkeys, Codes, Identities, Cards, Addresses, Contacts, Notes, and Files while an entry holds one) with Trash, and Input History. **Settings** holds what autofill saves and fills, Apple Pay, your vaults, unlock passkeys, import and export.
+- You can keep identities, such as your children's details, in the vault: Add › Identity starts with a name, an ID document, a hidden OIB, a date of baptism and medical notes, and asks for no sign-in. The Add button still adds a login with one click; its menu also adds an identity, a payment card, an address or a secure note.
+- Each custom field has a type: Text, Hidden, Date, Number or Email. Dates can be picked from a calendar. Showing, copying or exporting a hidden custom field, such as an SSN, asks for Touch ID, like a card or an ID document.
+- Payment cards, contacts and addresses are now saved in your vault. When you submit a checkout or address form, WSurf offers to save the card or address there, as it does for passwords, and fills it from the vault. A card still asks for Touch ID or your Mac password; addresses fill while the vault is unlocked. With every vault locked, card and address fields offer “Unlock Credentials…”. A profile with no vault gets no card or address save offer.
+- Cards and addresses saved on this Mac by earlier versions move into the vault only when you ask. The open Vault tab shows a card for them: Review lists their titles (cards ask for Touch ID once), Move to Vault adds what the vault doesn't already hold, and until you confirm, Undo moves those entries to the Trash. Erase Old Copies… then deletes the old cards and addresses and their rows in the list WSurf suggested them from. That list kept card endings, cardholder names, email addresses and streets in plain text, readable without Touch ID; WSurf checks that none of it is left. Until you erase them, the old copies stay on this Mac and are still offered when filling.
+- Cards and addresses are never offered, filled or saved in a tab the assistant or a connected app controls.
+- Cards and addresses are added and edited in the vault (Add › Payment Card or Address); the separate card and address lists are gone.
+- Settings › Autofill › Settings › Import & Export imports payment cards from a Safari export and a contact from Contacts straight into the vault. A review lists what will be added, Import adds it in one step, and Undo takes it back.
+- Any vault entry can keep files: scans, photos, PDFs, ZIPs or anything else, up to 50 MB each, 64 per entry and 2 GB per vault. Add File… in the editor encrypts each file in the vault; Preview opens it in Quick Look, Save Copy… saves a decrypted copy where you choose, and Open With… opens it in another app. Nothing is decrypted until you ask, and a preview's copy is deleted when you close it, when the vault locks and when WSurf quits.
+- A removed file can be brought back from History or with Undo, an entry in the Trash keeps its files, and merging entries keeps every file. Emptying the Trash or deleting a vault deletes the files nothing else uses. The Vault tab's Files section lists the entries that hold files and how much of the vault's room they use.
+- Files aren't included when you export credentials to another app; use Save Copy… for each file.
+- Once any vault of a profile holds a file, WSurf 0.1.6 and older, 0.1.5 included, can't open that profile's credentials: they say “Couldn’t access credentials.” and change nothing, so they can't lose the files. Removing the files doesn't undo this. If a newer WSurf saved your credentials, this version says so and changes nothing.
+- Input History is now kept with your vault. Once a profile has a vault, showing the entries needs that vault unlocked as well as Touch ID or your Mac password, and recording goes on while it is locked. The first time you open it with your default vault unlocked, the existing key moves under the vault without losing or re-encrypting any entry. Deleting that vault deletes what Input History kept with it, and Delete Vault lists those entries first. Profiles without a vault work as before.
+
+### Fixes
+
+- The native History test for merged credentials gives the primary its own verification code, so it checks that another credential's password and code never show as one version.
+
+### Known issues
+
+- With the vault locked, Input History's Show Entries asks you to unlock it in Settings › Autofill; it doesn't unlock on the click. Input History stays with the vault that was the default when it was first opened: picking another vault on the page or making another vault the default doesn't move it.
+- A removed file stays on disk, encrypted, while History names it. History never empties by itself, so that room comes back only when the entry is moved to the Trash and the Trash is emptied.
+- The known issues of 0.1.6 are unchanged.
+
 ## 0.1.6 (build 6) — 2026-10-21
 
 Everything since 0.1.5 (build 5), the installed candidate. None of the screens and prompts below has been checked by hand.
