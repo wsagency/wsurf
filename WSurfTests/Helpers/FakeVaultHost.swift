@@ -201,6 +201,27 @@ final class FakeVault {
     }
 }
 
+/// A pause in the host: the next `snapshot` reads the vault, then waits here before it hands the snapshot back. A test locks the vault
+/// or changes it meanwhile, as the real host’s awaits let other work run.
+@MainActor
+final class HostPause {
+    private(set) var isWaiting = false
+    private var continuation: CheckedContinuation<Void, Never>?
+
+    func wait() async {
+        await withCheckedContinuation { continuation in
+            self.continuation = continuation
+            isWaiting = true
+        }
+    }
+
+    func release() {
+        isWaiting = false
+        continuation?.resume()
+        continuation = nil
+    }
+}
+
 /// The macOS app's side of `VaultSync`, in memory: profiles with a folder each, and their vaults.
 @MainActor
 final class FakeVaultHost: VaultSyncHost {
@@ -213,6 +234,8 @@ final class FakeVaultHost: VaultSyncHost {
     private(set) var directories: [UUID: URL] = [:]
     private(set) var cards: [UUID: VaultProfileCard] = [:]
     private var vaults: [Slot: FakeVault] = [:]
+    /// Held once by the next `snapshot`, after it read the vault.
+    var pauseAfterSnapshot: HostPause?
 
     init(root: URL) {
         self.root = root
@@ -275,7 +298,17 @@ final class FakeVaultHost: VaultSyncHost {
 
     func snapshot(profileID: UUID, vaultID: UUID) async throws -> VaultSyncSnapshot {
         guard let vault = vault(profile: profileID, vault: vaultID) else { throw CredentialVaultError.missingVault }
-        return try vault.snapshot()
+        let snapshot = try vault.snapshot()
+        if let pause = pauseAfterSnapshot {
+            pauseAfterSnapshot = nil
+            await pause.wait()
+        }
+        return snapshot
+    }
+
+    /// The vaults the profile still lists, locked or not.
+    func vaultIDs(profileID: UUID) async -> [UUID]? {
+        vaults.keys.filter { $0.profileID == profileID }.map(\.vaultID).sorted { $0.uuidString < $1.uuidString }
     }
 
     func commit(profileID: UUID, vaultID: UUID, lease: UInt64, writes: [AccountWrite], removing: [UUID: AccountStamp]) async throws -> UInt64 {
@@ -300,9 +333,16 @@ final class SimulatedMac {
 
     private let box = Box()
 
-    init(cloud: FakeSyncCloud, root: URL, excluded: Set<UUID> = [], state: VaultSyncAppState = VaultSyncAppState()) {
+    /// `knownAccount`: the app’s file already names the account the engine is signed in with, as it does after the first run.
+    init(
+        cloud: FakeSyncCloud, root: URL, excluded: Set<UUID> = [], state: VaultSyncAppState = VaultSyncAppState(), knownAccount: Bool = true
+    ) {
         host = FakeVaultHost(root: root)
         let box = box
+        var state = state
+        if knownAccount, state.accountUser == nil {
+            state.accountUser = cloud.user
+        }
         sync = VaultSync(host: host, state: state, persist: { box.state = $0 }, excludedProfiles: excluded, debounce: .seconds(2), clock: clock)
         engine = FakeSyncEngine(cloud: cloud, delegate: sync)
     }

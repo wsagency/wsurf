@@ -339,7 +339,7 @@ extension VaultSync {
                     }
                 }
             }
-        case .signIn(let user) where state.accountUser == nil || state.accountUser == user:
+        case .signIn(let user) where state.accountUser == user || (state.accountUser == nil && enabledKeys.isEmpty):
             state.accountUser = user
             accountAvailable = true
             for key in enabledKeys {

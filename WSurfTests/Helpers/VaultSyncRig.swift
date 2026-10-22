@@ -40,10 +40,14 @@ final class VaultSyncRig {
 
     /// A Mac that holds the vault with `accounts`.
     func mac(
-        holding accounts: [CredentialAccount] = [], unlocked: Bool = true, dek: SymmetricKey? = nil, excluded: Set<UUID> = []
+        holding accounts: [CredentialAccount] = [], unlocked: Bool = true, dek: SymmetricKey? = nil, excluded: Set<UUID> = [],
+        knownAccount: Bool = true
     ) throws -> (mac: SimulatedMac, vault: FakeVault) {
         count += 1
-        let mac = SimulatedMac(cloud: cloud, root: root.appending(path: "mac-\(count)", directoryHint: .isDirectory), excluded: excluded)
+        let mac = SimulatedMac(
+            cloud: cloud, root: root.appending(path: "mac-\(count)", directoryHint: .isDirectory), excluded: excluded,
+            knownAccount: knownAccount
+        )
         let vault = try mac.host.addVault(profile: profile, vault: vaultID, dek: dek ?? self.dek, unlocked: unlocked)
         for account in accounts {
             vault.add(account)

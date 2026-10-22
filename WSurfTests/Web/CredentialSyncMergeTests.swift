@@ -189,6 +189,24 @@ struct CredentialSyncMergeTests {
         #expect(try decide(gone(account.id), local: nil, base: nil) == .keep(removed))
     }
 
+    @Test func remoteDeleteOfAnEntryWithFilesWaitsInsteadOfMovingItToTrash() throws {
+        let account = entry()
+        var withFiles = account
+        withFiles.attachments = [
+            CredentialAttachment(
+                id: UUID(), name: "scan.pdf", contentType: "com.adobe.pdf", size: 1, sha256: Data(count: 32),
+                wrappedKey: Data(count: CredentialAttachment.wrappedKeyBytes), addedAt: nil
+            ),
+        ]
+        // The files are not synced, so the Trash would hold their only copy and the owner was not asked.
+        #expect(try decide(gone(account.id), local: withFiles, base: try base(account)) == .review(.deletedThereChangedHere, parts: []))
+        // Answered, it is the owner's decision.
+        let answer = try CredentialSyncMerge.resolve(
+            gone(account.id), kind: .deletedThereChangedHere, local: withFiles, base: try base(account), keepLocal: false, index: index([withFiles])
+        )
+        #expect(answer == .moveToTrash(SyncBase(version: 2, parts: .removedParts)))
+    }
+
     @Test func deleteAgainstAnEditWaits() throws {
         let agreed = entry()
         let edited = changed(agreed, .password)

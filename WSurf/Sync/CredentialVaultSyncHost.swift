@@ -41,6 +41,14 @@ final class CredentialVaultSyncHost: VaultSyncHost {
         profile(profileID).map { VaultProfileCard(name: $0.name, symbol: $0.symbol, color: $0.color.rawValue) }
     }
 
+    /// The profile's vaults from its store, which lists them without an unlock. Nil when the store cannot be read.
+    func vaultIDs(profileID: UUID) async -> [UUID]? {
+        guard let profile = profile(profileID), let store = try? CredentialManager.store(for: profile),
+              let listing = try? await store.listing()
+        else { return nil }
+        return listing.map(\.vaultID)
+    }
+
     func syncKey(profileID: UUID, vaultID: UUID) async -> VaultSyncKey? {
         guard let manager = profile(profileID).flatMap({ manager($0, vaultID) }), manager.isUnlocked else { return nil }
         return try? await manager.syncKey()

@@ -259,7 +259,9 @@ public nonisolated enum CredentialSyncMerge {
         let accepted = SyncBase(version: item.version, parts: incoming)
         guard let account = item.account else {
             guard let local else { return .keep(accepted) }
-            if let base, !base.parts.removed, try SyncParts.of(local).sum == base.parts.sum {
+            // Files are never synced, so an entry that has some holds the only copy of them: its move to Trash is the owner's choice.
+            let hasFiles = local.attachments?.isEmpty == false
+            if let base, !base.parts.removed, !hasFiles, try SyncParts.of(local).sum == base.parts.sum {
                 return .moveToTrash(accepted)
             }
             return .review(.deletedThereChangedHere, parts: [])

@@ -38,4 +38,92 @@ struct VaultSyncEdgeTests {
         try await b.pump()
         #expect(rig.item(own) != nil, "this Mac’s own changes are not held back by it")
     }
+
+    // MARK: Files
+
+    private static func scan() -> CredentialAttachment {
+        CredentialAttachment(
+            id: UUID(), name: "scan.pdf", contentType: "com.adobe.pdf", size: 10, sha256: Data(repeating: 7, count: 32),
+            wrappedKey: Data(repeating: 9, count: CredentialAttachment.wrappedKeyBytes), addedAt: nil
+        )
+    }
+
+    @Test func aRemoteDeleteNeverMovesAnEntryWithFilesToTrashWithoutAsking() async throws {
+        let rig = Rig()
+        defer { rig.finish() }
+        let entry = syncAccounts(1)[0]
+        let (a, va) = try await rig.syncedMac(holding: [entry])
+        let (b, vb) = try await rig.addedMac()
+        try await converge([a, b])
+        // The files of an entry are never synced, so B’s copy of the entry is the only place they are.
+        var withFile = entry
+        withFile.attachments = [Self.scan()]
+        vb.edit(withFile)
+        await b.wrote(vb)
+        va.remove(entry.id)
+        await a.wrote(va)
+        try await converge([a, b])
+
+        #expect(vb.account(entry.id)?.attachments?.count == 1 && vb.trash.isEmpty, "the entry and its files stay where they are")
+        #expect(rig.status(b) == .needsReview(1))
+        let waiting = try await b.sync.conflicts(profileID: rig.profile, vaultID: rig.vaultID)
+        #expect(waiting.map(\.kind) == [.deletedThereChangedHere])
+
+        // Moving it to Trash is the owner’s choice, and then it goes with its files.
+        try await b.sync.resolve(profileID: rig.profile, vaultID: rig.vaultID, accountIDs: [entry.id], keepLocal: false)
+        #expect(vb.account(entry.id) == nil && vb.trash[entry.id]?.attachments?.count == 1)
+    }
+
+    // MARK: Rows of a vault that is gone
+
+    @Test func rowsOfAVaultTheProfileNoLongerListsAreDroppedAtLaunchAndNothingIsSent() async throws {
+        let rig = Rig()
+        defer { rig.finish() }
+        let held = syncAccounts(2)
+        let (a, va) = try await rig.syncedMac(holding: held)
+        va.edit(syncChanging(held[0], password: "sealed before"))
+        await a.wrote(va)
+        // The vault was deleted while sync did not run, so no hook ran and its rows stayed. The profile still has another vault.
+        a.host.removeVault(profile: rig.profile, vault: rig.vaultID)
+        _ = try a.host.addVault(profile: rig.profile, name: "Other")
+        let writes = rig.cloud.writeCount
+
+        a.sync.attach(a.engine)
+        try await a.pump()
+
+        #expect(rig.cloud.writeCount == writes, "a vault that is gone is not sent")
+        #expect(rig.status(a) == .off)
+        #expect(a.sync.record(for: SyncRecordID(zone: rig.zone, name: held[0].id.uuidString)) == nil)
+        #expect(!a.sync.isSyncing(profileID: rig.profile, vaultID: rig.vaultID))
+    }
+
+    @Test func rowsOfAVaultThatIsGoneAreDroppedAtTheNextUnlockToo() async throws {
+        let rig = Rig()
+        defer { rig.finish() }
+        let (a, _) = try await rig.syncedMac(holding: syncAccounts(1))
+        let otherID = UUID()
+        let other = try a.host.addVault(profile: rig.profile, vault: otherID, name: "Other")
+        other.add(syncAccounts(1)[0])
+        try await a.sync.enable(profileID: rig.profile, vaultID: otherID)
+        try await a.pump()
+        a.host.removeVault(profile: rig.profile, vault: rig.vaultID)
+
+        a.sync.vaultUnlocked(profileID: rig.profile, vaultID: otherID)
+        await a.sync.settle()
+
+        #expect(rig.status(a) == .off)
+        #expect(a.sync.status(profileID: rig.profile, vaultID: otherID) == .synced, "the vault that is still there is untouched")
+    }
+
+    @Test func aListingThatIsEmptyOrMissingDropsNothing() async throws {
+        let rig = Rig()
+        defer { rig.finish() }
+        let (a, _) = try await rig.syncedMac(holding: syncAccounts(1))
+        a.host.removeVault(profile: rig.profile, vault: rig.vaultID)
+
+        a.sync.attach(a.engine)
+        await a.sync.settle()
+
+        #expect(rig.status(a) == .synced, "an empty listing is not trusted as 'every vault is gone'")
+    }
 }

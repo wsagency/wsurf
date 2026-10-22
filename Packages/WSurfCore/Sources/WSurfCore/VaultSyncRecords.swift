@@ -219,6 +219,9 @@ public protocol VaultSyncHost: AnyObject {
     /// The profile's own folder (`Credentials.sync` lives there), or nil when the profile is not on this Mac.
     func syncDirectory(profileID: UUID) -> URL?
     func profileCard(profileID: UUID) -> VaultProfileCard?
+    /// The vaults the profile lists now, locked or not; nil when they cannot be listed. A profile always has a vault, so an empty
+    /// list is read as unknown too.
+    func vaultIDs(profileID: UUID) async -> [UUID]?
     /// The vault's sync key, or nil while it is locked. Never prompts.
     func syncKey(profileID: UUID, vaultID: UUID) async -> VaultSyncKey?
     /// Throws while the vault is locked (`CredentialVaultError.unauthorized` or `expired`).

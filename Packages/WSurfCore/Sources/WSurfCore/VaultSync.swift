@@ -104,6 +104,8 @@ public final class VaultSync: SyncEngineDelegate {
     /// Vaults whose last pass held back this many removed states, and the vaults whose owner agreed to send them in the next pass.
     @ObservationIgnored var holding: [VaultKey: Int] = [:]
     @ObservationIgnored var releasing: Set<VaultKey> = []
+    /// Checks that wait for the host and are not steps of a vault's chain; `settle` waits for them too.
+    @ObservationIgnored var housekeeping: [Task<Void, Never>] = []
     @ObservationIgnored var tallies: [VaultKey: (notSyncable: Int, unreadable: Int)] = [:]
 
     nonisolated struct StampedSum {
@@ -135,7 +137,6 @@ public final class VaultSync: SyncEngineDelegate {
         loadDatabases()
         for key in enabledKeys {
             retryAfterUpdate(key)
-            readd(key)
             oweReadOfParked(key)
             if needsFetch(key) {
                 enqueue(key) { [weak self] in
@@ -143,6 +144,13 @@ public final class VaultSync: SyncEngineDelegate {
                 }
             }
         }
+        // What waits to go up is handed to the engine once rows of vaults that are gone are dropped.
+        housekeeping.append(Task { [weak self] in
+            await self?.pruneVanished()
+            for key in self?.enabledKeys ?? [] {
+                self?.readd(key)
+            }
+        })
         Task { [weak self] in
             let available = await engine.accountIsAvailable()
             self?.accountAvailable = available
@@ -164,6 +172,25 @@ public final class VaultSync: SyncEngineDelegate {
         }
     }
 
+    /// Drops the rows of every vault the profile no longer lists, for every profile with a sync database.
+    private func pruneVanished() async {
+        for profileID in host.profileIDs() {
+            await prune(profileID)
+        }
+    }
+
+    /// A vault deleted while sync did not run left its rows, and a later pass would send them. The host’s list is trusted only when it
+    /// has a vault in it: a profile always has one. Nothing in iCloud changes.
+    func prune(_ profileID: UUID) async {
+        guard let database = database(profileID), let listed = await host.vaultIDs(profileID: profileID), !listed.isEmpty else { return }
+        for row in (try? database.read { try $0.vaults() }) ?? [] where !listed.contains(row.vaultID) {
+            let key = VaultKey(profileID: profileID, vaultID: row.vaultID)
+            try? database.write { try $0.remove(row.vaultID) }
+            forget(key)
+            summaries[key] = nil
+        }
+    }
+
     /// A record parked for a newer WSurf is read from the zone again at launch: this build may be the one that can read it.
     private func oweReadOfParked(_ key: VaultKey) {
         guard (summaries[key]?.parked ?? 0) > 0, let (database, row) = enabledRow(key), !row.needsFetch else { return }
@@ -178,6 +205,11 @@ public final class VaultSync: SyncEngineDelegate {
         var seen: Int
         repeat {
             seen = generation
+            let checks = housekeeping
+            housekeeping = []
+            for task in checks {
+                await task.value
+            }
             for task in Array(chains.values) {
                 await task.value
             }
@@ -338,6 +370,9 @@ public final class VaultSync: SyncEngineDelegate {
         guard summaries[key]?.enabled == true else { return }
         unlocked.insert(key)
         refresh(key)
+        housekeeping.append(Task { [weak self] in
+            await self?.prune(profileID)
+        })
         enqueue(key) { [weak self] in
             await self?.cycle(key, fetch: true)
         }
@@ -621,12 +656,9 @@ public final class VaultSync: SyncEngineDelegate {
     func readd(_ key: VaultKey) {
         guard let engine, let (database, row) = runningRow(key) else { return }
         let waiting = (try? database.read { try $0.outbox(key.vaultID).map(\.accountID) }) ?? []
+        // Never a zone: only turning sync on creates one. A zone another Mac removed must not come back because this Mac signed in again.
         var changes: [SyncChange] = []
         if row.pendingVault != nil {
-            if ((try? database.read { try $0.systemFields(key.vaultID, Self.vaultRecordName) }) ?? nil) == nil {
-                // The record was never confirmed, so the zone may not exist yet either.
-                changes.append(.saveZone(key.zone))
-            }
             changes.append(.saveRecord(key.vaultRecord))
         }
         changes += waiting.map { .saveRecord(key.itemRecord($0)) }

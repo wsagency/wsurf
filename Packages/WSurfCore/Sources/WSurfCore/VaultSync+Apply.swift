@@ -61,7 +61,7 @@ extension VaultSync {
                 return
             }
             guard let snapshot = await snapshot(key) else { return }
-            guard mine == token(key), let (_, row) = runningRow(key), notRolledBack(key, snapshot, row, database) else { return }
+            guard stillOpen(key, mine), let (_, row) = runningRow(key), notRolledBack(key, snapshot, row, database) else { return }
             var pass = SyncPass()
             decide(batch, key: key, snapshot: snapshot, syncKey: syncKey, database: database, into: &pass)
             pass.processed = batch
@@ -301,9 +301,9 @@ extension VaultSync {
     func produce(_ key: VaultKey) async {
         let mine = token(key)
         guard let (database, _) = runningRow(key), !needsFetch(key) else { return }
-        guard let syncKey = await host.syncKey(profileID: key.profileID, vaultID: key.vaultID) else { return }
+        guard let syncKey = await host.syncKey(profileID: key.profileID, vaultID: key.vaultID), stillOpen(key, mine) else { return }
         guard let snapshot = await snapshot(key) else { return }
-        guard mine == token(key), let (_, row) = runningRow(key), notRolledBack(key, snapshot, row, database) else { return }
+        guard stillOpen(key, mine), let (_, row) = runningRow(key), notRolledBack(key, snapshot, row, database) else { return }
         let inputs = produceState(key, database: database, syncKey: syncKey)
         var work = ProduceWork()
         var sums = sumCache[key] ?? [:]
@@ -357,7 +357,7 @@ extension VaultSync {
             }
             flush(&work, key: key, database: database)
             await Task.yield()
-            guard mine == token(key), runningRow(key) != nil else { return }
+            guard stillOpen(key, mine), runningRow(key) != nil else { return }
         }
 
         // Entries that were synced and are gone from the vault: a removed state at the next version. A pass that would send a large
@@ -607,6 +607,17 @@ extension VaultSync {
             locked(key)
             return nil
         }
+    }
+
+    /// Whether a step that waited for the host may go on: it is still the vault’s enablement the step started with, and the vault is
+    /// still unlocked. A vault locked meanwhile drops what was kept for it, so a step never seals or opens with a key that is gone.
+    func stillOpen(_ key: VaultKey, _ session: Int) -> Bool {
+        guard session == token(key) else { return false }
+        guard unlocked.contains(key) else {
+            locked(key)
+            return false
+        }
+        return true
     }
 
     func locked(_ key: VaultKey) {

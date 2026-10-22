@@ -132,4 +132,88 @@ struct VaultSyncRaceTests {
         #expect(rig.item(lockout.entry)?.payload == lockout.theirs.payload)
         try await expectBothVersionsToChoose(rig, lockout)
     }
+
+    // MARK: A lock while a pass runs
+
+    @Test func produceStopsWhenTheVaultIsLockedWhileItRuns() async throws {
+        let rig = Rig()
+        defer { rig.finish() }
+        let entry = syncAccounts(1)[0]
+        let (a, va) = try await rig.syncedMac(holding: [entry])
+        va.edit(syncChanging(entry, password: "typed"))
+        let pause = HostPause()
+        a.host.pauseAfterSnapshot = pause
+
+        // The quiet moment passes and produce reads the vault; the vault is locked before it goes on.
+        a.sync.noteWrite(profileID: rig.profile, vaultID: rig.vaultID)
+        _ = await waitUntil { a.clock.pendingCount > 0 }
+        a.clock.advance(by: .seconds(2))
+        _ = await waitUntil { pause.isWaiting }
+        a.lock(va)
+        pause.release()
+        await a.sync.settle()
+
+        #expect(a.engine.pending.isEmpty, "nothing is sealed with a key the vault no longer holds")
+        #expect(rig.status(a) == .synced)
+        await a.unlock(va)
+        try await a.pump()
+        let sent = try VaultSyncCodec.openItem(#require(rig.item(entry)).payload, accountID: entry.id, key: va.syncKey)
+        #expect(sent.version == 2 && sent.account?.password == "typed", "the change is sealed at the next unlock")
+    }
+
+    // MARK: Sign-out, sign-in and other accounts
+
+    @Test func aZoneAnotherMacRemovedIsNotCreatedAgainAfterASignIn() async throws {
+        let rig = Rig()
+        defer { rig.finish() }
+        let (a, va) = try await rig.syncedMac(holding: syncAccounts(1))
+        // A new name for the vault waits to go up; then this Mac signs out, and another Mac removes the vault from iCloud.
+        va.name = "Renamed"
+        await a.wrote(va)
+        await a.engine.simulateAccount(.signOut)
+        rig.cloud.deleteZone(rig.zone, reason: .deleted)
+
+        await a.engine.simulateAccount(.signIn(user: "user-1"))
+        try await a.pump()
+
+        #expect(rig.cloud.zones[rig.zone] == nil, "only turning sync on creates a zone")
+        #expect(rig.status(a) == .removed(.deleted))
+        #expect(va.name == "Renamed")
+    }
+
+    @Test func anAccountSeenForTheFirstTimeWithSyncOnIsADifferentAccount() async throws {
+        let rig = Rig()
+        defer { rig.finish() }
+        let held = syncAccounts(2)
+        // The app’s file was lost, so this Mac does not know which Apple Account it has been syncing with.
+        let (a, va) = try rig.mac(holding: held, knownAccount: false)
+        try await a.sync.enable(profileID: rig.profile, vaultID: rig.vaultID)
+        try await a.pump()
+        #expect(a.sync.state.accountUser == nil)
+        va.edit(syncChanging(held[0], password: "typed"))
+        await a.wrote(va)
+
+        // The engine starts fresh and names the account: another one, where a zone of that name exists.
+        rig.cloud.switchUser("user-2")
+        rig.cloud.createZone(rig.zone)
+        await a.engine.simulateAccount(.signIn(user: "user-2"))
+        try await a.pump()
+
+        #expect(rig.status(a) == .accountChanged)
+        #expect(rig.cloud.recordCount == 0, "nothing went up to the other account")
+        #expect(va.account(held[0].id)?.password == "typed" && a.sync.state.accountUser == "user-2")
+    }
+
+    @Test func aFirstSignInWithNothingSyncedJustRemembersTheAccount() async throws {
+        let rig = Rig()
+        defer { rig.finish() }
+        let (a, va) = try rig.mac(holding: syncAccounts(1), knownAccount: false)
+
+        await a.engine.simulateAccount(.signIn(user: "user-1"))
+        try await a.sync.enable(profileID: rig.profile, vaultID: rig.vaultID)
+        try await a.pump()
+
+        #expect(a.sync.state.accountUser == "user-1" && rig.status(a) == .synced)
+        #expect(rig.cloud.names(in: rig.zone).count == 2 && va.accounts.count == 1)
+    }
 }
