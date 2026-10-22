@@ -5,6 +5,7 @@ import Foundation
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 /// The dates a credential shows come only from what the vault recorded (spec §12.1): pure values, no vault or manager.
 struct CredentialDatesTests {

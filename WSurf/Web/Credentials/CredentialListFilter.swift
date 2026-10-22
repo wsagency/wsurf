@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import Foundation
+import WSurfVault
 
 /// Which kind of entry the Vault tab shows: its sections. Pure and secret-free: it reads only what a `CredentialSummary` carries, so
 /// searching and filtering never touch a snapshot. An entry that holds several kinds is listed under each.

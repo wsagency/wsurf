@@ -5,6 +5,7 @@ import Foundation
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 // Task 8 (item 17, §11.4): after a password and a TOTP were removed, the metadata edited, the account deleted and purged, no
 // reachable record of the vault or its Trash still holds a planted secret.

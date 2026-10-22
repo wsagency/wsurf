@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import Foundation
+import WSurfVault
 
 /// The import review's decisions, as the review sheet makes them. A refused one leaves the review as it was and says why.
 extension CredentialSettingsModel {

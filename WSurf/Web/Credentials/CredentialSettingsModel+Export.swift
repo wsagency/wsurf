@@ -3,6 +3,7 @@
 
 import AuthenticationServices
 import Foundation
+import WSurfVault
 
 /// Sending the selection to another app, or writing it as a CSV file. Both prove the selection against the vault first.
 extension CredentialSettingsModel {

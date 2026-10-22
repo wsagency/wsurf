@@ -3,6 +3,7 @@
 
 import AppKit
 import Foundation
+import WSurfVault
 
 /// Copying a credential's values to the clipboard from the list, the editor and History. Every copy reads the vault under the
 /// current unlock first, like every Show: a locked vault or a stale authorization copies nothing, and a secret goes out with the

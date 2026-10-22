@@ -6,6 +6,7 @@ import Security
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 extension WebsiteAuthenticatorTests {
     @Test func challengeAndUserHandleLimitsAreExact() throws {

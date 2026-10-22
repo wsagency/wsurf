@@ -3,6 +3,7 @@
 
 import AppKit
 import SwiftUI
+import WSurfVault
 
 extension InputHistoryRetention {
     var label: LocalizedStringResource {

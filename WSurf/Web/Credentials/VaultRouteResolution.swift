@@ -3,6 +3,7 @@
 
 import AppKit
 import AuthenticationServices
+import WSurfVault
 
 /// What a vault choice came to: a vault, the way out to the system's authenticator (a passkey request only), or nothing
 /// (no usable vault, or the user canceled).

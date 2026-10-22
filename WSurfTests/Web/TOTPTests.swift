@@ -5,6 +5,7 @@ import Foundation
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 struct TOTPTests {
     private struct Vector {

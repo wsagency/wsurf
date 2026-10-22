@@ -7,6 +7,7 @@ import Foundation
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 /// §13.3 import classification against the destination vault, the passkey hard conflict, the removal of passkey
 /// replace, and the truthful export dates of §12.2. Everything goes through `preview`, `classify`, `apply` and `export`.

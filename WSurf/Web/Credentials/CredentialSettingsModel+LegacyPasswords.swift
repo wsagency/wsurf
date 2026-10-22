@@ -3,6 +3,7 @@
 
 import Foundation
 import Security
+import WSurfVault
 
 /// The one-time import of the passwords saved before Credential Manager, as the Credential Manager page drives it: read the old
 /// list (the system asks the user to authenticate), stage what the vault does not hold for the usual review, and, once the import

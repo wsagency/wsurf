@@ -6,6 +6,7 @@ import GRDB
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 /// Files kept with vault entries, through the store's own API: the schema raise (owner decision 8), the lifecycle of a file's reference
 /// (History, Trash, undo, merge) and of its encrypted file (kept while any row names it, removed by a purge's sweep and by Delete Vault),

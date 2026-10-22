@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import Foundation
+import WSurfVault
 
 /// Undo for the Credentials page: the last five actions it made (Move to Trash, Merge, Edit, Add, Restore), kept in the unlocked
 /// session. Taking one back is a new ordinary commit with the cause "undo" (`ProfileVaultStore.undo`); nothing in history is rewritten.

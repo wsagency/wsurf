@@ -5,6 +5,7 @@ import Foundation
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 /// Merge suggestions are computed from accounts and return ids and reasons only.
 struct CredentialMergeSuggestionsTests {

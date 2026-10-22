@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import Foundation
+import WSurfVault
 
 /// The one editor state. It starts from the stored account and only overwrites what the form exposes, so
 /// passkeys, exchange metadata, descriptor ids/labels and nil-versus-empty passwords survive an edit.

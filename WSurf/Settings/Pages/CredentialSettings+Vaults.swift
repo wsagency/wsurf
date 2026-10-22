@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import SwiftUI
+import WSurfVault
 
 extension CredentialSettings {
     /// Switching vaults only rebinds the page: a locked vault stays locked, shows no content and offers its own Unlock.
@@ -75,6 +76,7 @@ extension CredentialSettings {
                                     .disabled(model.isBusy)
                             }
                         }
+                        CloudVaultRow(model: model, run: run)
                         RowSeparator()
                         DetailRow(title: "Delete vault", caption: deleteVaultCaption) {
                             Button("Delete Vault…", role: .destructive) { run { await model.requestVaultDeletion() } }
@@ -150,6 +152,7 @@ private struct CredentialDeleteVaultSheetHost: ViewModifier {
                 CredentialDeleteVaultSheet(
                     pending: pending,
                     isBusy: model.isBusy,
+                    syncedHere: model.vaultIsSyncedHere(pending.vaultID),
                     confirm: confirm,
                     export: {
                         exportsOnDismiss = true

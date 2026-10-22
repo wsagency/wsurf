@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import Foundation
+import WSurfVault
 
 /// When a credential came into the vault and when it last changed, read from fields the vault already stores (spec §12.1).
 /// Only a credential WSurf created has a creation date of its own. A moved or imported one says so instead of claiming to

@@ -5,6 +5,7 @@ import Foundation
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 /// Secure items are their own history subject, like notes: they move to the Trash with their earlier versions, restore, and are erased by
 /// a purge. The planted Wi-Fi passphrases are synthetic and distinctive so a search of every stored row can find them.

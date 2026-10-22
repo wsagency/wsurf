@@ -319,6 +319,37 @@ window backdrops read; it is rebuilt only when the selected theme, a saved theme
 or an adjustment changes. The appearance keys from before themes stay in place:
 `ThemeMigration` reads them once, and an older build still finds them.
 
+## Shared packages
+
+`Packages/WSurfCore` holds platform-neutral code that an iOS app can share with the Mac app. Its first target, `WSurfVault`,
+holds the profile vault: the store, its crypto, the Credential Exchange codec, TOTP and passkey key encoding. It imports no
+AppKit, SwiftUI, WebKit or CefKit, and it builds for iOS. It uses the app target's Swift settings (Main Actor default
+isolation, Member Import Visibility), so code behaves the same on either side of the boundary. The app links the product
+statically, which adds no framework to the bundle. The tests stay in `WSurfTests` and use `@testable import WSurfVault`
+without linking it, so the app is the only copy of the vault code in a test process. A resource the package reads through
+`Bundle.main`, such as the public suffix list, stays in the app.
+
+The second target, `WSurfCore`, holds the CloudKit sync of tabs and of vaults. One `CKSyncEngine` on the account's private
+database sits behind the `SyncEngine` protocol, and `CloudKitSyncEngine` is the only place that creates a `CKContainer`. The
+app's `CloudSync` creates that one engine and `SyncRouter` is its one delegate: the router keeps the engine's state and hands
+each zone to the feature that owns it. Tab sync (`TabSync`) uses the `Device` and `DeviceSession` records: a device publishes the
+Favorites, pins and open tabs of its Personal profile's regular windows and lists the other devices' in the sidebar, read-only.
+Vault sync (`VaultSync`) uses one zone per vault, `v-<profile UUID>-<vault UUID>`, with one `Vault` record (the wrapper list,
+the sealed name and the profile's name and color) and one `Item` record per entry. Every entry is sealed with AES-256-GCM
+under a sync key that HKDF derives from the vault's key, so the record opens only on a Mac that opened the vault with the
+synced unlock passkey. Each Mac merges what arrives into its own store through its own commit, part by part against a sync
+base it keeps sealed in `Credentials.sync` in the profile's folder; it works only while the vault is unlocked and never
+prompts or touches a lease. A row is never sent over a record that was fetched and not merged, a record only a newer WSurf
+reads parks that one entry, a store older than the last state it synced reads and sends nothing, and a pass that would delete
+many entries at once waits for the owner. A removed entry's `Item` carries what the entry stood for as keyed digests (its
+import trace, HMAC under a vault-derived subkey), and entries removed before the vault synced are sent once as removed states, so a
+Mac that never held an entry keeps it as a tombstone and an import there does not bring it back; a merge is part of what an entry
+syncs. Store rows, History, Trash, files, settings and Input History never sync. Nothing
+reaches CloudKit unless the feature's hidden flag (`experiments.iCloudTabs`, `experiments.iCloudVault`) is on and the signed
+binary carries the iCloud, CloudKit and push entitlements (`CloudSyncGate`); a build that is unsigned, staged or has a bundle ID
+suffix never creates the container. Private windows, the private profile, page state, history, autofill, cookies, permissions
+and favicons never sync, and `NeverSyncTests` pins the record types and scans the sync sources for them.
+
 ## Tests
 
 Tests use Swift Testing, with XCTest for the two things it cannot express:

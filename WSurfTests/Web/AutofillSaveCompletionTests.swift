@@ -6,6 +6,7 @@ import Testing
 import WebKit
 
 @testable import WSurf
+@testable import WSurfVault
 
 /// What the save pipeline does once a login is over: which document the offer belongs to, how long a staged attempt may wait,
 /// and what a click on a dead offer says. Real pages in a real window and a real vault; only the staging (the page script's

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import SwiftUI
+import WSurfVault
 
 /// The editor's cards, addresses and other items. Each value is typed in place; a hidden one (a card number, a key) is masked until
 /// its eye button shows it. A custom field's type (Text, Hidden, Date, Number, Email) is chosen from its menu, and a date can be

@@ -5,6 +5,7 @@ import Foundation
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 // Task 12 (§13.5), store boundary: `commitAccounts` re-verifies only the touched accounts' stamps, writes only them, and leaves every
 // other row and the head's policy byte-identical. State is read back from the file (`CommitProbe`, the fixture), never from the writer.

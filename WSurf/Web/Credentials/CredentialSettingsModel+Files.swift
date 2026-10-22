@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import Foundation
+import WSurfVault
 
 /// The editor's Files section. A file is encrypted into the vault's folder as soon as it is added and the draft keeps its record; Save
 /// stores the record with the entry, and Cancel removes the files the editor added (a save that left one out removes that one).

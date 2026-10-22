@@ -6,6 +6,7 @@ import Foundation
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 // Task 8 (§11.2, §11.3, §11.3a): Trash and earlier-version listings, undelete (the reverse MOVE) and restoring an earlier revision.
 // Shared plumbing lives in VaultTrashSupport.swift and VaultMoveSupport.swift.

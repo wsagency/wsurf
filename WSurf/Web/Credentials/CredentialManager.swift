@@ -7,6 +7,8 @@ import CryptoKit
 import Foundation
 import Observation
 import Synchronization
+import WSurfCore
+import WSurfVault
 
 nonisolated enum CredentialLockReason: Sendable {
     case manual, profileSwitch, screenLock, sleep, termination, timeout
@@ -25,6 +27,11 @@ nonisolated enum CredentialManagerError: Error {
     case externalPasskeyRemains(credentialID: Data, underlying: any Error)
     /// App cancellation arrived after registration started, so the provider may have created a passkey.
     case registrationOutcomeUnknown
+    /// The passkey opened no copy of the synced vault on this Mac: the key it gives here differs from the one that sealed the vault.
+    /// Nothing was written. `keyCheck` is the non-secret value to compare with the other Mac's.
+    case syncKeyDiffers(keyCheck: String)
+    /// A synced vault belongs to the profile its zone names; no other profile's store takes it.
+    case syncedVaultOfAnotherProfile
 }
 
 /// The native passkey calls a manager (or a vault creation) makes, as closures so a test drives the real manager with a stub.
@@ -93,6 +100,11 @@ final class CredentialManager {
         writesInFlight == 0 && current != nil ? writeGeneration : nil
     }
     private(set) var unlockCredentials: [VaultUnlock] = []
+    /// A short non-secret check of the key this passkey gave at the last unlock, for comparing two Macs when a synced vault does not
+    /// open (`CredentialVaultCrypto.keyCheck`). Memory only; it ends with the lease.
+    private(set) var lastKeyCheck: String?
+    /// Counts the writes sync applied to this vault, so a page shows them. Memory only.
+    var syncWrites: UInt64 = 0
     private(set) var lastLockReason: CredentialLockReason?
     /// How long this vault's next unlock lasts. The lease in force keeps the length it began with, except that a shorter choice
     /// applies to it at once (`setAutoLock`).
@@ -124,7 +136,7 @@ final class CredentialManager {
 
     let vaultID: UUID
     @ObservationIgnored private let profile: Profile
-    @ObservationIgnored private let store: ProfileVaultStore
+    @ObservationIgnored let store: ProfileVaultStore
     @ObservationIgnored private let now: @Sendable () -> ContinuousClock.Instant
     @ObservationIgnored private let native: VaultNativeUnlock
     @ObservationIgnored private var pending: [VaultAccess] = []
@@ -158,7 +170,7 @@ final class CredentialManager {
 
     /// A vault creation in flight: the lease it owns (nil when the source vault's own access authorizes it) and its native
     /// prompt, so a profile-level lock revokes the lease and cancels the prompt.
-    private final class Creation {
+    final class Creation {
         let lease: VaultAccess?
         let native: VaultNativeUnlock
 
@@ -170,14 +182,14 @@ final class CredentialManager {
 
     private static var managers: [UUID: [UUID: CredentialManager]] = [:]
     private static var stores: [UUID: ProfileVaultStore] = [:]
-    private static var creations: [UUID: [Creation]] = [:]
-    private static var retiredProfiles: Set<UUID> = []
+    static var creations: [UUID: [Creation]] = [:]
+    static var retiredProfiles: Set<UUID> = []
     private static var observers: [any NSObjectProtocol] = []
     /// One counter for every manager and creation in the process: an epoch handed to a consumer as a bare number names exactly
     /// one lease, so vault A's epoch can never select vault B's manager. Never reset before the process ends.
     private static var lastEpoch: UInt64 = 0
 
-    private static func nextEpoch() -> UInt64 {
+    static func nextEpoch() -> UInt64 {
         lastEpoch += 1
         return lastEpoch
     }
@@ -411,6 +423,8 @@ final class CredentialManager {
             unlockCredentials = unlocks
             VaultStateChanges.shared.note(profile.id)
             AutofillSuggestions.shared.vaultUnlocked(profileID: profile.id)
+            lastKeyCheck = CredentialVaultCrypto.keyCheck(prf: prf, credentialID: credentialID)
+            CloudSync.shared?.vaults?.vaultUnlocked(profileID: profile.id, vaultID: vaultID)
         } catch {
             publishScratch()
             discard(access)
@@ -660,6 +674,13 @@ final class CredentialManager {
         }
     }
 
+    /// Keeps what entries removed on another device left (`RemovedMemory`), as tombstones, under the lease the caller decided under.
+    func rememberRemoved(_ memories: [UUID: RemovedMemory], authorizedEpoch: UInt64) async throws -> VaultCommitReceipt {
+        try await authorizedWrite(epoch: authorizedEpoch) { access in
+            try await store.rememberRemoved(vaultID: vaultID, memories: memories, using: access)
+        }
+    }
+
     func removedIdentifiers() async throws -> RemovedIdentifiers {
         try await reading { access in try await store.removedIdentifiers(vaultID: vaultID, using: access) }
     }
@@ -751,6 +772,7 @@ final class CredentialManager {
         lock(reason: .manual)
         AutofillSaveCoordinator.shared.vaultAccessEnded(profileID: profile.id)
         InputHistory.shared.vaultDeleted(vaultID, in: profile)
+        CloudSync.shared?.vaults?.vaultDeleted(profileID: profile.id, vaultID: vaultID)
     }
 
     /// Synchronous revocation is the security boundary; actor cleanup is conditional on the exact
@@ -762,6 +784,8 @@ final class CredentialManager {
         }
         pending = []
         current = nil
+        lastKeyCheck = nil
+        CloudSync.shared?.vaults?.vaultLocked(profileID: profile.id, vaultID: vaultID)
         unlockGeneration &+= 1
         // Ceremonies bound to this vault stop here, synchronously, before any suspension can let one continue.
         WebAuthnAdapter.cancel(manager: self)
@@ -792,7 +816,7 @@ final class CredentialManager {
         }
     }
 
-    private func currentAccess() throws -> VaultAccess {
+    func currentAccess() throws -> VaultAccess {
         guard let current else { throw CredentialVaultError.unauthorized }
         try requireCurrent(current)
         return current
@@ -834,7 +858,7 @@ final class CredentialManager {
     }
 
     /// A read under the current lease; a result is discarded if a lock landed while it was in flight.
-    private func reading<T>(_ operation: (VaultAccess) async throws -> T) async throws -> T {
+    func reading<T>(_ operation: (VaultAccess) async throws -> T) async throws -> T {
         let access = try currentAccess()
         let result = try await guarded(using: access) { try await operation(access) }
         try requireCurrent(access)
@@ -853,7 +877,11 @@ final class CredentialManager {
     private func writing<T>(_ operation: () async throws -> T) async rethrows -> T {
         writeGeneration &+= 1
         writesInFlight += 1
-        defer { writesInFlight -= 1; writeGeneration &+= 1 }
+        defer {
+            writesInFlight -= 1
+            writeGeneration &+= 1
+            CloudSync.shared?.noteVaultWrite(profileID: profile.id, vaultID: vaultID)
+        }
         return try await operation()
     }
 
@@ -899,5 +927,11 @@ extension CredentialManager {
     /// list asks for it; agents and the MCP server never do (`InputHistoryIsolationTests`).
     func inputHistoryKey() async throws -> InputHistoryVaultKey {
         try await reading { access in try await store.inputHistoryKey(vaultID: vaultID, using: access) }
+    }
+
+    /// The import memory key of this vault, under the current lease (`ImportMemoryKey`): what an import matches what it brought before
+    /// by, as keyed digests. Never the vault's key.
+    func importMemoryKey() async throws -> ImportMemoryKey {
+        try await reading { access in try await store.importMemoryKey(vaultID: vaultID, using: access) }
     }
 }

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import Foundation
+import WSurfVault
 
 /// The one thing the user is told when a credential transfer ends or is refused (spec §13.5). Only the factories below
 /// build one, so `kind`, `action`, `receipt` and `text` cannot disagree: a receipt exists for `.succeeded` and for nothing

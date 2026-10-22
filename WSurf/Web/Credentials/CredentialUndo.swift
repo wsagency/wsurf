@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import Foundation
+import WSurfVault
 
 /// An account an action replaced, and the stamp of the account as the action left it. The stamp is what an undo requires to still
 /// hold: an account changed since is not put back over.

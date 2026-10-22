@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import Foundation
+import WSurfVault
 
 /// Actions on several credentials of the list at once.
 extension CredentialSettingsModel {

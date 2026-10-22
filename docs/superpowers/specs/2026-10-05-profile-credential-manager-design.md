@@ -34,7 +34,9 @@ Existing password records and behavior remain intact. Do not migrate, delete, re
 
 - Automatic migration, legacy recovery, or deletion/cutover of existing password records. Preserve existing legacy password manager as active default until explicit mutually exclusive selection.
 - Changes to payment-card, contact, assistant API-key, or MCP credential storage.
-- WSurf account servers, cloud-vault synchronization, recovery escrow, or a new cryptography dependency.
+- WSurf account servers, recovery escrow, or a new cryptography dependency. Cloud-vault synchronization was a non-goal of this
+  design; it exists only as the opt-in iCloud sync of sealed vault data in the user's own private CloudKit database, keyed only by
+  the synced unlock passkey (2026-10-12 spec, §18 amendment 2026-10-22).
 - General macOS AutoFill-provider functionality outside WSurf. An exchange extension does not replace the app-owned manager.
 - CSV as a substitute for the requested password/passkey/TOTP exchange.
 
@@ -195,7 +197,8 @@ Public Apple exchange documentation establishes transfer between participating c
 
 Before accepting Apple Passwords integration as implemented, demonstrate WSurf to Apple Passwords and Apple Passwords to WSurf transfer of a password, a usable passkey, and a TOTP generator on the target OS. Verify the received secrets by actual use. If the target app does not participate or rejects a type, report the exact blocker and stop that dependent work. Do not substitute CSV, export screenshots, or mark a generic exchange API wrapper as complete.
 
-Apple synchronizes credentials it holds. The exchange API is not an inventory/readback channel, does not prove remote synchronization completeness, and does not provide automatic bidirectional WSurf updates. Changes in either manager require another explicit transfer. Synchronizing an unlock passkey does not synchronize WSurf's encrypted vault file.
+Apple synchronizes credentials it holds. The exchange API is not an inventory/readback channel, does not prove remote synchronization completeness, and does not provide automatic bidirectional WSurf updates. Changes in either manager require another explicit transfer. Synchronizing an unlock passkey does not synchronize WSurf's encrypted vault file. The opt-in
+iCloud sync of the 2026-10-12 spec (§18, 2026-10-22) syncs a vault's sealed entries separately; it does not use the exchange API.
 
 ### Conflicts and errors
 

@@ -5,6 +5,7 @@ import Foundation
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 // The passwords saved before Credential Manager go through the CSV stager as numbered rows, so every rule that protects a CSV
 // import (exact matching, duplicates, conflicts, limits) protects them too. Synthetic entries only.

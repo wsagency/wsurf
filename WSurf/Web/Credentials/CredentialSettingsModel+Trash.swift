@@ -3,6 +3,7 @@
 
 import AuthenticationServices
 import Foundation
+import WSurfVault
 
 /// The Trash tab: listing, restoring and deleting permanently. Everything it shows lives in the authorization session, so a lock, a
 /// re-unlock or another vault starts again from nothing.

@@ -8,6 +8,7 @@ import Synchronization
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 // Task 9: the routed public `unlock` and the one-way v1 → v2 migration (spec §10). Every v1 file is a real `CredentialVaultCrypto`
 // envelope; assertions are on the files, the open state and the unlock result.

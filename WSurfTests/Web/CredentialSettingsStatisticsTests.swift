@@ -5,6 +5,7 @@ import Foundation
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 // The Statistics section's two vault-wide counts, against a real fixture vault: the Trash entries and the earlier versions the vault
 // keeps. The other rows come from the summaries (`CredentialListFilterTests`). Synthetic data only.

@@ -6,6 +6,7 @@ import Observation
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 // Selection mode (Select in a row's menu) and the row's right-click menu. Pure: rows in, a selection and menu entries out.
 @MainActor

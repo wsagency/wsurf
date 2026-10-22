@@ -106,6 +106,7 @@ final class BrowserApplication {
         let lastWindowID = defaults.string(forKey: Self.lastWindowKey).flatMap(UUID.init(uuidString:))
         let catalog = ProfileStore.shared
         InputHistory.shared.purgeAllProfilesAtLaunch(catalog.profiles)
+        CloudSync.startIfAvailable(profiles: catalog.profiles)
         restoreWindows(of: catalog.profiles)
         if windows.isEmpty {
             newWindow(profile: catalog.current)
@@ -118,6 +119,7 @@ final class BrowserApplication {
         } else if let lastWindowID, let window = windows.first(where: { $0.windowID == lastWindowID }) {
             window.showBrowser()
         }
+        CloudTabs.shared?.publishAll(force: true)
         isReady = true
         let queued = queuedURLs
         queuedURLs.removeAll()
@@ -376,6 +378,8 @@ final class BrowserApplication {
         // locked: unlocking again is one explicit user action, never an implicit one.
         CredentialManager.lockAll(reason: .termination)
         mcpServer.stop()
+        // The trees are still whole here; `closeTabsForTermination` empties them later.
+        CloudSync.shared?.prepareToTerminate()
         for coordinator in windows {
             coordinator.stopAgent()
             coordinator.voiceInput.cancel()
@@ -386,6 +390,7 @@ final class BrowserApplication {
 
     func cancelTermination() {
         isTerminating = false
+        CloudSync.shared?.cancelTermination()
         mcpServer.resume()
     }
 

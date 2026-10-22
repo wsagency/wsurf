@@ -9,6 +9,7 @@ import Synchronization
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 // Input History kept with a vault: the private key sealed to an inbox key that only the vault's Input History key opens, recording
 // while the vault is locked, the one-time move of today's key, Delete Vault, and the key the vault store derives. Synthetic values,

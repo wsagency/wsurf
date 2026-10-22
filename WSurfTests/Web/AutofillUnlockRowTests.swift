@@ -6,6 +6,7 @@ import Foundation
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 /// The dropdown's "Unlock Credentials…" row: offered only while every vault of the profile is locked, it unlocks through the
 /// ordinary unlock (the real manager, store and route; only the passkey prompt is the fixture's stub), and then the lookup reads the

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import Foundation
+import WSurfVault
 
 /// The websites the user excluded from save suggestions ("Never for This Site") belong to the vault that was asked: each vault
 /// keeps its own list, and so this page resets the selected vault's list and no other.

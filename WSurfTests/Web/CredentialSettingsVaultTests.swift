@@ -5,6 +5,7 @@ import Foundation
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 // A vault's name is sealed in its head, so the page lists a locked vault by its number and an unlocked one by its name. The listing is
 // read again whenever that changes, never only when a vault is created.

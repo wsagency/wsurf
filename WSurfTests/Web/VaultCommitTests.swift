@@ -6,6 +6,7 @@ import GRDB
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 // Task 7: the public `commit` boundary. State is read back from the file (`CommitProbe`, `StoreTables`, the fixture) and
 // through the public snapshot; `f.verify()` runs V1-V5 on the stored pair after every write.

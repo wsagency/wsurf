@@ -9,6 +9,7 @@ import Synchronization
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 // The per-vault `CredentialManager` and its profile-level registry, asserted through real managers over real stores. Only the native
 // passkey prompt is stubbed (`VaultPasskeys`).

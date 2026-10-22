@@ -5,6 +5,7 @@ import Foundation
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 // Password CSV transfer through the real parser, the real coordinator and the real vault. The CSV layouts here are
 // synthetic: a 6-column `Title,URL,Username,Password,Notes,OTPAuth` file and an older 4-column `Title,Url,Username,Password`

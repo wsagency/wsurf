@@ -3,6 +3,7 @@
 
 import Foundation
 import Observation
+import WSurfVault
 
 /// Input History on the main actor: the stores of the profiles, what is unlocked, and the timers that purge and lock.
 ///

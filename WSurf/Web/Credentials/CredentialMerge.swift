@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import Foundation
+import WSurfVault
 
 /// Why credentials can't be merged. A fixed vocabulary: it names a rule, never a value.
 nonisolated enum CredentialMergeError: Error, Equatable, Sendable {

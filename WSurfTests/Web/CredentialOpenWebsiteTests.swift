@@ -6,6 +6,7 @@ import Foundation
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 /// "Open Website" from a row, the right-click menu and the editor: which address, and that it goes to the page's own window and
 /// only as HTTPS. Synthetic data; nothing is opened, the opener is a recording seam.

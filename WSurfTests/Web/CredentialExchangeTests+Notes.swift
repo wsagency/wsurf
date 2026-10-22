@@ -6,6 +6,7 @@ import Foundation
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 // Notes are a credential of their own in the exchange: imported, kept in order, merged without loss and exported on request.
 extension CredentialExchangeTests {

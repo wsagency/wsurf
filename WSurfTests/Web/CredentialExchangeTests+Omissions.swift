@@ -7,6 +7,7 @@ import Foundation
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 // A transfer is never refused for something WSurf cannot keep: the part is left out, named in the review, and the rest is
 // imported. Only the checks that protect the vault still refuse a whole transfer.

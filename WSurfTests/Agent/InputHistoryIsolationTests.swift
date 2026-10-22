@@ -5,6 +5,7 @@ import Foundation
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 // Input History is for the person at the keyboard. No tool of the assistant, no MCP tool and nothing they call may read it, so the
 // code behind them must not even name it. This is the same source scan `PasskeyVaultUnlockGuardTests` uses for the vault's

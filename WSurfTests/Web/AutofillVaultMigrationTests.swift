@@ -6,6 +6,7 @@ import LocalAuthentication
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 // Synthetic data only: test card numbers, invented names, example.test addresses. The old card list, contact list and save index live
 // in `MemoryAutofillStorage`, the vault in a fixture vault of a throwaway profile, and the state in a throwaway defaults suite.

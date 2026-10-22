@@ -23,9 +23,9 @@ Decided by the user (not re-litigated here):
 6. Manual editor: URL fields accept Enter/Shift-Enter and typed comma/space as separators in both website fields; TOTP is entered as a raw key or `otpauth://` only (no QR). The editor cannot create a passkey. (The editor itself is another worker's scope; §12 only fixes its contract with this design.)
 7. The goal is implementation + PR + Pro build + Air deploy. **This written spec was approved by the user on 2026-10-12, together with the PR→`main` and G6 deploy path** (design approval only: runtime gates remain unverified; no tag/publish/release authorization).
 
-Not allowed: CSV as sync, QR, Apple autofill as a transport, background/automatic sync, retention off, any move of a credential between two independent active vaults, any claim that WSurf "synced". (The only MOVE is an active vault ↔ **its own linked Trash**.)
+Not allowed: CSV as sync, QR, Apple autofill as a transport, background/automatic sync other than the opt-in iCloud sync of sealed vault data (§18, amendment 2026-10-22), retention off, any move of a credential between two independent active vaults, any claim that WSurf "synced" with Apple Passwords. (The only MOVE is an active vault ↔ **its own linked Trash**.)
 
-Non-goals of this build: moving a credential between independent active vaults; cross-vault merge; deleting a profile's last vault (§9); SQLCipher or any new dependency; a Keychain item, entitlement, App Group or Secure Enclave key for this feature (§6.6); in-app quarantine, reset, "acknowledge missing" or high-water-mark features (not requested; §6.4, §6.7).
+Non-goals of this build: moving a credential between independent active vaults; cross-vault merge; deleting a profile's last vault (§9); SQLCipher or any new dependency; a Keychain item, entitlement, App Group or Secure Enclave key for this feature (§6.6; iCloud sync adds only the CloudKit and push entitlements for its own transport, §18 amendment 2026-10-22); in-app quarantine, reset, "acknowledge missing" or high-water-mark features (not requested; §6.4, §6.7).
 
 ## 2. Baseline (EXISTING) and source-backed risks this design must fix
 
@@ -188,6 +188,9 @@ The listed paths also include `Credentials.vault.swap` and every `Credentials.va
 ### 6.6 Explicit non-assumptions
 
 No new Keychain item, entitlement, access group, App Group, Secure Enclave key or system service is introduced, and none is needed: RK lives inside vault heads. The existing `keychain-access-groups` entitlement is for unrelated autofill vaults and is not relied on. If the user later approves a Keychain/OS witness it can replace A3 without changing the file format.
+
+> Amendment 2026-10-22: iCloud sync of sealed vault data (§18) adds the app's CloudKit container and push entitlements for its
+> transport only. No key, wrapper, PRF output, grant or sync state is stored in the Keychain, and nothing in the store relies on them.
 
 ### 6.7 Bounded limits (stated, not solved)
 
@@ -507,6 +510,47 @@ It runs on the **exact artifact G6 installs** (same SHA-256): the clean merged `
 Unverified until the user reports: Gate B (G1–G5), and G6's install result is the only agent-verifiable part of G6; that Foundation/SQLite atomicity, `RENAME_SWAP`/`RENAME_EXCL` on the target volume, `F_FULLFSYNC` and `synchronous=FULL` survive power loss on this macOS; SQLite behaviour under physical disk-full; the cost of full per-unlock history verification at realistic history sizes; whether Apple preserves or regenerates ids/dates and whether the receiver treats the three kinds equivalently; whether existing-passkey reuse is possible on the platform (if not, **blocked**, not reduced). Not covered by integrity: total anchor loss, DEK-holder forgery of the registry, whole valid snapshot rollback (§6.7), an old build's overlapping write beyond the preserved-evidence guarantee of §10. Not removed by purge (a logical row purge, §11.4): freed SQLite pages, WAL content and filesystem/SSD remnants, `Credentials.vault.pre-v2`, `Credentials.vault.cutover-v1*`, Time Machine and other outside copies. Not built: importing a generated password or an item reference, deleting a profile's last vault, cross-vault move/merge, background sync, retention off, QR, Keychain witness, quarantine/reset/acknowledge-missing UX, high-water marks, secure memory zeroization, secure erasure of old ciphertext.
 
 ## 18. Status
+
+**Amendment (2026-10-22b, requested by the owner): import memory.** The owner asked that importing the same or a newer Passwords
+export never bring back what was deleted or merged, and that only changes come in. A credential keeps what the last file import
+brought for it (`importTrace`: its logins, password and note) only as HMAC-SHA256 digests under an import memory key that HKDF-SHA256
+derives from the vault's DEK with its own label, the profile id and the vault id, so every device of the vault derives the same key
+and no value, plain hash or index exists anywhere. A merge's link to each absorbed credential keeps its trace (written by the store
+in the merge's commit), a whole account's Trash entry yields one from its snapshot, and its account-level tombstone keeps it after a
+purge. A file row the vault holds by login is classified like a bound exchange item (§13.3: unchanged, changed in the file only,
+changed here only, both changed); a row of a merged-away entry is the survivor's (unchanged: left out; changed: compared with the
+survivor); a row of a deleted entry is `previouslyRemoved`, as is a system item that no id matches but whose login the vault
+remembers. Both stay out unless the user imports them anyway. Sync (amendment below): the trace travels with the login and notes and
+is not a part; a merge (`mergedFrom` ids and traces, never their observed bases) is part of `metadata`; a removed `Item` may carry
+the removed entry's trace, sealed like any value, entries removed before the vault synced are sent once as removed states, and a
+device that never held such an entry keeps its trace as a tombstone. No schema, head, AAD, wrapper or purge rule changes; an older
+build ignores the new fields (an edit there drops the trace: degraded memory, not lost data).
+
+**Amendment (2026-10-22, accepted by the owner): iCloud sync of sealed vault data (iCloud phase 3).** The owner accepted syncing a
+vault between their own devices through their own private CloudKit database, only after the two-Mac PRF gate passes, keyed only by
+the synced `wsurf.app` unlock passkey. This amendment changes §1 and §6.6 and adds the rules below. The store format, schema, AADs,
+heads, journals, registry, History, Trash, purge and the Apple exchange (§13) are unchanged.
+- Per vault and opt-in ("Sync with iCloud", behind the hidden flag `experiments.iCloudVault`). One CloudKit zone per vault. A
+  `Vault` record holds the vault's wrapper list, its name sealed, key generation 1 and the profile's name, symbol and color; one
+  `Item` record per account holds the account sealed (without files) or a removed state with only its ids and version. Store rows,
+  History, Trash, tombstone rows, files, the blocked-website list, settings, Input History and keys never sync.
+- Every synced value is sealed with AES-256-GCM under a sync key derived by HKDF-SHA256 from the vault's DEK with the profile id,
+  vault id and key generation. The AAD binds the record kind, profile, vault, account, state, version and generation, so a value
+  opens only as itself and a lower version is rejected. Another device opens the vault only through the synced wrappers and a fresh
+  user-verified assertion of the synced unlock passkey (§4.2). A device whose PRF output differs cannot open it; nothing is written.
+  No passphrase, escrow or Keychain copy of any key exists.
+- Each device imports Items into its own store through its own commit, with a three-way merge per part (login, code, notes, secure
+  items, name and websites; passkeys by identity) against a sync base it keeps sealed in its own `Credentials.sync`. A sync base is
+  never an observed base of §13.2(a) and never changes one. The classes and defaults of §13.3 apply: unchanged and one-sided changes
+  apply without a click, and the superseded value becomes a revision (cause `sync`); both-changed, no-common-base, a delete against an
+  edit, and an item removed on this device wait for the user; a passkey with the same identity and another key is never replaced.
+  No clock decides: CloudKit's per-record change tag orders writers.
+- A synced delete moves the entry to the receiving device's Trash. History, Trash, purge and Undo stay per device.
+- Sync runs only while the vault is unlocked and never extends a lease; what arrives while it is locked waits sealed.
+- Removing a vault from iCloud, deleting the vault or deleting its profile deletes its zone; the other devices keep their copies and
+  say so. After any zone removal or Apple Account change nothing is uploaded until the user turns sync on again and confirms.
+- The §11.4 limits apply to iCloud: removing the zone deletes WSurf's copy in the user's iCloud account; WSurf cannot see or delete
+  copies outside it, such as backups of the user's devices. Record names, counts and sizes are visible to Apple; content is not.
 
 <!-- ponytail-merge: P2 and P4 both wrote amendment "2026-10-21c"; P4 (files) is relabelled 2026-10-21d and kept above P2, newest first. -->
 **Amendment (2026-10-21d, requested by the owner): files in the vault.** Any entry can hold up to 64 files (`attachments`, absent rather than empty) of up to 50 MB each, with at most 2 GB of live files per vault. A file's bytes are never in a row: each is a separate encrypted file, `Credentials.blobs/<vault>/<id>.wsb` beside the store, shared by the vault and its Trash, cut into 1 MiB AES-256-GCM chunks under a random per-file key with the AAD label ‖ id ‖ index ‖ final, and padded to 4 KiB. The row holds the id, name, type, size, the plaintext's SHA-256 and the file key sealed under the vault's file key (HKDF of the vault key with the store and vault ids) with the AAD id ‖ size ‖ digest. No unlock or snapshot opens a file. `attachment` is a new record subject: any change of an entry's file list keeps the earlier list as a revision (there is no Trash entry for a single file); History restores it, an entry in the Trash keeps its files, and a merge unites them on the primary. A file is written before the commit that refers to it and is removed only when no live row, revision or Trash entry names it: by the sweep after a purge (which also removes what a crash left behind), by Delete Vault (the vault's whole folder), or when an editor discards a file it added and did not save. The first saved file raises the registry and `store_meta` to schema 3; rows, heads and journals keep their schema-2 AADs. Release 0.1.5 accepts only schema 2 in the registry, so it refuses the store instead of dropping the files on its next edit, and this build refuses a store past schema 3 (`newerVersion`) before opening anything. Files are not part of a Credential Exchange (the export sheet counts them); each has Save Copy…. Quick Look and Open With use a decrypted copy in a per-run 0700 folder in the user's Caches, removed when Quick Look closes, when a vault locks, at quit and at the next launch. No tool of the assistant or of MCP reaches a file.

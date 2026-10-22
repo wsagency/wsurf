@@ -5,6 +5,7 @@ import Foundation
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 // The vault's own unlock passkey (`PasskeyVaultUnlocker`) is a native AuthenticationServices ceremony for the relying party
 // wsurf.app, and its passkey is kept in the user's passkey provider (Apple Passwords). It is a different thing from the

@@ -5,6 +5,7 @@ import Foundation
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 struct VaultOperationLockTests {
     nonisolated private func acquire(_ mode: OperationLock.Mode, in directory: URL, wait: Duration = .milliseconds(100)) async throws -> OperationLockHold {

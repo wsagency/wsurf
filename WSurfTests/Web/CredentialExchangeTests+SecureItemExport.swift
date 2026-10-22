@@ -6,6 +6,7 @@ import Foundation
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 // Cards, addresses, names, Wi-Fi networks, keys, documents and custom fields leave in an export as the credentials they came in as, and
 // an import of that export gives back the same items: every value, its field type, id and label, and every hidden value still hidden.

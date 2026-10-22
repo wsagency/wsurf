@@ -4,6 +4,7 @@
 import Observation
 import Security
 import SwiftUI
+import WSurfVault
 
 /// On the open Vault tab while the cards and addresses saved on this Mac have not moved into the vault (`AutofillVaultMigration`).
 /// Showing it asks the Keychain whether the old lists exist and nothing more. Review reads them (Touch ID once, for the cards) and

@@ -6,6 +6,7 @@ import Foundation
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 // Move to Trash from the list, for one credential or several: one write, no dialog, bound to what the page showed. Test-only
 // in-memory unlock keys, a private pasteboard and synthetic credentials.

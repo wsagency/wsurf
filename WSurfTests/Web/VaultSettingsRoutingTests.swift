@@ -6,6 +6,7 @@ import Foundation
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 // The Settings page works on one selected vault of the profile's real store: what it offers (Create, Unlock) comes from the store's
 // own listing, and a v1 vault is never offered Create and never prompts for a passkey before the user agrees to migrate it.

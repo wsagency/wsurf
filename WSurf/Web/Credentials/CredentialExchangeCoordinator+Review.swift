@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import Foundation
+import WSurfVault
 
 /// The review of a staged import: how it is built once, and how one decision updates only the item it belongs to. Nothing here
 /// writes to the vault; `commitImport` does, from the choices kept in the session.
@@ -164,7 +165,8 @@ extension CredentialExchangeCoordinator {
                     omissions: omissions[candidate.id] ?? [],
                     effect: effect,
                     action: nil,
-                    duplicate: duplicates[candidate.id]
+                    duplicate: duplicates[candidate.id],
+                    mergedInto: context.mergedInto[candidate.id].map { storedTitles[$0] ?? "" }
                 )
             }
             var review = CredentialImportReview(
@@ -438,7 +440,7 @@ extension CredentialExchangeCoordinator {
         do {
             _ = try Self.plan(
                 live.preview, choices: trial, required: live.index.mustDecide, duplicates: live.index.duplicates,
-                inputsValidated: live.inputsValidated
+                inputsValidated: live.inputsValidated, traces: live.context.traces
             )
         } catch CredentialVaultError.invalidData, CredentialVaultError.duplicateIdentifier {
             throw CredentialExchangeCoordinatorError.invalidChoice

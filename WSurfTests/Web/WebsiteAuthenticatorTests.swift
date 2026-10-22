@@ -6,6 +6,7 @@ import Security
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 struct WebsiteAuthenticatorTests {
     let origin = "https://login.example.com"

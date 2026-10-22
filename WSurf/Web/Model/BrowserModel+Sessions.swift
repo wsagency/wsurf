@@ -170,6 +170,7 @@ extension BrowserModel {
     }
 
     func scheduleSave(now: ContinuousClock.Instant = ContinuousClock.now) {
+        noteCloudTabsChange()
         publishProfilePins()
         let since = saveWaitingSince ?? now
         saveWaitingSince = since
@@ -230,6 +231,7 @@ extension BrowserModel {
     }
 
     func saveBlocking() {
+        noteCloudTabsChange()
         cancelPendingSave()
         for tab in tabs {
             tab.invalidateSessionState()

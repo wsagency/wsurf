@@ -7,6 +7,7 @@ import GRDB
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 // Task 8 (§11.4): purge is explicit, needs a fresh assertion, and replaces Trash entries with tombstones in one transaction.
 

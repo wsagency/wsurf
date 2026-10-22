@@ -6,6 +6,7 @@ import Foundation
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 // Model-level checks of Trash, restore, permanent delete and earlier versions. Test-only in-memory unlock keys; no native
 // ceremony and nothing here is evidence of Apple provider behavior.

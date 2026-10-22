@@ -4,6 +4,7 @@
 
 import SwiftUI
 import UniformTypeIdentifiers
+import WSurfCore
 
 struct ProfileSettings: View {
     let coordinator: AppCoordinator
@@ -83,6 +84,8 @@ struct ProfileSettings: View {
                     .padding(.leading, 2)
             }
         }
+
+        RemoteProfilesSection(store: store)
 
         SettingsSection(title: "On launch", symbol: "power") {
             DetailRow(title: "Open profile") {
@@ -306,6 +309,9 @@ private struct ProfileDetailPage: View {
                         if let vaultNote {
                             Text(verbatim: vaultNote)
                         }
+                        if CloudSync.shared?.vaults?.hasSyncedVaults(profileID: profile.id) == true {
+                            Text("Its vaults are also removed from iCloud. Your other devices keep their copies. To keep them in iCloud, turn off Sync with iCloud for each vault first.")
+                        }
                     }
             }
         }
@@ -315,6 +321,8 @@ private struct ProfileDetailPage: View {
         lookSection(profile)
 
         historySection(profile)
+
+        ProfileICloudTabsSection(profile: profile)
     }
 
     private func heading(_ profile: Profile) -> some View {

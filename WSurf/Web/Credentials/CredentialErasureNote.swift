@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import Foundation
+import WSurfVault
 
 /// What deleting a profile does to its credential vaults, told only as far as it can be known without asking for a passkey:
 /// a vault that is open reports its verified counts, and one that is locked (or can't be read) says its contents are unknown and

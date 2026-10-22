@@ -6,6 +6,7 @@ import Foundation
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 // Model-level checks of the device-owner prompt (Touch ID) around a credential's cards and identity documents: showing their values,
 // copying a hidden one, opening the editor and History. The prompt is a counting stub that can be told to fail; test-only in-memory

@@ -3,6 +3,7 @@
 
 import AuthenticationServices
 import Foundation
+import WSurfVault
 
 /// What a finished ceremony hands to page delivery: the result plus the exact vault state it was checked against, so the
 /// final dispatch can refuse a result whose authority or key material changed after that check.

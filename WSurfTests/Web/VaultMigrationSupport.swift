@@ -7,6 +7,7 @@ import GRDB
 import Synchronization
 
 @testable import WSurf
+@testable import WSurfVault
 
 // Task 9 shared test plumbing: a real v1 vault file, a file-ops wrapper that records and injects, and directory images.
 

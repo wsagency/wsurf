@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import Foundation
+import WSurfVault
 
 /// The History panel beside the editor (spec §14.1): a credential's earlier versions, read-only. Copying a value into the draft
 /// changes only the draft; saving is the ordinary commit, which keeps the value it replaces as a new earlier version. Everything

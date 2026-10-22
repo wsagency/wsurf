@@ -5,6 +5,7 @@ import Foundation
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 /// Searching, filtering and counting the Credentials tab's list: pure values built from summaries, so no vault is read and no
 /// secret is involved. Everything here is synthetic.

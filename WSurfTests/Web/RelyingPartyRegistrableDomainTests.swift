@@ -5,6 +5,7 @@ import Foundation
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 // The registrable domain (public suffix plus one label) that exact-duplicate detection compares sites by. Public-suffix names are
 // rule names here, not user data.

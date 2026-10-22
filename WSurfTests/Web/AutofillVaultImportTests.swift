@@ -7,6 +7,7 @@ import Foundation
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 /// Cards from a Safari export and contacts from Contacts are imported into the vault only: a review by title, one commit, Undo. The
 /// real settings model over a fixture vault; synthetic test card numbers and example.test details only.

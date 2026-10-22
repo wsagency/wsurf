@@ -5,6 +5,7 @@ import Foundation
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 // The whole-credential versions the History panel rebuilds from a credential and its revision values. Pure: no store, no clock.
 

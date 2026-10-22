@@ -7,6 +7,7 @@ import CryptoKit
 import Security
 import SwiftUI
 import WebKit
+import WSurfVault
 
 @MainActor
 final class AutofillSuggestions {

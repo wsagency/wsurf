@@ -3,6 +3,7 @@
 
 import AppKit
 import AuthenticationServices
+import WSurfVault
 
 /// The native question "which vault?" for an ambiguous or locked route. It shows names only for unlocked vaults; a locked vault
 /// is its ordinal. `nil` is a cancel: nothing is written and nothing is unlocked. A passkey request also offers the way out to

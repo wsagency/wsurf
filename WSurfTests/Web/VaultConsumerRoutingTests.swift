@@ -7,6 +7,7 @@ import Testing
 import WebKit
 
 @testable import WSurf
+@testable import WSurfVault
 
 /// A page's password save offer is made against exactly the vault that owns the login, and an offer's lease never reaches another
 /// vault: real managers in the registry, the real route, the real session.

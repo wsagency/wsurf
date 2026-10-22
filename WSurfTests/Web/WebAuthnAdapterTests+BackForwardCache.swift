@@ -6,6 +6,7 @@ import Testing
 import WebKit
 
 @testable import WSurf
+@testable import WSurfVault
 
 extension WebAuthnAdapterTests {
     // MARK: Back/forward-cache restore

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import Foundation
+import WSurfVault
 
 enum VaultChoiceReason: Sendable {
     /// The match is in more than one unlocked vault.

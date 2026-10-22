@@ -8,6 +8,8 @@ import SwiftUI
 struct CredentialDeleteVaultSheet: View {
     let pending: PendingVaultDeletion
     let isBusy: Bool
+    /// This Mac syncs the vault through iCloud: deleting it deletes its copy in iCloud too.
+    var syncedHere = false
     let confirm: (String) -> Void
     let export: () -> Void
     let cancel: () -> Void
@@ -46,6 +48,9 @@ struct CredentialDeleteVaultSheet: View {
             }
             if pending.counts.inputHistory > 0 {
                 note("Input History is kept with this vault, so what it recorded is deleted too.")
+            }
+            if syncedHere {
+                note("This also removes the vault from iCloud. Your other devices keep their copies.")
             }
             if pending.counts.passkeys > 0 {
                 note("""

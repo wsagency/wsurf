@@ -7,6 +7,7 @@ import Foundation
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 // Model-level checks of copying a credential's values from the list, the editor and History. Test-only in-memory unlock keys and a
 // private pasteboard; nothing here touches the general pasteboard, a real vault or a native ceremony.

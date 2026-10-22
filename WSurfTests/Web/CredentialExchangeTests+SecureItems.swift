@@ -6,6 +6,7 @@ import Foundation
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 // Cards, addresses, names, Wi-Fi networks, keys, documents and custom fields arrive in a transfer as items of their credential: every
 // value in the order the SDK lists it, with its exact field type, id and label. Synthetic values only.

@@ -7,6 +7,7 @@ import SwiftUI
 import XCTest
 
 @testable import WSurf
+@testable import WSurfVault
 
 // A vault of 3,000 synthetic credentials (every 10th has a passkey, every 5th a verification code, every 7th notes) behind the real
 // Credential Manager page, the real export sheet and the real unlock path. Nothing here is real data. The bounds are far above what a

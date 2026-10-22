@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import Foundation
+import WSurfVault
 
 /// The one-time move of the passwords that WSurf kept in its own Keychain list, before Credential Manager existed, into a
 /// profile's vault. This type holds the rules; the settings page drives them and the import review shows every step.

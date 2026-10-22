@@ -10,6 +10,7 @@ import Synchronization
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 /// A deterministic stand-in for the native passkey calls: `register` mints credential 1, 2, 3, ... with a fresh PRF secret, and
 /// `assert` answers with the proof of the first requested credential it knows. Only the OS prompt is replaced; every manager and

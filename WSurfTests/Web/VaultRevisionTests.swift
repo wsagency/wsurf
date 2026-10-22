@@ -5,6 +5,7 @@ import Foundation
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 // Task 7 (§11.1): what creates a revision inside `commit`. State is read back through the fixture (rows opened with the held DEK),
 // and every store here runs on the injected wall clock `RevisionFixtures.stamp`.

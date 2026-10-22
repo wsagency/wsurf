@@ -15,6 +15,8 @@
 		EEAD00013027B875008F6668 /* MCP in Frameworks */ = {isa = PBXBuildFile; productRef = EEAD00033027B875008F6668 /* MCP */; };
 		EEAE00013027B875008F6668 /* Logging in Frameworks */ = {isa = PBXBuildFile; productRef = EEAE00033027B875008F6668 /* Logging */; };
 		EEAF00013027B875008F6668 /* CefKit in Frameworks */ = {isa = PBXBuildFile; productRef = EEAF00033027B875008F6668 /* CefKit */; };
+		EEB000013027B875008F6668 /* WSurfVault in Frameworks */ = {isa = PBXBuildFile; productRef = EEB000033027B875008F6668 /* WSurfVault */; };
+		EEB100013027B875008F6668 /* WSurfCore in Frameworks */ = {isa = PBXBuildFile; productRef = EEB100033027B875008F6668 /* WSurfCore */; };
 		EEC0DE20000000000000000E /* WSurfCredentialExchange.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = EEC0DE200000000000000002 /* WSurfCredentialExchange.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
 
@@ -107,6 +109,8 @@
 				EEAA00013027B875008F6668 /* Sparkle in Frameworks */,
 				EEAC00013027B875008F6668 /* GRDB in Frameworks */,
 				EEAF00013027B875008F6668 /* CefKit in Frameworks */,
+				EEB000013027B875008F6668 /* WSurfVault in Frameworks */,
+				EEB100013027B875008F6668 /* WSurfCore in Frameworks */,
 			);
 		};
 		EEC0DE200000000000000006 /* Frameworks */ = {
@@ -172,6 +176,8 @@
 				EEAA00033027B875008F6668 /* Sparkle */,
 				EEAC00033027B875008F6668 /* GRDB */,
 				EEAF00033027B875008F6668 /* CefKit */,
+				EEB000033027B875008F6668 /* WSurfVault */,
+				EEB100033027B875008F6668 /* WSurfCore */,
 			);
 			productName = WSurf;
 			productReference = EE41BFE23027B875008F6668 /* WSurf.app */;
@@ -261,6 +267,7 @@
 				EEAA00023027B875008F6668 /* XCRemoteSwiftPackageReference "Sparkle" */,
 				EEAC00023027B875008F6668 /* XCRemoteSwiftPackageReference "GRDB" */,
 				EEAF00023027B875008F6668 /* XCRemoteSwiftPackageReference "CefSwift" */,
+				EEB000023027B875008F6668 /* XCLocalSwiftPackageReference "Packages/WSurfCore" */,
 			);
 			preferredProjectObjectVersion = 100;
 			productRefGroup = EE41BFE33027B875008F6668 /* Products */;
@@ -709,6 +716,13 @@
 		};
 /* End XCConfigurationList section */
 
+/* Begin XCLocalSwiftPackageReference section */
+		EEB000023027B875008F6668 /* XCLocalSwiftPackageReference "Packages/WSurfCore" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = Packages/WSurfCore;
+		};
+/* End XCLocalSwiftPackageReference section */
+
 /* Begin XCRemoteSwiftPackageReference section */
 		EEAA00023027B875008F6668 /* XCRemoteSwiftPackageReference "Sparkle" */ = {
 			isa = XCRemoteSwiftPackageReference;
@@ -795,6 +809,14 @@
 			isa = XCSwiftPackageProductDependency;
 			package = EEAF00023027B875008F6668 /* XCRemoteSwiftPackageReference "CefSwift" */;
 			productName = CefKit;
+		};
+		EEB000033027B875008F6668 /* WSurfVault */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = WSurfVault;
+		};
+		EEB100033027B875008F6668 /* WSurfCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = WSurfCore;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

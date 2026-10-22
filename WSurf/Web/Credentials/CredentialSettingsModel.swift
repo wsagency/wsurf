@@ -5,6 +5,8 @@ import AppKit
 import AuthenticationServices
 import Foundation
 import Observation
+import WSurfCore
+import WSurfVault
 
 // MARK: - Model
 
@@ -49,7 +51,7 @@ final class CredentialSettingsModel {
     /// `nil` for private browsing and for a test-injected manager (which owns its own store). Internal for the model's extensions.
     @ObservationIgnored let store: ProfileVaultStore?
     /// Test seam: managers made here use it instead of the system passkey UI, which the shared registry's managers always use.
-    @ObservationIgnored private let native: VaultNativeUnlock?
+    @ObservationIgnored let native: VaultNativeUnlock?
     /// Internal for `CredentialSettingsModel+Copy`, the one clipboard exit.
     @ObservationIgnored let pasteboard: NSPasteboard
     /// How long a copy confirmation stays, and how long one that offers Undo does; seams so a test does not wait for the real time.
@@ -89,6 +91,14 @@ final class CredentialSettingsModel {
     var ownMessage: (message: CredentialTransferMessage, vaultID: UUID?)?
     /// The vault this page deleted last, until the user dismisses it. Internal for `CredentialSettingsModel+VaultDeletion`.
     var deletedVault: DeletedVault?
+    /// Why adding a synced vault to this Mac did not work, when the card explains it. Internal for `CredentialSettingsModel+Sync`.
+    var syncAddFailure: SyncAddFailure?
+    /// The entries that wait for a choice, opened for the review sheet; set while the sheet is up. Internal for `CredentialSettingsModel+Sync`.
+    var syncReview: [VaultSyncConflict]?
+    /// Vaults whose "Removed from iCloud" card the person dismissed on this page. Internal for `CredentialSettingsModel+Sync`.
+    var dismissedSyncNotices: Set<UUID> = []
+    /// A synced write landed while an editor or an import review was open: the page reads again once they close.
+    var syncReloadPending = false
 
     /// `manager` and `native` are seams for tests that need their own clock or passkeys; production selects the profile's
     /// default vault (else the lowest-ordinal one) through the shared registry once `load()` has listed the vaults.

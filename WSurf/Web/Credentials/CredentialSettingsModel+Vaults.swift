@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import Foundation
+import WSurfVault
 
 extension CredentialSettingsModel {
     /// Reads the vault listing again and changes nothing else. A vault's name is sealed in its head and listed only while that

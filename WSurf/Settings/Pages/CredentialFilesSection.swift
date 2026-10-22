@@ -5,6 +5,7 @@ import AppKit
 import QuickLook
 import SwiftUI
 import UniformTypeIdentifiers
+import WSurfVault
 
 /// The editor's Files section: Add File…, and for each file Preview, Save Copy…, Open With… and Remove. A file is encrypted into the
 /// vault as soon as it is added; it belongs to the entry once Save stores it. Preview and Open With decrypt a copy into this run's
@@ -86,7 +87,13 @@ struct CredentialFilesSection: View {
         return String(localized: """
             Images, PDFs and any other files, up to \(limit) each and \(CredentialAttachment.entryLimit) per entry. They are encrypted \
             in the vault and aren’t included when you export credentials to another app.
-            """)
+            """) + syncNote
+    }
+
+    /// Files never sync: their keys are bound to this Mac's store.
+    private var syncNote: String {
+        guard model.selectedVaultID.map(model.vaultIsSyncedHere) == true else { return "" }
+        return " " + String(localized: "Files stay on this Mac; they aren’t synced with iCloud.")
     }
 
     private func row(_ file: CredentialAttachment) -> some View {

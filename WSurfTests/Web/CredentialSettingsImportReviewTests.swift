@@ -6,6 +6,7 @@ import Foundation
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 // The page's side of the import review: the decisions the sheet makes through the model, what a refusal says, and what Import
 // reports afterwards. The coordinator and the vault are real. Synthetic data only.

@@ -6,6 +6,7 @@ import CryptoKit
 import Foundation
 
 @testable import WSurf
+@testable import WSurfVault
 
 /// Synthetic Passwords transfers of any size for the limit and scale tests. Synthetic only: `example.test` hosts and freshly
 /// generated keys, never real data.

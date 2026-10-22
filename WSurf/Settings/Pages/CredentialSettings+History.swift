@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import SwiftUI
+import WSurfVault
 
 extension RecordSubject {
     /// What a change to this part is called in the version list.

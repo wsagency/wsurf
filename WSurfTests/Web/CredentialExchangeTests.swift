@@ -8,6 +8,7 @@ import Security
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 @MainActor
 struct CredentialExchangeTests {

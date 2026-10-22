@@ -8,6 +8,7 @@ import Synchronization
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 // Crypto/lifecycle verification only: PRF material is a test-only in-memory key handed straight to `completeUnlock`. Nothing here
 // is evidence of Apple provider or PRF behavior.
