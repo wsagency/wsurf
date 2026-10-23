@@ -51,6 +51,28 @@ struct SettingsSearchTests {
         #expect(SettingsIndex.search("summarize").contains { $0.id == "assistant.linkPeek" })
     }
 
+    @Test func pageWatchesAreFoundByTheirOwnWordsOnTheAssistantPage() throws {
+        let entries = SettingsIndex.all.filter { $0.id == "assistant.watches" }
+        let entry = try #require(entries.first)
+
+        #expect(entries.count == 1)
+        #expect(entry.category == .provider)
+        #expect(entry.targetAnchor == "assistant.watches")
+        #expect(entry.searchableTitle == "Page Watches")
+        for query in ["watch", "page watch", "monitor", "notify when page changes", "price drop", "pause all"] {
+            #expect(SettingsIndex.search(query).contains { $0.id == "assistant.watches" }, "\(query)")
+        }
+        #expect(SettingsIndex.search("page watches").first?.id == "assistant.watches")
+    }
+
+    @Test func thePageWatchesSectionCarriesTheAnchorTheSearchEntryOpens() throws {
+        let source = try String(contentsOf: URL(filePath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appending(path: "WSurf/Agent/Watches/WatchesPanel.swift"), encoding: .utf8)
+
+        #expect(source.components(separatedBy: ".settingsAnchor(\"assistant.watches\")").count == 2)
+    }
+
     @Test func thePaletteOrderIsFoundByItsOwnWords() {
         for query in ["command palette", "reorder", "section order", "tabs first"] {
             #expect(SettingsIndex.search(query).contains { $0.id == "general.paletteOrder" })

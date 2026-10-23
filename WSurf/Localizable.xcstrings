@@ -7145,7 +7145,7 @@
       "comment" : "Body of the notification when a page watch ended because it reached its 30-day lifetime."
     },
     "Page Watches" : {
-      "comment" : "Section title on the Tools settings page, above the tools that let the assistant watch a page for a change. Title Case."
+      "comment" : "Section title on the Tools settings page, above the tools that let the assistant watch a page for a change, and title of the Page Watches section on Settings › Assistant, which is also a Settings search result. Title Case."
     },
     "Watch Pages" : {
       "comment" : "Tool name in assistant settings: watching a page for a change the person confirms."

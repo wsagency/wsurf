@@ -285,5 +285,6 @@ struct PageWatchesSettingsSection: View {
                 }
             }
         }
+        .settingsAnchor("assistant.watches")
     }
 }
