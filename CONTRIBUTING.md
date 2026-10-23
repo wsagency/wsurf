@@ -163,8 +163,9 @@ Some checks need more than the default run:
 - **A real MCP client.** MCP.md, "Verify with a real client", lists the steps a person
   runs against a Stage app. No automated gate covers that path.
 
-Run the full suite before opening a pull request. CI also measures app-target
-line coverage and rejects regressions below the repository floor. CI runs
+Run the full suite before opening a pull request. CI also measures line
+coverage of the app and of the shared WSurfVault and WSurfCore packages and
+rejects any target below the repository floor. CI runs
 `Tools/check-format.sh`, which fails on SwiftLint violations. CI pins SwiftLint
 **0.65.1**; use the same version locally. The configuration is `.swiftlint.yml`. Put a
 switch case’s body on the line after the label. Do not write a declaration or
