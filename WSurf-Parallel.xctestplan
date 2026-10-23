@@ -7,7 +7,25 @@
     }
   ],
   "defaultOptions" : {
-    "codeCoverage" : true,
+    "codeCoverage" : {
+      "targets" : [
+        {
+          "containerPath" : "container:WSurf.xcodeproj",
+          "identifier" : "EE41BFE13027B875008F6668",
+          "name" : "WSurf"
+        },
+        {
+          "containerPath" : "container:Packages\/WSurfCore",
+          "identifier" : "WSurfVault",
+          "name" : "WSurfVault"
+        },
+        {
+          "containerPath" : "container:Packages\/WSurfCore",
+          "identifier" : "WSurfCore",
+          "name" : "WSurfCore"
+        }
+      ]
+    },
     "defaultTestExecutionTimeAllowance" : 120,
     "maximumTestExecutionTimeAllowance" : 300,
     "testTimeoutsEnabled" : true
