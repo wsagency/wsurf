@@ -149,7 +149,10 @@ struct ThemeEditorTests {
             // Their own colors, not an edit, so a copy of a tinted theme keeps its tint.
             let calm = try #require(loaded.userThemes.first { $0.id == "calm-copy" })
             let standard = try #require(loaded.userThemes.first { $0.id == "standard-copy" })
-            #expect(calm.light == ThemeCatalog.builtIn("calm")?.light && calm.drawnGround == .softTinted)
+            // The copy was saved with no secondary text of its own (the 0.55 default), so only its colors are Calm's.
+            let origin = try #require(ThemeCatalog.builtIn("calm")?.light)
+            #expect([calm.light.window, calm.light.sidebar, calm.light.surface, calm.light.accent]
+                == [origin.window, origin.sidebar, origin.surface, origin.accent] && calm.drawnGround == .softTinted)
             #expect(calm.dark.window == ThemeCatalog.builtIn("calm")?.dark.window && calm.dark.hue == 0.1)
             #expect(standard.drawnGround == .pageTinted && standard.light.hue == 0.2)
             #expect(loaded.themeID == "calm-copy" && loaded.resolvedTheme.ground == .softTinted)

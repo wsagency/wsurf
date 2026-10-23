@@ -98,6 +98,33 @@ final class SiteContentGuardTests {
         return (muted as? NSNumber)?.boolValue ?? false
     }
 
+    /// What Chromium leaves behind when an autoplay element was ready before the website's answer came: paused, ready, never
+    /// played. `play` is counted, not called (a player with no source throws on it). The answer is then handed to the guard
+    /// the way the reply is, and the count of `play` calls it made comes back.
+    private func startsAfterAnswer(
+        _ policy: AutoplayPolicy, in view: BrowserPage, autoplay: Bool = true, readyState: Int = 4,
+        played: Bool = false, pausedByHand: Bool = false
+    ) async -> Int {
+        let started = try? await run(
+            """
+            (() => {
+              const video = document.querySelector('video');
+              const fixed = (key, value) => Object.defineProperty(video, key, { configurable: true, get() { return value; } });
+              \(autoplay ? "video.setAttribute('autoplay', '');" : "")
+              fixed('paused', true);
+              fixed('readyState', \(readyState));
+              fixed('played', { length: \(played ? 1 : 0) });
+              window.__plays = 0;
+              video.play = () => { window.__plays += 1; return Promise.resolve(); };
+              \(pausedByHand ? "video.dispatchEvent(new Event('pause'));" : "")
+              window.__wsurfSiteGuard.applyPolicy({ autoplay: '\(policy.rawValue)' });
+              return window.__plays;
+            })()
+            """, in: view
+        )
+        return (started as? NSNumber)?.intValue ?? -1
+    }
+
     // MARK: - Auto-play
 
     @Test func aWebsiteToldNeverIsStopped() async {
@@ -139,6 +166,46 @@ final class SiteContentGuardTests {
         await play(in: view, startedByHand: true)
 
         #expect(await pauses(in: view) == 0)
+    }
+
+    /// Chromium tries an autoplay element once, when it is ready, and refuses it before the answer's activation has come; the
+    /// answer under Allow starts what is still waiting for it.
+    @Test func allowStartsAnAutoplayPlayerThatWasReadyBeforeTheAnswer() async {
+        settings.autoplay = .allow
+
+        let view = await page(permissions: temporaryPermissions())
+
+        #expect(await startsAfterAnswer(.allow, in: view) == 1)
+    }
+
+    /// What is not waiting is left alone: a player that has played, one that was paused, one that is not ready yet, and one
+    /// the website never asked to autoplay.
+    @Test func allowNeverStartsAPlayerThePersonOrThePageStoppedOrNeverAskedToAutoplay() async {
+        settings.autoplay = .allow
+
+        // A page of its own for each: a pause is remembered for the life of the page.
+        let cases: [(String, (BrowserPage) async -> Int)] = [
+            ("paused before the answer", { await self.startsAfterAnswer(.allow, in: $0, pausedByHand: true) }),
+            ("it has played, so it was stopped, not refused", { await self.startsAfterAnswer(.allow, in: $0, played: true) }),
+            ("not ready: its own attempt is still to come", { await self.startsAfterAnswer(.allow, in: $0, readyState: 2) }),
+            ("the website never asked it to start", { await self.startsAfterAnswer(.allow, in: $0, autoplay: false) }),
+        ]
+        for (what, answer) in cases {
+            let view = await page(permissions: temporaryPermissions())
+
+            #expect(await answer(view) == 0, "\(what)")
+        }
+    }
+
+    /// Muted and Never are what they were: nothing is started where the answer forbids sound or any start.
+    @Test func neitherMutedNorNeverStartsAPlayerTheEngineRefused() async {
+        for policy in [AutoplayPolicy.silent, .block] {
+            settings.autoplay = policy
+
+            let view = await page(permissions: temporaryPermissions())
+
+            #expect(await startsAfterAnswer(policy, in: view) == 0, "\(policy.rawValue) starts nothing")
+        }
     }
 
     /// A website's own answer outranks the setting every other website is under.

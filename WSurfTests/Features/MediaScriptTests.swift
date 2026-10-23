@@ -236,8 +236,11 @@ struct MediaScriptTests {
         #expect(selected["p"] == 1)
         #expect(selected["t"] == 21)
 
+        // `postMessage` delivers the seek as a task of its own, so the new time is read once the page has handled it.
         _ = try await webView.evaluateJavaScript("window.postMessage('wsurf-seek:1', '*'); true")
-        #expect((try? await webView.evaluateJavaScript("document.querySelectorAll('video')[1].currentTime")) as? Int == 22)
+        #expect(await waitUntil {
+            (try? await webView.evaluateJavaScript("document.querySelectorAll('video')[1].currentTime")) as? Int == 22
+        }, "the seek never reached the playing video")
         #expect((try? await webView.evaluateJavaScript("document.querySelectorAll('video')[0].currentTime")) as? Int == 5)
     }
 

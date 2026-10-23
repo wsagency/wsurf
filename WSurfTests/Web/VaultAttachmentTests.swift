@@ -262,7 +262,7 @@ struct VaultAttachmentTests {
             }
             draft.addAttachment(Self.record())
             #expect(draft.attachments.count == 64, "the draft itself never holds a 65th")
-            for error in [VaultFileError.tooLarge(name: "big.zip"), .entryFull, .vaultFull, .unreadable(name: "x"), .missing, .damaged] {
+            for error in [VaultFileError.tooLarge(name: "big.zip"), .entryFull, .vaultFull, .unreadable(name: "x"), .missing, .damaged, .lastFile] {
                 #expect(!error.message.isEmpty)
             }
             #expect(VaultFileError.tooLarge(name: "big.zip").message.contains("big.zip"))
