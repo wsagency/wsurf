@@ -86,6 +86,8 @@ struct PageWatchToolTests {
         browser.context.pageWatches = center
         let tab = browser.newTab(url: url)
         #expect(await PageSettle.untilIdle(tab.page, timeout: .seconds(30)))
+        // The page is idle before its title may have arrived, and the assistant asks with the title it finds then.
+        try #require(await waitUntil { tab.page.title == "Kettle" })
         return Screen(browser: browser, url: url, server: server, previous: previous)
     }
 
