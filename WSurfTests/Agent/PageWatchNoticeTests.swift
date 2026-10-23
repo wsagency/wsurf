@@ -15,13 +15,16 @@ struct PageWatchNoticeTests {
     private let page = URL(string: "https://shop.example/kettle")!
     private let start = Date(timeIntervalSinceReferenceDate: 800_000_000)
 
-    /// One center on `file`, a clock the test moves, and a page that always reads the same. `allowed` is the site's setting;
+    /// One center on `file`, a clock the test moves, and a page whose text and readability the test sets. `allowed` is the site's setting;
     /// `notificationsOff` makes every notice a missed one, as the live center does when macOS shows nothing.
     @MainActor
     private final class Rig {
         var date: Date
         var allowed = true
         var notificationsOff = false
+        var readable = true
+        var met = false
+        var text = "Kettle $54.99 In stock"
         var reads = 0
         var notices: [PageWatchCenter.Notice] = []
         var center: PageWatchCenter!
@@ -34,9 +37,9 @@ struct PageWatchNoticeTests {
                 now: { [unowned self] in self.date },
                 fetch: { [unowned self] _ in
                     reads += 1
-                    return PageWatchReading(title: "Kettle", text: "Kettle $54.99 In stock", url: nil)
+                    return readable ? PageWatchReading(title: "Kettle", text: text, url: nil) : nil
                 },
-                judge: { _, _ in PageWatchVerdict(met: false, state: "$54.99", message: "") },
+                judge: { [unowned self] _, _ in PageWatchVerdict(met: met, state: "$54.99", message: "") },
                 classify: { _, _ in PageWatchVerdict(met: false, state: "", message: "") },
                 notify: { [unowned self] watch, notice in
                     notices.append(notice)
@@ -55,9 +58,11 @@ struct PageWatchNoticeTests {
             .appending(path: "PageWatches.json")
     }
 
-    private func watching(_ rig: Rig, condition: String = "price below $50") async throws -> PageWatch {
+    private func watching(
+        _ rig: Rig, condition: String = "price below $50", at address: URL? = nil
+    ) async throws -> PageWatch {
         guard case .watching(let watch) = await rig.center.start(
-            url: page, title: "", condition: condition, everyMinutes: 60
+            url: address ?? page, title: "", condition: condition, everyMinutes: 60
         ) else {
             throw Unwatched()
         }
@@ -125,7 +130,9 @@ struct PageWatchNoticeTests {
         let file = scratchFile()
         defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
         let stored = (0..<(PageWatchCenter.missedLimit + 5)).map { index in
-            PageWatchCenter.Missed(url: page, condition: "condition \(index)", notice: .met, date: start + TimeInterval(index))
+            PageWatchCenter.Missed(
+                watchID: UUID(), url: page, condition: "condition \(index)", notice: .met, date: start + TimeInterval(index)
+            )
         }
         JSONFileStore.encodeAndWrite(stored, to: PageWatchCenter.missedFile(beside: file))
 
@@ -136,9 +143,11 @@ struct PageWatchNoticeTests {
         let file = scratchFile()
         defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
         let stored = [
-            PageWatchCenter.Missed(url: URL(filePath: "/etc/hosts"), condition: "", notice: .met, date: start),
-            PageWatchCenter.Missed(url: URL(string: "javascript:alert(1)")!, condition: "", notice: .met, date: start),
-            PageWatchCenter.Missed(url: page, condition: "", notice: .met, date: start),
+            PageWatchCenter.Missed(watchID: UUID(), url: URL(filePath: "/etc/hosts"), condition: "", notice: .met, date: start),
+            PageWatchCenter.Missed(
+                watchID: UUID(), url: URL(string: "javascript:alert(1)")!, condition: "", notice: .met, date: start
+            ),
+            PageWatchCenter.Missed(watchID: UUID(), url: page, condition: "", notice: .met, date: start),
         ]
         JSONFileStore.encodeAndWrite(stored, to: PageWatchCenter.missedFile(beside: file))
 
@@ -252,5 +261,176 @@ struct PageWatchNoticeTests {
         let shown = [request.content.title, request.content.subtitle, request.content.body].joined(separator: " ")
         #expect(!shown.contains("54.99") && !shown.contains("Kettle"))
         #expect(NotificationBridge.body(condition: "price below $50", .denied) == request.content.body)
+    }
+
+    // MARK: - Nothing outlives what it names
+
+    private let otherPage = URL(string: "https://shop.example/toaster")!
+
+    @Test func stoppingAWatchTakesItsNoticesAndLeavesTheOthers() async throws {
+        let file = scratchFile()
+        defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+        let rig = Rig(date: start, file: file)
+        let kettle = try await watching(rig)
+        let toaster = try await watching(rig, at: otherPage)
+        rig.center.noteMissed(kettle, .unreachable)
+        rig.center.noteMissed(toaster, .unreachable)
+        rig.center.noteMissed(kettle, .unreachable)
+
+        rig.center.stop(kettle.id)
+        await rig.center.flush()
+
+        #expect(rig.center.missed.map(\.watchID) == [toaster.id])
+        #expect(Rig(date: start, file: file).center.missed.map(\.watchID) == [toaster.id])
+    }
+
+    @Test func aWatchThatEndsOnItsOwnLeavesOnlyItsEndingNotice() async throws {
+        let file = scratchFile()
+        defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+        let rig = Rig(date: start, file: file)
+        rig.notificationsOff = true
+        let watch = try await watching(rig)
+        rig.center.noteMissed(watch, .unreachable)
+        rig.met = true
+        rig.text = "Kettle $42.99 In stock"
+        rig.date += 3600
+
+        await rig.center.checkDue()
+        await rig.center.flush()
+
+        #expect(rig.center.watches.isEmpty)
+        #expect(rig.center.missed.map(\.notice) == [.met], "the ending notice stays, the older one goes with the watch")
+        #expect(Rig(date: start, file: file).center.missed.map(\.notice) == [.met])
+    }
+
+    @Test func theNoAccessNoticeStaysUntilDismissedAndThenNothingIsLeft() async throws {
+        let file = scratchFile()
+        defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+        let rig = Rig(date: start, file: file)
+        rig.notificationsOff = true
+        let watch = try await watching(rig)
+        rig.center.noteMissed(watch, .unreachable)
+        rig.allowed = false
+        rig.date += 3600
+        await rig.center.checkDue()
+        await rig.center.flush()
+
+        let notice = try #require(rig.center.missed.first)
+        #expect(rig.center.missed.map(\.notice) == [.denied])
+        #expect(Rig(date: start, file: file).center.missed == [notice])
+
+        rig.center.dismissMissed(notice.id)
+        await rig.center.flush()
+
+        #expect(Rig(date: start, file: file).center.missed.isEmpty)
+        #expect(try String(contentsOf: PageWatchCenter.missedFile(beside: file), encoding: .utf8) == "[]")
+    }
+
+    @Test func aPageThatReadsAgainDropsTheNoticeThatItCouldNotBeRead() async throws {
+        let rig = Rig(date: start, file: nil)
+        rig.notificationsOff = true
+        let watch = try await watching(rig)
+        rig.readable = false
+        for _ in 0..<PageWatch.failureLimit {
+            await rig.center.check(watch.id)
+        }
+        #expect(rig.center.missed.map(\.notice) == [.unreachable])
+
+        rig.readable = true
+        await rig.center.check(watch.id)
+
+        #expect(rig.center.missed.isEmpty)
+        #expect(rig.center.watches.first?.isUnreachable == false)
+    }
+
+    @Test func clearingHistoryOrAnyBrowsingDataRemovesTheNotices() async throws {
+        let file = scratchFile()
+        defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+        let rig = Rig(date: start, file: file)
+        let watch = try await watching(rig)
+        rig.center.noteMissed(watch, .met)
+        rig.center.noteMissed(watch, .denied)
+
+        rig.center.dismissMissed()
+        await rig.center.flush()
+
+        #expect(rig.center.missed.isEmpty)
+        #expect(Rig(date: start, file: file).center.missed.isEmpty)
+        let stored = try String(contentsOf: PageWatchCenter.missedFile(beside: file), encoding: .utf8)
+        #expect(!stored.contains("shop.example"), "nothing about the pages is left on the disk")
+    }
+
+    @Test(arguments: [
+        (kinds: Set<BrowsingData.Kind>([.history]), range: BrowsingData.Range.hour),
+        (kinds: Set<BrowsingData.Kind>([.history]), range: BrowsingData.Range.everything),
+        (kinds: Set<BrowsingData.Kind>([.cache]), range: BrowsingData.Range.everything),
+    ])
+    func everyClearOfBrowsingDataTakesTheNotices(kinds: Set<BrowsingData.Kind>, range: BrowsingData.Range) async throws {
+        let profile = Profile(id: UUID(), name: "Clear", symbol: "eye", color: .gray)
+        defer { try? FileManager.default.removeItem(at: profile.supportDirectory) }
+        let context = BrowserProfileContext(profile: profile)
+        let center = try #require(context.pageWatches)
+        center.noteMissed(watch(), .met)
+        #expect(center.missed.count == 1)
+
+        try await BrowsingData.clear(kinds, range: range, history: context.history, context: context)
+
+        #expect(center.missed.isEmpty)
+        #expect(PageWatchRow.badge(for: center) == 0)
+    }
+
+    @Test func clearingEverythingOnQuitTakesTheNotices() async throws {
+        let profile = Profile(id: UUID(), name: "Quit", symbol: "eye", color: .gray)
+        defer { try? FileManager.default.removeItem(at: profile.supportDirectory) }
+        let context = BrowserProfileContext(profile: profile)
+        let center = try #require(context.pageWatches)
+        center.noteMissed(watch(), .expired)
+
+        try await BrowsingData.clearEverything(history: context.history, context: context)
+
+        #expect(center.missed.isEmpty)
+    }
+
+    @Test func clearingAnotherProfilesHistoryTakesItsNotices() throws {
+        let running = Profile(id: UUID(), name: "Running", symbol: "eye", color: .gray)
+        let idle = Profile(id: UUID(), name: "Idle", symbol: "eye", color: .gray)
+        defer {
+            BrowserProfileContext.forget(running.id)
+            for profile in [running, idle] {
+                try? FileManager.default.removeItem(at: profile.supportDirectory)
+            }
+        }
+        let center = try #require(BrowserProfileContext.shared(for: running).pageWatches)
+        center.noteMissed(watch(), .met)
+        let stored = PageWatchCenter.missedFile(beside: idle.pageWatchesFile)
+        let leftover = PageWatchCenter.Missed(watchID: UUID(), url: page, condition: "", notice: .met, date: start)
+        JSONFileStore.encodeAndWrite([leftover], to: stored)
+        #expect(FileManager.default.fileExists(atPath: stored.path(percentEncoded: false)))
+
+        ProfileMaintenance.clearHistory(of: running)
+        ProfileMaintenance.clearHistory(of: idle)
+
+        #expect(center.missed.isEmpty, "a profile whose watches run clears them in memory")
+        #expect(!FileManager.default.fileExists(atPath: stored.path(percentEncoded: false)), "one that is idle loses the file")
+    }
+
+    @Test func aDeletedProfilesNoticesGoWithItsFolderAndNothingIsWrittenBack() async throws {
+        let file = scratchFile()
+        let folder = file.deletingLastPathComponent()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let rig = Rig(date: start, file: file)
+        let watch = try await watching(rig)
+        rig.center.noteMissed(watch, .met)
+        await rig.center.close()
+        try FileManager.default.removeItem(at: folder)
+
+        rig.center.noteMissed(watch, .expired)
+        await rig.center.flush()
+
+        #expect(!FileManager.default.fileExists(atPath: folder.path(percentEncoded: false)))
+    }
+
+    private func watch() -> PageWatch {
+        PageWatch(id: UUID(), url: page, title: "", condition: "price below $50", interval: 3600, created: start, nextCheck: start)
     }
 }

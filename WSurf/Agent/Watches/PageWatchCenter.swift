@@ -79,13 +79,16 @@ final class PageWatchCenter {
     /// It holds the site, the person's own condition and the time, never a page's title or text: this is what reaches the disk.
     nonisolated struct Missed: Identifiable, Equatable, Codable, Sendable {
         let id: UUID
+        /// The watch it came from. Stopping that watch takes the notices it left before it ended with it.
+        let watchID: UUID
         let url: URL
         let condition: String
         let notice: Notice
         let date: Date
 
-        init(id: UUID = UUID(), url: URL, condition: String, notice: Notice, date: Date) {
+        init(id: UUID = UUID(), watchID: UUID, url: URL, condition: String, notice: Notice, date: Date) {
             self.id = id
+            self.watchID = watchID
             self.url = url
             self.condition = condition
             self.notice = notice
@@ -102,6 +105,7 @@ final class PageWatchCenter {
 
     static let classifyLimit = 16
     /// The most notices kept. A watch ends with its notice, so one watch leaves one or two; this bounds all of a profile's.
+    /// A notice names a page the person watched: clearing browsing data, stopping its watch and deleting its profile remove it.
     static let missedLimit = 20
     static let longestSleep: TimeInterval = 900
 
@@ -249,6 +253,8 @@ final class PageWatchCenter {
     func stop(_ id: UUID) -> PageWatch? {
         guard let index = watches.firstIndex(where: { $0.id == id }) else { return nil }
         let removed = watches.remove(at: index)
+        // The notice of a watch that ended on its own is added after this call, so only an earlier one goes.
+        removeMissed { $0.watchID == id }
         save()
         wake()
         return removed
@@ -269,7 +275,7 @@ final class PageWatchCenter {
     }
 
     func noteMissed(_ watch: PageWatch, _ notice: Notice) {
-        missed.append(Missed(url: watch.url, condition: watch.condition, notice: notice, date: now()))
+        missed.append(Missed(watchID: watch.id, url: watch.url, condition: watch.condition, notice: notice, date: now()))
         if missed.count > Self.missedLimit {
             missed.removeFirst(missed.count - Self.missedLimit)
         }
@@ -277,14 +283,17 @@ final class PageWatchCenter {
     }
 
     func dismissMissed(_ id: UUID) {
-        guard let index = missed.firstIndex(where: { $0.id == id }) else { return }
-        missed.remove(at: index)
-        saveMissed()
+        removeMissed { $0.id == id }
     }
 
+    /// Every notice goes: the Clear button, and every clear of browsing data.
     func dismissMissed() {
-        guard !missed.isEmpty else { return }
-        missed = []
+        removeMissed { _ in true }
+    }
+
+    private func removeMissed(where doomed: (Missed) -> Bool) {
+        guard missed.contains(where: doomed) else { return }
+        missed.removeAll(where: doomed)
         saveMissed()
     }
 
@@ -355,6 +364,8 @@ final class PageWatchCenter {
             failed(id)
             return
         }
+        // The page reads again, so a notice that it cannot be read is out of date.
+        removeMissed { $0.watchID == id && $0.notice == .unreachable }
         let fingerprint = reading.fingerprint
         if fingerprint == watch.fingerprint {
             update(id) { $0.failures = 0 }

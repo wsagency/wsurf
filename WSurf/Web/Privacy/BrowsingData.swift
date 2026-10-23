@@ -194,6 +194,9 @@ enum BrowsingData {
             since: range.since
         )
 
+        // Missed watch notices name the pages the person watched, so any clear takes them, whatever its kinds and range.
+        context.pageWatches?.dismissMissed()
+
         if kinds.contains(.history) {
             if range == .everything {
                 history.clear()
