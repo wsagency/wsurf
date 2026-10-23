@@ -40,7 +40,7 @@ struct PageWatchRow: Identifiable, Equatable {
         }
     }
 
-    /// The count on the Watches tab: notices WSurf could not show while its notifications were off.
+    /// The count on the Watches tab: notices WSurf could not show while its notifications were off, and the person has not dismissed.
     static func badge(for center: PageWatchCenter?) -> Int {
         center?.missed.count ?? 0
     }
@@ -119,25 +119,55 @@ private struct MissedNotices: View {
                     .foregroundStyle(Theme.accentText)
             }
             ForEach(center.missed) { missed in
-                Button {
-                    open(missed.watch.url)
-                } label: {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(verbatim: missed.watch.place)
-                            .font(Theme.Font.rowTitle)
-                        Text(verbatim: NotificationBridge.body(for: missed.watch, missed.notice))
-                            .font(Theme.Font.body)
-                            .foregroundStyle(.secondary)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .help(Text("Open Page"))
+                MissedRow(
+                    missed: missed,
+                    onOpen: { open(missed.url) },
+                    onDismiss: { center.dismissMissed(missed.id) }
+                )
             }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 9)
+    }
+}
+
+private struct MissedRow: View {
+    let missed: PageWatchCenter.Missed
+    let onOpen: () -> Void
+    let onDismiss: () -> Void
+
+    @State private var hovering = false
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 6) {
+            Button(action: onOpen) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(verbatim: missed.place)
+                        .font(Theme.Font.rowTitle)
+                    Text(verbatim: NotificationBridge.body(condition: missed.condition, missed.notice))
+                        .font(Theme.Font.body)
+                        .foregroundStyle(.secondary)
+                    TimelineView(.periodic(from: .now, by: 60)) { _ in
+                        Text(verbatim: missed.date.formatted(.relative(presentation: .named)))
+                    }
+                    .font(Theme.Font.caption)
+                    .foregroundStyle(.tertiary)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(Text("Open Page"))
+
+            QuietIconButton(symbol: "xmark", isOn: false, help: String(localized: "Dismiss"), action: onDismiss)
+                .accessibilityLabel(Text("Dismiss"))
+                .opacity(hovering ? 1 : 0)
+        }
+        .onHover { hovering = $0 }
+        .contextMenu {
+            Button("Open Page", action: onOpen)
+            Button("Dismiss", action: onDismiss)
+        }
     }
 }
 
@@ -285,5 +315,6 @@ struct PageWatchesSettingsSection: View {
                 }
             }
         }
+        .settingsAnchor("assistant.watches")
     }
 }

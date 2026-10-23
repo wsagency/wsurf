@@ -125,6 +125,10 @@ extension ProfileFacts {
 enum ProfileMaintenance {
     @MainActor
     static func clearHistory(of profile: Profile) {
+        // Missed watch notices name watched pages. The profile's watches may be running, so its center drops its list too; the
+        // file goes whether or not it does.
+        BrowserProfileContext.existing(for: profile.id)?.pageWatches?.dismissMissed()
+        try? FileManager.default.removeItem(at: PageWatchCenter.missedFile(beside: profile.pageWatchesFile))
         guard let database = profile.databaseURL,
               FileManager.default.fileExists(atPath: database.path)
         else { return }

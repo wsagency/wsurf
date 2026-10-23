@@ -215,7 +215,7 @@ final class PageWatchRefusals: NSObject, WKNavigationDelegate, WKUIDelegate {
 
 extension PageWatchCenter {
     /// The center of a regular profile. It keeps its file and runs its schedule only in the copy of WSurf that owns the session,
-    /// never in tests. A watch on a site whose assistant access is Deny is never read, and one set to Deny later stops. Pages are
+    /// never in tests. A watch on a site whose assistant access is Deny is never read, and one set to Deny later stops with a notice. Pages are
     /// judged on this Mac only; a notice WSurf may not show is kept for the Watches tab.
     static func live(for context: BrowserProfileContext) -> PageWatchCenter {
         let persists = !context.profile.isPrivate && !AppDatabase.isRunningTests && AppDatabase.ownsSession

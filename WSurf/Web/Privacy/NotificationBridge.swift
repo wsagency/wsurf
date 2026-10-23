@@ -255,7 +255,7 @@ extension NotificationBridge {
     static func request(for watch: PageWatch, _ notice: PageWatchCenter.Notice, profileID: UUID) -> UNNotificationRequest {
         let content = UNMutableNotificationContent()
         content.title = watch.place
-        content.body = body(for: watch, notice)
+        content.body = body(condition: watch.condition, notice)
         if notice == .met {
             content.sound = .default
         }
@@ -264,16 +264,18 @@ extension NotificationBridge {
     }
 
     /// What a notice says, in the notification and in the Watches tab: the condition is the person's words, never page text.
-    static func body(for watch: PageWatch, _ notice: PageWatchCenter.Notice) -> String {
+    static func body(condition: String, _ notice: PageWatchCenter.Notice) -> String {
         switch notice {
-        case .met where watch.condition.isEmpty:
+        case .met where condition.isEmpty:
             String(localized: "The page changed.")
         case .met:
-            String(localized: "The page now shows what you were waiting for: \(watch.condition)")
+            String(localized: "The page now shows what you were waiting for: \(condition)")
         case .unreachable:
             String(localized: "WSurf can’t read this page anymore, so it paused the watch.")
         case .expired:
             String(localized: "WSurf stopped watching this page after 30 days.")
+        case .denied:
+            String(localized: "WSurf stopped watching this page because this website’s Assistant Access is now No Access.")
         }
     }
 

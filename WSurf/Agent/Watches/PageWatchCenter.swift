@@ -56,10 +56,12 @@ final class PageWatchQueue {
 @MainActor
 @Observable
 final class PageWatchCenter {
-    enum Notice: Equatable {
+    nonisolated enum Notice: String, Codable, Equatable, Sendable {
         case met
         case unreachable
         case expired
+        /// The site was set to No Access after the watch began, so the watch ended instead of reading it again.
+        case denied
     }
 
     enum Start: Equatable {
@@ -73,17 +75,49 @@ final class PageWatchCenter {
         case denied
     }
 
-    /// A notice WSurf could not show because its notifications are off. Kept in memory for the Watches tab, never stored.
-    struct Missed: Identifiable, Equatable {
-        let id = UUID()
-        let watch: PageWatch
+    /// A notice WSurf could not show because its notifications are off, kept next to the watches until the person dismisses it.
+    /// It holds the site, the person's own condition and the time, never a page's title or text: this is what reaches the disk.
+    nonisolated struct Missed: Identifiable, Equatable, Codable, Sendable {
+        let id: UUID
+        /// The watch it came from. Stopping that watch takes the notices it left before it ended with it.
+        let watchID: UUID
+        let url: URL
+        let condition: String
         let notice: Notice
+        let date: Date
+
+        init(id: UUID = UUID(), watchID: UUID, url: URL, condition: String, notice: Notice, date: Date) {
+            self.id = id
+            self.watchID = watchID
+            self.url = url
+            self.condition = condition
+            self.notice = notice
+            self.date = date
+        }
+
+        /// A notice stored before it named its watch reads with no watch to match, so no stop ever removes it.
+        init(from decoder: any Decoder) throws {
+            let values = try decoder.container(keyedBy: CodingKeys.self)
+            id = try values.decode(UUID.self, forKey: .id)
+            watchID = try values.decodeIfPresent(UUID.self, forKey: .watchID) ?? id
+            url = try values.decode(URL.self, forKey: .url)
+            condition = try values.decode(String.self, forKey: .condition)
+            notice = try values.decode(Notice.self, forKey: .notice)
+            date = try values.decode(Date.self, forKey: .date)
+        }
+
+        var place: String {
+            PageWatch.place(of: url)
+        }
     }
 
     private(set) var watches: [PageWatch] = []
     private(set) var missed: [Missed] = []
 
     static let classifyLimit = 16
+    /// The most notices kept. A watch ends with its notice, so one watch leaves one or two; this bounds all of a profile's.
+    /// A notice names a page the person watched: clearing browsing data, stopping its watch and deleting its profile remove it.
+    static let missedLimit = 20
     static let longestSleep: TimeInterval = 900
 
     private let fetch: (PageWatch) async -> PageWatchReading?
@@ -99,6 +133,7 @@ final class PageWatchCenter {
     private let queue: PageWatchQueue
 
     private let file: URL?
+    private let missedFile: URL?
     private let schedules: Bool
     @ObservationIgnored private var loop: Task<Void, Never>?
     @ObservationIgnored private var sleeper: Task<Void, Never>?
@@ -125,6 +160,7 @@ final class PageWatchCenter {
         canRead: @escaping () -> Bool = { true }
     ) {
         self.file = file
+        missedFile = file.map(Self.missedFile(beside:))
         self.schedules = schedules
         self.launchHold = launchHold
         self.queue = queue
@@ -140,6 +176,11 @@ final class PageWatchCenter {
         if let file, let data = try? Data(contentsOf: file),
            let stored = try? JSONDecoder().decode([PageWatch].self, from: data) {
             watches = Array(stored.prefix(PageWatch.limit))
+        }
+        // A notice opens its page, so one read from the disk is held to the addresses a watch can have.
+        if let missedFile, let data = try? Data(contentsOf: missedFile),
+           let stored = try? JSONDecoder().decode([Missed].self, from: data) {
+            missed = Array(stored.filter { PageWatchReader.canWatch($0.url) }.suffix(Self.missedLimit))
         }
     }
 
@@ -223,6 +264,8 @@ final class PageWatchCenter {
     func stop(_ id: UUID) -> PageWatch? {
         guard let index = watches.firstIndex(where: { $0.id == id }) else { return nil }
         let removed = watches.remove(at: index)
+        // The notice of a watch that ended on its own is added after this call, so only an earlier one goes.
+        removeMissed { $0.watchID == id }
         save()
         wake()
         return removed
@@ -243,14 +286,28 @@ final class PageWatchCenter {
     }
 
     func noteMissed(_ watch: PageWatch, _ notice: Notice) {
-        missed.append(Missed(watch: watch, notice: notice))
-        if missed.count > PageWatch.limit {
-            missed.removeFirst(missed.count - PageWatch.limit)
+        missed.append(Missed(watchID: watch.id, url: watch.url, condition: watch.condition, notice: notice, date: now()))
+        if missed.count > Self.missedLimit {
+            missed.removeFirst(missed.count - Self.missedLimit)
         }
+        saveMissed()
     }
 
+    func dismissMissed(_ id: UUID) {
+        removeMissed { $0.id == id }
+    }
+
+    /// Every notice goes: the Clear button, and every clear of browsing data. Nothing is checked first: the stored file goes even when
+    /// the list in memory is empty, stale or never loaded, and whether or not the file can be read.
     func dismissMissed() {
         missed = []
+        erase(missedFile)
+    }
+
+    private func removeMissed(where doomed: (Missed) -> Bool) {
+        guard missed.contains(where: doomed) else { return }
+        missed.removeAll(where: doomed)
+        saveMissed()
     }
 
     func matching(_ reference: String) -> [PageWatch] {
@@ -310,7 +367,7 @@ final class PageWatchCenter {
             return
         }
         guard allows(watch.url) else {
-            stop(id)
+            finish(id, with: .denied)
             return
         }
         let fetched = await fetch(watch)
@@ -320,6 +377,8 @@ final class PageWatchCenter {
             failed(id)
             return
         }
+        // The page reads again, so a notice that it cannot be read is out of date.
+        removeMissed { $0.watchID == id && $0.notice == .unreachable }
         let fingerprint = reading.fingerprint
         if fingerprint == watch.fingerprint {
             update(id) { $0.failures = 0 }
@@ -406,14 +465,38 @@ final class PageWatchCenter {
 
     // MARK: - Storage
 
-    /// Writes are chained so an older list can never land after a newer one.
+    /// The notices are stored beside the watches, in the profile's own folder, so erasing the profile erases them. The watch list's
+    /// own file keeps its format.
+    nonisolated static func missedFile(beside file: URL) -> URL {
+        file.deletingLastPathComponent().appending(path: "PageWatchNotices.json")
+    }
+
     private func save() {
+        write(watches, to: file)
+    }
+
+    private func saveMissed() {
+        write(missed, to: missedFile)
+    }
+
+    /// Writes are chained, the watches' and the notices' alike, so an older list can never land after a newer one.
+    private func write(_ value: some Encodable & Sendable, to file: URL?) {
         guard let file, !isShutDown else { return }
-        let snapshot = watches
         let previous = saveTask
         saveTask = Task {
             await previous?.value
-            await JSONFileStore.shared.write(snapshot, to: file)
+            await JSONFileStore.shared.write(value, to: file)
+        }
+    }
+
+    /// Removes a stored file after every write started so far, so an older list cannot bring it back. Also in a center that is shut
+    /// down, whose folder may be going: removing what is already gone does no harm.
+    private func erase(_ file: URL?) {
+        guard let file else { return }
+        let previous = saveTask
+        saveTask = Task {
+            await previous?.value
+            try? FileManager.default.removeItem(at: file)
         }
     }
 

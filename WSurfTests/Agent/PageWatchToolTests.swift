@@ -255,6 +255,11 @@ struct PageWatchUITests {
         #expect(file.isShown && !file.isEnabled)
     }
 
+    @Test func aPrivateWindowHasNoWatchCenterToKeepNoticesIn() {
+        #expect(BrowserProfileContext(profile: .privateBrowsing()).pageWatches == nil)
+        #expect(PageWatchRow.badge(for: nil) == 0)
+    }
+
     @Test func thePrivateWindowsMenuHidesWatchThisPage() throws {
         let coordinator = AppCoordinator(browser: BrowserModel(context: BrowserProfileContext(profile: .privateBrowsing()), windowID: UUID()))
         let menu = MainMenu(coordinator: coordinator)
