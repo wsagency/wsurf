@@ -187,7 +187,7 @@ struct PageWatchJudgeTests {
         }
 
         #expect(center.missed.count == PageWatch.limit)
-        #expect(center.missed.last?.watch.condition == "condition \(PageWatch.limit)")
+        #expect(center.missed.last?.condition == "condition \(PageWatch.limit)")
         center.dismissMissed()
         #expect(center.missed.isEmpty)
     }

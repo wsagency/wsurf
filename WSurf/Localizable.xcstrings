@@ -2650,7 +2650,7 @@
 
     },
     "Dismiss" : {
-      "comment" : "Button that clears a notice about a vault removed from iCloud, or an entry in the Review Sync Changes sheet that cannot sync, without changing anything. Title Case for a command."
+      "comment" : "Button that clears a notice about a vault removed from iCloud, or an entry in the Review Sync Changes sheet that cannot sync, without changing anything. Also the tooltip, VoiceOver label and context menu item that dismiss one page watch notice in the Watches tab. Title Case for a command."
     },
     "Dismiss Error" : {
 
@@ -7290,10 +7290,10 @@
       "comment" : "Caption of the empty Watches tab of the side panel."
     },
     "While notifications were off" : {
-      "comment" : "Heading in the Watches tab above page watch notices WSurf could not show because notifications are off."
+      "comment" : "Heading in the Watches tab above page watch notices WSurf could not show because notifications are off. They stay, also after a restart, until the person dismisses them."
     },
     "Open Page" : {
-      "comment" : "Context menu item and tooltip of a page watch in the Watches tab: opens the watched page in a new tab."
+      "comment" : "Context menu item and tooltip of a page watch, and of a notice WSurf could not show, in the Watches tab: opens the watched page in a new tab."
     },
     "Resume Watching" : {
       "comment" : "Button and context menu item of a paused page watch in the Watches tab."
