@@ -113,6 +113,12 @@ final class SiteContentGuard {
       };
       document.addEventListener('play', guard, true);
 
+      // Media that was paused, by the person, by the page or by this guard, is never started by `start`.
+      const stopped = new WeakSet();
+      document.addEventListener('pause', (event) => {
+        if (event.target instanceof HTMLMediaElement) stopped.add(event.target);
+      }, true);
+
       const release = () => {
         for (const media of state.held) {
           if (state.autoplay === 'block') continue;
@@ -123,9 +129,22 @@ final class SiteContentGuard {
         state.held.clear();
       };
 
+      // Chromium makes one autoplay attempt per element, when it is ready, and refuses it without a user activation (a muted
+      // <audio> has no exemption); it does not try again when the activation comes. The Allow answer carries one, so an
+      // autoplay element that was ready before the answer and never started is started here. Only under Allow: Muted and
+      // Never are unchanged, and an element that has played, was paused or is not ready yet is left alone.
+      const start = () => {
+        for (const media of document.querySelectorAll('audio[autoplay], video[autoplay]')) {
+          if (!media.paused || media.readyState < 3 || media.played.length > 0 || stopped.has(media)) continue;
+          const started = media.play();
+          if (started && started.catch) started.catch(() => {});
+        }
+      };
+
       state.applyPolicy = (answer) => {
         state.autoplay = answer && answer.autoplay ? answer.autoplay : 'block';
         release();
+        if (state.autoplay === 'allow') start();
       };
       send('wsurfSiteGuard', { ask: 'policy' });
     })();
