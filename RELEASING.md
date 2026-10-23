@@ -350,7 +350,12 @@ Release requirements:
   the machine lock. `python3 -I Tools/check-test-partition.py` runs first and
   must pass, and each run takes its selection from
   `Tools/check-test-partition.py --args <plan>`. Coverage comes from the three
-  result bundles merged with `xcresulttool merge`; the budgets in
+  result bundles merged with `xcresulttool merge`. Xcode lists a varying subset of
+  its static package targets for coverage in each build's `.xctestrun` (the test
+  plans pin which targets to report, not which it lists), so the gate checks
+  that list after `build-for-testing` and repeats the build, up to eight times,
+  until WSurf.app, WSurfVault and WSurfCore are all in it; `Tools/check-coverage.sh`
+  then reads all three. The budgets in
   `Tools/check-performance.sh` come from the `WSurf-Performance` bundle. The test
   counts of the three runs must add up to the merged total. A new suite is
   serial until someone shows it is safe in parallel; see CONTRIBUTING.md,

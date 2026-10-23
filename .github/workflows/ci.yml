@@ -80,6 +80,9 @@ jobs:
       - name: Check watchdog
         run: python3 Tools/check-watchdog.py
 
+      - name: Check coverage script
+        run: python3 Tools/check-coverage-script.py
+
       - name: Cache Swift packages
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:

@@ -30,7 +30,7 @@ Everything since 0.1.9 (build 9). None of the screens and prompts below has been
 
 ### Under the hood
 
-- CI now checks the line coverage of the shared vault and core packages (WSurfVault and WSurfCore) as well as the app, each against the same minimum.
+- CI now checks the line coverage of the shared vault and core packages (WSurfVault and WSurfCore) as well as the app, each against the same minimum; a package target that Xcode leaves out of the report is a warning, not a failure.
 
 ### Known issues
 
