@@ -62,6 +62,20 @@ private nonisolated final class Versions: @unchecked Sendable {
     }
 }
 
+/// How many times a test's server was asked for the page.
+private nonisolated final class Served: @unchecked Sendable {
+    private let lock = NSLock()
+    private var hits = 0
+
+    var count: Int {
+        lock.withLock { hits }
+    }
+
+    func hit() {
+        lock.withLock { hits += 1 }
+    }
+}
+
 @MainActor
 private final class Delivered {
     var requests: [UNNotificationRequest] = []
@@ -224,6 +238,49 @@ struct PageWatchJudgeTests {
         let request = try #require(delivered.requests.first)
         #expect(request.content.body == String(localized: "The page changed."))
         #expect(!request.content.body.contains("49.99") && !request.content.title.contains("49.99"))
+        withExtendedLifetime(context) {}
+    }
+
+    /// The live center end to end: the person sets the site to No Access after the watch began, the next check ends the watch
+    /// without reading, and the one notice WSurf could not show is kept for the Watches tab.
+    @Test func aLiveWatchWhoseSiteIsSetToNoAccessEndsWithOneNoticeAndNoNewRequest() async throws {
+        let versions = Versions()
+        let served = Served()
+        let server = try await HTTPFixtureServer.start(routes: [:]) { request in
+            guard request.path == "/kettle" else { return nil }
+            served.hit()
+            return .html(versions.current)
+        }
+        let url = try server.url("/kettle")
+        let context = BrowserProfileContext(profile: .privateBrowsing())
+        let center = PageWatchCenter.live(for: context)
+        let delivered = Delivered()
+        let stub = NotificationBridge.DeliveryStub { request in
+            delivered.requests.append(request)
+            return false
+        }
+
+        await NotificationBridge.$watchDeliveryForTesting.withValue(stub) {
+            guard case .watching(let watch) = await center.start(url: url, title: "", condition: "", everyMinutes: 60) else {
+                Issue.record("no watch")
+                return
+            }
+            let reads = served.count
+            #expect(reads > 0)
+            context.sitePermissions.setAssistantAccess(.deny, for: SitePermissions.origin(for: url))
+            await center.check(watch.id)
+            _ = await waitUntil { center.missed.count == 1 }
+            await center.check(watch.id)
+
+            #expect(center.watches.isEmpty)
+            #expect(served.count == reads, "a site set to No Access is not read again")
+        }
+
+        #expect(center.missed.map(\.notice) == [.denied])
+        let request = try #require(delivered.requests.first)
+        #expect(delivered.requests.count == 1, "once")
+        #expect(request.content.body.contains("No Access"))
+        #expect(!request.content.body.contains("54.99") && !request.content.title.contains("54.99"))
         withExtendedLifetime(context) {}
     }
 

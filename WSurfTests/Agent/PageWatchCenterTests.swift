@@ -392,7 +392,7 @@ struct PageWatchCenterTests {
         #expect(harness.center.watches.isEmpty)
     }
 
-    @Test func aSiteBlockedLaterIsDroppedWithoutReading() async throws {
+    @Test func aSiteBlockedLaterEndsTheWatchWithoutReadingAndSaysSo() async throws {
         let harness = Harness(date: start)
         _ = try #require(await watching(harness))
         harness.allowed = false
@@ -403,7 +403,7 @@ struct PageWatchCenterTests {
         #expect(harness.center.watches.isEmpty)
         #expect(harness.fetched == 1)
         #expect(harness.judged == 1)
-        #expect(harness.notices.isEmpty)
+        #expect(harness.notices == [.denied])
     }
 
     @Test func stoppingAWatchMidCheckSendsNothing() async throws {

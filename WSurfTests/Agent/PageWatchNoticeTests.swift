@@ -3,22 +3,26 @@
 
 import Foundation
 import Testing
+import UserNotifications
 
 @testable import WSurf
 
-/// The notices WSurf could not show, and the watch that stops because its site was set to No Access: kept with the watches
-/// until the person dismisses them.
+/// The notices WSurf could not show, kept with the watches until the person dismisses them, and the watch that ends because
+/// its site was set to No Access.
 @MainActor
 @Suite(.serialized)
 struct PageWatchNoticeTests {
     private let page = URL(string: "https://shop.example/kettle")!
     private let start = Date(timeIntervalSinceReferenceDate: 800_000_000)
 
-    /// One center on `file`, a clock the test moves, and a page that always reads the same. `allowed` is the site's setting.
+    /// One center on `file`, a clock the test moves, and a page that always reads the same. `allowed` is the site's setting;
+    /// `notificationsOff` makes every notice a missed one, as the live center does when macOS shows nothing.
     @MainActor
     private final class Rig {
         var date: Date
         var allowed = true
+        var notificationsOff = false
+        var reads = 0
         var notices: [PageWatchCenter.Notice] = []
         var center: PageWatchCenter!
 
@@ -28,10 +32,18 @@ struct PageWatchNoticeTests {
                 file: file,
                 schedules: false,
                 now: { [unowned self] in self.date },
-                fetch: { _ in PageWatchReading(title: "Kettle", text: "Kettle $54.99 In stock", url: nil) },
+                fetch: { [unowned self] _ in
+                    reads += 1
+                    return PageWatchReading(title: "Kettle", text: "Kettle $54.99 In stock", url: nil)
+                },
                 judge: { _, _ in PageWatchVerdict(met: false, state: "$54.99", message: "") },
                 classify: { _, _ in PageWatchVerdict(met: false, state: "", message: "") },
-                notify: { [unowned self] _, notice in notices.append(notice) },
+                notify: { [unowned self] watch, notice in
+                    notices.append(notice)
+                    if notificationsOff {
+                        center.noteMissed(watch, notice)
+                    }
+                },
                 allows: { [unowned self] _ in allowed }
             )
         }
@@ -178,5 +190,67 @@ struct PageWatchNoticeTests {
 
         #expect(rig.center.missed.count == 1)
         #expect(Rig(date: start, file: nil).center.missed.isEmpty)
+    }
+
+    // MARK: - A watch whose site was set to No Access
+
+    @Test func aSiteSetToNoAccessEndsTheWatchWithOneNoticeAndNoReading() async throws {
+        let rig = Rig(date: start, file: nil)
+        _ = try await watching(rig)
+        rig.allowed = false
+        rig.date += 3600
+
+        await rig.center.checkDue()
+        rig.date += 3600
+        await rig.center.checkDue()
+
+        #expect(rig.center.watches.isEmpty)
+        #expect(rig.notices == [.denied], "once, and the watch does not come back")
+        #expect(rig.reads == 1, "only the reading that started the watch")
+    }
+
+    @Test func checkingNowAWatchWhoseSiteWasSetToNoAccessEndsItWithTheSameNotice() async throws {
+        let rig = Rig(date: start, file: nil)
+        let watch = try await watching(rig)
+        rig.allowed = false
+
+        await rig.center.check(watch.id)
+        await rig.center.check(watch.id)
+
+        #expect(rig.center.watches.isEmpty)
+        #expect(rig.notices == [.denied])
+        #expect(rig.reads == 1)
+    }
+
+    @Test func aWatchStoppedForNoAccessIsKeptAsAMissedNoticeAcrossARelaunch() async throws {
+        let file = scratchFile()
+        defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+        let rig = Rig(date: start, file: file)
+        rig.notificationsOff = true
+        _ = try await watching(rig)
+        rig.allowed = false
+        rig.date += 3600
+        await rig.center.checkDue()
+        await rig.center.flush()
+
+        let reopened: PageWatchCenter = Rig(date: start, file: file).center
+        #expect(reopened.watches.isEmpty)
+        #expect(reopened.missed.map(\.notice) == [.denied])
+        #expect(reopened.missed.first?.place == "shop.example")
+        #expect(reopened.missed.first?.condition == "price below $50")
+    }
+
+    @Test func theNoAccessNoticeNamesTheSettingAndNoPageText() async throws {
+        let rig = Rig(date: start, file: nil)
+        let watch = try await watching(rig)
+        let request = NotificationBridge.request(for: watch, .denied, profileID: UUID())
+
+        #expect(request.content.title == "shop.example")
+        #expect(request.content.body == String(localized: "WSurf stopped watching this page because this website’s Assistant Access is now No Access."))
+        #expect(request.content.body.contains("No Access"))
+        #expect(request.content.sound == nil, "only a met watch makes a sound")
+        let shown = [request.content.title, request.content.subtitle, request.content.body].joined(separator: " ")
+        #expect(!shown.contains("54.99") && !shown.contains("Kettle"))
+        #expect(NotificationBridge.body(condition: "price below $50", .denied) == request.content.body)
     }
 }

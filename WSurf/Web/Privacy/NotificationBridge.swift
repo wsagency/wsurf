@@ -274,6 +274,8 @@ extension NotificationBridge {
             String(localized: "WSurf can’t read this page anymore, so it paused the watch.")
         case .expired:
             String(localized: "WSurf stopped watching this page after 30 days.")
+        case .denied:
+            String(localized: "WSurf stopped watching this page because this website’s Assistant Access is now No Access.")
         }
     }
 

@@ -7144,6 +7144,9 @@
     "WSurf stopped watching this page after 30 days." : {
       "comment" : "Body of the notification when a page watch ended because it reached its 30-day lifetime."
     },
+    "WSurf stopped watching this page because this website’s Assistant Access is now No Access." : {
+      "comment" : "Body of the notification, and of the notice in the Watches tab, when a page watch ended because the person set the website's Assistant Access to No Access after the watch began."
+    },
     "Page Watches" : {
       "comment" : "Section title on the Tools settings page, above the tools that let the assistant watch a page for a change, and title of the Page Watches section on Settings › Assistant, which is also a Settings search result. Title Case."
     },

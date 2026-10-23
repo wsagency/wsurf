@@ -60,6 +60,8 @@ final class PageWatchCenter {
         case met
         case unreachable
         case expired
+        /// The site was set to No Access after the watch began, so the watch ended instead of reading it again.
+        case denied
     }
 
     enum Start: Equatable {
@@ -343,7 +345,7 @@ final class PageWatchCenter {
             return
         }
         guard allows(watch.url) else {
-            stop(id)
+            finish(id, with: .denied)
             return
         }
         let fetched = await fetch(watch)
