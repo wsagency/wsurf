@@ -5,6 +5,38 @@ This file preserves release notes inherited from the upstream
 describe upstream Linen releases, not releases published by WSurf. New WSurf
 release notes will be added above this provenance record.
 
+## 0.1.10 (build 10) — 2026-10-23
+
+Everything since 0.1.9 (build 9). None of the screens and prompts below has been checked by hand.
+
+### Page watches
+
+- Page Watches can now be found in Settings search: type “watch”, “monitor” or “notify when a page changes”, and the result opens Settings › Assistant at the Page Watches section.
+- A notice WSurf could not show because notifications were off now stays in the Watches tab until you dismiss it, also after you quit and reopen WSurf. Hover a notice and click the ✕ to dismiss one, or right-click it for Open Page and Dismiss; Clear still removes all of them.
+- A stored notice names only the site and what you were waiting for, never the page’s text. It goes away with what it names: Clear History and Clear Browsing Data (any kinds and range, and clearing on quit) remove every notice, stopping a watch removes the notices it left earlier, and deleting a profile removes its notices. The notice of a watch that ended on its own stays until you dismiss it, and a notice that a page can’t be read goes when the page reads again.
+- A watch whose site you set to No Access now tells you it stopped, with one notification or, with notifications off, a notice in the Watches tab, instead of ending silently: “WSurf stopped watching this page because this website’s Assistant Access is now No Access.” Nothing more arrives afterwards.
+
+### Passwords, passkeys and autofill
+
+- Removing the last file of an entry that holds nothing else now says why (“Removing this file would leave the entry empty. Add a login, note or other detail first, or delete the entry. Nothing was saved.”) instead of “Check the details and try again.”
+
+### Themes and appearance
+
+- The Secondary text of Nord in its dark appearance and of Calm in its light appearance now reads at 4.5:1 or better: sleeping-tab titles are slightly stronger there, and the Colors panel no longer shows the low-contrast warning for them as they come. Copies of these themes you saved keep the values stored with them.
+
+### Browsing
+
+- Chromium: under the Allow autoplay setting, media a page starts by itself now plays even when the page was ready before the setting reached it. Muted and Never are unchanged.
+
+### Under the hood
+
+- CI now checks the line coverage of the shared vault and core packages (WSurfVault and WSurfCore) as well as the app, each against the same minimum.
+
+### Known issues
+
+- If WSurf quits in the instant between a watch ending and the system saying it could not show the notification, that one notice is lost.
+- The low-contrast warning for Calm in its light appearance and Nord in its dark appearance, listed under 0.1.8, is gone; the other known issues of 0.1.9 are unchanged.
+
 ## 0.1.9 (build 9) — 2026-10-23
 
 Everything since 0.1.8 (build 8). None of the screens and prompts below has been checked by hand.
