@@ -62,6 +62,8 @@ public nonisolated enum VaultFileError: Error, Equatable, Sendable {
     case missing
     /// The encrypted file does not open under its key, or what it decrypts to is not the file that was added.
     case damaged
+    /// Saving would remove the only thing the entry keeps: its last file, with no login, note or other detail beside it.
+    case lastFile
 }
 
 nonisolated extension VaultFileError {
@@ -81,6 +83,8 @@ nonisolated extension VaultFileError {
             return String(localized: "This file is missing from the vault’s folder. Restore the vault’s files from a backup, or remove the file.")
         case .damaged:
             return String(localized: "This file couldn’t be decrypted. It may be damaged. Nothing was saved or opened.")
+        case .lastFile:
+            return String(localized: "Removing this file would leave the entry empty. Add a login, note or other detail first, or delete the entry. Nothing was saved.")
         }
     }
 }

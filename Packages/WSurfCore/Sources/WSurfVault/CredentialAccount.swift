@@ -262,9 +262,14 @@ public nonisolated struct CredentialAccount: Codable, Sendable, Identifiable, Eq
         self.attachments = attachments
     }
 
+    /// Whether the entry keeps anything at all: a username, a password, a passkey, a one-time code, a note, an item or a file.
+    public var holdsContent: Bool {
+        !username.isEmpty || password != nil || !passkeys.isEmpty || totp != nil || notes != nil || secureItems != nil
+            || attachments != nil
+    }
+
     public func validate() throws {
-        guard !username.isEmpty || password != nil || !passkeys.isEmpty || totp != nil || notes != nil || secureItems != nil
-                || attachments != nil,
+        guard holdsContent,
               username.utf8.count <= CredentialVaultLimits.payloadBytes,
               (displayName?.utf8.count ?? 0) <= CredentialVaultLimits.payloadBytes,
               (password?.utf8.count ?? 0) <= 4_096,

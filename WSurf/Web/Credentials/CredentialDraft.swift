@@ -233,6 +233,10 @@ nonisolated struct CredentialDraft: Sendable {
             result.secureItems = items.isEmpty ? nil : items
         }
         result.attachments = attachments.isEmpty ? nil : attachments
+        // An entry that held only files and has none left would fail validation like any empty entry, as "check the details".
+        if base?.attachments != nil, !result.holdsContent {
+            throw VaultFileError.lastFile
+        }
         try result.validate()
         return result
     }

@@ -75,7 +75,8 @@ struct CredentialFilesModelTests {
 
     /// End to end: an entry that holds only a name and a file saves, stores the record (schema 3), and reads the file back. Removing
     /// that only file would leave an entry with nothing to keep, which `CredentialAccount.validate()` refuses like any other empty entry:
-    /// the save fails before anything is written, the draft stays open, and the stored entry and its file are unchanged.
+    /// the save fails before anything is written, with the message of its own for the last file and not "check the details", the draft
+    /// stays open, and the stored entry and its file are unchanged.
     @Test func anEntryHoldingOnlyAFileSavesAndKeepsItsLastFile() async throws {
         try await withFixture { f in
             let id = try await f.saveEntry("Synthetic scan", files: ["scan.pdf"])
@@ -88,10 +89,13 @@ struct CredentialFilesModelTests {
 
             try await f.model.beginEditing(accountID: id)
             f.model.removeFile(file.id)
-            await #expect(throws: CredentialVaultError.invalidData) {
+            await #expect(throws: VaultFileError.lastFile) {
                 _ = try await f.model.commitDraft()
             }
             #expect(f.model.draft?.attachments.isEmpty == true, "the editor stays open with the change")
+            await f.model.attempt { _ = try await f.model.commitDraft() }
+            #expect(f.model.error == VaultFileError.lastFile.message)
+            #expect(f.model.error != CredentialSettingsModel.message(for: CredentialVaultError.invalidData))
             #expect(try await f.stored(id).attachments == [file])
             f.model.cancelEditing()
             await f.model.fileDiscard?.value
