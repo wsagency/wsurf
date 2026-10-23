@@ -356,8 +356,99 @@ struct PageWatchNoticeTests {
 
         #expect(rig.center.missed.isEmpty)
         #expect(Rig(date: start, file: file).center.missed.isEmpty)
-        let stored = try String(contentsOf: PageWatchCenter.missedFile(beside: file), encoding: .utf8)
-        #expect(!stored.contains("shop.example"), "nothing about the pages is left on the disk")
+        #expect(!exists(PageWatchCenter.missedFile(beside: file)), "nothing about the pages is left on the disk")
+    }
+
+    private func exists(_ file: URL) -> Bool {
+        FileManager.default.fileExists(atPath: file.path(percentEncoded: false))
+    }
+
+    private func store(_ notices: [PageWatchCenter.Missed], beside file: URL) {
+        JSONFileStore.encodeAndWrite(notices, to: PageWatchCenter.missedFile(beside: file))
+    }
+
+    private func sampleNotice(_ condition: String = "") -> PageWatchCenter.Missed {
+        PageWatchCenter.Missed(watchID: UUID(), url: page, condition: condition, notice: .met, date: start)
+    }
+
+    @Test func clearingRemovesStoredNoticesTheListInMemoryNeverHeld() async throws {
+        let file = scratchFile()
+        defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+        let rig = Rig(date: start, file: file)
+        #expect(rig.center.missed.isEmpty)
+        store([sampleNotice("price below $50")], beside: file)
+        #expect(exists(PageWatchCenter.missedFile(beside: file)), "the file holds a notice the center never loaded")
+
+        rig.center.dismissMissed()
+        await rig.center.flush()
+
+        #expect(!exists(PageWatchCenter.missedFile(beside: file)))
+        #expect(Rig(date: start, file: file).center.missed.isEmpty)
+    }
+
+    @Test func clearingRemovesAFileThatCannotBeRead() async throws {
+        let file = scratchFile()
+        defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+        let notices = PageWatchCenter.missedFile(beside: file)
+        try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("not json, https://shop.example/kettle".utf8).write(to: notices)
+        let rig = Rig(date: start, file: file)
+        #expect(rig.center.missed.isEmpty, "a file that fails to decode shows nothing")
+
+        rig.center.dismissMissed()
+        await rig.center.flush()
+
+        #expect(!exists(notices))
+    }
+
+    @Test func clearingRightAfterANoticeIsNotUndoneByThatNoticesWrite() async throws {
+        let file = scratchFile()
+        defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+        let rig = Rig(date: start, file: file)
+        let watch = try await watching(rig)
+        rig.center.noteMissed(watch, .met)
+        rig.center.noteMissed(watch, .expired)
+
+        rig.center.dismissMissed()
+        await rig.center.flush()
+
+        #expect(!exists(PageWatchCenter.missedFile(beside: file)), "the write that was still queued did not bring the file back")
+        #expect(Rig(date: start, file: file).center.missed.isEmpty)
+    }
+
+    @Test func clearingAClosedCentersNoticesStillRemovesTheFile() async throws {
+        let file = scratchFile()
+        defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+        let rig = Rig(date: start, file: file)
+        store([sampleNotice()], beside: file)
+        await rig.center.close()
+
+        rig.center.dismissMissed()
+        await rig.center.flush()
+
+        #expect(!exists(PageWatchCenter.missedFile(beside: file)))
+    }
+
+    @Test func aNoticeStoredBeforeItNamedItsWatchStillLoads() throws {
+        let file = scratchFile()
+        defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+        let id = UUID()
+        try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let legacy = """
+            [{"id":"\(id.uuidString)","url":"https:\\/\\/shop.example\\/kettle","condition":"price below $50","notice":"met","date":800000000}]
+            """
+        try Data(legacy.utf8).write(to: PageWatchCenter.missedFile(beside: file))
+
+        let center: PageWatchCenter = Rig(date: start, file: file).center
+        let notice = try #require(center.missed.first)
+
+        #expect(center.missed.count == 1)
+        #expect(notice.id == id)
+        #expect(notice.watchID == id, "no watch to match, so a stop never touches it")
+        #expect(notice.url == page && notice.condition == "price below $50" && notice.notice == .met)
+        #expect(notice.date == Date(timeIntervalSinceReferenceDate: 800_000_000))
+        center.dismissMissed(id)
+        #expect(center.missed.isEmpty, "it can still be dismissed")
     }
 
     @Test(arguments: [

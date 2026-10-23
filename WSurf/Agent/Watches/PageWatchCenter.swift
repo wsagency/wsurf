@@ -95,6 +95,17 @@ final class PageWatchCenter {
             self.date = date
         }
 
+        /// A notice stored before it named its watch reads with no watch to match, so no stop ever removes it.
+        init(from decoder: any Decoder) throws {
+            let values = try decoder.container(keyedBy: CodingKeys.self)
+            id = try values.decode(UUID.self, forKey: .id)
+            watchID = try values.decodeIfPresent(UUID.self, forKey: .watchID) ?? id
+            url = try values.decode(URL.self, forKey: .url)
+            condition = try values.decode(String.self, forKey: .condition)
+            notice = try values.decode(Notice.self, forKey: .notice)
+            date = try values.decode(Date.self, forKey: .date)
+        }
+
         var place: String {
             PageWatch.place(of: url)
         }
@@ -286,9 +297,11 @@ final class PageWatchCenter {
         removeMissed { $0.id == id }
     }
 
-    /// Every notice goes: the Clear button, and every clear of browsing data.
+    /// Every notice goes: the Clear button, and every clear of browsing data. Nothing is checked first: the stored file goes even when
+    /// the list in memory is empty, stale or never loaded, and whether or not the file can be read.
     func dismissMissed() {
-        removeMissed { _ in true }
+        missed = []
+        erase(missedFile)
     }
 
     private func removeMissed(where doomed: (Missed) -> Bool) {
@@ -473,6 +486,17 @@ final class PageWatchCenter {
         saveTask = Task {
             await previous?.value
             await JSONFileStore.shared.write(value, to: file)
+        }
+    }
+
+    /// Removes a stored file after every write started so far, so an older list cannot bring it back. Also in a center that is shut
+    /// down, whose folder may be going: removing what is already gone does no harm.
+    private func erase(_ file: URL?) {
+        guard let file else { return }
+        let previous = saveTask
+        saveTask = Task {
+            await previous?.value
+            try? FileManager.default.removeItem(at: file)
         }
     }
 
