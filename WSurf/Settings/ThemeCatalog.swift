@@ -46,7 +46,11 @@ enum ThemeCatalog {
         ThemeDefinition(id: standardID, name: String(localized: "Standard"), ground: .pageTinted),
         ThemeDefinition(
             id: calmID, name: String(localized: "Calm"), ground: .softTinted,
-            light: ThemeVariant(window: 0xDBCCC9, sidebar: 0xC7B3BD, surface: 0xE8D9D9, accent: 0xAD638A),
+            // Secondary text at 0.6 is the least that reads at 4.5:1 on Calm's light sidebar (0.55 is 3.9:1).
+            light: ThemeVariant(
+                window: 0xDBCCC9, sidebar: 0xC7B3BD, surface: 0xE8D9D9, accent: 0xAD638A,
+                unloadedText: SidebarTextStyle(opacity: 0.6)
+            ),
             dark: ThemeVariant(window: 0x201D2E, sidebar: 0x181624, surface: 0x3B334A, accent: 0xD1A1C2)
         ),
         ThemeDefinition(
@@ -67,7 +71,8 @@ enum ThemeCatalog {
         ThemeDefinition(
             id: "nord", name: String(localized: "Nord"), ground: .solid,
             light: palette(0xECEFF4, 0xE5E9F0, 0xD8DEE9, 0x5E81AC, 0x2E3440, unloaded: lightUnloaded),
-            dark: palette(0x3B4252, 0x2E3440, 0x434C5E, 0x88C0D0, 0xD8DEE9, unloaded: darkUnloaded)
+            // Its window (nord1) is the lightest ground its secondary text sits on: 0.65 is 4.2:1 there, 0.7 is 4.6:1.
+            dark: palette(0x3B4252, 0x2E3440, 0x434C5E, 0x88C0D0, 0xD8DEE9, unloaded: 0.7)
         ),
         ThemeDefinition(
             id: "dracula", name: String(localized: "Dracula"), ground: .solid,
@@ -76,8 +81,8 @@ enum ThemeCatalog {
         ),
     ]
 
-    /// Dimming for unloaded tabs. Every variant keeps 4.5:1 text contrast on its sidebar; the light palettes need
-    /// more ink, and Rosé Pine Dawn sets the floor.
+    /// Dimming for unloaded tabs. Every variant keeps 4.5:1 text contrast on its window and sidebar (`ThemeContrast`); the
+    /// light palettes need more ink, and Rosé Pine Dawn sets the floor. Nord dark and Calm light set their own.
     private static let lightUnloaded = 0.88
     private static let darkUnloaded = 0.65
 

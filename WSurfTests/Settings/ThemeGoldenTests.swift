@@ -231,17 +231,24 @@ struct ThemeGoldenTests {
     /// inherited text. No backgrounds, control surfaces, accents, URLs or passing foregrounds are exempted.
     /// `palette-and-inks|aqua|unloaded` stays exact: its original ink passes on the actual window ground.
     private static let guardedLegacyInks: [String: (style: SidebarTextStyle, text: UInt32?)] = [
-        "mode-lightCalm|aqua|unloaded": (SidebarTextStyle(opacity: 0.55), nil),
-        "mode-darkCalm|aqua|unloaded": (SidebarTextStyle(opacity: 0.55), nil),
-        "preset-nord|darkAqua|unloaded": (SidebarTextStyle(opacity: 0.65), 0xD8DEE9),
         "palette-and-inks|aqua|control": (SidebarTextStyle(colorRGB: 0x0033CC, opacity: 0.4), nil),
         "sidebar-text-styles|aqua|loaded": (SidebarTextStyle(colorRGB: 0xCC3300, opacity: 0.8), nil),
         "sidebar-text-styles|aqua|unloaded": (SidebarTextStyle(colorRGB: 0x0033CC, opacity: 0.3), nil),
         "sidebar-text-styles|darkAqua|unloaded": (SidebarTextStyle(colorRGB: 0xFFCC00, opacity: 0.5), nil),
         "calm-customized|aqua|control": (SidebarTextStyle(colorRGB: 0x224422, opacity: 0.9), nil),
         "calm-customized|aqua|loaded": (SidebarTextStyle(colorRGB: 0x553355, opacity: 0.95), nil),
-        "calm-customized|aqua|unloaded": (SidebarTextStyle(opacity: 0.55), nil),
-        "preset-over-customizations|darkAqua|unloaded": (SidebarTextStyle(opacity: 0.65), 0xD8DEE9),
+        // Calm's light variant now stores 0.6, but this row's brightness darkens its ground, so 0.6 still falls short there.
+        "calm-customized|aqua|unloaded": (SidebarTextStyle(opacity: 0.6), nil),
+    ]
+
+    /// The unloaded inks of Calm light and Nord dark that the catalog itself raised (0.55 to 0.6, 0.65 to 0.7) so that their
+    /// secondary text reads at 4.5:1 out of the box. The stored opacity is the new one and the recorded color is otherwise
+    /// unchanged, so these cells are the recorded ones with the new alpha, with no derived ink to explain.
+    private static let raisedCatalogInks: [String: Double] = [
+        "mode-lightCalm|aqua|unloaded": 0.6,
+        "mode-darkCalm|aqua|unloaded": 0.6,
+        "preset-nord|darkAqua|unloaded": 0.7,
+        "preset-over-customizations|darkAqua|unloaded": 0.7,
     ]
 
     private func expectGuardedLegacyInk(
@@ -283,6 +290,7 @@ struct ThemeGoldenTests {
         var installed: String?
         var checked = 0
         var guarded = 0
+        var raised = 0
         for line in Self.table.split(separator: "\n") {
             let parts = line.split(separator: "|", omittingEmptySubsequences: false).map(String.init)
             let scenario = try #require(Self.scenarios.first { $0.name == parts[0] }, "\(parts[0])")
@@ -304,6 +312,15 @@ struct ThemeGoldenTests {
                 if let original = Self.guardedLegacyInks["\(scenario.name)|\(row.name)|\(name)"] {
                     try expectGuardedLegacyInk(original, role: name, measured: pair.1, appearance: appearance, scheme: row.scheme)
                     guarded += 1
+                } else if let opacity = Self.raisedCatalogInks["\(scenario.name)|\(row.name)|\(name)"] {
+                    let stored = BrowserSettings.application.selectedTheme.variant(row.scheme).unloadedText
+                    #expect(stored.colorRGB == nil && stored.opacity == opacity, "the catalog's own raised opacity")
+                    let alpha = String(format: "%02X", Int((opacity * 255).rounded()))
+                    #expect(
+                        matches(String(pair.0.prefix(6)) + alpha, pair.1, appearance: appearance),
+                        "\(scenario.name) in \(row.name): \(name) was \(pair.0), is \(pair.1) at \(opacity)"
+                    )
+                    raised += 1
                 } else {
                     #expect(
                         matches(pair.0, pair.1, appearance: appearance),
@@ -316,6 +333,7 @@ struct ThemeGoldenTests {
         let skipped = Self.privateWindowRows.values.filter { $0 == nil }.count
         #expect(checked == (Self.scenarios.count * Self.appearances.count - skipped) * Self.cellNames.count)
         #expect(guarded == Self.guardedLegacyInks.count, "every explicitly allowed case is exercised")
+        #expect(raised == Self.raisedCatalogInks.count, "every raised catalog ink is exercised")
     }
 
     // MARK: - The recorded colors

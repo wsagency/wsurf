@@ -69,6 +69,25 @@ struct ThemeCatalogTests {
         #expect(checked == 12, "six solid themes in two appearances")
     }
 
+    /// The Colors panel warns when secondary text reads under 4.5:1 on the window or the sidebar, so no built-in theme may start
+    /// with that warning showing: Nord dark (4.2:1) and Calm light (3.9:1) did. Standard and Calm are tinted, so this runs on
+    /// the ground each theme draws, not only the solid ones.
+    @MainActor
+    @Test func everyBuiltInVariantKeepsItsSecondaryTextAtFourPointFive() {
+        var checked = 0
+        for theme in ThemeCatalog.builtIn {
+            for (name, variant, isDark) in [("light", theme.light, false), ("dark", theme.dark, true)] {
+                let found = ThemeContrast.shortfall(
+                    .secondary, in: variant, isDark: isDark, brightness: 0, ground: theme.ground
+                )
+                let detail = found.map { "\($0.ratio):1 on the \($0.ground)" } ?? ""
+                #expect(found == nil, "\(theme.id) \(name) secondary text, \(detail)")
+                checked += 1
+            }
+        }
+        #expect(checked == 16, "eight themes in two appearances")
+    }
+
     @Test func aVariantDecodesWhateverItsFileHolds() throws {
         let json = #"""
         {"id": "keep", "name": "Kept", "ground": "solid", "light": {"window": 16777215, "hue": "loud"},
