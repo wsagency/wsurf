@@ -369,6 +369,51 @@ struct HistoryStoreTests {
         #expect(store.visits.count == 1)
     }
 
+    /// Every way a visit can disappear while a tab still remembers it as the page it came from.
+    enum Forgetting: CaseIterable, CustomTestStringConvertible {
+        case clear, sinceADate, onlyThatVisit, thePage
+
+        var testDescription: String {
+            "\(self)"
+        }
+
+        @MainActor
+        func perform(on store: HistoryStore, forgetting visit: Int64) {
+            switch self {
+            case .clear:
+                store.clear()
+            case .sinceADate:
+                store.removeEntries(since: .distantPast)
+            case .onlyThatVisit:
+                store.removeVisit(visit)
+            case .thePage:
+                if let entry = store.entries.first {
+                    store.remove(entry)
+                }
+            }
+        }
+    }
+
+    /// A tab keeps the id of its last visit, so a link clicked after Clear History names a visit that is gone.
+    /// The foreign key on `fromVisit` must not turn that into a visit nobody recorded.
+    @Test(arguments: Forgetting.allCases)
+    func aVisitFromAForgottenVisitIsStillRecorded(forgetting: Forgetting) throws {
+        let (store, _) = makeStore()
+        let earlier = try #require(store.record(url: "https://example.com/a", title: "A"))
+        forgetting.perform(on: store, forgetting: earlier)
+
+        let visit = store.record(
+            url: "https://example.com/b",
+            title: "B",
+            transition: .link,
+            fromVisit: earlier
+        )
+
+        #expect(visit != nil)
+        #expect(store.visits.map(\.url) == ["https://example.com/b"])
+        #expect(store.referrerChain(to: try #require(visit)).map(\.url) == ["https://example.com/b"])
+    }
+
     @Test func removingNoVisitsChangesNothing() {
         let (store, _) = makeStore()
         store.record(url: "https://example.com/a", title: "Only")
