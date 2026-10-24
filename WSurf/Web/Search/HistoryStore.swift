@@ -114,6 +114,9 @@ final class HistoryStore {
         return !url.hasPrefix("https://wsurf.local")
     }
 
+    /// `fromVisit` is what a tab remembers, and the tab may remember a visit that Clear History, a range or a single removal
+    /// has since deleted. An id that names no stored visit is stored as none: the foreign key on `fromVisit` would otherwise
+    /// reject the whole insert and lose the visit.
     @discardableResult
     func record(
         url: String,
@@ -140,7 +143,7 @@ final class HistoryStore {
             try db.execute(
                 sql: """
                     INSERT INTO historyVisit (url, visitedAt, transition, fromVisit)
-                    VALUES (?, ?, ?, ?)
+                    VALUES (?, ?, ?, (SELECT id FROM historyVisit WHERE id = ?))
                     """,
                 arguments: [url, now, transition.rawValue, transition.carriesReferrer ? fromVisit : nil]
             )
