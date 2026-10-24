@@ -91,7 +91,8 @@ extension BrowserModel {
                     color: folder.color,
                     isExpanded: folder.isExpanded,
                     isPinned: folder.isPinned,
-                    sizeFactor: folder.size.storedFactor
+                    sizeFactor: folder.size.storedFactor,
+                    tintsIcons: folder.tintsIcons ? true : nil
                 ))
                 for child in tree.rows(in: id) {
                     add(child, under: id)
@@ -221,6 +222,7 @@ extension BrowserModel {
                 assign(\.isExpanded, to: pin.isExpanded, on: folder)
                 assign(\.isPinned, to: pin.isPinned, on: folder)
                 assign(\.size, to: .stored(pin.sizeFactor), on: folder)
+                assign(\.tintsIcons, to: pin.tintsIcons ?? false, on: folder)
                 items[pin.id] = .folder(folder.id)
             case .tab:
                 let tab = pages[pin.id] ?? makePinPage(pin)

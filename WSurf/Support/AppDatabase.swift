@@ -174,6 +174,12 @@ struct AppDatabase: Sendable {
                 t.add(column: "sizeFactor", .double)
             }
         }
+        // Whether the folder draws the icons inside it in its own color. NULL is off.
+        if try !db.columns(in: "sessionFolder").contains(where: { $0.name == "tintsIcons" }) {
+            try db.alter(table: "sessionFolder") { t in
+                t.add(column: "tintsIcons", .boolean)
+            }
+        }
     }
 
     private nonisolated static func defineSchema(in db: Database) throws {
@@ -342,6 +348,11 @@ struct AppDatabase: Sendable {
         if try !db.columns(in: "profilePin").contains(where: { $0.name == "sizeFactor" }) {
             try db.alter(table: "profilePin") { t in
                 t.add(column: "sizeFactor", .double)
+            }
+        }
+        if try !db.columns(in: "profilePin").contains(where: { $0.name == "tintsIcons" }) {
+            try db.alter(table: "profilePin") { t in
+                t.add(column: "tintsIcons", .boolean)
             }
         }
     }

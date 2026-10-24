@@ -44,6 +44,14 @@ struct SidebarRowInk {
         colors?.mark(style.mark).map { Color(nsColor: $0) }
     }
 
+    /// The tint and the favicon style of a row's icon. A row inside a folder that tints its icons draws them in that
+    /// color, as a monochrome, however the theme draws favicons. A current row keeps its own ink: the folder's color
+    /// would not read on its inverse fill.
+    func iconStyle(folderTint: Color?, colorsFavicon: Bool, isDeferred: Bool) -> (tint: Color, colorsFavicon: Bool) {
+        guard let folderTint, inverse == nil else { return (text, colorsFavicon) }
+        return (isDeferred ? folderTint.opacity(ThemeVariant.unloadedOpacity) : folderTint, false)
+    }
+
     /// A heavier title says a tab is new without relying on color.
     var titleFont: Font {
         let settings = BrowserSettings.application
@@ -55,6 +63,11 @@ struct SidebarRowInk {
         guard style.marksCurrentTab, let colors else { return nil }
         return (Color(nsColor: colors.fill), Color(nsColor: colors.content))
     }
+}
+
+extension EnvironmentValues {
+    /// The color of the nearest folder around a row that tints its icons, or nil when none does.
+    @Entry var sidebarIconTint: Color?
 }
 
 /// What a row reads from its surroundings to draw a `SidebarRowStyle`. Every kind of row keeps one, so none of

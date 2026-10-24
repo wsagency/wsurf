@@ -45,6 +45,7 @@ struct SidebarTabRow: View {
     }
 
     @Environment(\.sidebarStyle) private var sidebarStyle
+    @Environment(\.sidebarIconTint) private var folderIconTint
     private var inkSource = SidebarRowInkSource()
     @State private var hovering = false
     @State private var returnHovering = false
@@ -156,13 +157,17 @@ struct SidebarTabRow: View {
     }
 
     @ViewBuilder private var leadingIcon: some View {
-        let colorsFavicon = BrowserSettings.application.chromeShape.colorsFavicons
+        let icon = ink.iconStyle(
+            folderTint: folderIconTint,
+            colorsFavicon: BrowserSettings.application.chromeShape.colorsFavicons,
+            isDeferred: tab.isDeferred
+        )
         if sidebarStyle == .full {
-            TabIcon(tab: tab, tint: textColor, colorsFavicon: colorsFavicon)
+            TabIcon(tab: tab, tint: icon.tint, colorsFavicon: icon.colorsFavicon)
                 .frame(width: SidebarMetrics.rowIconSize)
                 .sidebarNewMark(ink)
         } else {
-            TabIcon(tab: tab, tint: textColor, colorsFavicon: colorsFavicon)
+            TabIcon(tab: tab, tint: icon.tint, colorsFavicon: icon.colorsFavicon)
                 .sidebarNewMark(ink)
         }
     }

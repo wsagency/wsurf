@@ -16,6 +16,7 @@ struct FolderSection: View {
     @Environment(\.sidebarStyle) private var sidebarStyle
     @Environment(\.windowColorScheme) private var windowColorScheme
     @Environment(\.displayScale) private var displayScale
+    @Environment(\.sidebarIconTint) private var outerIconTint
     private var inkSource = SidebarRowInkSource()
     @State private var hovering = false
     @State private var windowFrame: CGRect = .zero
@@ -224,6 +225,8 @@ struct FolderSection: View {
             if folder.isExpanded {
                 contents
                     .padding(.leading, childIndent)
+                    // The nearest folder that tints wins: a folder inside a tinted one that tints too keeps its own color.
+                    .environment(\.sidebarIconTint, folder.tintsIcons ? folder.color.tint : outerIconTint)
             }
         }
         .padding(showsOutline ? Self.outlineInset : 0)
@@ -449,6 +452,7 @@ enum FolderContextMenu {
         addFolderItems([.folder(folder.id)], to: menu, browser: browser)
         menu.addItem(sortItem(for: folder, browser: browser))
         menu.addItem(sizeItem(for: folder, browser: browser))
+        menu.addItem(tintIconsItem(for: folder, browser: browser))
         menu.addItem(.separator())
 
         let kept = browser.allTabs(in: folder).count
@@ -572,6 +576,19 @@ enum FolderContextMenu {
         let item = NSMenuItem(title: String(localized: "Size"), action: nil, keyEquivalent: "")
         item.image = NSImage(systemSymbolName: "textformat.size", accessibilityDescription: nil)
         item.submenu = sizeMenu(for: folder, browser: browser)
+        return item
+    }
+
+    static func tintIconsItem(for folder: TabFolder, browser: BrowserModel) -> NSMenuItem {
+        let item = actionItem(
+            title: String(localized: "Tint Icons as Folder"),
+            symbol: "paintpalette",
+            action: { [weak browser, weak folder] in
+                guard let browser, let folder else { return }
+                browser.setFolderTintsIcons(!folder.tintsIcons, for: folder)
+            }
+        )
+        item.state = folder.tintsIcons ? .on : .off
         return item
     }
 

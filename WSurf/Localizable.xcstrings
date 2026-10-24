@@ -1957,6 +1957,9 @@
     "Certificate exceptions" : {
 
     },
+    "Change Folder Icon Tint" : {
+      "comment" : "Name of the undo step after turning Tint Icons as Folder on or off in the context menu of a sidebar folder. Title Case, same style as Change Folder Size."
+    },
     "Change Folder Size" : {
       "comment" : "Name of the undo step after choosing a size in the Size submenu of a sidebar folder's context menu. Title Case, same style as Delete Folder."
     },
@@ -5537,6 +5540,9 @@
     },
     "Background tabs unload after they have been out of view this long, and reload when you open them. Favorites and tabs that play audio, use a camera or microphone, hold unsaved form input or are downloading stay loaded. Unloaded Chromium tabs restore only their URL." : {
       "comment" : "Caption of the Sleep after row in Settings > General. Explains the idle delay and which tabs are never unloaded. Chromium is a browser engine name and stays untranslated."
+    },
+    "Tint Icons as Folder" : {
+      "comment" : "Item in the context menu of a sidebar folder, checked while on: draws the icons of the tabs inside the folder in the folder's color instead of their own colors. Off by default. Title Case, next to Size."
     },
     "When memory is low" : {
       "comment" : "Choice in the Sleep after menu that sets no idle delay: tabs unload only when the Mac runs short of memory. Sentence case."

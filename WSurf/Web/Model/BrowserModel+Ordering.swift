@@ -501,6 +501,19 @@ extension BrowserModel {
         scheduleSave()
     }
 
+    /// One undo step. A pinned folder's setting goes to the profile with the rest of its row.
+    func setFolderTintsIcons(_ tints: Bool, for folder: TabFolder) {
+        guard foldersByID[folder.id] === folder, folder.tintsIcons != tints else { return }
+        let previous = folder.tintsIcons
+        let id = folder.id
+        registerSidebarUndo(named: String(localized: "Change Folder Icon Tint")) { model in
+            guard let folder = model.folder(id: id) else { return }
+            model.setFolderTintsIcons(previous, for: folder)
+        }
+        folder.tintsIcons = tints
+        scheduleSave()
+    }
+
     func deleteFolder(_ folder: TabFolder) {
         let tree = reconciledTree()
         guard foldersByID[folder.id] === folder else { return }
