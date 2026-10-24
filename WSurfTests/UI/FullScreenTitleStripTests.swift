@@ -7,10 +7,11 @@ import Testing
 
 @testable import WSurf
 
-/// In full screen the system draws a strip with the traffic lights over the top of the window, and the browser window
-/// is full-size content with no safe area, so a layout that starts at the window's top has its address field under the
-/// strip. The host reserves the strip's height for every layout. Real full screen needs a real display, so these cases
-/// check the number against a real titled window and the layout against hosted views.
+/// In full screen the system shows a strip with the traffic lights over the top of the window while the menu bar is down,
+/// and the browser window is full-size content with no safe area, so a layout that starts at the window's top has its
+/// address field under the strip. The host gives every layout as much room as the strip takes right now: none while it
+/// is hidden. Real full screen needs a real display (`FullScreenRevealTests`), so these cases check the arithmetic, the
+/// fallback against a real titled window and the layout against hosted views.
 @MainActor
 struct FullScreenTitleStripTests {
     private let titled: NSWindow.StyleMask = [.titled, .closable, .miniaturizable, .resizable]
@@ -29,7 +30,37 @@ struct FullScreenTitleStripTests {
     // MARK: - How much is reserved
 
     @Test func aWindowedBrowserReservesNothing() {
+        let window = titledWindow()
+        defer { window.close() }
+        #expect(BrowserWindowMetrics.titleStripInset(of: window) == 0)
+        #expect(BrowserWindowMetrics.titleStripInset(of: nil) == 0)
         #expect(BrowserWindowMetrics.fullScreenTitleStrip(isFullScreen: false) == 0)
+    }
+
+    private let screen = NSRect(x: 0, y: 0, width: 2_560, height: 1_600)
+
+    private func strip(at y: CGFloat, width: CGFloat = 2_560) -> NSRect {
+        NSRect(x: 0, y: y, width: width, height: 32)
+    }
+
+    /// Measured on the Pro (macOS 26.6, a display without a notch): hidden, the strip's title bar waits above the top edge.
+    @Test func aHiddenStripTakesNoRoom() {
+        #expect(BrowserWindowMetrics.covered(window: screen, strip: strip(at: 1_632)) == 0)
+        #expect(BrowserWindowMetrics.covered(window: screen, strip: strip(at: 1_600)) == 0)
+    }
+
+    /// Shown, the menu bar comes down over the window and the strip below it: the layout clears both. With the menu bar set
+    /// not to hide the strip shows the same way the whole time, so it is kept clear the whole time.
+    @Test func aShownStripTakesItsRoomAndTheMenuBarsAboveIt() {
+        #expect(BrowserWindowMetrics.covered(window: screen, strip: strip(at: 1_538)) == 62)
+        // With a notch the window starts below the menu bar, so only the strip reaches into it.
+        let belowNotch = NSRect(x: 0, y: 0, width: 1_728, height: 1_085)
+        #expect(BrowserWindowMetrics.covered(window: belowNotch, strip: strip(at: 1_053, width: 1_728)) == 32)
+    }
+
+    @Test func aSlidingStripTakesWhatHasSlidInRoundedUp() {
+        #expect(BrowserWindowMetrics.covered(window: screen, strip: strip(at: 1_587.5)) == 13)
+        #expect(BrowserWindowMetrics.covered(window: screen, strip: strip(at: -40)) == screen.height)
     }
 
     @Test func fullScreenReservesAtLeastTheSystemTitlebar() {
