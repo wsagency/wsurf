@@ -13,6 +13,7 @@ struct FaviconImage: View {
 
     var body: some View {
         let needsInk = FaviconContrast.needsInk(image, isDark: scheme == .dark)
+        let shift = FaviconArt.shift(of: image)
         Image(nsImage: image)
             .renderingMode(needsInk ? .template : .original)
             .resizable()
@@ -23,6 +24,27 @@ struct FaviconImage: View {
                 ShaderLibrary.wsurfFaviconTint(.color(tint ?? .white)),
                 isEnabled: tint != nil && !needsInk
             )
+            // The art, not the image, is what meets the title beside it. An icon with more padding below than above
+            // moves down by half the difference, which keeps the art inside the frame it was drawn in.
+            .visualEffect { content, proxy in
+                content.offset(y: proxy.size.height * shift)
+            }
+    }
+}
+
+/// How far the art of a favicon sits from the middle of its image, kept for as long as the image lives.
+@MainActor
+enum FaviconArt {
+    private static let cache = NSMapTable<NSImage, NSNumber>.weakToStrongObjects()
+
+    /// The shift that centers the art, as a fraction of the drawn height: positive moves the image down.
+    static func shift(of image: NSImage) -> CGFloat {
+        if let cached = cache.object(forKey: image) {
+            return CGFloat(cached.doubleValue)
+        }
+        let shift = FaviconInk.artMiddle(of: image).map { 0.5 - $0 } ?? 0
+        cache.setObject(NSNumber(value: shift), forKey: image)
+        return CGFloat(shift)
     }
 }
 

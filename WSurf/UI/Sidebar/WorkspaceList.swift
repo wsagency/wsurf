@@ -580,10 +580,10 @@ struct SidebarDragChip: View {
         case .folder(let id):
             if let folder = browser.folder(id: id) {
                 HStack(spacing: SidebarMetrics.rowIconSpacing) {
-                    Image(systemName: "folder.fill")
-                        .font(Theme.Font.caption)
-                        .foregroundStyle(folder.color.tint)
-                        .frame(width: SidebarMetrics.rowIconSize, height: SidebarMetrics.rowIconSize)
+                    SidebarSymbol(
+                        "folder.fill", size: 10.5 * SidebarMetrics.rowIconSize / 16, box: SidebarMetrics.rowIconSize
+                    )
+                    .foregroundStyle(folder.color.tint)
                     if sidebarStyle == .full {
                         Text(verbatim: folder.name)
                             .font(BrowserSettings.application.sidebarFont)

@@ -27,6 +27,19 @@ nonisolated enum FaviconInk {
         return (reading.luminance > lightLimit, reading.luminance < darkLimit)
     }
 
+    /// Where the middle of the visible art sits, as a fraction of the image's height from its top: 0.5 for art that is
+    /// centered, less when the transparent padding is deeper at the bottom. nil when nothing is drawn. Pixels that are
+    /// under a quarter opaque (a soft shadow) are not art.
+    static func artMiddle(of image: NSImage) -> Double? {
+        let side = 128
+        guard let rep = rasterized(image, side: side), let bytes = rep.bitmapData else { return nil }
+        let rows = (0..<side).filter { row in
+            (0..<side).contains { bytes[row * rep.bytesPerRow + $0 * 4 + 3] >= 64 }
+        }
+        guard let first = rows.first, let last = rows.last else { return nil }
+        return Double(first + last + 1) / 2 / Double(side)
+    }
+
     /// 48 px keeps the largest tab icon (24 pt) sharp at 2x.
     static func inked(_ data: Data, isDark: Bool, side: Int = 48) -> Data? {
         guard let source = NSImage(data: data), source.isValid,

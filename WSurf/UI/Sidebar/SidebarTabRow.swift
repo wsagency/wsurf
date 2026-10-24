@@ -605,23 +605,20 @@ struct TabIcon: View {
     var body: some View {
         Group {
             if let internalPage = tab.internalPage {
-                Image(systemName: internalPage.symbol)
-                    .font(.system(size: size * 0.72, weight: .medium))
+                SidebarSymbol(internalPage.symbol, size: size * 0.72, weight: .medium, box: size)
                     .foregroundStyle(tint ?? .secondary)
             } else if tab.isLoading, !tab.isRestoring {
                 Spinner(size: size * 0.8)
                     .foregroundStyle(tint ?? loadingColor)
             } else if SystemPages.showsStartFace(tab) {
-                Image(systemName: SystemPages.startSymbol)
-                    .font(.system(size: size * 0.66, weight: .medium))
+                SidebarSymbol(SystemPages.startSymbol, size: size * 0.66, weight: .medium, box: size)
                     .foregroundStyle(tint ?? .secondary)
             } else if let favicon = tab.favicon {
                 FaviconImage(image: favicon, tint: faviconTint)
                     .frame(width: size - 1, height: size - 1)
                     .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.tight, style: .continuous))
             } else {
-                Image(systemName: "globe")
-                    .font(.system(size: size * 0.69))
+                SidebarSymbol("globe", size: size * 0.69, box: size)
                     .foregroundStyle(tint ?? .secondary)
             }
         }

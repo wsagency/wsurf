@@ -107,14 +107,12 @@ struct FolderSection: View {
         let iconSize = SidebarMetrics.rowIconSize * scale
         VStack(spacing: SidebarMetrics.rowVerticalSpacing(settings: BrowserSettings.application)) {
             HStack(spacing: SidebarMetrics.rowIconSpacing) {
-                Image(systemName: audible == nil
-                    ? (folder.isExpanded ? "folder" : "folder.fill")
-                    : "speaker.wave.2.fill")
-                    // Theme.Font.caption at the 16 pt icon size; the glyph grows with the theme's tab icons.
-                    .font(.system(size: 10.5 * iconSize / 16))
+                // Theme.Font.caption at the 16 pt icon size; the glyph grows with the theme's tab icons.
+                SidebarSymbol(
+                    audible == nil ? (folder.isExpanded ? "folder" : "folder.fill") : "speaker.wave.2.fill",
+                    size: 10.5 * iconSize / 16, box: iconSize
+                )
                     .foregroundStyle(folder.color.tint)
-                    .contentTransition(.symbolEffect(.replace))
-                    .animation(Theme.Motion.settle, value: audible?.id)
                     .frame(width: iconSize, height: iconSize)
                     .help(audible.map { Text("“\($0.title)” is playing") } ?? Text(verbatim: ""))
                     .overlay(alignment: .bottomTrailing) {
