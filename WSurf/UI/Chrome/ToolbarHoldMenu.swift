@@ -112,13 +112,14 @@ private final class MenuHandler: NSObject {
 }
 
 extension NSMenu {
+    @discardableResult
     func addItem(
         title: String,
         image: NSImage? = nil,
         key: String = "",
         modifiers: NSEvent.ModifierFlags = .command,
         handler: @escaping () -> Void
-    ) {
+    ) -> NSMenuItem {
         let target = MenuHandler(handler)
         let item = NSMenuItem(title: title, action: #selector(MenuHandler.fire), keyEquivalent: key)
         item.image = image
@@ -126,6 +127,7 @@ extension NSMenu {
         item.target = target
         item.representedObject = target
         addItem(item)
+        return item
     }
 }
 

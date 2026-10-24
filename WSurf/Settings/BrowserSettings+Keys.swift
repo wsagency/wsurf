@@ -68,6 +68,8 @@ extension BrowserSettings {
         static let userAgent = "advanced.userAgent"
         static let customUserAgent = "advanced.userAgent.custom"
         static let webInspector = "advanced.webInspector"
+        static let devModeEnabledHosts = "devMode.enabledHosts"
+        static let devModeDisabledHosts = "devMode.disabledHosts"
         static let updateChannel = "updates.channel"
         static let startPageOrder = "startPage.order"
         static let startPageHidden = "startPage.hidden"

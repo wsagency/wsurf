@@ -386,7 +386,8 @@ enum SettingsIndex {
                       ["installed extensions", "chrome", "web store", "firefox", "mozilla", "add-ons", "plugins", "adblock",
                        "safari extensions", "app store", "extension options", "remove extension", "check for updates", ]),
 
-        SettingsEntry("advanced.inspector", .advanced, "Web Inspector", "Add Inspect Element to a page’s right-click menu.",
+        SettingsEntry("advanced.inspector", .advanced, "Web Inspector",
+                      "Add Inspect Element to a page’s right-click menu. Websites in Developer mode, such as localhost, keep it even when this is off.",
                       ["developer", "devtools", "inspector", "inspect", "debug", "console"]),
         SettingsEntry("advanced.mcp", .advanced, "External connections", "Connect an external assistant to tabs you choose.",
                       ["mcp", "external", "connection", "automation", "codex", "claude", "cursor", "client", "tools"]),

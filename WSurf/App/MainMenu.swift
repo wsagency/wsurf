@@ -224,7 +224,10 @@ final class MainMenu: NSObject, NSMenuItemValidation {
         menu.addItem(submenu(playerCornerMenu(), titled: "Move Player to Corner"))
         menu.addItem(.separator())
         let developer = NSMenu()
+        developer.addItem(command("Show Web Inspector", #selector(showWebInspector), key: "i", modifiers: [.command, .option]))
         developer.addItem(command("Restart Page", #selector(restartPage)))
+        developer.addItem(.separator())
+        developer.addItem(command("Developer Mode for This Website", #selector(toggleDevMode(_:))))
         menu.addItem(submenu(developer, titled: "Developer"))
         return menu
     }
@@ -387,8 +390,16 @@ final class MainMenu: NSObject, NSMenuItemValidation {
     @objc private func hardReload() {
         coordinator.pageCommandTab?.page.reloadFromOrigin()
     }
+    @objc private func showWebInspector() {
+        coordinator.pageCommandTab?.showWebInspector()
+    }
     @objc private func restartPage() {
         coordinator.pageCommandTab?.restartPage()
+    }
+    @objc private func toggleDevMode(_ sender: NSMenuItem) {
+        // The item named a website when it was validated; a page that moved on since is not the one the person chose.
+        guard let tab = coordinator.pageCommandTab, let host = sender.representedObject as? String else { return }
+        coordinator.setDevMode(!tab.usesDevMode, for: tab, named: host)
     }
     @objc private func stopLoading() {
         coordinator.pageCommandTab?.stopLoading()
@@ -547,6 +558,8 @@ final class MainMenu: NSObject, NSMenuItemValidation {
         case #selector(zoomIn), #selector(zoomOut), #selector(openFind), #selector(findNext),
              #selector(findPrevious), #selector(printPage):
             return coordinator.pageCommandTab != nil
+        case #selector(showWebInspector), #selector(toggleDevMode(_:)):
+            return validateDeveloperItem(menuItem)
         case #selector(restartPage):
             guard let tab = coordinator.pageCommandTab else { return false }
             return tab.isMaterialised && !tab.isShowingSystemPage
@@ -645,6 +658,26 @@ final class MainMenu: NSObject, NSMenuItemValidation {
 
     /// ⌘D names what it will do: pin the page, update a wandering pin's page to the one on screen, or unpin a tab showing
     /// its pinned page. Back to Pinned Page answers only while the pinned tab is away.
+    /// The two items of View > Developer that act on the page's website.
+    private func validateDeveloperItem(_ menuItem: NSMenuItem) -> Bool {
+        let tab = coordinator.pageCommandTab
+        if menuItem.action == #selector(showWebInspector) {
+            // Chromium has no inspector in WSurf: the item is hidden for such a tab instead of left there doing nothing.
+            menuItem.isHidden = tab.map { !$0.inspectsWithWebKit } ?? false
+            return tab?.canShowWebInspector ?? false
+        }
+        guard let tab, let host = DevMode.host(of: URL(string: tab.urlString)) else {
+            menuItem.title = String(localized: "Developer Mode for This Website")
+            menuItem.state = .off
+            menuItem.representedObject = nil
+            return false
+        }
+        menuItem.representedObject = host
+        menuItem.title = String(localized: "Developer Mode for “\(host)”")
+        menuItem.state = tab.usesDevMode ? .on : .off
+        return true
+    }
+
     private func validatePinItem(_ menuItem: NSMenuItem) -> Bool {
         let tab = coordinator.browser.activeTab
         guard menuItem.action == #selector(pinPage) else { return tab?.isAwayFromPin == true }

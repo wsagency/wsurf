@@ -23,6 +23,7 @@ final class BrowserSettings {
         Key.javaScript, Key.blockPopups, Key.blockTrackers, Key.autoplay,
         Key.startPageOrder, Key.startPageHidden, Key.startPageHiddenSites,
         Key.translationTarget, Key.alwaysTranslate,
+        Key.devModeEnabledHosts, Key.devModeDisabledHosts,
     ]
 
     private static let sessionKeySet = Set(sessionKeys)
@@ -391,6 +392,27 @@ final class BrowserSettings {
         }
     }
 
+    /// The websites this profile turned Developer mode on or off by hand. Only choices that differ from the automatic rule
+    /// (`DevMode.isLocal`) are kept. Per profile, never global; a private window keeps its own in memory.
+    private(set) var devModeSites = DevModeSites() {
+        didSet {
+            if devModeSites.enabled != oldValue.enabled {
+                write(devModeSites.enabled.sorted(), forKey: Key.devModeEnabledHosts)
+            }
+            if devModeSites.disabled != oldValue.disabled {
+                write(devModeSites.disabled.sorted(), forKey: Key.devModeDisabledHosts)
+            }
+        }
+    }
+
+    func usesDevMode(for url: URL?) -> Bool {
+        devModeSites.uses(url)
+    }
+
+    func setDevMode(_ isOn: Bool, for url: URL?) {
+        devModeSites.set(isOn, for: url)
+    }
+
     func hideFrequentSite(host: String) {
         hiddenFrequentHosts.insert(host.lowercased())
     }
@@ -569,6 +591,10 @@ final class BrowserSettings {
         hiddenFrequentHosts = Set(stringArray(Key.startPageHiddenSites) ?? [])
         translationTargetID = string(Key.translationTarget) ?? ""
         alwaysTranslatedLanguages = Set(stringArray(Key.alwaysTranslate) ?? [])
+        devModeSites = DevModeSites(
+            enabled: Set(stringArray(Key.devModeEnabledHosts) ?? []),
+            disabled: Set(stringArray(Key.devModeDisabledHosts) ?? [])
+        )
 
         if application == nil {
             if object(Key.websiteTint) == nil {
@@ -643,6 +669,7 @@ final class BrowserSettings {
         hiddenFrequentHosts = []
         translationTargetID = ""
         alwaysTranslatedLanguages = []
+        devModeSites = DevModeSites()
         resetReaderAppearance()
         readerSpeechRate = ReaderSpeech.defaultRate
         resetWindowStyle()

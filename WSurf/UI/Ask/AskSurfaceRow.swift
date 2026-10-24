@@ -111,6 +111,11 @@ struct AskSurfaceRow: View {
                     PermissionBadge(browser: model.browser)
                         .frame(width: placement.iconSlot)
                     PopupBadge(browser: model.browser, coordinator: model.coordinator)
+                    if let tab = model.browser.activeTab, tab.usesDevMode {
+                        DevModeBadge(tab: tab, coordinator: model.coordinator)
+                            .frame(width: placement.iconSlot)
+                            .transition(.scale(scale: 0.6).combined(with: .opacity))
+                    }
                     ReaderBadge(coordinator: model.coordinator)
                     TranslationBadge(browser: model.browser, coordinator: model.coordinator)
                     PinBadge(browser: model.browser)
