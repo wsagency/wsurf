@@ -98,10 +98,7 @@ extension AppCoordinator {
         }
         if application == nil || application?.windows.count == 1 {
             MoveToApplications.reregisterDefaultBrowserIfNeeded()
-            Task { [weak self] in
-                guard let self, await releaseNotes.shouldOpenForNewVersion(), !isClosed else { return }
-                showReleaseNotes()
-            }
+            releaseNotes.checkForNewVersion()
         }
         timing.mark("updates")
         Task { [extensions] in

@@ -18,6 +18,7 @@
 		EEB000013027B875008F6668 /* WSurfVault in Frameworks */ = {isa = PBXBuildFile; productRef = EEB000033027B875008F6668 /* WSurfVault */; };
 		EEB100013027B875008F6668 /* WSurfCore in Frameworks */ = {isa = PBXBuildFile; productRef = EEB100033027B875008F6668 /* WSurfCore */; };
 		EEC0DE20000000000000000E /* WSurfCredentialExchange.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = EEC0DE200000000000000002 /* WSurfCredentialExchange.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		EEC0DE300000000000000002 /* CHANGELOG.md in Resources */ = {isa = PBXBuildFile; fileRef = EEC0DE300000000000000001 /* CHANGELOG.md */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -55,6 +56,7 @@
 		EE41BFE23027B875008F6668 /* WSurf.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = WSurf.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		EEC0DE200000000000000002 /* WSurfCredentialExchange.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = WSurfCredentialExchange.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		EEC0DE100000000000000002 /* WSurfTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = WSurfTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		EEC0DE300000000000000001 /* CHANGELOG.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = CHANGELOG.md; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -133,6 +135,7 @@
 				EE41BFE43027B875008F6668 /* WSurf */,
 				EEC0DE200000000000000003 /* WSurfCredentialExchange */,
 				EEC0DE100000000000000003 /* WSurfTests */,
+				EEC0DE300000000000000001 /* CHANGELOG.md */,
 				EE41BFE33027B875008F6668 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -285,6 +288,7 @@
 		EE41BFE03027B875008F6668 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			files = (
+				EEC0DE300000000000000002 /* CHANGELOG.md in Resources */,
 			);
 		};
 		EEC0DE200000000000000007 /* Resources */ = {

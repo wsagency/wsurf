@@ -309,9 +309,7 @@ struct AskKeyHints: View {
         if typed.isEmpty {
             HStack(spacing: 4) {
                 Text("hold")
-                HStack(spacing: 3) {
-                    ForEach(ActivationSettings.talk.caps, id: \.self) { KeyCap($0) }
-                }
+                KeyCaps(caps: ActivationSettings.talk.caps)
                 Text("to speak")
             }
             .font(Theme.Font.caption)
@@ -340,7 +338,7 @@ private struct AskKeyHint: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: 3) {
-                ForEach(caps, id: \.self) { KeyCap($0) }
+                KeyCaps(caps: caps)
                 Text(verb)
                     .font(Theme.Font.caption)
                     .foregroundStyle(hovering ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tertiary))
