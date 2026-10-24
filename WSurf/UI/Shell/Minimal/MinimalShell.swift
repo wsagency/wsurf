@@ -17,15 +17,14 @@ struct MinimalShell: View {
     var pinnedInset: CGFloat = 0
 
     @State private var isIslandRaised = true
-    /// Opened by pointing at the left edge, so it closes again when the pointer leaves it.
+    /// Opened by resting the pointer on the left edge, so it closes again when the pointer leaves it or the app.
     @State private var isPeeking = false
-    @State private var hasEnteredTabList = false
     @State private var tabButtonFrame: CGRect = .zero
     @State private var tabListFrame: CGRect = .zero
+    @State private var shellFrame: CGRect = .zero
+    @State private var peekWatch = PeekWatch()
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.titleStripInset) private var titleStripInset
-
-    private static let edgeSensorWidth: CGFloat = 10
 
     private var isPinned: Bool {
         pinnedInset > 0
@@ -81,23 +80,19 @@ struct MinimalShell: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: edge == .top ? .top : .bottom)
                     .padding(.leading, pinnedInset)
 
-                if isPinned || coordinator.isMinimalTabListOpen {
+                // Kept open the list is docked, and there is nothing to peek at.
+                if PeekEdge.armsTabList(isPinned: isPinned, isTabListOpen: coordinator.isMinimalTabListOpen) {
+                    PeekEdgeStrip(coordinator: coordinator) {
+                        isPeeking = true
+                        coordinator.isMinimalTabListOpen = true
+                    }
+                } else {
                     tabList(width: SidebarMetrics.clampWidth(coordinator.sidebar.width, container: proxy.size.width), inset: spacing)
                         .transition(.move(edge: .leading))
-                } else {
-                    Color.clear
-                        .frame(width: Self.edgeSensorWidth)
-                        .frame(maxHeight: .infinity)
-                        .contentShape(Rectangle())
-                        .onHover { inside in
-                            guard inside else { return }
-                            isPeeking = true
-                            coordinator.isMinimalTabListOpen = true
-                        }
-                        .accessibilityHidden(true)
                 }
             }
         }
+        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { shellFrame = $0 }
         .animation(motion, value: coordinator.isMinimalTabListOpen)
         .animation(motion, value: isPinned)
         .animation(motion, value: isIslandRaised)
@@ -117,7 +112,12 @@ struct MinimalShell: View {
         .onChange(of: coordinator.isMinimalTabListOpen) { _, isOpen in
             if !isOpen {
                 isPeeking = false
-                hasEnteredTabList = false
+            }
+        }
+        // A list that is kept open is not a peek, even if it was one when it was pinned.
+        .onChange(of: isPinned) { _, pinned in
+            if pinned {
+                isPeeking = false
             }
         }
         .onChange(of: coordinator.addressBarFocusToken) { _, _ in raiseIsland(true) }
@@ -148,14 +148,57 @@ struct MinimalShell: View {
             .padding(inset)
             .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { tabListFrame = $0 }
             .onHover { inside in
-                if inside {
-                    hasEnteredTabList = true
-                } else if isPeeking, hasEnteredTabList, !coordinator.isProfileSwitcherOpen {
-                    coordinator.isMinimalTabListOpen = false
+                if !inside {
+                    closePeekedTabListUnlessPointerOnIt()
                 }
             }
+            .onChange(of: coordinator.isProfileSwitcherOpen) { _, isOpen in
+                if !isOpen {
+                    closePeekedTabListUnlessPointerOnIt()
+                }
+            }
+            // A context menu over the list swallows the pointer; when it closes the pointer may be elsewhere.
+            .onReceive(NotificationCenter.default.publisher(for: NSMenu.didEndTrackingNotification)) { _ in
+                closePeekedTabListUnlessPointerOnIt()
+            }
+            .onChange(of: isPeeking && !isPinned, initial: true) { _, isWatching in
+                if isWatching {
+                    peekWatch.start(
+                        window: coordinator.nativeWindow,
+                        check: { closePeekedTabListUnlessPointerOnIt() },
+                        onSwitchAway: { closePeekedTabListUnlessPointerOnIt(pointerGone: true) }
+                    )
+                } else {
+                    peekWatch.stop()
+                }
+            }
+            .onDisappear { peekWatch.stop() }
             .accessibilityElement(children: .contain)
             .accessibilityLabel(Text("Tabs"))
+    }
+
+    /// Where the open list sits once it has slid in, in the shell's `.global` space: from the shell's leading edge,
+    /// the list and its margin, the shell's height. Worked out from the shell, which does not move, so it holds while
+    /// the list is still sliding in under a pointer that rests on the edge.
+    static func peekedListFrame(shell: CGRect, sidebarWidth: CGFloat, margin: CGFloat) -> CGRect {
+        guard !shell.isEmpty else { return .zero }
+        let width = SidebarMetrics.clampWidth(sidebarWidth, container: shell.width)
+        return CGRect(x: shell.minX, y: shell.minY, width: width + 2 * margin, height: shell.height)
+    }
+
+    /// Closes the list that opened from the edge once the pointer is off it. `pointerGone` is for leaving the app: the
+    /// pointer may still be over the list then, but nobody is pointing at it any more.
+    private func closePeekedTabListUnlessPointerOnIt(pointerGone: Bool = false) {
+        guard PeekExit.endsTabListPeek(
+            isPeeking: isPeeking && coordinator.isMinimalTabListOpen,
+            isPinned: isPinned,
+            isProfileSwitcherOpen: coordinator.isProfileSwitcherOpen,
+            pointer: pointerGone ? nil : coordinator.pointerInShell,
+            frame: Self.peekedListFrame(
+                shell: shellFrame, sidebarWidth: coordinator.sidebar.width, margin: settings.chromeShape.pageSpacing
+            )
+        ) else { return }
+        coordinator.isMinimalTabListOpen = false
     }
 
     /// A click beside the open list closes it, unless it lands on the bar's tab button (which toggles it itself) or the

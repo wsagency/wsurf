@@ -36,6 +36,8 @@ struct BrowserView: View {
         coordinator.sidebar
     }
     @State private var containerWidth: CGFloat = 0
+    @State private var sidebarFrame: CGRect = .zero
+    @State private var peekWatch = PeekWatch()
     @Environment(\.colorScheme) private var scheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.titleStripInset) private var titleStripInset
@@ -158,12 +160,8 @@ struct BrowserView: View {
             PaneDragOverlay(browser: browser, model: coordinator.sidebarDrag)
                 .environment(\.sidebarStyle, isMinimal ? .full : sidebar.style)
 
-            if !isMinimal && !sidebar.isShowing {
-                Color.clear
-                    .frame(width: 10)
-                    .frame(maxHeight: .infinity)
-                    .contentShape(Rectangle())
-                    .onHover { if $0 { sidebar.isPeeking = true } }
+            if PeekEdge.armsSidebar(isMinimal: isMinimal, isSidebarShowing: sidebar.isShowing) {
+                PeekEdgeStrip(coordinator: coordinator) { sidebar.isPeeking = true }
             }
 
             if coordinator.isPaletteOpen {
@@ -278,12 +276,35 @@ struct BrowserView: View {
                 radius: 22,
                 x: 6
             )
+            // Measured inside the offset, so it is where the sidebar is drawn, not where it is parked.
+            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { sidebarFrame = $0 }
             .offset(x: sidebar.isShowing ? 0 : -(width + 24))
             .onHover { inside in
-                if !sidebar.isVisible, !inside {
-                    sidebar.isPeeking = false
+                if !inside {
+                    endPeekUnlessPointerOnSidebar()
                 }
             }
+            .onChange(of: coordinator.isProfileSwitcherOpen) { _, isOpen in
+                if !isOpen {
+                    endPeekUnlessPointerOnSidebar()
+                }
+            }
+            // A context menu over the peek swallows the pointer; when it closes the pointer may be elsewhere.
+            .onReceive(NotificationCenter.default.publisher(for: NSMenu.didEndTrackingNotification)) { _ in
+                endPeekUnlessPointerOnSidebar()
+            }
+            .onChange(of: sidebar.isFloating, initial: true) { _, isFloating in
+                if isFloating {
+                    peekWatch.start(
+                        window: coordinator.nativeWindow,
+                        check: { endPeekUnlessPointerOnSidebar() },
+                        onSwitchAway: { endPeekUnlessPointerOnSidebar(pointerGone: true) }
+                    )
+                } else {
+                    peekWatch.stop()
+                }
+            }
+            .onDisappear { peekWatch.stop() }
 
             if sidebar.isShowing {
                 LoomColumnResizeHandle(
@@ -308,6 +329,24 @@ struct BrowserView: View {
             SidebarVisibilityToggle(browser: browser, coordinator: coordinator)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+    }
+
+    /// Ends the Standard sidebar's peek once the pointer is off it. `pointerGone` is for leaving the app: the pointer
+    /// may still be over the sidebar then, but nobody is pointing at it any more.
+    private func endPeekUnlessPointerOnSidebar(pointerGone: Bool = false) {
+        guard PeekExit.endsSidebarPeek(
+            isPeeking: sidebar.isPeeking,
+            isSidebarVisible: sidebar.isVisible,
+            isResizing: sidebar.isDragging,
+            isProfileSwitcherOpen: coordinator.isProfileSwitcherOpen,
+            pointer: pointerGone ? nil : coordinator.pointerInShell,
+            frame: sidebarFrame,
+            // Read from the coordinator, not the environment: the watch calls this long after the body that made it.
+            alsoOn: PeekExit.toggleReach(
+                windowControlsInset: coordinator.windowControlsInset, titleStrip: coordinator.titleStripInset
+            )
+        ) else { return }
+        sidebar.isPeeking = false
     }
 
     /// Where tab previews open: beside the Standard sidebar while it shows, or beside the Minimal tab list while it is open
