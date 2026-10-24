@@ -101,7 +101,11 @@ changed set to `ProfilePinStore`, which writes it in one transaction and applies
 the profile's other windows before returning. A loaded page whose pin was removed
 elsewhere stays open as an ordinary tab; an unloaded one closes. Only the person removes
 a pin: a page or extension that closes one only unloads it, and the assistant and MCP
-refuse. A window detaches when it closes, quits or switches profile, so it never
+refuse. Everything above the pin line is pinned (`BrowserModel.isPinned`): a root tab
+with a pinned page, and every tab at any depth in a pinned root folder.
+`settlePinnedPages()` runs when a change lands, never during a drag: it gives a tab in a
+pinned folder its current page as its pinned page and takes it from a tab in a folder
+below the line. Unloading a pinned tab returns it to its pinned page. A window detaches when it closes, quits or switches profile, so it never
 publishes an empty set. A private window has an in-memory store of its own and neither
 sees nor changes the profile's pins.
 

@@ -108,13 +108,17 @@ versions.
   reveal the new folder and focus its inline name editor, including in icons-only
   mode. Undo, ⌘Z, or Ctrl-Z restores deleted folders and removed links with their
   names, hierarchy, pins, and positions. Text editors retain their own Undo.
-- **Pin folders independently:** Right-click a folder › Pin moves it into the
-  top pinned section; Unpin moves it below the remaining pins. Folder pinning
-  does not change its tabs' bookmarked URLs. Empty folders can be pinned, and
-  folder pin state and order survive a restart.
-  Reordering tabs inside the same folder preserves their bookmarks.
-  Deleting a folder or moving its children out keeps root pins above ordinary
-  rows without changing child bookmarks.
+- **Pinned tabs keep their place and page:** Everything above the pin line is
+  pinned: pins, Favorites, and every tab in a pinned folder. Each remembers its
+  pinned page. Browsing away keeps the tab pinned and in place, and unloading it
+  (X, ⌘W, or sleep) brings it back to that page. While it is away, Right-click ›
+  Update Pinned URL, or ⌘D, makes the page on screen its pinned page; Undo
+  restores the old one.
+- **Pin folders:** Right-click a folder › Pin moves it into the top pinned
+  section and pins every tab in it; Unpin moves it below the remaining pins and
+  unpins them. Empty folders can be pinned, and folder pin state and order
+  survive a restart. Deleting a pinned folder or moving its tabs out keeps them
+  pinned above ordinary rows.
 - **Ask the assistant:** type in the address field or hold ⌥Space to speak.
   Use `@` to include a tab, attach files, and review actions in Agent Activity.
   Batch filling supports up to 32 nonsensitive form controls without submitting.
