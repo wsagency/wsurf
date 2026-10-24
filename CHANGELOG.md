@@ -58,6 +58,7 @@ Everything since 0.1.10 (build 10). None of the screens and prompts below has be
 
 - Keyboard shortcuts in the ⌘K palette, the Ask hints, the profile menu and the shortcut recorder are drawn as key caps.
 - New Private Window has a new symbol.
+- The sidebar draws only the rows on screen, so a sidebar with a thousand tabs opens, switches tabs and scrolls in a fraction of the time. With VoiceOver, Switch Control or Full Keyboard Access on, it keeps drawing every row.
 - Long lists outside the sidebar scroll without stalls: Settings › Websites and Website data, the assistant’s approved actions and memory, Downloads and the Release Notes page. A site whose icon is missing is not asked again for 15 minutes.
 - Removing a site in Settings › Privacy › Website data shows a spinner on its row and no longer counts every site again; only that site’s data is removed, and a WebKit and a Chromium site of the same name stay separate.
 
