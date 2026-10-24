@@ -41,6 +41,8 @@ final class ChromiumPage: NSView {
     private(set) var history = PageHistoryList()
     private var requestedURL: URL?
     private var awaitingNativeNavigation = false
+    /// The address of a same-document move the engine reported before it reported the address.
+    private var awaitedMoveAddress: URL?
     private var navigationStarted = false
     private var initialDocument = true
     /// Chromium records the startup about:blank as a real history entry. The first commit starts the reset that drops it.
@@ -519,6 +521,7 @@ final class ChromiumPage: NSView {
             client?.documentResponses.reset()
         }
         awaitingNativeNavigation = false
+        awaitedMoveAddress = nil
         requestedURL = url
         owner?.isLoading = true
         owner?.estimatedProgress = 0
@@ -618,6 +621,20 @@ final class ChromiumPage: NSView {
         // A same-document entry (`pushState`) can make Back possible without a loading change.
         owner?.canGoBack = nativeCanGoBack()
         refreshHistory()
+        if let url, awaitedMoveAddress == url {
+            awaitedMoveAddress = nil
+            owner?.onNavigatedWithinDocument?()
+        }
+    }
+    /// The main frame moved inside its document. The owner is told once it also holds the new address, which the engine
+    /// reports through `didChangeURL`, before or after this event.
+    func didNavigateWithinDocument(to url: URL) {
+        guard !closing, !isClosed, !initialDocument else { return }
+        guard owner?.url == url else {
+            awaitedMoveAddress = url
+            return
+        }
+        owner?.onNavigatedWithinDocument?()
     }
     func didChangeLoading(_ loading: Bool, canGoBack: Bool, canGoForward: Bool) {
         guard !closing, !isClosed, !initialDocument else { return }

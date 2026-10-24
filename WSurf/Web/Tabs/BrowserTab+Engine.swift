@@ -25,6 +25,7 @@ extension BrowserTab {
         outgoing.onNavigationFailed = nil
         outgoing.onContentProcessTerminated = nil
         outgoing.onHistoryChanged = nil
+        outgoing.onNavigatedWithinDocument = nil
         outgoing.onOpenInChromium = nil
         outgoing.onLinkHovered = nil
         if let native = outgoing.webKit {
@@ -116,6 +117,7 @@ extension BrowserTab {
         liveView = nil
         self.engine = engine
         stoppedNavigation = false
+        awaitsVisit = false
         provisionalNavigation = nil
         committedNavigation = nil
         isRestoring = false

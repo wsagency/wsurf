@@ -17,7 +17,14 @@ final class BrowserTab: Identifiable {
 
     let id: UUID
     let autofillSave = AutofillSaveSession()
-    var pageTitle = BrowserTab.placeholderTitle
+    /// The title of the document, never the name a person gave the tab. History records this one.
+    var pageTitle = BrowserTab.placeholderTitle {
+        didSet {
+            if pageTitle != oldValue {
+                onTitleChanged?()
+            }
+        }
+    }
     var customTitle = ""
     var documentTitles: [URL: String] = [:]
 
@@ -172,6 +179,9 @@ final class BrowserTab: Identifiable {
     @ObservationIgnored var lastRequestedNavigation: PageNavigation?
     var hasActiveDownload: (() -> Bool)?
     @ObservationIgnored var stoppedNavigation = false
+    /// True from the start of a navigation until it finishes, fails or is stopped. An address change in that time belongs
+    /// to the load, and its visit is recorded when the load ends.
+    @ObservationIgnored var awaitsVisit = false
 
     var isMaterialised: Bool {
         liveView != nil
@@ -368,6 +378,7 @@ final class BrowserTab: Identifiable {
 
         retire(outgoing)
         stoppedNavigation = false
+        awaitsVisit = false
 
         // Keep the session and create a replacement view when the tab becomes visible.
         liveView = nil
@@ -382,6 +393,10 @@ final class BrowserTab: Identifiable {
     var onLocationRevoked: (() -> Void)?
 
     var onSameDocumentNavigation: (() -> Void)?
+    /// The address changed without a new document: `pushState`, `replaceState`, or Back and Forward between such entries.
+    /// A change of the fragment alone is not one.
+    var onInPageMove: (() -> Void)?
+    var onTitleChanged: (() -> Void)?
 
     var onContentProcessTerminated: (() -> Void)?
     /// Whether the model lets a tab whose web-content process died wait unloaded until it is shown:
@@ -418,6 +433,8 @@ final class BrowserTab: Identifiable {
         onSaveDocument = nil
         onLinkHovered = nil
         onSameDocumentNavigation = nil
+        onInPageMove = nil
+        onTitleChanged = nil
         onContentProcessTerminated = nil
         mayUnloadAfterTermination = nil
         onLocationRevoked = nil
