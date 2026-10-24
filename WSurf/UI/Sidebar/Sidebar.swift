@@ -564,6 +564,7 @@ struct SidebarFavoriteButton: View {
         .contextMenu {
             ExternalControlMenuItems(tabs: [tab], coordinator: coordinator)
             SidebarLinkMenuItems(tabs: [tab], coordinator: coordinator)
+            SidebarPinMenuItems(tab: tab, browser: browser)
             if !tab.isDeferred {
                 Button {
                     coordinator.tabPreview.dismiss()

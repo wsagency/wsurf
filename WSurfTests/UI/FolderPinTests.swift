@@ -11,8 +11,9 @@ import Testing
 
 @MainActor
 struct FolderPinTests {
+    /// Reordering inside a pinned folder keeps every pinned page; inside an ordinary folder nothing is pinned.
     @Test(arguments: [false, true])
-    func reorderingFolderChildrenPreservesTheirOwnBookmarks(folderIsPinned: Bool) {
+    func reorderingFolderChildrenKeepsThemPinnedOnlyAboveTheLine(folderIsPinned: Bool) {
         let browser = BrowserModel(database: .temporary())
         let folder = browser.createFolder(named: "Work")
         let anchor = browser.newTab(url: URL(string: "https://anchor.example/"), activate: false)
@@ -41,9 +42,14 @@ struct FolderPinTests {
         drag.settlePins(folder.isPinned, in: browser)
 
         #expect(browser.rows(in: folder) == [.tab(bookmarked.id), .tab(loose.id), .tab(anchor.id)])
-        #expect(bookmarked.pinnedURL?.absoluteString == "https://bookmarked.example/saved")
-        #expect(bookmarked.pinnedTitle == "Saved")
-        #expect(loose.pinnedURL == nil && loose.pinnedTitle.isEmpty)
+        if folderIsPinned {
+            #expect(bookmarked.pinnedURL?.absoluteString == "https://bookmarked.example/saved")
+            #expect(bookmarked.pinnedTitle == "Saved")
+            #expect(loose.pinnedURL?.absoluteString == "https://loose.example/")
+        } else {
+            #expect(bookmarked.pinnedURL == nil && bookmarked.pinnedTitle.isEmpty)
+            #expect(loose.pinnedURL == nil && loose.pinnedTitle.isEmpty)
+        }
         #expect(folder.isPinned == folderIsPinned)
     }
 
@@ -71,8 +77,9 @@ struct FolderPinTests {
         #expect(tab.pinnedURL == nil && tab.pinnedTitle.isEmpty)
     }
 
+    /// A pinned folder's pages stay pinned when the folder lets them go: they land among the root pins with their pages.
     @Test(arguments: [false, true])
-    func releasingFolderChildrenPreservesTheRootPinBoundary(moveOut: Bool) {
+    func releasingPinnedFolderChildrenKeepsThemPinned(moveOut: Bool) {
         let browser = BrowserModel(database: .temporary())
         let folder = browser.createFolder(named: "Work")
         let first = browser.newTab(url: URL(string: "https://first.example/"), activate: false)
@@ -89,21 +96,25 @@ struct FolderPinTests {
         if moveOut {
             browser.moveOut(children)
             #expect(browser.sidebarItems == [
-                .folder(folder.id), .tab(bookmarked.id), .tab(kept.id),
-                .tab(first.id), .tab(last.id), .tab(loose.id),
+                .folder(folder.id), .tab(first.id), .tab(bookmarked.id), .tab(last.id),
+                .tab(kept.id), .tab(loose.id),
             ])
-            #expect(browser.keptRunAtTop() == [.folder(folder.id), .tab(bookmarked.id), .tab(kept.id)])
+            #expect(browser.keptRunAtTop() == [
+                .folder(folder.id), .tab(first.id), .tab(bookmarked.id), .tab(last.id), .tab(kept.id),
+            ])
         } else {
             browser.deleteFolder(folder)
             #expect(browser.sidebarItems == [
-                .tab(bookmarked.id), .tab(kept.id), .tab(first.id), .tab(last.id), .tab(loose.id),
+                .tab(first.id), .tab(bookmarked.id), .tab(last.id), .tab(kept.id), .tab(loose.id),
             ])
-            #expect(browser.keptRunAtTop() == [.tab(bookmarked.id), .tab(kept.id)])
+            #expect(browser.keptRunAtTop() == [.tab(first.id), .tab(bookmarked.id), .tab(last.id), .tab(kept.id)])
         }
         #expect(bookmarked.pinnedURL?.absoluteString == "https://bookmarked.example/saved")
         #expect(bookmarked.pinnedTitle == "Saved")
-        #expect(first.pinnedURL == nil && last.pinnedURL == nil)
+        #expect(first.pinnedURL?.absoluteString == "https://first.example/")
+        #expect(last.pinnedURL?.absoluteString == "https://last.example/")
         #expect(kept.pinnedURL?.absoluteString == "https://kept.example/")
+        #expect(loose.pinnedURL == nil)
     }
 
     /// A pinned folder holding, in this order: item 10, Zulu (a folder of y then x), Same, Item 2, apple (an empty
@@ -366,7 +377,9 @@ struct FolderPinTests {
         #expect(byName["Mixed"]?.isPinned == false)
         #expect(byName["Empty"]?.isPinned == false)
         #expect(restored.tab(id: nested.id)?.pinnedURL == nested.pinnedURL)
-        #expect(restored.tab(id: bookmark.id)?.pinnedURL == bookmark.pinnedURL)
+        // Below the pin line nothing is pinned: a pin left in an ordinary folder by an older version is let go.
+        #expect(restored.tab(id: bookmark.id)?.pinnedURL == nil)
+        #expect(restored.tab(id: bookmark.id).flatMap { restored.folder(containing: $0)?.name } == "Mixed")
 
         let restoredOuter = try #require(byName["Outer"])
         restored.unpin(restoredOuter)

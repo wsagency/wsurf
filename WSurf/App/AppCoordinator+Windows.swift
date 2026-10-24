@@ -13,7 +13,7 @@ extension AppCoordinator {
             return
         }
         let loose = browser.tabs.filter {
-            browser.folder(containing: $0) == nil && $0.pinnedURL == nil && browser.isShown($0)
+            browser.folder(containing: $0) == nil && !$0.isPinnedForProfile && browser.isShown($0)
         }
         guard loose.count >= 4 else {
             statusMessage = String(localized: "Not enough loose tabs to organize.")
@@ -53,7 +53,7 @@ extension AppCoordinator {
             for folder in plan.folders {
                 let members = folder.tabIDs
                     .compactMap { id in browser.tabs.first { $0.id == id } }
-                    .filter { browser.folder(containing: $0) == nil && $0.pinnedURL == nil && browser.isShown($0) }
+                    .filter { browser.folder(containing: $0) == nil && !$0.isPinnedForProfile && browser.isShown($0) }
                 guard members.count >= 2 else { continue }
                 let made = browser.createFolder(named: folder.name, containing: members)
                 if browser.tabs(in: made).count < 2 {

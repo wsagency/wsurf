@@ -364,8 +364,9 @@ final class BrowserModel {
             tab.spaceID = space
         }
         let keptRun = keptRunAtTop()
+        // A page opened from above the pin line, a pinned folder's page included, lands just under the line.
         if let anchor = opener.flatMap(insertionAnchor(after:)),
-           !keptRun.contains(.tab(anchor.id)),
+           !isPinned(.tab(anchor.id)),
            let index = tabs.firstIndex(where: { $0 === anchor }) {
             tabs.insert(tab, at: tabs.index(after: index))
             storedTree = reconciledTree().inserting(.tab(tab.id), after: .tab(anchor.id))

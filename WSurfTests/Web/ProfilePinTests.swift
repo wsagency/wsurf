@@ -89,18 +89,18 @@ private func withPins(_ body: (PinFixture) async throws -> Void) async throws {
 @MainActor
 @Suite(.serialized)
 struct ProfilePinTests {
-    /// A pin, a Favorite and a pinned folder holding a bookmarked page, a plain page and a folder with a page.
+    /// A pin, a Favorite and a pinned folder holding a pin filed there, a plain page and a folder with a page, each pinned.
     private func populate(_ window: BrowserModel) {
         window.pinned("https://a.example/")
         window.addFavorite(window.addPage("https://fav.example/"))
         let work = window.createFolder(named: "Work")
         window.pin(work)
         let bookmarked = window.pinned("https://work.example/d")
-        window.move([.tab(bookmarked.id)], into: work, settlingPins: false)
-        window.move([.tab(window.addPage("https://work.example/e").id)], into: work, settlingPins: false)
+        window.move([.tab(bookmarked.id)], into: work)
+        window.move([.tab(window.addPage("https://work.example/e").id)], into: work)
         let nested = window.createFolder(named: "Nested")
-        window.move([.folder(nested.id)], into: work, settlingPins: false)
-        window.move([.tab(window.addPage("https://work.example/f").id)], into: nested, settlingPins: false)
+        window.move([.folder(nested.id)], into: work)
+        window.move([.tab(window.addPage("https://work.example/f").id)], into: nested)
     }
 
     private static let populated = """

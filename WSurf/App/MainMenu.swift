@@ -582,6 +582,8 @@ final class MainMenu: NSObject, NSMenuItemValidation {
             let closeTitle: LocalizedStringResource = tab?.isPinnedForProfile == true ? "Unload Tab" : "Close Tab"
             menuItem.title = String(localized: closeTitle)
             return tab != nil
+        case #selector(pinPage), #selector(returnToPin):
+            return validatePinItem(menuItem)
         case #selector(stopLoading):
             return coordinator.pageCommandTab?.isLoading ?? false
         case #selector(stopExternalConnections):
@@ -639,6 +641,22 @@ final class MainMenu: NSObject, NSMenuItemValidation {
         default:
             return true
         }
+    }
+
+    /// ⌘D names what it will do: pin the page, update a wandering pin's page to the one on screen, or unpin a tab showing
+    /// its pinned page. Back to Pinned Page answers only while the pinned tab is away.
+    private func validatePinItem(_ menuItem: NSMenuItem) -> Bool {
+        let tab = coordinator.browser.activeTab
+        guard menuItem.action == #selector(pinPage) else { return tab?.isAwayFromPin == true }
+        let title: LocalizedStringResource = if tab?.isAwayFromPin == true {
+            "Update Pinned URL"
+        } else if tab?.isShowingPin == true {
+            "Unpin Tab"
+        } else {
+            "Pin This Page"
+        }
+        menuItem.title = String(localized: title)
+        return tab != nil
     }
 
     /// Hide Sidebar, which shows and hides the tab list in the Minimal window, the window style, the Minimal bar's edge and

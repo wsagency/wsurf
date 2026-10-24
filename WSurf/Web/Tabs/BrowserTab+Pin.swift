@@ -9,7 +9,8 @@ extension BrowserTab {
         return !urlString.isEmpty && urlString != pinnedURL.absoluteString
     }
 
-    /// A bookmarked tab, or a page in a pinned folder. Only the person removes these.
+    /// Above the pin line: a pin, a Favorite, or a page in a pinned folder at any depth. Only the person removes these;
+    /// closing one unloads it. `BrowserModel.settlePinnedPages()` gives each its pinned page in `pinnedURL`.
     var isPinnedForProfile: Bool {
         pinnedURL != nil || pinID != nil
     }

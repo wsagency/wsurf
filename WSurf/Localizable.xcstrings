@@ -2762,8 +2762,8 @@
     "Edit Payment Card" : {
 
     },
-    "Edit Pinned Page" : {
-      "comment" : "Submenu in the context menu of a pinned tab row, holding the two ways to change what the tab returns to. Title Case."
+    "Edit Pinned Page…" : {
+      "comment" : "Item in the context menu of a pinned tab row or Favorite. It opens a sheet to type the address the tab returns to. Title Case, with an ellipsis because it asks for more."
     },
     "Edit Question" : {
 
@@ -3831,9 +3831,6 @@
     },
     "Move Here" : {
       "comment" : "First item inside a folder’s Move to Folder submenu. Moves the tab or selection into that folder itself rather than one of its subfolders. Title Case."
-    },
-    "Move Pin to This Page" : {
-      "comment" : "Item in the Edit Pinned Page submenu of a tab row: it hands the tab's single anchor to the page now open, replacing the old one. Use the same noun for “pin” as in “Pin This Page”. Title Case."
     },
     "Move Player to Bottom Left" : {
       "comment" : "VoiceOver action on the media player. It moves the player to the bottom left of the window. Pairs with the other three corners. Title Case."
@@ -6336,7 +6333,7 @@
       "comment" : "Folder context-menu command or drag label that takes a row out of the pinned section. Imperative verb, one word."
     },
     "Unpin Tab" : {
-      "comment" : "Command that takes the pin off a tab, which then drops out of the pinned rows. Four surfaces share it: the context menu of a pinned tab row, the minus button on that row, the toolbar button while the pinned page is on screen, and the search palette. Title Case."
+      "comment" : "Command that takes the pin off a tab, which then drops out of the pinned rows. Five surfaces share it: the context menu of a pinned tab row, the minus button on that row, the toolbar button while the pinned page is on screen, the search palette, and the File menu item on ⌘D while the pinned page is on screen. Title Case."
     },
     "Unsupported CRX container version %lld" : {
       "comment" : "Error shown when an extension package uses a file format version the app cannot read. %lld is the version number found in the file. CRX is the name of Chrome’s extension package format — leave as is. No final full stop."
@@ -6367,6 +6364,9 @@
     },
     "Update password?" : {
 
+    },
+    "Update Pinned URL" : {
+      "comment" : "Command that makes the page a pinned tab shows now its new pinned page, replacing the one it returned to. Shown while the tab is away from its pinned page: in the context menu of a pinned tab row or Favorite, as the File menu item on ⌘D, and in the search palette. Undo restores the old page. Title Case."
     },
     "update.banner.downloadingShare" : {
       "comment" : "Title of the software-update button in the sidebar while a release is being fetched. %@ is an already-formatted percentage and carries its own per-cent sign. Kept separate from “Downloading %@”, where %@ is a version number instead. The button is narrow, so keep this short.",
