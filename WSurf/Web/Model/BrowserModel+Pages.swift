@@ -296,7 +296,8 @@ extension BrowserModel {
         }
 
         let tab: BrowserTab
-        if let active = activeTab, SystemPages.showsStartFace(active) {
+        // A micro window never holds an internal page: the page opens as a tab, which the window hands to the main window.
+        if let active = activeTab, windowKind == .standard, SystemPages.showsStartFace(active) {
             tab = active
             activeTabID = tab.id
             tab.load(page.url)

@@ -214,6 +214,120 @@ struct MicroWindowTests {
         #expect(item.action != nil)
     }
 
+    @Test func tabSwitchingSplitsTheSidebarAndPinsAreOffInAMicroWindow() async throws {
+        try await withProfile { profile in
+            let savedMenus = (NSApp.mainMenu, NSApp.windowsMenu, NSApp.helpMenu, NSApp.servicesMenu)
+            let app = run()
+            let main = app.newWindow(profile: profile, show: false)
+            let micro = app.newWindow(profile: profile, show: false, kind: .micro)
+            for window in [main, micro] {
+                window.browser.newTab()
+                window.browser.newTab()
+            }
+            let menu = MainMenu(application: app)
+            menu.install()
+            defer {
+                (NSApp.mainMenu, NSApp.windowsMenu, NSApp.helpMenu, NSApp.servicesMenu) = savedMenus
+                finish(app)
+            }
+            let root = try #require(NSApp.mainMenu)
+            // Looked up before any item is validated: validation retitles some of them.
+            let items = root.items.compactMap(\.submenu).flatMap(\.items)
+            func item(_ title: LocalizedStringResource) throws -> NSMenuItem {
+                try #require(items.first { $0.title == String(localized: title) }, "\(String(localized: title))")
+            }
+            let atWork = [
+                try item("Show Next Tab"), try item("Show Previous Tab"), try item("Show Last Tab"), try item("Show Tab 1"),
+                try item("Show Space 1"), try item("Split Right"), try item("Split Down"), try item("Hide Sidebar"),
+                try item("Use Minimal Window Style"), try item("Keep Sidebar Open"), try item("Move Bar to Top"),
+                try item("Show Assistant"), try item("Show Lyrics"), try item("Pin This Page"), try item("Back to Pinned Page"),
+                try item("Swap Panes"), try item("Exit Split"),
+            ]
+            let forAPage = [
+                try item("Find…"), try item("Zoom In"), try item("Print…"), try item("Open Location…"), try item("New Tab"),
+                try item("Search Everything…"), try item("New Micro Window"), try item("Settings…"),
+            ]
+            let float = try item("Float on Top")
+
+            app.focus(main)
+            #expect(app.activeCoordinator === main)
+            for title in ["Show Next Tab", "Split Right", "Hide Sidebar", "Use Minimal Window Style", "Pin This Page", "Show Assistant"] {
+                let found = atWork.first { $0.title == title }
+                #expect(found.map(menu.validateMenuItem) == true, "\(title) works in a window that has a sidebar")
+            }
+            #expect(!menu.validateMenuItem(float) && float.isHidden, "Float on Top is a micro window's item")
+
+            app.focus(micro)
+            #expect(app.activeCoordinator === micro)
+            for found in atWork {
+                #expect(!menu.validateMenuItem(found), "\(found.title) is off in a micro window")
+            }
+            for found in forAPage {
+                #expect(menu.validateMenuItem(found), "\(found.title) still works")
+            }
+            #expect(menu.validateMenuItem(float) && !float.isHidden && float.state == .off)
+            micro.floatsOnTop = true
+            _ = menu.validateMenuItem(float)
+            #expect(float.state == .on)
+            micro.floatsOnTop = false
+
+            // A new tab, the palette, Settings, History and Downloads go to the window to browse in.
+            #expect(micro.mainWindowForCommands() === main)
+            #expect(main.mainWindowForCommands() === main)
+            #expect(micro.browser.tabs.count == 3, "and nothing was added to the micro window")
+        }
+    }
+
+    @Test func closingTheLastRegularWindowLeavesNowhereToSendCommands() async throws {
+        try await withProfile { profile in
+            let app = run()
+            let main = app.newWindow(profile: profile, show: false)
+            let micro = app.newWindow(profile: profile, show: false, kind: .micro)
+            #expect(app.browsingWindow(for: micro) === main)
+
+            main.closeWindow()
+
+            #expect(app.browsingWindow(for: micro) == nil)
+            #expect(app.activeBrowsingCoordinator == nil)
+            #expect(app.externalLinkTarget == nil)
+            finish(app)
+        }
+    }
+
+    // MARK: - Window
+
+    @Test func floatOnTopRaisesTheLevelAndJoinsEveryDesktop() async throws {
+        try await withProfile { profile in
+            let app = run()
+            let main = app.newWindow(profile: profile, show: false)
+            let micro = app.newWindow(profile: profile, show: false, kind: .micro)
+            let window = try #require(micro.nativeWindow)
+            let mainWindow = try #require(main.nativeWindow)
+
+            #expect(window.level == .normal)
+            #expect(window.collectionBehavior == [.fullScreenNone], "a micro window never enters full screen")
+            #expect(window.minSize == MicroWindowMetrics.minSize)
+            #expect(mainWindow.collectionBehavior.contains(.fullScreenPrimary), "a standard window does")
+            #expect(mainWindow.minSize.width == BrowserWindowMetrics.minWidth)
+            #expect(!micro.floatsOnTop)
+
+            micro.floatsOnTop = true
+            #expect(window.level == .floating)
+            #expect(window.collectionBehavior == [.fullScreenAuxiliary, .canJoinAllSpaces])
+
+            micro.floatsOnTop = false
+            #expect(window.level == .normal)
+            #expect(window.collectionBehavior == [.fullScreenNone])
+
+            // The setting belongs to a micro window: a standard window ignores it.
+            main.floatsOnTop = true
+            #expect(mainWindow.level == .normal)
+            #expect(mainWindow.collectionBehavior.contains(.fullScreenPrimary))
+            main.floatsOnTop = false
+            finish(app)
+        }
+    }
+
     @Test func newMicroWindowFromAPrivateWindowOpensARegularOne() async throws {
         try await withProfile { profile in
             let app = run()

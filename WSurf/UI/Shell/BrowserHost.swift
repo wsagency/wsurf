@@ -459,7 +459,13 @@ struct BrowserRootView: View {
     let coordinator: AppCoordinator
 
     var body: some View {
-        BrowserView(browser: coordinator.browser, coordinator: coordinator)
+        Group {
+            if coordinator.isMicro {
+                MicroWindowView(browser: coordinator.browser, coordinator: coordinator)
+            } else {
+                BrowserView(browser: coordinator.browser, coordinator: coordinator)
+            }
+        }
             .disclosureGroupStyle(ClickableDisclosureStyle())
             .writingToolsAffordanceVisibility(.hidden)
             .environment(\.windowControlsInset, coordinator.windowControlsInset)

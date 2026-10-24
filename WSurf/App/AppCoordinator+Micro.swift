@@ -22,4 +22,20 @@ extension AppCoordinator {
         micro.focusAddressBar()
         return micro
     }
+
+    /// Float on Top, set from the bar and the Window menu. Off is a normal window that can zoom but never enter full screen.
+    func applyFloatOnTop() {
+        guard isMicro, let window = nativeWindow else { return }
+        window.level = floatsOnTop ? .floating : .normal
+        window.collectionBehavior = MicroWindowMetrics.collectionBehavior(floating: floatsOnTop)
+    }
+
+    /// The window the commands that open app pages (a new tab, the palette, Settings, History, Downloads, release notes) act
+    /// in. A micro window holds one page, so those go to the regular window of its profile used last, or to a new one.
+    func mainWindowForCommands() -> AppCoordinator {
+        guard isMicro, !isClosed else { return self }
+        let app = application ?? BrowserApplication.shared
+        return app.browsingWindow(for: self)
+            ?? app.newWindow(profile: profiles.isPrivate ? profiles.profileToReturnTo : profiles.current)
+    }
 }
