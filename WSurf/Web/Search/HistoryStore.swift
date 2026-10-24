@@ -17,11 +17,13 @@ final class HistoryStore {
         case formSubmit
         case backForward
         case agent
+        /// A move the page made itself (`pushState`, `replaceState`) without loading a document.
+        case inPage
         case imported
         case unknown
 
         var carriesReferrer: Bool {
-            self == .link || self == .formSubmit
+            self == .link || self == .formSubmit || self == .inPage
         }
     }
 
@@ -49,6 +51,8 @@ final class HistoryStore {
         var title: String
         var visitedAt: Date
         var transition: Transition
+        /// The first visit of the run of visits this one belongs to. Nil for a visit saved before trails.
+        var trail: Int64?
 
         static func databaseDateDecodingStrategy(for column: String) -> DatabaseDateDecodingStrategy {
             .timeIntervalSinceReferenceDate
@@ -97,6 +101,9 @@ final class HistoryStore {
     private(set) var entries: [Entry] = []
     private(set) var visits: [VisitedPage] = []
     private(set) var count = 0
+    private(set) var hasOlderVisits = false
+    /// How many visits `visits` may hold: the window, grown by every page of older visits that was read.
+    private var visitLimit: Int
 
     private let database: AppDatabase
     private let windowSize: Int
@@ -104,7 +111,49 @@ final class HistoryStore {
     init(database: AppDatabase = .shared, windowSize: Int = 3000) {
         self.database = database
         self.windowSize = windowSize
+        visitLimit = windowSize
         reload()
+    }
+
+    func loadOlderVisits(limit: Int = 1_000) {
+        guard hasOlderVisits, let oldest = visits.last else { return }
+        let older = read { db in
+            try Self.fetchVisits(db, before: oldest, limit: limit + 1)
+        }
+        guard let older else { return }
+        hasOlderVisits = older.count > limit
+        visits.append(contentsOf: older.prefix(limit))
+        visitLimit = max(visitLimit, visits.count)
+    }
+
+    private nonisolated static func fetchVisits(
+        _ db: Database,
+        before oldest: VisitedPage? = nil,
+        limit: Int
+    ) throws -> [VisitedPage] {
+        let older = oldest == nil ? "" : """
+            WHERE historyVisit.visitedAt < ?
+                OR (historyVisit.visitedAt = ? AND historyVisit.id < ?)
+            """
+        var arguments: StatementArguments = []
+        if let oldest {
+            let date = oldest.visitedAt.timeIntervalSinceReferenceDate
+            arguments += [date, date, oldest.id]
+        }
+        arguments += [limit]
+        return try VisitedPage.fetchAll(
+            db,
+            sql: """
+                SELECT historyVisit.id, historyVisit.url, historyPage.title,
+                       historyVisit.visitedAt, historyVisit.transition, historyVisit.trail
+                FROM historyVisit
+                JOIN historyPage ON historyPage.url = historyVisit.url
+                \(older)
+                ORDER BY historyVisit.visitedAt DESC, historyVisit.id DESC
+                LIMIT ?
+                """,
+            arguments: arguments
+        )
     }
 
     nonisolated static func isRecordable(_ url: String) -> Bool {
@@ -114,19 +163,28 @@ final class HistoryStore {
         return !url.hasPrefix("https://wsurf.local")
     }
 
-    /// `fromVisit` is what a tab remembers, and the tab may remember a visit that Clear History, a range or a single removal
-    /// has since deleted. An id that names no stored visit is stored as none: the foreign key on `fromVisit` would otherwise
-    /// reject the whole insert and lose the visit.
+    private struct SavedVisit {
+        let entry: Entry
+        let isNew: Bool
+        let visitID: Int64
+        let trail: Int64
+    }
+
+    /// `fromVisit` and `trail` name what a tab remembers, and the tab may remember a visit that Clear History, a range or
+    /// a single removal has since deleted. Neither is trusted: an id that names no stored visit is stored as none (the
+    /// foreign key on `fromVisit` would otherwise reject the whole insert and lose the visit), and a trail that no stored
+    /// visit carries starts over with this visit.
     @discardableResult
     func record(
         url: String,
         title: String,
         transition: Transition = .typed,
-        fromVisit: Int64? = nil
+        fromVisit: Int64? = nil,
+        trail: Int64? = nil
     ) -> Int64? {
         guard Self.isRecordable(url) else { return nil }
         let title = title.isEmpty ? url : title
-        let saved = write { db -> (entry: Entry, isNew: Bool, visitID: Int64)? in
+        let saved = write { db -> SavedVisit? in
             let known = try Entry.fetchOne(db, key: url)
             let now = Date().timeIntervalSinceReferenceDate
             try db.execute(
@@ -140,16 +198,22 @@ final class HistoryStore {
                     """,
                 arguments: [url, title, now]
             )
+            let continued = try trail.flatMap {
+                try Int64.fetchOne(db, sql: "SELECT trail FROM historyVisit WHERE trail = ? LIMIT 1", arguments: [$0])
+            }
             try db.execute(
                 sql: """
-                    INSERT INTO historyVisit (url, visitedAt, transition, fromVisit)
-                    VALUES (?, ?, ?, (SELECT id FROM historyVisit WHERE id = ?))
+                    INSERT INTO historyVisit (url, visitedAt, transition, fromVisit, trail)
+                    VALUES (?, ?, ?, (SELECT id FROM historyVisit WHERE id = ?), ?)
                     """,
-                arguments: [url, now, transition.rawValue, transition.carriesReferrer ? fromVisit : nil]
+                arguments: [url, now, transition.rawValue, transition.carriesReferrer ? fromVisit : nil, continued]
             )
             let visitID = db.lastInsertedRowID
+            if continued == nil {
+                try db.execute(sql: "UPDATE historyVisit SET trail = id WHERE id = ?", arguments: [visitID])
+            }
             guard let entry = try Entry.fetchOne(db, key: url) else { return nil }
-            return (entry, known == nil, visitID)
+            return SavedVisit(entry: entry, isNew: known == nil, visitID: visitID, trail: continued ?? visitID)
         }
         guard let saved = saved.flatMap({ $0 }) else { return nil }
 
@@ -164,17 +228,47 @@ final class HistoryStore {
                 url: url,
                 title: title,
                 visitedAt: saved.entry.lastVisit,
-                transition: transition
+                transition: transition,
+                trail: saved.trail
             ),
             at: 0
         )
-        if visits.count > windowSize {
-            visits.removeLast(visits.count - windowSize)
+        if visits.count > visitLimit {
+            if visitLimit > windowSize {
+                visitLimit = visits.count
+            } else {
+                visits.removeLast(visits.count - visitLimit)
+                hasOlderVisits = true
+            }
         }
         if saved.isNew {
             count += 1
         }
         return saved.visitID
+    }
+
+    /// Names the page of `visit` once its document has a title. Only the page that visit recorded can be renamed: a title
+    /// for another address, or for a visit that is gone, changes nothing, so a cleared page is never written back.
+    func retitle(visit: Int64, url: String, title: String) {
+        guard !title.isEmpty else { return }
+        let changed = write { db -> Bool in
+            try db.execute(
+                sql: """
+                    UPDATE historyPage SET title = ?
+                    WHERE url = ? AND title != ?
+                        AND EXISTS (SELECT 1 FROM historyVisit WHERE id = ? AND url = ?)
+                    """,
+                arguments: [title, url, title, visit, url]
+            )
+            return db.changesCount > 0
+        }
+        guard changed == true else { return }
+        for index in entries.indices where entries[index].url == url {
+            entries[index].title = title
+        }
+        for index in visits.indices where visits[index].url == url {
+            visits[index].title = title
+        }
     }
 
     func removeVisit(_ id: Int64) {
@@ -230,7 +324,7 @@ final class HistoryStore {
                     db,
                     sql: """
                         SELECT historyVisit.id, historyVisit.url, historyPage.title,
-                               historyVisit.visitedAt, historyVisit.transition
+                               historyVisit.visitedAt, historyVisit.transition, historyVisit.trail
                         FROM historyVisit
                         JOIN historyPage ON historyPage.url = historyVisit.url
                         WHERE historyVisit.id = ?
@@ -419,28 +513,19 @@ final class HistoryStore {
     // MARK: - Storage
 
     private func reload() {
+        let visitLimit = visitLimit
         let loaded = read { db -> ([Entry], [VisitedPage], Int) in
             let entries = try Entry
                 .order(sql: "lastVisit DESC")
                 .limit(windowSize)
                 .fetchAll(db)
-            let visits = try VisitedPage.fetchAll(
-                db,
-                sql: """
-                    SELECT historyVisit.id, historyVisit.url, historyPage.title,
-                           historyVisit.visitedAt, historyVisit.transition
-                    FROM historyVisit
-                    JOIN historyPage ON historyPage.url = historyVisit.url
-                    ORDER BY historyVisit.visitedAt DESC
-                    LIMIT ?
-                    """,
-                arguments: [windowSize]
-            )
+            let visits = try Self.fetchVisits(db, limit: visitLimit + 1)
             return (entries, visits, try Entry.fetchCount(db))
         }
         guard let loaded else { return }
         entries = loaded.0
-        visits = loaded.1
+        hasOlderVisits = loaded.1.count > visitLimit
+        visits = Array(loaded.1.prefix(visitLimit))
         count = loaded.2
     }
 

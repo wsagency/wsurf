@@ -259,16 +259,7 @@ struct AppDatabase: Sendable {
             t.column("estimatedContextTokens", .integer).notNull()
         }
 
-        try db.create(table: "historyVisit", options: .ifNotExists) {  t in
-            t.autoIncrementedPrimaryKey("id")
-            t.column("url", .text)
-                .notNull()
-                .indexed()
-                .references("historyPage", onDelete: .cascade)
-            t.column("visitedAt", .double).notNull().indexed()
-            t.column("transition", .text).notNull()
-            t.column("fromVisit", .integer).references("historyVisit", onDelete: .setNull)
-        }
+        try defineHistoryVisits(in: db)
 
         try db.create(table: "sessionSplitTree", options: .ifNotExists) { t in
             t.primaryKey("id", .blob)
@@ -290,6 +281,26 @@ struct AppDatabase: Sendable {
         try defineProfilePins(in: db)
         try defineTabArchive(in: db)
         try defineAssistantFacts(in: db)
+    }
+
+    private nonisolated static func defineHistoryVisits(in db: Database) throws {
+        try db.create(table: "historyVisit", options: .ifNotExists) {  t in
+            t.autoIncrementedPrimaryKey("id")
+            t.column("url", .text)
+                .notNull()
+                .indexed()
+                .references("historyPage", onDelete: .cascade)
+            t.column("visitedAt", .double).notNull().indexed()
+            t.column("transition", .text).notNull()
+            t.column("fromVisit", .integer).references("historyVisit", onDelete: .setNull)
+        }
+        // The first visit of a trail names it. NULL (every visit saved before trails) is normal: such a visit has no trail.
+        if try !db.columns(in: "historyVisit").contains(where: { $0.name == "trail" }) {
+            try db.alter(table: "historyVisit") { t in
+                t.add(column: "trail", .integer)
+            }
+        }
+        try db.create(index: "historyVisit_trail", on: "historyVisit", columns: ["trail"], options: .ifNotExists)
     }
 
     /// Notes the assistant keeps about the person, one per subject. History-class data in the profile's database; not
@@ -386,6 +397,15 @@ struct AppDatabase: Sendable {
             guard try !db.columns(in: table).contains(where: { $0.name == "spaceID" }) else { continue }
             try db.alter(table: table) { t in
                 t.add(column: "spaceID", .blob)
+            }
+        }
+
+        // The last visit a tab recorded and the trail it belongs to, so a restored tab goes on with its trail. No foreign
+        // key: a saved id may name a visit Clear History removed, and `HistoryStore.record` treats such an id as none.
+        let sessionColumns = try db.columns(in: "sessionTab").map(\.name)
+        for column in ["lastVisit", "visitTrail"] where !sessionColumns.contains(column) {
+            try db.alter(table: "sessionTab") { t in
+                t.add(column: column, .integer)
             }
         }
 
