@@ -146,6 +146,40 @@ nonisolated final class ListPerformanceTests: XCTestCase, @unchecked Sendable {
         }
     }
 
+    /// The step of that removal the page used to repeat: showing the list again. The removal itself is WebKit's and stays outside the
+    /// measurement. Before, the page counted every site again; now it drops the removed rows from what it counted. The sites here
+    /// hold only cookies in memory, so a count is as cheap as it gets; on a profile with caches and databases on disk it costs far more.
+    func testShowingTheListAgainAfterARemoval() {
+        MainActor.assumeIsolated {
+            let context = BrowserProfileContext(profile: .privateBrowsing())
+            let hosts = (0..<1_500).map { "site-\($0).example" }
+            finish {
+                for host in hosts {
+                    await context.dataStore.httpCookieStore.setCookie(try XCTUnwrap(Self.cookie(for: host)))
+                }
+            }
+            var snapshot = WebsiteData.Snapshot(entries: [])
+            finish { snapshot = try await WebsiteData.snapshot(context: context) }
+            XCTAssertEqual(snapshot.entries.count, hosts.count)
+            var removed: [String] = []
+            let options = XCTMeasureOptions.budgeted
+            options.invocationOptions = [.manuallyStart, .manuallyStop]
+
+            measure(metrics: [XCTClockMetric(), XCTMemoryMetric()], options: options) {
+                guard let entry = snapshot.entries.first else { return XCTFail("The list ran out of sites.") }
+                removed.append(entry.displayName)
+                finish { try await WebsiteData.remove([entry], of: snapshot, context: context) }
+                startMeasuring()
+                snapshot = snapshot.removing([entry])
+                stopMeasuring()
+            }
+
+            XCTAssertGreaterThanOrEqual(removed.count, 6, "every measured run removed a site")
+            XCTAssertEqual(Set(snapshot.entries.map(\.displayName)), Set(hosts).subtracting(removed))
+            finish { await context.endPrivateSession() }
+        }
+    }
+
     // MARK: Favicons
 
     /// Every site row asks the favicon cache for its icon each time it is drawn. For 1,000 sites that have none, ten passes over
