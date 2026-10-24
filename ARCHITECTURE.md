@@ -310,6 +310,14 @@ screen or independently changing section should be a real `View` type with
 narrow inputs; a computed `some View` property does not create an observation
 boundary.
 
+The sidebar list (`WorkspaceList`) draws its top-level rows in a `LazyVStack`, so a window of thousands of
+tabs builds only the rows near the screen; a folder builds its rows as one unit. A row measures itself once in
+the list's content space (`SidebarRowFrame`, `SidebarFrames`) and forgets the frame when it leaves, and the
+list adds the scroll offset (`contentOrigin`), so scrolling is one update instead of one per row. A tab row
+reads `BrowserTab.isSidebarActive`, which `BrowserModel` maintains, instead of asking the model which tab is
+active, so a tab switch redraws two rows. With VoiceOver, Switch Control or Full Keyboard Access on, the list
+is a plain `VStack` and every row exists, as it did before rows were lazy.
+
 Use the components and metrics in `WSurf/UI/Chrome` and
 `WSurf/Settings/SettingsPrimitives.swift`. `Theme` owns shared visual tokens.
 User-facing strings remain localizable; protocol values, URLs, model IDs and
