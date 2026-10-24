@@ -7,6 +7,23 @@ import SwiftUI
 
 private enum WorkspaceListCoordinateSpace {
     static let name = "sidebar-workspace"
+    /// The scrolling content. A row measures itself here, so scrolling does not change what it measured.
+    static let content = "sidebar-workspace-content"
+}
+
+/// What the list does with its rows: it draws them as they come near the window, unless something that walks every row
+/// is on. VoiceOver, Switch Control and Full Keyboard Access reach a row only if it exists, so they get all of them,
+/// as before.
+nonisolated enum SidebarRowLoading {
+    static func isLazy(voiceOver: Bool, switchControl: Bool, fullKeyboardAccess: Bool) -> Bool {
+        !(voiceOver || switchControl || fullKeyboardAccess)
+    }
+}
+
+extension EnvironmentValues {
+    /// Whether the sidebar draws every row at once (true) or only the rows near the window (false). nil, the
+    /// default, follows assistive technology: every row while one that walks the rows is on.
+    @Entry var sidebarDrawsEveryRow: Bool?
 }
 
 private enum SpringLoad {
@@ -44,6 +61,10 @@ struct WorkspaceList<TopBar: View, BottomBar: View>: View {
     let topBar: TopBar
     let bottomBar: BottomBar
     let contentInsets: EdgeInsets
+
+    @Environment(\.accessibilityVoiceOverEnabled) private var voiceOver
+    @Environment(\.accessibilitySwitchControlEnabled) private var switchControl
+    @Environment(\.sidebarDrawsEveryRow) private var drawsEveryRow
 
     @State private var pinsCarried = false
     @State private var reopening: [UUID] = []
@@ -88,9 +109,49 @@ struct WorkspaceList<TopBar: View, BottomBar: View>: View {
             selection: selection,
             drag: drag,
             pinsCarried: pinsCarried,
-            space: WorkspaceListCoordinateSpace.name,
+            space: WorkspaceListCoordinateSpace.content,
             frames: frames
         )
+    }
+
+    private var loadsLazily: Bool {
+        if let drawsEveryRow {
+            return !drawsEveryRow
+        }
+        return SidebarRowLoading.isLazy(
+            voiceOver: voiceOver,
+            switchControl: switchControl,
+            fullKeyboardAccess: NSApp?.isFullKeyboardAccessEnabled == true
+        )
+    }
+
+    /// The rows and the room under them. A lazy stack builds the rows near the window; a plain one builds them all.
+    @ViewBuilder
+    private func rowStack(_ sections: (kept: [SidebarItem], loose: [SidebarItem])) -> some View {
+        let spacing = SidebarMetrics.rowVerticalSpacing(settings: context.coordinator.context.settings)
+        let rows = SidebarRows(
+            items: sections.kept + sections.loose,
+            depth: 0,
+            context: context,
+            seamAfter: sections.kept.last
+        )
+        let room = Color.clear
+            .frame(height: 26 + bottomClearance)
+            .contentShape(Rectangle())
+            .onTapGesture { selection.takeKeyboard() }
+            .contextMenu { emptySpaceMenu }
+            .animation(Theme.Motion.drift, value: bottomClearance)
+        if loadsLazily {
+            LazyVStack(spacing: spacing) {
+                rows
+                room
+            }
+        } else {
+            VStack(spacing: spacing) {
+                rows
+                room
+            }
+        }
     }
 
     @ViewBuilder
@@ -121,25 +182,17 @@ struct WorkspaceList<TopBar: View, BottomBar: View>: View {
     var body: some View {
         ScrollViewReader { proxy in
         ScrollView {
-            VStack(spacing: SidebarMetrics.rowVerticalSpacing(settings: context.coordinator.context.settings)) {
-                let sections = sections
-                if !sections.kept.isEmpty {
-                    SidebarRows(items: sections.kept, depth: 0, context: context)
-                    SidebarSectionSeam()
+            rowStack(sections)
+                .glassGroup()
+                .padding(.leading, contentInsets.leading)
+                .padding(.trailing, contentInsets.trailing)
+                .coordinateSpace(.named(WorkspaceListCoordinateSpace.content))
+                .onGeometryChange(for: CGPoint.self) {
+                    $0.frame(in: .named(WorkspaceListCoordinateSpace.name)).origin
+                } action: { origin in
+                    frames.contentOrigin = origin
+                    followPreview()
                 }
-
-                SidebarRows(items: sections.loose, depth: 0, context: context)
-
-                Color.clear
-                    .frame(height: 26 + bottomClearance)
-                    .contentShape(Rectangle())
-                    .onTapGesture { selection.takeKeyboard() }
-                    .contextMenu { emptySpaceMenu }
-                    .animation(Theme.Motion.drift, value: bottomClearance)
-            }
-            .glassGroup()
-            .padding(.leading, contentInsets.leading)
-            .padding(.trailing, contentInsets.trailing)
         }
         .onChange(of: browser.folderRenameID, initial: true) { _, id in
             guard let id else { return }
@@ -210,21 +263,40 @@ struct WorkspaceList<TopBar: View, BottomBar: View>: View {
         browser.folder(id: folderID)?.isExpanded ?? false
     }
 
-    private var liveFrames: [SidebarItem: CGRect] {
-        frames.live(
-            tabIDs: Set(browser.tabs.map(\.id)).subtracting(browser.hiddenSidebarTabIDs),
-            folderIDs: Set(browser.folders.map(\.id))
-        )
-        .filter { item, _ in isShowing(item) }
+    /// The preview card, if one is up, goes where its row went when the list scrolled.
+    private func followPreview() {
+        guard let shown = coordinator.tabPreview.shown else { return }
+        let item: SidebarItem
+        switch shown.subject {
+        case .folder(let folder, _):
+            item = .folder(folder.id)
+        case .split(_, let panes):
+            guard let leader = panes.first else { return }
+            item = .tab(leader.id)
+        case .tab(let tab):
+            // A pane of a split is the card of its own cell, which follows itself.
+            guard !browser.splits.contains(tab.id) else { return }
+            item = .tab(tab.id)
+        }
+        guard let anchor = frames.windowFrame(of: item, listOrigin: listOrigin) else { return }
+        coordinator.tabPreview.moved(shown.subject.id, anchor: anchor)
     }
 
-    private func isShowing(_ item: SidebarItem) -> Bool {
-        var parent = browser.sidebarTree.parent(of: item)
-        while let id = parent {
-            guard browser.folder(id: id)?.isExpanded == true else { return false }
-            parent = browser.sidebarTree.parent(of: .folder(id))
+    private var liveFrames: [SidebarItem: CGRect] {
+        frames.visible(in: browser)
+    }
+
+    /// The bottom of the list's last row, or nil while that row is not drawn: below the rows that are drawn there are
+    /// rows that are not, so a pointer past them is not past the list.
+    private func endOfList(in slots: [SidebarItem: CGRect]) -> CGFloat? {
+        let hidden = browser.hiddenSidebarTabIDs
+        let last = browser.sidebarTree.visibleRows(isExpanded: isExpanded).last { item in
+            if case .tab(let id) = item, hidden.contains(id) {
+                return false
+            }
+            return !browser.isFavorite(item) && browser.isShown(item)
         }
-        return true
+        return last.flatMap { slots[$0]?.maxY }
     }
 
     private func dragChanged(_ value: DragGesture.Value) {
@@ -344,7 +416,7 @@ struct WorkspaceList<TopBar: View, BottomBar: View>: View {
         guard let hit = slots.first(where: {
             !drag.carries($0.key) && $0.value.minY <= point.y && point.y < $0.value.maxY
         }) else {
-            if let lowest = slots.values.map(\.maxY).max(), point.y > lowest {
+            if let lowest = endOfList(in: slots), point.y > lowest {
                 pinsCarried = false
                 browser.move(drag.items, into: nil, before: nil, settlingPins: false)
             }

@@ -44,7 +44,7 @@ struct SidebarSplitRow: View {
     @Environment(\.sidebarStyle) private var sidebarStyle
 
     @State private var hoveringRow = false
-    @State private var windowFrame: CGRect = .zero
+    @State private var rowFrame = SidebarRowFrame()
 
     private var interaction: SplitRowInteraction {
         .mode(isOnScreen: isOnScreen)
@@ -122,19 +122,20 @@ struct SidebarSplitRow: View {
         .onHover { over in
             withAnimation(Theme.Motion.quick) { hoveringRow = over }
             if over {
-                coordinator.tabPreview.hover(.split(split, panes), anchor: windowFrame)
+                coordinator.tabPreview.hover(.split(split, panes), anchor: context.windowFrame(of: item))
             } else {
                 coordinator.tabPreview.unhover(panes.first?.id ?? leading.id)
             }
         }
         .onGeometryChange(for: CGRect.self) { $0.frame(in: .named(context.space)) } action: {
-            context.frames.record(item, at: $0)
+            rowFrame.measure(item, at: $0, in: context.frames)
+            context.followPreview(of: item, id: panes.first?.id ?? leading.id)
         }
-        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frame in
-            windowFrame = frame
-            coordinator.tabPreview.moved(panes.first?.id ?? leading.id, anchor: frame)
+        .onAppear { rowFrame.appear(item, in: context.frames) }
+        .onDisappear {
+            coordinator.tabPreview.unhover(panes.first?.id ?? leading.id)
+            rowFrame.forget(item, in: context.frames)
         }
-        .onDisappear { coordinator.tabPreview.unhover(panes.first?.id ?? leading.id) }
         .contextMenu { menu }
     }
 

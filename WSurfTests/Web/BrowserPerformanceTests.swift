@@ -475,6 +475,120 @@ nonisolated final class BrowserPerformanceTests: XCTestCase, @unchecked Sendable
         }
     }
 
+    /// The real sidebar over a window of 1,025 rows, 1,000 tabs in 25 open folders of 40 and two live tabs (the two that
+    /// the switching case activates), in a 280 x 700 window.
+    @MainActor
+    private struct ThousandRowSidebar {
+        let coordinator: AppCoordinator
+        let first: BrowserTab
+        let second: BrowserTab
+
+        var browser: BrowserModel {
+            coordinator.browser
+        }
+
+        init() {
+            coordinator = AppCoordinator(browser: BrowserModel(database: .temporary()))
+            let browser = coordinator.browser
+            let pages = (0..<1_000).map { browser.addPage("https://fixture-\($0).example/") }
+            for index in 0..<25 {
+                browser.createFolder(named: "Folder \(index)", containing: Array(pages[index * 40..<(index + 1) * 40]))
+            }
+            first = browser.newTab()
+            second = browser.newTab()
+        }
+
+        func window() -> (NSWindow, NSHostingView<AnyView>) {
+            // Lazy whatever the Mac's accessibility settings are: this is the list the cases measure.
+            let sidebar = Sidebar(browser: browser, coordinator: coordinator)
+                .frame(width: 280, height: 700)
+                .environment(\.sidebarDrawsEveryRow, false)
+            let host = NSHostingView(rootView: AnyView(sidebar))
+            host.frame = CGRect(x: 0, y: 0, width: 280, height: 700)
+            let window = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false
+            window.contentView = host
+            host.layoutSubtreeIfNeeded()
+            host.displayIfNeeded()
+            return (window, host)
+        }
+
+        func scrollView(in view: NSView) -> NSScrollView? {
+            func all(_ view: NSView) -> [NSScrollView] {
+                ((view as? NSScrollView).map { [$0] } ?? []) + view.subviews.flatMap { all($0) }
+            }
+            return all(view).max { ($0.documentView?.frame.height ?? 0) < ($1.documentView?.frame.height ?? 0) }
+        }
+    }
+
+    /// Opening the sidebar over 1,000 tabs in 25 folders: the window is built, laid out and drawn once per run, which is
+    /// what showing a sidebar, switching to a space or restoring a window costs. Budgeted in Tools/check-performance.sh.
+    func testLayingOutAThousandRowSidebar() {
+        MainActor.assumeIsolated {
+            let rig = ThousandRowSidebar()
+            measure(metrics: [XCTClockMetric(), XCTMemoryMetric()], options: .budgeted) {
+                autoreleasepool {
+                    let (window, host) = rig.window()
+                    host.layoutSubtreeIfNeeded()
+                    host.displayIfNeeded()
+                    window.contentView = nil
+                    window.close()
+                }
+            }
+            rig.browser.cancelPendingSave()
+        }
+    }
+
+    /// Switching between two tabs four times over a sidebar of 1,000 tabs that is on screen: every switch changes which
+    /// row is current, and the sidebar is laid out and drawn after each.
+    func testSwitchingTabsOverAThousandRowSidebar() {
+        MainActor.assumeIsolated {
+            let rig = ThousandRowSidebar()
+            let (window, host) = rig.window()
+            measure(metrics: [XCTClockMetric(), XCTMemoryMetric()], options: .budgeted) {
+                for _ in 0..<2 {
+                    for tab in [rig.first, rig.second] {
+                        rig.browser.activate(tab)
+                        RunLoop.current.run(until: Date())
+                        host.layoutSubtreeIfNeeded()
+                        host.displayIfNeeded()
+                    }
+                }
+            }
+            window.contentView = nil
+            window.close()
+            rig.browser.cancelPendingSave()
+        }
+    }
+
+    /// Scrolling down a sidebar of 1,000 tabs in 30 steps of 300 pt, laid out and drawn at each step, as a drag of the
+    /// scroll bar or a fling does.
+    func testScrollingAThousandRowSidebar() {
+        MainActor.assumeIsolated {
+            let rig = ThousandRowSidebar()
+            let (window, host) = rig.window()
+            guard let scroll = rig.scrollView(in: host) else {
+                XCTFail("the sidebar has no scroll view")
+                return
+            }
+            measure(metrics: [XCTClockMetric(), XCTMemoryMetric()], options: .budgeted) {
+                scroll.contentView.scroll(to: .zero)
+                scroll.reflectScrolledClipView(scroll.contentView)
+                host.layoutSubtreeIfNeeded()
+                for step in 1...30 {
+                    scroll.contentView.scroll(to: NSPoint(x: 0, y: CGFloat(step) * 300))
+                    scroll.reflectScrolledClipView(scroll.contentView)
+                    RunLoop.current.run(until: Date())
+                    host.layoutSubtreeIfNeeded()
+                    host.displayIfNeeded()
+                }
+            }
+            window.contentView = nil
+            window.close()
+            rig.browser.cancelPendingSave()
+        }
+    }
+
     /// The test host's physical footprint, the figure XCTMemoryMetric samples.
     private static func physicalFootprint() -> UInt64 {
         var usage = rusage_info_current()
