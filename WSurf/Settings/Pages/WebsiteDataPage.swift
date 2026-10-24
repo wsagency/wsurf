@@ -8,7 +8,9 @@ struct WebsiteDataPage: View {
     let context: BrowserProfileContext
     let onBack: () -> Void
 
-    @State private var entries: [WebsiteData.Entry] = []
+    @State private var snapshot: WebsiteData.Snapshot?
+    /// The ids of the sites whose data is being removed: their rows show a spinner in place of the button.
+    @State private var removing: Set<String> = []
     @State private var query = ""
     @State private var isLoading = true
     @State private var removingEntry: WebsiteData.Entry?
@@ -16,6 +18,10 @@ struct WebsiteDataPage: View {
     @State private var error: String?
     @State private var activeContextID: UUID?
     @FocusState private var searchFocused: Bool
+
+    private var entries: [WebsiteData.Entry] {
+        snapshot?.entries ?? []
+    }
 
     private var shown: [WebsiteData.Entry] {
         entries.filter { WebsiteData.matches($0, query: query) }
@@ -67,21 +73,25 @@ struct WebsiteDataPage: View {
                 )
             } else {
                 ForEach(Array(shown.enumerated()), id: \.element.id) { index, entry in
-                    if index > 0 {
-                        RowSeparator()
-                    }
                     SiteRow(host: entry.displayName, summary: entry.summary) {
-                        SettingsButton(title: "Remove…", isDestructive: true) {
-                            removingEntry = entry
+                        if removing.contains(entry.id) {
+                            Spinner(size: 12)
+                                .foregroundStyle(.secondary)
+                        } else {
+                            SettingsButton(title: "Remove…", isDestructive: true) {
+                                removingEntry = entry
+                            }
                         }
                     }
+                    .separated(above: index > 0)
                 }
             }
         })
         .task(id: context.contextID) {
             activeContextID = context.contextID
             isLoading = true
-            entries = []
+            snapshot = nil
+            removing = []
             await reload()
         }
         .confirmationDialog(
@@ -134,9 +144,9 @@ struct WebsiteDataPage: View {
     private func reload() async {
         let contextID = context.contextID
         do {
-            let loaded = try await WebsiteData.entries(context: context)
+            let loaded = try await WebsiteData.snapshot(context: context)
             guard activeContextID == contextID else { return }
-            entries = loaded
+            snapshot = loaded
         } catch {
             guard activeContextID == contextID else { return }
             self.error = error.localizedDescription
@@ -146,16 +156,24 @@ struct WebsiteDataPage: View {
         }
     }
 
+    /// Removes what the list already knows about the chosen sites and drops their rows, without counting every site again.
     private func remove(_ selected: Set<WebsiteData.Entry>) async {
+        guard let counted = snapshot else { return }
         let contextID = context.contextID
+        let ids = Set(selected.map(\.id))
+        removing.formUnion(ids)
         do {
-            try await WebsiteData.remove(selected, context: context)
+            try await WebsiteData.remove(selected, of: counted, context: context)
             guard activeContextID == contextID else { return }
             removingEntry = nil
-            await reload()
+            snapshot = snapshot?.removing(selected)
+            removing.subtract(ids)
         } catch {
             guard activeContextID == contextID else { return }
             self.error = error.localizedDescription
+            removing.subtract(ids)
+            // Part of the data may have gone: count again so the list says what is left.
+            await reload()
         }
     }
 

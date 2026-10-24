@@ -43,26 +43,46 @@ struct ReleaseNotesView: View {
                 .padding(.horizontal, 12)
                 .padding(.top, 28)
         } else {
-            LazyVStack(alignment: .leading, spacing: 0) {
-                ForEach(Array(sections.enumerated()), id: \.element.id) { index, section in
-                    if index > 0 {
-                        RowSeparator()
-                            .padding(.vertical, 20)
-                    }
-                    ReleaseNotesSection(section: section, isRunning: notes.isRunning(section))
-                }
-            }
-            .padding(.horizontal, 12)
-            .padding(.top, 14)
+            ReleaseNotesList(sections: sections, isRunning: notes.isRunning)
+                .padding(.horizontal, 12)
+                .padding(.top, 14)
         }
     }
 }
 
-private struct ReleaseNotesSection: View {
-    let section: ChangelogSection
-    let isRunning: Bool
+/// The installed build's section and the older ones below it, newest first, as the Release Notes page lists them.
+struct ReleaseNotesList: View {
+    let sections: [ChangelogSection]
+    let isRunning: (ChangelogSection) -> Bool
 
     var body: some View {
+        // Lazy, and each section equatable: the notes of a release far down the page are not parsed or laid out until it scrolls near.
+        LazyVStack(alignment: .leading, spacing: 0) {
+            ForEach(Array(sections.enumerated()), id: \.element.id) { index, section in
+                ReleaseNotesSection(section: section, isRunning: isRunning(section), isFirst: index == 0)
+                    .equatable()
+            }
+        }
+    }
+}
+
+private struct ReleaseNotesSection: View, Equatable {
+    let section: ChangelogSection
+    let isRunning: Bool
+    let isFirst: Bool
+
+    /// The hairline above is part of the section, so that the lazy list has one item per release.
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if !isFirst {
+                RowSeparator()
+                    .padding(.vertical, 20)
+            }
+            details
+        }
+    }
+
+    private var details: some View {
         VStack(alignment: .leading, spacing: 14) {
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 7) {

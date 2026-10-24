@@ -19,7 +19,7 @@ struct AssistantGrantsPage: View {
             caption: "Actions the assistant may take on these websites without asking again, such as purchases or posting."
         )
 
-        SettingsCard {
+        SettingsList {
             if policy.grants.isEmpty {
                 SettingsEmptyState(
                     symbol: "hand.raised",
@@ -28,10 +28,6 @@ struct AssistantGrantsPage: View {
                 )
             } else {
                 ForEach(Array(policy.grantsByHost.enumerated()), id: \.element.host) { index, entry in
-                    if index > 0 {
-                        RowSeparator()
-                    }
-
                     SiteRow(
                         host: entry.host,
                         summary: entry.categories
@@ -42,6 +38,7 @@ struct AssistantGrantsPage: View {
                             revokingHost = entry.host
                         }
                     }
+                    .separated(above: index > 0)
                 }
             }
         }

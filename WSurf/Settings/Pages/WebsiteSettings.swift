@@ -121,6 +121,7 @@ struct WebsiteSettings: View {
         .settingsAnchor("websites.permissions")
 
         SettingsSection(title: "Websites you’ve changed", symbol: "list.bullet", isLongList: true) {
+            let entries = entries
             if entries.isEmpty {
                 SettingsEmptyState(
                     symbol: "globe",
@@ -129,12 +130,11 @@ struct WebsiteSettings: View {
                 )
             } else {
                 ForEach(Array(entries.enumerated()), id: \.element.id) { index, entry in
-                    if index > 0 {
-                        RowSeparator()
-                    }
                     WebsiteSettingsEntryRow(host: entry.host, summary: entry.summary) {
                         destination = .site(entry.origin)
                     }
+                    .equatable()
+                    .separated(above: index > 0)
                 }
             }
         }
@@ -160,7 +160,8 @@ struct WebsiteSettings: View {
     }
 }
 
-private struct WebsiteSettingsEntryRow: View {
+/// Equatable on what it shows, not on its action, so a list that is built again leaves the rows that read the same alone.
+private struct WebsiteSettingsEntryRow: View, Equatable {
     let host: String
     let summary: String
     let action: () -> Void
@@ -173,6 +174,10 @@ private struct WebsiteSettingsEntryRow: View {
             .settingsRowTarget()
         }
         .buttonStyle(.plain)
+    }
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.host == rhs.host && lhs.summary == rhs.summary
     }
 }
 
@@ -222,7 +227,8 @@ private struct PermissionDetailPage: View {
             )
         }
 
-        SettingsSection(title: "Saved website permissions", symbol: "list.bullet") {
+        SettingsSection(title: "Saved website permissions", symbol: "list.bullet", isLongList: true) {
+            let origins = origins
             if origins.isEmpty {
                 SettingsEmptyState(
                     symbol: permission.slashedSymbol,
@@ -231,9 +237,6 @@ private struct PermissionDetailPage: View {
                 )
             } else {
                 ForEach(Array(origins.enumerated()), id: \.element) { index, origin in
-                    if index > 0 {
-                        RowSeparator()
-                    }
                     SiteRow(host: SiteSettingsIndex.host(of: origin)) {
                         SettingsMenu(
                             options: [
@@ -247,6 +250,7 @@ private struct PermissionDetailPage: View {
                             )
                         )
                     }
+                    .separated(above: index > 0)
                 }
             }
         }

@@ -28,6 +28,19 @@ final class FaviconLoader {
     private static let guessExtension = "guess"
 
     private var guessed: Set<String> = []
+    /// Keys whose icon could not be fetched, and when: not asked for again until `missingRetry` has passed, so a long list of sites
+    /// with no icon does not repeat a failed request each time a row is drawn.
+    private var missing: [String: Date] = [:]
+    /// Keys known to have no file in the cache directory, so a row without an icon does not read the disk each time it is drawn.
+    /// Whatever stores an icon clears it. ponytail: a loader does not see a file another loader writes to the same directory
+    /// (a private window reads its owner's cache); a new loader does.
+    private var notOnDisk: Set<String> = []
+    private static let missingRetry: TimeInterval = 15 * 60
+
+    private func isMissing(_ key: String) -> Bool {
+        guard let since = missing[key] else { return false }
+        return Date().timeIntervalSince(since) < Self.missingRetry
+    }
 
     enum IconScheme: String {
         case light
@@ -60,6 +73,14 @@ final class FaviconLoader {
         }
         inFlight.removeAll()
         sessionOnly.removeAll()
+        missing.removeAll()
+        notOnDisk.removeAll()
+    }
+
+    /// The icon if it is already in memory; never reads the disk, so a view can ask while it is drawn.
+    func memoryCached(for host: String) -> NSImage? {
+        let key = key(host)
+        return sessionOnly[key] ?? cache[key]
     }
 
     func cached(for host: String) -> NSImage? {
@@ -67,6 +88,7 @@ final class FaviconLoader {
         if let image = sessionOnly[key] ?? cache[key] {
             return image
         }
+        guard !isMissing(key), !notOnDisk.contains(key) else { return nil }
 
         for isGuess in [false, true] {
             let file = cacheFile(for: key, isGuess: isGuess)
@@ -79,6 +101,7 @@ final class FaviconLoader {
             }
             return image
         }
+        notOnDisk.insert(key)
         return nil
     }
 
@@ -91,6 +114,8 @@ final class FaviconLoader {
         cache[key] = nil
         sessionOnly[key] = nil
         guessed.remove(key)
+        missing[key] = nil
+        notOnDisk.remove(key)
         inFlight[key]?.cancel()
         inFlight[key] = nil
         guard persistsToDisk else { return }
@@ -116,10 +141,18 @@ final class FaviconLoader {
         if let hit = cached(for: host) {
             return hit
         }
+        let key = key(host)
+        guard !isMissing(key) else { return nil }
 
-        return await coalesced(key: key(host)) { [weak self] in
+        let generation = cacheGeneration
+        let image = await coalesced(key: key) { [weak self] in
             await self?.fetchAndCache(url, forHost: host, isGuess: true)
         }
+        // A fetch that was cancelled, or outlived a clear, says nothing about the site.
+        if image == nil, generation == cacheGeneration, !Task.isCancelled, cached(for: host) == nil {
+            missing[key] = Date()
+        }
+        return image
     }
 
     nonisolated private static func fallbackURL(for pageURL: URL) -> URL? {
@@ -286,6 +319,8 @@ final class FaviconLoader {
               Self.carriesAnImage(data) else { return nil }
 
         let key = key(host)
+        missing[key] = nil
+        notOnDisk.remove(key)
         if isGuess {
             guessed.insert(key)
         } else {

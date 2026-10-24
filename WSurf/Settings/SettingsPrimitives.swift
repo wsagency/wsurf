@@ -13,6 +13,9 @@ nonisolated private struct SettingsScrollProxyKey: EnvironmentKey {
 
 extension EnvironmentValues {
     @Entry var settingsDescriptionLineLimit: Int?
+    /// True inside a long list and on its site rows: a control takes a flat wash and outline in place of a glass layer of its own,
+    /// which a few hundred rows cannot afford.
+    @Entry var settingsSurfaceIsFlat = false
     /// The detail pane's scroll view, so a page can bring a row it moved a cursor to into view.
     var settingsScrollProxy: ScrollViewProxy? {
         get { self[SettingsScrollProxyKey.self] }
@@ -70,7 +73,46 @@ extension View {
         isLifted: Bool = false,
         in shape: S
     ) -> some View {
-        controlGlassSurface(isActive: isActive, tint: tint, isLifted: isLifted, in: shape)
+        modifier(SettingsSurface(isActive: isActive, tint: tint, isLifted: isLifted, shape: shape))
+    }
+}
+
+/// A control's surface: the glass of `controlGlassSurface`, or, in a long list, only its wash and outline.
+private struct SettingsSurface<S: InsettableShape>: ViewModifier {
+    let isActive: Bool
+    let tint: Color?
+    let isLifted: Bool
+    let shape: S
+
+    @Environment(\.settingsSurfaceIsFlat) private var isFlat
+
+    // The wash and outline of ControlGlassSurface in ChromeInk.swift; change them together.
+    private var wash: Color {
+        if let tint {
+            return tint.opacity(isActive ? 0.10 : 0.045)
+        }
+        return Color.primary.opacity(isActive ? 0.06 : 0.04)
+    }
+
+    private var outline: Color {
+        if let tint {
+            return tint.opacity(isActive ? 0.24 : 0.13)
+        }
+        if isLifted {
+            return Color.primary.opacity(isActive ? 0.20 : 0.14)
+        }
+        return Color.primary.opacity(isActive ? 0.12 : 0.08)
+    }
+
+    func body(content: Content) -> some View {
+        if isFlat {
+            content
+                .background { shape.fill(wash) }
+                .overlay { shape.strokeBorder(outline, lineWidth: 1) }
+                .contentShape(shape)
+        } else {
+            content.controlGlassSurface(isActive: isActive, tint: tint, isLifted: isLifted, in: shape)
+        }
     }
 }
 
@@ -387,6 +429,18 @@ struct DetailRow<Content: View>: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
+        }
+    }
+}
+
+extension View {
+    /// A row with a hairline above it, as one item of a lazy list. A separator beside the row in the list would be an item of its own.
+    func separated(above: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if above {
+                RowSeparator()
+            }
+            self
         }
     }
 }

@@ -404,6 +404,103 @@ check_average \
   'Theme gallery memory growth' \
   'kB'
 
+# Long lists outside the sidebar (ListPerformanceTests). Six-sample means on the Pro (2026-10-24), seconds, port of Linen 0.9.3 b44a8393:
+# case                                   before      after   budget
+# 600-site list, four screens deep       0.165-0.181 0.094-0.102  0.150 (a tight budget: the flat row surface is a 1.7x gain)
+# three removals among 1,500 sites       0.402-0.427 0.289-0.325  0.650 (WebKit's own removal dominates; the case guards gross changes)
+# the list shown again after a removal   0.121        0.0032       0.020 (a recount of 1,500 cookie-only sites; far more with data on disk)
+# 10,000 icon lookups, sites with none   1.29-1.34    0.0031       0.015
+# 1,000 sites with custom settings       0.67-0.68    0.0206       0.050
+# 40 progress updates among 300 rows     0.245-0.269  0.147-0.164  0.220 (includes 0.040 s of run-loop turns; a tight budget)
+# 40 release notes, four screens deep    0.245-0.258  0.055-0.059  0.120
+# Memory growth is noisy (single samples between -43 and +16 MB, medians within 8 MB before and 1.2 MB after), so every memory budget
+# is the usual 4096 kB. A budget twice the after mean could not tell the list rows apart from their old state, so the two row cases above
+# sit between the two.
+check_average \
+  'ListPerformanceTests/testLayingOutALongListOfSites()' \
+  'com.apple.dt.XCTMetric_Clock.time.monotonic' \
+  '0.150' \
+  '600-site Website data list laid out four screens deep' \
+  's'
+check_average \
+  'ListPerformanceTests/testLayingOutALongListOfSites()' \
+  'com.apple.dt.XCTMetric_Memory.physical' \
+  '4096' \
+  'Website data list layout memory growth' \
+  'kB'
+check_average \
+  'ListPerformanceTests/testRemovingASiteFromTheWebsiteDataList()' \
+  'com.apple.dt.XCTMetric_Clock.time.monotonic' \
+  '0.650' \
+  'Three removals from a 1,500-site Website data list' \
+  's'
+check_average \
+  'ListPerformanceTests/testRemovingASiteFromTheWebsiteDataList()' \
+  'com.apple.dt.XCTMetric_Memory.physical' \
+  '4096' \
+  'Website data removal memory growth' \
+  'kB'
+check_average \
+  'ListPerformanceTests/testShowingTheListAgainAfterARemoval()' \
+  'com.apple.dt.XCTMetric_Clock.time.monotonic' \
+  '0.020' \
+  'Website data list shown again after a removal among 1,500 sites' \
+  's'
+check_average \
+  'ListPerformanceTests/testShowingTheListAgainAfterARemoval()' \
+  'com.apple.dt.XCTMetric_Memory.physical' \
+  '4096' \
+  'Website data refresh memory growth' \
+  'kB'
+check_average \
+  'ListPerformanceTests/testAskingForTheIconsOfSitesThatHaveNone()' \
+  'com.apple.dt.XCTMetric_Clock.time.monotonic' \
+  '0.015' \
+  '10,000 icon lookups for sites that have none' \
+  's'
+check_average \
+  'ListPerformanceTests/testAskingForTheIconsOfSitesThatHaveNone()' \
+  'com.apple.dt.XCTMetric_Memory.physical' \
+  '4096' \
+  'Icon lookup memory growth' \
+  'kB'
+check_average \
+  'ListPerformanceTests/testIndexingTheSitesWithCustomSettings()' \
+  'com.apple.dt.XCTMetric_Clock.time.monotonic' \
+  '0.050' \
+  'Websites list of 1,000 sites with custom settings' \
+  's'
+check_average \
+  'ListPerformanceTests/testIndexingTheSitesWithCustomSettings()' \
+  'com.apple.dt.XCTMetric_Memory.physical' \
+  '4096' \
+  'Websites list index memory growth' \
+  'kB'
+check_average \
+  'ListPerformanceTests/testUpdatingOneDownloadInALongList()' \
+  'com.apple.dt.XCTMetric_Clock.time.monotonic' \
+  '0.220' \
+  '40 progress updates in a 300-download list' \
+  's'
+check_average \
+  'ListPerformanceTests/testUpdatingOneDownloadInALongList()' \
+  'com.apple.dt.XCTMetric_Memory.physical' \
+  '4096' \
+  'Download list update memory growth' \
+  'kB'
+check_average \
+  'ListPerformanceTests/testLayingOutManyReleaseNotes()' \
+  'com.apple.dt.XCTMetric_Clock.time.monotonic' \
+  '0.120' \
+  '40 release notes laid out four screens deep' \
+  's'
+check_average \
+  'ListPerformanceTests/testLayingOutManyReleaseNotes()' \
+  'com.apple.dt.XCTMetric_Memory.physical' \
+  '4096' \
+  'Release notes layout memory growth' \
+  'kB'
+
 # Five-sample Pro baselines: 0.009744 s for one extraction of a 200 KB article; memory growth between -33 and 246 kB.
 check_average \
   'ReaderPerformanceTests/testExtractingALongArticle()' \
