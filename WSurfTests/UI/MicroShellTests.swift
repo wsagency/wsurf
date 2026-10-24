@@ -297,6 +297,58 @@ struct MicroShellTests {
         #expect(MicroWindowMetrics.minSize == NSSize(width: 420, height: 240))
     }
 
+    // MARK: - The badge
+
+    @Test func theBadgeOffersMoveBackInAMicroWindowAndNothingOnInternalPages() throws {
+        let app = BrowserApplication(defaults: InMemoryUserDefaults(inheriting: .standard), notifications: NotificationCenter())
+        let context = BrowserProfileContext.shared(for: .original())
+        let standard = AppCoordinator(browser: BrowserModel(context: context, windowID: UUID()))
+        let microBrowser = BrowserModel(context: context, windowID: UUID())
+        microBrowser.windowKind = .micro
+        let micro = AppCoordinator(browser: microBrowser)
+        app.register(standard)
+        app.register(micro)
+        defer {
+            standard.closeWindow()
+            micro.closeWindow()
+        }
+        let tab = standard.browser.newTab()
+        let microTab = micro.browser.newTab()
+        func offer(_ coordinator: AppCoordinator, _ tab: BrowserTab?) -> MicroWindowBadge.Offer? {
+            MicroWindowBadge.offer(for: coordinator, tab: tab)
+        }
+
+        #expect(offer(standard, nil) == nil && offer(micro, nil) == nil, "no tab, no offer")
+        #expect(offer(standard, tab) == nil && offer(micro, microTab) == nil, "no page yet")
+
+        tab.urlString = "https://example.com/"
+        microTab.urlString = "https://example.com/"
+        #expect(offer(standard, tab) == .moveOut)
+        #expect(offer(micro, microTab) == .moveBack, "the same slot moves it back")
+        #expect(standard.canMoveToMicroWindow(tab) && !micro.canMoveToMicroWindow(microTab))
+
+        for page in BrowserTab.InternalPage.allCases {
+            tab.urlString = page.url.absoluteString
+            #expect(tab.internalPage == page)
+            #expect(offer(standard, tab) == nil, "\(page) never goes chromeless")
+            #expect(!standard.canMoveToMicroWindow(tab))
+        }
+
+        // A tab that is not one of this window's cannot be moved by it.
+        let stranger = micro.browser.newTab()
+        stranger.urlString = "https://example.com/"
+        #expect(!standard.canMoveToMicroWindow(stranger))
+    }
+
+    @Test func theBadgeSitsBesideReaderAndThePin() throws {
+        let row = try source("WSurf/UI/Ask/AskSurfaceRow.swift")
+        let pin = try #require(row.range(of: "PinBadge(browser: model.browser)"))
+        let micro = try #require(row.range(of: "MicroWindowBadge(browser: model.browser, coordinator: model.coordinator)"))
+        let reader = try #require(row.range(of: "ReaderBadge("))
+        #expect(reader.lowerBound < pin.lowerBound && pin.lowerBound < micro.lowerBound)
+        #expect(try source("WSurf/UI/Sidebar/SidebarTabRow.swift").contains("Label(\"Move to Micro Window\""))
+    }
+
     // MARK: - Helpers
 
     private func source(_ path: String) throws -> String {

@@ -115,6 +115,7 @@ struct AskSurfaceRow: View {
                     TranslationBadge(browser: model.browser, coordinator: model.coordinator)
                     PinBadge(browser: model.browser)
                         .frame(width: placement.iconSlot)
+                    MicroWindowBadge(browser: model.browser, coordinator: model.coordinator)
                     SiteControlsMenu(browser: model.browser)
                         .frame(width: placement.iconSlot)
                 }

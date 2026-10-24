@@ -5,6 +5,7 @@ import AppKit
 import Foundation
 import GRDB
 import Testing
+import WebKit
 
 @testable import WSurf
 
@@ -232,7 +233,10 @@ struct MicroWindowTests {
             }
             let root = try #require(NSApp.mainMenu)
             // Looked up before any item is validated: validation retitles some of them.
-            let items = root.items.compactMap(\.submenu).flatMap(\.items)
+            func flattened(_ menu: NSMenu) -> [NSMenuItem] {
+                menu.items.flatMap { [$0] + ($0.submenu.map(flattened) ?? []) }
+            }
+            let items = flattened(root)
             func item(_ title: LocalizedStringResource) throws -> NSMenuItem {
                 try #require(items.first { $0.title == String(localized: title) }, "\(String(localized: title))")
             }
@@ -294,6 +298,275 @@ struct MicroWindowTests {
         }
     }
 
+    // MARK: - Moving a page out and back
+
+    /// A page of `main` that shows `address` and loads nothing, like a tab restored from a session.
+    private func unloadedPage(_ address: String, in window: AppCoordinator) -> BrowserTab {
+        let tab = window.browser.addPage(address)
+        window.browser.activate(tab)
+        return tab
+    }
+
+    @Test(arguments: [BrowserEngine.webKit, .chromium])
+    func movingToAMicroWindowKeepsTheLivePage(engine: BrowserEngine) async throws {
+        let gate = ResponseGate()
+        gate.open()
+        let server = try await HTTPFixtureServer.start(routes: [
+            "/": .html("<title>Form</title><input id='note'>", gate: gate),
+        ])
+        let url = try server.url("/")
+        try await withProfile { profile in
+            let context = BrowserProfileContext.shared(for: profile)
+            context.sitePermissions.setEngine(engine, for: SitePermissions.origin(for: url))
+            let app = run()
+            let main = app.newWindow(profile: profile, show: false)
+            let tab = main.browser.newTab(url: url)
+            let page = tab.page
+            try #require(await waitUntil { page.title == "Form" && !page.isLoading })
+            _ = try await page.evaluateJavaScript("window.marker = 'kept'; document.getElementById('note').value = 'typed, not sent'; true")
+            #expect(page.engine == engine)
+            #expect(gate.requestCount == 1)
+
+            let micro = try #require(main.moveToMicroWindow(tab))
+            let microWindow = try #require(micro.nativeWindow)
+
+            #expect(micro.isMicro && micro.browser.tabs.map(\.id) == [tab.id], "the placeholder window tab is gone")
+            #expect(main.browser.tab(id: tab.id) == nil, "the page left its window")
+            #expect(tab.page === page && tab.liveView === page && !page.isClosed && !tab.isClosed, "the same page, not a copy")
+            try #require(await waitUntil { page.window === microWindow })
+            #expect(try await page.evaluateJavaScript("window.marker") as? String == "kept")
+            #expect(try await page.evaluateJavaScript("document.getElementById('note').value") as? String == "typed, not sent")
+            #expect(gate.requestCount == 1, "nothing was fetched again")
+
+            finish(app)
+            await tab.waitForRetirement()
+            await ChromiumRuntime.shared.releaseContext(contextID: context.contextID)
+            withExtendedLifetime(server) {}
+        }
+    }
+
+    @Test func movingAPinKeepsThePinInTheMainWindow() async throws {
+        try await withProfile { profile in
+            let app = run()
+            let main = app.newWindow(profile: profile, show: false)
+            let pin = main.browser.pinned("https://one.example/")
+            let folder = main.browser.createFolder(named: "Work")
+            main.browser.pin(folder)
+            let inFolder = main.browser.addPage("https://two.example/")
+            main.browser.move([.tab(inFolder.id)], into: folder, settlingPins: true)
+            main.browser.addFavorite(main.browser.addPage("https://three.example/"))
+            let pins = main.browser.pinStore.pins
+            let outline = main.browser.pinOutline
+            #expect(pins.count >= 3 && pin.pinID != nil && inFolder.pinID != nil)
+
+            for page in [pin, inFolder, try #require(main.browser.page(at: "https://three.example/"))] {
+                let pinID = try #require(page.pinID)
+                let address = page.urlString
+                let micro = try #require(main.moveToMicroWindow(page))
+                let moved = try #require(micro.browser.tab(id: page.id))
+                #expect(moved.pinID == nil && moved.pinnedURL == nil && !moved.isFavorite, "an ordinary tab over there")
+                #expect(micro.browser.attachedPinStore == nil)
+                let left = try #require(main.browser.page(for: pinID))
+                #expect(left !== moved && left.urlString == address, "the pin keeps an unloaded page of its own here")
+                #expect(main.browser.pinStore.pins == pins, "the person removes pins, not a pop-out")
+                #expect(main.browser.pinOutline == outline)
+                micro.closeWindow()
+            }
+            finish(app)
+        }
+    }
+
+    /// A window that opens for a page used to forget the assistant conversations of every other window of the profile, the
+    /// page's own among them, before the page arrived.
+    @Test func openingAMicroWindowKeepsTheConversationsOfTheProfile() async throws {
+        try await withProfile { profile in
+            let app = run()
+            let main = app.newWindow(profile: profile, show: false)
+            let tab = unloadedPage("https://one.example/", in: main)
+            let other = unloadedPage("https://two.example/", in: main)
+            for page in [tab, other] {
+                main.conversationLog.completeTask(main.conversationLog.beginTask("work on \(page.urlString)", tabID: page.id), response: "done")
+            }
+
+            let micro = try #require(main.moveToMicroWindow(tab))
+
+            #expect(main.conversationLog.traces(forTab: tab.id).count == 1, "the moved page's conversation went with it")
+            #expect(main.conversationLog.traces(forTab: other.id).count == 1, "and the page that stayed kept its own")
+            #expect(micro.conversationLog === main.conversationLog)
+            finish(app)
+        }
+    }
+
+    @Test func movingBackReturnsTheSamePageAndRetiresTheMicroWindow() async throws {
+        try await withProfile { profile in
+            let app = run()
+            let main = app.newWindow(profile: profile, show: false)
+            main.browser.pinned("https://pin.example/")
+            let other = unloadedPage("https://other.example/", in: main)
+            let tab = unloadedPage("https://one.example/", in: main)
+            let database = main.context.database
+            let micro = try #require(main.moveToMicroWindow(tab))
+            let microID = micro.windowID
+            micro.browser.saveBlocking()
+            #expect(BrowserModel.savedWindows(in: database).contains { $0.id == microID })
+
+            micro.moveBackToMainWindow()
+
+            #expect(main.browser.tab(id: tab.id) === tab, "the same tab object")
+            #expect(main.browser.activeTab === tab)
+            #expect(tab.pinID == nil && main.browser.tabs.contains { $0 === other })
+            let tabs = main.browser.tabs
+            let line = try #require(tabs.firstIndex { $0.pinID != nil })
+            let position = try #require(tabs.firstIndex { $0 === tab })
+            #expect(position > line, "under the pin line")
+            try #require(await waitUntil { micro.isClosed })
+            #expect(!BrowserModel.savedWindows(in: database, includeClosed: true).contains { $0.id == microID },
+                    "Reopen Last Closed Window never brings back an empty micro window")
+            let leftovers = try await database.writer.read { db in
+                try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM sessionTab WHERE windowID = ?", arguments: [microID])
+            }
+            #expect(leftovers == 0, "and no rows are left to be adopted as a window")
+            finish(app)
+        }
+    }
+
+    @Test func movingBackWithNoMainWindowOpensOne() async throws {
+        try await withProfile { profile in
+            let app = run()
+            let main = app.newWindow(profile: profile, show: false)
+            let tab = unloadedPage("https://one.example/", in: main)
+            let micro = try #require(main.moveToMicroWindow(tab))
+            main.closeWindow()
+            #expect(app.browsingWindow(for: micro) == nil)
+
+            micro.moveBackToMainWindow()
+
+            let opened = try #require(app.windows.first { !$0.isMicro && !$0.isClosed })
+            #expect(opened !== main && opened.context === micro.context)
+            #expect(opened.browser.tabs.map(\.id) == [tab.id], "the page, and no placeholder")
+            try #require(await waitUntil { micro.isClosed })
+            finish(app)
+        }
+    }
+
+    @Test func aTabTheMicroPageOpensGoesToTheMainWindow() async throws {
+        let server = try await HTTPFixtureServer.start(routes: [
+            "/two": .html("<title>Two</title>"), "/three": .html("<title>Three</title>"),
+        ])
+        try await withProfile { profile in
+            let app = run()
+            let main = app.newWindow(profile: profile, show: false)
+            let tab = unloadedPage("https://one.example/", in: main)
+            let micro = try #require(main.moveToMicroWindow(tab))
+            let before = main.browser.activeTab
+            let count = main.browser.tabs.count
+
+            // Opened in the background: it waits there, unseen, and the micro window stays as it was.
+            tab.onOpenInNewTab?(try server.url("/two"), false)
+            try #require(await waitUntil { main.browser.tabs.count == count + 1 })
+            let two = try #require(main.browser.page(at: try server.url("/two").absoluteString))
+            #expect(micro.browser.tabs.map(\.id) == [tab.id] && micro.browser.activeTab === tab)
+            #expect(two.isUnseen && main.browser.activeTab === before)
+
+            // Opened in front: it is in front over there.
+            tab.onOpenInNewTab?(try server.url("/three"), true)
+            try #require(await waitUntil { main.browser.tabs.count == count + 2 })
+            let three = try #require(main.browser.page(at: try server.url("/three").absoluteString))
+            #expect(main.browser.activeTab === three)
+            #expect(micro.browser.tabs.map(\.id) == [tab.id] && micro.browser.activeTab === tab)
+
+            // A popup is the page it already is: the same web view, so what it was opened with goes with it.
+            let popup = WKWebView(frame: .zero, configuration: WebViewPool.makeConfiguration())
+            tab.onNewWindow?(popup, true)
+            try #require(await waitUntil { main.browser.tabs.contains { $0.liveView?.webKit === popup } })
+            #expect(micro.browser.tabs.map(\.id) == [tab.id])
+            finish(app)
+            withExtendedLifetime(server) {}
+        }
+    }
+
+    @Test func closingAMicroWindowClosesItsPageAndReopensAsMicro() async throws {
+        try await withProfile { profile in
+            let savedMenus = (NSApp.mainMenu, NSApp.windowsMenu, NSApp.helpMenu, NSApp.servicesMenu)
+            let app = run()
+            let main = app.newWindow(profile: profile, show: false)
+            let tab = unloadedPage("https://one.example/", in: main)
+            let micro = try #require(main.moveToMicroWindow(tab))
+            let database = main.context.database
+            let menu = MainMenu(application: app)
+            menu.install()
+            defer { (NSApp.mainMenu, NSApp.windowsMenu, NSApp.helpMenu, NSApp.servicesMenu) = savedMenus }
+            let root = try #require(NSApp.mainMenu)
+            app.focus(micro)
+
+            let event = try #require(NSEvent.keyEvent(
+                with: .keyDown, location: .zero, modifierFlags: .command, timestamp: 0, windowNumber: 0, context: nil,
+                characters: "w", charactersIgnoringModifiers: "w", isARepeat: false, keyCode: 0
+            ))
+            #expect(root.performKeyEquivalent(with: event), "Command-W")
+
+            #expect(micro.isClosed, "the window closed, not only its tab")
+            #expect(!app.windows.contains { $0 === micro } && app.windows.contains { $0 === main })
+            let saved = try #require(BrowserModel.savedWindows(in: database, includeClosed: true).first { $0.id == micro.windowID })
+            #expect(saved.closedAt != nil && saved.windowKind == .micro)
+
+            app.reopenLastClosedWindow()
+
+            let reopened = try #require(app.windows.first { $0.windowID == micro.windowID })
+            #expect(reopened.isMicro)
+            #expect(reopened.browser.tabs.map(\.urlString) == ["https://one.example/"], "the same page")
+            #expect(reopened.browser.attachedPinStore == nil)
+            finish(app)
+        }
+    }
+
+    @Test func aMicroWindowWhoseOwnPageClosesRetiresItsSession() async throws {
+        try await withProfile { profile in
+            let app = run()
+            let main = app.newWindow(profile: profile, show: false)
+            let tab = unloadedPage("https://one.example/", in: main)
+            let micro = try #require(main.moveToMicroWindow(tab))
+            let database = main.context.database
+            micro.browser.saveBlocking()
+
+            tab.onCloseRequested?()
+
+            try #require(await waitUntil { micro.isClosed })
+            #expect(!BrowserModel.savedWindows(in: database, includeClosed: true).contains { $0.id == micro.windowID })
+            #expect(main.browser.tab(id: tab.id) == nil && tab.isClosed)
+            finish(app)
+        }
+    }
+
+    @Test func theWindowMenuMovesThePageOutAndBack() async throws {
+        try await withProfile { profile in
+            let savedMenus = (NSApp.mainMenu, NSApp.windowsMenu, NSApp.helpMenu, NSApp.servicesMenu)
+            let app = run()
+            let main = app.newWindow(profile: profile, show: false)
+            let tab = unloadedPage("https://one.example/", in: main)
+            let menu = MainMenu(application: app)
+            menu.install()
+            defer {
+                (NSApp.mainMenu, NSApp.windowsMenu, NSApp.helpMenu, NSApp.servicesMenu) = savedMenus
+                finish(app)
+            }
+            let root = try #require(NSApp.mainMenu)
+            let item = try #require(root.items.compactMap(\.submenu).flatMap(\.items)
+                .first { $0.title == String(localized: "Move to Micro Window") })
+            #expect(item.keyEquivalent == "N" && item.keyEquivalentModifierMask == [.command, .option])
+
+            app.focus(main)
+            #expect(menu.validateMenuItem(item) && item.title == String(localized: "Move to Micro Window"))
+            let address = tab.urlString
+            tab.urlString = ""
+            #expect(!menu.validateMenuItem(item), "a page with no address has nothing to move")
+            tab.urlString = address
+            let micro = try #require(main.moveToMicroWindow(tab))
+            app.focus(micro)
+            #expect(menu.validateMenuItem(item) && item.title == String(localized: "Move Back to Main Window"))
+        }
+    }
+
     // MARK: - Window
 
     @Test func floatOnTopRaisesTheLevelAndJoinsEveryDesktop() async throws {
@@ -306,9 +579,10 @@ struct MicroWindowTests {
 
             #expect(window.level == .normal)
             #expect(window.collectionBehavior == [.fullScreenNone], "a micro window never enters full screen")
-            #expect(window.minSize == MicroWindowMetrics.minSize)
+            // AppKit reports the frame, which is the content size and the band the traffic lights sit in.
+            #expect(window.minSize.width == MicroWindowMetrics.minSize.width)
+            #expect(window.minSize.height >= MicroWindowMetrics.minSize.height)
             #expect(mainWindow.collectionBehavior.contains(.fullScreenPrimary), "a standard window does")
-            #expect(mainWindow.minSize.width == BrowserWindowMetrics.minWidth)
             #expect(!micro.floatsOnTop)
 
             micro.floatsOnTop = true

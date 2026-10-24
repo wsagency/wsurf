@@ -69,6 +69,7 @@ extension AppCoordinator {
         browser.onTabClosed = { [weak self] tab in
             extensionTabClosed?(tab)
             self?.tabDidClose(tab)
+            self?.closeMicroWindowIfEmpty()
         }
         let extensionTabChanged = browser.onActiveTabChanged
         browser.onActiveTabChanged = { [weak self] newTab, previousTab in
@@ -81,6 +82,7 @@ extension AppCoordinator {
             applyHoverShield()
             updateWindowAppearance()
         }
+        configureMicroCallbacks()
     }
 
     var windowTitle: String {
@@ -161,7 +163,12 @@ extension AppCoordinator {
     func windowDidClose() {
         guard application?.isTerminating != true, beginClosingWindow() else { return }
         if !profiles.isPrivate {
-            browser.markSessionClosed()
+            // A micro window whose page left or closed has nothing to reopen.
+            if isMicro, browser.tabs.isEmpty {
+                browser.retireSession()
+            } else {
+                browser.markSessionClosed()
+            }
         }
         conversationLog.saveBlocking()
         stopAgent()

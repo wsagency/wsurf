@@ -274,6 +274,9 @@ final class MainMenu: NSObject, NSMenuItemValidation {
         menu.addItem(chain("Minimize", #selector(NSWindow.performMiniaturize(_:)), key: "m"))
         menu.addItem(chain("Zoom", #selector(NSWindow.performZoom(_:))))
         menu.addItem(command("Float on Top", #selector(toggleFloatOnTop)))
+        menu.addItem(command(
+            "Move to Micro Window", #selector(moveToMicroWindow), key: "n", modifiers: [.command, .option, .shift]
+        ))
         menu.addItem(.separator())
         menu.addItem(command("Show Next Tab", #selector(nextTab), key: "]", modifiers: [.command, .shift]))
         menu.addItem(command("Show Previous Tab", #selector(previousTab), key: "[", modifiers: [.command, .shift]))
@@ -431,6 +434,14 @@ final class MainMenu: NSObject, NSMenuItemValidation {
     }
     @objc private func toggleFloatOnTop() {
         coordinator.floatsOnTop.toggle()
+    }
+    /// Pops the page in front out into a micro window, or, in one, moves it back to the main window.
+    @objc private func moveToMicroWindow() {
+        if coordinator.isMicro {
+            coordinator.moveBackToMainWindow()
+        } else if let tab = coordinator.browser.activeTab {
+            coordinator.moveToMicroWindow(tab)
+        }
     }
     @objc private func movePlayerToCorner(_ sender: NSMenuItem) {
         guard let raw = sender.representedObject as? String, let corner = MediaPlayerCorner(rawValue: raw) else { return }
@@ -672,13 +683,18 @@ final class MainMenu: NSObject, NSMenuItemValidation {
         }
     }
 
-    /// What a micro window changes: Float on Top, shown only there, and the items it has no use for. false refuses the item;
-    /// anything else leaves it to `validateMenuItem`.
+    /// What a micro window changes: Float on Top, shown only there, Move to Micro Window and back, and the items it has no use
+    /// for. false refuses the item; anything else leaves it to `validateMenuItem`.
     private func validateMicroItem(_ menuItem: NSMenuItem) -> Bool? {
         if menuItem.action == #selector(toggleFloatOnTop) {
             menuItem.isHidden = !coordinator.isMicro
             menuItem.state = coordinator.floatsOnTop ? .on : .off
             return coordinator.isMicro
+        }
+        if menuItem.action == #selector(moveToMicroWindow) {
+            let title: LocalizedStringResource = coordinator.isMicro ? "Move Back to Main Window" : "Move to Micro Window"
+            menuItem.title = String(localized: title)
+            return MicroWindowBadge.offer(for: coordinator, tab: coordinator.browser.activeTab) != nil
         }
         guard coordinator.isMicro, let action = menuItem.action, Self.notInMicroWindows.contains(action) else { return nil }
         return false

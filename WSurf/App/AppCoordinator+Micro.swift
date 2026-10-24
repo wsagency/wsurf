@@ -38,4 +38,87 @@ extension AppCoordinator {
         return app.browsingWindow(for: self)
             ?? app.newWindow(profile: profiles.isPrivate ? profiles.profileToReturnTo : profiles.current)
     }
+
+    // MARK: - Moving a page out and back
+
+    /// Whether `tab` can move to a micro window: a page of this window that shows a site. Settings, History, Downloads and
+    /// the vault pages stay out, so none of them is ever drawn without chrome, always on top and on every desktop. A private
+    /// tab stays in its own session and its windows.
+    func canMoveToMicroWindow(_ tab: BrowserTab) -> Bool {
+        !isMicro && !isClosed && !profiles.isPrivate && application != nil
+            && browser.tabsByID[tab.id] === tab && !tab.isClosed
+            && tab.internalPage == nil && tab.extensionBaseURL == nil && !tab.urlString.isEmpty
+    }
+
+    /// Moves `tab`, the live page and all it holds, into a new micro window and shows that window. The page is not
+    /// reloaded; if it was a pin, the pin stays here with an unloaded page, and the page is an ordinary tab over there.
+    @discardableResult
+    func moveToMicroWindow(_ tab: BrowserTab) -> AppCoordinator? {
+        guard canMoveToMicroWindow(tab), let application else { return nil }
+        let micro = application.newWindow(profile: profiles.current, settingsOwner: profiles.current, show: false, kind: .micro)
+        let placeholder = micro.browser.activeTab
+        guard moveTab(tab, to: micro) else {
+            micro.closeWindow()
+            return nil
+        }
+        if let placeholder {
+            micro.browser.close(placeholder, recordForReopening: false)
+        }
+        return micro
+    }
+
+    /// Moves `tab` of this micro window to the regular window used last, or to a new one when there is none. A page that
+    /// was opened in the background stays in the background there. Moving it takes it out of any hold a connected app
+    /// or the assistant had on it, as dragging a tab to another window does.
+    @discardableResult
+    func giveToMainWindow(_ tab: BrowserTab, activate: Bool) -> Bool {
+        guard isMicro, !isClosed, browser.tabsByID[tab.id] === tab, let application else { return false }
+        guard let main = application.browsingWindow(for: self) else {
+            moveTabToNewWindow(tab)
+            return browser.tabsByID[tab.id] == nil
+        }
+        guard main.browser.adoptTab(tab, from: browser, activate: activate) else { return false }
+        if activate {
+            main.showBrowser()
+        } else {
+            tab.isUnseen = true
+        }
+        return true
+    }
+
+    /// Move Back to Main Window: the page in front goes where it came from, and this window closes.
+    func moveBackToMainWindow() {
+        guard isMicro, let tab = browser.activeTab else { return }
+        giveToMainWindow(tab, activate: true)
+    }
+
+    /// A micro window holds exactly one page. Any other tab that reaches it, by a link, a popup, an extension or the
+    /// assistant, moves to the main window as it is, and the window closes when its own page leaves.
+    func configureMicroCallbacks() {
+        guard isMicro else { return }
+        let previous = browser.onTabOpened
+        browser.onTabOpened = { [weak self] tab in
+            previous?(tab)
+            // After the tab has been made, so an opener that chose to show it has already done so.
+            Task { @MainActor [weak self, weak tab] in
+                guard let self, let tab else { return }
+                handOff(tab)
+            }
+        }
+        // Assigned, not chained: nothing else sets it, and a second call of `configureWindowCallbacks` stays harmless.
+        browser.onTabTransferredOut = { [weak self] _, _ in self?.closeMicroWindowIfEmpty() }
+    }
+
+    private func handOff(_ tab: BrowserTab) {
+        guard browser.tabs.count > 1, browser.tabsByID[tab.id] === tab else { return }
+        giveToMainWindow(tab, activate: browser.activeTabID == tab.id)
+    }
+
+    /// A micro window with no page left has nothing to show: it closes.
+    func closeMicroWindowIfEmpty() {
+        guard isMicro, !isClosed, browser.tabs.isEmpty else { return }
+        Task { @MainActor [weak self] in
+            self?.closeWindow()
+        }
+    }
 }
