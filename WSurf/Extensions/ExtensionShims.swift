@@ -227,37 +227,141 @@ nonisolated enum ExtensionShims {
     /// Stand-ins for Chrome APIs that WebKit does not provide. An extension that
     /// uses one without a guard throws when the script loads. In a background
     /// script that happens before the extension registers its listeners, so its
-    /// popup and content scripts can never connect. The stand-in events never
-    /// fire. The `privacy` settings stay absent, so a check for one still reads
-    /// as unsupported. A native API is never replaced.
+    /// popup and content scripts can never connect. With the stand-ins the
+    /// extension starts and only that feature is inert.
+    ///
+    /// They are plain objects inside the extension's own scripts. A call reaches
+    /// nothing outside them: no native API, no WSurf message handler, no
+    /// permission request. A native API is never replaced, a namespace is added
+    /// only for a permission the manifest declares, and an event that WebKit
+    /// lacks never fires. `declarativeContent` stays absent on purpose: code that
+    /// guards on it goes on to build rules and matchers, which a stand-in cannot
+    /// answer, so absent is the only value that keeps the guard honest.
     static let gapsSource = """
-    // wsurf-api-gaps
+    \(gapsMarker)
     (() => {
         "use strict";
         try {
             const silent = () => ({ addListener() {}, removeListener() {}, hasListener: () => false });
+            const answer = (args, value, error) => {
+                const callback = typeof args[args.length - 1] === "function" ? args[args.length - 1] : null;
+                if (callback) {
+                    Promise.resolve().then(() => callback(error ? undefined : value));
+                    return;
+                }
+                return error ? Promise.reject(error) : Promise.resolve(value);
+            };
+            const unsupported = name => new Proxy({}, {
+                get(target, key) {
+                    if (typeof key !== "string" || key === "then" || key === "toJSON") {
+                        return undefined;
+                    }
+                    if (!(key in target)) {
+                        target[key] = /^on[A-Z]/.test(key)
+                            ? silent()
+                            : (...args) => answer(args, undefined, new Error(`${name}.${key}() isn't supported in WSurf.`));
+                    }
+                    return target[key];
+                }
+            });
+            const missingEvents = \(missingEvents);
+            const notNamespaces = new Set(\(notNamespaces));
+            const standIns = api => {
+                for (const member of missingEvents) {
+                    const [namespace, event] = member.split(".");
+                    try {
+                        const target = api[namespace];
+                        if (target && !target[event]) {
+                            target[event] = silent();
+                        }
+                    } catch (e) {
+                    }
+                }
+                let declared = [];
+                try {
+                    const permissions = api.runtime?.getManifest?.()?.permissions;
+                    declared = Array.isArray(permissions) ? permissions.filter(name => typeof name === "string") : [];
+                } catch (e) {
+                }
+                if (declared.includes("privacy") && !api.privacy) {
+                    api.privacy = { network: {}, services: {}, websites: {} };
+                }
+                if (api.storage && !api.storage.managed) {
+                    const readOnly = (...args) => answer(args, undefined, new Error("This is a read-only store."));
+                    api.storage.managed = {
+                        get: (...args) => {
+                            let defaults = {};
+                            try {
+                                const keys = args[0];
+                                if (keys && typeof keys === "object" && !Array.isArray(keys)) {
+                                    defaults = structuredClone(keys);
+                                }
+                            } catch (e) {
+                            }
+                            return answer(args, defaults);
+                        },
+                        getBytesInUse: (...args) => answer(args, 0),
+                        getKeys: (...args) => answer(args, []),
+                        set: readOnly, remove: readOnly, clear: readOnly,
+                        onChanged: silent()
+                    };
+                }
+                for (const permission of declared) {
+                    if (notNamespaces.has(permission) || !/^[a-z][A-Za-z.]*$/.test(permission)) {
+                        continue;
+                    }
+                    const path = permission.split(".");
+                    if (path.some(part => !part || part === "then" || part === "prototype" || part in Object.prototype)) {
+                        continue;
+                    }
+                    const last = path.pop();
+                    try {
+                        let parent = api;
+                        for (const part of path) {
+                            parent = parent[part] ??= {};
+                        }
+                        if (!parent[last]) {
+                            parent[last] = unsupported(permission);
+                        }
+                    } catch (e) {
+                    }
+                }
+            };
             const roots = [
                 typeof browser === "object" ? browser : null,
                 typeof chrome === "object" ? chrome : null,
             ];
             for (const api of new Set(roots)) {
-                if (!api) {
-                    continue;
-                }
-                api.privacy ||= { network: {}, services: {}, websites: {} };
-                if (api.webNavigation) {
-                    for (const name of ["onCreatedNavigationTarget", "onHistoryStateUpdated", "onReferenceFragmentUpdated", "onTabReplaced"]) {
-                        api.webNavigation[name] ||= silent();
-                    }
+                if (api) {
+                    standIns(api);
                 }
             }
         } catch (e) {
         }
     })();
+    \(gapsEnd)
     """
 
     private static let gapsMarker = "// wsurf-api-gaps"
+    private static let gapsEnd = "// wsurf-api-gaps-end"
     private static let gapsTag = "<script src=\"/\(gapsFileName)\"></script>"
+
+    private static let missingEvents = jsonArray(ExtensionCompatibility.unsupportedMembers.sorted())
+
+    /// Permissions that name no API namespace, or one whose absence the existing
+    /// shims and extensions rely on (`downloads`), or one that cannot be answered
+    /// (`declarativeContent`). None gets a stand-in.
+    private static let notNamespaces = jsonArray([
+        "activeTab", "background", "clipboardRead", "clipboardWrite", "declarativeContent",
+        "declarativeNetRequestFeedback", "declarativeNetRequestWithHostAccess", "downloads",
+        "downloads.open", "downloads.ui", "favicon", "geolocation", "identity.email",
+        "nativeMessaging", "tabHide", "unlimitedStorage", "webRequestBlocking", "webRequestFilterResponse",
+    ])
+
+    private static func jsonArray(_ names: [String]) -> String {
+        let data = try? JSONSerialization.data(withJSONObject: names, options: [.withoutEscapingSlashes])
+        return data.flatMap { String(data: $0, encoding: .utf8) } ?? "[]"
+    }
 
     private static let backgroundSource = """
     "use strict";
@@ -376,8 +480,11 @@ nonisolated enum ExtensionShims {
     }
 
     /// Puts the API stand-ins in front of code that `ensureApplied` cannot
-    /// reach: a service worker, and the background, popup and options pages.
-    /// Returns whether the package now carries them.
+    /// reach: a service worker, and every HTML page of the package (popup,
+    /// options, side panel, frames an extension opens in a tab). Only files that
+    /// stay inside the package once symlinks are resolved are touched, and the
+    /// manifest is never rewritten, so what the extension asks for does not
+    /// change. Returns whether the package now carries them.
     @discardableResult
     static func ensureGapsApplied(at package: URL) -> Bool {
         let manifestURL = package.appendingPathComponent("manifest.json")
@@ -388,7 +495,7 @@ nonisolated enum ExtensionShims {
         var covered = false
         var changed = false
         let background = root["background"] as? [String: Any]
-        if let worker = (background?["service_worker"] as? String).flatMap({ file($0, in: package) }) {
+        if let worker = (background?["service_worker"] as? String).flatMap({ packageFile($0, in: package) }) {
             // A service worker is one script. A second classic script cannot run
             // ahead of it, so the stand-ins go at the start of the file itself.
             if let outcome = prependGaps(to: worker) {
@@ -397,7 +504,7 @@ nonisolated enum ExtensionShims {
             }
         }
 
-        let pages = declaredPages(in: root).compactMap { file($0, in: package) }
+        let pages = declaredPages(in: root).compactMap { packageFile($0, in: package) } + htmlPages(in: package)
         if !pages.isEmpty {
             try? gapsSource.write(
                 to: package.appendingPathComponent(gapsFileName),
@@ -447,16 +554,54 @@ nonisolated enum ExtensionShims {
         return url
     }
 
+    /// `file`, resolved through symlinks: nil when the real file is outside the package.
+    private static func packageFile(_ path: String, in package: URL) -> URL? {
+        file(path, in: package).flatMap { contained($0, in: package) }
+    }
+
+    private static func contained(_ url: URL, in package: URL) -> URL? {
+        let root = package.resolvingSymlinksInPath().standardizedFileURL.path
+        let real = url.resolvingSymlinksInPath().standardizedFileURL
+        return real.path.hasPrefix(root + "/") ? real : nil
+    }
+
+    /// Every HTML page in the package, whether or not the manifest names it.
+    private static func htmlPages(in package: URL) -> [URL] {
+        let root = package.resolvingSymlinksInPath()
+        guard let files = FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil) else { return [] }
+        return files.compactMap { entry in
+            guard let url = entry as? URL, ["html", "htm"].contains(url.pathExtension.lowercased()) else { return nil }
+            return contained(url, in: root)
+        }
+    }
+
     /// Nil when the file cannot be read or written; otherwise whether it changed.
+    /// The block goes at the very start, and a block from an earlier build is
+    /// replaced, so an installed package picks up new stand-ins.
     private static func prependGaps(to script: URL) -> Bool? {
         guard let text = try? String(contentsOf: script, encoding: .utf8) else { return nil }
-        guard !text.hasPrefix(gapsMarker) else { return false }
+        guard let code = removingGaps(from: text) else { return false }
+        let updated = gapsSource + "\n" + code
+        guard updated != text else { return false }
         do {
-            try (gapsSource + "\n" + text).write(to: script, atomically: true, encoding: .utf8)
+            try updated.write(to: script, atomically: true, encoding: .utf8)
         } catch {
             return nil
         }
         return true
+    }
+
+    /// The script without the stand-in block at its start. Nil when it starts
+    /// with a block whose end cannot be found, which is then left alone.
+    private static func removingGaps(from text: String) -> String? {
+        guard text.hasPrefix(gapsMarker) else { return text }
+        // Builds before the end marker closed the block with a bare `})();` line.
+        for end in [gapsEnd + "\n", "\n})();\n"] {
+            if let range = text.range(of: end) {
+                return String(text[range.upperBound...])
+            }
+        }
+        return nil
     }
 
     /// Nil when the page cannot be read or written; otherwise whether it changed.

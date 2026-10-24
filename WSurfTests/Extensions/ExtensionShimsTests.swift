@@ -397,7 +397,10 @@ struct ExtensionShimRuntimeTests {
         let result = try await run(setup: """
         const native = { addListener() {}, removeListener() {}, hasListener: () => true };
         const nativePrivacy = { services: { passwordSavingEnabled: {} } };
-        const chrome = { webNavigation: { onCompleted: native, onTabReplaced: native } };
+        const chrome = {
+            webNavigation: { onCompleted: native, onTabReplaced: native },
+            runtime: { getManifest: () => ({ permissions: ["privacy"] }) }
+        };
         const browser = { privacy: nativePrivacy, webNavigation: {} };
         """, body: """
         const listener = () => {};
