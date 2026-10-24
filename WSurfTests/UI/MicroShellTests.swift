@@ -151,16 +151,52 @@ struct MicroShellTests {
         #expect(keeps(), "a notice has to be read")
     }
 
-    /// Everything the bar waits on is read from the live objects, not copied: the source says so.
+    /// What cannot be told keeps the bar: no window, and a page with no host to show.
+    @Test func whatCannotBeToldKeepsTheBar() {
+        #expect(MicroShell.isEditing(in: nil), "no window to look at")
+        for address in ["about:blank", "data:text/html,hi", "file:///tmp/page.html", "", "not an address"] {
+            #expect(MicroShell.host(of: address) == nil, "\(address)")
+        }
+
+        let coordinator = AppCoordinator(browser: BrowserModel(database: .temporary()))
+        defer {
+            coordinator.browser.closeAllTabs(saving: false)
+            coordinator.closeWindow()
+        }
+        let tab = coordinator.browser.newTab()
+        func keeps(_ address: String) -> Bool {
+            tab.urlString = address
+            return MicroShell.keepsBar(browser: coordinator.browser, coordinator: coordinator, isEditing: false, voiceOver: false)
+        }
+        #expect(!keeps("https://example.com/"))
+        for address in ["about:blank", "data:text/html,hi", "file:///tmp/page.html", ""] {
+            #expect(keeps(address), "no host, no reason to hide the address: \(address)")
+        }
+    }
+
+    /// Everything the bar waits on is read from the live objects, not copied, and the window is watched by its own
+    /// notifications: the source says so.
     @Test func theBarReadsEveryInputFromTheLiveWindow() throws {
         let shell = try source("WSurf/UI/Shell/Micro/MicroShell.swift")
         for line in [
-            "tab?.permissions.badge", "autofillSave.current", "autofillSave.websiteOffer", "coordinator.statusMessage",
-            "coordinator.pendingAgentQuestion(inChrome: true)", "firstResponder is NSTextView",
-            ".onChange(of: currentHost)", "reveal.siteChanged()", ".onChange(of: coordinator.addressBarFocusToken)",
-            "NSWorkspace.shared.isVoiceOverEnabled",
+            "autofillSave.current", "autofillSave.websiteOffer", "coordinator.statusMessage",
+            "coordinator.pendingAgentQuestion(inChrome: true)", "firstResponder is NSTextView", "coordinator.hasPendingPagePrompt",
         ] {
             #expect(shell.contains(line), "\(line)")
+        }
+        let reveal = try source("WSurf/UI/Shell/Micro/MicroReveal.swift")
+        for line in [
+            "NSWindow.willBeginSheetNotification", "NSWindow.didEndSheetNotification", "NSPopover.didShowNotification",
+            "NSPopover.didCloseNotification", "withObservationTracking", "watchPending", "queue: nil",
+        ] {
+            #expect(reveal.contains(line), "\(line)")
+        }
+        let micro = try source("WSurf/App/AppCoordinator+Micro.swift")
+        for line in [
+            "permissions.pendingAsks", "autofillSave.isPopoverPresented", "NSWorkspace.shared.isVoiceOverEnabled",
+            "isEditing(in: nativeWindow)", "guard let self else { return true }",
+        ] {
+            #expect(micro.contains(line), "\(line)")
         }
     }
 

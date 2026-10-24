@@ -104,6 +104,7 @@ extension AppCoordinator {
     /// assistant, moves to the main window as it is, and the window closes when its own page leaves.
     func configureMicroCallbacks() {
         guard isMicro else { return }
+        microReveal.start()
         let previous = browser.onTabOpened
         browser.onTabOpened = { [weak self] tab in
             previous?(tab)
@@ -128,5 +129,38 @@ extension AppCoordinator {
         Task { @MainActor [weak self] in
             self?.closeWindow()
         }
+    }
+
+    // MARK: - The bar
+
+    func makeMicroReveal() -> MicroReveal {
+        MicroReveal(
+            window: { [weak self] in self?.nativeWindow },
+            host: { [weak self] in MicroShell.host(of: self?.browser.activeTab?.urlString) },
+            focusToken: { [weak self] in self?.addressBarFocusToken ?? 0 },
+            pending: { [weak self] in self?.hasPendingPagePrompt ?? true },
+            // A window that is gone, or a state that cannot be read, keeps the bar.
+            keeps: { [weak self] in
+                guard let self else { return true }
+                return MicroShell.keepsBar(
+                    browser: browser,
+                    coordinator: self,
+                    isEditing: MicroShell.isEditing(in: nativeWindow),
+                    voiceOver: NSWorkspace.shared.isVoiceOverEnabled
+                )
+            }
+        )
+    }
+
+    /// The one flag for "a page is asking something of the person", which keeps the bar down so the real address shows: a
+    /// sheet or a popover open on the window (every JavaScript dialog, sign-in, certificate question, app hand-off and
+    /// passkey step is one), a permission prompt, a password or passkey save offer.
+    var hasPendingPagePrompt: Bool {
+        if isMicro, microReveal.openPrompts > 0 {
+            return true
+        }
+        guard let tab = browser.activeTab else { return false }
+        return !tab.permissions.pendingAsks.isEmpty || tab.permissions.isPopoverPresented
+            || tab.autofillSave.current != nil || tab.autofillSave.websiteOffer != nil || tab.autofillSave.isPopoverPresented
     }
 }

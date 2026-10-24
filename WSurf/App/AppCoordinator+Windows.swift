@@ -176,6 +176,9 @@ extension AppCoordinator {
         voicePreparation?.cancel()
         voicePreparation = nil
         activation.stop()
+        if isMicro {
+            microReveal.stop()
+        }
         memoryPressure.stop()
         sleepTimer.stop()
         media.releaseControl()
