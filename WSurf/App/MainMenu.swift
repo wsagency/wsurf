@@ -572,15 +572,18 @@ final class MainMenu: NSObject, NSMenuItemValidation {
         #selector(toggleAgentInspector), #selector(toggleLyrics), #selector(pinPage), #selector(returnToPin),
     ]
 
+    /// What still works with no browser window open.
+    private static let withoutAWindow: Set<Selector> = [
+        #selector(newWindow), #selector(newTab), #selector(newPrivateWindow), #selector(newMicroWindow),
+        #selector(openSettings), #selector(checkForUpdates), #selector(reopenClosedTab), #selector(showAbout),
+    ]
+
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {  // swiftlint:disable:this cyclomatic_complexity
         if menuItem.action == #selector(reopenClosedWindow) {
             return application?.canReopenWindow == true
         }
         if let application, application.activeCoordinator == nil {
-            return [
-                #selector(newWindow), #selector(newTab), #selector(newPrivateWindow), #selector(newMicroWindow),
-                #selector(openSettings), #selector(checkForUpdates), #selector(reopenClosedTab), #selector(showAbout),
-            ].contains(menuItem.action)
+            return menuItem.action.map(Self.withoutAWindow.contains) ?? false
         }
         guard validateMicroItem(menuItem) != false else { return false }
         switch menuItem.action {
