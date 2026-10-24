@@ -30,10 +30,10 @@ struct FolderSection: View {
     private var isSelected: Bool {
         context.isSelected(item)
     }
-    /// How far the rows inside this folder start to the right of its own row, from the theme's Folder indent. Each
-    /// level of folders adds one. The icons-only sidebar has no room for it.
+    /// How far the rows inside this folder start to the right of its own row, from the theme's Folder indent for the
+    /// level they are on. The levels add up down the tree. The icons-only sidebar has no room for it.
     private var childIndent: CGFloat {
-        sidebarStyle == .full ? BrowserSettings.application.chromeShape.folderIndent : 0
+        sidebarStyle == .full ? BrowserSettings.application.chromeShape.folderIndent(level: depth + 1) : 0
     }
 
     /// How strongly this folder's color draws, from the theme.

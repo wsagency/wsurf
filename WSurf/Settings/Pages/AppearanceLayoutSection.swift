@@ -61,10 +61,17 @@ struct AppearanceLayoutSection: View {
                 pointSlider("Tab padding", caption: "The room between a tab’s edge and its icon.",
                             \.rowPadding, in: ThemeAdjustment.rowPaddingRange)
                 RowSeparator()
-                pointSlider(
-                    "Folder indent", caption: "Moves the tabs and folders inside an open folder in. Each level adds one step.",
-                    \.folderIndent, in: ThemeAdjustment.folderIndentRange, step: ThemeAdjustment.folderIndentStep, zero: "None"
-                )
+                DetailRow(
+                    title: "Folder indent",
+                    caption: "Moves the tabs and folders inside an open folder in. Each level of folders takes its own step, and the steps add up."
+                ) {
+                    EmptyView()
+                }
+                indentSlider("Level 1", caption: "Directly inside a folder.", \.folderIndentLevel1)
+                RowSeparator()
+                indentSlider("Level 2", caption: "Inside a folder that is inside a folder.", \.folderIndentLevel2)
+                RowSeparator()
+                indentSlider("Level 3 and deeper", caption: "Every level below the second.", \.folderIndentLevel3)
                 RowSeparator()
                 DetailRow(title: "Tab icons", caption: "Unloaded tabs stay monochrome.") {
                     SegmentedControl(items: Self.favicons, selection: adjustment.loadedFavicons, onSelect: { update(\.loadedFavicons, $0) })
@@ -124,6 +131,19 @@ struct AppearanceLayoutSection: View {
                     .frame(width: 52, alignment: .trailing)
             }
         }
+    }
+
+    /// One level of the folder indent: the same slider as the others, set in a little from the heading it belongs to.
+    private func indentSlider(
+        _ title: LocalizedStringResource,
+        caption: LocalizedStringResource,
+        _ keyPath: WritableKeyPath<ThemeAdjustment, Double>
+    ) -> some View {
+        pointSlider(
+            title, caption: caption, keyPath,
+            in: ThemeAdjustment.folderIndentRange, step: ThemeAdjustment.folderIndentStep, zero: "None"
+        )
+        .padding(.leading, 16)
     }
 
     /// A drag previews in memory and writes once when it ends; a tap or a keyboard step writes at once.

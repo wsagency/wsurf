@@ -18,7 +18,8 @@ struct ThemeShape: Equatable {
     var tabIconSize: CGFloat = 16
     /// How strongly folder colors draw; see `ThemeAdjustment.folderColorOpacity`.
     var folderColorOpacity: Double = 1
-    var folderIndent: CGFloat = 0
+    /// The step that each level of an open folder moves its rows in; see `ThemeAdjustment.folderIndent(level:)`.
+    var folderIndents: [CGFloat] = [0, 0, 0]
 
     init() {}
 
@@ -32,7 +33,12 @@ struct ThemeShape: Equatable {
         rowPadding = CGFloat(adjustment.rowPadding)
         tabIconSize = CGFloat(adjustment.tabIconSize)
         folderColorOpacity = adjustment.folderColorOpacity
-        folderIndent = CGFloat(adjustment.folderIndent)
+        folderIndents = (1...3).map { CGFloat(adjustment.folderIndent(level: $0)) }
+    }
+
+    /// The step that the rows inside a folder at `level` take; every level from 3 on takes the third.
+    func folderIndent(level: Int) -> CGFloat {
+        folderIndents[min(max(level, 1), 3) - 1]
     }
 
     /// Half the shortest sidebar row. A larger radius would leave a row no straight edge on its ends.
