@@ -164,7 +164,9 @@ private struct TabPreviewCard: View {
             case .folder(let folder, let tabs):
                 GroupFace(
                     symbol: "folder",
-                    tint: folder.color == .gray ? .secondary : folder.color.tint,
+                    tint: folder.color == .gray
+                        ? .secondary
+                        : folder.color.tint(opacity: BrowserSettings.application.chromeShape.folderColorOpacity),
                     title: folder.name,
                     detail: tabs.count == 1
                         ? String(localized: "1 tab")

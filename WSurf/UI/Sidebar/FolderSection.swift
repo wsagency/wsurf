@@ -36,6 +36,11 @@ struct FolderSection: View {
         sidebarStyle == .full ? BrowserSettings.application.chromeShape.folderIndent : 0
     }
 
+    /// How strongly this folder's color draws, from the theme.
+    private var colorOpacity: Double {
+        BrowserSettings.application.chromeShape.folderColorOpacity
+    }
+
     /// How much larger this folder's own row is drawn. The icons-only sidebar has no title and a fixed width, so
     /// it keeps every folder at its normal size.
     private var scale: CGFloat {
@@ -113,7 +118,7 @@ struct FolderSection: View {
                     audible == nil ? (folder.isExpanded ? "folder" : "folder.fill") : "speaker.wave.2.fill",
                     size: 10.5 * iconSize / 16, box: iconSize
                 )
-                    .foregroundStyle(folder.color.tint)
+                    .foregroundStyle(folder.color.tint(opacity: colorOpacity))
                     .frame(width: iconSize, height: iconSize)
                     .help(audible.map { Text("“\($0.title)” is playing") } ?? Text(verbatim: ""))
                     .overlay(alignment: .bottomTrailing) {
@@ -174,7 +179,7 @@ struct FolderSection: View {
             .sidebarRowSelectionEffect(
                 isSelected: style.emphasis != .resting,
                 isHovering: hovering,
-                hoverTint: folder.color.tint,
+                hoverTint: folder.color.tint(opacity: colorOpacity),
                 radius: showsOutline ? Self.rowRadius(depth: depth) : Theme.Radius.row
             )
             .contentShape(Rectangle())
@@ -226,7 +231,7 @@ struct FolderSection: View {
                 contents
                     .padding(.leading, childIndent)
                     // The nearest folder that tints wins: a folder inside a tinted one that tints too keeps its own color.
-                    .environment(\.sidebarIconTint, folder.tintsIcons ? folder.color.tint : outerIconTint)
+                    .environment(\.sidebarIconTint, folder.tintsIcons ? folder.color.tint(opacity: colorOpacity) : outerIconTint)
             }
         }
         .padding(showsOutline ? Self.outlineInset : 0)
@@ -235,7 +240,7 @@ struct FolderSection: View {
                 let shape = RoundedRectangle(cornerRadius: outlineRadius, style: .continuous)
                 shape
                     .fill(folder.color.tint.opacity(
-                        Self.fillOpacity * BrowserSettings.application.sidebarFolderTint
+                        Self.fillOpacity * BrowserSettings.application.sidebarFolderTint * colorOpacity
                     ))
                     .overlay {
                         if let edge = Self.outlineEdgeWidth(
@@ -245,7 +250,7 @@ struct FolderSection: View {
                         ) {
                             shape.strokeBorder(
                                 folder.color.tint.opacity(
-                                    Self.edgeOpacity * BrowserSettings.application.sidebarFolderTint
+                                    Self.edgeOpacity * BrowserSettings.application.sidebarFolderTint * colorOpacity
                                 ),
                                 lineWidth: edge
                             )
@@ -866,6 +871,11 @@ extension TabFolderColor {
 
     var tint: Color {
         Color(nsTint)
+    }
+
+    /// The color at `opacity`. At 1 it is the color itself, as it always was.
+    func tint(opacity: Double) -> Color {
+        opacity >= 1 ? tint : tint.opacity(opacity)
     }
 
     func menuSwatch(isSelected: Bool) -> NSImage {

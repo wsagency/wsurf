@@ -182,6 +182,9 @@ struct ThemeAdjustment: Codable, Equatable {
     var rowPadding = 9.0
     /// Points.
     var tabIconSize = 16.0
+    /// How strongly folder colors draw, 0.2...1: the folder icon, the outline and wash of an open folder, its hover, and
+    /// the icons it tints. 1 is the look folders always had.
+    var folderColorOpacity = 1.0
     /// Points an open folder moves its tabs and subfolders in from its own row, once for each level of folders. 0 keeps
     /// them under the folder's icon, as folders always were.
     var folderIndent = 0.0
@@ -193,6 +196,8 @@ struct ThemeAdjustment: Codable, Equatable {
     static let sidebarMarginRange = 1.0...8.0
     static let rowPaddingRange = 1.0...12.0
     static let tabIconSizeRange = 12.0...24.0
+    static let folderColorOpacityRange = 0.2...1.0
+    static let folderColorOpacityStep = 0.05
     static let folderIndentRange = 0.0...24.0
     static let folderIndentStep = 2.0
 
@@ -222,6 +227,9 @@ struct ThemeAdjustment: Codable, Equatable {
         result.sidebarMargin = clamp(sidebarMargin.rounded(), Self.sidebarMarginRange, default: 6)
         result.rowPadding = clamp(rowPadding.rounded(), Self.rowPaddingRange, default: 9)
         result.tabIconSize = clamp(tabIconSize.rounded(), Self.tabIconSizeRange, default: 16)
+        let opacity = clamp(folderColorOpacity, Self.folderColorOpacityRange, default: 1)
+        let steps = (1 / Self.folderColorOpacityStep).rounded()
+        result.folderColorOpacity = (opacity * steps).rounded() / steps
         let indent = clamp(folderIndent, Self.folderIndentRange, default: 0)
         result.folderIndent = (indent / Self.folderIndentStep).rounded() * Self.folderIndentStep
         return result
@@ -244,6 +252,7 @@ extension ThemeAdjustment {
             sidebarMargin: container.lenient(.sidebarMargin, 6),
             rowPadding: container.lenient(.rowPadding, 9),
             tabIconSize: container.lenient(.tabIconSize, 16),
+            folderColorOpacity: container.lenient(.folderColorOpacity, 1),
             folderIndent: container.lenient(.folderIndent, 0)
         )
     }

@@ -161,6 +161,7 @@ enum SettingsIndex {
                       ["theme", "hue", "color", "colour", "accent", "assistant", "controls", "icons", "url", "opacity", "reset", "palette",
                        "sidebar", "font", "text", "loaded", "unloaded", "sleep", "base", "window", "background", "surface", "toolbar",
                        "primary", "secondary", "contrast", "readable", "custom", "own", "edit", "window background", "base colors",
+                       "folder", "folders", "folder color", "folder opacity", "folder color opacity", "transparency", "faint", "tint",
                       ]),
         SettingsEntry("appearance.layout", .appearance, "Layout",
                       "Choose the page edge and spacing, tab and folder edges, corner rounding, sidebar margin, tab padding, folder indent and tab icons of this theme.",

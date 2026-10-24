@@ -16,6 +16,8 @@ struct ThemeShape: Equatable {
     var sidebarMargin = LoomChrome.canvasInset
     var rowPadding: CGFloat = 9
     var tabIconSize: CGFloat = 16
+    /// How strongly folder colors draw; see `ThemeAdjustment.folderColorOpacity`.
+    var folderColorOpacity: Double = 1
     var folderIndent: CGFloat = 0
 
     init() {}
@@ -29,6 +31,7 @@ struct ThemeShape: Equatable {
         sidebarMargin = CGFloat(adjustment.sidebarMargin)
         rowPadding = CGFloat(adjustment.rowPadding)
         tabIconSize = CGFloat(adjustment.tabIconSize)
+        folderColorOpacity = adjustment.folderColorOpacity
         folderIndent = CGFloat(adjustment.folderIndent)
     }
 

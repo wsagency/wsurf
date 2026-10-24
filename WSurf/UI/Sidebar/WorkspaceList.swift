@@ -583,7 +583,7 @@ struct SidebarDragChip: View {
                     SidebarSymbol(
                         "folder.fill", size: 10.5 * SidebarMetrics.rowIconSize / 16, box: SidebarMetrics.rowIconSize
                     )
-                    .foregroundStyle(folder.color.tint)
+                    .foregroundStyle(folder.color.tint(opacity: BrowserSettings.application.chromeShape.folderColorOpacity))
                     if sidebarStyle == .full {
                         Text(verbatim: folder.name)
                             .font(BrowserSettings.application.sidebarFont)
