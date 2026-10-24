@@ -75,27 +75,37 @@ struct ReleaseNotesList: View {
     let isRunning: (GitHubRelease) -> Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        // Lazy, and each section equatable: the notes of a release far down the page are not parsed or laid out until it scrolls near.
+        LazyVStack(alignment: .leading, spacing: 0) {
             ForEach(Array(releases.enumerated()), id: \.element.id) { index, release in
-                if index > 0 {
-                    RowSeparator()
-                        .padding(.vertical, 20)
-                }
-                ReleaseNotesSection(release: release, isRunning: isRunning(release))
+                ReleaseNotesSection(release: release, isRunning: isRunning(release), isFirst: index == 0)
+                    .equatable()
             }
         }
     }
 }
 
-private struct ReleaseNotesSection: View {
+private struct ReleaseNotesSection: View, Equatable {
     let release: GitHubRelease
     let isRunning: Bool
+    let isFirst: Bool
 
     private var notes: String {
         (release.body ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    /// The hairline above is part of the section, so that the lazy list has one item per release.
     var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if !isFirst {
+                RowSeparator()
+                    .padding(.vertical, 20)
+            }
+            details
+        }
+    }
+
+    private var details: some View {
         VStack(alignment: .leading, spacing: 14) {
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 7) {

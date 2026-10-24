@@ -49,6 +49,7 @@ struct DownloadsView: View {
                                     preview(item, toggling: false)
                                 }
                             )
+                            .equatable()
                         }
                     }
                 }
@@ -123,13 +124,20 @@ struct DownloadsView: View {
     }
 }
 
-private struct DownloadFileRow: View {
+/// Equatable on what the row shows, not on its two actions: they act on the item, so while the item is unchanged they cannot differ.
+/// One download's progress then redraws that row, not every row of the list.
+private struct DownloadFileRow: View, Equatable {
     let item: DownloadManager.Item
     let downloads: DownloadManager
     let browser: BrowserModel
     let isSelected: Bool
     let onSelect: () -> Void
     let onPreview: () -> Void
+
+    static func == (lhs: DownloadFileRow, rhs: DownloadFileRow) -> Bool {
+        lhs.item == rhs.item && lhs.isSelected == rhs.isSelected
+            && lhs.downloads === rhs.downloads && lhs.browser === rhs.browser
+    }
 
     @State private var hovering = false
 
