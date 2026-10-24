@@ -163,6 +163,12 @@
     "Developer access works only in this profile, so connected apps never use your everyday sign-ins." : {
       "comment" : "Caption under the Developer profile menu on the Connected apps page."
     },
+    "Developer Mode for “%@”" : {
+      "comment" : "Item in View > Developer that turns Developer mode on or off for one website; a check mark shows it is on. %@ is the website’s host name, such as localhost, and is never translated. Title Case. Quotation marks are curly. Developer mode is a browsing aid for web developers and is not the same as the Developer access of connected apps."
+    },
+    "Developer Mode for This Website" : {
+      "comment" : "Item in View > Developer that turns Developer mode on or off for the website of the current page; a check mark shows it is on. Shown while no page with a website address is open (the item is then dimmed). Title Case. See also Developer Mode for “%@”."
+    },
     "Developer profile" : {
       "comment" : "Row title on the Connected apps page for the menu that chooses the only profile where paired apps can work without asking."
     },
@@ -757,6 +763,9 @@
     },
     "%@ out" : {
       "comment" : "The other half of the same footer line in the agent activity column: %@ is an abbreviated count of tokens the model produced, and “out” is the short form of “returned”. Must balance the “%@ in” string beside it; extremely tight."
+    },
+    "Outline Elements" : {
+      "comment" : "Item in the Developer Tools menu that draws a thin red outline around every element of the page so the layout can be seen. A check mark shows when it is on. Outline is a verb. Title Case."
     },
     "%@ Suggestions" : {
       "comment" : "Section heading over the search-engine completions in the address bar results list and in the ⌘K palette. %@ is the name of the chosen search engine (DuckDuckGo, Google, Bing…) — a product name, never translated. Title Case."
@@ -1451,8 +1460,8 @@
     "Add extensions from the Chrome Web Store or Firefox Add-ons." : {
       "comment" : "Caption under the Add extensions heading. These refers to the extensions listed below it. Chrome and Firefox are browser names and are never translated; their stores are the websites the extensions are downloaded from, and opening a store page in WSurf is how the reader installs more."
     },
-    "Add Inspect Element to a page’s right-click menu." : {
-
+    "Add Inspect Element to a page’s right-click menu. Websites in Developer mode, such as localhost, keep it even when this is off." : {
+      "comment" : "Caption of the Web Inspector row in Settings > Advanced, and the same wording in the Settings search index. The switch adds Inspect Element to a page’s right-click menu; the second sentence says websites in Developer mode (localhost and other local addresses, or any website the person turned it on for) keep it when the switch is off. Curly apostrophe."
     },
     "Add it to this Mac with your unlock passkey. Its entries download when you unlock it." : {
       "comment" : "Caption of the Vault on your other devices card."
@@ -1930,9 +1939,6 @@
     "Cancel" : {
       "comment" : "The standard Cancel button in confirmation sheets and alerts throughout the app. Use the system's own wording for it."
     },
-    "Cancel shortcut recording" : {
-      "comment" : "Tooltip on the shortcut recorder in Settings > Voice while it is listening for a key combination; pressing it stops without recording anything."
-    },
     "Canceled" : {
       "comment" : "Status label on a download the user stopped."
     },
@@ -2185,6 +2191,12 @@
     "Clear the history in \"%@\"?" : {
 
     },
+    "Clear Website Data…" : {
+      "comment" : "Item in the Developer Tools menu that, after a confirmation, removes the cookies and stored data of the website shown and reloads the page. Clear is a verb. Title Case; the ellipsis means a confirmation follows."
+    },
+    "Clear website data for “%@”?" : {
+      "comment" : "Question in the confirmation sheet before Clear Website Data. %@ is the website’s address with its port, such as http://localhost:5173, and is never translated. Sentence case, ends with a question mark; quotation marks are curly."
+    },
     "Clear…" : {
       "comment" : "Button on the Downloads settings page that raises the confirmation for emptying the download list. A verb, with a real ellipsis (…) promising a dialog."
     },
@@ -2299,7 +2311,7 @@
       "comment" : "Tooltip on the arrows button while the side panel fills the window. It puts the panel back to its narrow width beside the page. Pairs with “Expand Side Panel”. Title Case."
     },
     "Collapsed" : {
-
+      "comment" : "VoiceOver value of a control that shows or hides what belongs to it, while that content is hidden: a trail of visited pages on the History page and the start page (the row’s label is the title of the first page), a folder of another Mac’s tabs in the sidebar, the assistant’s work history and activity steps, and other expandable sections. Title Case."
     },
     "Color" : {
       "comment" : "Label of the color swatches that tint a profile’s symbol."
@@ -2436,6 +2448,9 @@
     "Copy Question" : {
 
     },
+    "Copy Screenshot" : {
+      "comment" : "Command in the Developer Tools menu and in the ⌘K palette that copies a picture of the page as it is shown to the clipboard. Copy is a verb. Title Case."
+    },
     "Copy this answer" : {
 
     },
@@ -2456,6 +2471,9 @@
     },
     "Couldn’t check for updates" : {
       "comment" : "Status line in the update row on the About settings page when the check failed. Curly apostrophe. Also the title of the sidebar update card when the check fails; the two slots share this key."
+    },
+    "Couldn’t clear all website data" : {
+      "comment" : "Short notice in the address field when Clear Website Data failed or removed only part of the data. Sentence case, curly apostrophe, no full stop."
     },
     "Couldn’t compact. Context unchanged." : {
 
@@ -2519,6 +2537,9 @@
     },
     "Couldn’t summarize this page." : {
 
+    },
+    "Couldn’t take a screenshot" : {
+      "comment" : "Short notice in the address field when Copy Screenshot could not capture the page. Sentence case, curly apostrophe, no full stop."
     },
     "Couldn’t transcribe the recording." : {
       "comment" : "Brief status line shown when speech recognition fails. The recording is what the user just said."
@@ -2624,6 +2645,9 @@
     },
     "Developer settings…" : {
 
+    },
+    "Developer Tools" : {
+      "comment" : "Tooltip and accessibility label of the bug-shaped button in the address field of a website that is in Developer mode. Pressing it opens a menu of tools for web developers. Title Case, plural noun phrase."
     },
     "Dictation and read aloud" : {
 
@@ -2902,7 +2926,7 @@
       "comment" : "Tooltip on the arrows button in the side panel’s tab strip while the panel is narrow. It makes the panel fill the window beside the sidebar. Pairs with “Collapse Side Panel”. Title Case."
     },
     "Expanded" : {
-
+      "comment" : "VoiceOver value of a control that shows or hides what belongs to it, while that content is listed beneath it: a trail of visited pages on the History page and the start page (the row’s label is the title of the first page), a folder of another Mac’s tabs in the sidebar, the assistant’s work history and activity steps, and other expandable sections. Title Case."
     },
     "Experimental features may break websites. Reload the page to apply changes." : {
       "comment" : "Caption of the WebKit feature flags page: these are WebKit's own experimental switches, and a page has to be reloaded before a change takes effect."
@@ -3032,6 +3056,9 @@
     },
     "Flights to Lisbon" : {
 
+    },
+    "Float on Top" : {
+      "comment" : "Window menu item (checkmark when on, shown only in a Micro window) and, with “Stop Floating on Top”, the tooltip of a button in the Micro window’s bar. While on, the Micro window stays above other windows, on every desktop and over full-screen apps, like a picture-in-picture window. Title Case."
     },
     "Folder name" : {
       "comment" : "Placeholder in the inline rename field on a sidebar folder row. Sentence case, and very narrow — the field is only as wide as a sidebar row."
@@ -3629,9 +3656,6 @@
     "Looking for related tabs…" : {
 
     },
-    "Looking for the notes…" : {
-      "comment" : "Line on the Release Notes page while the app fetches the notes from GitHub. Ends with an ellipsis character, not three full stops."
-    },
     "Low" : {
       "comment" : "The second of the four Thinking levels in Settings > Provider (None, Low, Medium, High). One segment of a segmented control, so space is tight."
     },
@@ -3670,6 +3694,9 @@
     },
     "Manually" : {
 
+    },
+    "Match System" : {
+      "comment" : "Choice in the Page Appearance submenu of the Developer Tools menu: the page follows the Mac’s light or dark appearance. A check mark shows the current choice. Title Case, like the macOS wording."
     },
     "Max" : {
       "comment" : "Label for the highest Thinking level in model and provider settings."
@@ -3817,6 +3844,9 @@
     "Move a visible pointer over the page." : {
 
     },
+    "Move Back to Main Window" : {
+      "comment" : "The same Window menu item and address-bar icon as “Move to Micro Window”, shown in a Micro window instead: it moves the page back to the regular browser window it came from and closes the Micro window. Title Case verb phrase."
+    },
     "Move Bar to Bottom" : {
       "comment" : "The same View menu command when the floating bar is at the top; it moves the bar to the bottom. Title Case."
     },
@@ -3861,6 +3891,9 @@
     },
     "Move to Folder" : {
       "comment" : "Title of the submenu in a sidebar context menu that lists the folders the tab, or the whole selection, can be filed into. Title Case."
+    },
+    "Move to Micro Window" : {
+      "comment" : "Moves the current tab out of its window into a new Micro window (a small window that shows only the page). Three places: the Window menu item (Option-Shift-Command-N), the tab’s right-click menu in the sidebar, and the tooltip and VoiceOver label of a small icon in the address bar beside Reader and the pin. The page moves as it is; nothing reloads. Title Case verb phrase, like “Move to Folder”."
     },
     "Move up or down a page." : {
       "comment" : "Caption for the Scroll tool in assistant settings."
@@ -3930,6 +3963,9 @@
     },
     "New Folder…" : {
       "comment" : "Last item of that “Move to Folder” submenu; it makes a new folder with the rows the menu acts on — the one tab, or every selected row — in it. The real ellipsis character marks that a name is asked for — keep it. Title Case."
+    },
+    "New Micro Window" : {
+      "comment" : "File menu item (Option-Command-N). Opens a Micro window: a small browser window that shows only the page, with no visible controls until the pointer reaches the top of the window, where a bar and the window buttons slide down. Title Case, like “New Window” and “New Private Window”."
     },
     "New Profile" : {
 
@@ -4001,10 +4037,10 @@
 
     },
     "No notes are published yet." : {
-      "comment" : "Line on the Release Notes page when GitHub returns no releases at all. A Try Again button sits below it. Not an error: the fetch may simply have failed."
+      "comment" : "Line on the Release Notes page if the notes that ship inside the app are missing. It should never be seen. Not an error message to act on: there is no button."
     },
     "No notes for this release." : {
-      "comment" : "Shown in the release notes sheet when the update carries no description."
+      "comment" : "Shown on the Release Notes page under a version whose section in the notes has no text."
     },
     "No open tabs" : {
       "comment" : "Shown in the sidebar in place of another device’s list when that device shares no tabs. Sentence case."
@@ -4219,6 +4255,9 @@
     "Open Image in New Tab" : {
       "comment" : "Item in the web page’s right-click menu. Title Case."
     },
+    "Open In" : {
+      "comment" : "Item in the Developer Tools menu that opens a submenu listing the other web browsers installed on this Mac; choosing one opens the page’s address there. Short, Title Case; the browser names follow in the submenu."
+    },
     "Open in current tab" : {
       "comment" : "Shown with a history result in the command palette while Option is held."
     },
@@ -4344,6 +4383,9 @@
     },
     "Page Actions" : {
 
+    },
+    "Page Appearance" : {
+      "comment" : "Item in the Developer Tools menu that opens a submenu to preview the page in light or dark appearance. Noun phrase, Title Case. Its choices are Match System, Light and Dark."
     },
     "Page Down" : {
       "comment" : "Legend printed on a key cap in the shortcut recorder in Settings, where the user records the key that activates the assistant. Use the word your language's Apple keyboards print on that key; the cap is only a few characters wide. This one is the Page Down navigation key."
@@ -4523,7 +4565,7 @@
       "comment" : "First of three things to try, on the last onboarding screen. ⌘K opens the command palette; keep the shortcut as it is."
     },
     "Press a shortcut. Press Escape to cancel." : {
-      "comment" : "Instruction shown under the keyboard-shortcut field while it is listening for a keystroke. Escape is the name of the key — use the name printed on keyboards in the target language."
+      "comment" : "Tooltip on the keyboard-shortcut field in Settings while it is listening for a keystroke. It no longer appears as a line under the field. Escape is the name of the key — use the name printed on keyboards in the target language."
     },
     "Press buttons and follow links." : {
       "comment" : "Caption for the Click tool in assistant settings."
@@ -4841,7 +4883,7 @@
       "comment" : "Item in a sidebar context menu, shown only when the tab, or a row of the selection, is inside a folder; it moves the rows back out into the main list without closing them. Title Case."
     },
     "Remove from History" : {
-      "comment" : "Tooltip on the close button of a history row on the start page; it deletes that one entry from history. Title Case."
+      "comment" : "Context-menu item, and tooltip on the close button, of a history row on the History page and on the start page; it deletes that one entry from history. Title Case."
     },
     "Remove from iCloud" : {
       "comment" : "Title of the row, and the destructive button of its confirmation, that deletes a vault’s encrypted copy from the person’s iCloud account. Sentence case for the row; the button reads the same."
@@ -5160,6 +5202,9 @@
     "Scopes, separated by spaces" : {
 
     },
+    "Screenshot Copied" : {
+      "comment" : "Short notice in the address field after Copy Screenshot succeeded. Past participle, Title Case, no full stop."
+    },
     "Scroll" : {
       "comment" : "Tool name in assistant settings: scrolling a web page."
     },
@@ -5382,6 +5427,9 @@
     "Show Extension" : {
       "comment" : "Command in the right-click menu of an extension’s toolbar button, which puts the button back on the toolbar. The same item reads Hide Extension when it is already there, so the two should stay parallel. Title Case, Show is a verb."
     },
+    "Show Frame Rate" : {
+      "comment" : "Item in the Developer Tools menu that shows a small badge with the page’s frames per second over the page. A check mark shows when it is on. Show is a verb. Title Case."
+    },
     "Show full website address" : {
       "comment" : "Title of a switch in the Browsing section of the General settings page. When on, the address bar shows the whole page address instead of only the website name."
     },
@@ -5456,6 +5504,9 @@
     },
     "Show video in the player" : {
       "comment" : "Title of the only row on the Experiments settings page, and the title of that same row in Settings search. It turns on the picture inside the media player in the sidebar."
+    },
+    "Show Web Inspector" : {
+      "comment" : "Command in View > Developer, in the Developer Tools menu and in the ⌘K palette (shortcut ⌥⌘I) that opens WebKit’s Web Inspector for the page. Web Inspector is established platform terminology and is the name Safari uses. Show is a verb. Title Case."
     },
     "Show what went wrong" : {
       "comment" : "Tooltip on the warning button beside an extension that reported problems; pressing it opens a panel listing them. Show is a verb."
@@ -5706,6 +5757,9 @@
     "Stop and Run" : {
       "comment" : "Tooltip on the microphone button while it is listening: one click ends the utterance and sends what was heard to the assistant. Two verbs on one control, Title Case; alternates with “Click to Talk”."
     },
+    "Stop Floating on Top" : {
+      "comment" : "Tooltip and VoiceOver label of the Float on Top button in the Micro window’s bar while Float on Top is on. It turns it off. Title Case, the opposite of “Float on Top”."
+    },
     "Stop Listening" : {
       "comment" : "Command that turns the microphone off. The same command reads “Start Listening” while it is off. Title Case."
     },
@@ -5736,6 +5790,9 @@
     },
     "Stopped. Your progress is saved; choose Continue to resume." : {
 
+    },
+    "Storage, caches and cookies of this exact address are removed, and the page reloads. Other addresses, including its subdomains and parent domain, are left alone." : {
+      "comment" : "Detail text of the Clear Website Data confirmation sheet. It promises that only the address named in the question loses data, not its subdomains or its parent domain, which other websites may share. Two sentences, ends with full stops."
     },
     "Stored on this Mac" : {
       "comment" : "Heading of the list of websites holding data locally. Past participle describing the list below, not an instruction."
@@ -5980,6 +6037,9 @@
     },
     "The page changed before the assistant could use it." : {
 
+    },
+    "The page changed, so nothing was cleared" : {
+      "comment" : "Short notice in the address field when Clear Website Data found that the page had moved to another website (or the website was no longer in Developer mode) while the confirmation was open, so it removed nothing. Sentence case, no full stop."
     },
     "The page couldn’t be saved." : {
       "comment" : "Message of the warning shown when the web archive file could not be written. The reason supplied by macOS follows below it. Curly apostrophe."
@@ -6263,6 +6323,9 @@
     "Try Again…" : {
       "comment" : "Button on the Vault on your other devices card after the passkey gave a different key. Title Case for a command."
     },
+    "Turn Off Developer Mode for “%@”" : {
+      "comment" : "Item at the bottom of the Developer Tools menu that turns Developer mode off for one website. %@ is the website’s host name, such as localhost, and is never translated. Title Case. Quotation marks are curly."
+    },
     "Turn on any Safari extension you already have. The App Store keeps it up to date." : {
       "comment" : "Footnote under the Safari extensions section on the Extensions settings page. The first sentence invites the person to switch on an extension that arrived with an app they installed; the second says updates come through the App Store rather than through WSurf. Safari and App Store are product names and are never translated."
     },
@@ -6411,7 +6474,7 @@
       }
     },
     "Updated to %@" : {
-
+      "comment" : "Two uses of one wording. 1) Title of the card at the bottom of the sidebar, and tooltip and VoiceOver label of its badge in the icons-only sidebar, shown for a few seconds after the first launch of a new build. %@ is the new version number, for example 0.1.12, never translated. 2) Tag on an extension row in Settings > Extensions that was just updated; there %@ is the extension’s version. Past participle, no full stop."
     },
     "Upload" : {
       "comment" : "Button of the confirmation that uploads this Mac’s copy of a vault to iCloud again."
@@ -6527,9 +6590,6 @@
     "View downloads and their saved locations." : {
       "comment" : "Caption describing the Recent downloads list in the Settings search results. Where it was saved means which folder the file went to."
     },
-    "View on GitHub" : {
-      "comment" : "Button in the release notes sheet that opens the release page in a browser. View is a verb; GitHub is a product name — leave as is."
-    },
     "View the installed version and check for updates." : {
       "comment" : "Caption describing the Software update section in the Settings search results. A sentence fragment naming what the section reports."
     },
@@ -6593,6 +6653,9 @@
     "Website data" : {
       "comment" : "Title of the Privacy settings row reporting how many websites are storing something on this Mac, and the same wording in the Settings search index. A noun phrase; sentence case."
     },
+    "Website Data Cleared" : {
+      "comment" : "Short notice in the address field after Clear Website Data succeeded. Past participle, Title Case, no full stop."
+    },
     "Website permissions" : {
       "comment" : "Something a profile keeps separately from every other profile; also the title of the row counting them on a profile’s page."
     },
@@ -6625,6 +6688,9 @@
     },
     "Welcome to WSurf" : {
       "comment" : "Heading of the first onboarding screen, shown under the app icon. WSurf is the application name and is never translated. Keep it short — it is set in large type."
+    },
+    "What’s New" : {
+      "comment" : "Button on the card at the bottom of the sidebar that tells the person WSurf was just updated (“Updated to 0.1.12”). It opens the Release Notes page. In the icons-only sidebar the card is a round badge and this text is not shown. Title Case, a noun phrase, like the menu item “Release Notes…”."
     },
     "what the assistant is doing" : {
       "comment" : "Caption under the Show Agent Activity command in the command palette; the panel lists the steps the assistant is taking. Sentence fragment, lower case."
