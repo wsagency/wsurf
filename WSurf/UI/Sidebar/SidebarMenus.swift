@@ -39,7 +39,7 @@ struct SidebarPinMenuItems: View {
             } label: {
                 Label("Pin This Page", systemImage: "pin")
             }
-            .disabled(tab.urlString.isEmpty)
+            .disabled(tab.pinnableURL == nil)
         } else {
             if tab.isAwayFromPin {
                 Button {

@@ -9,7 +9,7 @@ extension BrowserModel {
     // MARK: - Pinning
 
     func pin(_ tab: BrowserTab) {
-        guard let url = URL(string: tab.urlString), !tab.urlString.isEmpty else { return }
+        guard let url = tab.pinnableURL else { return }
         setPin(url, title: tab.title, for: tab)
     }
 
@@ -79,7 +79,7 @@ extension BrowserModel {
             let pinned = liveFolders[id]?.isPinned == true
             for case .tab(let tabID) in tree.descendants(ofFolder: id) {
                 guard let tab = liveTabs[tabID] else { continue }
-                if pinned, tab.pinnedURL == nil, !tab.urlString.isEmpty, let url = URL(string: tab.urlString) {
+                if pinned, tab.pinnedURL == nil, let url = tab.pinnableURL {
                     tab.pinnedURL = url
                     tab.pinnedTitle = tab.title
                     changed = true
@@ -150,7 +150,7 @@ extension BrowserModel {
             case .tab(let id):
                 guard let tab = tabsByID[id] else { continue }
                 if pinned, tab.pinnedURL == nil {
-                    guard let url = URL(string: tab.urlString), !tab.urlString.isEmpty else { continue }
+                    guard let url = tab.pinnableURL else { continue }
                     tab.pinnedURL = url
                     tab.pinnedTitle = tab.title
                     changed = true

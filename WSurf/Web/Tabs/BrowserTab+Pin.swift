@@ -15,8 +15,20 @@ extension BrowserTab {
         pinnedURL != nil || pinID != nil
     }
 
+    /// A Start pin shows its page while the tab is on the Start page, which a new tab shows with no address of its own.
     var isShowingPin: Bool {
         guard let pinnedURL else { return false }
+        if SystemPages.isStart(pinnedURL) {
+            return urlString.isEmpty || SystemPages.isStart(URL(string: urlString))
+        }
         return urlString == pinnedURL.absoluteString
+    }
+
+    /// The page a pin of this tab keeps: the address it shows, or the Start page for a new tab that shows it.
+    var pinnableURL: URL? {
+        guard !urlString.isEmpty else {
+            return SystemPages.showsStartFace(self) ? SystemPages.start : nil
+        }
+        return URL(string: urlString)
     }
 }

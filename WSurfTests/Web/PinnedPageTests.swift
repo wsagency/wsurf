@@ -188,6 +188,38 @@ struct PinnedPageTests {
         #expect(pin.urlString == "https://pin.test/home")
     }
 
+    /// A pinned new tab keeps the Start page: unloading it away, or Back to Pinned Page, brings back the Start page.
+    @Test func aPinnedNewTabComesBackOnTheStartPage() {
+        let model = model()
+        defer { model.closeAllTabs(saving: false) }
+        page("https://other.test/", in: model, activate: true)
+        let (outer, _) = pinnedFolder(in: model)
+        let fresh = model.newTab(activate: false)
+        model.pin(fresh)
+        let filed = model.newTab(activate: false)
+        model.move([.tab(filed.id)], into: outer)
+
+        for tab in [fresh, filed] {
+            #expect(tab.pinnedURL == SystemPages.start)
+            #expect(tab.isShowingPin && !tab.isAwayFromPin)
+        }
+
+        fresh.urlString = "https://away.test/"
+        #expect(fresh.isAwayFromPin && !fresh.isShowingPin)
+        #expect(model.unload(fresh))
+        #expect(fresh.isDeferred)
+        #expect(fresh.urlString == SystemPages.start.absoluteString)
+        #expect(fresh.pageTitle == SystemPages.startTitle)
+        #expect(fresh.isShowingPin && !fresh.isAwayFromPin)
+        model.activate(fresh)
+        #expect(fresh.urlString == SystemPages.start.absoluteString)
+
+        filed.urlString = "https://away.test/"
+        model.returnToPin(filed)
+        #expect(filed.urlString == SystemPages.start.absoluteString)
+        #expect(filed.isShowingPin && !filed.isAwayFromPin)
+    }
+
     @Test func unloadingAnOrdinaryTabKeepsItsPage() {
         let model = model()
         defer { model.closeAllTabs(saving: false) }
