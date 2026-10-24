@@ -11,11 +11,17 @@ extension BrowserTab {
         pendingNavigationTask?.cancel()
         page.stopLoading()
         stoppedNavigation = true
+        awaitsVisit = false
         isLoading = false
     }
 
     func noteNavigationStarted() {
         stoppedNavigation = false
+        awaitsVisit = true
+    }
+
+    func noteNavigationEnded() {
+        awaitsVisit = false
     }
 
     func reload() {

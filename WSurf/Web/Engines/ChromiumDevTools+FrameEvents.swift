@@ -36,6 +36,8 @@ extension ChromiumDevTools {
             bindingCalled(params)
         case "Page.frameNavigated":
             frameNavigated(params)
+        case "Page.navigatedWithinDocument":
+            navigatedWithinDocument(params)
         case "Page.frameDetached":
             frameDetached(params)
         case "Network.responseReceived":
@@ -117,9 +119,30 @@ extension ChromiumDevTools {
         handler(BrowserScriptMessage(page: owner, body: body, frameInfo: current.browserFrame, name: handlerName))
     }
 
+    /// The main frame moved inside its document (`pushState`, `replaceState`, a fragment, Back or Forward between such
+    /// entries). Only this event proves it: Chromium reports the new address before or after it, and a document that is
+    /// still loading changes the address too. A move that changes nothing but the fragment is a jump, so it is not passed on.
+    private func navigatedWithinDocument(_ params: [String: Any]) {
+        guard let frameID = params["frameId"] as? String, framesByID[frameID]?.isMainFrame == true,
+              let address = params["url"] as? String, let url = URL(string: address) else { return }
+        let previous = mainFrameAddress
+        mainFrameAddress = url
+        guard let previous, Self.withoutFragment(previous) != Self.withoutFragment(url) else { return }
+        page?.didNavigateWithinDocument(to: url)
+    }
+
+    private static func withoutFragment(_ url: URL) -> URL {
+        guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return url }
+        components.fragment = nil
+        return components.url ?? url
+    }
+
     private func frameNavigated(_ params: [String: Any]) {
         guard let frame = params["frame"] as? [String: Any], let parsed = parseFrame(frame, parentID: frame["parentId"] as? String) else { return }
         let restoredFromCache = params["type"] as? String == "BackForwardCacheRestore"
+        if parsed.isMainFrame {
+            mainFrameAddress = parsed.url
+        }
         let old = framesByID[parsed.id]
         frameRevision &+= 1
         framesByID[parsed.id] = parsed

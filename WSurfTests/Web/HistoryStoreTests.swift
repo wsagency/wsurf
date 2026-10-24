@@ -3,6 +3,7 @@
 // Modified for WSurf by wsagency in 2026; based on Linen by Kavoye.
 
 import Foundation
+import GRDB
 import Testing
 
 @testable import WSurf
@@ -369,6 +370,128 @@ struct HistoryStoreTests {
         #expect(store.visits.count == 1)
     }
 
+    /// Every way a visit can disappear while a tab still remembers it as the page it came from.
+    enum Forgetting: CaseIterable, CustomTestStringConvertible {
+        case clear, sinceADate, onlyThatVisit, thePage
+
+        var testDescription: String {
+            "\(self)"
+        }
+
+        @MainActor
+        func perform(on store: HistoryStore, forgetting visit: Int64) {
+            switch self {
+            case .clear:
+                store.clear()
+            case .sinceADate:
+                store.removeEntries(since: .distantPast)
+            case .onlyThatVisit:
+                store.removeVisit(visit)
+            case .thePage:
+                if let entry = store.entries.first {
+                    store.remove(entry)
+                }
+            }
+        }
+    }
+
+    /// A tab keeps the id of its last visit, so a link clicked after Clear History names a visit that is gone.
+    /// The foreign key on `fromVisit` must not turn that into a visit nobody recorded.
+    @Test(arguments: Forgetting.allCases)
+    func aVisitFromAForgottenVisitIsStillRecorded(forgetting: Forgetting) throws {
+        let (store, _) = makeStore()
+        let earlier = try #require(store.record(url: "https://example.com/a", title: "A"))
+        forgetting.perform(on: store, forgetting: earlier)
+
+        let visit = store.record(
+            url: "https://example.com/b",
+            title: "B",
+            transition: .link,
+            fromVisit: earlier
+        )
+
+        #expect(visit != nil)
+        #expect(store.visits.map(\.url) == ["https://example.com/b"])
+        #expect(store.referrerChain(to: try #require(visit)).map(\.url) == ["https://example.com/b"])
+    }
+
+    /// The tab hands over a trail as well as a visit. One that no stored visit carries any more is the trail of
+    /// something Clear History removed, and it ends there.
+    @Test func aTrailThatNoStoredVisitCarriesStartsOver() throws {
+        let (store, _) = makeStore()
+        let first = try #require(store.record(url: "https://example.com/a", title: "A"))
+        store.record(url: "https://example.com/b", title: "B", transition: .link, fromVisit: first, trail: first)
+        store.clear()
+
+        let visit = try #require(store.record(
+            url: "https://example.com/c",
+            title: "C",
+            transition: .link,
+            fromVisit: first,
+            trail: first
+        ))
+
+        #expect(store.visits.map(\.trail) == [visit], "the trail starts again with this visit")
+    }
+
+    @Test func aTrailSurvivesRemovingItsFirstVisit() throws {
+        let (store, _) = makeStore()
+        let first = try #require(store.record(url: "https://example.com/a", title: "A"))
+        let second = try #require(store.record(url: "https://example.com/b", title: "B", trail: first))
+        store.removeVisit(first)
+
+        let third = try #require(store.record(url: "https://example.com/c", title: "C", trail: first))
+
+        #expect(store.visits.map(\.id) == [third, second])
+        #expect(Set(store.visits.map(\.trail)) == [first], "the trail is still carried by the visits that remain")
+    }
+
+    @Test func clearingHistoryRemovesEveryTrail() throws {
+        let (store, database) = makeStore()
+        let first = try #require(store.record(url: "https://example.com/a", title: "A"))
+        store.record(url: "https://example.com/b", title: "B", transition: .link, fromVisit: first, trail: first)
+
+        store.clear()
+
+        #expect(store.visits.isEmpty)
+        try database.writer.read { db throws in
+            #expect(try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM historyVisit") == 0)
+            #expect(try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM historyVisit WHERE trail IS NOT NULL") == 0)
+        }
+    }
+
+    @Test func clearingARangeRemovesTheTrailsInsideItAndKeepsTheOthers() throws {
+        let (store, database) = makeStore()
+        let kept = try #require(store.record(url: "https://example.com/a", title: "A"))
+        let cutoff = Date()
+        let inside = try #require(store.record(url: "https://example.com/b", title: "B"))
+        store.record(url: "https://example.com/c", title: "C", transition: .link, fromVisit: inside, trail: inside)
+
+        store.removeEntries(since: cutoff)
+
+        #expect(store.visits.map(\.id) == [kept])
+        #expect(store.visits.map(\.trail) == [kept])
+        try database.writer.read { db throws in
+            #expect(try Int64.fetchAll(db, sql: "SELECT DISTINCT trail FROM historyVisit") == [kept])
+        }
+        let next = try #require(store.record(url: "https://example.com/d", title: "D", trail: inside))
+        #expect(store.visits.first?.trail == next, "the cleared trail does not come back")
+    }
+
+    /// Pruning by age takes visits, and so trails, the same way a range clear does.
+    @Test func pruningTakesTheTrailsOfOldVisitsToo() throws {
+        let (store, database) = makeStore()
+        store.merge([HistoryStore.Entry(url: "https://example.com/old", title: "Old", date: Date(timeIntervalSinceNow: -90 * 24 * 3600))])
+        let fresh = try #require(store.record(url: "https://example.com/new", title: "New"))
+
+        store.prune(retention: .month)
+
+        #expect(store.visits.map(\.id) == [fresh])
+        try database.writer.read { db throws in
+            #expect(try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM historyVisit") == 1)
+        }
+    }
+
     @Test func removingNoVisitsChangesNothing() {
         let (store, _) = makeStore()
         store.record(url: "https://example.com/a", title: "Only")
@@ -488,5 +611,165 @@ struct HistoryStoreTests {
         #expect(store.entries.first?.title == "Known")
         #expect(store.entries.map(\.url).contains("https://new.example/"))
         #expect(!store.entries.map(\.url).contains("file:///etc/hosts"))
+    }
+
+    @Test func aTitleThatArrivesAfterLoadReplacesThePlaceholder() throws {
+        let (store, database) = makeStore()
+        let url = "https://jira.example/browse/ENEY-6039"
+        let visit = try #require(store.record(url: url, title: "Jira"))
+
+        store.retitle(visit: visit, url: url, title: "[ENEY-6039] Tour cards stay on top - Jira")
+
+        #expect(store.entries.first?.title == "[ENEY-6039] Tour cards stay on top - Jira")
+        #expect(store.visits.first?.title == "[ENEY-6039] Tour cards stay on top - Jira")
+        #expect(store.search("tour cards").map(\.url) == [url])
+        #expect(HistoryStore(database: database).visits.first?.title == "[ENEY-6039] Tour cards stay on top - Jira")
+    }
+
+    @Test func aTitleForAnotherAddressLeavesTheVisitAlone() throws {
+        let (store, _) = makeStore()
+        let visit = try #require(store.record(url: "https://example.com/a", title: "A"))
+
+        store.retitle(visit: visit, url: "https://example.com/b", title: "B")
+        store.retitle(visit: visit, url: "https://example.com/a", title: "")
+
+        #expect(store.entries.map(\.title) == ["A"])
+        #expect(store.visits.map(\.title) == ["A"])
+    }
+
+    /// A page the person cleared must not come back because its title arrived late.
+    @Test(arguments: Forgetting.allCases)
+    func aLateTitleNeverBringsBackAForgottenPage(forgetting: Forgetting) throws {
+        let (store, database) = makeStore()
+        let url = "https://example.com/a"
+        let visit = try #require(store.record(url: url, title: "A"))
+        forgetting.perform(on: store, forgetting: visit)
+
+        store.retitle(visit: visit, url: url, title: "A, finally titled")
+
+        #expect(store.entries.isEmpty)
+        #expect(store.visits.isEmpty)
+        try database.writer.read { db throws in
+            #expect(try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM historyPage") == 0)
+        }
+    }
+
+    @Test func aVisitStartsItsOwnTrailUnlessItContinuesOne() throws {
+        let (store, database) = makeStore()
+        let first = try #require(store.record(url: "https://example.com/a", title: "A"))
+        let second = try #require(store.record(url: "https://example.com/b", title: "B", trail: first))
+        let third = try #require(store.record(url: "https://example.com/c", title: "C"))
+
+        let trails = HistoryStore(database: database).visits.map(\.trail)
+        #expect(trails == [third, first, first])
+        #expect(store.visits.map(\.trail) == [third, first, first])
+        #expect(second != first)
+    }
+
+    @Test func anInPageVisitRemembersWhereItCameFrom() throws {
+        let (store, _) = makeStore()
+        let board = try #require(store.record(url: "https://jira.example/board", title: "Board"))
+        let ticket = try #require(store.record(
+            url: "https://jira.example/browse/1",
+            title: "Ticket",
+            transition: .inPage,
+            fromVisit: board,
+            trail: board
+        ))
+
+        #expect(store.referrerChain(to: ticket).map(\.url) == ["https://jira.example/board", "https://jira.example/browse/1"])
+        #expect(store.visits.first?.transition == .inPage)
+    }
+
+    @Test func olderVisitsLoadInPagesPastTheWindow() {
+        let database = AppDatabase.temporary()
+        let store = HistoryStore(database: database, windowSize: 3)
+        for index in 0..<7 {
+            store.record(url: "https://example.com/\(index)", title: "Page \(index)")
+        }
+        #expect(store.visits.map(\.url).last == "https://example.com/4")
+        #expect(store.hasOlderVisits)
+
+        store.loadOlderVisits(limit: 3)
+        #expect(store.visits.map(\.url) == (1...6).reversed().map { "https://example.com/\($0)" })
+        #expect(store.hasOlderVisits)
+
+        store.loadOlderVisits(limit: 3)
+        #expect(store.visits.count == 7)
+        #expect(store.visits.last?.url == "https://example.com/0")
+        #expect(!store.hasOlderVisits)
+    }
+
+    @Test func aNewVisitKeepsThePagedVisits() {
+        let store = HistoryStore(database: .temporary(), windowSize: 3)
+        for index in 0..<7 {
+            store.record(url: "https://example.com/\(index)", title: "Page \(index)")
+        }
+        store.loadOlderVisits(limit: 3)
+
+        store.record(url: "https://example.com/new", title: "New")
+        #expect(store.visits.count == 7)
+        #expect(store.visits.last?.url == "https://example.com/1")
+
+        store.removeVisits([store.visits[0].id])
+        #expect(store.visits.count == 7)
+        #expect(store.visits.last?.url == "https://example.com/0")
+        #expect(!store.hasOlderVisits)
+    }
+
+    @Test func clearingHistoryEndsPaging() {
+        let store = HistoryStore(database: .temporary(), windowSize: 3)
+        for index in 0..<7 {
+            store.record(url: "https://example.com/\(index)", title: "Page \(index)")
+        }
+        store.loadOlderVisits(limit: 3)
+
+        store.clear()
+
+        #expect(store.visits.isEmpty)
+        #expect(!store.hasOlderVisits)
+    }
+
+    // MARK: - A database saved before trails
+
+    /// History written by an earlier build has no trail column. Opening it adds the column, keeps every visit, and
+    /// lets the next visit start a trail.
+    @Test func aDatabaseFromBeforeTrailsGainsTheColumnAndKeepsItsVisits() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("HistoryBeforeTrails-\(UUID().uuidString).sqlite")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let old = try DatabaseQueue(path: url.path)
+        try old.write { db in
+            try db.execute(sql: """
+                CREATE TABLE historyPage (
+                    url TEXT PRIMARY KEY, title TEXT NOT NULL, visitCount INTEGER NOT NULL DEFAULT 1,
+                    lastVisit DOUBLE NOT NULL);
+                CREATE TABLE historyVisit (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    url TEXT NOT NULL REFERENCES historyPage(url) ON DELETE CASCADE,
+                    visitedAt DOUBLE NOT NULL, transition TEXT NOT NULL,
+                    fromVisit INTEGER REFERENCES historyVisit(id) ON DELETE SET NULL);
+                INSERT INTO historyPage VALUES ('https://example.com/a', 'A', 1, 1000);
+                INSERT INTO historyVisit (url, visitedAt, transition) VALUES ('https://example.com/a', 1000, 'typed');
+                """)
+        }
+        try old.close()
+
+        let database = AppDatabase(at: url)
+        #expect(!database.isEphemeral)
+        let store = HistoryStore(database: database)
+        #expect(store.visits.map(\.url) == ["https://example.com/a"])
+        #expect(store.visits.first?.trail == nil)
+
+        let earlier = try #require(store.visits.first?.id)
+        let visit = try #require(store.record(
+            url: "https://example.com/b", title: "B", transition: .link, fromVisit: earlier
+        ))
+        #expect(store.visits.map(\.trail) == [visit, nil])
+        try database.writer.read { db throws in
+            #expect(try db.columns(in: "historyVisit").contains { $0.name == "trail" })
+            #expect(try db.columns(in: "sessionTab").contains { $0.name == "lastVisit" })
+            #expect(try db.columns(in: "sessionTab").contains { $0.name == "visitTrail" })
+        }
     }
 }

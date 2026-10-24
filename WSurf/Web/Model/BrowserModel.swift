@@ -10,6 +10,7 @@ import Observation
 import os
 import SwiftUI
 import WebKit
+import WSurfVault
 
 @MainActor
 @Observable
@@ -161,13 +162,10 @@ final class BrowserModel {
     func bindCallbacks(to tab: BrowserTab) {
         tab.onNavigationStarted = { [weak self, weak tab] url in
             guard let tab else { return }
+            self?.heldInPageMove[tab.id] = nil
             self?.onNavigationStarted?(tab, url)
         }
-        tab.onNavigationFinished = { [weak self, weak tab] wasRestore in
-            self?.scheduleSave()
-            guard !wasRestore, let tab, !tab.isPrivate else { return }
-            self?.recordVisit(for: tab)
-        }
+        bindHistoryCallbacks(to: tab)
         tab.onSameDocumentNavigation = { [weak self] in
             self?.scheduleSave()
         }
@@ -280,7 +278,16 @@ final class BrowserModel {
         }
     }
 
-    var lastVisitID: [UUID: Int64] = [:]
+    /// What a tab remembers of its History: the last visit it recorded and the trail that visit is on. The trail is the
+    /// tab's own, so a tab a page opened takes the visit as its referrer but starts a trail of its own.
+    struct VisitMemory: Equatable {
+        var visit: Int64
+        var trail: Int64?
+    }
+
+    var lastVisitID: [UUID: VisitMemory] = [:]
+    /// In-page moves waiting for a title: the address a tab moved to while the title was still the last visit's.
+    private var heldInPageMove: [UUID: String] = [:]
 
     /// A page opened `opened`: the tab continues that page's visit, and the page is remembered as its opener.
     /// "Continue in Chromium" on a WebKit passkey sheet: the page again, in a Chromium tab of this profile next to its tab. The
@@ -293,7 +300,7 @@ final class BrowserModel {
     private func noteOpened(_ opened: BrowserTab, by tab: BrowserTab) {
         openerByTab[opened.id] = tab.id
         if let origin = lastVisitID[tab.id] {
-            lastVisitID[opened.id] = origin
+            lastVisitID[opened.id] = VisitMemory(visit: origin.visit, trail: nil)
         }
     }
 
@@ -301,16 +308,90 @@ final class BrowserModel {
     /// or an agent opened is absent, so an agent is told only about tabs its own page opened.
     var openerByTab: [UUID: UUID] = [:]
 
-    private func recordVisit(for tab: BrowserTab) {
+    /// The events that write History: a finished load, a move the page made itself, and a title that arrived later.
+    private func bindHistoryCallbacks(to tab: BrowserTab) {
+        tab.onNavigationFinished = { [weak self, weak tab] wasRestore in
+            self?.scheduleSave()
+            guard let tab else { return }
+            self?.noteNavigationFinished(of: tab, wasRestore: wasRestore)
+        }
+        tab.onInPageMove = { [weak self, weak tab] in
+            guard let tab else { return }
+            self?.noteInPageMove(of: tab)
+        }
+        tab.onTitleChanged = { [weak self, weak tab] in
+            guard let tab else { return }
+            self?.noteTitleChange(of: tab)
+        }
+    }
+
+    private func lastVisit(of tab: BrowserTab) -> HistoryStore.VisitedPage? {
+        guard let last = lastVisitID[tab.id]?.visit else { return nil }
+        return history.visits.first { $0.id == last }
+    }
+
+    /// A finished load is a visit, unless it only ends the wait of an address change that was recorded already.
+    private func noteNavigationFinished(of tab: BrowserTab, wasRestore: Bool) {
+        defer { tab.noteNavigationEnded() }
+        guard !wasRestore, !tab.isPrivate else { return }
+        heldInPageMove[tab.id] = nil
+        if tab.awaitsVisit || lastVisit(of: tab)?.url != tab.urlString {
+            recordVisit(for: tab)
+        }
+    }
+
+    /// A move the page made itself is a visit once its title shows which page it is. While the old title still stands,
+    /// the move is held for the title; while a load is under way it belongs to the load.
+    private func noteInPageMove(of tab: BrowserTab) {
+        guard !tab.isPrivate else { return }
+        if tab.awaitsVisit || lastVisit(of: tab)?.title == tab.pageTitle {
+            heldInPageMove[tab.id] = tab.urlString
+        } else {
+            heldInPageMove[tab.id] = nil
+            recordVisit(for: tab, transition: .inPage)
+        }
+    }
+
+    /// A title that arrives after the load names the page that was recorded. For a held move it is the title that makes
+    /// the move a visit.
+    private func noteTitleChange(of tab: BrowserTab) {
+        guard !tab.isPrivate else { return }
+        if let held = heldInPageMove[tab.id], held == tab.urlString {
+            guard tab.awaitsVisit || lastVisit(of: tab)?.title != tab.pageTitle else { return }
+            heldInPageMove[tab.id] = nil
+            recordVisit(for: tab, transition: .inPage)
+            return
+        }
+        guard let visit = lastVisitID[tab.id]?.visit else { return }
+        history.retitle(visit: visit, url: tab.urlString, title: tab.pageTitle)
+    }
+
+    private func recordVisit(for tab: BrowserTab, transition: HistoryStore.Transition? = nil) {
         guard !tab.isPrivate, !tab.isClosed, tabsByID[tab.id] === tab else { return }
+        let transition = tab.awaitsVisit ? tab.pendingTransition : transition ?? tab.pendingTransition
+        tab.noteNavigationEnded()
+        let previous = lastVisitID[tab.id]
+        let trail = continuesTrail(from: previous?.visit, to: tab.urlString) ? previous?.trail : nil
         let visitID = history.record(
             url: tab.urlString,
-            title: tab.title,
-            transition: tab.pendingTransition,
-            fromVisit: lastVisitID[tab.id]
+            title: tab.pageTitle,
+            transition: transition,
+            fromVisit: previous?.visit,
+            trail: trail
         )
         guard let visitID else { return }
-        lastVisitID[tab.id] = visitID
+        lastVisitID[tab.id] = VisitMemory(visit: visitID, trail: history.visits.first { $0.id == visitID }?.trail)
+    }
+
+    /// A trail stays inside one website, so it goes on only while the new page is of the site of the last one.
+    private func continuesTrail(from visit: Int64?, to url: String) -> Bool {
+        guard let visit, let previous = history.visits.first(where: { $0.id == visit }) else { return false }
+        return Self.site(of: previous.url) == Self.site(of: url)
+    }
+
+    private static func site(of url: String) -> String? {
+        guard let host = URL(string: url)?.host()?.lowercased() else { return nil }
+        return RelyingPartyPolicy.registrableDomain(of: host) ?? host
     }
 
     var recentlyActive: [UUID] = []

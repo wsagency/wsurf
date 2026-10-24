@@ -81,6 +81,8 @@ final class ChromiumDevTools {
     typealias Handler = (BrowserScriptMessage) -> Void
 
     var framesByID: [String: FrameState] = [:]
+    /// The address of the main frame as the last main-frame navigation event left it, same-document moves included.
+    var mainFrameAddress: URL?
     var frameRevision = 0
     var contextsByUniqueID: [String: ContextState] = [:]
     var uniqueIDByExecutionID: [Int: String] = [:]
@@ -291,6 +293,7 @@ final class ChromiumDevTools {
             self.host = nil
         }
         framesByID.removeAll()
+        mainFrameAddress = nil
         contextsByUniqueID.removeAll()
         uniqueIDByExecutionID.removeAll()
         bindingWorlds.removeAll()

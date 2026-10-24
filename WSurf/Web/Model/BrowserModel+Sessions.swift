@@ -93,6 +93,9 @@ extension BrowserModel {
         var pinID: UUID?
         var lastActiveAt: Date?
         var spaceID: UUID?
+        /// The last visit the tab recorded and its trail, so a restored tab goes on with them. See `HistoryStore.record`.
+        var lastVisit: Int64?
+        var visitTrail: Int64?
     }
 
     private nonisolated struct FolderRecord: Codable, FetchableRecord, PersistableRecord, Sendable {
@@ -282,7 +285,9 @@ extension BrowserModel {
                 isFavorite: tab.isFavorite,
                 pinID: tab.pinID,
                 lastActiveAt: tab.lastActiveAt,
-                spaceID: tab.spaceID
+                spaceID: tab.spaceID,
+                lastVisit: lastVisitID[tab.id]?.visit,
+                visitTrail: lastVisitID[tab.id]?.trail
             )
         }
         writtenStateGeneration = writtenStateGeneration.filter { id, _ in
@@ -378,8 +383,8 @@ extension BrowserModel {
                 sql: """
                     INSERT INTO sessionTab
                         (id, windowID, title, customTitle, url, state, pinnedURL, pinnedTitle,
-                         internalPage, isActive, isFavorite, pinID, lastActiveAt, spaceID)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         internalPage, isActive, isFavorite, pinID, lastActiveAt, spaceID, lastVisit, visitTrail)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(id) DO UPDATE SET
                         windowID = excluded.windowID,
                         title = excluded.title,
@@ -393,12 +398,15 @@ extension BrowserModel {
                         isFavorite = excluded.isFavorite,
                         pinID = excluded.pinID,
                         lastActiveAt = excluded.lastActiveAt,
-                        spaceID = excluded.spaceID
+                        spaceID = excluded.spaceID,
+                        lastVisit = excluded.lastVisit,
+                        visitTrail = excluded.visitTrail
                     """,
                 arguments: [
                     tab.id, tab.windowID, tab.title, tab.customTitle, tab.url, tab.state,
                     tab.pinnedURL, tab.pinnedTitle,
                     tab.internalPage?.rawValue, tab.isActive, tab.isFavorite, tab.pinID, tab.lastActiveAt, tab.spaceID,
+                    tab.lastVisit, tab.visitTrail,
                 ]
             )
         }
@@ -517,6 +525,7 @@ extension BrowserModel {
             tab.pinID = record.pinID
             tab.spaceID = record.spaceID
             tab.lastActiveAt = Self.restoredUse(record.lastActiveAt, savedAt: stored.savedAt, now: now)
+            lastVisitID[tab.id] = record.lastVisit.map { VisitMemory(visit: $0, trail: record.visitTrail) }
             tab.deferRestore(state: record.state, url: restoredURL)
             if let host = URL(string: record.url)?.host() {
                 dressRow(tab, fromHost: host)

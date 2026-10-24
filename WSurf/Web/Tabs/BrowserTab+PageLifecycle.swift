@@ -103,6 +103,10 @@ extension BrowserTab {
         if (error as? URLError)?.code != .cancelled {
             autofillSave.submissions.clear()
         }
+        // A navigation another one replaced fails after the new one started and must not end the new one's wait.
+        if let navigation, provisionalNavigation === navigation || committedNavigation === navigation {
+            noteNavigationEnded()
+        }
         if provisionalNavigation === navigation {
             provisionalNavigation = nil
         }
@@ -259,6 +263,10 @@ extension BrowserTab {
         }
         view.onContentProcessTerminated = { [weak self] in self?.contentProcessDidTerminate() }
         view.onHistoryChanged = { [weak self] in self?.refreshChrome() }
+        view.onNavigatedWithinDocument = { [weak self, weak view] in
+            guard let self, let view, !isClosed, liveView === view, isShowingRealPage, !isRestoring else { return }
+            onInPageMove?()
+        }
         view.onOpenInChromium = { [weak self, weak view] url in
             guard let self, let view, !isClosed, liveView === view else { return }
             onOpenInChromium?(url)
@@ -492,10 +500,29 @@ extension BrowserTab {
         readerPageMoved(from: previous)
         translationPageMoved()
         onSameDocumentNavigation?()
+        if movedWithinDocument(from: previous, in: page) {
+            onInPageMove?()
+        }
+    }
+
+    /// Whether a WebKit page's address changed inside the document the tab already shows, which is what `pushState`,
+    /// `replaceState` and Back or Forward between such entries do. A change of the fragment is a jump within the page, not
+    /// a move. The URL of the committed history entry is the proof: it is the address of the entry the page is on, so a
+    /// document that is still loading, and whose entry is not committed, does not pass. A Chromium page reports its moves
+    /// itself (`onNavigatedWithinDocument`); its history is read later than its address, so this proof does not fit it.
+    func movedWithinDocument(from previous: String, in page: BrowserPage) -> Bool {
+        guard page.webKit != nil, isShowingRealPage, !isRestoring, let url = page.url, url == committedURL,
+              var before = URLComponents(string: previous),
+              var after = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        else { return false }
+        before.fragment = nil
+        after.fragment = nil
+        return before != after
     }
     func contentProcessDidTerminate() {
         guard !isClosed else { return }
         isPlayingAudio = false
+        awaitsVisit = false
         dialogs.cancelAll()
         onContentProcessTerminated?()
         // Only a WebKit page can come back from its saved interaction state; a Chromium page
