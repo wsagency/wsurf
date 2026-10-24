@@ -135,6 +135,7 @@ struct SiteRow<Trailing: View>: View {
             trailing
         }
         .padding(.vertical, SettingsMetrics.rowPaddingV)
+        .environment(\.settingsSurfaceIsFlat, true)
     }
 }
 
@@ -290,6 +291,7 @@ struct SettingsList<Content: View>: View {
         }
         .environment(\.settingsCardInset, inset)
         .environment(\.settingsSectionLit, false)
+        .environment(\.settingsSurfaceIsFlat, true)
         .padding(.horizontal, inset)
         .padding(.vertical, SettingsMetrics.cardInsetV)
         .frame(maxWidth: .infinity, alignment: .leading)

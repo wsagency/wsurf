@@ -131,7 +131,8 @@ struct AssistantMemoryPage: View {
             footnote: """
                 Notes are written on this Mac. When you use a cloud model, the notes it needs are sent with your request. \
                 Forgetting a note stops it being used. Earlier conversations keep what they said.
-                """
+                """,
+            isLongList: true
         ) {
             let shown = Self.matching(query, in: facts.facts)
             if facts.facts.isEmpty {
@@ -144,10 +145,8 @@ struct AssistantMemoryPage: View {
                 SettingsEmptyState(symbol: "magnifyingglass", title: "No matches", caption: "Try a different word.")
             } else {
                 ForEach(Array(shown.enumerated()), id: \.element.id) { index, fact in
-                    if index > 0 {
-                        RowSeparator()
-                    }
                     row(for: fact, in: facts)
+                        .separated(above: index > 0)
                 }
             }
         }
