@@ -42,10 +42,9 @@ extension AppCoordinator {
     // MARK: - Moving a page out and back
 
     /// Whether `tab` can move to a micro window: a page of this window that shows a site. Settings, History, Downloads and
-    /// the vault pages stay out, so none of them is ever drawn without chrome, always on top and on every desktop. A private
-    /// tab stays in its own session and its windows.
+    /// the vault pages stay out, so none of them is ever drawn without chrome, always on top and on every desktop.
     func canMoveToMicroWindow(_ tab: BrowserTab) -> Bool {
-        !isMicro && !isClosed && !profiles.isPrivate && application != nil
+        !isMicro && !isClosed && application != nil
             && browser.tabsByID[tab.id] === tab && !tab.isClosed
             && tab.internalPage == nil && tab.extensionBaseURL == nil && !tab.urlString.isEmpty
     }
@@ -55,7 +54,7 @@ extension AppCoordinator {
     @discardableResult
     func moveToMicroWindow(_ tab: BrowserTab) -> AppCoordinator? {
         guard canMoveToMicroWindow(tab), let application else { return nil }
-        let micro = application.newWindow(profile: profiles.current, settingsOwner: profiles.current, show: false, kind: .micro)
+        let micro = newCompanionWindow(kind: .micro, show: false, in: application)
         let placeholder = micro.browser.activeTab
         guard moveTab(tab, to: micro) else {
             micro.closeWindow()
@@ -84,6 +83,15 @@ extension AppCoordinator {
             tab.isUnseen = true
         }
         return true
+    }
+
+    /// A new window for a page that leaves this one: the same profile, or, for a private tab, the same private session. A
+    /// private page never moves into a context of its own, which would be a different cookie store.
+    func newCompanionWindow(kind: WindowKind, show: Bool, in application: BrowserApplication) -> AppCoordinator {
+        let owner = profiles.isPrivate ? profiles.profileToReturnTo : profiles.current
+        return application.newWindow(
+            profile: profiles.current, settingsOwner: owner, show: show, kind: kind, joining: profiles.isPrivate ? context : nil
+        )
     }
 
     /// Move Back to Main Window: the page in front goes where it came from, and this window closes.

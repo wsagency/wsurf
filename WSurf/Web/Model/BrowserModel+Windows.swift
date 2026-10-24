@@ -10,8 +10,10 @@ extension BrowserModel {
     /// `activate` is false: a page that was opened in the background stays there.
     @discardableResult
     func adoptTab(_ tab: BrowserTab, from source: BrowserModel, activate: Bool = true) -> Bool {
+        // Only within one context: a private page never reaches another private window's cookie store, only a window that
+        // joined its own session.
         guard source !== self, source.windowID != windowID, source.context === context,
-              !opensPrivately, source.sessionClosedAt == nil, sessionClosedAt == nil,
+              source.sessionClosedAt == nil, sessionClosedAt == nil,
               context.isRegistered(source), context.isRegistered(self),
               (source.database.writer as AnyObject) === (database.writer as AnyObject),
               source.tabsByID[tab.id] === tab, tab.context === context,

@@ -334,6 +334,16 @@ struct MicroShellTests {
             #expect(!standard.canMoveToMicroWindow(tab))
         }
 
+        // A private page moves too: its micro window joins the session.
+        let privateWindow = AppCoordinator(
+            browser: BrowserModel(context: .shared(for: .privateBrowsing()), windowID: UUID())
+        )
+        app.register(privateWindow)
+        defer { privateWindow.closeWindow() }
+        let privateTab = privateWindow.browser.newTab()
+        privateTab.urlString = "https://example.com/"
+        #expect(offer(privateWindow, privateTab) == .moveOut)
+
         // A tab that is not one of this window's cannot be moved by it.
         let stranger = micro.browser.newTab()
         stranger.urlString = "https://example.com/"

@@ -214,13 +214,16 @@ final class BrowserApplication {
         restoring: Bool = false,
         show: Bool = true,
         urls: [URL] = [],
-        kind: WindowKind = .standard
+        kind: WindowKind = .standard,
+        joining shared: BrowserProfileContext? = nil
     ) -> AppCoordinator {
-        let profile = profile ?? activeCoordinator?.profiles.current ?? ProfileStore.shared.current
+        let profile = shared?.profile ?? profile ?? activeCoordinator?.profiles.current ?? ProfileStore.shared.current
         let owner = settingsOwner ?? activeCoordinator.map {
             $0.profiles.isPrivate ? $0.profiles.profileToReturnTo : $0.profiles.current
         } ?? ProfileStore.shared.current
-        let context = BrowserProfileContext.shared(for: profile, settingsOwner: owner)
+        // A window can join a private context that is already open, which a new private window never does: its page is
+        // the same session, and a context of its own would be another cookie store.
+        let context = shared ?? BrowserProfileContext.shared(for: profile, settingsOwner: owner)
         let browser = BrowserModel(context: context, windowID: windowID)
         // Before the coordinator exists: what it builds, and what restores from the saved row, depends on it.
         browser.windowKind = kind

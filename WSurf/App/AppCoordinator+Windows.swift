@@ -210,14 +210,19 @@ extension AppCoordinator {
         }
         releaseWindowHost()
         if profiles.isPrivate {
-            browser.downloads.forgetPrivateDownloads()
-            conversationLog.clearAll()
             privateSession = nil
+            // Another window of this private session, such as the micro window a page was moved to, still shows its pages.
+            // The session ends with the last of them.
             let context = browser.context
-            if let application {
-                application.endPrivateSession(context)
-            } else {
-                Task { await context.endPrivateSession() }
+            let isLast = application?.windows.contains { !$0.isClosed && $0.context === context } != true
+            if isLast {
+                browser.downloads.forgetPrivateDownloads()
+                conversationLog.clearAll()
+                if let application {
+                    application.endPrivateSession(context)
+                } else {
+                    Task { await context.endPrivateSession() }
+                }
             }
         }
     }
@@ -231,10 +236,10 @@ extension AppCoordinator {
     }
 
     func moveTabToNewWindow(_ tab: BrowserTab) {
-        // Private windows have independent cookie stores. Moving a live page
-        // between those stores would also move its authenticated session.
-        guard !profiles.isPrivate, let application else { return }
-        let destination = application.newWindow(profile: profiles.current)
+        // A private window has a cookie store of its own, and moving a live page to another store would move its
+        // authenticated session too: the new window joins this window's session instead.
+        guard let application else { return }
+        let destination = newCompanionWindow(kind: .standard, show: true, in: application)
         let placeholder = destination.browser.activeTab
         if moveTab(tab, to: destination), let placeholder {
             destination.browser.close(placeholder, recordForReopening: false)

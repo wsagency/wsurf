@@ -90,6 +90,16 @@ remembered in `UserDefaults` until another regular window opens; if the app quit
 between, the next launch reopens it for a profile with no open window. A window closed
 while another stays open, and any private window, is never brought back this way.
 
+A micro window is a regular window (coordinator, model and host) with `BrowserModel.windowKind
+== .micro` that shows one page with no chrome until the pointer reaches the top, where a bar
+and the traffic lights slide down. It never attaches the profile's pins and never enters full
+screen. It holds exactly one page: any other tab that reaches it (a link, a popup, an extension,
+the assistant) moves live to the regular window of its context used last, and Settings, History,
+Downloads and the vault pages are never moved into one. It is never an MCP or external-link
+target. It restores as a micro window (`sessionWindow.kind`, NULL meaning standard) and retires
+its saved session when it empties. A private page moves into a micro window that joins its
+source's private context, and that context ends with its last window, not with the first to close.
+
 Pins, pinned folders with everything inside them, and Favorites belong to the profile,
 not to a window. They are `profilePin` rows in the profile's database: a stable UUID, a
 parent, and a fractional order key (`OrderKey`) for each item. The upgrade merges the

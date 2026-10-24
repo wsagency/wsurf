@@ -567,6 +567,129 @@ struct MicroWindowTests {
         }
     }
 
+    // MARK: - Private tabs
+
+    /// A private window with a page that is loaded from the fixture, and the cookie its session holds.
+    private func withPrivateWindow(
+        _ body: (BrowserApplication, AppCoordinator) async throws -> Void
+    ) async throws {
+        try await withProfile { profile in
+            let app = run()
+            let main = app.newWindow(profile: .privateBrowsing(), settingsOwner: profile, show: false)
+            try await body(app, main)
+            finish(app)
+        }
+    }
+
+    @Test func aPrivateTabMovesIntoTheSamePrivateSession() async throws {
+        let server = try await HTTPFixtureServer.start(routes: ["/": .html("<title>Private</title>")])
+        let url = try server.url("/")
+        try await withPrivateWindow { app, main in
+            let context = main.context
+            let host = try #require(url.host())
+            let cookie = try #require(HTTPCookie(properties: [
+                .domain: host, .path: "/", .name: "session", .value: "abc", .originURL: url,
+            ]))
+            await context.dataStore.httpCookieStore.setCookie(cookie)
+            let tab = main.browser.newTab(url: url)
+            let page = tab.page
+            try #require(await waitUntil { page.title == "Private" && !page.isLoading })
+            #expect(try await page.evaluateJavaScript("document.cookie") as? String == "session=abc")
+
+            let micro = try #require(main.moveToMicroWindow(tab))
+
+            #expect(micro.isMicro && micro.profiles.isPrivate && micro.browser.opensPrivately)
+            #expect(micro.context === context && micro.context.dataStore === context.dataStore, "the same session, not a new one")
+            #expect(micro.context.database.isEphemeral, "and it keeps nothing")
+            #expect(app.windows.count == 2 && micro.browser.tabs.map(\.id) == [tab.id])
+            try #require(await waitUntil { page.window === micro.nativeWindow })
+            #expect(try await page.evaluateJavaScript("document.cookie") as? String == "session=abc", "still signed in")
+            #expect(await context.dataStore.httpCookieStore.allCookies().contains { $0.name == "session" })
+
+            // A private window never reaches another's cookie store, micro or not.
+            let stranger = app.newWindow(profile: .privateBrowsing(), settingsOwner: main.profiles.profileToReturnTo, show: false)
+            #expect(stranger.context !== context)
+            #expect(!stranger.browser.adoptTab(tab, from: micro.browser))
+            #expect(micro.browser.tab(id: tab.id) === tab)
+            finish(app)
+            await tab.waitForRetirement()
+            withExtendedLifetime(server) {}
+        }
+    }
+
+    @Test func closingThePrivateMicroWindowKeepsTheSessionForItsWindow() async throws {
+        try await withPrivateWindow { _, main in
+            let context = main.context
+            let tab = unloadedPage("https://one.example/", in: main)
+            let kept = unloadedPage("https://two.example/", in: main)
+            let trace = main.conversationLog.beginTask("private work", tabID: kept.id)
+            main.conversationLog.completeTask(trace, response: "done")
+            let micro = try #require(main.moveToMicroWindow(tab))
+
+            micro.closeWindow()
+
+            #expect(micro.isClosed && !main.isClosed)
+            #expect(!context.privateSessionEnded, "another window still shows pages of the session")
+            #expect(main.conversationLog.traces(forTab: kept.id).count == 1, "and its assistant log is kept")
+            #expect(main.browser.tab(id: kept.id) === kept && !kept.isClosed)
+        }
+    }
+
+    @Test func closingThePrivateWindowKeepsTheSessionForTheMicroWindowItGave() async throws {
+        try await withPrivateWindow { app, main in
+            let context = main.context
+            let tab = unloadedPage("https://one.example/", in: main)
+            let micro = try #require(main.moveToMicroWindow(tab))
+
+            main.closeWindow()
+
+            #expect(main.isClosed && !micro.isClosed)
+            #expect(!context.privateSessionEnded, "the page in the micro window is still in the session")
+            #expect(micro.browser.tab(id: tab.id) === tab && !tab.isClosed)
+            #expect(app.windows.map(\.windowID) == [micro.windowID])
+        }
+    }
+
+    @Test func closingTheLastPrivateWindowEndsTheSession() async throws {
+        try await withPrivateWindow { app, main in
+            let context = main.context
+            let tab = unloadedPage("https://one.example/", in: main)
+            let trace = main.conversationLog.beginTask("private work", tabID: tab.id)
+            main.conversationLog.completeTask(trace, response: "done")
+            let micro = try #require(main.moveToMicroWindow(tab))
+            let log = main.conversationLog
+
+            main.closeWindow()
+            #expect(!context.privateSessionEnded)
+            micro.closeWindow()
+
+            try #require(await waitUntil { context.privateSessionEnded })
+            #expect(log.traces.isEmpty, "the log went with the session")
+            #expect(app.windows.isEmpty)
+            #expect(tab.isClosed)
+        }
+    }
+
+    @Test func aPrivateWindowAndItsMicroWindowLeaveNothingOnDisk() async throws {
+        try await withProfile { profile in
+            let app = run()
+            let regular = app.newWindow(profile: profile, show: false)
+            let database = regular.context.database
+            regular.browser.saveBlocking()
+            let before = BrowserModel.savedWindows(in: database, includeClosed: true).map(\.id)
+            let main = app.newWindow(profile: .privateBrowsing(), settingsOwner: profile, show: false)
+            let tab = unloadedPage("https://one.example/", in: main)
+            let micro = try #require(main.moveToMicroWindow(tab))
+            micro.browser.saveBlocking()
+            micro.closeWindow()
+            main.closeWindow()
+
+            #expect(BrowserModel.savedWindows(in: database, includeClosed: true).map(\.id) == before)
+            #expect(micro.windowID != regular.windowID)
+            finish(app)
+        }
+    }
+
     // MARK: - Window
 
     @Test func floatOnTopRaisesTheLevelAndJoinsEveryDesktop() async throws {
