@@ -118,6 +118,7 @@ final class MainMenu: NSObject, NSMenuItemValidation {
         menu.addItem(command("New Tab", #selector(newTab), key: "t"))
         menu.addItem(command("New Window", #selector(newWindow), key: "n"))
         menu.addItem(command("New Private Window", #selector(newPrivateWindow), key: "n", modifiers: [.command, .shift]))
+        menu.addItem(command("New Micro Window", #selector(newMicroWindow), key: "n", modifiers: [.command, .option]))
         menu.addItem(.separator())
         menu.addItem(command("Reopen Last Closed Tab", #selector(reopenClosedTab), key: "t", modifiers: [.command, .shift]))
         menu.addItem(command("Reopen Last Closed Window", #selector(reopenClosedWindow)))
@@ -335,6 +336,14 @@ final class MainMenu: NSObject, NSMenuItemValidation {
         }
     }
 
+    @objc private func newMicroWindow() {
+        if let coordinator = application?.activeCoordinator ?? fallbackCoordinator {
+            coordinator.requestNewMicroWindow()
+        } else {
+            application?.newWindow(profile: ProfileStore.shared.current, kind: .micro).focusAddressBar()
+        }
+    }
+
     @objc private func reopenClosedWindow() {
         application?.reopenLastClosedWindow()
     }
@@ -528,7 +537,7 @@ final class MainMenu: NSObject, NSMenuItemValidation {
         }
         if let application, application.activeCoordinator == nil {
             return [
-                #selector(newWindow), #selector(newTab), #selector(newPrivateWindow),
+                #selector(newWindow), #selector(newTab), #selector(newPrivateWindow), #selector(newMicroWindow),
                 #selector(openSettings), #selector(checkForUpdates), #selector(reopenClosedTab), #selector(showAbout),
             ].contains(menuItem.action)
         }

@@ -133,6 +133,7 @@ final class BrowserHost: NSObject, NSWindowDelegate {
             return window
         }
 
+        let isMicro = coordinator?.isMicro == true
         let created = BrowserWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1280, height: 820),
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
@@ -146,9 +147,9 @@ final class BrowserHost: NSObject, NSWindowDelegate {
         created.toolbarStyle = .unified
         created.titlebarSeparatorStyle = .none
         applyTransparencyPreference(to: created)
-        created.minSize = NSSize(width: BrowserWindowMetrics.minWidth, height: 580)
+        created.minSize = isMicro ? MicroWindowMetrics.minSize : NSSize(width: BrowserWindowMetrics.minWidth, height: 580)
         created.preservesContentDuringLiveResize = true
-        created.collectionBehavior = [.fullScreenPrimary]
+        created.collectionBehavior = isMicro ? MicroWindowMetrics.collectionBehavior(floating: false) : [.fullScreenPrimary]
         created.isReleasedWhenClosed = false
         created.isMovableByWindowBackground = false
         created.tabbingMode = .disallowed
@@ -167,7 +168,7 @@ final class BrowserHost: NSObject, NSWindowDelegate {
             created.setFrameAutosaveName(frameKey)
         }
         if coordinator?.profiles.isPrivate == true || !created.setFrameUsingName(frameKey) {
-            created.setFrame(Self.openingFrame(for: created), display: false)
+            created.setFrame(isMicro ? Self.microOpeningFrame(for: created) : Self.openingFrame(for: created), display: false)
         }
         let root = NSView(frame: NSRect(x: 0, y: 0, width: 1280, height: 820))
         content.frame = root.bounds
@@ -266,6 +267,20 @@ final class BrowserHost: NSObject, NSWindowDelegate {
         )
     }
 
+    /// Beside the last micro window, or in the corner of the screen for the first.
+    private static func microOpeningFrame(for window: NSWindow) -> NSRect {
+        guard let visible = (window.screen ?? NSScreen.main)?.visibleFrame else { return window.frame }
+        let last = UserDefaults.standard.string(forKey: MicroWindowMetrics.lastFrameKey).map(NSRectFromString)
+        return MicroWindowMetrics.openingFrame(visible: visible, last: last.flatMap { $0.isEmpty ? nil : $0 })
+    }
+
+    /// The next micro window opens beside this one. A private window leaves no trace of where it was.
+    private func rememberMicroFrame() {
+        guard let window, coordinator?.isMicro == true, coordinator?.profiles.isPrivate == false,
+              !AppDatabase.isRunningTests else { return }
+        UserDefaults.standard.set(NSStringFromRect(window.frame), forKey: MicroWindowMetrics.lastFrameKey)
+    }
+
     // MARK: - Window delegate
 
     func windowDidBecomeKey(_ notification: Notification) {
@@ -312,6 +327,11 @@ final class BrowserHost: NSObject, NSWindowDelegate {
 
     func windowDidResize(_ notification: Notification) {
         window?.alignWindowControls()
+        rememberMicroFrame()
+    }
+
+    func windowDidMove(_ notification: Notification) {
+        rememberMicroFrame()
     }
 
     // MARK: - State out

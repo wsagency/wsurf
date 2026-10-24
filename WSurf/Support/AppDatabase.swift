@@ -405,6 +405,12 @@ struct AppDatabase: Sendable {
             t.column("closedAt", .datetime)
             t.column("revision", .integer).notNull().defaults(to: 0)
         }
+        // The window's kind ("micro", or see `WindowKind`). NULL, every window saved before micro windows, is a standard window.
+        if try !db.columns(in: "sessionWindow").contains(where: { $0.name == "kind" }) {
+            try db.alter(table: "sessionWindow") { t in
+                t.add(column: "kind", .text)
+            }
+        }
         try db.create(table: "sessionWindowRetirement", options: .ifNotExists) { t in
             t.primaryKey("id", .blob)
             t.column("revision", .integer).notNull()
