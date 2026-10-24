@@ -16,7 +16,10 @@ struct ThemeShape: Equatable {
     var sidebarMargin = LoomChrome.canvasInset
     var rowPadding: CGFloat = 9
     var tabIconSize: CGFloat = 16
-    var folderIndent: CGFloat = 0
+    /// How strongly folder colors draw; see `ThemeAdjustment.folderColorOpacity`.
+    var folderColorOpacity: Double = 1
+    /// The step that each level of an open folder moves its rows in; see `ThemeAdjustment.folderIndent(level:)`.
+    var folderIndents: [CGFloat] = [0, 0, 0]
 
     init() {}
 
@@ -29,7 +32,13 @@ struct ThemeShape: Equatable {
         sidebarMargin = CGFloat(adjustment.sidebarMargin)
         rowPadding = CGFloat(adjustment.rowPadding)
         tabIconSize = CGFloat(adjustment.tabIconSize)
-        folderIndent = CGFloat(adjustment.folderIndent)
+        folderColorOpacity = adjustment.folderColorOpacity
+        folderIndents = (1...3).map { CGFloat(adjustment.folderIndent(level: $0)) }
+    }
+
+    /// The step that the rows inside a folder at `level` take; every level from 3 on takes the third.
+    func folderIndent(level: Int) -> CGFloat {
+        folderIndents[min(max(level, 1), 3) - 1]
     }
 
     /// Half the shortest sidebar row. A larger radius would leave a row no straight edge on its ends.

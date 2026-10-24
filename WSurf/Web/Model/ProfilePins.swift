@@ -35,6 +35,8 @@ nonisolated struct ProfilePin: Codable, Equatable, FetchableRecord, PersistableR
     var isPinned = false
     /// A folder's size factor; nil is normal.
     var sizeFactor: Double?
+    /// Whether a folder draws the icons inside it in its own color; nil is off.
+    var tintsIcons: Bool?
 
     /// Parents before children, siblings by key. This is the order to insert rows in, because a child
     /// references its parent.

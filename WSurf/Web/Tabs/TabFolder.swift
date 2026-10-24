@@ -59,6 +59,9 @@ final class TabFolder: Identifiable {
     var isExpanded = true
     var isPinned = false
     var size = TabFolderSize.normal
+    /// Draws the icons of the tabs inside the folder in the folder's color, and those of the folders inside it that
+    /// do not tint on their own. Off by default.
+    var tintsIcons = false
     /// The space the folder and everything in it belong to; nil while the folder is pinned or inside a pinned folder.
     var spaceID: UUID?
 

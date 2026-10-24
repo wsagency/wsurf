@@ -75,7 +75,7 @@ struct ThemeEditorTests {
     private let knobs = ThemeAdjustment(
         material: .glass, glassOpacity: 0.8, lightBrightness: 0.3, darkBrightness: -0.2, pageFrame: .hairline,
         rowFrame: FrameStyle.none, cornerScale: 0.4, loadedFavicons: .color, pageSpacing: 2, sidebarMargin: 3,
-        rowPadding: 4, tabIconSize: 20, folderIndent: 10
+        rowPadding: 4, tabIconSize: 20, folderIndentLevel1: 10
     )
 
     // MARK: - Making and keeping one
@@ -83,7 +83,7 @@ struct ThemeEditorTests {
     @Test func aCustomThemeIsMadeEditedRenamedAndDecodedAgain() throws {
         try withSettings { settings, defaults in
             settings.themeID = "nord"
-            let nordKnobs = ThemeAdjustment(rowPadding: 4, folderIndent: 8)
+            let nordKnobs = ThemeAdjustment(rowPadding: 4, folderIndentLevel1: 8)
             settings.themeAdjustment = nordKnobs
             let name = settings.customThemeName(for: settings.selectedTheme)
             #expect(name == "Nord Custom")
@@ -145,7 +145,7 @@ struct ThemeEditorTests {
             let loose = try #require(loaded.userThemes.first { $0.id == "loose" })
             #expect(loose.light.window == 16316666 && loose.light.accent == 3874257 && loose.dark.hue == 0.1)
             #expect(loose.light.text == nil && loose.basedOn == nil && loose.drawnGround == .solid)
-            #expect(loaded.themeAdjustments["loose"]?.glassOpacity == 0.7 && loaded.themeAdjustments["loose"]?.folderIndent == 0)
+            #expect(loaded.themeAdjustments["loose"]?.glassOpacity == 0.7 && loaded.themeAdjustments["loose"]?.folderIndentLevel1 == 0)
             // Their own colors, not an edit, so a copy of a tinted theme keeps its tint.
             let calm = try #require(loaded.userThemes.first { $0.id == "calm-copy" })
             let standard = try #require(loaded.userThemes.first { $0.id == "standard-copy" })
@@ -261,7 +261,7 @@ struct ThemeEditorTests {
             settings.themeAdjustment = knobs
 
             let resolved = settings.resolvedTheme
-            #expect(resolved.adjustment == knobs && resolved.adjustment.folderIndent == 10)
+            #expect(resolved.adjustment == knobs && resolved.adjustment.folderIndentLevel1 == 10)
             #expect(settings.chromeShape == ThemeShape(knobs))
             #expect(hex(resolved.variant(.dark).window.srgb(scheme: .dark)) != 0x14110F, "brightness is laid over the base color")
             #expect(settings.themeAdjustments[settings.selectedTheme.id] == knobs)

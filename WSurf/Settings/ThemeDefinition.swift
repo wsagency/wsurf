@@ -182,9 +182,16 @@ struct ThemeAdjustment: Codable, Equatable {
     var rowPadding = 9.0
     /// Points.
     var tabIconSize = 16.0
-    /// Points an open folder moves its tabs and subfolders in from its own row, once for each level of folders. 0 keeps
-    /// them under the folder's icon, as folders always were.
-    var folderIndent = 0.0
+    /// How strongly folder colors draw, 0.2...1: the folder icon, the outline and wash of an open folder, its hover, and
+    /// the icons it tints. 1 is the look folders always had.
+    var folderColorOpacity = 1.0
+    /// Points an open folder moves its tabs and subfolders in from its own row, for each level of folders: level 1 is
+    /// the rows directly inside a top-level folder, level 2 the rows inside a folder that is inside one, and level 3 every
+    /// level below. 0 keeps them under the folder's icon, as folders always were. A theme saved with the single Folder
+    /// indent that came before reads it as all three, so its folders look as they did.
+    var folderIndentLevel1 = 0.0
+    var folderIndentLevel2 = 0.0
+    var folderIndentLevel3 = 0.0
 
     /// -100 % to 100 %. Text, icons and accent text keep their contrast through `ThemeReadability` at either end.
     static let brightnessRange = -1.0...1.0
@@ -193,8 +200,29 @@ struct ThemeAdjustment: Codable, Equatable {
     static let sidebarMarginRange = 1.0...8.0
     static let rowPaddingRange = 1.0...12.0
     static let tabIconSizeRange = 12.0...24.0
+    static let folderColorOpacityRange = 0.2...1.0
+    static let folderColorOpacityStep = 0.05
     static let folderIndentRange = 0.0...24.0
     static let folderIndentStep = 2.0
+
+    /// The step that the rows inside a folder at `level` take: level 1 is the rows directly inside a top-level folder,
+    /// and every level from 3 on takes the third step.
+    func folderIndent(level: Int) -> Double {
+        switch level {
+        case ..<2:
+            folderIndentLevel1
+        case 2:
+            folderIndentLevel2
+        default:
+            folderIndentLevel3
+        }
+    }
+
+    /// How far a row at `depth` starts in from where it starts with no indent: the steps of every level down to its
+    /// depth. A top-level row has depth 0 and no step.
+    func folderInset(depth: Int) -> Double {
+        (0..<max(depth, 0)).reduce(0) { $0 + folderIndent(level: $1 + 1) }
+    }
 
     func brightness(_ scheme: ColorScheme) -> Double {
         scheme == .dark ? darkBrightness : lightBrightness
@@ -222,15 +250,28 @@ struct ThemeAdjustment: Codable, Equatable {
         result.sidebarMargin = clamp(sidebarMargin.rounded(), Self.sidebarMarginRange, default: 6)
         result.rowPadding = clamp(rowPadding.rounded(), Self.rowPaddingRange, default: 9)
         result.tabIconSize = clamp(tabIconSize.rounded(), Self.tabIconSizeRange, default: 16)
-        let indent = clamp(folderIndent, Self.folderIndentRange, default: 0)
-        result.folderIndent = (indent / Self.folderIndentStep).rounded() * Self.folderIndentStep
+        let opacity = clamp(folderColorOpacity, Self.folderColorOpacityRange, default: 1)
+        let steps = (1 / Self.folderColorOpacityStep).rounded()
+        result.folderColorOpacity = (opacity * steps).rounded() / steps
+        func indent(_ points: Double) -> Double {
+            (clamp(points, Self.folderIndentRange, default: 0) / Self.folderIndentStep).rounded() * Self.folderIndentStep
+        }
+        result.folderIndentLevel1 = indent(folderIndentLevel1)
+        result.folderIndentLevel2 = indent(folderIndentLevel2)
+        result.folderIndentLevel3 = indent(folderIndentLevel3)
         return result
     }
+}
+
+/// The key of the one Folder indent that every level shares in a theme saved before there was one for each.
+private enum LegacyFolderIndentKey: String, CodingKey {
+    case folderIndent
 }
 
 extension ThemeAdjustment {
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        let single = (try? decoder.container(keyedBy: LegacyFolderIndentKey.self))?.lenient(.folderIndent, 0.0) ?? 0
         self.init(
             material: container.lenient(.material, .plain),
             glassOpacity: container.lenient(.glassOpacity, 0.5),
@@ -244,7 +285,10 @@ extension ThemeAdjustment {
             sidebarMargin: container.lenient(.sidebarMargin, 6),
             rowPadding: container.lenient(.rowPadding, 9),
             tabIconSize: container.lenient(.tabIconSize, 16),
-            folderIndent: container.lenient(.folderIndent, 0)
+            folderColorOpacity: container.lenient(.folderColorOpacity, 1),
+            folderIndentLevel1: container.lenient(.folderIndentLevel1, single),
+            folderIndentLevel2: container.lenient(.folderIndentLevel2, single),
+            folderIndentLevel3: container.lenient(.folderIndentLevel3, single)
         )
     }
 }

@@ -243,6 +243,7 @@ private struct SplitRowCell: View {
     let onTap: (BrowserTab) -> Void
 
     @Environment(\.sidebarStyle) private var sidebarStyle
+    @Environment(\.sidebarIconTint) private var folderIconTint
     private var inkSource = SidebarRowInkSource()
     @State private var hovering = false
     @State private var controlsWidth: CGFloat = 0
@@ -295,7 +296,12 @@ private struct SplitRowCell: View {
                     browser.returnToPin(tab)
                 }
             } else {
-                TabIcon(tab: tab, tint: ink.text, colorsFavicon: BrowserSettings.application.chromeShape.colorsFavicons)
+                let icon = ink.iconStyle(
+                    folderTint: folderIconTint,
+                    colorsFavicon: BrowserSettings.application.chromeShape.colorsFavicons,
+                    isDeferred: tab.isDeferred
+                )
+                TabIcon(tab: tab, tint: icon.tint, colorsFavicon: icon.colorsFavicon)
                     .sidebarNewMark(ink)
                     .sidebarRowName(tab.title, style: style, isIconOnly: !showsTitle)
                     .overlay(alignment: .bottomTrailing) {

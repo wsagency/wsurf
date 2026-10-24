@@ -110,6 +110,8 @@ extension BrowserModel {
         var spaceID: UUID?
         /// nil is normal; see `TabFolderSize`.
         var sizeFactor: Double?
+        /// nil is off; see `TabFolder.tintsIcons`.
+        var tintsIcons: Bool?
     }
 
     private nonisolated struct ItemRecord: Codable, FetchableRecord, PersistableRecord, Sendable {
@@ -299,7 +301,8 @@ extension BrowserModel {
                 isPinned: folder.isPinned,
                 pinID: nil,
                 spaceID: folder.spaceID,
-                sizeFactor: folder.size.storedFactor
+                sizeFactor: folder.size.storedFactor,
+                tintsIcons: folder.tintsIcons ? true : nil
             )
         }
         let known = Set(persisted.map(\.id))
@@ -575,6 +578,7 @@ extension BrowserModel {
         folder.isExpanded = record.isExpanded
         folder.isPinned = record.isPinned
         folder.size = .stored(record.sizeFactor)
+        folder.tintsIcons = record.tintsIcons ?? false
         folder.spaceID = record.spaceID
         return folder
     }

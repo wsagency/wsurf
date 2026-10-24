@@ -111,6 +111,13 @@ struct AppearanceColorsSection: View {
                     paletteColor(\.assistant, label: "Assistant color")
                 }
                 RowSeparator()
+                DetailRow(
+                    title: "Folder color opacity",
+                    caption: "How strongly folder colors draw: folder icons, outlines and the icons a folder tints."
+                ) {
+                    folderOpacityControls
+                }
+                RowSeparator()
                 DetailRow(title: "Tab text", caption: "The title of tabs and folders that are loaded.") {
                     inkControls(
                         \.sidebarText, label: "Tab text", opacityLabel: "Tab text opacity",
@@ -270,6 +277,34 @@ struct AppearanceColorsSection: View {
             .frame(width: 90)
             .accessibilityLabel(Text(opacityLabel))
             Text("Opacity \(style.wrappedValue.opacity, format: .percent.precision(.fractionLength(0)))")
+                .monospacedDigit()
+                .frame(width: 92, alignment: .trailing)
+        }
+    }
+
+    /// A knob of the theme, not a color: like the Layout sliders it never makes a copy, a drag previews in memory and
+    /// writes once when it ends, and Reset Theme to Default puts it back.
+    private var folderOpacityControls: some View {
+        let opacity = Binding(
+            get: { settings.themeAdjustment.folderColorOpacity },
+            set: { value in
+                var adjustment = settings.themeAdjustment
+                adjustment.folderColorOpacity = value
+                if isEditing {
+                    settings.previewThemeAdjustment(adjustment)
+                } else {
+                    settings.themeAdjustment = adjustment
+                }
+            }
+        )
+        return HStack(spacing: 8) {
+            Slider(
+                value: opacity, in: ThemeAdjustment.folderColorOpacityRange,
+                step: ThemeAdjustment.folderColorOpacityStep, onEditingChanged: editingChanged
+            )
+            .frame(width: 90)
+            .accessibilityLabel("Folder color opacity")
+            Text("Opacity \(opacity.wrappedValue, format: .percent.precision(.fractionLength(0)))")
                 .monospacedDigit()
                 .frame(width: 92, alignment: .trailing)
         }

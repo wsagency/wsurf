@@ -83,37 +83,82 @@ struct ThemeSpacingTests {
         #expect(damaged.pageSpacing == 6 && damaged.tabIconSize == 20)
     }
 
-    @Test func theFolderIndentDefaultsToNoneAndOlderDataKeepsIt() throws {
-        #expect(ThemeAdjustment().folderIndent == 0)
-        #expect(ThemeShape().folderIndent == 0 && ThemeShape(ThemeAdjustment()).folderIndent == 0)
+    private func decode(_ json: String) throws -> ThemeAdjustment {
+        try JSONDecoder().decode(ThemeAdjustment.self, from: Data(json.utf8))
+    }
+
+    private func levels(_ adjustment: ThemeAdjustment) -> [Double] {
+        [adjustment.folderIndentLevel1, adjustment.folderIndentLevel2, adjustment.folderIndentLevel3]
+    }
+
+    @Test func theFolderIndentDefaultsToNoneOnEveryLevelAndOlderDataKeepsIt() throws {
+        #expect(levels(ThemeAdjustment()) == [0, 0, 0])
+        #expect(ThemeShape().folderIndents == [0, 0, 0] && ThemeShape(ThemeAdjustment()).folderIndents == [0, 0, 0])
 
         // A theme saved before the knob existed, or with a value of the wrong type, keeps folders as they were.
-        let older = try JSONDecoder().decode(ThemeAdjustment.self, from: Data(#"{"tabIconSize":20}"#.utf8))
-        #expect(older.folderIndent == 0 && older.tabIconSize == 20)
-        let damaged = try JSONDecoder().decode(ThemeAdjustment.self, from: Data(#"{"folderIndent":"deep"}"#.utf8))
-        #expect(damaged.folderIndent == 0)
+        let older = try decode(#"{"tabIconSize":20}"#)
+        #expect(levels(older) == [0, 0, 0] && older.tabIconSize == 20)
+        #expect(try levels(decode(#"{"folderIndent":"deep"}"#)) == [0, 0, 0])
+        #expect(try levels(decode(#"{"folderIndentLevel2":"deep"}"#)) == [0, 0, 0])
 
-        let indented = ThemeAdjustment(folderIndent: 12)
+        let indented = ThemeAdjustment(folderIndentLevel1: 4, folderIndentLevel2: 12, folderIndentLevel3: 20)
         let back = try JSONDecoder().decode(ThemeAdjustment.self, from: JSONEncoder().encode(indented))
-        #expect(back == indented && ThemeShape(back).folderIndent == 12)
+        #expect(back == indented && ThemeShape(back).folderIndents == [4, 12, 20])
     }
 
-    @Test func theFolderIndentIsBoundedToEvenPointsFromNoneToTwentyFour() {
-        func bounded(_ points: Double) -> Double {
-            ThemeAdjustment(folderIndent: points).bounded().folderIndent
+    /// The Folder indent that came before had one value for every level, saved as `folderIndent`.
+    @Test func aThemeSavedWithOneFolderIndentAppliesItToEveryLevelAndSavesInTheNewForm() throws {
+        let single = try decode(#"{"folderIndent":12,"tabIconSize":20}"#)
+        #expect(levels(single) == [12, 12, 12] && single.tabIconSize == 20)
+        for depth in 0...5 {
+            #expect(single.folderInset(depth: depth) == Double(depth) * 12, "a row is where it was: depth times the one indent")
         }
-        #expect(bounded(-5) == 0 && bounded(0) == 0 && bounded(24) == 24 && bounded(99) == 24)
-        #expect(bounded(5) == 6 && bounded(3) == 4 && bounded(4.9) == 4 && bounded(13) == 14)
-        #expect(bounded(.nan) == 0 && bounded(.infinity) == 0)
-        #expect(ThemeAdjustment.folderIndentRange == 0...24 && ThemeAdjustment.folderIndentStep == 2)
+
+        let saved = try JSONEncoder().encode(single)
+        let text = String(decoding: saved, as: UTF8.self)
+        #expect(!text.contains(#""folderIndent""#) && text.contains("folderIndentLevel1"), "saved again, it is in the new form")
+        #expect(try JSONDecoder().decode(ThemeAdjustment.self, from: saved) == single)
+
+        // A level that has its own value keeps it; the levels without one read the old value.
+        #expect(try levels(decode(#"{"folderIndent":8,"folderIndentLevel2":4}"#)) == [8, 4, 8])
+        // The old value was bounded like any other.
+        #expect(try levels(decode(#"{"folderIndent":99}"#).bounded()) == [24, 24, 24])
     }
 
-    @Test func theFolderIndentIsStoredWithTheThemeAndReachesTheSidebarShape() throws {
+    @Test func eachFolderIndentLevelIsBoundedToEvenPointsFromNoneToTwentyFour() {
+        func bounded(_ points: Double) -> [Double] {
+            levels(ThemeAdjustment(folderIndentLevel1: points, folderIndentLevel2: points, folderIndentLevel3: points).bounded())
+        }
+        #expect(bounded(-5) == [0, 0, 0] && bounded(0) == [0, 0, 0] && bounded(24) == [24, 24, 24] && bounded(99) == [24, 24, 24])
+        #expect(bounded(5) == [6, 6, 6] && bounded(3) == [4, 4, 4] && bounded(4.9) == [4, 4, 4] && bounded(13) == [14, 14, 14])
+        #expect(bounded(.nan) == [0, 0, 0] && bounded(.infinity) == [0, 0, 0])
+        #expect(ThemeAdjustment.folderIndentRange == 0...24 && ThemeAdjustment.folderIndentStep == 2)
+        let mixed = ThemeAdjustment(folderIndentLevel1: 3, folderIndentLevel2: 99, folderIndentLevel3: 7).bounded()
+        #expect(levels(mixed) == [4, 24, 8], "each level on its own")
+    }
+
+    @Test func aRowsInsetIsTheSumOfTheLevelsDownToItsDepth() {
+        let steps = ThemeAdjustment(folderIndentLevel1: 4, folderIndentLevel2: 8, folderIndentLevel3: 12)
+        #expect((0...5).map(steps.folderInset(depth:)) == [0, 4, 12, 24, 36, 48], "level 3 repeats for every level below")
+        #expect((1...5).map { steps.folderIndent(level: $0) } == [4, 8, 12, 12, 12])
+        #expect(steps.folderIndent(level: 0) == 4 && steps.folderInset(depth: -1) == 0, "nothing sits above the first level")
+
+        let shape = ThemeShape(steps)
+        #expect((1...5).map { shape.folderIndent(level: $0) } == [4, 8, 12, 12, 12])
+        #expect((0...4).allSatisfy { ThemeAdjustment().folderInset(depth: $0) == 0 }, "the default moves nothing")
+    }
+
+    @Test func theFolderIndentsAreStoredWithTheThemeAndResetWithIt() throws {
         try withSettings { settings, defaults in
-            settings.themeAdjustment = ThemeAdjustment(folderIndent: 9)
-            #expect(settings.themeAdjustment.folderIndent == 10, "stored in whole 2 pt steps")
-            #expect(settings.chromeShape.folderIndent == 10)
-            #expect(reopened(defaults).chromeShape.folderIndent == 10)
+            settings.themeAdjustment = ThemeAdjustment(folderIndentLevel1: 3, folderIndentLevel2: 9, folderIndentLevel3: 24)
+            #expect(levels(settings.themeAdjustment) == [4, 10, 24], "stored in whole 2 pt steps")
+            #expect(settings.chromeShape.folderIndents == [4, 10, 24])
+            #expect(reopened(defaults).chromeShape.folderIndents == [4, 10, 24])
+
+            #expect(settings.canResetTheme)
+            settings.resetSelectedTheme()
+            #expect(settings.chromeShape.folderIndents == [0, 0, 0] && !settings.canResetTheme, "Reset Theme to Default puts them back")
+            #expect(reopened(defaults).chromeShape.folderIndents == [0, 0, 0])
         }
     }
 
@@ -313,7 +358,7 @@ struct ThemeSpacingTests {
     }
 
     @Test func searchFindsTheSpacingKnobs() {
-        for query in ["spacing", "margin", "padding", "flush", "indent", "nested", "subfolder"] {
+        for query in ["spacing", "margin", "padding", "flush", "indent", "nested", "subfolder", "level"] {
             #expect(SettingsIndex.search(query).contains { $0.id == "appearance.layout" }, "\(query)")
         }
     }

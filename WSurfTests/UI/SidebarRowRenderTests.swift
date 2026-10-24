@@ -325,26 +325,31 @@ struct SidebarRowRenderTests {
             return grid.map { row in row.map { $0 / strongest < 0.05 ? 0 : $0 / strongest } }
         }
 
-        /// The top and bottom edge, in points, of the ink between the columns `xs` (points). An edge sits where the
-        /// ink covers as much of the outermost row as that row holds against the row just inside it.
+        /// The top and bottom edge, in points, of the ink between the columns `xs` (points). A row weighs as much as its
+        /// strongest pixel, so a round or uneven shape (a folder, with its tab) is read at its extremes like a flat one,
+        /// and an edge sits inside its outermost row by the share of the pixel that the ink leaves empty.
         func vertical(in xs: ClosedRange<CGFloat>) -> ClosedRange<CGFloat>? {
             let columns = Int((xs.lowerBound * scale).rounded(.down))..<Int((xs.upperBound * scale).rounded(.up))
-            let rows = coverage(columns: columns).map { $0.reduce(0, +) }
-            guard let peak = rows.max(), peak > 0 else { return nil }
-            let inked = rows.indices.filter { rows[$0] > 0.05 * peak }
+            let grid = (0..<bitmap.pixelsHigh).map { y in columns.map { distance($0, y) } }
+            let strongest = grid.joined().max() ?? 0
+            guard strongest > 0 else { return nil }
+            let rows = grid.map { ($0.max() ?? 0) / strongest }
+            let inked = rows.indices.filter { rows[$0] > 0.08 }
             guard let first = inked.first, let last = inked.last, last - first > 2 else { return nil }
-            let top = CGFloat(first) + 1 - min(rows[first] / rows[first + 1], 1)
-            let bottom = CGFloat(last) + min(rows[last] / rows[last - 1], 1)
+            let top = CGFloat(first) + 1 - min(rows[first], 1)
+            let bottom = CGFloat(last) + min(rows[last], 1)
             return (top / scale)...(bottom / scale)
         }
 
-        /// The first column, in points, where the ink in the rows `ys` (points) reaches half of its strongest pixel.
-        func leftEdge(in ys: ClosedRange<CGFloat>) -> CGFloat? {
+        /// The first column, in points, from `x` on, where the ink in the rows `ys` (points) reaches half of its
+        /// strongest pixel.
+        func leftEdge(in ys: ClosedRange<CGFloat>, from x: CGFloat = 0) -> CGFloat? {
             let rows = Int((ys.lowerBound * scale).rounded(.down))..<Int((ys.upperBound * scale).rounded(.up))
-            let columns = (0..<bitmap.pixelsWide).map { x in rows.map { distance(x, $0) }.max() ?? 0 }
+            let start = Int(x * scale)
+            let columns = (start..<bitmap.pixelsWide).map { x in rows.map { distance(x, $0) }.max() ?? 0 }
             guard let strongest = columns.max(), strongest > 0,
                   let first = columns.firstIndex(where: { $0 >= 0.5 * strongest }) else { return nil }
-            return CGFloat(first) / scale
+            return CGFloat(start + first) / scale
         }
 
         /// The first column, in points, right of `x` where the ink reaches a quarter of its densest column.
@@ -406,25 +411,11 @@ struct SidebarRowRenderTests {
     /// icons on whole pixels, which moves them by up to half a point by itself.
     private let tolerance: CGFloat = 0.6
 
-    /// Where the ink of the folder symbol sits in its 16 pt frame, in points below the middle. The drawing of the
-    /// symbol is not centered on its own box, and a display of 1x moves a frame that starts between two pixels.
-    private func folderSymbolBias() throws -> CGFloat {
-        let frame = Image(systemName: "folder.fill")
-            .font(Theme.Font.caption)
-            .foregroundStyle(.white)
-            .frame(width: SidebarMetrics.rowIconSize, height: SidebarMetrics.rowIconSize)
-            .background(Color(red: 0.5, green: 0.5, blue: 0.5))
-        let ink = try readInk(of: frame, baseAt: CGPoint(x: 0.5, y: 0.5))
-        let edges = try #require(ink.vertical(in: 0...SidebarMetrics.rowIconSize))
-        return (edges.lowerBound + edges.upperBound) / 2 - ink.height / 2
-    }
-
     /// The icon is as high as the row's middle, and so is the middle of the capitals in the title: half a capital's
-    /// height above the baseline. `iconBias` is where the ink of the icon sits in its own frame.
+    /// height above the baseline.
     private func expectCentered(
         _ ink: Ink,
         icon: ClosedRange<CGFloat>,
-        iconBias: CGFloat = 0,
         font: NSFont,
         _ name: String,
         sourceLocation: SourceLocation = #_sourceLocation
@@ -437,7 +428,7 @@ struct SidebarRowRenderTests {
             sourceLocation: sourceLocation
         )
         let midline = font.capHeight / 2
-        let iconOff = (iconEdges.lowerBound + iconEdges.upperBound) / 2 - center - iconBias
+        let iconOff = (iconEdges.lowerBound + iconEdges.upperBound) / 2 - center
         let titleOff = title.upperBound - midline - center
         let capitals = title.upperBound - title.lowerBound
 
@@ -485,7 +476,7 @@ struct SidebarRowRenderTests {
             }
             try expectCentered(
                 readInk(of: sidebar(FolderSection(folder: folder, depth: 0, context: context))),
-                icon: 9...25, iconBias: folderSymbolBias(), font: font, "a folder"
+                icon: 9...25, font: font, "a folder"
             )
             try expectCentered(
                 readInk(
@@ -527,10 +518,10 @@ struct SidebarRowRenderTests {
     }
 
     /// The renderer draws at 1x, which puts an icon or a baseline on a whole point: each can sit half a point off
-    /// its true place, and a symbol is drawn a little low in its frame. The capitals are held to the row's middle
+    /// its true place. The capitals are held to the row's middle
     /// tighter than the icon, so the title cannot drift back towards the middle of the lowercase letters, which
     /// puts the capitals a point above it.
-    private let capitalsTolerance: CGFloat = 0.6
+    private let capitalsTolerance: CGFloat = 0.8
     private let iconTolerance: CGFloat = 1.0
 
     @Test(arguments: [12.0, 16, 24])
@@ -575,87 +566,10 @@ struct SidebarRowRenderTests {
         let found = try offsets(
             of: row, height: height, iconSize: SidebarMetrics.rowIconSize * size.factor, font: font, "a folder"
         )
-        // A drawn symbol is a little low in its frame, in proportion to its size.
-        let bias = 0.02 * SidebarMetrics.rowIconSize * size.factor
         #expect(
-            abs(found.capitals) <= capitalsTolerance + bias && abs(found.icon) <= iconTolerance + bias,
+            abs(found.capitals) <= capitalsTolerance && abs(found.icon) <= iconTolerance,
             "a folder at \(size) with icons of \(iconSize) pt: the capitals are \(found.capitals) pt and the icon \(found.icon) pt off the middle of a row \(height) pt tall"
         )
-    }
-
-    /// Three folders, each inside the one before, with the first two open. An open folder draws an outline 2 pt
-    /// inside its parent's, so the middle folder's icon starts 2 pt and one indent right of the outer one. The inner
-    /// folder is shut and has no outline, so it starts one indent right of the middle one. At indent 0 the rows are
-    /// where they were before the setting existed.
-    @Test(arguments: [0.0, 8, 16])
-    func eachLevelOfAnOpenFolderMovesItsRowsInByTheFolderIndent(indent: Double) throws {
-        let settings = BrowserSettings.application
-        let fixture = makeFixture()
-        defer { fixture.restoreTheme() }
-        settings.themeAdjustments["standard"] = ThemeAdjustment(folderIndent: indent)
-        settings.refreshTheme()
-        let outer = fixture.browser.createFolder(named: "Outer")
-        let middle = fixture.browser.createFolder(named: "Middle")
-        let inner = fixture.browser.createFolder(named: "Inner")
-        fixture.browser.move([.folder(inner.id)], into: middle)
-        fixture.browser.move([.folder(middle.id)], into: outer)
-        for folder in [outer, middle, inner] {
-            folder.color = .red
-        }
-        inner.isExpanded = false
-        let row = rowHeight
-        let spacing = SidebarMetrics.rowVerticalSpacing(settings: settings)
-        let outline = FolderSection.outlineInset
-        let total = 3 * row + 2 * spacing + 4 * outline
-        let middleTop = outline + row + spacing + outline
-        let centers = [
-            outline + row / 2,
-            middleTop + row / 2,
-            middleTop + row + spacing + row / 2,
-        ]
-
-        let ink = try readInk(
-            of: sidebar(FolderSection(folder: outer, depth: 0, context: fixture.context), height: total),
-            baseAt: CGPoint(x: rowWidth / 2 + 30, y: centers[0])
-        )
-        let edges = try centers.map { try #require(ink.leftEdge(in: ($0 - 3)...($0 + 3))) }
-
-        #expect(
-            abs((edges[1] - edges[0]) - (outline + indent)) <= 1,
-            "the middle folder starts \(edges[1] - edges[0]) pt right of the outer one at indent \(indent)"
-        )
-        #expect(
-            abs((edges[2] - edges[1]) - indent) <= 1,
-            "the inner folder starts \(edges[2] - edges[1]) pt right of the middle one at indent \(indent)"
-        )
-    }
-
-    @Test func aFolderIndentIsIgnoredInTheIconsOnlySidebar() throws {
-        let settings = BrowserSettings.application
-        let fixture = makeFixture()
-        defer { fixture.restoreTheme() }
-        func edge(indent: Double) throws -> CGFloat {
-            settings.themeAdjustments["standard"] = ThemeAdjustment(folderIndent: indent)
-            settings.refreshTheme()
-            let outer = fixture.browser.createFolder(named: "Outer")
-            let inner = fixture.browser.createFolder(named: "Inner")
-            fixture.browser.move([.folder(inner.id)], into: outer)
-            outer.color = .red
-            inner.color = .red
-            inner.isExpanded = false
-            let width = SidebarMetrics.iconsWidth
-            let total = 2 * rowHeight + SidebarMetrics.rowVerticalSpacing(settings: settings) + 4 * FolderSection.outlineInset
-            let ink = try readInk(
-                of: sidebar(FolderSection(folder: outer, depth: 0, context: fixture.context), width: width, height: total, style: .icons),
-                baseAt: CGPoint(x: 1, y: 1)
-            )
-            let innerCenter = FolderSection.outlineInset + rowHeight + SidebarMetrics.rowVerticalSpacing(settings: settings)
-                + FolderSection.outlineInset + rowHeight / 2
-            return try #require(ink.leftEdge(in: (innerCenter - 3)...(innerCenter + 3)))
-        }
-        let none = try edge(indent: 0)
-        let wide = try edge(indent: 24)
-        #expect(abs(none - wide) <= 0.6, "the inner folder is at \(none) pt with no indent and \(wide) pt with 24 pt")
     }
 
     @Test func aFolderTitleStartsWhereATabTitleStarts() throws {
@@ -694,18 +608,14 @@ struct SidebarRowRenderTests {
             let width = SidebarMetrics.iconsWidth
             let corner = CGPoint(x: 1, y: 1)
 
-            let rows: [(String, AnyView, CGFloat)] = try [
-                ("a tab", AnyView(SidebarTabRow(tab: tab, depth: 0, context: fixture.context)), 0),
-                (
-                    "a folder",
-                    AnyView(FolderSection(folder: folder, depth: 0, context: fixture.context)),
-                    folderSymbolBias()
-                ),
+            let rows: [(String, AnyView)] = [
+                ("a tab", AnyView(SidebarTabRow(tab: tab, depth: 0, context: fixture.context))),
+                ("a folder", AnyView(FolderSection(folder: folder, depth: 0, context: fixture.context))),
             ]
-            for (name, row, bias) in rows {
+            for (name, row) in rows {
                 let ink = try readInk(of: sidebar(row, width: width, style: .icons), baseAt: corner)
                 let edges = try #require(ink.vertical(in: 0...width), "\(name): no icon was drawn")
-                let off = (edges.lowerBound + edges.upperBound) / 2 - ink.height / 2 - bias
+                let off = (edges.lowerBound + edges.upperBound) / 2 - ink.height / 2
                 #expect(abs(off) <= tolerance, "\(name): the icon is \(off) pt off the row's middle")
             }
         }
