@@ -5,6 +5,69 @@ This file preserves release notes inherited from the upstream
 describe upstream Linen releases, not releases published by WSurf. New WSurf
 release notes will be added above this provenance record.
 
+## 0.1.11 (build 11) — 2026-10-24
+
+Everything since 0.1.10 (build 10). None of the screens and prompts below has been checked by hand.
+
+### Tabs and sidebar
+
+- Everything above the pin line is pinned, including every tab in a pinned folder and in its subfolders. A pinned tab keeps its place when you browse away, and unloading it (the X, ⌘W, Unload Tab, sleeping tabs or Free Memory) brings it back to its pinned page. A link opened from a page in a pinned folder now opens below the line, and ⌘D on such a page no longer moves it out of its folder.
+- Right-click a pinned tab or a favorite that has wandered › Update Pinned URL makes the page it shows its new pinned page, beside Back to Pinned Page; one Undo puts the old page back. In the File menu the ⌘D item says what it will do: Pin This Page, Update Pinned URL or Unpin Tab. “Edit Pinned Page ▸ Edit…” is now “Edit Pinned Page…”.
+- A new tab can be pinned: it pins the Start page and comes back to it.
+- On first launch, a page in a pinned folder takes the page it shows as its pinned page. A tab in an ordinary folder that an older version still treated as pinned (left from a folder that was unpinned) is no longer pinned, and the X closes it.
+- Tab, page and folder icons now sit on the middle of the row, level with the title, at every icon and font size: SF Symbols and favicons with uneven transparent padding were up to about 1.8 pt off. The open and shut folder icon no longer cross-fades, and thin symbol strokes are a little softer.
+- Right-click a folder › Tint Icons as Folder draws the icons of the tabs in it, and in its subfolders, in the folder’s color. It is off by default, the current tab keeps its own colors, and the nearest folder that tints wins. One Undo turns it back.
+- Settings › Appearance › Colors › Folder color opacity makes folder colors stronger or fainter (20 to 100 %, 100 % is the look until now). It is kept with the theme, like the Layout sliders, and Reset Theme to Default puts it back.
+- Settings › Appearance › Layout › Folder indent now has a slider for Level 1, Level 2, and Level 3 and deeper. A theme that had one indent keeps it on all three levels, so nothing moves until you change one.
+- The hidden sidebar, and the Minimal tab list, open only when the pointer rests at the left edge for a moment, not when it passes over it. They close when the pointer leaves them, when you switch to another app, or after a menu closes outside them; resizing the sidebar keeps them open.
+
+### Window
+
+- Full screen now uses the whole screen: the empty band at the top is gone. When you point at the top edge, the toolbar, the sidebar or the Minimal bar slides down with the menu bar and the strip of window buttons, and back up when they hide. With the menu bar set to stay, the toolbar sits right below the strip.
+- New Micro WSurf window: just the page, with no controls until you point at the top of the window, where a small bar and the window buttons slide down. File › New Micro Window (⌥⌘N).
+- Move any tab into a micro window with the new button beside Reader and the pin, from the tab’s menu or with Window › Move to Micro Window (⌥⇧⌘N). The page moves as it is, without reloading. Move Back to Main Window returns it.
+- Float on Top keeps a micro window above other windows, on every desktop and over full-screen apps.
+- Micro windows come back after a restart, with Float on Top off. A private tab stays private in its micro window, and the private session ends when its last window closes. While a page in a micro window asks something (a dialog, a sign-in, a certificate, a permission, a password to save, a passkey step), the bar stays down so the website’s address shows.
+- The assistant no longer forgets the conversations of other windows when a new window opens.
+
+### Developer mode
+
+- Websites on local addresses (localhost, `*.localhost`, `*.test`, `*.local`, 127.x.x.x, `::1`) open in Developer mode: the address field shows the full address and a Developer Tools button with Copy Screenshot, Show Frame Rate, Outline Elements, Page Appearance (WebKit tabs), Open In another browser (not in private windows), Restart Page and Clear Website Data…. View › Developer › Developer Mode for “site” turns it on for any website and off for a local one; the choice is kept per profile, and a private window’s choice is forgotten when it closes.
+- Clear Website Data… removes the storage and cookies of exactly the address it names, not its subdomains or its parent domain, and removes nothing if the page moved on while you were asked.
+- View › Developer › Show Web Inspector (⌥⌘I), also in the ⌘K palette, opens WebKit’s Web Inspector for the page. Chromium tabs don’t offer it. Websites in Developer mode get Inspect Element even with the Web Inspector setting off.
+- Copy Screenshot, in the Developer Tools menu and the ⌘K palette, copies a picture of the page as shown.
+
+### History
+
+- History groups the pages of one visit to a website into a trail you can open and close, with its pages in the order you visited them. A trail stays on one website.
+- Pages that change their address without loading (single-page apps) are recorded as visits, with the title they end up with; a move to another part of the same page is not. History records the page’s own title, never a name you gave the tab.
+- Older history loads as you scroll to the end of the list, and a middle-click on a row opens it in a background tab (a private tab only from a private window).
+- A link clicked in a tab that was already open when you cleared History, or part of it, is recorded again. Until now that visit was lost.
+- Private windows record nothing, and Clear History removes the trails too.
+
+### Extensions
+
+- Extensions that use features WebKit lacks now start: events it does not have are silent, `storage.managed` is empty and read-only, and an API the extension asks for that WebKit dropped answers with an error instead of being missing. Already installed extensions are updated on their next load. Nothing gains a permission, the manifest is never rewritten, and the iCloud Passwords adaptation is unchanged.
+
+### Updates and release notes
+
+- After an update the sidebar shows “Updated to 0.1.11” with a What’s New button, for 30 seconds or until clicked, once per installed build. The release notes no longer open by themselves.
+- What’s New and WSurf › Release Notes… show WSurf’s own notes, from this changelog inside the app: the installed build first, with the older ones below. Nothing is fetched from the network.
+
+### Interface
+
+- Keyboard shortcuts in the ⌘K palette, the Ask hints, the profile menu and the shortcut recorder are drawn as key caps.
+- New Private Window has a new symbol.
+- Long lists outside the sidebar scroll without stalls: Settings › Websites and Website data, the assistant’s approved actions and memory, Downloads and the Release Notes page. A site whose icon is missing is not asked again for 15 minutes.
+- Removing a site in Settings › Privacy › Website data shows a spinner on its row and no longer counts every site again; only that site’s data is removed, and a WebKit and a Chromium site of the same name stay separate.
+
+### Known issues
+
+- On a display at 1x (not Retina), a sidebar icon can still sit up to about 1 pt off its title.
+- After 0.1.11 has recorded a single-page-app visit, an older build shows an empty History page, no recent history or frequent sites on the Start page and no history suggestions for an empty address field, until those visits age out or History is cleared. Going back to an older build is not supported before 1.0.
+- A page that sets its title just before changing its address renames the previous visit with the new title, and an app that changes its address but never its title is not recorded.
+- The known issues of 0.1.10 are unchanged.
+
 ## 0.1.10 (build 10) — 2026-10-23
 
 Everything since 0.1.9 (build 9). None of the screens and prompts below has been checked by hand.
