@@ -77,13 +77,11 @@ nonisolated final class ListPerformanceTests: XCTestCase, @unchecked Sendable {
                 VStack(alignment: .leading, spacing: SettingsMetrics.sectionSpacing) {
                     SettingsSection(title: "Stored on this Mac", symbol: "internaldrive", isLongList: true) {
                         ForEach(Array(entries.enumerated()), id: \.element.id) { index, entry in
-                            if index > 0 {
-                                RowSeparator()
-                            }
                             SiteRow(host: entry.displayName, summary: entry.summary) {
                                 SettingsButton(title: "Remove…", isDestructive: true) {}
                             }
                             .onAppear { appeared.value += 1 }
+                            .separated(above: index > 0)
                         }
                     }
                 }
@@ -111,35 +109,40 @@ nonisolated final class ListPerformanceTests: XCTestCase, @unchecked Sendable {
         HTTPCookie(properties: [.domain: host, .path: "/", .name: "session", .value: "1"])
     }
 
-    /// Removing one site from the Website data list of 300 sites, and what the page does next to show the result. The data store is
-    /// WebKit's own, in memory, so the removal is the real one. Each run removes the first site still listed; afterwards exactly
-    /// those sites are gone and no other.
+    /// Removing three sites, one after another, from the Website data list of 1,500 sites, each with what the page does next to show the
+    /// result. The data store is WebKit's own, in memory, so the removal is the real one. Each run removes the first three sites still
+    /// listed; afterwards exactly the sites removed are gone and no other.
     func testRemovingASiteFromTheWebsiteDataList() {
         MainActor.assumeIsolated {
             let context = BrowserProfileContext(profile: .privateBrowsing())
-            let hosts = (0..<300).map { "site-\($0).example" }
+            let hosts = (0..<1_500).map { "site-\($0).example" }
             finish {
                 for host in hosts {
                     await context.dataStore.httpCookieStore.setCookie(try XCTUnwrap(Self.cookie(for: host)))
                 }
             }
-            var entries: [WebsiteData.Entry] = []
-            finish { entries = try await WebsiteData.entries(context: context) }
-            XCTAssertEqual(entries.count, hosts.count)
+            var snapshot = WebsiteData.Snapshot(entries: [])
+            finish { snapshot = try await WebsiteData.snapshot(context: context) }
+            XCTAssertEqual(snapshot.entries.count, hosts.count)
             var removed: [String] = []
 
             measure(metrics: [XCTClockMetric(), XCTMemoryMetric()], options: .budgeted) {
-                guard let entry = entries.first else { return XCTFail("The list ran out of sites.") }
-                removed.append(entry.displayName)
-                finish {
-                    try await WebsiteData.remove([entry], context: context)
-                    entries = try await WebsiteData.entries(context: context)
+                for _ in 0..<3 {
+                    guard let entry = snapshot.entries.first else { return XCTFail("The list ran out of sites.") }
+                    removed.append(entry.displayName)
+                    finish { try await WebsiteData.remove([entry], of: snapshot, context: context) }
+                    snapshot = snapshot.removing([entry])
                 }
             }
 
-            XCTAssertEqual(removed.count, 6)
-            XCTAssertEqual(Set(entries.map(\.displayName)), Set(hosts).subtracting(removed))
-            finish { await context.endPrivateSession() }
+            XCTAssertGreaterThanOrEqual(removed.count, 18, "every measured run removed three sites")
+            XCTAssertEqual(Set(snapshot.entries.map(\.displayName)), Set(hosts).subtracting(removed))
+            // What the page shows is what the data store holds: nothing was left behind and nothing else went.
+            finish {
+                let counted = try await WebsiteData.snapshot(context: context)
+                XCTAssertEqual(Set(counted.entries.map(\.displayName)), Set(hosts).subtracting(removed))
+                await context.endPrivateSession()
+            }
         }
     }
 
@@ -163,6 +166,29 @@ nonisolated final class ListPerformanceTests: XCTestCase, @unchecked Sendable {
                     }
                 }
                 XCTAssertEqual(found, 0)
+            }
+        }
+    }
+
+    // MARK: Websites with custom settings
+
+    /// The list on Settings › Websites of every site that has a rule of its own: 1,000 sites with a camera rule, 500 of them allowing
+    /// trackers, and 500 with an approved assistant action. Each of those 1,000 extra rules found its site's origins by reading all of them.
+    func testIndexingTheSitesWithCustomSettings() {
+        MainActor.assumeIsolated {
+            let file = URL.temporaryDirectory.appending(path: "ListPerformanceTests-\(UUID().uuidString).json")
+            let permissions = SitePermissions(storageURL: file, persists: false)
+            let hosts = (0..<1_000).map { "site-\($0).example" }
+            for host in hosts {
+                permissions.set(.allow, for: "https://\(host)", .camera)
+            }
+            let exempt = Set(hosts.prefix(500))
+            let grants = hosts.suffix(500).map { (host: $0, categories: [SensitiveAction.Category.purchase]) }
+
+            measure(metrics: [XCTClockMetric(), XCTMemoryMetric()], options: .budgeted) {
+                let entries = SiteSettingsIndex.entries(permissions: permissions, grantsByHost: grants, exemptHosts: exempt)
+                XCTAssertEqual(entries.count, hosts.count)
+                XCTAssertEqual(entries.first?.host, "site-0.example")
             }
         }
     }
@@ -197,7 +223,7 @@ nonisolated final class ListPerformanceTests: XCTestCase, @unchecked Sendable {
                     tick += 1
                     downloads.noteProgress(received: tick * 50_000, expected: 4_000_000, for: running)
                     // The run loop gets its turn here, which is when SwiftUI applies the change.
-                    RunLoop.current.run(until: Date().addingTimeInterval(0.002))
+                    RunLoop.current.run(until: Date().addingTimeInterval(0.001))
                     Self.settle(host)
                 }
             }
