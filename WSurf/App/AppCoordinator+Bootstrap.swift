@@ -72,7 +72,8 @@ extension AppCoordinator {
             linkPeek.show(url, tabID: tab.id, anchor: anchor, context: context)
         }
         linkPeek.begin()
-        if application == nil || application?.windows.count == 1 {
+        // A micro window has no onboarding to show and no release notes to open: those belong to the window to browse in.
+        if !isMicro, application == nil || application?.windows.count == 1 {
             onboarding.beginIfNeeded()
         }
         if onboarding.isPresented {
@@ -96,7 +97,7 @@ extension AppCoordinator {
             updates.setChannel(settings.updateChannel)
             updates.start()
         }
-        if application == nil || application?.windows.count == 1 {
+        if !isMicro, application == nil || application?.windows.count == 1 {
             MoveToApplications.reregisterDefaultBrowserIfNeeded()
             releaseNotes.checkForNewVersion()
         }

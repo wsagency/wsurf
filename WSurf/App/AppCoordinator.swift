@@ -176,6 +176,12 @@ final class AppCoordinator {
         didSet { if isMinimalTabListOpen != oldValue { applyHoverShield() } }
     }
     var profileButtonFrame: CGRect?
+    /// A micro window's Float on Top: above other windows, on every desktop and over full-screen apps. Never saved.
+    var floatsOnTop = false {
+        didSet { if floatsOnTop != oldValue { applyFloatOnTop() } }
+    }
+    /// When a micro window's bar is down. Made, and started, only for micro windows (`configureMicroCallbacks`).
+    @ObservationIgnored lazy var microReveal = makeMicroReveal()
     private(set) var paletteToken = 0
     var sidebarDestination: SidebarDestination? {
         SidebarDestination.resolve(activeTabID: browser.activeTab?.id)
@@ -318,7 +324,7 @@ final class AppCoordinator {
                     isMediaPicture: view === media.model.picturePage?.webKit,
                     isPointerOverPlayer: media.isPointerOverPlayer
                 )
-                    || shell.panelCoversPage
+                    || (shell.panelCoversPage && !isMicro)
                     || (isMinimal && isMinimalTabListOpen)
             )
         }

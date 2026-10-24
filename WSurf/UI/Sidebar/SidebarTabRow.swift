@@ -354,6 +354,13 @@ struct SidebarTabRow: View {
                 Label("Exit Split", systemImage: "rectangle")
             }
         }
+        if coordinator.canMoveToMicroWindow(tab) {
+            Button {
+                coordinator.moveToMicroWindow(tab)
+            } label: {
+                Label("Move to Micro Window", systemImage: "arrow.up.forward.square")
+            }
+        }
         Divider()
 
         SidebarPinMenuItems(tab: tab, browser: browser)

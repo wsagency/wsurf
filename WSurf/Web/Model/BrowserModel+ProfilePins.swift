@@ -13,7 +13,8 @@ extension BrowserModel {
 
     /// Shows the profile's pins in this window and adopts the window's own kept items that the profile lacks.
     func attachProfilePins() {
-        guard attachedPinStore == nil, sessionClosedAt == nil else { return }
+        // A micro window holds one page. Showing every pin there would fill it, and closing it would publish its set.
+        guard attachedPinStore == nil, sessionClosedAt == nil, windowKind == .standard else { return }
         let store = pinStore
         guard store.isAvailable else { return }
         attachedPinStore = store

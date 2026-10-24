@@ -118,6 +118,7 @@ final class MainMenu: NSObject, NSMenuItemValidation {
         menu.addItem(command("New Tab", #selector(newTab), key: "t"))
         menu.addItem(command("New Window", #selector(newWindow), key: "n"))
         menu.addItem(command("New Private Window", #selector(newPrivateWindow), key: "n", modifiers: [.command, .shift]))
+        menu.addItem(command("New Micro Window", #selector(newMicroWindow), key: "n", modifiers: [.command, .option]))
         menu.addItem(.separator())
         menu.addItem(command("Reopen Last Closed Tab", #selector(reopenClosedTab), key: "t", modifiers: [.command, .shift]))
         menu.addItem(command("Reopen Last Closed Window", #selector(reopenClosedWindow)))
@@ -275,6 +276,10 @@ final class MainMenu: NSObject, NSMenuItemValidation {
         let menu = NSMenu(title: "Window")
         menu.addItem(chain("Minimize", #selector(NSWindow.performMiniaturize(_:)), key: "m"))
         menu.addItem(chain("Zoom", #selector(NSWindow.performZoom(_:))))
+        menu.addItem(command("Float on Top", #selector(toggleFloatOnTop)))
+        menu.addItem(command(
+            "Move to Micro Window", #selector(moveToMicroWindow), key: "n", modifiers: [.command, .option, .shift]
+        ))
         menu.addItem(.separator())
         menu.addItem(command("Show Next Tab", #selector(nextTab), key: "]", modifiers: [.command, .shift]))
         menu.addItem(command("Show Previous Tab", #selector(previousTab), key: "[", modifiers: [.command, .shift]))
@@ -307,21 +312,21 @@ final class MainMenu: NSObject, NSMenuItemValidation {
     }
 
     @objc private func openSettings() {
-        coordinator.openSettings()
+        coordinator.mainWindowForCommands().openSettings()
     }
 
     @objc private func checkForUpdates() {
         (application?.updates ?? coordinator.updates).checkNow()
     }
     @objc private func showReleaseNotes() {
-        coordinator.showReleaseNotes()
+        coordinator.mainWindowForCommands().showReleaseNotes()
     }
 
     @objc private func openDownloads() {
-        coordinator.openSettings(.downloads)
+        coordinator.mainWindowForCommands().openSettings(.downloads)
     }
     @objc private func newTab() {
-        coordinator.requestNewTab()
+        coordinator.mainWindowForCommands().requestNewTab()
     }
     @objc private func newWindow() {
         if let coordinator = application?.activeCoordinator ?? fallbackCoordinator {
@@ -338,12 +343,25 @@ final class MainMenu: NSObject, NSMenuItemValidation {
         }
     }
 
+    @objc private func newMicroWindow() {
+        if let coordinator = application?.activeCoordinator ?? fallbackCoordinator {
+            coordinator.requestNewMicroWindow()
+        } else {
+            application?.newWindow(profile: ProfileStore.shared.current, kind: .micro).focusAddressBar()
+        }
+    }
+
     @objc private func reopenClosedWindow() {
         application?.reopenLastClosedWindow()
     }
     /// ⌘W: a Peek closes first; a pin, favorite or page in a pinned folder unloads; any other tab closes like its sidebar X.
+    /// In a micro window it closes the window, so Reopen Last Closed Window brings the page back as a micro window.
     @objc private func closeOrUnloadTab() {
         if coordinator.closePeek() {
+            return
+        }
+        if coordinator.isMicro {
+            coordinator.closeWindow()
             return
         }
         guard let tab = coordinator.browser.activeTab else { return }
@@ -379,10 +397,10 @@ final class MainMenu: NSObject, NSMenuItemValidation {
         coordinator.browser.returnToPin(tab)
     }
     @objc private func openPalette() {
-        coordinator.togglePalette()
+        coordinator.mainWindowForCommands().togglePalette()
     }
     @objc private func showHistory() {
-        coordinator.showHistory()
+        coordinator.mainWindowForCommands().showHistory()
     }
     @objc private func reload() {
         coordinator.pageCommandTab?.reload()
@@ -424,6 +442,17 @@ final class MainMenu: NSObject, NSMenuItemValidation {
     }
     @objc private func toggleAgentInspector() {
         coordinator.toggleAgentInspector()
+    }
+    @objc private func toggleFloatOnTop() {
+        coordinator.floatsOnTop.toggle()
+    }
+    /// Pops the page in front out into a micro window, or, in one, moves it back to the main window.
+    @objc private func moveToMicroWindow() {
+        if coordinator.isMicro {
+            coordinator.moveBackToMainWindow()
+        } else if let tab = coordinator.browser.activeTab {
+            coordinator.moveToMicroWindow(tab)
+        }
     }
     @objc private func movePlayerToCorner(_ sender: NSMenuItem) {
         guard let raw = sender.representedObject as? String, let corner = MediaPlayerCorner(rawValue: raw) else { return }
@@ -533,16 +562,27 @@ final class MainMenu: NSObject, NSMenuItemValidation {
 
     // MARK: - Validation
 
+    /// What a micro window has no use for: it holds one page, with no sidebar, tab list, side panel or window style.
+    private static let notInMicroWindows: Set<Selector> = [
+        #selector(nextTab), #selector(previousTab), #selector(switchToNextTab), #selector(switchToPreviousTab),
+        #selector(showTabAtIndex(_:)), #selector(showLastTab), #selector(showSpaceAtIndex(_:)),
+        #selector(splitRight), #selector(splitDown), #selector(focusOtherPane), #selector(swapPanes),
+        #selector(toggleSplitAxis), #selector(exitSplit), #selector(closeOtherPanes),
+        #selector(toggleSidebar), #selector(toggleWindowStyle), #selector(moveMinimalBar), #selector(toggleMinimalSidebarPin),
+        #selector(toggleAgentInspector), #selector(toggleLyrics), #selector(pinPage), #selector(returnToPin),
+    ]
+
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {  // swiftlint:disable:this cyclomatic_complexity
         if menuItem.action == #selector(reopenClosedWindow) {
             return application?.canReopenWindow == true
         }
         if let application, application.activeCoordinator == nil {
             return [
-                #selector(newWindow), #selector(newTab), #selector(newPrivateWindow),
+                #selector(newWindow), #selector(newTab), #selector(newPrivateWindow), #selector(newMicroWindow),
                 #selector(openSettings), #selector(checkForUpdates), #selector(reopenClosedTab), #selector(showAbout),
             ].contains(menuItem.action)
         }
+        guard validateMicroItem(menuItem) != false else { return false }
         switch menuItem.action {
         case #selector(goBack):
             return coordinator.pageCommandTab?.canGoBack ?? false
@@ -654,6 +694,23 @@ final class MainMenu: NSObject, NSMenuItemValidation {
         default:
             return true
         }
+    }
+
+    /// What a micro window changes: Float on Top, shown only there, Move to Micro Window and back, and the items it has no use
+    /// for. false refuses the item; anything else leaves it to `validateMenuItem`.
+    private func validateMicroItem(_ menuItem: NSMenuItem) -> Bool? {
+        if menuItem.action == #selector(toggleFloatOnTop) {
+            menuItem.isHidden = !coordinator.isMicro
+            menuItem.state = coordinator.floatsOnTop ? .on : .off
+            return coordinator.isMicro
+        }
+        if menuItem.action == #selector(moveToMicroWindow) {
+            let title: LocalizedStringResource = coordinator.isMicro ? "Move Back to Main Window" : "Move to Micro Window"
+            menuItem.title = String(localized: title)
+            return MicroWindowBadge.offer(for: coordinator, tab: coordinator.browser.activeTab) != nil
+        }
+        guard coordinator.isMicro, let action = menuItem.action, Self.notInMicroWindows.contains(action) else { return nil }
+        return false
     }
 
     /// ⌘D names what it will do: pin the page, update a wandering pin's page to the one on screen, or unpin a tab showing

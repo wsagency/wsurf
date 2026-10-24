@@ -24,7 +24,7 @@ final class BrowserApplication {
     private let defaults: UserDefaults
     private static let lastWindowKey = "browser.lastFocusedWindow"
     /// Profile and window of the last regular window the user closed, kept until another regular window opens.
-    private static let closedAsLastKey = "browser.windowClosedAsLast"
+    static let closedAsLastKey = "browser.windowClosedAsLast"
     private var mainMenu: MainMenu?
 
     init(defaults: UserDefaults? = nil, notifications: NotificationCenter = .default) {
@@ -44,19 +44,41 @@ final class BrowserApplication {
             ?? windows.last { !$0.isClosed }
     }
 
+    /// A micro window is never where an external link lands: it holds one page.
     var externalLinkTarget: AppCoordinator? {
-        if let activeCoordinator, !activeCoordinator.profiles.isPrivate {
+        if let activeCoordinator, !activeCoordinator.profiles.isPrivate, !activeCoordinator.isMicro {
             return activeCoordinator
         }
         return focusOrder.reversed().compactMap { id in
-            windows.first { !$0.isClosed && $0.windowID == id && !$0.profiles.isPrivate }
-        }.first ?? windows.last { !$0.isClosed && !$0.profiles.isPrivate }
+            windows.first { !$0.isClosed && $0.windowID == id && !$0.profiles.isPrivate && !$0.isMicro }
+        }.first ?? windows.last { !$0.isClosed && !$0.profiles.isPrivate && !$0.isMicro }
+    }
+
+    /// The window a connected app, the assistant's tools and shortcuts that open app pages work in: the active window, or
+    /// while a micro window is active, the regular window used last. A private window that is active, micro or not, gives
+    /// nothing, so a connected app keeps being refused while one is in front.
+    var activeBrowsingCoordinator: AppCoordinator? {
+        guard let active = activeCoordinator else { return nil }
+        guard active.isMicro else { return active }
+        guard !active.profiles.isPrivate else { return nil }
+        return focusOrder.reversed().compactMap { id in
+            windows.first { !$0.isClosed && $0.windowID == id && !$0.isMicro }
+        }.first ?? windows.last { !$0.isClosed && !$0.isMicro }
+    }
+
+    /// The window a micro window's page moves to, and where pages it opens go: the regular window of the same profile used
+    /// most recently, which is normally the one the page came from.
+    func browsingWindow(for micro: AppCoordinator) -> AppCoordinator? {
+        let recent = focusOrder.reversed().compactMap { id in windows.first { $0.windowID == id } }
+        return (recent + windows.reversed()).first {
+            !$0.isClosed && !$0.isMicro && !$0.isSwitchingProfile && $0.context === micro.context
+        }
     }
 
     @ObservationIgnored lazy var mcpServer = BrowserMCPServer(
         defaults: BrowserMCPServer.appDefaults,
         target: { [weak self] in
-            guard let coordinator = self?.activeCoordinator,
+            guard let coordinator = self?.activeBrowsingCoordinator,
                   !coordinator.isClosed, coordinator.nativeWindow != nil,
                   !coordinator.profiles.isPrivate, !coordinator.isSwitchingProfile
             else { return nil }
@@ -64,7 +86,7 @@ final class BrowserApplication {
         },
         available: { [weak self] browser in
             self?.windows.contains {
-                $0.browser === browser && !$0.isClosed && $0.nativeWindow != nil
+                $0.browser === browser && !$0.isClosed && $0.nativeWindow != nil && !$0.isMicro
                     && !$0.profiles.isPrivate && !$0.isSwitchingProfile && !$0.agentTurns.isRunning
             } == true
         },
@@ -78,7 +100,7 @@ final class BrowserApplication {
               let profile = ProfileStore.shared.profiles.first(where: { $0.id == profileID }) else { return nil }
         let recent = ([activeCoordinator].compactMap { $0 } + focusOrder.reversed().compactMap { id in windows.first { $0.windowID == id } })
         if let existing = (recent + windows).first(where: {
-            !$0.isClosed && $0.nativeWindow != nil && !$0.profiles.isPrivate && !$0.isSwitchingProfile
+            !$0.isClosed && $0.nativeWindow != nil && !$0.isMicro && !$0.profiles.isPrivate && !$0.isSwitchingProfile
                 && $0.context.profile.id == profileID
         }) {
             return existing
@@ -108,15 +130,18 @@ final class BrowserApplication {
         InputHistory.shared.purgeAllProfilesAtLaunch(catalog.profiles)
         CloudSync.startIfAvailable(profiles: catalog.profiles)
         restoreWindows(of: catalog.profiles)
-        if windows.isEmpty {
+        // A micro window alone is not a launch: the person still gets a window to browse in.
+        if !windows.contains(where: { !$0.isMicro }) {
             newWindow(profile: catalog.current)
         }
         if let profileID = catalog.launchProfileID,
            let profile = catalog.profiles.first(where: { $0.id == profileID }) {
-            let window = windows.last { $0.profiles.current.id == profileID }
+            let window = windows.last { $0.profiles.current.id == profileID && !$0.isMicro }
                 ?? newWindow(profile: profile, show: false)
             window.showBrowser()
         } else if let lastWindowID, let window = windows.first(where: { $0.windowID == lastWindowID }) {
+            window.showBrowser()
+        } else if activeCoordinator?.isMicro == true, let window = windows.last(where: { !$0.isMicro }) {
             window.showBrowser()
         }
         CloudTabs.shared?.publishAll(force: true)
@@ -144,14 +169,19 @@ final class BrowserApplication {
         let closedAsLast = takeWindowClosedAsLast()
         for profile in profiles {
             let context = BrowserProfileContext.shared(for: profile)
-            for saved in BrowserModel.savedWindows(in: context.database).reversed() {
-                openSavedWindow(saved, of: profile, show: show)
+            let saved = BrowserModel.savedWindows(in: context.database).reversed()
+            for window in saved where window.windowKind == .standard {
+                openSavedWindow(window, of: profile, show: show)
             }
+            // Micro windows come after: one left open at quit must not hide that the regular window was closed last.
             if let closedAsLast, closedAsLast.profileID == profile.id,
-               !windows.contains(where: { $0.context === context }),
-               let saved = BrowserModel.savedWindows(in: context.database, includeClosed: true)
+               !windows.contains(where: { $0.context === context && !$0.isMicro }),
+               let window = BrowserModel.savedWindows(in: context.database, includeClosed: true)
                 .first(where: { $0.id == closedAsLast.windowID && $0.closedAt != nil }) {
-                openSavedWindow(saved, of: profile, show: show)
+                openSavedWindow(window, of: profile, show: show)
+            }
+            for window in saved where window.windowKind == .micro {
+                openSavedWindow(window, of: profile, show: show)
             }
         }
     }
@@ -165,7 +195,7 @@ final class BrowserApplication {
             ) else { return }
             id = uniqueID
         }
-        newWindow(profile: profile, windowID: id, restoring: true, show: show)
+        newWindow(profile: profile, windowID: id, restoring: true, show: show, kind: saved.windowKind)
     }
 
     private func takeWindowClosedAsLast() -> (profileID: UUID, windowID: UUID)? {
@@ -183,14 +213,20 @@ final class BrowserApplication {
         windowID: UUID = UUID(),
         restoring: Bool = false,
         show: Bool = true,
-        urls: [URL] = []
+        urls: [URL] = [],
+        kind: WindowKind = .standard,
+        joining shared: BrowserProfileContext? = nil
     ) -> AppCoordinator {
-        let profile = profile ?? activeCoordinator?.profiles.current ?? ProfileStore.shared.current
+        let profile = shared?.profile ?? profile ?? activeCoordinator?.profiles.current ?? ProfileStore.shared.current
         let owner = settingsOwner ?? activeCoordinator.map {
             $0.profiles.isPrivate ? $0.profiles.profileToReturnTo : $0.profiles.current
         } ?? ProfileStore.shared.current
-        let context = BrowserProfileContext.shared(for: profile, settingsOwner: owner)
+        // A window can join a private context that is already open, which a new private window never does: its page is
+        // the same session, and a context of its own would be another cookie store.
+        let context = shared ?? BrowserProfileContext.shared(for: profile, settingsOwner: owner)
         let browser = BrowserModel(context: context, windowID: windowID)
+        // Before the coordinator exists: what it builds, and what restores from the saved row, depends on it.
+        browser.windowKind = kind
         let selection = ProfileStore.selection(profile: profile)
         if profile.isPrivate {
             selection.markCurrent(owner)
@@ -210,7 +246,7 @@ final class BrowserApplication {
         precondition(!windows.contains { $0.windowID == coordinator.windowID })
         coordinator.application = self
         windows.append(coordinator)
-        if !coordinator.profiles.isPrivate {
+        if !coordinator.profiles.isPrivate, !coordinator.isMicro {
             defaults.removeObject(forKey: Self.closedAsLastKey)
         }
         remember(coordinator.context)
@@ -222,8 +258,10 @@ final class BrowserApplication {
         activeCoordinator ?? newWindow(profile: ProfileStore.shared.current)
     }
 
+    /// Brings a window to the front for a Dock click: a window to browse in, never only a micro window.
     func showBrowser() {
-        ensureActiveWindow().showBrowser()
+        (activeBrowsingCoordinator ?? windows.last { !$0.isClosed && !$0.isMicro }
+            ?? newWindow(profile: ProfileStore.shared.current)).showBrowser()
     }
 
     /// Unloads the background tabs of every open window. Each window keeps its current tab.
@@ -237,7 +275,7 @@ final class BrowserApplication {
         activeWindowID = coordinator.windowID
         focusOrder.removeAll { $0 == coordinator.windowID }
         focusOrder.append(coordinator.windowID)
-        if !coordinator.profiles.isPrivate, !AppDatabase.isRunningTests {
+        if !coordinator.profiles.isPrivate, !coordinator.isMicro, !AppDatabase.isRunningTests {
             defaults.set(coordinator.windowID.uuidString, forKey: Self.lastWindowKey)
         }
         coordinator.extensions.focus(browser: coordinator.browser)
@@ -256,7 +294,10 @@ final class BrowserApplication {
             activeWindowID = focusOrder.last ?? windows.last?.windowID
         }
         // A private window keeps nothing, so it neither counts as an open window nor leaves a window to bring back.
-        if !coordinator.profiles.isPrivate, !windows.contains(where: { !$0.isClosed && !$0.profiles.isPrivate }) {
+        // A micro window is neither: it is not the window to bring back, and one left open does not hide that the last
+        // regular window closed.
+        if !coordinator.profiles.isPrivate, !coordinator.isMicro,
+           !windows.contains(where: { !$0.isClosed && !$0.profiles.isPrivate && !$0.isMicro }) {
             defaults.set([coordinator.context.profile.id.uuidString, coordinator.windowID.uuidString], forKey: Self.closedAsLastKey)
         }
     }

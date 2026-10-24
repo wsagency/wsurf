@@ -6,11 +6,14 @@ import AppKit
 import Foundation
 
 extension BrowserModel {
-    /// Transfer the same live page; navigation and POST state belong to the tab.
+    /// Transfer the same live page; navigation and POST state belong to the tab. The page becomes the tab in front, unless
+    /// `activate` is false: a page that was opened in the background stays there.
     @discardableResult
-    func adoptTab(_ tab: BrowserTab, from source: BrowserModel) -> Bool {
+    func adoptTab(_ tab: BrowserTab, from source: BrowserModel, activate: Bool = true) -> Bool {
+        // Only within one context: a private page never reaches another private window's cookie store, only a window that
+        // joined its own session.
         guard source !== self, source.windowID != windowID, source.context === context,
-              !opensPrivately, source.sessionClosedAt == nil, sessionClosedAt == nil,
+              source.sessionClosedAt == nil, sessionClosedAt == nil,
               context.isRegistered(source), context.isRegistered(self),
               (source.database.writer as AnyObject) === (database.writer as AnyObject),
               source.tabsByID[tab.id] === tab, tab.context === context,
@@ -26,7 +29,9 @@ extension BrowserModel {
         // The page leaves as an ordinary tab. Its pin stays in this window and every other one, so the source
         // gets a new unloaded page for it below.
         let wasPin = tab.pinID != nil
-        if wasPin {
+        // A micro window shows none of the profile's pins, so a page that reaches one is an ordinary tab even where this
+        // window has no pin store to say it was a pin.
+        if wasPin || windowKind == .micro {
             tab.pinID = nil
             tab.pinnedURL = nil
             tab.pinnedTitle = ""
@@ -76,7 +81,9 @@ extension BrowserModel {
         writtenStateGeneration[tab.id] = nil
         source.onTabTransferredOut?(tab, oldIndex)
         onTabTransferredIn?(tab, source, oldIndex)
-        activeTabID = tab.id
+        if activate {
+            activeTabID = tab.id
+        }
         saveTransferredSession(from: source)
         return true
     }

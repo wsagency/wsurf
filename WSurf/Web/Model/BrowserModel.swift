@@ -593,4 +593,7 @@ final class BrowserModel {
     var opensPrivately: Bool {
         context.profile.isPrivate
     }
+
+    /// Set once by `BrowserApplication.newWindow` before the window's coordinator exists, and never changed afterwards.
+    @ObservationIgnored var windowKind: WindowKind = .standard
 }

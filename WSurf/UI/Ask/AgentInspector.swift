@@ -66,7 +66,12 @@ extension AppCoordinator {
 
     func retainAgentMemory() {
         let live = Set(browser.tabs.map(\.id))
-        conversationLog.retainTabs(live)
+        // The windows of one profile share one log, so a page another of them shows is live too: a window that opens for a
+        // page (a micro window, or the window of one dragged out) must not forget the conversations of the page's own.
+        let shown = (application?.windows ?? [])
+            .filter { !$0.isClosed && $0.context === context }
+            .flatMap { $0.browser.tabs.map(\.id) }
+        conversationLog.retainTabs(live.union(shown))
         attention.retainAnchors(live)
     }
 }

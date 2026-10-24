@@ -113,6 +113,8 @@ struct ChromeWashTests {
             "WSurf/UI/Content/ContentNavBar.swift",
             "WSurf/UI/Shell/BrowserView.swift",
             "WSurf/UI/Shell/Minimal/IslandBar.swift",
+            "WSurf/UI/Shell/Micro/MicroWindowView.swift",
+            "WSurf/UI/Shell/Micro/MicroBar.swift",
             "WSurf/Media/Lyrics/LyricsView.swift",
         ]
         for path in sources {

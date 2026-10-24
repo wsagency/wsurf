@@ -18,6 +18,12 @@ extension BrowserModel {
         var id: UUID
         var lastActiveAt: Date
         var closedAt: Date?
+        /// `WindowKind.rawValue`; nil for every window saved before micro windows.
+        var kind: String?
+
+        var windowKind: WindowKind {
+            kind.flatMap(WindowKind.init(rawValue:)) ?? .standard
+        }
     }
 
     static func savedWindows(in database: AppDatabase, includeClosed: Bool = false) -> [SavedBrowserWindow] {
@@ -153,6 +159,8 @@ extension BrowserModel {
         var revision: Int64
         var savedAt: Date
         var closedAt: Date?
+        /// `WindowKind.micro.rawValue` for a micro window, nil for a standard one.
+        var kind: String?
         var tabs: [TabRecord]
         var folders: [FolderRecord]
         var items: [ItemRecord]
@@ -343,6 +351,7 @@ extension BrowserModel {
 
         return SessionSnapshot(
             windowID: windowID, revision: sessionRevision, savedAt: Date(), closedAt: sessionClosedAt,
+            kind: windowKind == .micro ? WindowKind.micro.rawValue : nil,
             tabs: tabRecords,
             folders: folderRecords,
             items: itemRecords,
@@ -361,10 +370,10 @@ extension BrowserModel {
         ) ?? 0
         guard snapshot.revision >= revision else { return }
         try db.execute(sql: """
-            INSERT INTO sessionWindow (id, lastActiveAt, closedAt, revision) VALUES (?, ?, ?, ?)
+            INSERT INTO sessionWindow (id, lastActiveAt, closedAt, revision, kind) VALUES (?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET lastActiveAt = excluded.lastActiveAt,
-                closedAt = excluded.closedAt, revision = excluded.revision
-            """, arguments: [snapshot.windowID, snapshot.savedAt, snapshot.closedAt, snapshot.revision])
+                closedAt = excluded.closedAt, revision = excluded.revision, kind = excluded.kind
+            """, arguments: [snapshot.windowID, snapshot.savedAt, snapshot.closedAt, snapshot.revision, snapshot.kind])
         let belongsToWindow = Column("windowID") == snapshot.windowID
         try FolderRecord.filter(belongsToWindow).deleteAll(db)
         for folder in snapshot.folders {
