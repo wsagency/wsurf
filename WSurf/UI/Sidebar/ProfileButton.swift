@@ -56,7 +56,7 @@ struct ProfileSwitcher: View {
                     .padding(.vertical, 5)
             }
 
-            ProfileActionRow(title: "New Private Window", symbol: "eyeglasses", shortcut: "⇧⌘N") {
+            ProfileActionRow(title: "New Private Window", symbol: "plus.square.fill", shortcut: "⇧⌘N") {
                 dismiss()
                 coordinator.requestNewWindow(isPrivate: true)
             }
