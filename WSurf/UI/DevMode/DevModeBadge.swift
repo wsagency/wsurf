@@ -41,6 +41,15 @@ extension AppCoordinator {
         }
     }
 
+    /// Turns Developer mode on or off for `host`, the website a menu item named, only while `tab` still shows that host: a page
+    /// that moved on while the menu was open is not a website the person chose. Returns whether anything was changed.
+    @discardableResult
+    func setDevMode(_ isOn: Bool, for tab: BrowserTab, named host: String) -> Bool {
+        guard DevMode.host(of: URL(string: tab.urlString)) == host else { return false }
+        setDevMode(isOn, for: tab)
+        return true
+    }
+
     func copyScreenshot(of tab: BrowserTab) {
         guard tab.isMaterialised else { return }
         let page = tab.shownPage
@@ -65,9 +74,12 @@ extension AppCoordinator {
                 detail: "Storage, caches and cookies of this exact address are removed, and the page reloads. Other addresses, including its subdomains and parent domain, are left alone.",
                 verb: "Clear"
             ), let tab else { return }
-            switch await tab.clearDevModeSiteData() {
+            // The website that was confirmed, not whichever one the tab shows by now.
+            switch await tab.clearDevModeSiteData(origin: origin) {
             case .cleared(let report) where report.failed.isEmpty:
                 self?.show(notice: String(localized: "Website Data Cleared"))
+            case .stale:
+                self?.show(notice: String(localized: "The page changed, so nothing was cleared"))
             default:
                 self?.show(notice: String(localized: "Couldn’t clear all website data"))
             }
@@ -156,7 +168,7 @@ enum DevModeMenu {
             menu.addItem(.separator())
             menu.addItem(title: String(localized: "Turn Off Developer Mode for “\(host)”")) { [weak tab, weak coordinator] in
                 guard let tab, let coordinator else { return }
-                coordinator.setDevMode(false, for: tab)
+                coordinator.setDevMode(false, for: tab, named: host)
             }
         }
         return menu

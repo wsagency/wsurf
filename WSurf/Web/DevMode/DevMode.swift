@@ -233,26 +233,35 @@ extension BrowserTab {
         let tools = documentUsesDevMode ? state.tools : DevModeTools()
         guard tools.hasOverlays || state.overlaysShown, let page = liveView else { return }
         state.overlaysShown = tools.hasOverlays
+        // The script runs a moment later, in whatever document the page shows by then. It names the origin it was asked
+        // about and does nothing in any other, so an overlay never lands on a website that is not in Developer mode.
+        let origin = SitePermissions.origin(for: page.url)
+        guard !origin.isEmpty else { return }
         Task {
             _ = try? await page.callAsyncJavaScript(
                 DevModeOverlay.source,
-                arguments: ["fps": tools.showsFrameRate, "outlines": tools.outlinesElements],
+                arguments: ["fps": tools.showsFrameRate, "outlines": tools.outlinesElements, "origin": origin],
                 in: nil,
                 contentWorld: DevModeOverlay.world
             )
         }
     }
 
-    /// Removes the cookies and storage of the exact address this tab shows, and no other website's: not its subdomains,
-    /// not its parent domain, not another port's storage. Reloads from the network afterwards. Nil when the tab shows no
-    /// http(s) page of its own. The caller has already asked the person.
+    /// Removes the cookies and storage of `confirmed`, the origin the person was asked about, and no other website's: not its
+    /// subdomains, not its parent domain, not another port's storage. Reloads from the network afterwards. The page may have
+    /// moved on while the question was open (a redirect, a script, a click), so this clears only while the tab still shows
+    /// exactly that origin and the website still uses Developer mode, checks both again before each step, and otherwise clears
+    /// nothing and answers `.stale`. The caller has already asked the person.
     @discardableResult
-    func clearDevModeSiteData() async -> DevelopmentSiteDataOutcome? {
-        guard let page = liveView, let url = page.url, DevMode.host(of: url) != nil else { return nil }
-        let origin = SitePermissions.origin(for: url)
+    func clearDevModeSiteData(origin confirmed: String) async -> DevelopmentSiteDataOutcome {
+        func isStillTheConfirmedWebsite(_ page: BrowserPage) -> Bool {
+            guard let url = page.url, DevMode.host(of: url) != nil else { return false }
+            return SitePermissions.origin(for: url) == confirmed && context.settings.usesDevMode(for: url)
+        }
+        guard let page = liveView, isStillTheConfirmedWebsite(page), let url = page.url else { return .stale }
         let outcome = await page.clearDevelopmentSiteData(for: url) { [weak self, weak page] in
             guard let self, let page, !isClosed, liveView === page else { return false }
-            return SitePermissions.origin(for: page.url) == origin
+            return isStillTheConfirmedWebsite(page)
         }
         if case .cleared = outcome, liveView === page {
             page.reloadFromOrigin()
@@ -267,6 +276,7 @@ enum DevModeOverlay {
     static let world = WKContentWorld.world(name: "WSurfDevMode")
 
     static let source = """
+    if (location.origin !== origin) return;
     const state = window.__wsurfDevMode ??= {};
     if (fps && !state.fps) {
         const badge = document.createElement("div");

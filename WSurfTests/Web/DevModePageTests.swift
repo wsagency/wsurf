@@ -302,6 +302,30 @@ struct DevModePageTests {
     }
 
     @Test(arguments: [BrowserEngine.webKit, .chromium])
+    func theOverlayScriptDrawsOnlyInTheOriginItWasAskedFor(engine: BrowserEngine) async throws {
+        let rig = makeRig()
+        defer { finish(rig) }
+        let server = try await server()
+        let (tab, window) = try await open(rig, server, engine: engine)
+        defer { hide(window) }
+        let outlined = "getComputedStyle(document.querySelector('p')).outlineStyle"
+        func run(for origin: String) async throws {
+            _ = try await tab.page.callAsyncJavaScript(
+                DevModeOverlay.source, arguments: ["fps": false, "outlines": true, "origin": origin], in: nil,
+                contentWorld: DevModeOverlay.world)
+        }
+
+        // A document that is not the one the call was made for (the page moved on in between) is left alone.
+        try await run(for: "http://elsewhere.test")
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(await script(tab, outlined) as? String == "none")
+        #expect(await script(tab, "typeof window.__wsurfDevMode") as? String == "undefined")
+
+        try await run(for: SitePermissions.origin(for: tab.page.url))
+        #expect(await waitUntil { await script(tab, outlined) as? String == "solid" })
+    }
+
+    @Test(arguments: [BrowserEngine.webKit, .chromium])
     func aNewDocumentGetsTheOverlaysAgain(engine: BrowserEngine) async throws {
         let rig = makeRig()
         defer { finish(rig) }
@@ -445,7 +469,8 @@ struct DevModePageTests {
         #expect(before.contains("app.localhost"), "the page's own cookie is set: \(before)")
         #expect(before.isSuperset(of: others), "the other cookies are in place: \(before)")
 
-        let outcome = try #require(await tab.clearDevModeSiteData())
+        let confirmed = SitePermissions.origin(for: try address(server, host: "app.localhost"))
+        let outcome = await tab.clearDevModeSiteData(origin: confirmed)
         guard case .cleared(let report) = outcome else {
             Issue.record("expected the data to be cleared, got \(outcome)")
             return
@@ -467,6 +492,126 @@ struct DevModePageTests {
         let rig = makeRig()
         defer { finish(rig) }
         let unloaded = rig.browser.newTab()
-        #expect(await unloaded.clearDevModeSiteData() == nil)
+        guard case .stale = await unloaded.clearDevModeSiteData(origin: "http://app.localhost:5173") else {
+            Issue.record("a tab with no page has nothing to clear")
+            return
+        }
+    }
+
+    /// The question names an origin, and the page can move on while it is open (a redirect, a script, a click). Confirming must
+    /// clear what was named, never whatever the tab shows by the time the person answers.
+    @Test(.timeLimit(.minutes(3)), arguments: [BrowserEngine.webKit, .chromium])
+    func aPageThatMovedOnWhileTheQuestionWasOpenIsNeverCleared(engine: BrowserEngine) async throws {
+        let rig = makeRig()
+        defer { finish(rig) }
+        let server = try await server()
+        let (tab, window) = try await open(rig, server, host: "app.localhost", engine: engine)
+        defer { hide(window) }
+        let confirmed = SitePermissions.origin(for: try address(server, host: "app.localhost"))
+        #expect(try await tab.page.callAsyncJavaScript(seed, in: nil, contentWorld: .page) as? Bool == true)
+
+        // The page moves to another website while the alert is open.
+        let other = try address(server, host: "other.localhost")
+        rig.permissions.setEngine(engine, for: SitePermissions.origin(for: other))
+        let document = tab.page.mainDocumentID
+        tab.load(other)
+        try #require(await waitUntil {
+            tab.page.url == other && !tab.page.isLoading && tab.page.mainDocumentID != nil && tab.page.mainDocumentID != document
+        })
+        #expect(tab.page.engine == engine)
+        #expect(try await tab.page.callAsyncJavaScript(seed, in: nil, contentWorld: .page) as? Bool == true)
+        let before = try await cookieDomains(tab)
+        #expect(before.isSuperset(of: ["app.localhost", "other.localhost"]), "\(before)")
+
+        guard case .stale = await tab.clearDevModeSiteData(origin: confirmed) else {
+            Issue.record("a page that is no longer the confirmed website must report stale")
+            return
+        }
+        #expect(try await cookieDomains(tab) == before, "no cookie of either website was removed")
+        #expect(await script(tab, "String(localStorage.length) + String(sessionStorage.length)") as? String == "11", "the page now shown kept its storage")
+        #expect(await script(tab, "document.cookie") as? String == "session=devModeSecret")
+        #expect(tab.page.url == other, "and it did not reload")
+    }
+
+    @Test(.timeLimit(.minutes(3)), arguments: [BrowserEngine.webKit, .chromium])
+    func aWebsiteTurnedOffWhileTheQuestionWasOpenIsNeverCleared(engine: BrowserEngine) async throws {
+        let rig = makeRig()
+        defer { finish(rig) }
+        let server = try await server()
+        let (tab, window) = try await open(rig, server, host: "app.localhost", engine: engine)
+        defer { hide(window) }
+        let confirmed = SitePermissions.origin(for: try address(server, host: "app.localhost"))
+        #expect(try await tab.page.callAsyncJavaScript(seed, in: nil, contentWorld: .page) as? Bool == true)
+        let before = try await cookieDomains(tab)
+
+        tab.setDevMode(false)
+        guard case .stale = await tab.clearDevModeSiteData(origin: confirmed) else {
+            Issue.record("a website that is no longer in Developer mode must report stale")
+            return
+        }
+        #expect(try await cookieDomains(tab) == before)
+        #expect(await script(tab, "String(localStorage.length)") as? String == "1")
+
+        // Back on, the same confirmed website is cleared.
+        tab.setDevMode(true)
+        guard case .cleared = await tab.clearDevModeSiteData(origin: confirmed) else {
+            Issue.record("the confirmed website in Developer mode is cleared")
+            return
+        }
+        #expect(!(try await cookieDomains(tab)).contains("app.localhost"))
+    }
+
+    @Test func aMenuItemActsOnlyOnTheWebsiteItNamed() async throws {
+        let rig = makeRig()
+        defer { finish(rig) }
+        let coordinator = AppCoordinator(browser: rig.browser)
+        defer { coordinator.closeWindow() }
+        let tab = await parkTab(rig.browser, at: try #require(URL(string: "http://app.localhost:5173/")))
+
+        // The page moved on while a menu named another website: nothing changes.
+        for named in ["other.localhost", "shop.invalid", "localhost", ""] {
+            #expect(!coordinator.setDevMode(false, for: tab, named: named), "\(named)")
+        }
+        #expect(tab.usesDevMode)
+        #expect(rig.browser.context.settings.devModeSites == DevModeSites())
+
+        #expect(coordinator.setDevMode(false, for: tab, named: "app.localhost"))
+        #expect(!tab.usesDevMode)
+        #expect(rig.browser.context.settings.devModeSites.disabled == ["app.localhost"])
+    }
+
+    @Test func theWebsiteItemOfTheDeveloperMenuActsOnlyOnTheWebsiteItNamed() async throws {
+        let rig = makeRig()
+        defer { finish(rig) }
+        let coordinator = AppCoordinator(browser: rig.browser)
+        defer { coordinator.closeWindow() }
+        let previousMenu = NSApp.mainMenu
+        let mainMenu = MainMenu(coordinator: coordinator)
+        mainMenu.install()
+        defer { NSApp.mainMenu = previousMenu }
+        let developer = try #require(
+            NSApp.mainMenu?.items.compactMap(\.submenu).flatMap(\.items).first { $0.title == "Developer" }?.submenu)
+        let toggle = try #require(developer.items.first { $0.title.hasPrefix("Developer Mode for") })
+        let local = try #require(URL(string: "http://app.localhost:5173/"))
+        let remote = try #require(URL(string: "https://shop.invalid/"))
+        let tab = await parkTab(rig.browser, at: local)
+        let settings = rig.browser.context.settings
+
+        #expect(mainMenu.validateMenuItem(toggle))
+        #expect(toggle.title == String(localized: "Developer Mode for “app.localhost”"))
+        // The page moves on after the item named app.localhost: choosing it changes nothing, for either website.
+        tab.loadHTML("<!doctype html><title>Shop</title><p>Shop</p>", baseURL: remote)
+        #expect(await waitUntil { tab.urlString == remote.absoluteString })
+        #expect(NSApp.sendAction(try #require(toggle.action), to: toggle.target, from: toggle))
+        #expect(settings.devModeSites == DevModeSites())
+        #expect(settings.usesDevMode(for: local) && !settings.usesDevMode(for: remote))
+
+        // Named again for the page that is shown, it acts on that one.
+        #expect(mainMenu.validateMenuItem(toggle))
+        #expect(toggle.title == String(localized: "Developer Mode for “shop.invalid”"))
+        #expect(NSApp.sendAction(try #require(toggle.action), to: toggle.target, from: toggle))
+        #expect(settings.usesDevMode(for: remote))
+        #expect(settings.devModeSites.enabled == ["shop.invalid"])
+        #expect(settings.usesDevMode(for: local))
     }
 }

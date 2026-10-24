@@ -227,7 +227,7 @@ final class MainMenu: NSObject, NSMenuItemValidation {
         developer.addItem(command("Show Web Inspector", #selector(showWebInspector), key: "i", modifiers: [.command, .option]))
         developer.addItem(command("Restart Page", #selector(restartPage)))
         developer.addItem(.separator())
-        developer.addItem(command("Developer Mode for This Website", #selector(toggleDevMode)))
+        developer.addItem(command("Developer Mode for This Website", #selector(toggleDevMode(_:))))
         menu.addItem(submenu(developer, titled: "Developer"))
         return menu
     }
@@ -396,9 +396,10 @@ final class MainMenu: NSObject, NSMenuItemValidation {
     @objc private func restartPage() {
         coordinator.pageCommandTab?.restartPage()
     }
-    @objc private func toggleDevMode() {
-        guard let tab = coordinator.pageCommandTab else { return }
-        coordinator.setDevMode(!tab.usesDevMode, for: tab)
+    @objc private func toggleDevMode(_ sender: NSMenuItem) {
+        // The item named a website when it was validated; a page that moved on since is not the one the person chose.
+        guard let tab = coordinator.pageCommandTab, let host = sender.representedObject as? String else { return }
+        coordinator.setDevMode(!tab.usesDevMode, for: tab, named: host)
     }
     @objc private func stopLoading() {
         coordinator.pageCommandTab?.stopLoading()
@@ -557,7 +558,7 @@ final class MainMenu: NSObject, NSMenuItemValidation {
         case #selector(zoomIn), #selector(zoomOut), #selector(openFind), #selector(findNext),
              #selector(findPrevious), #selector(printPage):
             return coordinator.pageCommandTab != nil
-        case #selector(showWebInspector), #selector(toggleDevMode):
+        case #selector(showWebInspector), #selector(toggleDevMode(_:)):
             return validateDeveloperItem(menuItem)
         case #selector(restartPage):
             guard let tab = coordinator.pageCommandTab else { return false }
@@ -668,8 +669,10 @@ final class MainMenu: NSObject, NSMenuItemValidation {
         guard let tab, let host = DevMode.host(of: URL(string: tab.urlString)) else {
             menuItem.title = String(localized: "Developer Mode for This Website")
             menuItem.state = .off
+            menuItem.representedObject = nil
             return false
         }
+        menuItem.representedObject = host
         menuItem.title = String(localized: "Developer Mode for “\(host)”")
         menuItem.state = tab.usesDevMode ? .on : .off
         return true
