@@ -73,7 +73,15 @@ extension BrowserSettings {
             webView.pageZoom = pageZoom
         }
         webView.customUserAgent = userAgentString
-        webView.isInspectable = webInspectorEnabled
+        applyInspector(to: webView)
+    }
+
+    /// The inspector of one view: on when the person turned the Web Inspector on, or when the document the view shows is a
+    /// website in Developer mode. Asked again at every commit, so leaving such a website switches it off again.
+    func applyInspector(to webView: WKWebView) {
+        let isEnabled = webInspectorEnabled || usesDevMode(for: webView.url)
+        webView.configuration.preferences.setValue(isEnabled, forKey: "developerExtrasEnabled")
+        webView.isInspectable = isEnabled
     }
 
     func apply(to page: BrowserPage) {

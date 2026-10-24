@@ -15,6 +15,8 @@ struct CommandPaletteContext {
     var canGoForward = false
     var isLoading = false
     var isZoomed = false
+    var canInspect = false
+    var canScreenshot = false
     var isShowingPin = false
     var isAwayFromPin = false
     var canReopenClosedTab = false
@@ -80,6 +82,8 @@ enum CommandPaletteAction: String, CaseIterable {
     case zoomIn
     case zoomOut
     case actualSize
+    case showWebInspector
+    case copyScreenshot
 
     case splitRight
     case splitDown
@@ -539,6 +543,23 @@ enum CommandPaletteCatalog {
                     shortcut: "⌘0",
                     aliases: ["reset zoom", "100%"],
                     isAvailable: context.isZoomed
+                ),
+                make(
+                    .showWebInspector,
+                    group: .page,
+                    title: "Show Web Inspector",
+                    symbol: "hammer",
+                    shortcut: "⌥⌘I",
+                    aliases: ["inspect element", "developer tools", "devtools", "console"],
+                    isAvailable: context.canInspect
+                ),
+                make(
+                    .copyScreenshot,
+                    group: .page,
+                    title: "Copy Screenshot",
+                    symbol: "camera.viewfinder",
+                    aliases: ["screenshot", "take screenshot", "capture page", "snapshot"],
+                    isAvailable: context.canScreenshot
                 ),
             ]
         }

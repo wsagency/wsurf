@@ -702,6 +702,8 @@ final class CommandPaletteModel {
             canGoForward: page?.canGoForward ?? false,
             isLoading: page?.isLoading ?? false,
             isZoomed: page?.isZoomed ?? false,
+            canInspect: page?.canShowWebInspector ?? false,
+            canScreenshot: page?.isMaterialised ?? false,
             isShowingPin: tab?.isShowingPin ?? false,
             isAwayFromPin: tab?.isAwayFromPin ?? false,
             canReopenClosedTab: browser.canReopenClosedTab,
@@ -855,6 +857,12 @@ final class CommandPaletteModel {
             page?.zoomOut()
         case .actualSize:
             page?.resetZoom()
+        case .showWebInspector:
+            page?.showWebInspector()
+        case .copyScreenshot:
+            if let page {
+                coordinator.copyScreenshot(of: page)
+            }
         case .splitRight:
             coordinator.splitActiveTab(axis: .sideBySide)
         case .splitDown:

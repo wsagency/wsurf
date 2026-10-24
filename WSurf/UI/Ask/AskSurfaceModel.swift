@@ -129,6 +129,7 @@ final class AskSurfaceModel {
             placeholder: placeholder,
             currentURL: currentURL,
             showsFullAddress: coordinator.context.settings.showsFullAddress
+                || browser.activeTab?.usesDevMode == true
         )
     }
 

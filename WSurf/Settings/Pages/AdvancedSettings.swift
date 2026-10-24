@@ -38,7 +38,7 @@ struct AdvancedSettings: View {
         SettingsCard {
             DetailRow(
                 title: "Web Inspector",
-                caption: "Add Inspect Element to a page’s right-click menu."
+                caption: "Add Inspect Element to a page’s right-click menu. Websites in Developer mode, such as localhost, keep it even when this is off."
             ) {
                 SettingsToggle($settings.webInspectorEnabled)
             }

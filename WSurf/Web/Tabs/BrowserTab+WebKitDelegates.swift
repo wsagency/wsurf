@@ -571,11 +571,15 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
         pendingMainFrameURL = nil
         guard let page = BrowserPage.from(webView) else { return }
         PageFrameRegistry.shared.navigationCommitted(navigation, in: page)
+        // The committed document decides the inspector and the page appearance: leaving a website in Developer mode switches both off.
+        tab?.context.settings.applyInspector(to: webView)
+        tab?.applyDevModeAppearance()
         page.onNavigationCommitted?(page.navigation(for: navigation))
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         guard let page = BrowserPage.from(webView) else { return }
+        tab?.applyDevModeOverlays()
         page.onNavigationFinished?(page.navigation(for: navigation))
     }
 
