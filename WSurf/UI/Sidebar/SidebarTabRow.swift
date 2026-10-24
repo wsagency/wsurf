@@ -356,7 +356,7 @@ struct SidebarTabRow: View {
         SidebarAudioMenuItems(tab: tab, coordinator: coordinator)
         SidebarFolderMenuItems(items: [item], browser: browser)
 
-        if tab.pinnedURL != nil {
+        if tab.isPinnedForProfile {
             SidebarUnpinButton(tab: tab, browser: browser)
         }
         if !tab.isDeferred {
@@ -372,8 +372,8 @@ struct SidebarTabRow: View {
         } label: {
             Label("Remove Tab", systemImage: "xmark")
         }
-        let others = browser.tabs.filter { $0 !== tab && $0.pinID == nil && browser.isShown($0) }
-        if tab.pinnedURL == nil, !others.isEmpty {
+        let others = browser.tabs.filter { $0 !== tab && !$0.isPinnedForProfile && browser.isShown($0) }
+        if !tab.isPinnedForProfile, !others.isEmpty {
             Button(role: .destructive) {
                 let count = others.count
                 Task {
@@ -491,7 +491,7 @@ struct SidebarTabActionButton: View {
 
     var body: some View {
         let action = SidebarTabAction.resolve(
-            isPinned: tab.pinnedURL != nil,
+            isPinned: tab.isPinnedForProfile,
             isDeferred: tab.isDeferred,
             command: coordinator.linkModifiers.contains(.command)
         )
@@ -499,7 +499,7 @@ struct SidebarTabActionButton: View {
             coordinator.tabPreview.dismiss()
             let modifiers = NSApp.currentEvent?.modifierFlags ?? NSEvent.modifierFlags
             switch SidebarTabAction.resolve(
-                isPinned: tab.pinnedURL != nil,
+                isPinned: tab.isPinnedForProfile,
                 isDeferred: tab.isDeferred,
                 command: modifiers.contains(.command)
             ) {

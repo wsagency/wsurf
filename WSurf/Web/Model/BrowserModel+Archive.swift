@@ -27,8 +27,7 @@ extension BrowserModel {
         return tabs.filter { tab in
             tab.id != active
                 && tab.lastActiveAt < cutoff
-                && tab.pinID == nil
-                && tab.pinnedURL == nil
+                && !tab.isPinnedForProfile
                 && !tab.isFavorite
                 && !tab.isPrivate
                 && !paired.contains(tab.id)

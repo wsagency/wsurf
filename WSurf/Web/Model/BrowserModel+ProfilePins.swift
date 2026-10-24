@@ -19,6 +19,8 @@ extension BrowserModel {
         attachedPinStore = store
         store.subscribe(self)
         applyProfilePins(store.pins)
+        // Pages of pinned folders saved before they had a pinned page of their own take the page they show, once.
+        settlePinnedPages()
         publishProfilePins()
     }
 
@@ -120,7 +122,7 @@ extension BrowserModel {
     /// Closes a page that closed itself or that an extension closed. A pin is the person's to remove, so its
     /// page is only unloaded.
     func closeFromPage(_ tab: BrowserTab) {
-        if tab.pinID != nil {
+        if tab.isPinnedForProfile {
             _ = unload(tab)
         } else {
             close(tab)

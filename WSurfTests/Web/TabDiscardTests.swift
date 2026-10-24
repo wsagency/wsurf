@@ -47,7 +47,7 @@ struct TabDiscardTests {
         let tab = model.newTab(url: URL(string: "https://example.com/a"))
         tab.customTitle = "Saved page"
         let folder = model.createFolder(named: "Saved", containing: [tab])
-        model.setPinned(true, for: [.tab(tab.id)])
+        model.pin(folder)
         let other = model.newTab(url: URL(string: "https://example.com/b"), activate: false)
         model.activate(tab)
         let before = tab.page
@@ -98,7 +98,7 @@ struct TabDiscardTests {
         let inner = model.createFolder(named: "Inner", containing: [nested, protectedTab])
         let outer = model.createFolder(named: "Outer", containing: [direct])
         model.move([.folder(inner.id)], into: outer)
-        model.setPinned(true, for: [.tab(direct.id)])
+        model.pin(outer)
         let downloadID = model.downloads.beginItem(
             source: URL(string: "https://example.com/protected.zip"),
             sourceTabID: protectedTab.id

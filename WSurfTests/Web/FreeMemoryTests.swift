@@ -128,7 +128,7 @@ struct FreeMemoryTests {
         let pinned = model.newTab(url: url("pinned"))
         pinned.customTitle = "Saved page"
         let folder = model.createFolder(named: "Saved", containing: [pinned])
-        model.setPinned(true, for: [.tab(pinned.id)])
+        model.pin(folder)
         let current = model.newTab(url: url("current"))
 
         #expect(model.freeMemory() == 1)

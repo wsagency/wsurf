@@ -21,10 +21,31 @@ extension BrowserModel {
             && cutoff.map({ tab.lastForegroundAt <= $0 }) ?? true
             && tab.canDiscardWebContent
             && protectionReason(for: tab) == nil {
-            tab.discardWebContent()
+            discard(tab)
             discarded += 1
         }
         return discarded
+    }
+
+    /// Drops `tab`'s page. A pinned tab that has wandered from its pinned page comes back on that page the next time it
+    /// is shown, without the history it made away from it.
+    private func discard(_ tab: BrowserTab) {
+        tab.discardWebContent()
+        guard tab.isDeferred, tab.isPinnedForProfile, tab.isAwayFromPin, let base = tab.pinnedURL else { return }
+        let host = base.host()
+        if host?.lowercased() != URL(string: tab.urlString)?.host()?.lowercased() {
+            tab.favicon = nil
+        }
+        tab.deferRestore(state: nil, url: base)
+        tab.invalidateSessionState()
+        tab.urlString = base.absoluteString
+        if !tab.pinnedTitle.isEmpty {
+            tab.pageTitle = tab.pinnedTitle
+        }
+        if let host {
+            dressRow(tab, fromHost: host)
+        }
+        scheduleSave()
     }
 
     /// Unloads every background tab now, with the protections memory pressure uses, whether or not Sleep inactive tabs is on.
@@ -88,7 +109,7 @@ extension BrowserModel {
                 activeTabID = nil
             }
         }
-        tab.discardWebContent()
+        discard(tab)
         scheduleSave()
         return !tab.isMaterialised
     }

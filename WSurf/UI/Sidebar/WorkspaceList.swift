@@ -346,7 +346,7 @@ struct WorkspaceList<TopBar: View, BottomBar: View>: View {
         }) else {
             if let lowest = slots.values.map(\.maxY).max(), point.y > lowest {
                 pinsCarried = false
-                browser.move(drag.items, into: nil, before: nil)
+                browser.move(drag.items, into: nil, before: nil, settlingPins: false)
             }
             return
         }
@@ -368,8 +368,9 @@ struct WorkspaceList<TopBar: View, BottomBar: View>: View {
         place(drag.items, before: before, of: hit.key)
     }
 
+    /// Above the pin line, so a row landing in it is pinned: a folder inside a pinned folder counts too.
     private func keepsSection(_ item: SidebarItem) -> Bool {
-        browser.isKept(item)
+        browser.isPinned(item)
     }
 
     private func lands(before isBefore: Bool, of anchor: SidebarItem) -> Bool {

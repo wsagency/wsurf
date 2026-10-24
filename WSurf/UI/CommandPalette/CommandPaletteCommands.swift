@@ -258,7 +258,9 @@ enum CommandPaletteCatalog {
         let perform: (CommandPaletteAction) -> Void
 
         var tabs: [CommandPaletteCommand] {
-            let pinTitle: LocalizedStringResource = context.isShowingPin ? "Unpin Tab" : "Pin This Page"
+            let pinTitle: LocalizedStringResource = context.isAwayFromPin
+                ? "Update Pinned URL"
+                : (context.isShowingPin ? "Unpin Tab" : "Pin This Page")
             let indexedTabs = CommandPaletteAction.indexedTabs.enumerated().compactMap { index, action -> CommandPaletteCommand? in
                 let slot = index + 1
                 guard slot <= context.tabCount else { return nil }

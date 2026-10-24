@@ -9,7 +9,7 @@ extension BrowserModel {
     // MARK: - Pinning
 
     func pin(_ tab: BrowserTab) {
-        guard let url = URL(string: tab.urlString), !tab.urlString.isEmpty else { return }
+        guard let url = tab.pinnableURL else { return }
         setPin(url, title: tab.title, for: tab)
     }
 
@@ -22,12 +22,20 @@ extension BrowserModel {
         scheduleSave()
     }
 
+    /// Pins `tab` to `url`. A tab already above the line keeps its place, and a new pinned page is one undo step.
     func setPin(_ url: URL, title: String? = nil, for tab: BrowserTab) {
-        let wasPinned = tab.pinnedURL != nil
+        let wasPinned = isPinned(.tab(tab.id))
+        let previous = tab.pinnedURL.map { (url: $0, title: tab.pinnedTitle) }
         tab.pinnedURL = url
         tab.pinnedTitle = title ?? (tab.pinnedTitle.isEmpty ? tab.title : tab.pinnedTitle)
         if !wasPinned {
             moveToPinnedBoundary(tab)
+        } else if let previous, previous.url != url {
+            let id = tab.id
+            registerSidebarUndo(named: String(localized: "Update Pinned URL")) { model in
+                guard let tab = model.tab(id: id) else { return }
+                model.setPin(previous.url, title: previous.title, for: tab)
+            }
         }
         scheduleSave()
     }
@@ -45,6 +53,46 @@ extension BrowserModel {
             tabsByID[id]?.pinnedURL != nil
         case .folder(let id):
             foldersByID[id]?.isPinned == true
+        }
+    }
+
+    /// The pin line: a root row is above it when it is kept, and everything inside a kept root folder is above it at any
+    /// depth. Everything above the line is pinned.
+    func isPinned(_ item: SidebarItem) -> Bool {
+        let tree = reconciledTree()
+        var top = item
+        while let parent = tree.parent(of: top) {
+            top = .folder(parent)
+        }
+        return isKept(top)
+    }
+
+    /// Settles the pinned pages after a change lands: a tab inside a pinned folder that has no pinned page takes the page
+    /// it shows now, and a tab inside a folder below the line has none. A root tab is a pin exactly when it has a pinned
+    /// page, so it settles itself. Never called while a row is in the air; a drag settles when it lands.
+    func settlePinnedPages() {
+        let tree = reconciledTree()
+        let liveTabs = Dictionary(tabs.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let liveFolders = Dictionary(folders.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        var changed = false
+        for case .folder(let id) in tree.root {
+            let pinned = liveFolders[id]?.isPinned == true
+            for case .tab(let tabID) in tree.descendants(ofFolder: id) {
+                guard let tab = liveTabs[tabID] else { continue }
+                if pinned, tab.pinnedURL == nil, let url = tab.pinnableURL {
+                    tab.pinnedURL = url
+                    tab.pinnedTitle = tab.title
+                    changed = true
+                } else if !pinned, tab.pinnedURL != nil {
+                    tab.pinnedURL = nil
+                    tab.pinnedTitle = ""
+                    tab.isFavorite = false
+                    changed = true
+                }
+            }
+        }
+        if changed {
+            scheduleSave()
         }
     }
 
@@ -75,12 +123,23 @@ extension BrowserModel {
         let moved = Set(items)
         let rest = reconciledTree().root.filter { !moved.contains($0) }
         let boundary = pinnedBoundary(in: rest, ignoring: [])
-        // Pin first: a bookmark-less child of a pinned folder would otherwise leave the profile's pins for a moment.
-        setPinned(true, for: items)
-        move(items, into: nil, before: rest.indices.contains(boundary) ? rest[boundary] : nil)
+        // Pin first: a child of a pinned folder with no pinned page yet would otherwise leave the profile's pins for a moment.
+        if flagPinned(true, for: items) {
+            scheduleSave()
+        }
+        move(items, into: nil, before: rest.indices.contains(boundary) ? rest[boundary] : nil, settlingPins: false)
+        settlePinnedPages()
     }
 
     func setPinned(_ pinned: Bool, for items: some Sequence<SidebarItem>) {
+        if flagPinned(pinned, for: items) {
+            scheduleSave()
+        }
+        settlePinnedPages()
+    }
+
+    /// Pins or unpins the rows themselves; what a folder holds settles afterwards.
+    private func flagPinned(_ pinned: Bool, for items: some Sequence<SidebarItem>) -> Bool {
         var changed = false
         for item in items {
             switch item {
@@ -91,7 +150,7 @@ extension BrowserModel {
             case .tab(let id):
                 guard let tab = tabsByID[id] else { continue }
                 if pinned, tab.pinnedURL == nil {
-                    guard let url = URL(string: tab.urlString), !tab.urlString.isEmpty else { continue }
+                    guard let url = tab.pinnableURL else { continue }
                     tab.pinnedURL = url
                     tab.pinnedTitle = tab.title
                     changed = true
@@ -103,9 +162,7 @@ extension BrowserModel {
                 }
             }
         }
-        if changed {
-            scheduleSave()
-        }
+        return changed
     }
 
     func pin(_ folder: TabFolder) {
@@ -124,6 +181,7 @@ extension BrowserModel {
             before: rest.indices.contains(boundary) ? rest[boundary] : nil,
             settlingPins: false
         )
+        settlePinnedPages()
         scheduleSave()
     }
 
@@ -325,7 +383,7 @@ extension BrowserModel {
 
     /// Pins, and what a pinned folder holds, stay: the person removes those one by one. Other spaces stay too.
     func closeOthers(_ kept: BrowserTab) {
-        close(tabs.filter { $0 !== kept && $0.pinID == nil && isShown($0) }.map { .tab($0.id) })
+        close(tabs.filter { $0 !== kept && !$0.isPinnedForProfile && isShown($0) }.map { .tab($0.id) })
     }
 
     func closeActiveTab() {
@@ -516,6 +574,7 @@ extension BrowserModel {
             : next
         folders.removeAll { $0 === folder }
         syncTabOrder()
+        settlePinnedPages()
         scheduleSave()
         finishFolderRename(folder.id)
         sidebarSelection.takeKeyboard()
@@ -538,24 +597,16 @@ extension BrowserModel {
         let tree = reconciledTree()
         let moved = tree.normalized(items)
         guard !moved.isEmpty, let next = tree.moving(moved, into: folder?.id, before: target) else { return }
-        let entering = moved.filter { tree.parent(of: $0) != folder?.id }
         storedTree = next
         if let folder {
             folder.isExpanded = true
             autoName(folder)
-            if settlingPins {
-                setPinned(
-                    false,
-                    for: entering.filter {
-                        if case .tab = $0 {
-                            return true
-                        }
-                        return false
-                    }
-                )
-            }
         }
         syncTabOrder()
+        // A page filed in a pinned folder is pinned and one filed below the line is not; a drag settles when it lands.
+        if settlingPins {
+            settlePinnedPages()
+        }
         scheduleSave()
     }
 
@@ -569,6 +620,7 @@ extension BrowserModel {
         else { return }
         storedTree = destination == nil ? next.keepingPinsAtRootTop(isKept) : next
         syncTabOrder()
+        settlePinnedPages()
         scheduleSave()
     }
 

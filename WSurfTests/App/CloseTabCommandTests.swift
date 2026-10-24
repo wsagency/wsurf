@@ -150,7 +150,7 @@ struct CloseTabCommandTests {
                 // The window publishes its pinned folders to the profile, which links each page inside to its pin.
                 browser.attachProfilePins()
                 try #require(tab.pinID != nil, "a page in a pinned folder carries its pin link")
-                #expect(tab.pinnedURL == nil, "and has no bookmark of its own, unlike the pin and the Favorite")
+                #expect(tab.pinnedURL?.absoluteString == tab.urlString, "and its own pinned page, like the pin and the Favorite")
             }
         }
     }
@@ -176,6 +176,31 @@ struct CloseTabCommandTests {
         #expect(browser.activeTab === other)
         #expect(!browser.canReopenClosedTab)
         #expect(!browser.sidebarUndoManager.canUndo, "nothing was removed, so there is nothing to undo")
+    }
+
+    /// The owner's case: navigate away in a pinned tab, ⌘W, and the tab comes back on its pinned page.
+    @Test(arguments: Kept.allCases) func aPinnedTabThatWanderedComesBackOnItsPinnedPage(kind: Kept) throws {
+        let window = try CloseTabWindow()
+        defer { window.tearDown() }
+        let browser = window.browser
+        let other = window.page("other")
+        let tab = window.page("kept")
+        try kind.keep(tab, in: browser)
+        browser.activate(tab)
+        let place = browser.sidebarTree.walk().firstIndex(of: .tab(tab.id))
+        tab.urlString = "https://elsewhere.test/deep"
+        #expect(tab.isPinnedForProfile && tab.isAwayFromPin)
+        #expect(window.title == "Unload Tab")
+
+        window.closeTab()
+
+        #expect(!tab.isClosed && tab.isDeferred)
+        #expect(browser.activeTab === other)
+        #expect(tab.urlString == "https://example.test/kept")
+        #expect(browser.sidebarTree.walk().firstIndex(of: .tab(tab.id)) == place)
+        browser.activate(tab)
+        #expect(tab.urlString == "https://example.test/kept", "the next activation loads the pinned page")
+        #expect(tab.pinnedURL?.absoluteString == "https://example.test/kept")
     }
 
     @Test func aRefusedUnloadShowsTheSameNoticeAndKeepsThePageLoaded() throws {
@@ -332,5 +357,38 @@ struct CloseTabCommandTests {
         browser.activate(plain)
         window.item.menu?.update()
         #expect(window.item.title == "Close Tab")
+    }
+
+    /// ⌘D, beside Back to Pinned Page, names what it will do: pin a page, update a wandering pin, or unpin.
+    @Test func commandDNamesTheUpdateWhileAPinnedTabIsAway() throws {
+        let window = try CloseTabWindow()
+        defer { window.tearDown() }
+        let browser = window.browser
+        let items = window.root.items.compactMap(\.submenu).flatMap(\.items)
+        let pinItem = try #require(items.first { $0.action == Selector(("pinPage")) })
+        let backItem = try #require(items.first { $0.action == Selector(("returnToPin")) })
+        #expect(pinItem.keyEquivalent == "d" && items.firstIndex(of: backItem) == items.firstIndex(of: pinItem).map { $0 + 1 })
+        let folder = browser.createFolder(named: "Work", containing: [window.page("folder")])
+        browser.pin(folder)
+        let tab = try #require(browser.tabs(in: folder).first)
+        browser.activate(tab)
+        func titles() -> (String, Bool) {
+            _ = window.menu.validateMenuItem(pinItem)
+            return (pinItem.title, window.menu.validateMenuItem(backItem))
+        }
+
+        #expect(titles() == ("Unpin Tab", false))
+        tab.urlString = "https://elsewhere.test/"
+        #expect(titles() == ("Update Pinned URL", true))
+
+        window.press("d")
+
+        #expect(tab.pinnedURL?.absoluteString == "https://elsewhere.test/")
+        #expect(browser.folder(containing: tab) === folder, "updating never moves the tab")
+        #expect(titles() == ("Unpin Tab", false))
+        browser.sidebarUndoManager.undo()
+        #expect(tab.pinnedURL?.absoluteString == "https://example.test/folder")
+        browser.activate(window.page("plain"))
+        #expect(titles() == ("Pin This Page", false))
     }
 }

@@ -33,13 +33,13 @@ struct SidebarPinMenuItems: View {
     let browser: BrowserModel
 
     var body: some View {
-        if tab.pinnedURL == nil {
+        if !tab.isPinnedForProfile {
             Button {
                 browser.pin(tab)
             } label: {
                 Label("Pin This Page", systemImage: "pin")
             }
-            .disabled(tab.urlString.isEmpty)
+            .disabled(tab.pinnableURL == nil)
         } else {
             if tab.isAwayFromPin {
                 Button {
@@ -47,22 +47,17 @@ struct SidebarPinMenuItems: View {
                 } label: {
                     Label("Back to Pinned Page", systemImage: "arrow.uturn.backward")
                 }
-            }
-            Menu {
                 Button {
                     browser.pin(tab)
+                    browser.sidebarSelection.takeKeyboard()
                 } label: {
-                    Label("Move Pin to This Page", systemImage: "pin")
+                    Label("Update Pinned URL", systemImage: "pin")
                 }
-                .disabled(!tab.isAwayFromPin)
-
-                Button {
-                    PinEditor.edit(tab, in: browser)
-                } label: {
-                    Label("Edit…", systemImage: "pencil")
-                }
+            }
+            Button {
+                PinEditor.edit(tab, in: browser)
             } label: {
-                Label("Edit Pinned Page", systemImage: "pin.circle")
+                Label("Edit Pinned Page…", systemImage: "pin.circle")
             }
         }
         Divider()
