@@ -53,17 +53,9 @@ struct ReleaseNotesView: View {
             .padding(.horizontal, 12)
             .padding(.top, 28)
         } else {
-            VStack(alignment: .leading, spacing: 0) {
-                ForEach(Array(notes.releases.enumerated()), id: \.element.id) { index, release in
-                    if index > 0 {
-                        RowSeparator()
-                            .padding(.vertical, 20)
-                    }
-                    ReleaseNotesSection(release: release, isRunning: notes.isRunning(release))
-                }
-            }
-            .padding(.horizontal, 12)
-            .padding(.top, 14)
+            ReleaseNotesList(releases: notes.releases, isRunning: notes.isRunning)
+                .padding(.horizontal, 12)
+                .padding(.top, 14)
         }
     }
 
@@ -73,6 +65,24 @@ struct ReleaseNotesView: View {
             Text("Looking for the notes…")
         } else {
             Text("No notes are published yet.")
+        }
+    }
+}
+
+/// Every published release, newest first, as the Release Notes page lists them.
+struct ReleaseNotesList: View {
+    let releases: [GitHubRelease]
+    let isRunning: (GitHubRelease) -> Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(Array(releases.enumerated()), id: \.element.id) { index, release in
+                if index > 0 {
+                    RowSeparator()
+                        .padding(.vertical, 20)
+                }
+                ReleaseNotesSection(release: release, isRunning: isRunning(release))
+            }
         }
     }
 }
