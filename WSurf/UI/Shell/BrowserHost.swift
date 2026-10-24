@@ -277,6 +277,7 @@ final class BrowserHost: NSObject, NSWindowDelegate {
     }
 
     func windowWillClose(_ notification: Notification) {
+        stopWatchingTitleStrip()
         isVisible = false
         publish()
         guard let coordinator else { return }
@@ -292,6 +293,7 @@ final class BrowserHost: NSObject, NSWindowDelegate {
     }
 
     func windowWillExitFullScreen(_ notification: Notification) {
+        stopWatchingTitleStrip()
         window?.toolbar = frameToolbar
     }
 
@@ -299,6 +301,7 @@ final class BrowserHost: NSObject, NSWindowDelegate {
         if let window {
             roundContentCorners(of: window)
         }
+        watchTitleStrip()
         publish()
     }
 
@@ -328,8 +331,37 @@ final class BrowserHost: NSObject, NSWindowDelegate {
         coordinator?.hostDidChange(
             visible: isVisible,
             controlsInset: windowControlsInset,
-            titleStripInset: BrowserWindowMetrics.fullScreenTitleStrip(isFullScreen: isFullScreen)
+            titleStripInset: BrowserWindowMetrics.titleStripInset(of: window)
         )
+    }
+
+    private var titleStripObservers: [any NSObjectProtocol] = []
+
+    /// Follows the full-screen strip while it slides in and out with the menu bar, about once a frame. The system moves the
+    /// strip's own window, and AppKit moves the title bar inside it, so both are watched.
+    private func watchTitleStrip() {
+        stopWatchingTitleStrip()
+        guard let window, let bar = window.standardWindowButton(.closeButton)?.superview,
+              let strip = bar.window, strip !== window else { return }
+        var watched: [(Notification.Name, AnyObject)] = [
+            (NSWindow.didMoveNotification, strip),
+            (NSWindow.didResizeNotification, strip),
+        ]
+        var view: NSView? = bar
+        while let ancestor = view {
+            watched.append((NSView.frameDidChangeNotification, ancestor))
+            view = ancestor.superview
+        }
+        titleStripObservers = watched.map { name, object in
+            NotificationCenter.default.addObserver(forName: name, object: object, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.publish() }
+            }
+        }
+    }
+
+    private func stopWatchingTitleStrip() {
+        titleStripObservers.forEach(NotificationCenter.default.removeObserver)
+        titleStripObservers = []
     }
 }
 
@@ -453,7 +485,8 @@ struct BrowserRootView: View {
 }
 extension EnvironmentValues {
     @Entry var windowControlsInset: CGFloat = 0
-    /// How far below the window's top edge the layout starts: the system's title strip in full screen, else 0.
+    /// How far below the window's top edge the layout starts: in full screen, as far as the system's title strip reaches
+    /// into the window right now (0 while it is hidden); windowed, 0.
     @Entry var titleStripInset: CGFloat = 0
 }
 
@@ -463,11 +496,31 @@ nonisolated enum BrowserWindowMetrics {
     /// The titlebar height AppKit reports for a window without a toolbar, and the least the strip is ever given.
     private static let plainTitlebarHeight: CGFloat = 28
 
-    /// In full screen the system draws its own strip, with the traffic lights, over the top of the window when the pointer
-    /// reaches the top edge or the menu bar comes down. The strip floats over the content instead of making room for it,
-    /// and the browser window is full-size content with no safe area, so a layout that starts at the window's top has its
-    /// toolbar and address field under it. Every layout starts this far lower in full screen. Windowed, the traffic lights
-    /// sit in the toolbar's own leading inset and nothing is reserved.
+    /// In full screen the system shows its own strip, the title bar with the traffic lights, below the menu bar whenever the
+    /// menu bar shows: while the pointer is at the top edge, or all the time when the menu bar is set not to hide. The strip
+    /// floats over the content instead of making room for it, and the browser window is full-size content with no safe
+    /// area, so the layout starts as far down as the strip reaches into the window right now: 0 while it is hidden, the
+    /// strip (and the menu bar above it, where that overlaps the window) while it shows. Windowed, the traffic lights sit in
+    /// the toolbar's own leading inset and nothing is reserved.
+    ///
+    /// In full screen the strip lives in a window of its own, reached through the close button; `BrowserHost` watches it
+    /// and asks again as it moves. If there is no separate strip to measure, the whole strip is kept clear instead.
+    @MainActor
+    static func titleStripInset(of window: NSWindow?) -> CGFloat {
+        guard let window, window.styleMask.contains(.fullScreen) else { return 0 }
+        guard let bar = window.standardWindowButton(.closeButton)?.superview,
+              let strip = bar.window, strip !== window
+        else { return fullScreenTitleStrip(isFullScreen: true) }
+        return covered(window: window.frame, strip: strip.convertToScreen(bar.convert(bar.bounds, to: nil)))
+    }
+
+    /// How far down from the top of `window` a strip at `strip` reaches; both in screen coordinates. A hidden strip sits
+    /// above the window's top and covers nothing.
+    static func covered(window: NSRect, strip: NSRect) -> CGFloat {
+        min(max(0, window.maxY - strip.minY), window.height).rounded(.up)
+    }
+
+    /// The whole strip: AppKit's titlebar height for a plain titled window, kept clear when the strip cannot be measured.
     @MainActor
     static func fullScreenTitleStrip(isFullScreen: Bool) -> CGFloat {
         guard isFullScreen else { return 0 }

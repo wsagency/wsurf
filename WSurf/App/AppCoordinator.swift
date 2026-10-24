@@ -759,7 +759,10 @@ final class AppCoordinator {
         }
     }
 
+    /// Called about once a frame while the full-screen strip slides, so only a real change reaches the views.
     func hostDidChange(visible: Bool, controlsInset: CGFloat, titleStripInset: CGFloat) {
+        guard visible != browserVisible || controlsInset != windowControlsInset || titleStripInset != self.titleStripInset
+        else { return }
         browserVisible = visible
         windowControlsInset = controlsInset
         self.titleStripInset = titleStripInset
