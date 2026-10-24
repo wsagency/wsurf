@@ -87,6 +87,8 @@ extension BrowserTab {
             return
         }
         didPresentContent()
+        // WebKit re-applies Developer mode's overlays in its own didFinish; Chromium's new document gets them here.
+        if page.chromium != nil { applyDevModeOverlays() }
         refreshFavicon()
         releasePageColorHold()
         refreshPageColor(from: page)

@@ -339,11 +339,6 @@ struct DevModePageTests {
         let document = tab.page.mainDocumentID
         tab.page.reload()
         try #require(await waitUntil { tab.page.mainDocumentID != document && !tab.page.isLoading })
-        if engine == .chromium {
-            // Chromium's navigation callback is the one slice D and integration own; this is the call it makes.
-            #expect(await script(tab, outlined) as? String == "none")
-            tab.applyDevModeOverlays()
-        }
         #expect(await waitUntil { await script(tab, outlined) as? String == "solid" }, "\(engine)")
     }
 

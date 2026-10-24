@@ -73,7 +73,7 @@ struct MinimalShell: View {
 
                 IslandBar(browser: browser, coordinator: coordinator, edge: edge) { tabButtonFrame = $0 }
                     .frame(width: IslandBar.width(
-                        fullAddress: settings.showsFullAddress,
+                        fullAddress: settings.showsFullAddress || browser.activeTab?.usesDevMode == true,
                         available: proxy.size.width - pinnedInset - 2 * gap
                     ))
                     .padding(edge == .top ? .top : .bottom, gap)
