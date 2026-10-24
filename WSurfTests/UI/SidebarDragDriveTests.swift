@@ -26,12 +26,13 @@ final class SidebarDriveRig {
     /// 84) and above the bottom chrome and the fade at the bottom of the list (the window is 700 high).
     static let viewport: ClosedRange<CGFloat> = 90...600
 
-    init(width: CGFloat = 280, height: CGFloat = 700, style: SidebarStyle = .full) {
+    init(width: CGFloat = 280, height: CGFloat = 700, style: SidebarStyle = .full, voiceOver: Bool = false) {
         coordinator = AppCoordinator(browser: BrowserModel(database: .temporary()))
         let browser = coordinator.browser
         let sidebar = Sidebar(browser: browser, coordinator: coordinator)
             .frame(width: width, height: height)
             .environment(\.sidebarStyle, style)
+            .environment(\.sidebarDrawsEveryRow, voiceOver)
         host = NSHostingView(rootView: AnyView(sidebar))
         host.frame = CGRect(x: 0, y: 0, width: width, height: height)
         window = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
@@ -84,7 +85,7 @@ final class SidebarDriveRig {
         let scroll = try #require(scrollView)
         scroll.contentView.scroll(to: NSPoint(x: 0, y: offset))
         scroll.reflectScrolledClipView(scroll.contentView)
-        try await settle()
+        try await settle(rounds: 15)
     }
 
     /// Where `item` is drawn, in points from the window's top left, or nil while it is not drawn.
@@ -159,6 +160,23 @@ struct SidebarDragDriveTests {
         if scrolled {
             try await rig.scroll(to: 600)
         }
+        let visible = rig.onScreen()
+        try #require(visible.count >= 6)
+        let moving = visible[0]
+        let target = visible[4]
+        try await rig.drag(through: [try rig.spot(moving), try rig.spot(target, 0.9)], steps: 14)
+
+        let after = rig.browser.sidebarItems
+        #expect(after.firstIndex(of: moving) == (after.firstIndex(of: target) ?? -2) + 1)
+        #expect(rig.coordinator.sidebarDrag.drag == nil)
+    }
+
+    /// With VoiceOver on, every row exists, and the list drags the same.
+    @Test func theListDragsTheSameWhileEveryRowIsDrawn() async throws {
+        let rig = SidebarDriveRig(voiceOver: true)
+        defer { rig.close() }
+        rig.addPages(60)
+        try await rig.settle(rounds: 12)
         let visible = rig.onScreen()
         try #require(visible.count >= 6)
         let moving = visible[0]

@@ -22,7 +22,9 @@ final class BrowserModel {
             context.register(self)
         }
     }
-    var tabs: [BrowserTab] = []
+    var tabs: [BrowserTab] = [] {
+        didSet { refreshSidebarActive() }
+    }
     var folders: [TabFolder] = []
     var storedTree = SidebarTree()
     var history: HistoryStore
@@ -75,13 +77,16 @@ final class BrowserModel {
     }
     let sidebarSelection = SidebarSelection()
 
-    var hasNoActiveTab = false
+    var hasNoActiveTab = false {
+        didSet { refreshSidebarActive() }
+    }
     var activeTabID: UUID? {
         didSet {
             if activeTabID != nil, hasNoActiveTab {
                 hasNoActiveTab = false
             }
             guard oldValue != activeTabID else { return }
+            refreshSidebarActive()
             followSpace(of: activeTab)
             sidebarSelection.dropMarks()
             noteUse(of: [oldValue, activeTabID])
@@ -131,7 +136,13 @@ final class BrowserModel {
 
     /// The space this window shows. Nil shows every tab: private windows, and models that never adopted spaces.
     /// Changed through `adoptSpaces(_:)`, `switchSpace(to:showing:)` and activation.
-    var currentSpaceID: UUID?
+    var currentSpaceID: UUID? {
+        didSet {
+            if oldValue != currentSpaceID {
+                refreshSidebarActive()
+            }
+        }
+    }
     /// The spaces of the window's profile. A tab or folder naming any other space joins the current one.
     var knownSpaceIDs: Set<UUID> = []
     // MARK: - Tab management
@@ -564,8 +575,22 @@ final class BrowserModel {
 
     var sidebarTree = SidebarTree()
 
-    var tabsByID: [UUID: BrowserTab] = [:]
+    var tabsByID: [UUID: BrowserTab] = [:] {
+        didSet { refreshSidebarActive() }
+    }
     var foldersByID: [UUID: TabFolder] = [:]
+
+    @ObservationIgnored private weak var sidebarActiveTab: BrowserTab?
+
+    /// Marks the active tab for the sidebar and clears the mark of the one it replaces. Everything `activeTab` is made
+    /// of calls this: the tabs, their index, the space on screen and which tab is chosen.
+    private func refreshSidebarActive() {
+        let active = activeTab
+        guard active !== sidebarActiveTab else { return }
+        sidebarActiveTab?.isSidebarActive = false
+        active?.isSidebarActive = true
+        sidebarActiveTab = active
+    }
 
     @ObservationIgnored var saveTask: Task<Void, Never>?
 

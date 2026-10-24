@@ -109,7 +109,8 @@ struct SidebarRowStyle: Equatable {
 }
 
 extension BrowserModel {
-    /// The style of one tab's row, for every place that draws the tab. `isMarked` is the multi-selection.
+    /// The style of one tab's row, for every place that draws the tab. `isMarked` is the multi-selection. The row asks
+    /// the tab, not the model, which tab is current, so a switch redraws only the rows whose answer changed.
     func rowStyle(
         of tab: BrowserTab,
         isMarked: Bool,
@@ -117,7 +118,7 @@ extension BrowserModel {
         increasedContrast: Bool
     ) -> SidebarRowStyle {
         SidebarRowStyle.resolve(
-            isCurrent: activeTab === tab,
+            isCurrent: tab.isSidebarActive,
             isMarked: isMarked,
             isUnseen: tab.isUnseen,
             paletteOpen: paletteOpen,
@@ -152,6 +153,6 @@ extension BrowserModel {
     func collapsedContents(of folder: TabFolder) -> (containsCurrent: Bool, containsNew: Bool) {
         guard !folder.isExpanded else { return (false, false) }
         let inside = allTabs(in: folder)
-        return (inside.contains { $0 === activeTab }, inside.contains { $0.isUnseen })
+        return (inside.contains { $0.isSidebarActive }, inside.contains { $0.isUnseen })
     }
 }

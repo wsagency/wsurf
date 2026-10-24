@@ -50,6 +50,9 @@ final class BrowserTab: Identifiable {
     /// True from the moment a tab opens in the background until it first comes on screen. It is not saved, so a
     /// restored, imported or reopened tab is never new.
     var isUnseen = false
+    /// The tab the sidebar draws as current. The model keeps it (`BrowserModel.refreshSidebarActive`), so a row reads
+    /// its own flag and a switch redraws two rows instead of every row that asked which tab is active.
+    var isSidebarActive = false
     var hasNoPageYet: Bool {
         urlString.isEmpty && !isLoading
     }

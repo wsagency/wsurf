@@ -499,7 +499,10 @@ nonisolated final class BrowserPerformanceTests: XCTestCase, @unchecked Sendable
         }
 
         func window() -> (NSWindow, NSHostingView<AnyView>) {
-            let sidebar = Sidebar(browser: browser, coordinator: coordinator).frame(width: 280, height: 700)
+            // Lazy whatever the Mac's accessibility settings are: this is the list the cases measure.
+            let sidebar = Sidebar(browser: browser, coordinator: coordinator)
+                .frame(width: 280, height: 700)
+                .environment(\.sidebarDrawsEveryRow, false)
             let host = NSHostingView(rootView: AnyView(sidebar))
             host.frame = CGRect(x: 0, y: 0, width: 280, height: 700)
             let window = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)

@@ -341,6 +341,46 @@ check_average \
   '7019' \
   'Layout option sidebar memory growth' \
   'kB'
+# The real sidebar over 1,000 tabs in 25 open folders (Linen 0.9.3 e8362495, lazy rows), 280 x 700 window. Three-run Pro means after the
+# change (2026-10-24, Debug): 0.2700 s to open it, 0.5661 s for four tab switches over it, 0.5260 s to scroll it in 30 steps of 300 pt; memory
+# medians 327 to 393 kB, and below zero when scrolling. The list drew every row at once before: 7.1194 s, 14.9612 s and 2.8782 s. Budgets are
+# twice the mean (memory at least 4096 kB), so the old list fails them.
+check_average \
+  'BrowserPerformanceTests/testLayingOutAThousandRowSidebar()' \
+  'com.apple.dt.XCTMetric_Clock.time.monotonic' \
+  '0.540' \
+  'Sidebar layout over 1,000 tabs in 25 folders' \
+  's'
+check_average \
+  'BrowserPerformanceTests/testLayingOutAThousandRowSidebar()' \
+  'com.apple.dt.XCTMetric_Memory.physical' \
+  '4096' \
+  'Thousand-tab sidebar layout memory growth' \
+  'kB'
+check_average \
+  'BrowserPerformanceTests/testSwitchingTabsOverAThousandRowSidebar()' \
+  'com.apple.dt.XCTMetric_Clock.time.monotonic' \
+  '1.130' \
+  'Four tab switches over a sidebar of 1,000 tabs' \
+  's'
+check_average \
+  'BrowserPerformanceTests/testSwitchingTabsOverAThousandRowSidebar()' \
+  'com.apple.dt.XCTMetric_Memory.physical' \
+  '4096' \
+  'Tab switching over the thousand-tab sidebar memory growth' \
+  'kB'
+check_average \
+  'BrowserPerformanceTests/testScrollingAThousandRowSidebar()' \
+  'com.apple.dt.XCTMetric_Clock.time.monotonic' \
+  '1.050' \
+  'Thirty scroll steps down a sidebar of 1,000 tabs' \
+  's'
+check_average \
+  'BrowserPerformanceTests/testScrollingAThousandRowSidebar()' \
+  'com.apple.dt.XCTMetric_Memory.physical' \
+  '4096' \
+  'Thousand-tab sidebar scrolling memory growth' \
+  'kB'
 check_average \
   'CredentialListPerformanceTests/testLayingOutThreeThousandCredentials()' \
   'com.apple.dt.XCTMetric_Clock.time.monotonic' \

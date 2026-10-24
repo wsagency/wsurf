@@ -19,7 +19,7 @@ struct FolderSection: View {
     @Environment(\.sidebarIconTint) private var outerIconTint
     private var inkSource = SidebarRowInkSource()
     @State private var hovering = false
-    @State private var windowFrame: CGRect = .zero
+    @State private var rowFrame = SidebarRowFrame()
 
     private var browser: BrowserModel {
         context.browser
@@ -29,6 +29,9 @@ struct FolderSection: View {
     }
     private var isSelected: Bool {
         context.isSelected(item)
+    }
+    private var windowAnchor: CGRect {
+        context.windowFrame(of: item)
     }
     /// How far the rows inside this folder start to the right of its own row, from the theme's Folder indent for the
     /// level they are on. The levels add up down the tree. The icons-only sidebar has no room for it.
@@ -188,20 +191,21 @@ struct FolderSection: View {
                 if over {
                     context.coordinator.tabPreview.hover(
                         .folder(folder, browser.tabs(in: folder)),
-                        anchor: windowFrame
+                        anchor: windowAnchor
                     )
                 } else {
                     context.coordinator.tabPreview.unhover(folder.id)
                 }
             }
-            .onDisappear { context.coordinator.tabPreview.unhover(folder.id) }
+            .onDisappear {
+                context.coordinator.tabPreview.unhover(folder.id)
+                rowFrame.forget(item, in: context.frames)
+            }
             .onGeometryChange(for: CGRect.self) { $0.frame(in: .named(context.space)) } action: {
-                context.frames.record(item, at: $0)
+                rowFrame.measure(item, at: $0, in: context.frames)
+                context.followPreview(of: item, id: folder.id)
             }
-            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frame in
-                windowFrame = frame
-                context.coordinator.tabPreview.moved(folder.id, anchor: frame)
-            }
+            .onAppear { rowFrame.appear(item, in: context.frames) }
             .onTapGesture { tapped() }
             .id(item)
             .help(sidebarStyle == .icons ? Text(verbatim: folder.name) : Text(verbatim: ""))
@@ -279,7 +283,11 @@ struct FolderSection: View {
     }
 
     private var contents: AnyView {
-        AnyView(SidebarRows(items: browser.rows(in: folder), depth: depth + 1, context: context))
+        AnyView(
+            VStack(spacing: SidebarMetrics.rowVerticalSpacing(settings: BrowserSettings.application)) {
+                SidebarRows(items: browser.rows(in: folder), depth: depth + 1, context: context)
+            }
+        )
     }
 
     private func unloadFolderTabs() {

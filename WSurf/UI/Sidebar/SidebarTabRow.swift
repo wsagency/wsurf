@@ -33,7 +33,10 @@ struct SidebarTabRow: View {
         context.isSelected(item)
     }
     private var isActive: Bool {
-        coordinator.sidebarDestination == .tab(tab.id)
+        tab.isSidebarActive
+    }
+    private var windowAnchor: CGRect {
+        context.windowFrame(of: item)
     }
     private var style: SidebarRowStyle {
         browser.rowStyle(
@@ -52,7 +55,7 @@ struct SidebarTabRow: View {
     @State private var isRenaming = false
     @State private var draftTitle = ""
     @FocusState private var renameFocused: Bool
-    @State private var windowFrame: CGRect = .zero
+    @State private var rowFrame = SidebarRowFrame()
     @State private var controlsWidth: CGFloat = 0
     @State private var markWidth: CGFloat = 0
 
@@ -287,12 +290,10 @@ struct SidebarTabRow: View {
         .opacity(isLifted ? 0 : 1)
         .contentShape(Rectangle())
         .onGeometryChange(for: CGRect.self) { $0.frame(in: .named(context.space)) } action: {
-            context.frames.record(item, at: $0)
+            rowFrame.measure(item, at: $0, in: context.frames)
+            context.followPreview(of: item, id: tab.id)
         }
-        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frame in
-            windowFrame = frame
-            coordinator.tabPreview.moved(tab.id, anchor: frame)
-        }
+        .onAppear { rowFrame.appear(item, in: context.frames) }
         .onTapGesture { tapped() }
         .onMiddleClick {
             coordinator.tabPreview.dismiss()
@@ -301,12 +302,15 @@ struct SidebarTabRow: View {
         .onHover { over in
             withAnimation(Theme.Motion.quick) { hovering = over }
             if over, !isRenaming {
-                coordinator.tabPreview.hover(tab, anchor: windowFrame)
+                coordinator.tabPreview.hover(tab, anchor: windowAnchor)
             } else {
                 coordinator.tabPreview.unhover(tab.id)
             }
         }
-        .onDisappear { coordinator.tabPreview.unhover(tab.id) }
+        .onDisappear {
+            coordinator.tabPreview.unhover(tab.id)
+            rowFrame.forget(item, in: context.frames)
+        }
         .help(sidebarStyle == .icons ? Text(verbatim: tab.title) : Text(verbatim: ""))
         .popover(isPresented: Binding(
             get: { isRenaming && sidebarStyle == .icons },
