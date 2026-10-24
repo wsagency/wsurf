@@ -45,6 +45,16 @@ struct DevModePageTests {
         window.close()
     }
 
+    /// `parkTab` returns as soon as the page reports the address, which a new view does at once, while its web process is
+    /// still starting and nothing has committed (and a moment later the view reports no address at all, until the load
+    /// begins). The inspector and the page appearance follow the committed document, so these tests wait for that.
+    private func park(_ browser: BrowserModel, at url: URL) async throws -> BrowserTab {
+        let tab = await parkTab(browser, at: url)
+        let view = try #require(tab.page.webKit)
+        try #require(await waitUntil { view.url == url && !view.isLoading }, "the document at \(url) committed")
+        return tab
+    }
+
     private func server() async throws -> HTTPFixtureServer {
         try await HTTPFixtureServer.start(routes: ["/": .html("<!doctype html><title>Dev</title><p>Hello</p>")])
     }
@@ -96,7 +106,7 @@ struct DevModePageTests {
 
         let local = try #require(URL(string: "http://app.localhost:5173/"))
         let remote = try #require(URL(string: "https://shop.invalid/"))
-        let tab = await parkTab(rig.browser, at: local)
+        let tab = try await park(rig.browser, at: local)
         let view = try #require(tab.page.webKit)
         #expect(await waitUntil { inspectorOn(view) }, "a website in Developer mode has the inspector")
         #expect(tab.canShowWebInspector)
@@ -122,9 +132,9 @@ struct DevModePageTests {
         let remote = try #require(URL(string: "https://shop.invalid/"))
         let coordinator = AppCoordinator(browser: rig.browser)
         defer { coordinator.closeWindow() }
-        let first = await parkTab(rig.browser, at: local)
-        let second = await parkTab(rig.browser, at: local)
-        let other = await parkTab(rig.browser, at: remote)
+        let first = try await park(rig.browser, at: local)
+        let second = try await park(rig.browser, at: local)
+        let other = try await park(rig.browser, at: remote)
         let firstView = try #require(first.page.webKit)
         let secondView = try #require(second.page.webKit)
         let otherView = try #require(other.page.webKit)
@@ -147,10 +157,38 @@ struct DevModePageTests {
         #expect(rig.browser.context.settings.devModeSites == DevModeSites())
     }
 
+    /// A view reports the address of a page it is still loading, and no address at all while its web process starts, so a
+    /// website can be turned on before its document exists. The commit then decides, and the inspector arrives with it.
+    @Test func aWebsiteTurnedOnWhileItsPageIsStillLoadingGetsTheInspectorWhenItCommits() async throws {
+        let rig = makeRig()
+        defer { finish(rig) }
+        let application = BrowserSettings.application
+        let before = application.webInspectorEnabled
+        application.webInspectorEnabled = false
+        defer { application.webInspectorEnabled = before }
+
+        let remote = try #require(URL(string: "https://shop.invalid/"))
+        let coordinator = AppCoordinator(browser: rig.browser)
+        defer { coordinator.closeWindow() }
+        let tab = rig.browser.newTab()
+        let view = try #require(tab.page.webKit)
+        tab.loadHTML("<!doctype html><title>Shop</title><p>Shop</p>", baseURL: remote)
+        #expect(await waitUntil { tab.urlString == remote.absoluteString })
+
+        coordinator.setDevMode(true, for: tab)
+        #expect(tab.usesDevMode)
+        #expect(await waitUntil { view.url == remote && !view.isLoading && inspectorOn(view) }, "on once the document committed")
+        #expect(tab.canShowWebInspector)
+
+        coordinator.setDevMode(false, for: tab)
+        #expect(inspectorOff(view), "and off at once on the committed document")
+        #expect(rig.browser.context.settings.devModeSites == DevModeSites())
+    }
+
     @Test func theInspectorCanBeOpenedOnlyThroughWebKitsOwnInterface() async throws {
         let rig = makeRig()
         defer { finish(rig) }
-        let tab = await parkTab(rig.browser, at: try #require(URL(string: "http://app.localhost:5173/")))
+        let tab = try await park(rig.browser, at: try #require(URL(string: "http://app.localhost:5173/")))
         let view = try #require(tab.page.webKit)
         // The private interface the command calls. If a WebKit update drops it, the command does nothing instead of crashing.
         #expect(view.responds(to: NSSelectorFromString("_inspector")), "WebKit still has the private inspector the command uses")
@@ -183,7 +221,7 @@ struct DevModePageTests {
     @Test func aWebKitTabsMenuHasTheInspectorAndThePageAppearance() async throws {
         let rig = makeRig()
         defer { finish(rig) }
-        let tab = await parkTab(rig.browser, at: try #require(URL(string: "http://app.localhost:5173/")))
+        let tab = try await park(rig.browser, at: try #require(URL(string: "http://app.localhost:5173/")))
         let coordinator = AppCoordinator(browser: rig.browser)
         defer { coordinator.closeWindow() }
         let titles = DevModeMenu.make(for: tab, coordinator: coordinator).items.map(\.title)
@@ -208,7 +246,7 @@ struct DevModePageTests {
         #expect(inspector.keyEquivalentModifierMask == [.command, .option])
 
         // A WebKit page on a local website.
-        let webKit = await parkTab(rig.browser, at: try #require(URL(string: "http://app.localhost:5173/")))
+        let webKit = try await park(rig.browser, at: try #require(URL(string: "http://app.localhost:5173/")))
         #expect(rig.browser.activeTab === webKit)
         #expect(mainMenu.validateMenuItem(inspector))
         #expect(!inspector.isHidden)
@@ -245,7 +283,7 @@ struct DevModePageTests {
         let context = BrowserProfileContext(profile: .privateBrowsing(), settingsOwner: owner)
         let browser = BrowserModel(context: context, windowID: UUID(), database: .temporary(), sitePermissions: permissions)
         let local = try #require(URL(string: "http://localhost:3000/secret?token=abc"))
-        let tab = await parkTab(browser, at: local)
+        let tab = try await park(browser, at: local)
         #expect(tab.isPrivate)
         #expect(tab.usesDevMode, "Developer mode itself works in a private window")
         let coordinator = AppCoordinator(browser: browser)
@@ -262,7 +300,7 @@ struct DevModePageTests {
     @Test func aRegularWindowsMenuOffersOpenInOnlyWithBrowsersThatAreNotWSurf() async throws {
         let rig = makeRig()
         defer { finish(rig) }
-        let tab = await parkTab(rig.browser, at: try #require(URL(string: "http://localhost:3000/")))
+        let tab = try await park(rig.browser, at: try #require(URL(string: "http://localhost:3000/")))
         #expect(!tab.isPrivate)
         let coordinator = AppCoordinator(browser: rig.browser)
         defer { coordinator.closeWindow() }
@@ -372,7 +410,7 @@ struct DevModePageTests {
         defer { finish(rig) }
         let local = try #require(URL(string: "http://app.localhost:5173/"))
         let remote = try #require(URL(string: "https://shop.invalid/"))
-        let tab = await parkTab(rig.browser, at: local)
+        let tab = try await park(rig.browser, at: local)
         let view = try #require(tab.page.webKit)
 
         // Nothing chosen: the view's appearance is left to whoever set it (a media emulation, for one).
@@ -561,7 +599,7 @@ struct DevModePageTests {
         defer { finish(rig) }
         let coordinator = AppCoordinator(browser: rig.browser)
         defer { coordinator.closeWindow() }
-        let tab = await parkTab(rig.browser, at: try #require(URL(string: "http://app.localhost:5173/")))
+        let tab = try await park(rig.browser, at: try #require(URL(string: "http://app.localhost:5173/")))
 
         // The page moved on while a menu named another website: nothing changes.
         for named in ["other.localhost", "shop.invalid", "localhost", ""] {
@@ -589,7 +627,7 @@ struct DevModePageTests {
         let toggle = try #require(developer.items.first { $0.title.hasPrefix("Developer Mode for") })
         let local = try #require(URL(string: "http://app.localhost:5173/"))
         let remote = try #require(URL(string: "https://shop.invalid/"))
-        let tab = await parkTab(rig.browser, at: local)
+        let tab = try await park(rig.browser, at: local)
         let settings = rig.browser.context.settings
 
         #expect(mainMenu.validateMenuItem(toggle))
