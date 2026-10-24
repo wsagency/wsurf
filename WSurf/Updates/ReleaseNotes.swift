@@ -56,34 +56,55 @@ nonisolated struct GitHubRelease: Decodable, Equatable, Identifiable, Sendable {
 @MainActor
 @Observable
 final class ReleaseNotesModel {
-    private static let seenKey = "updates.notesSeenVersion"
+    static let seenKey = "updates.notesSeenVersion"
 
     private(set) var releases: [GitHubRelease] = []
     private(set) var isLoading = false
+    /// The version this launch is the first of. The sidebar says so until it is opened, or `noticeDuration` has passed.
+    private(set) var updatedVersion: String?
 
-    private var hasAttempted = false
+    @ObservationIgnored private var hasAttempted = false
+    @ObservationIgnored private var expiry: Task<Void, Never>?
+    @ObservationIgnored private let defaults: UserDefaults
+    @ObservationIgnored private let currentVersion: String
+    @ObservationIgnored private let noticeDuration: Duration
 
-    /// A version whose notes are not published yet stays unseen, so the next launch asks again.
-    func shouldOpenForNewVersion() async -> Bool {
-        guard !hasAttempted else { return false }
+    init(
+        defaults: UserDefaults = .standard,
+        currentVersion: String = UpdateFeed.currentVersion,
+        noticeDuration: Duration = .seconds(30)
+    ) {
+        self.defaults = defaults
+        self.currentVersion = currentVersion
+        self.noticeDuration = noticeDuration
+    }
+
+    /// Notes the first launch of a version that is not the one last run. WSurf's versions are `0.1.<build>`, one per
+    /// installed build, so a different version is a different build. The version is remembered at once, not when the
+    /// notice goes: a candidate gets relaunched within seconds, and the notice is for one launch per build. Nothing here
+    /// waits for published release notes, because a candidate has none. The Release Notes page loads them when opened.
+    func checkForNewVersion() {
+        guard !hasAttempted else { return }
         hasAttempted = true
 
-        let current = UpdateFeed.currentVersion
-        let defaults = UserDefaults.standard
         guard let seen = defaults.string(forKey: Self.seenKey) else {
-            defaults.set(current, forKey: Self.seenKey)
-            return false
+            defaults.set(currentVersion, forKey: Self.seenKey)
+            return
         }
-        guard seen != current else { return false }
+        guard seen != currentVersion else { return }
 
-        await load()
-        guard releases.contains(where: { $0.version == current }) else {
-            Pipeline.log.notice("release notes: none published for \(current, privacy: .public) yet")
-            return false
+        defaults.set(currentVersion, forKey: Self.seenKey)
+        updatedVersion = currentVersion
+        expiry = Task { [weak self, noticeDuration] in
+            try? await Task.sleep(for: noticeDuration)
+            self?.acknowledgeUpdate()
         }
+    }
 
-        defaults.set(current, forKey: Self.seenKey)
-        return true
+    func acknowledgeUpdate() {
+        expiry?.cancel()
+        expiry = nil
+        updatedVersion = nil
     }
 
     func isRunning(_ release: GitHubRelease) -> Bool {
