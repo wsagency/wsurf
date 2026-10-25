@@ -452,6 +452,31 @@ struct CredentialSyncMergeTests {
         #expect(try parts(observed) == parts(merged))
     }
 
+    /// Not the Same on a merge suggestion is vault data of both entries: it is part of `metadata`, so it reaches the other Macs, and an
+    /// entry without it, or one merged into before without it, keeps the base it had.
+    @Test func notTheSameIsMetadataAndLeavesEveryEarlierBaseAsItWas() throws {
+        let agreed = entry()
+        #expect(try parts(agreed).metadata == CredentialContent.hash(.metadata(agreed)))
+        var merged = agreed
+        merged.mergedFrom = [MergedItemLink(accountID: UUID(), exchangeAccountID: Data([1]), exchangeItemID: Data([2]))]
+        let mergedMetadata = try parts(merged).metadata
+
+        var apart = agreed
+        apart.notSameAs = [UUID()]
+        #expect(try parts(apart).metadata != parts(agreed).metadata)
+        #expect(try parts(apart).password == parts(agreed).password && parts(apart).notes == parts(agreed).notes)
+        let decision = try decide(live(apart), local: agreed, base: try base(agreed))
+        #expect(decision.written?.notSameAs == apart.notSameAs)
+        #expect(decision.recorded?.parts == (try parts(apart)))
+
+        var both = merged
+        both.notSameAs = apart.notSameAs
+        #expect(try parts(both).metadata != mergedMetadata)
+        #expect(try parts(merged).metadata == mergedMetadata, "an entry merged into before keeps its base")
+        // Suggest Again on the other Mac takes it away here too.
+        #expect(try decide(live(agreed), local: apart, base: try base(apart)).written?.notSameAs == nil)
+    }
+
     @Test func appleBasesTravelWithTheirPart() throws {
         let agreed = entry()
         var incoming = changed(agreed, .password)

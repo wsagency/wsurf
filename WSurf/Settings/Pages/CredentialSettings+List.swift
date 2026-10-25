@@ -346,7 +346,8 @@ struct CredentialListView<Switcher: View>: View {
                 Toggle("By Site", isOn: $list.bySite)
                     .toggleStyle(.button)
                     .controlSize(.small)
-                if merge.suggestionCount > 0 {
+                // Also with none left to suggest, while some are dismissed: the sheet lists those to take back.
+                if merge.suggestionCount > 0 || merge.dismissedCount > 0 {
                     Button("Suggested Merges (\(merge.suggestionCount.formatted()))") { merge.route = .suggestions }
                         .controlSize(.small)
                         .disabled(model.isBusy)

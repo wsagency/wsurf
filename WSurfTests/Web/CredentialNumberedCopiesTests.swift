@@ -34,7 +34,7 @@ struct CredentialNumberedCopiesTests {
     @Test(arguments: 1...4)
     func numberedCopiesOnOneSiteAreOneSuggestion(copies: Int) {
         let plain = login("ada@example.test", "pw", on: "https://www.example.test")
-        let numbered = (1...copies).map { login("ada@example.test (\($0))", "pw", on: "https://login.example.test") }
+        let numbered = (1...copies).map { login("ada@example.test (\($0))", "pw", on: "https://example.test") }
         let found = CredentialMergeSuggestions.index(for: [plain] + numbered, revision: 1)
         #expect(found.suggestions.count == 1)
         #expect(found.suggestions.first?.reason == .numberedCopies)

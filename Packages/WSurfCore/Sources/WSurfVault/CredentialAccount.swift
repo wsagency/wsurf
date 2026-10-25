@@ -209,6 +209,11 @@ public nonisolated struct CredentialAccount: Codable, Sendable, Identifiable, Eq
     /// What an import last brought for this credential, as keyed digests (`ImportTrace`). `nil` for one no import has written since
     /// imports began to record it. Not content: it raises no History version and no sync upload, and travels with the login and notes.
     public var importTrace: ImportTrace?
+    /// The other entries the person said are not the same credential as this one (Not the Same on a merge suggestion), by id, sorted by
+    /// their text. `nil` means none: an empty array is never stored. Each entry of such a pair keeps the other's id, so the choice
+    /// outlives edits and a merge of either one (an id merged into a live entry counts as that entry). Not content: no History version;
+    /// sync carries it in the `metadata` part, like `mergedFrom`.
+    public var notSameAs: [UUID]?
 
     public init(
         id: UUID,
@@ -321,6 +326,10 @@ public nonisolated struct CredentialAccount: Codable, Sendable, Identifiable, Eq
         try totpEvents?.validate()
         try validateMergedFrom()
         try importTrace?.validate()
+        if let notSameAs {
+            guard !notSameAs.isEmpty, notSameAs.count <= Self.notSameAsLimit, Set(notSameAs).count == notSameAs.count,
+                  !notSameAs.contains(id) else { throw CredentialVaultError.invalidData }
+        }
         for data in [exchangeAccountID, exchangeItemID].compactMap({ $0 }) where data.count > CredentialVaultLimits.payloadBytes {
             throw CredentialVaultError.invalidData
         }
@@ -358,6 +367,9 @@ public nonisolated struct CredentialAccount: Codable, Sendable, Identifiable, Eq
 
     /// Most items of the other app one credential remembers as merged into it.
     public static let mergedFromLimit = 64
+
+    /// Most other entries one credential remembers as not the same as it.
+    public static let notSameAsLimit = 256
 
     public static func origin(for url: URL) -> String? {
         guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false),
