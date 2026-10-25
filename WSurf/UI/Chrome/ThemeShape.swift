@@ -41,6 +41,19 @@ struct ThemeShape: Equatable {
         folderIndents[min(max(level, 1), 3) - 1]
     }
 
+    /// How far a row at `depth` starts in from where it starts with no indent: the steps of every level down to its
+    /// depth (a top-level row is depth 0). A folder's row and a tab's row at the same depth start at the same place; the
+    /// open folder's own 2 pt outline is the only thing that sets a folder row apart. This is the one place the rule is.
+    func folderInset(depth: Int) -> CGFloat {
+        (0..<max(depth, 0)).reduce(0) { $0 + folderIndent(level: $1 + 1) }
+    }
+
+    /// How much further in than the folder's own row the rows inside a folder at `depth` start: the step between its
+    /// depth and the next. Each folder pads its rows by this, so the steps add up down the tree to `folderInset`.
+    func folderStep(below depth: Int) -> CGFloat {
+        folderInset(depth: depth + 1) - folderInset(depth: depth)
+    }
+
     /// Half the shortest sidebar row. A larger radius would leave a row no straight edge on its ends.
     static let rowRadiusLimit: CGFloat = 12
 

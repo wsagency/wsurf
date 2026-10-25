@@ -26,12 +26,20 @@ final class SidebarDriveRig {
     /// 84) and above the bottom chrome and the fade at the bottom of the list (the window is 700 high).
     static let viewport: ClosedRange<CGFloat> = 90...600
 
-    init(width: CGFloat = 280, height: CGFloat = 700, style: SidebarStyle = .full, voiceOver: Bool = false) {
+    /// The theme the rig found, put back by `close()` after `adjustTheme(_:)`.
+    private var savedTheme: (id: String, adjustments: [String: ThemeAdjustment])?
+
+    /// `floating` is how a peeking sidebar and the Minimal window's tab list draw the same `Sidebar`.
+    init(
+        width: CGFloat = 280, height: CGFloat = 700, style: SidebarStyle = .full, voiceOver: Bool = false,
+        floating: Bool = false
+    ) {
         coordinator = AppCoordinator(browser: BrowserModel(database: .temporary()))
         let browser = coordinator.browser
         let sidebar = Sidebar(browser: browser, coordinator: coordinator)
             .frame(width: width, height: height)
             .environment(\.sidebarStyle, style)
+            .environment(\.sidebarIsFloating, floating)
             .environment(\.sidebarDrawsEveryRow, voiceOver)
         host = NSHostingView(rootView: AnyView(sidebar))
         host.frame = CGRect(x: 0, y: 0, width: width, height: height)
@@ -41,7 +49,24 @@ final class SidebarDriveRig {
         window.makeKeyAndOrderFront(nil)
     }
 
+    /// Sets the knobs of the Standard theme, which the rig draws with, until `close()`.
+    func adjustTheme(_ adjustment: ThemeAdjustment) {
+        let settings = BrowserSettings.application
+        if savedTheme == nil {
+            savedTheme = (settings.themeID, settings.themeAdjustments)
+        }
+        settings.themeID = "standard"
+        settings.themeAdjustments["standard"] = adjustment
+        settings.refreshTheme()
+    }
+
     func close() {
+        if let savedTheme {
+            let settings = BrowserSettings.application
+            settings.themeAdjustments = savedTheme.adjustments
+            settings.themeID = savedTheme.id
+            self.savedTheme = nil
+        }
         window.orderOut(nil)
         window.contentView = nil
         window.close()
