@@ -77,6 +77,28 @@ struct AutofillUnlockRowTests {
         }
     }
 
+    /// Phase A of Pick Credential…: with one vault open and nothing in it for the field, the row unlocks the other. Only a locked
+    /// vault is a choice, so the one locked vault is unlocked without asking which.
+    @Test func withAnotherVaultOpenOnlyTheLockedOneIsUnlocked() async throws {
+        let passkeys = VaultPasskeys()
+        try await VaultManagerFixture.with(passkeys: passkeys, vaults: [.unlocked, .locked]) { profile, _, vaults in
+            var asked = false
+            VaultChoicePrompt.answersForTesting[profile.id] = { _ in
+                asked = true
+                return nil
+            }
+            defer { VaultChoicePrompt.answersForTesting[profile.id] = nil }
+            let before = passkeys.assertions.count
+
+            let unlocked = await AutofillSuggestions.shared.unlockVault(of: profile, in: VaultManagerFixture.anchor()) { true }
+
+            #expect(unlocked && !asked && passkeys.assertions.count == before + 1)
+            #expect(vaults[0].manager.isUnlocked && vaults[1].manager.isUnlocked)
+            let again = await AutofillSuggestions.shared.unlockVault(of: profile, in: VaultManagerFixture.anchor()) { true }
+            #expect(!again, "nothing is locked any more")
+        }
+    }
+
     @Test func aLockWhileTheChoiceIsOpenUnlocksNothing() async throws {
         let passkeys = VaultPasskeys()
         try await VaultManagerFixture.with(passkeys: passkeys, vaults: [.locked, .locked]) { profile, _, vaults in

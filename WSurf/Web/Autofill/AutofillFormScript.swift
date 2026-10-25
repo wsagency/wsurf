@@ -105,7 +105,10 @@ nonisolated enum AutofillFormScript {
       const classifyField = el => {
         if (!(el instanceof HTMLInputElement || el instanceof HTMLSelectElement || el instanceof HTMLTextAreaElement)) return null;
         const declared = tokens(el), words = hint(el);
-        if (declared.includes('one-time-code') || /\b(otp|one time code|verification code|authenticator code)\b/.test(words)) return 'one-time-code';
+        // A code's name is often "totp", "mfaCode" or "twoFactorToken": words that name a second factor with a code or token.
+        if (declared.includes('one-time-code') ||
+            /\b(otp|totp|one time code|one time password|verification code|authenticator code|authentication code)\b/.test(words) ||
+            /\b(2fa|mfa|two factor|2 factor|two step|2 step)\b/.test(words) && /\b(code|token)\b/.test(words)) return 'one-time-code';
         if (declared.includes('cc-csc') || /\b(cvv|cvc|csc|cid|card security code|card verification)\b/.test(words)) return 'cc-csc';
         if (/\bsecurity code\b/.test(words)) return null;
         const exact = declared.find(t => passwordKinds.has(t) || contactKinds.has(t) || cardKinds.has(t));

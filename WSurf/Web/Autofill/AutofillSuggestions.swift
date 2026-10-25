@@ -304,10 +304,8 @@ final class AutofillSuggestions {
             // Nothing is read from a locked vault: the one row only offers to unlock.
             guard await Self.allVaultsLocked(of: context.profile), request.page.context === context,
                   presentation == presentationID, requests[ObjectIdentifier(request.page)] === request else { return nil }
-            let rowID = UUID()
             request.isLocked = true
-            request.actions[rowID] = .unlock
-            return [AutofillSuggestion(id: rowID, title: String(localized: "Unlock Credentials…"), detail: "", origin: origin)]
+            return Self.unlockRow(for: request, origin: origin)
         }
         guard request.page.context === context,
               presentation == presentationID, requests[ObjectIdentifier(request.page)] === request else { return nil }
@@ -335,7 +333,9 @@ final class AutofillSuggestions {
                 result.append(AutofillSuggestion(id: rowID, title: row.title, detail: detail, origin: origin))
             }
         }
-        guard result.isEmpty, request.field == .password else { return result }
+        guard result.isEmpty else { return result }
+        let anotherIsLocked = reads.count < listing.count
+        guard request.field == .password else { return anotherIsLocked ? Self.unlockRow(for: request, origin: origin) : [] }
         var siblings: [AutofillSuggestion] = []
         for read in reads {
             for (account, website) in CredentialAccountSelection.siblings(
@@ -354,11 +354,19 @@ final class AutofillSuggestions {
         }
         guard case .siblings(let site) = CredentialDropdown.plan(
             exact: result.count, siblings: siblings.count, origin: origin, field: request.field
-        ) else { return result }
+        ) else { return anotherIsLocked ? Self.unlockRow(for: request, origin: origin) : [] }
         request.siblings = siblings
         let rowID = UUID()
         request.actions[rowID] = .siblings
         return [AutofillSuggestion(id: rowID, title: String(localized: "Check other logins for *.\(site)"), detail: "", origin: origin)]
+    }
+
+    /// The one row that unlocks: every vault is locked, or the open ones hold nothing for this field while another is locked and may
+    /// (the request then keeps the grants it read, and `unlock(_:in:)` offers the locked vaults only). Nothing is read before.
+    private static func unlockRow(for request: Request, origin: String) -> [AutofillSuggestion] {
+        let rowID = UUID()
+        request.actions[rowID] = .unlock
+        return [AutofillSuggestion(id: rowID, title: String(localized: "Unlock Credentials…"), detail: "", origin: origin)]
     }
 
     /// Cards or addresses of the profile's unlocked vaults, after the ones still in the old Keychain lists: titles only (a card's
@@ -376,10 +384,8 @@ final class AutofillSuggestions {
         case .none:
             return []
         case .unlock:
-            let rowID = UUID()
             request.isLocked = true
-            request.actions[rowID] = .unlock
-            return [AutofillSuggestion(id: rowID, title: String(localized: "Unlock Credentials…"), detail: "", origin: origin)]
+            return Self.unlockRow(for: request, origin: origin)
         case .items:
             break
         }
@@ -710,16 +716,8 @@ final class AutofillSuggestions {
         }
     }
 
-    /// Whether the profile has vaults and every one of them is locked. The dropdown then offers to unlock and reads nothing.
-    static func allVaultsLocked(of profile: Profile) async -> Bool {
-        guard !profile.isPrivate, let store = try? CredentialManager.store(for: profile), await store.openState().isProvisional,
-              let listing = try? await store.listing(), !listing.isEmpty else { return false }
-        let unlocked = Set(CredentialManager.unlockedManagers(for: profile).map(\.vaultID))
-        return !listing.contains { unlocked.contains($0.vaultID) }
-    }
-
-    /// Unlocks a vault of `profile` through the ordinary unlock: the only vault directly, otherwise the one the user picks in
-    /// `VaultChoicePrompt`. `isCurrent` is asked after every suspension, and last right before the unlock starts, so a request that
+    /// Unlocks a locked vault of `profile` through the ordinary unlock: the only locked vault directly, otherwise the one the user picks
+    /// in `VaultChoicePrompt`. `isCurrent` is asked after every suspension, and last right before the unlock starts, so a request that
     /// ended while the choice was open (another field, a navigation, a lock or profile switch) unlocks nothing. The lease is the
     /// vault's own: nothing here extends it (`CredentialAutoLock`).
     func unlockVault(of profile: Profile, in window: @autoclosure () -> NSWindow, while isCurrent: () -> Bool) async -> Bool {
@@ -727,7 +725,10 @@ final class AutofillSuggestions {
         guard !profile.isPrivate, let store = try? CredentialManager.store(for: profile), await store.openState().isProvisional,
               let listing = try? await store.listing(), !listing.isEmpty,
               generation == accessGenerations[profile.id], isCurrent() else { return false }
-        let ordered = listing.sorted { $0.ordinal < $1.ordinal }
+        // Only a locked vault is a choice: an unlocked one has already answered.
+        let open = Set(CredentialManager.unlockedManagers(for: profile).map(\.vaultID))
+        let ordered = listing.filter { !open.contains($0.vaultID) }.sorted { $0.ordinal < $1.ordinal }
+        guard !ordered.isEmpty else { return false }
         let route: VaultRoute
         if ordered.count == 1, let only = try? CredentialManager.forVault(profile, vaultID: ordered[0].vaultID) {
             route = .manager(only)
@@ -952,6 +953,14 @@ final class AutofillSuggestions {
 }
 
 extension AutofillSuggestions {
+    /// Whether the profile has vaults and every one of them is locked. The dropdown then offers to unlock and reads nothing.
+    static func allVaultsLocked(of profile: Profile) async -> Bool {
+        guard !profile.isPrivate, let store = try? CredentialManager.store(for: profile), await store.openState().isProvisional,
+              let listing = try? await store.listing(), !listing.isEmpty else { return false }
+        let unlocked = Set(CredentialManager.unlockedManagers(for: profile).map(\.vaultID))
+        return !listing.contains { unlocked.contains($0.vaultID) }
+    }
+
     /// What a card or address field is offered from the credentials vault, decided before anything is read: nothing in a tab the
     /// assistant or a connected app controls (so no agent can have one filled into a page it reads), one row that only unlocks while
     /// every vault of the profile is locked, and otherwise the unlocked vaults' cards or addresses.
@@ -962,29 +971,6 @@ extension AutofillSuggestions {
     nonisolated static func vaultItemRows(kind: AutofillSaveKind, underAssistantControl: Bool, allVaultsLocked: Bool) -> VaultItemRows {
         guard kind != .password, !underAssistantControl else { return .none }
         return allVaultsLocked ? .unlock : .items
-    }
-}
-
-nonisolated extension AutofillSuggestionSearch.KeyInput {
-    /// A key-down as the dropdown sees it. Function keys report private-use characters and Tab reports a control character: neither is text.
-    init(_ event: NSEvent) {
-        switch event.keyCode {
-        case 125:
-            self = .down
-        case 126:
-            self = .up
-        case 36, 76:
-            self = .enter
-        case 53:
-            self = .escape
-        case 51:
-            self = .backspace
-        default:
-            let isText = event.characters.map { text in
-                text.count == 1 && text.unicodeScalars.allSatisfy { !CharacterSet.controlCharacters.contains($0) && !(0xF700...0xF8FF).contains($0.value) }
-            } ?? false
-            self = isText ? .character(event.characters ?? "") : .other
-        }
     }
 }
 
