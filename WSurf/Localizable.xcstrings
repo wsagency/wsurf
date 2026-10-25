@@ -385,6 +385,9 @@
     "Revoke “%@”?" : {
       "comment" : "Heading of the dialog that confirms withdrawing a paired app. The inserted text is the app’s name."
     },
+    "Same website and username" : {
+      "comment" : "Why a merge is suggested: the credentials are for the same website with the same username."
+    },
     "same website and username as entry %lld with another password. Choose what to do with each of them." : {
 
     },
@@ -585,6 +588,9 @@
     },
     "Don’t ask again for this connection" : {
       "comment" : "Checkbox in the sheet that asks whether a connected app may close a tab. When checked and the person closes the tab, that connection closes other tabs without asking until it disconnects."
+    },
+    "Don’t suggest merging these credentials again" : {
+      "comment" : "Help tooltip of the Not the Same button."
     },
     "Without asking" : {
       "comment" : "Label beside the menu on a paired app’s row. The menu sets what the app may do on developer sites without a prompt: Off, Development or Developer."
@@ -2724,6 +2730,9 @@
     "Dismiss keeps this Mac’s version. Your next change here replaces the version on your other devices; theirs stays in its History." : {
       "comment" : "Caption under the list in the Review Sync Changes sheet, shown when a row has only a Dismiss button (information only). It says what Dismiss leaves: this Mac keeps its version of the entry, and the next change made here goes up as the new version in iCloud, replacing the one on the other devices, which that entry’s History on those devices keeps. “History” is the entry’s list of earlier versions."
     },
+    "Dismissed (%@)" : {
+      "comment" : "Segment of the Suggested Merges sheet: the groups marked Not the Same, with their count."
+    },
     "Don’t Allow" : {
       "comment" : "Button in the permission panel that refuses the website's request, beside “Allow Once” and “Always Allow”. Keep the curly apostrophe. Title Case, and the three buttons share one narrow row."
     },
@@ -3743,6 +3752,9 @@
     "Manually" : {
 
     },
+    "Marked as not the same" : {
+      "comment" : "Second line of a dismissed group in the Suggested Merges sheet."
+    },
     "Match System" : {
       "comment" : "Choice in the Page Appearance submenu of the Developer Tools menu: the page follows the Mac’s light or dark appearance. A check mark shows the current choice. Title Case, like the macOS wording."
     },
@@ -4069,6 +4081,9 @@
     "No data stored" : {
       "comment" : "Shown under “Size on disk” when a profile is holding nothing."
     },
+    "No dismissed suggestions" : {
+      "comment" : "Empty state of the Dismissed list in the Suggested Merges sheet."
+    },
     "No extensions installed yet." : {
 
     },
@@ -4212,6 +4227,9 @@
     },
     "Not specified" : {
 
+    },
+    "Not the Same" : {
+      "comment" : "Button on a merge suggestion: these credentials are different accounts, so the vault never suggests merging them again."
     },
     "Not translated" : {
       "comment" : "Accessibility value of the translate control when the page shows its original text."
@@ -5896,11 +5914,14 @@
     "Street address" : {
 
     },
+    "Suggest Again" : {
+      "comment" : "Button on a dismissed merge suggestion: forget Not the Same, so it can be suggested again."
+    },
     "Suggested" : {
       "comment" : "Heading over the group of recommended models at the top of the model pop-up menu. Adjective describing the models below it."
     },
     "Suggestions" : {
-
+      "comment" : "Two uses. The name of the Suggestions section of the start page. And the accessibility label, hidden on screen, of the segmented control that switches the Suggested Merges sheet between suggested and dismissed groups."
     },
     "Suggestions from %@ appear as you type." : {
       "comment" : "Caption under the Search suggestions row. %@ is the search engine's brand name, for example Google or DuckDuckGo — leave the inserted name as is. The alternative caption, used when the engine offers none, is %@ doesn’t offer suggestions."
@@ -6499,6 +6520,9 @@
     },
     "Unmute WSurf" : {
       "comment" : "The same menu item, right-click item and list button while WSurf is muted: it ends the mute of all of WSurf and puts back each tab's own mute setting. Title Case verb phrase, the opposite of “Mute WSurf”."
+    },
+    "Unmute WSurf to talk with the assistant by voice." : {
+      "comment" : "Message in the voice conversation panel when the person starts a voice conversation with the assistant while all of WSurf is muted (Mute WSurf, the speaker, ⌃⌘M): the conversation does not start, because nothing of it could be heard, and this says what to do. Full sentence with a full stop, imperative, like other hints. “WSurf” is the app's name and is never translated; “Unmute WSurf” is the same wording as the menu item and the speaker's button."
     },
     "Unmutes WSurf and gives each tab its own setting back." : {
       "comment" : "VoiceOver hint of the speaker button while WSurf is muted: it says what pressing the button does. Full sentence with a full stop, third person, like other hints."
@@ -8457,8 +8481,20 @@
     "Copied. It leaves the clipboard in a minute." : {
       "comment" : "Confirmation note (checkmark icon) under the Input History list in Settings > Autofill after an entry is copied. WSurf clears the clipboard a minute later unless something else was copied since. Two short sentences."
     },
+    "Copies %@ of “%@”" : {
+      "comment" : "Why a merge is suggested: several numbered copies of a username. First argument: a list of copy numbers, e.g. (1) and (2). Second: the username."
+    },
+    "Copies %@ of “%@”, same password" : {
+      "comment" : "As Copies %@ of “%@”, with the same password (Merge All Identical takes these)."
+    },
     "Copy %@" : {
       "comment" : "Tooltip and VoiceOver label of the copy-icon button beside each value of a card or other item in the credential editor, History panel and list. %@ is the field’s name, such as “Card number”. Title Case, a verb phrase."
+    },
+    "Copy %@ of “%@”" : {
+      "comment" : "Why a merge is suggested: one numbered copy of a username, as exports name duplicates. First argument: the copy number in parentheses, e.g. (1). Second: the username."
+    },
+    "Copy %@ of “%@”, same password" : {
+      "comment" : "As Copy %@ of “%@”, with the same password (Merge All Identical takes these)."
     },
     "copy a saved card, document or hidden field" : {
       "comment" : "Reason shown in the Touch ID or password prompt when the user copies a hidden value of a saved card or ID document. It completes a system sentence like “WSurf is trying to …”, so it is a lowercase verb phrase with no period."
@@ -9735,6 +9771,9 @@
     "Password, hidden" : {
       "comment" : "VoiceOver label for an Input History row whose value is a password that has not been revealed; read instead of the row’s masked bullets. Not shown on screen. A noun, then a state."
     },
+    "Password, passkey or code for the same website, saved separately" : {
+      "comment" : "Why a merge is suggested: a password, a passkey and a verification code for one person on one website were saved as separate entries."
+    },
     "Password, passkey or code saved separately" : {
       "comment" : "Reason line under a suggestion in the Suggested Merges sheet: a password, a passkey or a verification code saved apart that seem to belong together. Sentence case, no final period."
     },
@@ -9825,8 +9864,14 @@
     "Redid Move to Trash." : {
       "comment" : "Notice shown briefly above the credential list after Redo repeated the action; the action is moving credentials to the vault’s Trash. Past tense of Redo, full sentence with a final period; the action name matches the one in the “Redo Move to Trash” menu title."
     },
+    "Redid Not the Same." : {
+      "comment" : "Notice after Redo of Not the Same."
+    },
     "Redid Restore." : {
       "comment" : "Notice shown briefly above the credential list after Redo repeated the action; the action is restoring an item from the Trash. Past tense of Redo, full sentence with a final period; the action name matches the one in the “Redo Restore” menu title."
+    },
+    "Redid Suggest Again." : {
+      "comment" : "Notice after Redo of Suggest Again."
     },
     "Redo Add Credential" : {
       "comment" : "Title of the Edit menu’s Redo item while the keyboard is in the credential list or Trash of Settings › Credentials; it replaces the plain “Redo”. Title Case. Here the action is adding a new credential. Verb phrase."
@@ -9843,8 +9888,14 @@
     "Redo Move to Trash" : {
       "comment" : "Title of the Edit menu’s Redo item while the keyboard is in the credential list or Trash of Settings › Credentials; it replaces the plain “Redo”. Title Case. Here the action is moving credentials to the vault’s Trash. Verb phrase."
     },
+    "Redo Not the Same" : {
+      "comment" : "Edit menu: repeat Not the Same on a merge suggestion."
+    },
     "Redo Restore" : {
       "comment" : "Title of the Edit menu’s Redo item while the keyboard is in the credential list or Trash of Settings › Credentials; it replaces the plain “Redo”. Title Case. Here the action is restoring an item from the Trash. Verb phrase."
+    },
+    "Redo Suggest Again" : {
+      "comment" : "Edit menu: repeat Suggest Again on a dismissed merge suggestion."
     },
     "Reduce transparency or increase contrast is on in System Settings, so WSurf uses Plain." : {
       "comment" : "Caption under the Material row in Settings › Appearance › Theme, shown instead of the Glass caption when a macOS accessibility setting (Reduce transparency or Increase contrast) is on. Use the macOS names of those settings. Plain is the “Plain” choice of the Material control. Sentence case."
@@ -10019,6 +10070,9 @@
     },
     "same website and username as line %lld with another password or note. Choose what to do with each of them." : {
       "comment" : "Note in the CSV import review for a row that has the same website and username as an earlier row but another password or note. %lld is the earlier row’s line number. The user must choose what to do with each one in the review. Lowercase fragment after “Line N:”."
+    },
+    "Same website, username and password" : {
+      "comment" : "Why a merge is suggested: identical logins on the same website (Merge All Identical takes these)."
     },
     "Same website, username and password as “%@”." : {
       "comment" : "Sentence in the status line of an import review row: the item is identical to the saved credential named in the quotes. %@ is that credential’s title and should not be translated. A sentence about what a merge adds follows."
@@ -10292,6 +10346,9 @@
     },
     "Suffix" : {
       "comment" : "Row label, shown beside the value, of a field of an item in the credential editor of Settings › Credentials. Sentence case. On a Name item: a name suffix such as Jr. or III. Noun."
+    },
+    "Suggested (%@)" : {
+      "comment" : "Segment of the Suggested Merges sheet: the suggestions, with their count."
     },
     "Suggested Merges" : {
       "comment" : "Headline of the sheet listing credentials that look like duplicates; opened by the Suggested Merges (n) button. Title Case."
@@ -10581,6 +10638,9 @@
     "Theme name" : {
       "comment" : "VoiceOver label of the Name text field in the Save as Theme, Customize Theme and Rename Theme sheets in Settings › Appearance. Not shown visually."
     },
+    "These can be suggested for merging again." : {
+      "comment" : "Confirmation after Suggest Again, in the sheet and the page notice (with Undo)."
+    },
     "These changes stay as they are. Only the names of the fields and the dates are shown, never their values." : {
       "comment" : "Caption shown when the “Changed in WSurf (kept)” section is expanded in the import review sheet. It says the changes stay and that only field names and dates are listed. Sentences."
     },
@@ -10604,6 +10664,9 @@
     },
     "These websites are on other sites. The merged password and verification code fill on one only if you tick it." : {
       "comment" : "Caption under the “Also fill on” checkboxes in the merge sheet. Other sites means websites that belong to a different site than the primary credential’s. Sentence."
+    },
+    "These won’t be suggested for merging again." : {
+      "comment" : "Confirmation after Not the Same, in the sheet and the page notice (with Undo)."
     },
     "They are in the vault. Review them, then erase the copies saved on this Mac." : {
       "comment" : "Caption of the Cards and addresses saved on this Mac row in Settings › Autofill (Vault tab) when the entries are already in the vault but old copies remain. “They” are the cards and addresses; the button is Review…. Sentence case."
@@ -10791,8 +10854,14 @@
     "Undid Move to Trash." : {
       "comment" : "Notice shown briefly above the credential list after Undo took the action back; the action is moving credentials to the vault’s Trash. Past tense of Undo, full sentence with a final period; the action name matches the one in the “Undo Move to Trash” menu title."
     },
+    "Undid Not the Same." : {
+      "comment" : "Notice after Undo of Not the Same."
+    },
     "Undid Restore." : {
       "comment" : "Notice shown briefly above the credential list after Undo took the action back; the action is restoring an item from the Trash. Past tense of Undo, full sentence with a final period; the action name matches the one in the “Undo Restore” menu title."
+    },
+    "Undid Suggest Again." : {
+      "comment" : "Notice after Undo of Suggest Again."
     },
     "Undo Add Credential" : {
       "comment" : "Title of the Edit menu’s Undo item while the keyboard is in the credential list or Trash of Settings › Credentials; it replaces the plain “Undo”. Title Case. Here the action is adding a new credential. Verb phrase."
@@ -10809,8 +10878,14 @@
     "Undo Move to Trash" : {
       "comment" : "Title of the Edit menu’s Undo item while the keyboard is in the credential list or Trash of Settings › Credentials; it replaces the plain “Undo”. Title Case. Here the action is moving credentials to the vault’s Trash. Verb phrase."
     },
+    "Undo Not the Same" : {
+      "comment" : "Edit menu: take back Not the Same on a merge suggestion."
+    },
     "Undo Restore" : {
       "comment" : "Title of the Edit menu’s Undo item while the keyboard is in the credential list or Trash of Settings › Credentials; it replaces the plain “Undo”. Title Case. Here the action is restoring an item from the Trash. Verb phrase."
+    },
+    "Undo Suggest Again" : {
+      "comment" : "Edit menu: take back Suggest Again on a dismissed merge suggestion."
     },
     "Undone: %@" : {
       "comment" : "VoiceOver label of the “Remembered …” line under an assistant answer after the notes were taken back. %@ is the list of notes, one “subject: value” per line."
