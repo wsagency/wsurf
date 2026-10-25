@@ -271,12 +271,13 @@ struct CrossSiteFrameAutofillTests {
         try await withPage(.chromium, "/", media: true) { harness in
             let frame = try await harness.ready("localhost")
             let services = BrowserPage.servicesWorld
-            func probe(in world: WKContentWorld) async throws -> [String: Any] {
+            @MainActor func probe(in world: WKContentWorld) async throws -> [String: Any] {
                 let script = """
                     return {media: window.__wsurfMedia === true, passwords: typeof globalThis.__wsurfPasswords,
                             save: typeof globalThis.__wsurfAutofillSave, send: typeof globalThis.__wsurfSend};
                     """
-                return try #require(try await harness.page.callAsyncJavaScript(script, in: frame, contentWorld: world) as? [String: Any])
+                let answer = try await harness.page.callAsyncJavaScript(script, in: frame, contentWorld: world)
+                return try #require(answer as? [String: Any])
             }
             let inServices = try await probe(in: services)
             #expect(inServices["media"] as? Bool == true, "the media script runs in the frame's services world")
@@ -293,7 +294,7 @@ struct CrossSiteFrameAutofillTests {
 
             // From the services world: an autofill handler and another service's handler, then the media handler's own word.
             let marker = UUID().uuidString
-            try await harness.page.callAsyncJavaScript("""
+            _ = try await harness.page.callAsyncJavaScript("""
                 globalThis.__wsurfSend('wsurfPasswords', {action: 'context', marker, token: 'forged', field: 'text', url: location.href});
                 globalThis.__wsurfSend('wsurfAutofillSave', {action: 'stage', marker});
                 globalThis.__wsurfSend('wsurfSiteGuard', {marker});
