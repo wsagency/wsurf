@@ -833,3 +833,15 @@ Folder custom colors and icons are not synced to other devices (folder propertie
 ### Setting default changed
 
 `appearance.minimalBarAutoHide` ("Hide the bar while scrolling", Settings > Appearance > Window) now **reads as on when unset** (`BrowserSettings.swift`), and Reset to Defaults turns it on. No stored value is migrated: an install that explicitly turned it off keeps the explicit off, and one that never touched it now gets the new default (reading the default writes nothing).
+
+## WSurf 0.1.14 candidate: vault field
+
+Not upstream provenance: this build takes no Linen commits. It is `9a2858f1f9f4f0f1bf8babb9820dd22edf6b7aff` (the signed 0.1.13) plus four WSurf branches, merged `--no-ff` into `feature/release-0.1.14-20261026` (candidate 0.1.14, build 14): `fix/catalog-sweep-0.1.14`, `fix/chromium-iframe-autofill-0.1.14`, `fix/merge-suggestions-0.1.14` and `fix/audio-iframe-mute-0.1.14`. Not merged to `main`, no PR, not deployed. The one persisted change is below; the other three branches write nothing new (no database column, no setting, no default: the iframe work and the mute are in memory only, the catalog is strings).
+
+### Vault field in the 0.1.14 candidate
+
+No database, no registered migration, no CloudKit record type or field, and no change to the sealed formats (schema, head, AAD, wrappers): the field is part of the account that is sealed whole.
+
+| Change | Source | Notes |
+|---|---|---|
+| `CredentialAccount.notSameAs: [UUID]?` (inside the sealed account row, so also in the encrypted sync payload) | WSurf merge suggestions (`fix/merge-suggestions-0.1.14`, Not the Same) | The ids of the other entries the person said are not the same credential as this one, so the vault never suggests merging them again. Ids only, never an address or a name, at most 256, sorted by id text, never the entry's own id; absent (not an empty array) when there are none. Not content: it raises no History version, no `modifiedAt` and no Trash entry. Both entries of a pair keep the other's id, the pair outlives edits, and an id merged into a live entry counts as that entry. Sync carries it in the `metadata` part (like `mergedFrom`): an entry without the field keeps its earlier metadata hash, so no existing sync base changes and nothing re-uploads; a Not the Same or Suggest Again then uploads and applies on the other Mac like a rename. Two metadata edits of one entry on two Macs before they sync are a conflict ("Entries need a choice"), as for any metadata edit. An older build ignores the field and, when it edits that entry, drops it (the suggestion can come back; nothing else is lost). |
