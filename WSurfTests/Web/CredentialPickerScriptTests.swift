@@ -84,11 +84,20 @@ struct CredentialPickerScriptTests {
         }
 
         /// Right-clicks element `id` (in `frame`, the iframe's document, when given) and returns what that frame's script reported.
+        /// Chromium hit-tests an out-of-process frame only once it has been drawn: until then the click lands on the page, which
+        /// reports a right-click on no field. Only that is tried again; any other report is returned as it is.
         func rightClick(_ id: String, in frame: BrowserFrame? = nil) async throws -> (body: [String: Any], frame: BrowserFrame) {
-            let point = try await PageRightClick.center(of: id, in: page, frame: frame)
-            let count = contexts.count
-            try await PageRightClick.send(at: point, in: page, window: window)
-            try #require(await waitUntil { self.contexts.count > count }, "the right-click on \(id) reached its frame")
+            for attempt in 1...10 {
+                let point = try await PageRightClick.center(of: id, in: page, frame: frame)
+                let count = contexts.count
+                try await PageRightClick.send(at: point, in: page, window: window)
+                try #require(await waitUntil { self.contexts.count > count }, "the right-click on \(id) reached its frame")
+                let last = contexts[contexts.count - 1]
+                guard let frame, attempt < 10, last.frame.isMainFrame, !frame.isMainFrame, last.body["token"] is NSNull || last.body["token"] == nil else {
+                    return last
+                }
+                try await Task.sleep(for: .milliseconds(200))
+            }
             return contexts[contexts.count - 1]
         }
 
@@ -182,9 +191,7 @@ struct CredentialPickerScriptTests {
             page.load(URLRequest(url: url))
             try #require(await waitUntil { page.url == url && !page.isLoading })
             try #require(await waitUntil { harness.readyFrames.contains(where: \.isMainFrame) })
-            if !(engine == .chromium && crossOriginFrame) {
-                try #require(await waitUntil { harness.subframe != nil }, "the iframe's script is ready")
-            }
+            try #require(await waitUntil { harness.subframe != nil }, "the iframe's script is ready")
             // What the policy sends a profile with password autofill on; the private test profile would get false.
             for frame in harness.readyFrames {
                 _ = try await page.callAsyncJavaScript(
@@ -297,18 +304,12 @@ struct CredentialPickerScriptTests {
         }
     }
 
-    /// WebKit runs the page scripts in a cross-origin iframe too. Chromium runs them only in frames of the page's own process (its
-    /// DevTools session attaches to no other target), so under site isolation a cross-origin iframe gets none: neither the dropdown
-    /// nor Pick Credential… works there yet (Phase A).
+    /// WebKit runs the page scripts in a cross-origin iframe too. Under site isolation Chromium runs such a frame in another process,
+    /// which gets the autofill scripts through its own DevTools session (`ChromiumDevTools+CrossSiteFrames`): the right-click lands on
+    /// that frame and the fill goes into that frame and field only.
     @Test(.boundedWebViews, arguments: BrowserEngine.allCases)
     func aRightClickInAnotherSitesFrameBelongsToThatFrameAlone(engine: BrowserEngine) async throws {
         try await withHarness(engine, crossOriginFrame: true) { harness in
-            if engine == .chromium {
-                await withKnownIssue("Chromium: no WSurf page script in a cross-origin (out-of-process) iframe") {
-                    #expect(await waitUntil(timeout: .seconds(8)) { harness.subframe != nil })
-                }
-                return
-            }
             try await checkFrameIsolation(harness, frameHost: "localhost")
         }
     }
