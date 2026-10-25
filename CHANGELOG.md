@@ -5,6 +5,30 @@ This file preserves release notes inherited from the upstream
 describe upstream Linen releases, not releases published by WSurf. New WSurf
 release notes will be added above this provenance record.
 
+## 0.1.13 (build 13) — 2026-10-25
+
+Everything since 0.1.11 (build 11); 0.1.12 was not released, so its notes below are part of this build. None of the screens and prompts in either section has been checked by hand.
+
+### Passwords, passkeys and autofill
+
+- Right-click a field › Pick Credential… for the times the dropdown does not open, in WebKit and Chromium tabs. A sheet lists the logins and verification codes in your unlocked vaults, this website’s first, with a search; choose one and press Fill (or double-click). A login goes into the field you right-clicked and its partner field, a code into the code field, and a code split over several boxes fills them one by one. Nothing is filled into a form that sends what you type to another website, and the password or code is read from the vault only after you choose it. The item is not offered in private windows, with Save and fill passwords off, on a page that is not secure, or while the assistant or a connected app is working in the tab.
+- When Pick Credential… fills an entry that is not saved for that website, the toolbar asks “Use “name” on host?” with “Add host to its websites.” Add Website adds exactly that website, as the address bar shows it, as one change in the entry’s History; Not Now stores nothing. If the page’s address imitates one of the entry’s own websites (a look-alike letter, a digit for a letter, a one-letter typo), the popover says so and Not Now is the default.
+- A verification code saved for example.com is now offered on login.example.com and the other websites of the same domain. When nothing matches exactly, the code field shows “Check other logins for *.example.com”, which lists the codes saved for the domain; choosing one fills the code and then offers to add that website. A look-alike domain is never a sibling.
+- More code fields get the dropdown: names such as totp, mfaCode, twoFactorToken and 2fa_code, and the words “authentication code” and “one time password”. “Security code” is still not taken for a verification code, because it may be a card’s.
+- When one vault is open and the login or code for a field is in another, locked vault, the dropdown now shows “Unlock Credentials…”, which asks for the locked vault only; it used to show nothing. A vault you keep locked on purpose now shows this row on fields the open vault has no match for.
+
+### Sound
+
+- A speaker appears at the bottom left of the sidebar, beside the profile button, while a tab plays sound or WSurf is muted. Rest the pointer on it for a moment and a list shows each tab that plays, with its icon, title and website, “Another Window” or “Micro Window” when it is not in this window, and a Mute button of its own. Click a tab to go to it: its window comes forward, its space and row are shown, and a shut folder around it opens. The list covers the windows of the same profile, and a private window lists only its own tabs. The speaker is also in the Minimal bar’s island, in a micro window’s bar before Float on Top, and above the profile button in the icons-only sidebar; VoiceOver reads how many tabs play and offers a Show action for each, and right-clicking the speaker lists the same tabs.
+- Click the speaker, or choose View › Mute WSurf (⌃⌘M), to mute every tab in every window, private and micro windows included; a page that starts to play afterwards is silent from its first sound. The speaker stays, crossed out. Click again and each tab gets its own setting back: a tab you muted yourself stays muted, and one you unmuted while WSurf was muted stays unmuted. It mutes the sound of pages, not the assistant’s voice or Read Aloud, and it is not kept after a restart.
+- A muted tab now stays muted when it goes to another page; until now the new page was audible. Unmuting a tab also leaves alone a video the page itself keeps muted.
+
+### Known issues
+
+- Chromium tabs: a login or code field inside a frame from another website (a cross-site iframe) gets no dropdown and no Pick Credential… item, because WSurf’s page scripts do not run in such a frame. WebKit tabs are not affected.
+- The speaker and its list notice only sound from the page itself, not from a player inside an iframe. Mute WSurf still silences such a player.
+- The known issues of 0.1.12 are unchanged.
+
 ## 0.1.12 (build 12) — 2026-10-25
 
 Everything since 0.1.11 (build 11). None of the screens and prompts below has been checked by hand.
