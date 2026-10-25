@@ -159,6 +159,10 @@ final class BrowserTab: Identifiable {
     /// The space of the window this tab belongs to. Nil while it is a pin or inside a pinned folder, which every space
     /// shows, and for a tab that has not joined a space yet.
     var spaceID: UUID?
+    /// Set on the row a window keeps for one of its pages while that page is in a micro window: the id of the page's tab
+    /// there. Such a row refers to that tab and is not a tab itself: it never loads, is never in front, and opening it
+    /// brings the page back (`AppCoordinator.openMicroPlaceholder`). Nil on every real tab.
+    var microTabID: UUID?
 
     @ObservationIgnored var liveView: BrowserPage? {
         didSet {
@@ -557,7 +561,8 @@ final class BrowserTab: Identifiable {
     }
 
     func realizeDeferredSession() {
-        guard isDeferred else { return }
+        // The page a micro window row stands for is live in the micro window; loading it here would make a second one.
+        guard isDeferred, microTabID == nil else { return }
         let state = deferredState
         let url = deferredURL
         processState.beginReload()

@@ -420,6 +420,14 @@ struct AppDatabase: Sendable {
             }
         }
 
+        // The tab of a micro window a row stands for (`BrowserTab.microTabID`). NULL, every row saved before micro windows
+        // and every real tab, is a tab. Holds an id only, never an address; older builds ignore it and restore an ordinary row.
+        if try !db.columns(in: "sessionTab").contains(where: { $0.name == "microTabID" }) {
+            try db.alter(table: "sessionTab") { t in
+                t.add(column: "microTabID", .blob)
+            }
+        }
+
         try db.create(table: "sessionItem", options: .ifNotExists) { t in
             t.primaryKey("position", .integer)
             t.column("tabID", .blob).references("sessionTab", onDelete: .cascade)

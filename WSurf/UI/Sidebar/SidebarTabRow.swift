@@ -147,7 +147,7 @@ struct SidebarTabRow: View {
     }
 
     private var titleMask: some View {
-        let badge = peekedTab == nil ? 0 : PeekRowBadge.extent + 4
+        let badge = (peekedTab == nil ? 0 : PeekRowBadge.extent + 4) + (tab.microTabID == nil ? 0 : MicroRowBadge.extent + 4)
         let mark = tab.processState.externalControllers.isEmpty ? 0 : markWidth + 4
         let covered = (showsTrailingControls ? controlsWidth : 0) + badge + mark
         return HStack(spacing: 0) {
@@ -266,6 +266,7 @@ struct SidebarTabRow: View {
                         if let peekedTab {
                             PeekRowBadge(tab: peekedTab, coordinator: coordinator)
                         }
+                        MicroRowBadge(tab: tab)
                     }
                     .padding(.trailing, SidebarMetrics.rowControlEdgeOffset(
                         style: sidebarStyle,
@@ -365,6 +366,7 @@ struct SidebarTabRow: View {
                 Label("Move to Micro Window", systemImage: "arrow.up.forward.square")
             }
         }
+        MicroRowMenuItems(tab: tab, coordinator: coordinator)
         Divider()
 
         SidebarPinMenuItems(tab: tab, browser: browser)

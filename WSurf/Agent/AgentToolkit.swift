@@ -908,7 +908,7 @@ extension AgentToolkit {
             return output
         }
         let readable = contextTabIDs
-        let tabs = browser.tabs.filter { $0.assistantAccess.effectivePolicy != .deny }
+        let tabs = browser.tabs.filter { $0.microTabID == nil && $0.assistantAccess.effectivePolicy != .deny }
         guard !tabs.isEmpty else {
             let output = "No tabs are open."
             completeTool(step, output: output)

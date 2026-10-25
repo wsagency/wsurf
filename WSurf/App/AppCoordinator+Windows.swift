@@ -69,6 +69,7 @@ extension AppCoordinator {
         browser.onTabClosed = { [weak self] tab in
             extensionTabClosed?(tab)
             self?.tabDidClose(tab)
+            self?.releaseMicroPlaceholders(for: [tab.id])
             self?.closeMicroWindowIfEmpty()
         }
         let extensionTabChanged = browser.onActiveTabChanged
@@ -178,6 +179,8 @@ extension AppCoordinator {
         activation.stop()
         if isMicro {
             microReveal.stop()
+            // Its page closes with it, so the rows other windows kept for that page go too.
+            releaseMicroPlaceholders(for: Set(browser.tabs.map(\.id)))
         }
         memoryPressure.stop()
         sleepTimer.stop()

@@ -245,13 +245,13 @@ extension BrowserModel {
     }
 
     func split(_ anchor: BrowserTab, with tab: BrowserTab, axis: SplitAxis) {
-        guard anchor !== tab else { return }
+        guard anchor !== tab, anchor.microTabID == nil, tab.microTabID == nil else { return }
         splits = splits.splitting(anchor.id, with: tab.id, axis: axis)
         settleSplit(containing: anchor)
     }
 
     func insertIntoSplit(_ tab: BrowserTab, beside anchor: BrowserTab, edge: SplitDropZone) {
-        guard anchor !== tab else { return }
+        guard anchor !== tab, anchor.microTabID == nil, tab.microTabID == nil else { return }
         splits = splits.inserting(tab.id, beside: anchor.id, edge: edge)
         settleSplit(containing: anchor)
     }
@@ -359,7 +359,8 @@ extension BrowserModel {
     }
 
     private func neighbor(of tab: BrowserTab) -> BrowserTab? {
-        let peers = currentSpaceID == nil ? tabs : tabs.filter { $0 === tab || isShown($0) }
+        // A row standing for a page in a micro window is never the next page in front.
+        let peers = tabs.filter { $0 === tab || (isShown($0) && $0.microTabID == nil) }
         guard let index = peers.firstIndex(where: { $0 === tab }) else {
             return peers.first { $0 !== tab }
         }
@@ -393,6 +394,10 @@ extension BrowserModel {
     }
 
     func activate(_ tab: BrowserTab) {
+        guard tab.microTabID == nil else {
+            onActivatingMicroPlaceholder?(tab)
+            return
+        }
         activeTabID = tab.id
         scheduleSave()
     }
@@ -461,7 +466,7 @@ extension BrowserModel {
     }
 
     func cycleTab(forward: Bool) {
-        let tabs = currentSpaceTabs
+        let tabs = currentSpaceTabs.filter { $0.microTabID == nil }
         guard tabs.count > 1, let current = tabs.firstIndex(where: { $0.id == activeTab?.id }) else { return }
         let next = forward
             ? (current + 1) % tabs.count
