@@ -197,6 +197,16 @@ final class ChromiumPage: NSView {
         return try body(host)
     }
 
+    /// The engine's own mute of the page: every frame and every kind of sound, a frame of another site (which no WSurf script
+    /// reaches) and Web Audio included. It stays across navigations, like the tab's mute does.
+    func setAudioMuted(_ muted: Bool) {
+        withHost { $0.pointee.set_audio_muted?($0, muted ? 1 : 0) }
+    }
+
+    var isAudioMuted: Bool {
+        withHost { ($0.pointee.is_audio_muted?($0) ?? 0) != 0 } ?? false
+    }
+
     func command(_ method: String, params: [String: Any] = [:]) async throws -> [String: Any] {
         try await devTools.command(method, params: params)
     }

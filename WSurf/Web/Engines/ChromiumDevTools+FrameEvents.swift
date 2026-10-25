@@ -148,6 +148,10 @@ extension ChromiumDevTools {
         framesByID[parsed.id] = parsed
         if let old, old.documentID != parsed.documentID {
             let retired = [old.documentID] + retireDescendants(parentID: parsed.id)
+            if !parsed.isMainFrame {
+                // What the frame's last document said about its sound is over; the new one reports for itself.
+                page?.owner?.onFramesRetired?([parsed.id])
+            }
             if !restoredFromCache {
                 removeContexts(frameID: parsed.id)
             } else {
@@ -226,6 +230,7 @@ extension ChromiumDevTools {
             removeContexts(frameID: id)
         }
         invalidateCredentialContexts(documents: documents, pageWide: wasMain)
+        page?.owner?.onFramesRetired?(removed)
     }
 
     func targetFrame(_ requested: BrowserFrame?) async throws -> BrowserFrame {

@@ -88,27 +88,35 @@ final class MediaCenter {
         page.installScript(MediaScript.source, in: BrowserPage.servicesWorld, injectionTime: .atDocumentStart, forMainFrameOnly: false)
         page.addScriptMessageHandler(name: Self.frameScriptHandlerName, in: BrowserPage.servicesWorld) { [weak self] message in
             guard let body = message.body as? String else { return }
-            self?.receiveScriptMessage(body, from: message.page, isMainFrame: message.frameInfo.isMainFrame)
+            self?.receiveScriptMessage(
+                body, from: message.page, isMainFrame: message.frameInfo.isMainFrame, frameID: message.frameInfo.chromiumID
+            )
         }
+        Self.watchFrames(of: page) { [weak self] _ in self }
     }
 
-    func receiveScriptMessage(_ message: String, from page: BrowserPage, isMainFrame: Bool) {
+    /// `frameID` is the engine's id for the frame the message came from, when the engine has one (Chromium).
+    func receiveScriptMessage(_ message: String, from page: BrowserPage, isMainFrame: Bool, frameID: String? = nil) {
         if message == "picture-in-picture" || message == "inline" {
             applyPresentationMode(message, from: page)
             return
         }
         if isMainFrame, message == "hello" {
             forgetPicture(page)
+            updateAudio(of: page) { $0.startDocument() }
             onPageStarted?(page)
         }
         if message == "tabunmuted" {
             onTabUnmuted?(page)
             return
         }
+        if message == "frames:moved" {
+            refreshFrames(of: page)
+        }
+        if let report = FrameAudio.report(in: message, isMainFrame: isMainFrame) {
+            updateAudio(of: page) { $0.apply(report, engineFrame: frameID) }
+        }
         if let controlled = controlledPage, page === controlled {
-            if isMainFrame, let playing = Self.audioReport(in: message) {
-                onTabAudioChanged?(controlled, playing)
-            }
             if isMainFrame, let hasVideo = Self.videoReport(in: message) {
                 onTabVideoChanged?(controlled, hasVideo)
             }
@@ -118,9 +126,6 @@ final class MediaCenter {
         if page === pipTargetPage,
            handlePiPMessage(message, from: page, isMainFrame: isMainFrame) { return }
         guard isMainFrame else { return }
-        if let playing = Self.audioReport(in: message) {
-            onTabAudioChanged?(page, playing)
-        }
         if let hasVideo = Self.videoReport(in: message) {
             onTabVideoChanged?(page, hasVideo)
         }
@@ -240,6 +245,8 @@ final class MediaCenter {
 
     func pageDidReset(_ page: BrowserPage) {
         forgetPicture(page)
+        // Its renderer is gone with everything it played; the tab has already said so for itself.
+        forgetAudio(of: page)
         if page === watchedPage {
             watched.currentTime = 0
             watched.duration = 0
@@ -381,13 +388,16 @@ final class MediaCenter {
         post("wsurf-seekabs:\(seconds)", to: page, userGesture: true)
     }
 
+    /// The page's players are muted by its script, in each frame the script runs in. Chromium is told as well: its own mute
+    /// covers what the script cannot reach, a frame of another site and Web Audio.
     static func setMuted(_ muted: Bool, on page: BrowserPage) {
         post("wsurf-mute:\(muted ? 1 : 0)", to: page, userGesture: true)
+        page.chromium?.setAudioMuted(muted)
     }
 
     /// `userGesture` for the person's own press on WSurf's controls, so its play is theirs under any auto-play answer;
     /// WSurf's own requests (resend, rect, reveal, Picture in Picture setup) carry none.
-    private static func post(_ message: String, to page: BrowserPage, userGesture: Bool = false) {
+    static func post(_ message: String, to page: BrowserPage, userGesture: Bool = false) {
         guard let data = try? JSONSerialization.data(withJSONObject: message, options: [.fragmentsAllowed]),
               let escaped = String(data: data, encoding: .utf8) else { return }
         Task { @MainActor in
@@ -398,11 +408,6 @@ final class MediaCenter {
             });
             """, in: nil, contentWorld: BrowserPage.servicesWorld, userGesture: userGesture)
         }
-    }
-
-    nonisolated private static func audioReport(in message: String) -> Bool? {
-        guard message.hasPrefix("audio:") else { return nil }
-        return message.hasSuffix("1")
     }
 
     nonisolated private static func videoReport(in message: String) -> Bool? {
