@@ -201,9 +201,10 @@ connected app controls; every step asks again.
   (and its siblings') first; titles, usernames and websites only.
 - The chosen entry is read again under the unlock and revision it was listed
   under. The fill goes to the right-clicked field and its partner in that
-  frame only, once: a login fills the username and, only into a password field
-  of a form that sends to the same site, the password; a code goes into the
-  field, box by box when it is split.
+  frame only, once, and only if its form sends to the same site: a login fills
+  the username and, only into a password field, the password; a code goes into
+  the field, or into exactly the boxes of a split code, from the first. The
+  sheet closes when the vault locks or the autofill policy changes.
 - Used on a website it is not saved for, the entry is offered that website
   (the website popover, "Use … on …?"). Accepting is one vault commit with the
   `add-website` cause, one History version; declining stores nothing. A page
