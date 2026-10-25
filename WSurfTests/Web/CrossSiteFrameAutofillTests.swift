@@ -548,6 +548,49 @@ struct CrossSiteFrameAutofillTests {
         await context.endPrivateSession()
     }
 
+    /// What a cross-site frame said about its sound must not outlive it: a frame session that ends as a whole (its process is gone,
+    /// or it went back into its parent's) sends no `Page.frameDetached`, and a renderer that crashes drops its frames silently.
+    /// Both tell the page's owner which frames are gone, which is what the media center reads.
+    @Test func aCrossSiteFrameThatEndsOrCrashesRetiresItsFramesForTheMediaCenter() async throws {
+        let context = BrowserProfileContext(profile: .privateBrowsing())
+        let native = ChromiumPage(context: context)
+        let page = BrowserPage(chromium: native)
+        var retired: [Set<String>] = []
+        page.onFramesRetired = { retired.append($0) }
+        let root = ChromiumDevTools(page: native)
+        func session(_ id: String, target: String, frames: [String]) throws -> ChromiumDevTools {
+            let child = ChromiumDevTools(root: root, parent: root, sessionID: id, targetID: target)
+            root.sessions[id] = child
+            for (index, name) in frames.enumerated() {
+                var frame: [String: Any] = [
+                    "id": name, "url": "https://player.example/\(name)", "securityOrigin": "https://player.example", "loaderId": "L-" + name,
+                ]
+                if index == 0 {
+                    frame["parentId"] = "P"
+                }
+                child.framesByID[name] = try #require(child.parseFrame(frame, parentID: index == 0 ? "P" : frames[0]))
+            }
+            return child
+        }
+        let ended = try session("S1", target: "T1", frames: ["T1", "T1a"])
+        ended.endCrossSiteFrameSession()
+        #expect(retired == [["T1", "T1a"]], "the session that ended says all its frames are gone")
+        #expect(ended.framesByID.isEmpty && root.sessions["S1"] == nil)
+
+        retired = []
+        let crashed = try session("S2", target: "T2", frames: ["T2"])
+        root.targetCrashed(["targetId": "T2"])
+        #expect(retired == [["T2"]], "a crashed frame renderer says its frames are gone")
+        #expect(crashed.framesByID.isEmpty && root.sessions["S2"] != nil, "its session stays for the reloaded frame")
+
+        retired = []
+        let quiet = try session("S3", target: "T3", frames: [])
+        quiet.endCrossSiteFrameSession()
+        #expect(retired.isEmpty, "a session with no frame has nothing to retire")
+        await page.close()
+        await context.endPrivateSession()
+    }
+
     @Test func onlyTheListedScriptsAndHandlersReachCrossSiteFrames() {
         typealias Script = ChromiumDevTools.Script
         let autofill = PasswordAutofill.world.name ?? ""

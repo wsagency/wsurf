@@ -131,6 +131,9 @@ extension ChromiumDevTools {
         guard let target = params["targetId"] as? String,
               let child = (root ?? self).sessions.values.first(where: { $0.targetID == target && $0.parent === self }) else { return }
         let documents = child.framesByID.values.map(\.documentID)
+        // A crashed renderer plays nothing, and its frames' last word about their sound would otherwise stand (the reloaded
+        // frame says its own, and the old one is forgotten here, so nothing would retire it).
+        page?.owner?.onFramesRetired?(Set(child.framesByID.keys))
         child.forgetDocuments()
         child.invalidateCredentialContexts(documents: documents, pageWide: false)
     }
@@ -143,7 +146,9 @@ extension ChromiumDevTools {
         let documents = framesByID.values.map(\.documentID)
         frameRevision &+= 1
         // What these frames said about their sound is over; they send no `Page.frameDetached` when their session ends as a whole.
-        page?.owner?.onFramesRetired?(Set(framesByID.keys))
+        if !framesByID.isEmpty {
+            page?.owner?.onFramesRetired?(Set(framesByID.keys))
+        }
         framesByID.removeAll()
         contextsByUniqueID.removeAll()
         uniqueIDByExecutionID.removeAll()
