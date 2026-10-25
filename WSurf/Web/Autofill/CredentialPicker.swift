@@ -174,10 +174,11 @@ final class CredentialPicker {
     }
 
     /// Chromium names the right-clicked frame by its own id, which need not be the DevTools id the script's frame carries. The URL
-    /// then names it only while no other live frame of the page has that URL, the rule of `ChromiumPage.frame(id:requestURL:isMainFrame:)`.
+    /// then names it only while no other live frame of the page, cross-site frames included, has that URL, the rule of
+    /// `ChromiumPage.frame(id:requestURL:isMainFrame:)`.
     private static func isNamedFrame(_ target: Target, by menu: Menu, in page: BrowserPage) async -> Bool {
         guard let named = menu.chromiumFrame, target.frame.chromiumID != named.id else { return true }
-        guard let chromium = page.chromium, let live = try? await chromium.frames() else { return false }
+        guard let chromium = page.chromium, let live = try? await chromium.devTools.framesIncludingCrossSiteFrames() else { return false }
         return live.filter { $0.isMainFrame == named.isMain && $0.request.url == named.url }.count == 1
     }
 
