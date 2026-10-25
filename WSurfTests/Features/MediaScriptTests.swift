@@ -624,4 +624,119 @@ struct MediaScriptTests {
         await state(webView, collector, after: post("wsurf-mute:1"))
         #expect(await audio(collector) == "audio:0", "the page's own muted loop is no sound for the list")
     }
+    // MARK: - Frames
+
+    /// A frame made of its own document, with an `audio` element whose `paused` the page controls, as the player of an embed is.
+    private static let framePlayer = """
+    <!doctype html><audio id="song"></audio><script>
+    let playing = true;
+    const song = document.getElementById('song');
+    Object.defineProperty(song, 'paused', { get() { return !playing; } });
+    addEventListener('message', (event) => {
+      if (event.data !== 'play' && event.data !== 'stop') { return; }
+      playing = event.data === 'play';
+      song.dispatchEvent(new Event(playing ? 'play' : 'pause'));
+    });
+    </script>
+    """
+
+    private func addFrame(_ id: String, source: String = MediaScriptTests.framePlayer, to webView: WKWebView) async throws {
+        let literal = String(data: try JSONSerialization.data(withJSONObject: source, options: [.fragmentsAllowed]), encoding: .utf8) ?? "\"\""
+        _ = try await webView.evaluateJavaScript("""
+        (() => {
+          const frame = document.createElement('iframe'); frame.id = '\(id)'; frame.srcdoc = \(literal);
+          document.body.append(frame);
+        })(); true
+        """)
+    }
+
+    private func frameReports(_ collector: Collector) -> [(key: String, playing: Bool)] {
+        collector.messages.compactMap { message in
+            guard message.hasPrefix("frameaudio:") else { return nil }
+            let fields = message.dropFirst("frameaudio:".count).split(separator: ":")
+            guard fields.count == 2 else { return nil }
+            return (String(fields[0]), fields[1] == "1")
+        }
+    }
+
+    /// A frame says what plays in it under a key of its own, and the page's own document keeps saying `audio:`.
+    @Test func aFrameReportsItsOwnSoundUnderItsOwnKey() async throws {
+        let (webView, collector) = await player(hasVideo: false)
+        collector.messages.removeAll()
+
+        try await addFrame("a", to: webView)
+        #expect(await waitUntil { frameReports(collector).contains { $0.playing } }, "a player in a frame is reported")
+        let key = try #require(frameReports(collector).first?.key)
+        #expect(!collector.messages.contains("audio:1"), "the page's own document plays nothing")
+
+        _ = try await webView.evaluateJavaScript("document.getElementById('a').contentWindow.postMessage('stop', '*'); true")
+        #expect(await waitUntil { frameReports(collector).last.map { $0.key == key && !$0.playing } == true }, "and when it stops")
+
+        try await addFrame("b", to: webView)
+        #expect(await waitUntil { frameReports(collector).contains { $0.playing && $0.key != key } }, "another frame, another key")
+    }
+
+    @Test func aFrameThatGoesSaysItsSoundIsOver() async throws {
+        let (webView, collector) = await player(hasVideo: false)
+        try await addFrame("a", to: webView)
+        try #require(await waitUntil { frameReports(collector).contains { $0.playing } })
+        let key = try #require(frameReports(collector).first?.key)
+
+        _ = try await webView.evaluateJavaScript("document.getElementById('a').remove(); true")
+        #expect(
+            await waitUntil { frameReports(collector).last.map { $0.key == key && !$0.playing } == true },
+            "a frame removed while it plays says so as it goes"
+        )
+    }
+
+    @Test func aFrameWithNothingToPlayStaysQuiet() async throws {
+        let (webView, collector) = await player(hasVideo: false)
+        collector.messages.removeAll()
+        try await addFrame("quiet", source: "<!doctype html><p>No player here.</p>", to: webView)
+        try await Task.sleep(for: .milliseconds(600))
+        #expect(frameReports(collector).isEmpty, "no word, rather than a word of silence from every frame of the page")
+    }
+
+    /// The mute still reaches a player that lives in a frame, and the frame still counts as playing under it.
+    @Test func aFramePlayerMutedByTheAppStillCountsAsPlaying() async throws {
+        let (webView, collector) = await player(hasVideo: false)
+        try await addFrame("a", to: webView)
+        try #require(await waitUntil { frameReports(collector).contains { $0.playing } })
+
+        _ = try await webView.evaluateJavaScript("\(post("wsurf-mute:1")); true")
+        try await Task.sleep(for: .milliseconds(400))
+        #expect(frameReports(collector).last?.playing == true, "muted by the app, it is still playing, for the list")
+    }
+    /// A document that sees one of its frames go, or load another page, says so: the frame itself may not get to.
+    @Test func aDocumentSaysWhenItsFramesMove() async throws {
+        let (webView, collector) = await player(hasVideo: false)
+        collector.messages.removeAll()
+
+        try await addFrame("a", source: "<!doctype html><p>Quiet.</p>", to: webView)
+        #expect(await waitUntil { collector.messages.contains("frames:moved") }, "a frame loaded")
+
+        try await Task.sleep(for: .milliseconds(400))
+        collector.messages.removeAll { $0 == "frames:moved" }
+        _ = try await webView.evaluateJavaScript("document.getElementById('a').remove(); true")
+        #expect(await waitUntil { collector.messages.contains("frames:moved") }, "a frame was removed")
+    }
+
+    /// Asking again reaches a frame inside a frame, which the app has no way to address itself.
+    @Test func aResendReachesTheFramesInsideFrames() async throws {
+        let (webView, collector) = await player(hasVideo: false)
+        let inner = String(
+            data: try JSONSerialization.data(withJSONObject: Self.framePlayer, options: [.fragmentsAllowed]), encoding: .utf8
+        )?.replacingOccurrences(of: "</", with: "<\\/") ?? "\"\""
+        try await addFrame(
+            "outer",
+            source: "<!doctype html><script>const f = document.createElement('iframe'); f.srcdoc = \(inner); document.documentElement.append(f);</script>",
+            to: webView
+        )
+        try #require(await waitUntil { frameReports(collector).contains { $0.playing } }, "the inner frame plays")
+        let key = try #require(frameReports(collector).first { $0.playing }?.key)
+
+        collector.messages.removeAll()
+        _ = try await webView.evaluateJavaScript("\(post("wsurf-resend")); true")
+        #expect(await waitUntil { frameReports(collector).contains { $0.playing && $0.key == key } }, "it says so again")
+    }
 }

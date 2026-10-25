@@ -57,6 +57,16 @@ extension AppCoordinator {
 }
 
 extension AppCoordinator {
+    /// WSurf is muted, or no longer is (`BrowserApplication.muteAll`). The assistant's voice is silent while it is, whatever the
+    /// person's own setting for it says; unmuting leaves that setting as it was. A conversation by voice ends, as it does when
+    /// the person mutes the assistant's voice.
+    func silenceSpeech(_ silenced: Bool) {
+        speech.isSilenced = silenced
+        if silenced, isVoiceConversationPresented || conversationVoice != nil {
+            endVoiceConversation()
+        }
+    }
+
     var supportsVoiceConversation: Bool {
         selectedProvider.adapter == .openAIResponses
     }
@@ -65,6 +75,10 @@ extension AppCoordinator {
         guard supportsVoiceConversation else { return }
         isVoiceConversationPresented = true
         voiceConversationMessage = nil
+        guard !isWSurfMuted else {
+            voiceConversationMessage = String(localized: "Unmute WSurf to talk with the assistant by voice.")
+            return
+        }
         guard conversationVoice?.isActive != true else { return }
         conversationVoice = nil
         guard microphoneIsReady() else {

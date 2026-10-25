@@ -251,6 +251,9 @@ final class BrowserApplication {
         precondition(!windows.contains { $0.windowID == coordinator.windowID })
         coordinator.application = self
         windows.append(coordinator)
+        if isMuted {
+            coordinator.silenceSpeech(true)
+        }
         if !coordinator.profiles.isPrivate, !coordinator.isMicro {
             defaults.removeObject(forKey: Self.closedAsLastKey)
         }
@@ -411,9 +414,10 @@ final class BrowserApplication {
             page.addScriptMessageHandler(name: MediaCenter.frameScriptHandlerName, in: BrowserPage.servicesWorld) { [weak self] message in
                 guard let body = message.body as? String else { return }
                 self?.coordinator(for: message.page)?.media.receiveScriptMessage(
-                    body, from: message.page, isMainFrame: message.frameInfo.isMainFrame
+                    body, from: message.page, isMainFrame: message.frameInfo.isMainFrame, frameID: message.frameInfo.chromiumID
                 )
             }
+            MediaCenter.watchFrames(of: page) { [weak self] in self?.coordinator(for: $0)?.media }
             GeolocationBridge.shared.install(in: page)
             NotificationBridge.shared.install(in: page)
         }

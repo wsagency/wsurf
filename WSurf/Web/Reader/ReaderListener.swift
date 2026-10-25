@@ -40,6 +40,10 @@ final class ReaderListener {
     /// True from handing a sentence to the voice until the voice says it began. Until then, "nothing is speaking" is the end of
     /// what was said before, not of this sentence.
     @ObservationIgnored private var awaitingStart = false
+    /// WSurf is muted (Mute WSurf), so nothing is said: see `setSilenced`.
+    @ObservationIgnored private(set) var isSilenced = false
+    /// The reading is paused only because WSurf is muted, and goes on when it is not. One the person paused stays paused.
+    @ObservationIgnored private var pausedBySilence = false
 
     init(output: any SpeechOutput, settings: BrowserSettings = .application) {
         self.output = output
@@ -73,6 +77,26 @@ final class ReaderListener {
         self.source = source
         state = .playing
         load(0, fromEnd: false)
+    }
+
+    /// While WSurf is muted a reading that is playing pauses where it is, and a reading begun meanwhile waits at its first
+    /// sentence; when WSurf is unmuted they go on from the sentence they were on. A reading the person paused, or stopped, stays
+    /// as they left it.
+    func setSilenced(_ silenced: Bool) {
+        guard silenced != isSilenced else { return }
+        isSilenced = silenced
+        output.isMuted = silenced
+        if silenced {
+            if state == .playing {
+                pausedBySilence = true
+                togglePause()
+            }
+        } else if pausedBySilence {
+            pausedBySilence = false
+            if state == .paused {
+                togglePause()
+            }
+        }
     }
 
     func togglePause() {
@@ -112,6 +136,7 @@ final class ReaderListener {
         sentence = 0
         spot = nil
         awaitingStart = false
+        pausedBySilence = false
         output.stopSpeaking()
         mark?(nil)
     }
@@ -156,6 +181,12 @@ final class ReaderListener {
         spot = ReaderSpeech.Spot(block: blocks[position], range: sentences[index].range)
         mark?(spot)
         guard state == .playing else { return }
+        guard !isSilenced else {
+            // WSurf is muted: wait here, marked, and speak this sentence when it is not.
+            pausedBySilence = true
+            state = .paused
+            return
+        }
         awaitingStart = true
         output.stopSpeaking()
         output.setLanguage(language)

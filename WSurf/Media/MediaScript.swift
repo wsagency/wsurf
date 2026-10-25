@@ -17,6 +17,10 @@ enum MediaScript {
       let video = null;
       let gestureAttempts = 0;
       let muteAll = false;
+      // Each document names itself, so the app can tell the frames of one page apart and count the page as playing while any
+      // of them does: a player in an iframe, of another site too. The same script reports the same way wherever it runs.
+      const isTop = window === window.top;
+      const frameKey = Math.random().toString(36).slice(2, 12) + Date.now().toString(36);
       let scanTimer = null;
       let pendingScan = null;
       let pageHidden = false;
@@ -54,12 +58,19 @@ enum MediaScript {
       function anyPlaying() {
         return media().some(audible);
       }
-      let lastAudio = null;
+      // The page's own document says `audio:`, a frame `frameaudio:<key>:`. A frame starts out quiet: no word for a frame
+      // that has nothing to play, which most of them have not.
+      let lastAudio = isTop ? null : false;
+      function audioMessage(playing) {
+        return (isTop ? 'audio:' : 'frameaudio:' + frameKey + ':') + (playing ? 1 : 0);
+      }
       function reportAudio() {
+        // A frame that is going (`pagehide`) has said its sound is over; its player's last events say nothing new.
+        if (pageHidden && !isTop) { return; }
         const playing = anyPlaying();
         if (playing === lastAudio) { return; }
         lastAudio = playing;
-        post('audio:' + (playing ? 1 : 0));
+        post(audioMessage(playing));
       }
       let lastVideo = null;
       function reportVideo() {
@@ -214,6 +225,9 @@ enum MediaScript {
           reportAudio();
           reportVideo();
           updatePolling();
+          Array.prototype.forEach.call(document.querySelectorAll('iframe'), function (f) {
+            try { f.contentWindow.postMessage('wsurf-resend', '*'); } catch (e) {}
+          });
           return;
         }
         // Before the player is looked for: a page with nothing to play yet still has to start muted when it has some.
@@ -411,8 +425,17 @@ enum MediaScript {
         });
         return best;
       }
+      // A frame that is removed, or shows another page, may not get to say its sound is over, so a document that sees one of its
+      // frames go says so, and the app asks the frames that remain again (`wsurf-resend`).
+      let frameCount = 0;
+      function checkFrames() {
+        const found = document.querySelectorAll('iframe').length;
+        if (found < frameCount) { post('frames:moved'); }
+        frameCount = found;
+      }
       function scan() {
         if (pageHidden) { return; }
+        checkFrames();
         const visible = !document.hidden;
         const main = mainVideo(visible);
         if (main && main !== video) {
@@ -451,7 +474,7 @@ enum MediaScript {
         return node.nodeType === 1 && (node.matches(selector) || node.querySelector(selector) !== null);
       }
       const changes = new MutationObserver(function (records) {
-        const selector = document.hidden ? 'video,audio' : relevant;
+        const selector = document.hidden ? 'video,audio,iframe' : relevant;
         const needsScan = records.some(function (record) {
           if (record.type === 'attributes') { return record.target.matches(selector); }
           if (record.target.nodeType === 1 && record.target.matches('title')) { return !document.hidden; }
@@ -471,6 +494,9 @@ enum MediaScript {
       addEventListener('load', scheduleScan, { once: true });
       document.addEventListener('scroll', scheduleScan, { capture: true, passive: true });
       window.addEventListener('resize', scheduleScan);
+      document.addEventListener('load', function (event) {
+        if (event.target && event.target.tagName === 'IFRAME') { post('frames:moved'); }
+      }, true);
       document.addEventListener('visibilitychange', function () {
         updatePolling();
         if (!document.hidden) { scheduleScan(); }
@@ -481,6 +507,8 @@ enum MediaScript {
       });
       window.addEventListener('pagehide', function () {
         pageHidden = true;
+        // A frame that goes (removed, or showing another page) says its sound is over; the page may carry on without it.
+        if (!isTop && lastAudio === true) { lastAudio = false; post(audioMessage(false)); }
         changes.disconnect();
         updatePolling();
         if (pendingScan !== null) { clearTimeout(pendingScan); pendingScan = null; }
@@ -495,7 +523,7 @@ enum MediaScript {
       document.addEventListener('play', function (event) {
         if (muteAll && event.target && event.target.muted === false) { silence(event.target); }
       }, true);
-      if (window === window.top) { post('hello'); }
+      if (isTop) { post('hello'); }
       else { try { window.parent.postMessage('wsurf-mute?', '*'); } catch (e) {} }
       scan();
       observeChanges();

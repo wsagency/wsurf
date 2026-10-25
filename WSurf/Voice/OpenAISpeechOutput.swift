@@ -104,10 +104,26 @@ final class OpenAISpeechOutput: SpeechOutput {
 final class ProviderSpeechOutput: SpeechOutput {
     private var output: any SpeechOutput
     private var generation = 0
+    /// The person's own setting for the assistant's voice (`AppCoordinator.isSpeechMuted`).
     var isMuted = false {
-        didSet { output.isMuted = isMuted }
+        didSet { syncMute() }
+    }
+    /// WSurf is muted (Mute WSurf): the voice is silent whatever the setting above says, and what it was saying stops. Nothing it
+    /// is asked to say meanwhile is kept for later, and unmuting WSurf leaves the person's own setting as they made it.
+    var isSilenced = false {
+        didSet {
+            guard isSilenced != oldValue else { return }
+            syncMute()
+            if isSilenced {
+                output.stopSpeaking()
+            }
+        }
     }
     var onSpeakingChange: ((Bool) -> Void)?
+
+    private func syncMute() {
+        output.isMuted = isMuted || isSilenced
+    }
 
     init(output: any SpeechOutput = AppleSpeechOutput()) {
         self.output = output
@@ -119,7 +135,7 @@ final class ProviderSpeechOutput: SpeechOutput {
         output.onSpeakingChange = nil
         output.stopSpeaking()
         output = next
-        output.isMuted = isMuted
+        syncMute()
         let generation = generation
         output.onSpeakingChange = { [weak self] speaking in
             guard let self, self.generation == generation else { return }

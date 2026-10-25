@@ -98,6 +98,8 @@ final class BrowserPage: NSView {
     /// WebKit has no such event, and the tab tells the move from its address and history entry.
     var onNavigatedWithinDocument: (() -> Void)?
     var onLinkHovered: ((URL?) -> Void)?
+    /// Chromium only: these frames (the engine's ids) are gone, or show another document, so what they said is over.
+    var onFramesRetired: ((Set<String>) -> Void)?
     var onZoomChanged: (() -> Void)?
     /// Opens `url` in a new Chromium tab of the page's own profile ("Continue in Chromium" on a WebKit passkey sheet).
     var onOpenInChromium: ((URL) -> Void)?

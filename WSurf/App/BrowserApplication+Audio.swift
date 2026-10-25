@@ -25,6 +25,18 @@ enum AudioIndicator {
         audibleCount > 0 || isMuted
     }
 
+    /// Where the speaker is. There is one at a time: in the sidebar while the sidebar is on screen (docked, or peeking over the
+    /// page), and in the Standard window's toolbar while it is not. Nowhere while nothing plays and WSurf is not muted.
+    enum Place: Equatable {
+        case sidebar
+        case toolbar
+    }
+
+    static func place(audibleCount: Int, isMuted: Bool, isSidebarShowing: Bool) -> Place? {
+        guard isVisible(audibleCount: audibleCount, isMuted: isMuted) else { return nil }
+        return isSidebarShowing ? .sidebar : .toolbar
+    }
+
     static func symbol(isMuted: Bool) -> String {
         isMuted ? "speaker.slash" : "speaker.wave.2"
     }
@@ -89,6 +101,7 @@ extension BrowserApplication {
         guard !isMuted else { return }
         isMuted = true
         mutedBefore = [:]
+        silenceSpeech(true)
         for (window, tab) in everyTab {
             if tab.isPlayingAudio, !tab.isMuted {
                 mutedBefore[tab.id] = false
@@ -109,6 +122,7 @@ extension BrowserApplication {
     func unmuteAll() {
         guard isMuted else { return }
         isMuted = false
+        silenceSpeech(false)
         for (window, tab) in everyTab {
             window.setMuted(tab.isMuted && mutedBefore[tab.id] == true, tab: tab)
         }
@@ -123,8 +137,22 @@ extension BrowserApplication {
         window.setMuted(true, tab: tab)
     }
 
-    /// A page starts every document unmuted, so its tab asks again: for its own mute, and for WSurf's.
+    /// The assistant's voice of every window, and Read Aloud of every tab: silent while WSurf is muted, and back when it is not.
+    /// The person's own mute of the assistant's voice (`AppCoordinator.isSpeechMuted`) is not touched, so it still says what they
+    /// chose once WSurf is unmuted.
+    func silenceSpeech(_ silenced: Bool) {
+        for window in windows where !window.isClosed {
+            window.silenceSpeech(silenced)
+        }
+        for (_, tab) in everyTab {
+            tab.reader.isSilenced = silenced
+        }
+    }
+
+    /// A page starts every document unmuted, so its tab asks again: for its own mute, and for WSurf's. Its Read Aloud is told
+    /// whether WSurf is muted too: a tab made while WSurf is muted has not been told.
     func carryMute(into tab: BrowserTab) {
+        tab.reader.isSilenced = isMuted
         guard tab.isMuted || (isMuted && mutedBefore[tab.id] == nil), tab.isMaterialised else { return }
         MediaCenter.setMuted(true, on: tab.page)
     }
