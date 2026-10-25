@@ -180,6 +180,18 @@ struct AppDatabase: Sendable {
                 t.add(column: "tintsIcons", .boolean)
             }
         }
+        // A color the person chose (`#RRGGBB`) and the SF Symbol they chose for the folder. NULL is the preset color and
+        // the plain folder icon, which is what every row saved before them is.
+        if try !db.columns(in: "sessionFolder").contains(where: { $0.name == "customColor" }) {
+            try db.alter(table: "sessionFolder") { t in
+                t.add(column: "customColor", .text)
+            }
+        }
+        if try !db.columns(in: "sessionFolder").contains(where: { $0.name == "symbol" }) {
+            try db.alter(table: "sessionFolder") { t in
+                t.add(column: "symbol", .text)
+            }
+        }
     }
 
     private nonisolated static func defineSchema(in db: Database) throws {
@@ -364,6 +376,16 @@ struct AppDatabase: Sendable {
         if try !db.columns(in: "profilePin").contains(where: { $0.name == "tintsIcons" }) {
             try db.alter(table: "profilePin") { t in
                 t.add(column: "tintsIcons", .boolean)
+            }
+        }
+        if try !db.columns(in: "profilePin").contains(where: { $0.name == "customColor" }) {
+            try db.alter(table: "profilePin") { t in
+                t.add(column: "customColor", .text)
+            }
+        }
+        if try !db.columns(in: "profilePin").contains(where: { $0.name == "symbol" }) {
+            try db.alter(table: "profilePin") { t in
+                t.add(column: "symbol", .text)
             }
         }
     }

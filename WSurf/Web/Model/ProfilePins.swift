@@ -37,6 +37,10 @@ nonisolated struct ProfilePin: Codable, Equatable, FetchableRecord, PersistableR
     var sizeFactor: Double?
     /// Whether a folder draws the icons inside it in its own color; nil is off.
     var tintsIcons: Bool?
+    /// A folder's own color as `#RRGGBB`; nil is its preset.
+    var customColor: String?
+    /// A folder's own SF Symbol; nil is the plain folder icon.
+    var symbol: String?
 
     /// Parents before children, siblings by key. This is the order to insert rows in, because a child
     /// references its parent.

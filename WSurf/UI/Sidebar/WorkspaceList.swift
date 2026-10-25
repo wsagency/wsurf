@@ -690,9 +690,9 @@ struct SidebarDragChip: View {
             if let folder = browser.folder(id: id) {
                 HStack(spacing: SidebarMetrics.rowIconSpacing) {
                     SidebarSymbol(
-                        "folder.fill", size: 10.5 * SidebarMetrics.rowIconSize / 16, box: SidebarMetrics.rowIconSize
+                        folder.glyph(isOpen: false), size: 10.5 * SidebarMetrics.rowIconSize / 16, box: SidebarMetrics.rowIconSize
                     )
-                    .foregroundStyle(folder.color.tint(opacity: BrowserSettings.application.chromeShape.folderColorOpacity))
+                    .foregroundStyle(folder.tint(opacity: BrowserSettings.application.chromeShape.folderColorOpacity))
                     if sidebarStyle == .full {
                         Text(verbatim: folder.name)
                             .font(BrowserSettings.application.sidebarFont)

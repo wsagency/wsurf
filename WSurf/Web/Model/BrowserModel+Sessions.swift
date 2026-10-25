@@ -121,6 +121,10 @@ extension BrowserModel {
         var sizeFactor: Double?
         /// nil is off; see `TabFolder.tintsIcons`.
         var tintsIcons: Bool?
+        /// `#RRGGBB`, or nil for the preset; see `TabFolder.customColor`.
+        var customColor: String?
+        /// nil is the plain folder icon; see `TabFolder.symbol`.
+        var symbol: String?
     }
 
     private nonisolated struct ItemRecord: Codable, FetchableRecord, PersistableRecord, Sendable {
@@ -315,7 +319,9 @@ extension BrowserModel {
                 pinID: nil,
                 spaceID: folder.spaceID,
                 sizeFactor: folder.size.storedFactor,
-                tintsIcons: folder.tintsIcons ? true : nil
+                tintsIcons: folder.tintsIcons ? true : nil,
+                customColor: folder.customColor?.hex,
+                symbol: folder.symbol
             )
         }
         let known = Set(persisted.map(\.id))
@@ -597,6 +603,8 @@ extension BrowserModel {
         folder.isPinned = record.isPinned
         folder.size = .stored(record.sizeFactor)
         folder.tintsIcons = record.tintsIcons ?? false
+        folder.customColor = record.customColor.flatMap(CustomFolderColor.init(hex:))
+        folder.symbol = record.symbol
         folder.spaceID = record.spaceID
         return folder
     }
