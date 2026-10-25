@@ -37,7 +37,8 @@ public nonisolated struct PasskeyPart: Codable, Equatable, Sendable {
 /// uploaded only sealed (`VaultSyncCodec.sealParts`). Dates, events, the Apple observed bases, the import trace, a passkey's
 /// `lastSignedAt` and files are not parts: they never raise an upload or a conflict, and they travel with the part they belong to. The
 /// entries merged into an account (`mergedFrom`: who they were and what they stood for, without their observed bases) are part of
-/// `metadata`, so a merge always reaches the other Macs, and with it what keeps an import from bringing a merged entry back.
+/// `metadata`, so a merge always reaches the other Macs, and with it what keeps an import from bringing a merged entry back. So are the
+/// entries the person said it is not the same as (`notSameAs`), so a Not the Same reaches them too.
 public nonisolated struct SyncParts: Codable, Equatable, Sendable {
     public var removed: Bool
     public var password: Data
@@ -100,14 +101,15 @@ public nonisolated struct SyncParts: Codable, Equatable, Sendable {
         )
     }
 
-    /// `CredentialContent.hash(.metadata)`, and, for an account that entries were merged into, SHA-256 of that hash and of each merged
-    /// entry's id, exchange ids and trace (an account without any keeps the plain hash, so its base does not change).
+    /// `CredentialContent.hash(.metadata)`, and, for an account that entries were merged into or that is not the same as others,
+    /// SHA-256 of that hash, of each merged entry's id, exchange ids and trace, and then of each id it is not the same as (an account
+    /// without either keeps the plain hash, and one without `notSameAs` the earlier one, so no existing base changes).
     private static func metadata(of account: CredentialAccount) throws -> Data {
         let content = try CredentialContent.hash(.metadata(account))
-        guard let links = account.mergedFrom else { return content }
+        guard account.mergedFrom != nil || account.notSameAs != nil else { return content }
         var writer = StoreWriter()
         writer.bytes(content)
-        writer.array(links) { writer, link in
+        writer.array(account.mergedFrom ?? []) { writer, link in
             writer.uuid(link.accountID)
             writer.bytes(link.exchangeAccountID)
             writer.bytes(link.exchangeItemID)
@@ -116,6 +118,9 @@ public nonisolated struct SyncParts: Codable, Equatable, Sendable {
                 writer.optional(trace.password) { $0.bytes($1) }
                 writer.optional(trace.note) { $0.bytes($1) }
             }
+        }
+        if let apart = account.notSameAs {
+            writer.array(apart) { $0.uuid($1) }
         }
         return Data(SHA256.hash(data: writer.data))
     }
@@ -405,7 +410,7 @@ public nonisolated enum CredentialSyncMerge {
     /// `local` with what `taking` names copied from `incoming`. Always the local one's: `id`, `attachments`, `createdAt`,
     /// `modifiedAt`, `migratedAt` and every passkey kept (so `lastSignedAt` stays local). Each part brings the fields that belong to it:
     /// the login its events and observed base, the code likewise, the items their observed base, the login and the notes the import
-    /// trace, and the name and websites the exchange metadata, the exchanger's ids and the merged items.
+    /// trace, and the name and websites the exchange metadata, the exchanger's ids, the merged items and the entries it is not the same as.
     public static func merge(local: CredentialAccount, incoming: CredentialAccount, taking: SyncTaking) -> CredentialAccount {
         var result = local
         for part in taking.parts {
@@ -435,6 +440,7 @@ public nonisolated enum CredentialSyncMerge {
                 result.exchangeAccountID = incoming.exchangeAccountID
                 result.exchangeItemID = incoming.exchangeItemID
                 result.mergedFrom = incoming.mergedFrom
+                result.notSameAs = incoming.notSameAs
             }
         }
         if !taking.dropPasskeys.isEmpty {
