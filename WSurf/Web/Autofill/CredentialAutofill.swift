@@ -21,17 +21,20 @@ nonisolated enum CredentialSaveOutcome: Equatable, Sendable {
 nonisolated enum CredentialDropdown: Equatable, Sendable {
     /// The default list: the accounts associated with the page's exact origin.
     case accounts
-    /// Nothing for the exact origin, but accounts for other websites of its registrable domain: one row that lists them.
+    /// Nothing for the exact origin, but accounts (for a code field: verification codes) for other websites of its registrable
+    /// domain: one row that lists them.
     case siblings(site: String)
     /// Nothing to offer: the dropdown stays closed.
     case empty
 
-    /// Sibling websites are a fallback for a password field only, and never extend a list that already has an exact match.
+    /// Sibling websites are a fallback, for a password field and for a verification-code field alike (the owner's rule: no match here
+    /// but other websites of the same domain, offer "Check other logins for *.example.com"). They never extend a list that already has
+    /// an exact match, and they are only listed once that row is chosen. `field` decides which siblings were counted (`siblings`).
     static func plan(exact: Int, siblings: Int, origin: String, field: CredentialAutofillField) -> CredentialDropdown {
         if exact > 0 {
             return .accounts
         }
-        guard field == .password, siblings > 0, let site = CredentialAccountSelection.site(of: origin) else { return .empty }
+        guard siblings > 0, let site = CredentialAccountSelection.site(of: origin) else { return .empty }
         return .siblings(site: site)
     }
 }
@@ -93,16 +96,17 @@ nonisolated enum CredentialAccountSelection {
     }
 
     /// Accounts saved for another HTTPS website of `origin`'s registrable domain and not for `origin` itself, each with the first
-    /// such website. Public suffix rules decide the domain, so `a.github.io` and `b.github.io` are never siblings. Typing filters as
-    /// in `candidates`. Only identity is used here: a chosen account's secret is read again at delivery.
+    /// such website: for a password field the ones with a login, for a code field the ones with a verification code. Public suffix
+    /// rules decide the domain, so `a.github.io` and `b.github.io` (or a look-alike such as `paypa1.com` of `paypal.com`) are never
+    /// siblings. Typing filters as in `candidates`. Only identity is used here: a chosen account's secret is read again at delivery.
     static func siblings(
-        in accounts: [CredentialAccount], origin: String, entered: String?
+        in accounts: [CredentialAccount], origin: String, entered: String?, field: CredentialAutofillField = .password
     ) -> [(account: CredentialAccount, website: String)] {
         guard let site = site(of: origin) else { return [] }
         let typed = entered.flatMap { $0.isEmpty ? nil : $0 }
         var sites = ImportDuplicates.Sites()
         var result: [(account: CredentialAccount, website: String)] = []
-        for account in accounts where account.password != nil || !account.username.isEmpty {
+        for account in accounts where field == .totp ? account.totp != nil : account.password != nil || !account.username.isEmpty {
             if let typed, account.username.range(of: typed, options: [.anchored, .caseInsensitive]) == nil {
                 continue
             }
@@ -236,9 +240,10 @@ nonisolated enum CredentialAccountSelection {
         return sanitized
     }
 
-    /// A fresh code for `account` at `date`, only when the account explicitly lists `origin`. The seed stays here.
-    static func totpCode(for account: CredentialAccount, origin: String, at date: Date) -> String? {
-        guard account.origins.contains(origin), let generator = account.totp else { return nil }
+    /// A fresh code for `account` at `date`, only when the account explicitly lists `origin`, or (`sibling`, a row the person chose
+    /// from "Check other logins") still holds a sibling website of it. The seed stays here.
+    static func totpCode(for account: CredentialAccount, origin: String, at date: Date, sibling: Bool = false) -> String? {
+        guard account.origins.contains(origin) || sibling && isSibling(account, of: origin), let generator = account.totp else { return nil }
         return try? TOTP.code(generator, at: date.timeIntervalSince1970).value
     }
 

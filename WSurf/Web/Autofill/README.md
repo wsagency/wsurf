@@ -40,15 +40,16 @@ elsewhere, another window, a lookup that found nothing): the next focus or click
 on the same field, which the page script reports with the same field token,
 starts a new lookup instead of being taken for the old one.
 
-A password list holds only accounts saved for the page's exact origin. When it
-would be empty but an unlocked vault holds accounts for another HTTPS website of
-the same registrable domain (public-suffix aware, so `a.github.io` and
-`b.github.io` are not related), the panel shows one row, "Check other logins
-for *.example.com". Choosing it lists those accounts, each with the website it
-is saved for. Only titles and websites are shown; the chosen account's secret
-is read again at delivery and filled exactly like a normal choice.
+A password or verification-code list holds only accounts saved for the page's
+exact origin. When it would be empty but an unlocked vault holds accounts (for
+a code field: codes) for another HTTPS website of the same registrable domain
+(public-suffix aware, so `a.github.io` and `b.github.io` are not related, and a
+look-alike domain never is), the panel shows one row, "Check other logins for
+*.example.com". Choosing it lists those accounts, each with the website it is
+saved for. Only titles and websites are shown; the chosen account's secret or
+fresh code is read again at delivery and filled exactly like a normal choice.
 
-After such a fill, and when a submitted login repeats one saved for a sibling
+After such a fill (a code too), and when a submitted login repeats one saved for a sibling
 website exactly (username and password) while nothing for the page has that
 username, the address-bar popover offers "Add login.example.com to “ada”?"
 instead of saving a copy. When several sibling credentials repeat the login, only

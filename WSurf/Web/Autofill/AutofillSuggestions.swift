@@ -275,8 +275,8 @@ final class AutofillSuggestions {
     /// vault is never read. With every vault locked, the answer is one row that unlocks through the ordinary unlock
     /// (`unlock(_:in:)`). Stale or mis-originated requests get no dropdown. The picked-account lookup can invalidate the
     /// carry-over, so it runs only while this is still the page's current request and presentation. With nothing for the
-    /// exact origin, a password field gets one row that lists the accounts of sibling websites (`CredentialDropdown`); the
-    /// default list itself never widens. A lookup starts from nothing, so running it again for the same request (after an
+    /// exact origin, a password or code field gets one row that lists the logins or codes of sibling websites
+    /// (`CredentialDropdown`); the default list itself never widens. A lookup starts from nothing, so running it again for the same request (after an
     /// unlock) drops whatever the previous one granted.
     private func managerSuggestions(for request: Request, origin: String, presentation: UUID) async -> [AutofillSuggestion]? {
         let context = request.context
@@ -335,18 +335,18 @@ final class AutofillSuggestions {
         }
         guard result.isEmpty else { return result }
         let anotherIsLocked = reads.count < listing.count
-        guard request.field == .password else { return anotherIsLocked ? Self.unlockRow(for: request, origin: origin) : [] }
         var siblings: [AutofillSuggestion] = []
         for read in reads {
             for (account, website) in CredentialAccountSelection.siblings(
-                in: read.snapshot.accounts, origin: origin, entered: request.enteredUsername
+                in: read.snapshot.accounts, origin: origin, entered: request.enteredUsername, field: request.field
             ) {
                 let rowID = UUID()
                 request.rows[rowID] = (read.manager.vaultID, account.id)
                 request.siblingRows.insert(rowID)
-                // A sibling row says which website the account is saved for, and with several vaults open, which vault.
-                let host = String(website.dropFirst("https://".count))
-                let detail = reads.count > 1 ? "\(host) · \(read.label)" : host
+                // A sibling row says which website the account is saved for, that it is a code, and with several vaults open, which vault.
+                let code = request.field == .totp ? String(localized: "Verification code") : nil
+                let detail = [String(website.dropFirst("https://".count)), code, reads.count > 1 ? read.label : nil]
+                    .compactMap { $0 }.joined(separator: " · ")
                 siblings.append(AutofillSuggestion(
                     id: rowID, title: CredentialAccountSelection.title(account, origin: website), detail: detail, origin: origin
                 ))
@@ -854,8 +854,8 @@ final class AutofillSuggestions {
                         epoch: picked.flatMap { request.grants[$0.vaultID]?.epoch }
                     )
                 }
-                // A login of a sibling website was just used here: offer to add this website to it, instead of a copy later.
-                if request.kind == .password, request.field == .password, request.siblingRows.contains(id),
+                // A login or code of a sibling website was just used here: offer to add this website to it, so it matches next time.
+                if Self.offersWebsiteAfterFill(kind: request.kind, fromSiblingRow: request.siblingRows.contains(id)),
                    let picked = request.rows[id], let epoch = request.grants[picked.vaultID]?.epoch,
                    let origin = SavedPassword.origin(for: request.frameURL),
                    let session = AutofillSaveCoordinator.shared.session(for: page) {
@@ -902,7 +902,7 @@ final class AutofillSuggestions {
             throw ContactAutofillError.changedPage
         }
         let (manager, account, generation) = try await managerAccount(id, request: request, origin: origin)
-        let field = request.field
+        let field = request.field, fromSibling = request.siblingRows.contains(id)
         let epoch = request.grants[row.vaultID]?.epoch
         let prepare: @MainActor @Sendable () throws -> [String: Any] = { [weak self, weak page] in
             guard let self, let page else { throw ContactAutofillError.changedPage }
@@ -914,7 +914,7 @@ final class AutofillSuggestions {
             var delivered: [String: Any]
             switch field {
             case .totp:
-                guard let code = CredentialAccountSelection.totpCode(for: account, origin: origin, at: .now) else {
+                guard let code = CredentialAccountSelection.totpCode(for: account, origin: origin, at: .now, sibling: fromSibling) else {
                     throw ContactAutofillError.noField
                 }
                 delivered = ["code": code]
@@ -971,6 +971,12 @@ extension AutofillSuggestions {
     nonisolated static func vaultItemRows(kind: AutofillSaveKind, underAssistantControl: Bool, allVaultsLocked: Bool) -> VaultItemRows {
         guard kind != .password, !underAssistantControl else { return .none }
         return allVaultsLocked ? .unlock : .items
+    }
+
+    /// After a fill from "Check other logins", a login or a verification code alike, the page's website is offered to that credential
+    /// ("Add Website"), so the next time it is an exact match. Nothing else offers it here.
+    nonisolated static func offersWebsiteAfterFill(kind: AutofillSaveKind, fromSiblingRow: Bool) -> Bool {
+        kind == .password && fromSiblingRow
     }
 }
 
