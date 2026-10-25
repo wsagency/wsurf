@@ -196,7 +196,6 @@
         "ThemeLayoutTests",
         "ThemeMigrationTests",
         "ThemePreviewTests",
-        "UpdateSurfaceTests",
         "VaultAccountModelTests",
         "VaultAccountSizeTests",
         "VaultAccountWriteTests",
