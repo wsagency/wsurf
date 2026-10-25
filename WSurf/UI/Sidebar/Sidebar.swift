@@ -254,6 +254,7 @@ private struct SidebarBottomChrome: View {
                     if showsSpaceSwitcher {
                         SidebarSpaceSwitcher(coordinator: coordinator, axis: .vertical)
                     }
+                    AudioIndicatorButton(coordinator: coordinator)
                     SidebarProfileControl(coordinator: coordinator)
                     downloadsButton
                     SidebarSettingsRow(coordinator: coordinator)
@@ -262,6 +263,8 @@ private struct SidebarBottomChrome: View {
                 HStack(spacing: 6) {
                     SidebarProfileControl(coordinator: coordinator)
                         .padding(.leading, SidebarMetrics.profileLeading)
+
+                    AudioIndicatorButton(coordinator: coordinator)
 
                     if showsSpaceSwitcher {
                         SidebarSpaceSwitcher(coordinator: coordinator)

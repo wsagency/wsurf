@@ -548,4 +548,80 @@ struct MediaScriptTests {
         let unmuted = await state(webView, collector, after: post("wsurf-mute:0"), resending: false)
         #expect(unmuted["m"] == 0)
     }
+
+    // MARK: - Muting the page as a whole
+
+    private func muted(_ webView: WKWebView, _ selector: String) async -> Bool? {
+        (try? await webView.evaluateJavaScript("document.querySelector('\(selector)').muted")) as? Bool
+    }
+
+    private func bound(_ webView: WKWebView, _ selector: String) async -> Bool {
+        await waitUntil {
+            (try? await webView.evaluateJavaScript("document.querySelector('\(selector)').__wsurfBound === true")) as? Bool == true
+        }
+    }
+
+    /// The app mutes a page before the page has a player: the message is kept, and the player it makes later is born muted.
+    @Test func aPageWithNothingToPlayYetStillTakesTheMute() async throws {
+        let (webView, _) = await player(hasVideo: false)
+        _ = try await webView.evaluateJavaScript("\(post("wsurf-mute:1")); true")
+        try await Task.sleep(for: .milliseconds(150))
+
+        _ = try await webView.evaluateJavaScript("document.body.append(document.createElement('audio')); true")
+
+        #expect(await bound(webView, "audio"))
+        #expect(await muted(webView, "audio") == true)
+
+        _ = try await webView.evaluateJavaScript("\(post("wsurf-mute:0")); true")
+        #expect(await waitUntil { await muted(webView, "audio") == false })
+    }
+
+    /// Unmuting gives back what the app muted and nothing else: a loop the page muted itself stays muted.
+    @Test func unmutingGivesBackOnlyWhatTheAppMuted() async throws {
+        let (webView, _) = await player(hasVideo: false)
+        _ = try await webView.evaluateJavaScript("""
+        const own = document.createElement('audio'); own.id = 'own';
+        const quiet = document.createElement('audio'); quiet.id = 'quiet'; quiet.muted = true;
+        document.body.append(own, quiet); true
+        """)
+        #expect(await bound(webView, "#own"))
+        #expect(await bound(webView, "#quiet"))
+
+        _ = try await webView.evaluateJavaScript("\(post("wsurf-mute:1")); true")
+        #expect(await waitUntil { await muted(webView, "#own") == true })
+        #expect(await muted(webView, "#quiet") == true)
+
+        _ = try await webView.evaluateJavaScript("\(post("wsurf-mute:0")); true")
+        #expect(await waitUntil { await muted(webView, "#own") == false }, "what the app muted is heard again")
+        #expect(await muted(webView, "#quiet") == true, "what the page muted is not the app's to unmute")
+    }
+
+    /// A player the page starts while muted is silenced by its own play event, not at the next scan, so no first sound gets out.
+    @Test func aPlayerStartedWhileMutedIsSilencedByItsPlayEvent() async throws {
+        let (webView, _) = await player(hasVideo: false)
+        _ = try await webView.evaluateJavaScript("\(post("wsurf-mute:1")); true")
+        try await Task.sleep(for: .milliseconds(150))
+
+        let silenced = try await webView.evaluateJavaScript("""
+        const song = document.createElement('audio'); document.body.append(song);
+        song.dispatchEvent(new Event('play'));
+        song.muted
+        """)
+
+        #expect(silenced as? Bool == true)
+    }
+
+    /// Muted by the app still counts as playing (the tab stays in the list to be unmuted); a player the page muted does not,
+    /// whatever the app has done.
+    @Test func aPlayerThePageMutedIsNotCountedWhileTheAppHasTheTabMuted() async {
+        let (webView, collector) = await player()
+
+        collector.messages.removeAll()
+        await state(webView, collector, after: "window.__box.paused = false; window.__box.muted = true")
+        #expect(await audio(collector) == "audio:0")
+
+        collector.messages.removeAll()
+        await state(webView, collector, after: post("wsurf-mute:1"))
+        #expect(await audio(collector) == "audio:0", "the page's own muted loop is no sound for the list")
+    }
 }

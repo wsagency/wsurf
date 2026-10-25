@@ -27,10 +27,26 @@ enum MediaScript {
         if (video && !video.isConnected) { video = null; }
         return video || media()[0] || null;
       }
+      // What the app silences it marks, so a tab it muted still counts as playing, and unmuting gives back only what it took:
+      // a video the page muted itself (a quiet background loop) stays muted.
+      function silence(m) {
+        if (!m.muted) { m.__wsurfMuted = true; m.muted = true; }
+      }
+      function restore(m) {
+        if (m.__wsurfMuted) { m.__wsurfMuted = false; m.muted = false; }
+      }
+      // The state lives in each frame, and a new document starts without it, so a frame passes it down to its frames and
+      // a new frame asks its parent (`wsurf-mute?`).
+      function setMuteAll(on) {
+        muteAll = on;
+        media().forEach(on ? silence : restore);
+        Array.prototype.forEach.call(document.querySelectorAll('iframe'), function (f) {
+          try { f.contentWindow.postMessage('wsurf-mute:' + (on ? 1 : 0), '*'); } catch (e) {}
+        });
+      }
       function audible(m) {
         if (m.paused || m.ended) { return false; }
-        if (muteAll) { return true; }
-        if (m.muted || m.volume <= 0) { return false; }
+        if (m.muted ? m.__wsurfMuted !== true : m.volume <= 0) { return false; }
         var tracks = m.audioTracks;
         if (tracks && m.readyState >= 2 && tracks.length === 0) { return false; }
         return true;
@@ -200,6 +216,12 @@ enum MediaScript {
           updatePolling();
           return;
         }
+        // Before the player is looked for: a page with nothing to play yet still has to start muted when it has some.
+        if (data.indexOf('wsurf-mute:') === 0) {
+          setMuteAll(arg === 1);
+          if (primary()) { sendState(); }
+          return;
+        }
         const video = primary();
         if (!video) { return; }
         const duration = realDuration(video);
@@ -214,9 +236,6 @@ enum MediaScript {
         } else if (data.indexOf('wsurf-volume:') === 0) {
           video.muted = arg <= 0;
           video.volume = clamp(arg, 0, 1);
-        } else if (data.indexOf('wsurf-mute:') === 0) {
-          muteAll = arg === 1;
-          media().forEach(function (m) { m.muted = muteAll; });
         }
         sendState();
       }
@@ -321,9 +340,13 @@ enum MediaScript {
         post('diag:need-gesture');
       }
       window.addEventListener('message', function (event) {
-        if (event.source !== window && event.source !== window.parent) { return; }
         const data = event.data;
         if (typeof data !== 'string' || data.indexOf('wsurf-') !== 0) { return; }
+        if (data === 'wsurf-mute?') {
+          if (muteAll && event.source) { try { event.source.postMessage('wsurf-mute:1', '*'); } catch (e) {} }
+          return;
+        }
+        if (event.source !== window && event.source !== window.parent) { return; }
         if (data === 'wsurf-pip' || data === 'wsurf-pip-auto') {
           gestureAttempts = 0;
           if (video && video.videoWidth) { revealStage(); }
@@ -343,7 +366,7 @@ enum MediaScript {
         if (asPrimary) { video = found; }
         if (!found.__wsurfBound) {
           found.__wsurfBound = true;
-          if (muteAll) { found.muted = true; }
+          if (muteAll) { silence(found); }
           ['play', 'pause', 'timeupdate', 'volumechange', 'durationchange', 'seeked', 'ended', 'loadedmetadata', 'emptied', 'resize']
             .forEach(function (name) { found.addEventListener(name, mediaChanged); });
           ['play', 'pause', 'ended', 'emptied', 'volumechange']
@@ -468,7 +491,12 @@ enum MediaScript {
         observeChanges();
         scheduleScan();
       });
+      // A player the page starts while the app has it muted is silenced before the first sound, not at the next scan.
+      document.addEventListener('play', function (event) {
+        if (muteAll && event.target && event.target.muted === false) { silence(event.target); }
+      }, true);
       if (window === window.top) { post('hello'); }
+      else { try { window.parent.postMessage('wsurf-mute?', '*'); } catch (e) {} }
       scan();
       observeChanges();
     })();

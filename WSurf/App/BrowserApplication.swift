@@ -15,6 +15,10 @@ final class BrowserApplication {
     private(set) var windows: [AppCoordinator] = []
     private(set) var activeWindowID: UUID?
     private(set) var isTerminating = false
+    /// Mute WSurf is on: every tab of every window is silenced. What each tab's own mute was, to give back, is `mutedBefore`.
+    /// Only `BrowserApplication+Audio` changes them.
+    var isMuted = false
+    @ObservationIgnored var mutedBefore: [UUID: Bool] = [:]
     private var privateSessionCleanups: [UUID: Task<Void, Never>] = [:]
     let updates = UpdateController()
     private var isReady = false

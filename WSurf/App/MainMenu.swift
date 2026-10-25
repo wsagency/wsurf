@@ -223,6 +223,8 @@ final class MainMenu: NSObject, NSMenuItemValidation {
         ))
         menu.addItem(command("Show Lyrics", #selector(toggleLyrics), key: "y", modifiers: [.command, .option]))
         menu.addItem(submenu(playerCornerMenu(), titled: "Move Player to Corner"))
+        // ⌃⌘M: ⌘M minimizes, ⇧⌘M is the window style and ⌥⌘M is the system's Minimize All; ⌃⌘M was free.
+        menu.addItem(command("Mute WSurf", #selector(toggleWSurfMute), key: "m", modifiers: [.command, .control]))
         menu.addItem(.separator())
         let developer = NSMenu()
         developer.addItem(command("Show Web Inspector", #selector(showWebInspector), key: "i", modifiers: [.command, .option]))
@@ -463,6 +465,11 @@ final class MainMenu: NSObject, NSMenuItemValidation {
         coordinator.toggleLyrics()
     }
 
+    /// Silences every tab of every window, or gives each tab its own mute back.
+    @objc private func toggleWSurfMute() {
+        coordinator.toggleWSurfMute()
+    }
+
     @objc private func splitRight() {
         coordinator.splitActiveTab(axis: .sideBySide)
     }
@@ -687,6 +694,8 @@ final class MainMenu: NSObject, NSMenuItemValidation {
                 ? .on
                 : .off
             return coordinator.canMovePlayer
+        case #selector(toggleWSurfMute):
+            return validateMuteItem(menuItem)
         case #selector(toggleLyrics):
             let lyricsTitle: LocalizedStringResource = coordinator.sidePanel.isShowing(.lyrics)
                 ? "Hide Lyrics"
@@ -697,6 +706,12 @@ final class MainMenu: NSObject, NSMenuItemValidation {
         default:
             return true
         }
+    }
+
+    /// Mute WSurf names what it will do. It works in every window, a micro window and a private one included.
+    private func validateMuteItem(_ menuItem: NSMenuItem) -> Bool {
+        menuItem.title = AudioIndicator.help(isMuted: coordinator.isWSurfMuted)
+        return true
     }
 
     /// What a micro window changes: Float on Top, shown only there, Move to Micro Window and back, and the items it has no use

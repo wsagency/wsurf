@@ -171,6 +171,8 @@ final class AppCoordinator {
     private(set) var isPaletteOpen = false
     private(set) var isNewTabPaletteOpen = false
     var isProfileSwitcherOpen = false
+    /// The list of tabs playing sound is open over the speaker (`AudioIndicatorButton`).
+    var isAudioListOpen = false
     /// The Minimal window's tab list. It never touches the Standard sidebar's `isVisible` or `isPeeking`.
     var isMinimalTabListOpen = false {
         didSet { if isMinimalTabListOpen != oldValue { applyHoverShield() } }

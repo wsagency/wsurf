@@ -65,6 +65,8 @@ final class MediaCenter {
     var onTabAudioChanged: ((BrowserPage, Bool) -> Void)?
     var onTabVideoChanged: ((BrowserPage, Bool) -> Void)?
     var onTabUnmuted: ((BrowserPage) -> Void)?
+    /// A page began a new document. It starts unmuted whatever its tab asked for, so the window mutes it again.
+    var onPageStarted: ((BrowserPage) -> Void)?
     var onPictureOutChanged: ((BrowserPage, Bool) -> Void)?
     var onControlledTabChanged: ((UUID?, UUID?) -> Void)?
     var onPictureChanged: (() -> Void)?
@@ -97,6 +99,7 @@ final class MediaCenter {
         }
         if isMainFrame, message == "hello" {
             forgetPicture(page)
+            onPageStarted?(page)
         }
         if message == "tabunmuted" {
             onTabUnmuted?(page)
