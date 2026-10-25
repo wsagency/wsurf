@@ -59,9 +59,9 @@ final class AutofillSaveSession: NSObject {
     @ObservationIgnored var username: UsernameStep?
     @ObservationIgnored var manualPick: ManualPick?
     @ObservationIgnored let submissions = AutofillSubmissionTracker()
-    /// Whether the assistant or a connected app controls the tab right now (`BrowserTab.isUnderAssistantControl`). The fill panel
-    /// then offers no card or address, so none is ever filled into a page an agent reads, and no card or address is offered for saving.
-    @ObservationIgnored var isUnderAssistantControl: @MainActor () -> Bool = { false }
+    /// Whether the assistant or a connected app controls the tab right now (`BrowserTab.isAgentControlled`, which the tab sets). The
+    /// dropdown then offers nothing and no fill is delivered, so nothing is filled into a page an agent reads, and nothing is staged or offered for saving.
+    @ObservationIgnored var isAgentControlled: @MainActor () -> Bool = { false }
 
     var current: Offer? {
         offers.first
@@ -265,7 +265,7 @@ final class AutofillSaveSession: NSObject {
     /// With every vault locked, the offer is a new entry and the vault is chosen and unlocked on Save, as for a password; nothing is read
     /// from a locked vault before that.
     private func itemPlan(for candidate: AutofillSaveCandidate, origin: String, revision: Int) async -> ManagedSave? {
-        guard let context, !context.profile.isPrivate, let page, page.context === context, !isUnderAssistantControl() else { return nil }
+        guard let context, !context.profile.isPrivate, let page, page.context === context, !isAgentControlled() else { return nil }
         let kind = candidate.kind, profileID = context.profile.id
         let blocked = await Task.detached { (try? AutofillSaveIndex.isBlocked(kind: kind, origin: origin, profileID: profileID)) ?? false }.value
         guard !blocked else {
@@ -297,7 +297,7 @@ final class AutofillSaveSession: NSObject {
         _ candidate: AutofillSaveCandidate, origin: String, documentID: String = "", liveOrigin: String? = nil, loginURL: URL? = nil,
         target: CredentialManager? = nil
     ) async {
-        guard let context, AutofillSaveCoordinator.shared.isEnabled(candidate.kind, context: context) else { return }
+        guard let context, AutofillSaveCoordinator.shared.isEnabled(candidate.kind, context: context), !isAgentControlled() else { return }
         let liveOrigin = liveOrigin ?? origin
         let bytes = (try? JSONEncoder().encode([origin, candidate.kind.rawValue] + candidate.values)) ?? Data()
         let fingerprint = Data(HMAC<SHA256>.authenticationCode(for: bytes, using: fingerprintKey)).base64EncodedString()
@@ -336,7 +336,7 @@ final class AutofillSaveSession: NSObject {
         }
         // The liveness check suspends: whatever it waited through (a clear, a policy change, another offer) is checked again.
         guard revision == self.revision, self.context === context, AutofillSaveCoordinator.shared.isEnabled(candidate.kind, context: context),
-              !offers.contains(where: { $0.fingerprint == fingerprint && !$0.isGone }) else { return }
+              !isAgentControlled(), !offers.contains(where: { $0.fingerprint == fingerprint && !$0.isGone }) else { return }
         guard dismissed[candidate.kind]?.contains(fingerprint) != true else {
             AutofillDiagnostics.note(.offerDroppedDismissed, kind: candidate.kind)
             return
@@ -436,7 +436,7 @@ final class AutofillSaveSession: NSObject {
     func offerWebsite(
         accountID: UUID, epoch: UInt64, origin: String, documentID: String, liveOrigin: String? = nil, manual: Bool = false
     ) async {
-        guard let context, AutofillSaveCoordinator.shared.isEnabled(.password, context: context),
+        guard let context, AutofillSaveCoordinator.shared.isEnabled(.password, context: context), !isAgentControlled(),
               let page, page.context === context, let origin = managerOrigin(origin), let manager = manager(epoch: epoch),
               WebsiteLookalike.displayHost(of: origin) != nil else { return }
         let revision = revision
@@ -460,7 +460,7 @@ final class AutofillSaveSession: NSObject {
         }
         // The reads suspend: whatever they waited through (a clear, a policy change, a lock, another offer) is checked again.
         guard revision == self.revision, self.context === context, page.context === context, self.manager(epoch: epoch) === manager,
-              AutofillSaveCoordinator.shared.isEnabled(.password, context: context), websiteOffer?.fingerprint != fingerprint,
+              AutofillSaveCoordinator.shared.isEnabled(.password, context: context), !isAgentControlled(), websiteOffer?.fingerprint != fingerprint,
               dismissed[.password]?.contains(fingerprint) != true else { return }
         offers.removeAll { $0.candidate.kind == .password }
         websiteOffer = WebsiteOffer(
@@ -664,7 +664,7 @@ final class AutofillSaveSession: NSObject {
                     return
                 }
             case .card, .contact:
-                guard !isUnderAssistantControl() else { throw CredentialVaultError.unauthorized }
+                guard !isAgentControlled() else { throw CredentialVaultError.unauthorized }
                 let manager = try await target(for: offer, username: "")
                 try await saveItem(candidate, offer: offer, manager: manager, keepingCode: replacement == nil)
             }
@@ -905,12 +905,11 @@ final class AutofillSaveCoordinator {
             applyPolicy(in: page, frame: message.frameInfo)
             return
         }
-        guard page.window != nil, !page.isHiddenOrHasHiddenAncestor, page.hasOnlySecureContent,
+        guard page.window != nil, !page.isHiddenOrHasHiddenAncestor, page.hasOnlySecureContent, !session.isAgentControlled(),
               let documentID = body["documentID"] as? String, isRegistered(documentID, in: key, action: action),
               let topURL = page.url, SavedPassword.origin(for: topURL) != nil,
-              let rawURL = body["url"] as? String, let url = URL(string: rawURL), let origin = SavedPassword.origin(for: url),
-              message.frameInfo.hasTrustedSecurityOrigin, message.frameInfo.securityOrigin.protocol == "https", message.frameInfo.securityOrigin.host == url.host?.lowercased(),
-              (message.frameInfo.securityOrigin.port == 0 ? 443 : message.frameInfo.securityOrigin.port) == (url.port ?? 443) else { return }
+              let rawURL = body["url"] as? String, let url = URL(string: rawURL),
+              let origin = message.frameInfo.autofillOrigin(reportedURL: url) else { return }
         if action == "diagnostic", let value = body["event"] as? String,
            let event = AutofillDiagnostics.Event(rawValue: value),
            [.editNoScope, .editDisabled, .editRecorded, .submitNoEdits, .submitInvalid, .submitCaptured, .captureAbandonedByLink, .captureUnsafeAction].contains(event) {

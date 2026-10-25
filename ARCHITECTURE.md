@@ -140,6 +140,19 @@ Native detach, replacement, non-aborted load failure, termination and close inva
 CEF frame IDs are not DevTools frame IDs. Ordinary JavaScript and permission
 operations retain their asynchronous live-document checks.
 
+A Chromium page's DevTools session reaches only the page's own renderer, so a
+cross-site (out-of-process) iframe got none of WSurf's page scripts. The session
+auto-attaches to each one (`Target.setAutoAttach`, flat protocol, the frame
+paused until its scripts are registered) and gives it a child `ChromiumDevTools`
+that sends with the frame's `sessionId` through the page's connection and keeps
+that process's frames, isolated-world contexts and bindings. A message from the
+frame names Chromium's frame and origin for it; such a frame is never a main
+frame, and is trusted only when its own address is of its origin. Only the
+worlds, scripts and handlers listed in
+`ChromiumDevTools.crossSiteFrameScripts` run there (autofill today; never the
+page world), one level deeper too. Calls aimed at such a frame go to its
+session; when Chromium detaches it, its pending calls fail and its documents end.
+
 ## Page translation
 
 Each `BrowserTab` owns a `PageTranslation`. After a finished load in a regular

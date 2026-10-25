@@ -88,6 +88,18 @@ final class PasswordAutofill {
     static func isSecure(_ url: URL) -> Bool { url.scheme?.lowercased() == "https" && url.host != nil && url.user == nil && url.password == nil }
 }
 
+extension BrowserFrame {
+    /// The frame's origin for autofill (suggestions, Pick Credential…, save offers), when the address its script reports is of that
+    /// origin. The origin is the engine's word for the frame, a Chromium cross-site frame's included, never the page's: a frame
+    /// cannot claim another origin, and one whose origin is not trusted (opaque, sandboxed, an inheriting about:blank or srcdoc in
+    /// a cross-site frame) or not HTTPS gets nothing.
+    func autofillOrigin(reportedURL url: URL) -> String? {
+        guard hasTrustedSecurityOrigin, securityOrigin.protocol == "https", securityOrigin.host == url.host?.lowercased(),
+              (securityOrigin.port == 0 ? 443 : securityOrigin.port) == (url.port ?? 443) else { return nil }
+        return SavedPassword.origin(for: url)
+    }
+}
+
 /// Sends one frame its autofill policy. A frame can refuse the first call while its document is still starting, and its script would
 /// then keep autofill off until the next policy change, so a refused call is tried once more after `delay`.
 enum AutofillPolicyDelivery {

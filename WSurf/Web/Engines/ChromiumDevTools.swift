@@ -15,12 +15,22 @@ final class ChromiumDevTools {
     private var pending: [Int: PendingCommand] = [:]
     private var timeouts: [Int: Task<Void, Never>] = [:]
     var closed = false
+    /// A cross-site frame's own session (`ChromiumDevTools+CrossSiteFrames`): its flat-protocol session ID, its target (the
+    /// frame's ID), the page's session it sends through and the session that attached it. All nil for the page's own session.
+    let sessionID: String?
+    let targetID: String?
+    private(set) weak var root: ChromiumDevTools?
+    private(set) weak var parent: ChromiumDevTools?
+    /// The page's session only: every cross-site frame session under it, at any depth, by session ID.
+    var sessions: [String: ChromiumDevTools] = [:]
+    /// The page's session only: the session each pending command went to, when not its own.
+    private var pendingSessions: [Int: String] = [:]
     /// MCP development diagnostics. Nil unless a lease is capturing.
     private(set) var diagnosticsSink: ((String, [String: Any]) -> Void)?
     private var diagnosticsOwner: ObjectIdentifier?
     /// Sees every command as it is sent, for tests.
     var commandObserver: ((String, [String: Any]) -> Void)?
-    private var prepared = false
+    private(set) var prepared = false
     private var preparing = false
     private var prepareWaiters: [CheckedContinuation<Void, Error>] = []
 
@@ -30,7 +40,7 @@ final class ChromiumDevTools {
         let documentID: String
         let url: URL
         let securityOrigin: BrowserSecurityOrigin
-        let hasTrustedSecurityOrigin: Bool
+        var hasTrustedSecurityOrigin: Bool
         let isMainFrame: Bool
         /// Chromium's serialization of a trusted origin, the string `location.origin` reports in that document.
         var serializedOrigin: String?
@@ -64,7 +74,7 @@ final class ChromiumDevTools {
         let result: CommandResult
     }
 
-    private struct Script {
+    struct Script {
         let source: String
         let worldName: String
         let injectionTime: WKUserScriptInjectionTime
@@ -84,9 +94,12 @@ final class ChromiumDevTools {
     /// The address of the main frame as the last main-frame navigation event left it, same-document moves included.
     var mainFrameAddress: URL?
     var frameRevision = 0
+    /// Documents whose own `origin` was read in WSurf's isolated world: false when it is not the security origin Chromium reports
+    /// (`verifyOrigin`), which then is never trusted.
+    var documentOrigins: [String: Bool] = [:]
     var contextsByUniqueID: [String: ContextState] = [:]
     var uniqueIDByExecutionID: [Int: String] = [:]
-    private var scripts: [Script] = []
+    var scripts: [Script] = []
     var handlers: [HandlerKey: Handler] = [:]
     var bindingWorlds: Set<String> = []
     /// Serializes script registration so Chromium's registration order always matches `scripts`.
@@ -102,15 +115,30 @@ final class ChromiumDevTools {
 
     init(page: ChromiumPage) {
         self.page = page
+        sessionID = nil
+        targetID = nil
+    }
+
+    /// A cross-site frame's session, attached by `parent` and sending through `root`.
+    init(root: ChromiumDevTools, parent: ChromiumDevTools, sessionID: String, targetID: String) {
+        page = root.page
+        self.root = root
+        self.parent = parent
+        self.sessionID = sessionID
+        self.targetID = targetID
     }
 
     func attach(to host: UnsafeMutablePointer<cef_browser_host_t>) throws {
         guard !closed else { throw ChromiumError.closed }
         guard self.host == nil else { return }
         let observer = ChromiumInterop.allocate(cef_dev_tools_message_observer_t.self, owner: self)
-        observer.pointee.on_dev_tools_message = { _, browser, _, _ in
-            ChromiumDevTools.releaseBrowser(browser)
-            return 0
+        observer.pointee.on_dev_tools_message = { observerSelf, browser, message, size in
+            defer { ChromiumDevTools.releaseBrowser(browser) }
+            guard let observerSelf, let message,
+                  let owner = ChromiumInterop.owner(ChromiumDevTools.self,
+                                                    of: UnsafeMutableRawPointer(observerSelf)) else { return 0 }
+            // A cross-site frame session's message is taken here whole: CEF's parsed callbacks would drop its `sessionId`.
+            return MainActor.assumeIsolated { owner.receiveSessionMessage(message, size: size) } ? 1 : 0
         }
         observer.pointee.on_dev_tools_method_result = { observerSelf, browser, messageID, success, result, resultSize in
             defer { ChromiumDevTools.releaseBrowser(browser) }
@@ -175,8 +203,13 @@ final class ChromiumDevTools {
         do {
             // No Runtime.enable: pages can detect it. Contexts come from Page.createIsolatedWorld instead.
             _ = try await command("Page.enable")
-            _ = try await command("Security.enable")
-            _ = try await command("Network.enable")
+            // A cross-site frame's security state and responses are not the page's: its session reads neither.
+            if sessionID == nil {
+                _ = try await command("Security.enable")
+                _ = try await command("Network.enable")
+            }
+            // Before the loop: nothing may suspend between its last check and `prepared`, or a script added meanwhile is lost.
+            try await attachCrossSiteFrames()
 
             while true {
                 if let index = scripts.firstIndex(where: { $0.identifier == nil }) {
@@ -210,6 +243,27 @@ final class ChromiumDevTools {
         dispatchCheck: (@MainActor @Sendable () throws -> Void)? = nil,
         prepareParameters: (@MainActor @Sendable () throws -> [String: Any])? = nil
     ) async throws -> [String: Any] {
+        guard !closed else { throw sessionID == nil ? ChromiumError.closed : ChromiumError.staleFrame }
+        if let sessionID {
+            // A cross-site frame's session sends through the page's connection, and nothing once it has ended.
+            guard let root else { throw ChromiumError.staleFrame }
+            return try await root.command(method, params: baseParams, session: sessionID, dispatchCheck: { [weak self] in
+                guard let self, !self.closed else { throw ChromiumError.staleFrame }
+                try dispatchCheck?()
+            }, prepareParameters: prepareParameters)
+        }
+        return try await command(method, params: baseParams, session: nil, dispatchCheck: dispatchCheck, prepareParameters: prepareParameters)
+    }
+
+    /// The page's session sends `method` to `session` (nil: itself). Only the cross-site frame sessions and the resume of a paused
+    /// frame use it directly.
+    func command(
+        _ method: String,
+        params baseParams: [String: Any],
+        session: String?,
+        dispatchCheck: (@MainActor @Sendable () throws -> Void)?,
+        prepareParameters: (@MainActor @Sendable () throws -> [String: Any])?
+    ) async throws -> [String: Any] {
         guard !closed else { throw ChromiumError.closed }
         guard let host else { throw ChromiumError.unavailable("Chromium DevTools is not attached.") }
         if prepareParameters == nil, !JSONSerialization.isValidJSONObject(baseParams) {
@@ -235,7 +289,10 @@ final class ChromiumDevTools {
                     guard JSONSerialization.isValidJSONObject(params) else {
                         throw ChromiumError.protocolFailure("DevTools parameters are not JSON serializable.")
                     }
-                    let object: [String: Any] = ["id": id, "method": method, "params": params]
+                    var object: [String: Any] = ["id": id, "method": method, "params": params]
+                    if let session {
+                        object["sessionId"] = session
+                    }
                     let data: Data
                     do {
                         data = try JSONSerialization.data(withJSONObject: object)
@@ -246,6 +303,7 @@ final class ChromiumDevTools {
                     guard !closed, self.host == host else { throw ChromiumError.closed }
                     commandObserver?(method, params)
                     pending[id] = PendingCommand(continuation: continuation, result: result)
+                    pendingSessions[id] = session
                     timeouts[id] = Task { [weak self] in
                         do { try await Task.sleep(for: self?.commandTimeout ?? .seconds(15)) } catch { return }
                         guard let self else { return }
@@ -276,6 +334,7 @@ final class ChromiumDevTools {
         closed = true
         finishPrepareWaiters(ChromiumError.closed)
         failAll(ChromiumError.closed)
+        endCrossSiteFrameSessions()
         // A browser closed natively (not through BrowserPage.close) must still end its credential contexts.
         if let owner = page?.owner, !owner.isClosed {
             owner.invalidateCredentialContexts()
@@ -310,7 +369,7 @@ final class ChromiumDevTools {
         framesByID.values.map(\.browserFrame)
     }
 
-    private func refreshFrames() async throws {
+    func refreshFrames() async throws {
         let revision = frameRevision
         let response = try await command("Page.getFrameTree")
         guard !closed else { throw ChromiumError.closed }
@@ -343,6 +402,8 @@ final class ChromiumDevTools {
     }
 
     func isLive(frame: BrowserFrame) async throws -> Bool {
+        let session = session(for: frame)
+        guard session === self else { return try await session.isLive(frame: frame) }
         guard !closed, frame.chromiumID != nil, !frame.documentID.isEmpty else { return false }
         try await refreshFrames()
         return frameIsCurrent(frame)
@@ -359,111 +420,11 @@ final class ChromiumDevTools {
             && current.securityOrigin == frame.securityOrigin
     }
 
-    /// Ordered requesting frame → top frame, from the live native tree. Fails closed on a stale requester,
-    /// missing ancestor, cycle, or a root that is not the single main frame.
-    func frameChain(for frame: BrowserFrame) async throws -> [BrowserFrame] {
-        guard let id = frame.chromiumID, !frame.documentID.isEmpty else { throw WebAuthnContextError.staleFrame }
-        try await refreshFrames()
-        guard let requesting = framesByID[id], requesting.documentID == frame.documentID,
-              requesting.securityOrigin == frame.securityOrigin,
-              requesting.parentID == frame.chromiumParentID else { throw WebAuthnContextError.staleFrame }
-        var chain = [requesting]
-        var visited: Set<String> = [id]
-        while let parentID = chain[chain.count - 1].parentID {
-            guard visited.insert(parentID).inserted, let parent = framesByID[parentID],
-                  !parent.documentID.isEmpty else { throw WebAuthnContextError.untrustedOrigin }
-            chain.append(parent)
-        }
-        guard chain[chain.count - 1].isMainFrame, framesByID.values.filter({ $0.parentID == nil }).count == 1 else {
-            throw WebAuthnContextError.untrustedOrigin
-        }
-        return chain.map(\.browserFrame)
-    }
-
-    func permissionsPolicyAllows(frame: BrowserFrame, feature: String) async throws -> Bool {
-        guard let frameID = frame.chromiumID else { throw WebAuthnContextError.staleFrame }
-        guard try await isLiveCredentialFrame(frame) else { throw WebAuthnContextError.staleFrame }
-        let response = try await command("Page.getPermissionsPolicyState", params: ["frameId": frameID])
-        guard let states = response["states"] as? [[String: Any]] else { throw WebAuthnContextError.policyUnavailable }
-        let matches = states.filter { $0["feature"] as? String == feature }
-        guard matches.count == 1, let allowed = matches[0]["allowed"] as? Bool else {
-            throw WebAuthnContextError.policyUnavailable
-        }
-        guard try await isLiveCredentialFrame(frame) else { throw WebAuthnContextError.staleFrame }
-        return allowed
-    }
-
-    /// Reports the document's current activation state; never grants or consumes one.
-    func transientUserActivationIsActive(in frame: BrowserFrame, world: WKContentWorld) async throws -> Bool {
-        let (target, snapshot) = try await credentialContext(for: frame, world: world)
-        let response = try await command("Runtime.evaluate", params: address(snapshot).merging([
-            "expression": documentGuard(snapshot) + "navigator.userActivation?.isActive === true",
-            "returnByValue": true,
-            "awaitPromise": false,
-            "userGesture": false,
-        ]) { $1 }, dispatchCheck: { [self] in
-            guard credentialFrameIsCurrent(target), contextIsLive(snapshot) else { throw WebAuthnContextError.staleFrame }
-        })
-        let value = try runtimeValue(response)
-        guard try await isLiveCredentialFrame(target), contextIsLive(snapshot) else {
-            throw WebAuthnContextError.staleFrame
-        }
-        return value as? Bool == true
-    }
-
-    func executionContextIdentity(for frame: BrowserFrame, world: WKContentWorld) async throws -> String {
-        try await credentialContext(for: frame, world: world).context.uniqueID
-    }
-
-    func isCurrentCredentialContext(frame: BrowserFrame, executionContextID: String) -> Bool {
-        guard credentialFrameIsCurrent(frame),
-              let context = contextsByUniqueID[executionContextID],
-              context.frameID == frame.chromiumID,
-              context.documentID == frame.documentID,
-              uniqueIDByExecutionID[context.executionID] == executionContextID else { return false }
-        return contextIsLive(context)
-    }
-
-    private func credentialFrameIsCurrent(_ frame: BrowserFrame) -> Bool {
-        guard !closed, frame.hasTrustedSecurityOrigin, let id = frame.chromiumID, !frame.documentID.isEmpty,
-              let current = framesByID[id] else { return false }
-        return current.hasTrustedSecurityOrigin
-            && current.documentID == frame.documentID
-            && current.securityOrigin == frame.securityOrigin
-    }
-
-    private func isLiveCredentialFrame(_ frame: BrowserFrame) async throws -> Bool {
-        guard !closed, frame.chromiumID != nil else { return false }
-        try await refreshFrames()
-        return credentialFrameIsCurrent(frame)
-    }
-
-    /// The live frame and its (marked) execution context for `world`, revalidated after every async step.
-    private func credentialContext(
-        for frame: BrowserFrame, world: WKContentWorld
-    ) async throws -> (frame: BrowserFrame, context: ContextState) {
-        guard try await isLiveCredentialFrame(frame), let id = frame.chromiumID, let state = framesByID[id] else {
-            throw WebAuthnContextError.staleFrame
-        }
-        let target = state.browserFrame
-        let snapshot: ContextState
-        do {
-            snapshot = try await context(for: target, world: world)
-            if snapshot.worldName != "" {
-                try await setDocumentMarker(contextID: snapshot.uniqueID, documentID: snapshot.documentID)
-            }
-        } catch ChromiumError.staleFrame {
-            throw WebAuthnContextError.staleFrame
-        }
-        guard try await isLiveCredentialFrame(target), contextIsLive(snapshot) else {
-            throw WebAuthnContextError.staleFrame
-        }
-        return (target, snapshot)
-    }
-
     /// `userGesture` only replays a person's own action; the page's activation is otherwise neither created nor consumed.
     func evaluate(_ script: String, in frame: BrowserFrame?, world: WKContentWorld, userGesture: Bool = false) async throws -> Any {
-        try await evaluate(in: frame, world: world, userGesture: userGesture, dispatchCheck: nil) { script }
+        let session = session(for: frame)
+        guard session === self else { return try await session.evaluate(script, in: frame, world: world, userGesture: userGesture) }
+        return try await evaluate(in: frame, world: world, userGesture: userGesture, dispatchCheck: nil) { script }
     }
 
     private func evaluate(
@@ -525,7 +486,11 @@ final class ChromiumDevTools {
         prepareArguments: @escaping @MainActor @Sendable () throws -> [String: Any],
         dispatchCheck: (@MainActor @Sendable () throws -> Void)? = nil
     ) async throws -> Any {
-        try await evaluate(in: frame, world: world, userGesture: false, dispatchCheck: dispatchCheck) { [self] in
+        let session = session(for: frame)
+        guard session === self else {
+            return try await session.callAsync(body, in: frame, world: world, prepareArguments: prepareArguments, dispatchCheck: dispatchCheck)
+        }
+        return try await evaluate(in: frame, world: world, userGesture: false, dispatchCheck: dispatchCheck) { [self] in
             try asyncExpression(body, arguments: prepareArguments())
         }
     }
@@ -556,6 +521,11 @@ final class ChromiumDevTools {
         let index = scripts.count
         scripts.append(Script(source: source, worldName: worldName(world), injectionTime: injectionTime,
                               mainFrameOnly: forMainFrameOnly))
+        if sessionID == nil, Self.runsInCrossSiteFrames(scripts[index]) {
+            for session in sessions.values {
+                session.installScript(source, in: world, injectionTime: injectionTime, forMainFrameOnly: forMainFrameOnly)
+            }
+        }
         guard prepared else { return }
         schedule { [weak self] in try await self?.installPending(from: index) }
     }
@@ -653,7 +623,7 @@ final class ChromiumDevTools {
     }
 
     private func receiveResult(id: Int, success: Bool, pointer: UnsafeRawPointer?, size: Int) {
-        guard !closed else { return }
+        guard !closed, isPending(id, in: nil) else { return }
 
         guard size <= 8 * 1_048_576 else {
             finishFailure(id: id, error: ChromiumError.protocolFailure("DevTools result is too large."))
@@ -837,22 +807,37 @@ final class ChromiumDevTools {
         }
     }
 
-    private func finishSuccess(id: Int, value: [String: Any]) {
+    /// Whether a result from `session` (nil: the page's own) may settle command `id`: only the session it was sent to answers it.
+    func isPending(_ id: Int, in session: String?) -> Bool {
+        pending[id] != nil && pendingSessions[id] == session
+    }
+
+    func finishSuccess(id: Int, value: [String: Any]) {
         guard let pendingCommand = pending.removeValue(forKey: id) else { return }
+        pendingSessions.removeValue(forKey: id)
         timeouts.removeValue(forKey: id)?.cancel()
         pendingCommand.result.value = value
         pendingCommand.continuation.resume()
     }
 
-    private func finishFailure(id: Int, error: Error) {
+    func finishFailure(id: Int, error: Error) {
         guard let pendingCommand = pending.removeValue(forKey: id) else { return }
+        pendingSessions.removeValue(forKey: id)
         timeouts.removeValue(forKey: id)?.cancel()
         pendingCommand.continuation.resume(throwing: error)
+    }
+
+    /// Fails every command pending in `session`, whose target is gone: Chromium would answer none of them.
+    func failPending(in session: String) {
+        for (id, owner) in pendingSessions where owner == session {
+            finishFailure(id: id, error: ChromiumError.staleFrame)
+        }
     }
 
     private func failAll(_ error: Error) {
         let values = pending
         pending.removeAll()
+        pendingSessions.removeAll()
         for (id, pendingCommand) in values {
             timeouts.removeValue(forKey: id)?.cancel()
             pendingCommand.continuation.resume(throwing: error)

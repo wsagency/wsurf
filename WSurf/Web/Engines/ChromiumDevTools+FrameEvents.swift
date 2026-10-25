@@ -14,10 +14,28 @@ extension ChromiumDevTools {
             guard let value = try? Self.jsonObject(pointer, size: size) as? [String: Any] else { return }
             params = value
         }
+        receiveEvent(name: name, params: params)
+    }
+
+    /// A cross-site frame's session hears only what concerns its own frames: never the page's security state, responses,
+    /// address or diagnostics.
+    private static let crossSiteFrameEvents: Set<String> = [
+        "Runtime.bindingCalled", "Page.frameNavigated", "Page.frameDetached",
+        "Target.attachedToTarget", "Target.detachedFromTarget", "Target.targetCrashed",
+    ]
+
+    func receiveEvent(name: String, params: [String: Any]) {
+        guard !closed, sessionID == nil || Self.crossSiteFrameEvents.contains(name) else { return }
         if let diagnosticsSink, Self.diagnosticEvents.contains(name) {
             diagnosticsSink(name, params)
         }
         switch name {
+        case "Target.attachedToTarget":
+            attachedToTarget(params)
+        case "Target.detachedFromTarget":
+            detachedFromTarget(params)
+        case "Target.targetCrashed":
+            targetCrashed(params)
         // Runtime events arrive only while a diagnostics capture enables the domain.
         case "Runtime.executionContextCreated":
             contextCreated(params)
@@ -113,7 +131,10 @@ extension ChromiumDevTools {
               let handlerName = pair[0] as? String, !handlerName.isEmpty, handlerName.utf8.count <= 256 else { return }
         // Only the page bridge forwards page-world messages, and only to page-world handlers.
         let world = context.worldName == Self.pageBridgeWorld ? "" : context.worldName
-        guard let handler = handlers[HandlerKey(name: handlerName, worldName: world)],
+        let key = HandlerKey(name: handlerName, worldName: world)
+        // A cross-site frame reaches only the handlers listed for such frames (`crossSiteFrameScripts`), never the page world's.
+        guard sessionID == nil || Self.hearsCrossSiteFrames(key),
+              let handler = (root ?? self).handlers[key],
               let owner = page?.owner else { return }
         let body = pair[1]
         handler(BrowserScriptMessage(page: owner, body: body, frameInfo: current.browserFrame, name: handlerName))
@@ -138,7 +159,8 @@ extension ChromiumDevTools {
     }
 
     private func frameNavigated(_ params: [String: Any]) {
-        guard let frame = params["frame"] as? [String: Any], let parsed = parseFrame(frame, parentID: frame["parentId"] as? String) else { return }
+        guard let frame = params["frame"] as? [String: Any], let parsed = parseFrame(frame, parentID: frame["parentId"] as? String),
+              isInOwnSubtree(parsed) else { return }
         let restoredFromCache = params["type"] as? String == "BackForwardCacheRestore"
         if parsed.isMainFrame {
             mainFrameAddress = parsed.url
@@ -188,7 +210,7 @@ extension ChromiumDevTools {
     }
 
     /// Binds the new document's isolated worlds, so the messages their document-start scripts queued reach native.
-    private func bindDocument(frameID: String, documentID: String) {
+    func bindDocument(frameID: String, documentID: String) {
         let worlds = bindingWorlds.filter { !$0.isEmpty }.sorted()
         guard !worlds.isEmpty else { return }
         Task { [weak self] in
@@ -204,8 +226,11 @@ extension ChromiumDevTools {
     func forgetDocuments() {
         frameRevision &+= 1
         framesByID.removeAll()
+        documentOrigins.removeAll()
         contextsByUniqueID.removeAll()
         uniqueIDByExecutionID.removeAll()
+        // The page's renderer or DevTools connection is gone, and with it every cross-site frame session.
+        endCrossSiteFrameSessions()
     }
 
     private func frameDetached(_ params: [String: Any]) {
@@ -321,6 +346,8 @@ extension ChromiumDevTools {
             }
         }
         guard bindingWorlds.contains(worldName), !context.bound else { return context }
+        // Before any message of the document can arrive.
+        try await verifyOrigin(context)
         // A context ID reused by another renderer after a commit not yet reported would get the binding without the shim:
         // messages from it are refused, but its global would show. The check narrows that to the commit itself.
         let candidate = context
@@ -338,6 +365,23 @@ extension ChromiumDevTools {
         context.bound = true
         contextsByUniqueID[context.uniqueID]?.bound = true
         return context
+    }
+
+    /// Chromium reports a sandboxed (opaque-origin) document's precursor as its security origin, and `location.origin` is its
+    /// address's. The document's own `origin`, read in WSurf's isolated world (the page cannot reach it), is "null" for an
+    /// opaque one: such a document, or any whose origin is not the one reported, is never trusted. Once per document.
+    private func verifyOrigin(_ context: ContextState) async throws {
+        guard !context.worldName.isEmpty, documentOrigins[context.documentID] == nil,
+              let expected = framesByID[context.frameID]?.serializedOrigin else { return }
+        let value = try runtimeValue(try await command("Runtime.evaluate", params: address(context).merging([
+            "expression": documentGuard(context, marker: false) + "globalThis.origin", "returnByValue": true,
+        ]) { $1 }))
+        guard contextIsLive(context) else { throw ChromiumError.staleFrame }
+        let own = value as? String == expected
+        documentOrigins[context.documentID] = own
+        if !own {
+            framesByID[context.frameID]?.hasTrustedSecurityOrigin = false
+        }
     }
 
     /// `Runtime.evaluate` parameters that address `context`. ID 0 is the main frame's default context, which Chromium
@@ -407,6 +451,8 @@ extension ChromiumDevTools {
 
     func updateFrames(_ parsed: [String: FrameState]) {
         frameRevision &+= 1
+        let live = Set(parsed.values.map(\.documentID))
+        documentOrigins = documentOrigins.filter { live.contains($0.key) }
         var retired: [String] = []
         var pageWide = false
         for (id, old) in framesByID where !old.documentID.isEmpty && parsed[id]?.documentID != old.documentID {
@@ -441,7 +487,10 @@ extension ChromiumDevTools {
     }
 
     func parseFrameTree(_ tree: [String: Any], parentID: String?, into result: inout [String: FrameState]) {
-        guard let frame = tree["frame"] as? [String: Any], let parsed = parseFrame(frame, parentID: parentID) else { return }
+        guard let frame = tree["frame"] as? [String: Any] else { return }
+        // A cross-site frame session's tree is rooted at its target, the frame whose parent is in another process.
+        let parentID = parentID ?? (sessionID == nil || frame["id"] as? String != targetID ? nil : frame["parentId"] as? String)
+        guard let parsed = parseFrame(frame, parentID: parentID) else { return }
         result[parsed.id] = parsed
         if let children = tree["childFrames"] as? [[String: Any]] {
             for child in children {
@@ -458,13 +507,28 @@ extension ChromiumDevTools {
         let originURL = URL(string: protocolOrigin ?? url.originString)
         let origin = originURL.map(BrowserSecurityOrigin.init(url:)) ?? BrowserSecurityOrigin(url: url)
         // Credentials only trust the origin Chromium itself reported, and only for a real web origin.
-        let trustedOrigin = protocolOrigin != nil
+        var trustedOrigin = protocolOrigin != nil
             && ["http", "https"].contains(origin.protocol)
             && !origin.host.isEmpty
             && originURL?.host?.caseInsensitiveCompare(origin.host) == .orderedSame
-        return FrameState(id: id, parentID: parentID, documentID: frame["loaderId"] as? String ?? "",
+        let serializedOrigin = trustedOrigin ? protocolOrigin : nil
+        if sessionID != nil {
+            // A cross-site frame session never has the page's main frame, and its frames are trusted only when their own
+            // address is of that origin: an inheriting about:blank or srcdoc, a data: or blob: document is not.
+            guard parentID != nil else { return nil }
+            trustedOrigin = trustedOrigin && Self.isOwnOrigin(url, origin)
+        }
+        let documentID = frame["loaderId"] as? String ?? ""
+        // A document found opaque (`verifyOrigin`) stays untrusted whenever its frame is reported again.
+        trustedOrigin = trustedOrigin && documentOrigins[documentID] != false
+        return FrameState(id: id, parentID: parentID, documentID: documentID,
                           url: url, securityOrigin: origin, hasTrustedSecurityOrigin: trustedOrigin,
-                          isMainFrame: parentID == nil, serializedOrigin: trustedOrigin ? protocolOrigin : nil)
+                          isMainFrame: parentID == nil, serializedOrigin: serializedOrigin)
+    }
+
+    nonisolated static func isOwnOrigin(_ url: URL, _ origin: BrowserSecurityOrigin) -> Bool {
+        url.scheme?.lowercased() == origin.protocol && url.host()?.lowercased() == origin.host
+            && PageFrameRegistry.portMatches(url: url, securityPort: origin.port)
     }
 
 }
