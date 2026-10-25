@@ -117,6 +117,7 @@ extension AppCoordinator {
             tab.isPlayingAudio = isPlaying
             if isPlaying {
                 playedPages[tab.id] = tab.urlString
+                audioScope.silenceIfMuted(tab, in: self)
             }
             if isPlaying, !tab.isMuted, tab.id != browser.activeTabID, media.controlledTabID == nil {
                 controlPlayback(in: tab)
@@ -130,10 +131,16 @@ extension AppCoordinator {
         media.onTabUnmuted = { [weak self] page in
             guard let self, let tab = browser.tabs.first(where: { $0.isMaterialised && $0.page === page }),
                   tab.isMuted else { return }
-            tab.isMuted = false
-            if media.controlledTabID == tab.id {
-                media.model.isMuted = false
-            }
+            // The page's own control unmuted one player: the tab is unmuted, and what the app silenced beside it is let go.
+            setMuted(false, tab: tab)
+        }
+        media.onPageStarted = { [weak self] page in
+            guard let self,
+                  let tab = browser.tabs.first(where: { $0.isMaterialised && $0.page === page }) ?? peek.tab.flatMap({
+                      $0.liveView === page ? $0 : nil
+                  })
+            else { return }
+            audioScope.carryMute(into: tab)
         }
         media.onPictureOutChanged = { [weak self] page, isOut in
             guard let self, let tab = browser.tabs.first(where: { $0.isMaterialised && $0.page === page }),
@@ -330,10 +337,17 @@ extension AppCoordinator {
     }
 
     func toggleMute(tab: BrowserTab) {
-        tab.isMuted.toggle()
-        MediaCenter.setMuted(tab.isMuted, on: tab.page)
+        setMuted(!tab.isMuted, tab: tab)
+    }
+
+    /// A tab's own mute, kept on the tab and put in its page. A page that is not loaded takes it when it starts (`onPageStarted`).
+    func setMuted(_ muted: Bool, tab: BrowserTab) {
+        tab.isMuted = muted
+        if tab.isMaterialised {
+            MediaCenter.setMuted(muted, on: tab.page)
+        }
         guard media.controlledTabID == tab.id else { return }
-        media.model.isMuted = tab.isMuted
+        media.model.isMuted = muted
     }
 
     func tabDidClose(_ tab: BrowserTab) {
