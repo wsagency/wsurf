@@ -40,7 +40,7 @@ final class ChromiumDevTools {
         let documentID: String
         let url: URL
         let securityOrigin: BrowserSecurityOrigin
-        let hasTrustedSecurityOrigin: Bool
+        var hasTrustedSecurityOrigin: Bool
         let isMainFrame: Bool
         /// Chromium's serialization of a trusted origin, the string `location.origin` reports in that document.
         var serializedOrigin: String?
@@ -94,6 +94,9 @@ final class ChromiumDevTools {
     /// The address of the main frame as the last main-frame navigation event left it, same-document moves included.
     var mainFrameAddress: URL?
     var frameRevision = 0
+    /// Documents whose own `origin` was read in WSurf's isolated world: false when it is not the security origin Chromium reports
+    /// (`verifyOrigin`), which then is never trusted.
+    var documentOrigins: [String: Bool] = [:]
     var contextsByUniqueID: [String: ContextState] = [:]
     var uniqueIDByExecutionID: [Int: String] = [:]
     var scripts: [Script] = []

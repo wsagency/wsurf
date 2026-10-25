@@ -226,6 +226,7 @@ extension ChromiumDevTools {
     func forgetDocuments() {
         frameRevision &+= 1
         framesByID.removeAll()
+        documentOrigins.removeAll()
         contextsByUniqueID.removeAll()
         uniqueIDByExecutionID.removeAll()
         // The page's renderer or DevTools connection is gone, and with it every cross-site frame session.
@@ -345,6 +346,8 @@ extension ChromiumDevTools {
             }
         }
         guard bindingWorlds.contains(worldName), !context.bound else { return context }
+        // Before any message of the document can arrive.
+        try await verifyOrigin(context)
         // A context ID reused by another renderer after a commit not yet reported would get the binding without the shim:
         // messages from it are refused, but its global would show. The check narrows that to the commit itself.
         let candidate = context
@@ -362,6 +365,23 @@ extension ChromiumDevTools {
         context.bound = true
         contextsByUniqueID[context.uniqueID]?.bound = true
         return context
+    }
+
+    /// Chromium reports a sandboxed (opaque-origin) document's precursor as its security origin, and `location.origin` is its
+    /// address's. The document's own `origin`, read in WSurf's isolated world (the page cannot reach it), is "null" for an
+    /// opaque one: such a document, or any whose origin is not the one reported, is never trusted. Once per document.
+    private func verifyOrigin(_ context: ContextState) async throws {
+        guard !context.worldName.isEmpty, documentOrigins[context.documentID] == nil,
+              let expected = framesByID[context.frameID]?.serializedOrigin else { return }
+        let value = try runtimeValue(try await command("Runtime.evaluate", params: address(context).merging([
+            "expression": documentGuard(context, marker: false) + "globalThis.origin", "returnByValue": true,
+        ]) { $1 }))
+        guard contextIsLive(context) else { throw ChromiumError.staleFrame }
+        let own = value as? String == expected
+        documentOrigins[context.documentID] = own
+        if !own {
+            framesByID[context.frameID]?.hasTrustedSecurityOrigin = false
+        }
     }
 
     /// `Runtime.evaluate` parameters that address `context`. ID 0 is the main frame's default context, which Chromium
@@ -431,6 +451,8 @@ extension ChromiumDevTools {
 
     func updateFrames(_ parsed: [String: FrameState]) {
         frameRevision &+= 1
+        let live = Set(parsed.values.map(\.documentID))
+        documentOrigins = documentOrigins.filter { live.contains($0.key) }
         var retired: [String] = []
         var pageWide = false
         for (id, old) in framesByID where !old.documentID.isEmpty && parsed[id]?.documentID != old.documentID {
@@ -489,15 +511,19 @@ extension ChromiumDevTools {
             && ["http", "https"].contains(origin.protocol)
             && !origin.host.isEmpty
             && originURL?.host?.caseInsensitiveCompare(origin.host) == .orderedSame
+        let serializedOrigin = trustedOrigin ? protocolOrigin : nil
         if sessionID != nil {
             // A cross-site frame session never has the page's main frame, and its frames are trusted only when their own
             // address is of that origin: an inheriting about:blank or srcdoc, a data: or blob: document is not.
             guard parentID != nil else { return nil }
             trustedOrigin = trustedOrigin && Self.isOwnOrigin(url, origin)
         }
-        return FrameState(id: id, parentID: parentID, documentID: frame["loaderId"] as? String ?? "",
+        let documentID = frame["loaderId"] as? String ?? ""
+        // A document found opaque (`verifyOrigin`) stays untrusted whenever its frame is reported again.
+        trustedOrigin = trustedOrigin && documentOrigins[documentID] != false
+        return FrameState(id: id, parentID: parentID, documentID: documentID,
                           url: url, securityOrigin: origin, hasTrustedSecurityOrigin: trustedOrigin,
-                          isMainFrame: parentID == nil, serializedOrigin: trustedOrigin ? protocolOrigin : nil)
+                          isMainFrame: parentID == nil, serializedOrigin: serializedOrigin)
     }
 
     nonisolated static func isOwnOrigin(_ url: URL, _ origin: BrowserSecurityOrigin) -> Bool {
