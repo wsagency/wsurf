@@ -908,9 +908,8 @@ final class AutofillSaveCoordinator {
         guard page.window != nil, !page.isHiddenOrHasHiddenAncestor, page.hasOnlySecureContent,
               let documentID = body["documentID"] as? String, isRegistered(documentID, in: key, action: action),
               let topURL = page.url, SavedPassword.origin(for: topURL) != nil,
-              let rawURL = body["url"] as? String, let url = URL(string: rawURL), let origin = SavedPassword.origin(for: url),
-              message.frameInfo.hasTrustedSecurityOrigin, message.frameInfo.securityOrigin.protocol == "https", message.frameInfo.securityOrigin.host == url.host?.lowercased(),
-              (message.frameInfo.securityOrigin.port == 0 ? 443 : message.frameInfo.securityOrigin.port) == (url.port ?? 443) else { return }
+              let rawURL = body["url"] as? String, let url = URL(string: rawURL),
+              let origin = message.frameInfo.autofillOrigin(reportedURL: url) else { return }
         if action == "diagnostic", let value = body["event"] as? String,
            let event = AutofillDiagnostics.Event(rawValue: value),
            [.editNoScope, .editDisabled, .editRecorded, .submitNoEdits, .submitInvalid, .submitCaptured, .captureAbandonedByLink, .captureUnsafeAction].contains(event) {

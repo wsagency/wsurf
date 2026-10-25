@@ -177,10 +177,7 @@ final class AutofillSuggestions {
               AutofillSaveCoordinator.shared.isEnabled(kind, context: context),
               let rawURL = body["url"] as? String, let frameURL = URL(string: rawURL),
               let topURL = page.url, SavedPassword.origin(for: topURL) != nil,
-              let origin = SavedPassword.origin(for: frameURL), page.hasOnlySecureContent,
-              message.frameInfo.hasTrustedSecurityOrigin, message.frameInfo.securityOrigin.protocol == "https",
-              message.frameInfo.securityOrigin.host == frameURL.host?.lowercased(),
-              (message.frameInfo.securityOrigin.port == 0 ? 443 : message.frameInfo.securityOrigin.port) == (frameURL.port ?? 443),
+              let origin = message.frameInfo.autofillOrigin(reportedURL: frameURL), page.hasOnlySecureContent,
               body["rect"] is [String: Double],
               Self.canPresent(in: page) else { return }
         let rawRect = body["rect"]

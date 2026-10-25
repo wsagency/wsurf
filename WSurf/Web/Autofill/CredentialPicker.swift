@@ -124,10 +124,7 @@ final class CredentialPicker {
               let documentID = body["documentID"] as? String, UUID(uuidString: documentID) != nil,
               let field = (body["field"] as? String).flatMap(Field.init(rawValue:)),
               let raw = body["url"] as? String, let frameURL = URL(string: raw),
-              let origin = CredentialAccountSelection.origin(for: frameURL),
-              frame.hasTrustedSecurityOrigin, frame.securityOrigin.protocol == "https",
-              frame.securityOrigin.host == frameURL.host?.lowercased(),
-              (frame.securityOrigin.port == 0 ? 443 : frame.securityOrigin.port) == (frameURL.port ?? 443) else {
+              let origin = CredentialAccountSelection.origin(for: frameURL), frame.autofillOrigin(reportedURL: frameURL) == origin else {
             targets[ObjectIdentifier(page)] = nil
             return
         }
