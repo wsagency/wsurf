@@ -140,6 +140,20 @@ Credential Manager. A profile with no vault gets one offer per run
 of the app to set one up, and nothing is saved by it.
 
 Native code binds messages to the WebKit or CEF frame identity and origin.
+In Chromium a cross-site iframe runs in another process; the autofill world's
+scripts reach it through that frame's own DevTools session
+(`ChromiumDevTools+CrossSiteFrames`), and its messages carry the origin Chromium
+reports for that frame. The dropdown, Pick Credential…, save offers, card and
+address filling and Input History then work there for the frame's own origin,
+exactly as in WebKit and as for a page of that origin
+(`BrowserFrame.autofillOrigin`), under the same page-level rules (no private
+window, no card or address and no Input History in a tab an agent or connected
+app controls). Nothing is filled without the person's
+choice in any frame: there is no fill on load, only a dropdown row or Pick
+Credential…, and a password or code still goes only into a form that sends it
+to the same site. An opaque (sandboxed) frame, an inheriting about:blank or
+srcdoc document inside a cross-site frame, a frame whose origin cannot be
+verified and a frame whose session ended get nothing.
 Filling additionally checks the document/form/field identity, selection token,
 focus, geometry, and policy before and after authentication. A new document at
 the same URL is still a different document. The page spends the selection token
