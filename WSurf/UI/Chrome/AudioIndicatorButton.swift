@@ -124,6 +124,28 @@ struct AudioIndicatorButton: View {
     }
 }
 
+/// The speaker in the Standard window's toolbar, for a window whose sidebar is not on screen: the sidebar carries it otherwise, and
+/// there is never one in each. Shown by the same rule as the sidebar's: while a tab plays or WSurf is muted, with the same list on
+/// hover and the same mute on a press.
+struct ToolbarAudioIndicator: View {
+    let coordinator: AppCoordinator
+
+    /// Whether the toolbar carries the speaker now. The toolbar makes room for it by this.
+    static func isShown(in coordinator: AppCoordinator) -> Bool {
+        AudioIndicator.place(
+            audibleCount: coordinator.audibleTabs.count,
+            isMuted: coordinator.isWSurfMuted,
+            isSidebarShowing: coordinator.sidebar.isShowing
+        ) == .toolbar
+    }
+
+    var body: some View {
+        if Self.isShown(in: coordinator) {
+            AudioIndicatorButton(coordinator: coordinator, style: .bar, listEdge: .bottom)
+        }
+    }
+}
+
 /// What the speaker lists: the tabs playing now, then the switch for all of WSurf.
 struct AudioTabsList: View {
     let coordinator: AppCoordinator

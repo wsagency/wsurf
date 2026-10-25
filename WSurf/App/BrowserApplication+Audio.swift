@@ -25,6 +25,18 @@ enum AudioIndicator {
         audibleCount > 0 || isMuted
     }
 
+    /// Where the speaker is. There is one at a time: in the sidebar while the sidebar is on screen (docked, or peeking over the
+    /// page), and in the Standard window's toolbar while it is not. Nowhere while nothing plays and WSurf is not muted.
+    enum Place: Equatable {
+        case sidebar
+        case toolbar
+    }
+
+    static func place(audibleCount: Int, isMuted: Bool, isSidebarShowing: Bool) -> Place? {
+        guard isVisible(audibleCount: audibleCount, isMuted: isMuted) else { return nil }
+        return isSidebarShowing ? .sidebar : .toolbar
+    }
+
     static func symbol(isMuted: Bool) -> String {
         isMuted ? "speaker.slash" : "speaker.wave.2"
     }
