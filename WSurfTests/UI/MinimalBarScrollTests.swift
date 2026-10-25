@@ -152,6 +152,8 @@ struct MinimalBarScrollTests {
         let page: BrowserPage
         let window: NSWindow
         let host: NSView
+        /// The same page on another host name, so the window moves to another site.
+        let otherSite: URL
     }
 
     /// The page: tall enough to scroll, with a 1 px row of its own color at the very end.
@@ -166,9 +168,12 @@ struct MinimalBarScrollTests {
     private func withMinimalWindow(engine: BrowserEngine, _ body: (Rig) async throws -> Void) async throws {
         let server = try await HTTPFixtureServer.start(routes: ["/": .html(Self.longPage)])
         let url = try server.url("/")
+        let otherSite = try #require(URL(string: url.absoluteString.replacingOccurrences(of: "127.0.0.1", with: "localhost")))
         let profile = Profile(id: UUID(), name: "Minimal fixture", symbol: "person", color: .gray)
         let context = BrowserProfileContext.shared(for: profile)
-        context.sitePermissions.setEngine(engine, for: SitePermissions.origin(for: url))
+        for site in [url, otherSite] {
+            context.sitePermissions.setEngine(engine, for: SitePermissions.origin(for: site))
+        }
         let browser = BrowserModel(context: context, windowID: UUID(), database: .temporary())
         let coordinator = AppCoordinator(browser: browser)
         let window = NSWindow(
@@ -189,7 +194,7 @@ struct MinimalBarScrollTests {
             let page = tab.page
             try #require(await waitUntil { page.window === window && page.title == "Long" && !page.isLoading })
             #expect(page.engine == engine)
-            try await body(Rig(coordinator: coordinator, tab: tab, page: page, window: window, host: host))
+            try await body(Rig(coordinator: coordinator, tab: tab, page: page, window: window, host: host, otherSite: otherSite))
         } catch {
             failure = error
         }
@@ -322,6 +327,25 @@ struct MinimalBarScrollTests {
             }
             _ = await dialog.value
             #expect(await eventually { barIsAway(rig) }, "answered, the scrolled page has the room again")
+        }
+    }
+
+    /// Another site shows its address for a moment however soon the page scrolls (the micro window's rule), and then the
+    /// scrolled page has the room again. Without the rule the scroll would take the bar away at once.
+    @Test(arguments: [BrowserEngine.webKit, .chromium])
+    func anotherSiteKeepsTheBarForAMomentWhateverThePageDoes(engine: BrowserEngine) async throws {
+        try await withMinimalWindow(engine: engine) { rig in
+            _ = try await rig.page.evaluateJavaScript("window.scrollTo(0, 1500); true")
+            try #require(await eventually { barIsAway(rig) })
+
+            rig.tab.load(rig.otherSite)
+            try #require(await waitUntil { rig.tab.page.url?.host() == "localhost" && rig.tab.page.title == "Long" && !rig.tab.page.isLoading })
+            let page = rig.tab.page
+            _ = try await page.evaluateJavaScript("window.scrollTo(0, document.documentElement.scrollHeight); true")
+            try #require(await waitUntil(timeout: .seconds(8)) { try await isAtTheEnd(page) })
+            try? await Task.sleep(for: .milliseconds(300))
+            #expect(barIsShown(rig), "the new site's address is in sight although the page scrolled down")
+            #expect(await eventually { barIsAway(rig) }, "and after its moment the scrolled page has the room")
         }
     }
 }
