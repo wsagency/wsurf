@@ -22,6 +22,13 @@ final class CredentialMergeState {
     /// The sheet that is open, if any.
     var route: CredentialMergeRoute?
     private(set) var index: CredentialMergeIndex?
+    /// The suggestion the sheet shows selected, and the one at the top of its list, by identity. When the list is computed again
+    /// without one (it was merged, or marked Not the Same), it moves to the next one that is still there (`kept`), so the sheet stays
+    /// where it was.
+    var focus: Set<UUID>?
+    var scrollAnchor: Set<UUID>?
+    /// The sheet lists the dismissed groups instead of the suggestions.
+    private(set) var showsDismissed = false
     /// The credentials by id, for the suggestion list.
     private(set) var summaries: [UUID: CredentialSummary] = [:]
     /// The first suggestion that names each credential, by its position in `index`.
@@ -49,6 +56,22 @@ final class CredentialMergeState {
         index?.identical.count ?? 0
     }
 
+    var dismissedCount: Int {
+        index?.dismissed.count ?? 0
+    }
+
+    /// What the sheet lists, by identity: the suggestions, or the dismissed groups.
+    var shown: [Set<UUID>] {
+        showsDismissed ? (index?.dismissed ?? []).map(\.members) : index?.suggestions.map(\.id) ?? []
+    }
+
+    func showDismissed(_ dismissed: Bool) {
+        guard dismissed != showsDismissed else { return }
+        showsDismissed = dismissed
+        focus = nil
+        scrollAnchor = nil
+    }
+
     /// Computes the suggestions for the model's vault as it is now, off the main actor. Nothing is kept from another vault or unlock,
     /// so a stale answer is never shown.
     func refresh(_ model: CredentialSettingsModel) async {
@@ -61,7 +84,17 @@ final class CredentialMergeState {
         let all = model.summaries
         let found = try? await model.mergeSuggestions()
         guard !Task.isCancelled, next == Key(model) else { return }
+        show(found, summaries: all)
+        key = next
+    }
+
+    /// Shows `found` and keeps the selection and the top of the list where they were, by identity.
+    func show(_ found: CredentialMergeIndex?, summaries all: [CredentialSummary]) {
+        let before = shown
         index = found
+        let now = shown
+        focus = Self.kept(focus, from: before, in: now)
+        scrollAnchor = Self.kept(scrollAnchor, from: before, in: now)
         summaries = Dictionary(all.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         suggestionOf = [:]
         for (position, suggestion) in (found?.suggestions ?? []).enumerated() {
@@ -69,13 +102,25 @@ final class CredentialMergeState {
                 suggestionOf[id] = position
             }
         }
-        key = next
+    }
+
+    /// `id` if `now` still lists it; else the first after it in `before` that `now` lists, else the last before it, else the one now at
+    /// its place. Never by index alone: the suggestions around it keep their identity when one is merged.
+    static func kept(_ id: Set<UUID>?, from before: [Set<UUID>], in now: [Set<UUID>]) -> Set<UUID>? {
+        guard let id, !now.contains(id) else { return id }
+        let present = Set(now)
+        guard let at = before.firstIndex(of: id) else { return now.first }
+        return before[(at + 1)...].first(where: present.contains) ?? before[..<at].last(where: present.contains)
+            ?? (now.isEmpty ? nil : now[min(at, now.count - 1)])
     }
 
     /// Forgets everything, for a lock or another vault.
     func clear() {
         route = nil
         index = nil
+        focus = nil
+        scrollAnchor = nil
+        showsDismissed = false
         summaries = [:]
         suggestionOf = [:]
         key = nil
@@ -94,17 +139,38 @@ final class CredentialMergeState {
     }
 }
 
-extension CredentialMergeReason {
-    var text: LocalizedStringResource {
-        switch self {
+extension [UUID] {
+    /// A group's members in any order: what names a suggestion or a dismissed group in the sheet.
+    var members: Set<UUID> {
+        Set(self)
+    }
+}
+
+extension CredentialMergeSuggestion {
+    /// Why the vault suggests it, in a short line: "Same website and username", "Copy (1) of “ada@example.test”". `summaries` give the
+    /// usernames the list shows; a concealed one is not named.
+    func reasonText(_ summaries: [UUID: CredentialSummary]) -> LocalizedStringResource {
+        switch reason {
         case .sameLogin:
-            "Same site and username"
+            return isIdentical ? "Same website, username and password" : "Same website and username"
         case .numberedCopies:
-            "Numbered copies of one username"
+            let usernames = ids.compactMap { summaries[$0]?.username }
+            guard usernames.count == ids.count, let first = usernames.first else { return "Numbered copies of one username" }
+            let base = CredentialMergeSuggestions.baseUsername(first)
+            let copies = usernames.filter { $0 != base }.map { $0.dropFirst(base.count).trimmingCharacters(in: .whitespaces) }
+            let numbers = ListFormatter.localizedString(byJoining: copies)
+            switch (copies.count == 1, isIdentical) {
+            case (true, false):
+                return "Copy \(numbers) of “\(base)”"
+            case (true, true):
+                return "Copy \(numbers) of “\(base)”, same password"
+            case (false, false):
+                return "Copies \(numbers) of “\(base)”"
+            case (false, true):
+                return "Copies \(numbers) of “\(base)”, same password"
+            }
         case .splitParts:
-            "Password, passkey or code saved separately"
-        case .relatedSite:
-            "Same username on a related site"
+            return "Password, passkey or code for the same website, saved separately"
         }
     }
 }
@@ -159,7 +225,9 @@ struct CredentialSiteGroupsList<Row: View>: View {
 // MARK: - Suggestions
 
 /// Every merge the vault suggests, to review one at a time. "Merge All Identical" merges the groups whose logins are byte-equal and
-/// whose websites are on the same sites, which loses nothing and adds no website on another site.
+/// whose websites are the same, which loses nothing and adds no website on another site. "Not the Same" hides a suggestion for good;
+/// the Dismissed list shows those and takes one back with "Suggest Again". After a merge or a dismissal the sheet stays where it was,
+/// with the next suggestion selected (`CredentialMergeState.kept`).
 struct CredentialSuggestionsSheet: View {
     let model: CredentialSettingsModel
     let merge: CredentialMergeState
@@ -168,6 +236,13 @@ struct CredentialSuggestionsSheet: View {
     @State private var message: String?
     @State private var isWorking = false
     @State private var confirming = false
+    /// The last Not the Same or Suggest Again of this sheet can be taken back here; the page's notice is behind the sheet.
+    @State private var offersUndo = false
+
+    /// A list computed for another revision than the vault's (a merge just landed and the new one is on its way) is not acted on.
+    private var isCurrent: Bool {
+        merge.index?.revision == model.revision
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -176,27 +251,52 @@ struct CredentialSuggestionsSheet: View {
                 .font(Theme.Font.label)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
-            if let index = merge.index, !index.suggestions.isEmpty {
+            if merge.dismissedCount > 0 || merge.showsDismissed {
+                Picker("Suggestions", selection: Binding(get: { merge.showsDismissed }, set: { merge.showDismissed($0) })) {
+                    Text("Suggested (\(merge.suggestionCount.formatted()))").tag(false)
+                    Text("Dismissed (\(merge.dismissedCount.formatted()))").tag(true)
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .fixedSize()
+            }
+            if !merge.shown.isEmpty {
                 ScrollView {
                     // Lazy: a vault of thousands can have hundreds of suggestions.
-                    LazyVStack(alignment: .leading, spacing: 12) {
-                        ForEach(index.suggestions) { suggestion in
-                            row(suggestion)
+                    LazyVStack(alignment: .leading, spacing: 6) {
+                        if merge.showsDismissed {
+                            ForEach(merge.index?.dismissed ?? [], id: \.members) { ids in
+                                row(ids, reason: "Marked as not the same") { dismissedActions(ids) }
+                            }
+                        } else {
+                            ForEach(merge.index?.suggestions ?? []) { suggestion in
+                                row(suggestion.ids, reason: suggestion.reasonText(merge.summaries)) { suggestionActions(suggestion) }
+                            }
                         }
                     }
+                    .scrollTargetLayout()
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
+                .scrollPosition(id: Binding(get: { merge.scrollAnchor }, set: { merge.scrollAnchor = $0 }), anchor: .top)
                 .frame(height: 360)
             } else {
-                Text("No suggested merges").foregroundStyle(.secondary).padding(.vertical, 24).frame(maxWidth: .infinity)
+                (merge.showsDismissed ? Text("No dismissed suggestions") : Text("No suggested merges"))
+                    .foregroundStyle(.secondary)
+                    .padding(.vertical, 24)
+                    .frame(maxWidth: .infinity)
             }
             if let message {
-                Text(verbatim: message).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: 8) {
+                    Text(verbatim: message).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    if offersUndo, model.canUndo {
+                        Button("Undo") { undo() }.controlSize(.small)
+                    }
+                }
             }
             HStack {
-                if merge.identicalCount > 0 {
+                if merge.identicalCount > 0, !merge.showsDismissed {
                     Button("Merge All Identical (\(merge.identicalCount.formatted()))") { confirming = true }
-                        .disabled(isWorking || model.isBusy)
+                        .disabled(isWorking || model.isBusy || !isCurrent)
                 }
                 Spacer()
                 Button("Done", action: close).keyboardShortcut(.defaultAction)
@@ -212,35 +312,76 @@ struct CredentialSuggestionsSheet: View {
         }
     }
 
-    private func row(_ suggestion: CredentialMergeSuggestion) -> some View {
+    /// One group: its titles, why, and its buttons. A click selects it; the selected one is the one the sheet comes back to.
+    private func row<Actions: View>(_ ids: [UUID], reason: LocalizedStringResource, @ViewBuilder actions: () -> Actions) -> some View {
         HStack(alignment: .top, spacing: 10) {
             VStack(alignment: .leading, spacing: 3) {
-                Text(verbatim: names(of: suggestion)).font(Theme.Font.row).fixedSize(horizontal: false, vertical: true)
-                Group {
-                    if suggestion.isIdentical, suggestion.reason == .numberedCopies {
-                        Text("Numbered copies with the same password")
-                    } else if suggestion.isIdentical {
-                        Text("Same site, username and password")
-                    } else {
-                        Text(suggestion.reason.text)
-                    }
-                }
-                .font(Theme.Font.label)
-                .foregroundStyle(.secondary)
+                Text(verbatim: names(of: ids)).font(Theme.Font.row).fixedSize(horizontal: false, vertical: true)
+                Text(reason)
+                    .font(Theme.Font.label)
+                    .foregroundStyle(.secondary)
             }
             Spacer(minLength: 8)
-            Button("Review Merge…") { review(suggestion.ids) }
+            actions()
                 .controlSize(.small)
-                .disabled(isWorking)
+                .disabled(isWorking || model.isBusy || !isCurrent)
+        }
+        .padding(.vertical, 6)
+        .padding(.horizontal, 8)
+        .background(merge.focus == ids.members ? Color.accentColor.opacity(0.14) : .clear, in: RoundedRectangle(cornerRadius: 6))
+        .contentShape(Rectangle())
+        .onTapGesture { merge.focus = ids.members }
+    }
+
+    private func suggestionActions(_ suggestion: CredentialMergeSuggestion) -> some View {
+        HStack(spacing: 6) {
+            Button("Not the Same") { apart(suggestion.ids, again: false) }
+                .help("Don’t suggest merging these credentials again")
+            Button("Review Merge…") {
+                merge.focus = suggestion.id
+                review(suggestion.ids)
+            }
         }
     }
 
+    private func dismissedActions(_ ids: [UUID]) -> some View {
+        Button("Suggest Again") { apart(ids, again: true) }
+    }
+
     /// The first few titles; the rest are counted.
-    private func names(of suggestion: CredentialMergeSuggestion) -> String {
-        let titles = suggestion.ids.prefix(3).map { merge.summaries[$0]?.title ?? String(localized: "Credential") }
-        let more = suggestion.ids.count - titles.count
+    private func names(of ids: [UUID]) -> String {
+        let titles = ids.prefix(3).map { merge.summaries[$0]?.title ?? String(localized: "Credential") }
+        let more = ids.count - titles.count
         let list = ListFormatter.localizedString(byJoining: titles)
         return more > 0 ? list + " " + String(localized: "+\(more) more") : list
+    }
+
+    /// Not the Same, or Suggest Again for a dismissed group. The group is selected first, so the list comes back to the one after it.
+    private func apart(_ ids: [UUID], again: Bool) {
+        merge.focus = ids.members
+        isWorking = true
+        Task {
+            do {
+                if again {
+                    try await model.suggestAgain(ids)
+                    message = String(localized: "These can be suggested for merging again.")
+                } else {
+                    try await model.markNotTheSame(ids)
+                    message = String(localized: "These won’t be suggested for merging again.")
+                }
+                offersUndo = true
+            } catch {
+                message = CredentialSettingsModel.mergeMessage(for: error)
+                offersUndo = false
+            }
+            isWorking = false
+        }
+    }
+
+    private func undo() {
+        offersUndo = false
+        message = nil
+        Task { await model.undo() }
     }
 
     private func mergeAll() {
@@ -253,6 +394,7 @@ struct CredentialSuggestionsSheet: View {
             } catch {
                 message = CredentialSettingsModel.mergeMessage(for: error)
             }
+            offersUndo = false
             isWorking = false
         }
     }
@@ -283,12 +425,13 @@ struct CredentialMergeFlow: View {
         case .suggestions:
             CredentialSuggestionsSheet(model: model, merge: merge, review: { step = .review($0) }, close: close)
         case let .review(ids):
-            CredentialMergeSheet(model: model, ids: ids) { merged in
-                // A written merge ends the flow; a cancelled one returns to the suggestions it came from.
-                if merged || route != .suggestions {
-                    close()
-                } else {
+            CredentialMergeSheet(model: model, ids: ids) { _ in
+                // From the suggestions, a written or a cancelled merge returns to them, where it was, with the next one selected; from
+                // the list, the flow ends.
+                if route == .suggestions {
                     step = .suggestions
+                } else {
+                    close()
                 }
             }
         }

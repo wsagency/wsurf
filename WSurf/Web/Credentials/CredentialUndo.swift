@@ -15,7 +15,7 @@ nonisolated struct CredentialReplaced: Sendable {
 /// draft, and goes with it: a lock, another vault or leaving the page ends it. Nothing here is ever logged.
 nonisolated struct CredentialUndoStep: Sendable {
     enum Kind: Equatable, Sendable {
-        case moveToTrash, merge, edit, add, restore, markForDeletion
+        case moveToTrash, merge, edit, add, restore, markForDeletion, notTheSame, suggestAgain
     }
 
     /// Tells this step from the others while a replay is under way, so the step that ran is the one that is taken off its stack.
@@ -90,6 +90,10 @@ nonisolated extension CredentialUndoStep.Kind {
             "Undo Restore"
         case .markForDeletion:
             "Undo Delete"
+        case .notTheSame:
+            "Undo Not the Same"
+        case .suggestAgain:
+            "Undo Suggest Again"
         }
     }
 
@@ -108,6 +112,10 @@ nonisolated extension CredentialUndoStep.Kind {
             "Redo Restore"
         case .markForDeletion:
             "Redo Delete"
+        case .notTheSame:
+            "Redo Not the Same"
+        case .suggestAgain:
+            "Redo Suggest Again"
         }
     }
 
@@ -126,6 +134,10 @@ nonisolated extension CredentialUndoStep.Kind {
             "Redid Restore."
         case .markForDeletion:
             "Redid Delete."
+        case .notTheSame:
+            "Redid Not the Same."
+        case .suggestAgain:
+            "Redid Suggest Again."
         }
     }
 
@@ -144,6 +156,10 @@ nonisolated extension CredentialUndoStep.Kind {
             "Undid Restore."
         case .markForDeletion:
             "Undid Delete."
+        case .notTheSame:
+            "Undid Not the Same."
+        case .suggestAgain:
+            "Undid Suggest Again."
         }
     }
 }

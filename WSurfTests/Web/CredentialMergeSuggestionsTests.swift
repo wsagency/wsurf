@@ -36,15 +36,36 @@ struct CredentialMergeSuggestionsTests {
         CredentialMergeSuggestions.index(for: accounts, revision: 1)
     }
 
-    @Test func sameSiteAndUsernameAreSuggestedAcrossSubdomains() {
+    @Test func theSameWebsiteAndUsernameAreSuggestedWithWwwAsTheSameWebsite() {
         let first = login("ada", "one", on: "https://www.example.test")
-        let second = login("ada", "two", on: "https://login.example.test")
+        let second = login("ada", "two", on: "https://example.test")
         let unrelated = login("ada", "three", on: "https://other.test")
         let found = index([first, unrelated, second])
         #expect(found.suggestions.count == 1)
         #expect(found.suggestions[0].reason == .sameLogin)
         #expect(found.suggestions[0].ids == [first.id, second.id])
         #expect(!found.suggestions[0].isIdentical)
+    }
+
+    /// The owner's case: servers under one domain (dev5, htz, cloud1) are different websites, whatever their username and password.
+    @Test func differentSubdomainsOfOneDomainAreDifferentWebsites() {
+        let servers = ["dev5", "htz", "cloud1"].map { login("root", "pw", on: "https://\($0).example.test") }
+        #expect(index(servers).suggestions.isEmpty)
+        let portal = login("root", "pw", on: "https://login.example.test")
+        #expect(index([portal, servers[0]]).suggestions.isEmpty)
+    }
+
+    @Test func aPortIsPartOfTheWebsite() {
+        let panel = login("admin", "pw", on: "https://host.example.test:2083")
+        let manager = login("admin", "pw", on: "https://host.example.test:2087")
+        let again = login("admin", "pw", on: "https://host.example.test:2083")
+        #expect(index([panel, manager, again]).suggestions.map(\.ids) == [[panel.id, again.id]])
+    }
+
+    @Test func partsSavedApartOnDifferentSubdomainsAreNotJoined() throws {
+        let password = login("root", "pw", on: "https://dev5.example.test")
+        let passkey = try passkeyOnly(user: "root", rp: "htz.example.test", seed: 5)
+        #expect(index([password, passkey]).suggestions.isEmpty)
     }
 
     @Test func usernamesAreComparedAsExactBytes() {
@@ -77,9 +98,17 @@ struct CredentialMergeSuggestionsTests {
         let bob = login("bob")
         let passkey = try passkeyOnly(user: "carol", seed: 3)
         let code = codeOnly(issuer: "Example")
-        // The code names nobody, so it joins the first person it fits and never a second one.
-        let found = index([ada, bob, passkey, code])
-        #expect(found.suggestions.map(\.ids) == [[ada.id, code.id]])
+        // The code names nobody and fits three people, so it is suggested with none of them.
+        #expect(index([ada, bob, passkey, code]).suggestions.isEmpty)
+        // With one person on the website, it fits only that one.
+        #expect(index([ada, code]).suggestions.map(\.ids) == [[ada.id, code.id]])
+    }
+
+    @Test func aCodeWithoutAWebsiteIsNotSuggestedWhenItsIssuerNamesSeveralWebsites() {
+        let servers = ["dev5", "htz", "cloud1"].map { login("root", "pw", on: "https://\($0).example.test") }
+        let code = codeOnly(issuer: "Example", user: "root")
+        #expect(index(servers + [code]).suggestions.isEmpty, "the issuer names three websites: no telling which")
+        #expect(index([servers[0], code]).suggestions.map(\.ids) == [[servers[0].id, code.id]])
     }
 
     @Test func separatePasswordPasskeyAndCodeItemsAreSuggestedAsOne() throws {
@@ -108,16 +137,13 @@ struct CredentialMergeSuggestionsTests {
         #expect(found.suggestions.isEmpty)
     }
 
-    @Test func aRelatedSiteNeedsTheSamePasswordOrSiteName() {
+    /// The same password is password reuse, not one account; a site name in common is not one website.
+    @Test func theSamePasswordOrSiteNameOnDifferentWebsitesIsNeverASuggestion() {
         let com = login("ada", "pw", on: "https://example.test")
         let samePassword = login("ada", "pw", on: "https://another.test")
-        let sameName = login("ada", "different", on: "https://example.org")
-        let neither = login("ada", "unrelated", on: "https://unrelated.test")
-        let found = index([com, samePassword, sameName, neither])
-        #expect(found.suggestions.count == 1)
-        #expect(found.suggestions[0].reason == .relatedSite)
-        #expect(found.suggestions[0].ids == [com.id, samePassword.id, sameName.id])
-        #expect(!found.suggestions[0].isIdentical)
+        let sameName = login("ada", "pw", on: "https://example.org")
+        let otherUser = login("bob", "pw", on: "https://example.test")
+        #expect(index([com, samePassword, sameName, otherUser]).suggestions.isEmpty)
     }
 
     @Test func publicSuffixSiblingsAreNotSuggested() {
@@ -126,11 +152,17 @@ struct CredentialMergeSuggestionsTests {
     }
 
     @Test func anAddressUsedOnManySitesIsNotSuggested() {
-        var accounts = (0...CredentialMergeSuggestions.bucketLimit).map { login("ada@example.test", "pw", on: "https://site\($0).test") }
+        let accounts = (0...CredentialMergeSuggestions.bucketLimit).map { login("ada@example.test", "pw", on: "https://site\($0).test") }
         // Every one shares the username and the password, which says nothing about any pair.
         #expect(index(accounts).suggestions.isEmpty)
+        #expect(index(Array(accounts.prefix(2))).suggestions.isEmpty)
+    }
+
+    @Test func moreRepeatsOfOneLoginThanTheBucketLimitSayNothing() {
+        var accounts = (0...CredentialMergeSuggestions.bucketLimit).map { login("ada", "pw\($0)", on: "https://example.test") }
+        #expect(index(accounts).suggestions.isEmpty)
         accounts.removeLast()
-        #expect(!index(accounts).suggestions.isEmpty)
+        #expect(index(accounts).suggestions.count == 1)
     }
 
     @Test func eachMemberListsOnceAndTheStrongestReasonNamesAGroup() {

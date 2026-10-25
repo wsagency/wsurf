@@ -150,6 +150,58 @@ extension CredentialSettingsModel {
         return CredentialMergeAllResult(merged: replaced.count, absorbed: removed.count, skipped: skipped)
     }
 
+    /// Remembers that `ids` are not one credential (Not the Same on a suggestion), so no suggestion puts any two of them together again.
+    /// Each keeps the others' ids in its sealed row (`CredentialAccount.notSameAs`), so the choice syncs with the entries and outlives
+    /// edits, a trip to the Trash and a merge. One per-account write bound to the stamps it read, one Undo step, nothing in History.
+    func markNotTheSame(_ ids: [UUID]) async throws {
+        try await rememberApart(ids, kind: .notTheSame) { held, group in held.union(group) }
+    }
+
+    /// Forgets every Not the Same between `ids`, a group the sheet lists as dismissed, so they can be suggested again. An id of a
+    /// credential since merged into one of them counts as that one.
+    func suggestAgain(_ ids: [UUID]) async throws {
+        try await rememberApart(ids, kind: .suggestAgain) { held, group in held.subtracting(group) }
+    }
+
+    private func rememberApart(
+        _ ids: [UUID], kind: CredentialUndoStep.Kind, _ change: (_ held: Set<UUID>, _ group: Set<UUID>) -> Set<UUID>
+    ) async throws {
+        let group = Set(ids)
+        guard group.count == ids.count, group.count > 1 else { throw CredentialVaultError.invalidData }
+        let (epoch, snapshot) = try await authorizedSnapshot()
+        let survivors = CredentialMergeSuggestions.survivors(in: snapshot.accounts)
+        var before: [CredentialAccount] = []
+        var writes: [AccountWrite] = []
+        var starting: [UUID: AccountStamp] = [:]
+        for account in try Self.accounts(ids, in: snapshot.accounts) {
+            guard let stamp = snapshot.stamps[account.id] else { throw CredentialVaultError.invalidData }
+            let held = (account.notSameAs ?? []).map { survivors[$0] ?? $0 }
+            var next = change(Set(held), group)
+            next.remove(account.id)
+            var changed = account
+            changed.notSameAs = next.isEmpty ? nil : next.sorted { $0.uuidString < $1.uuidString }
+            guard changed.notSameAs != account.notSameAs else { continue }
+            before.append(account)
+            writes.append(AccountWrite(accountID: account.id, expected: .stamp(stamp), replacement: changed))
+            starting[account.id] = stamp
+        }
+        guard !writes.isEmpty else { return }
+        guard let manager, manager.authorizationEpoch == epoch else { throw CredentialVaultError.unauthorized }
+        // Last point before the durable write: a cancelled task or a changed authorization never commits.
+        try Task.checkCancellation()
+        let receipt = try await manager.commitAccounts(writes, authorizedEpoch: epoch)
+        _ = try? await reloadAfterWrite(epoch: epoch)
+        let recorded = recordUndo(receipt: receipt, epoch: epoch) { session in
+            var replaced: [CredentialReplaced] = []
+            for account in before {
+                guard let stamp = session.stamps[account.id] else { return nil }
+                replaced.append(CredentialReplaced(before: account, after: stamp))
+            }
+            return CredentialUndoStep(kind: kind, accounts: replaced, starting: starting)
+        }
+        showNotice(kind == .notTheSame ? "These won’t be suggested for merging again." : "These can be suggested for merging again.", undo: recorded)
+    }
+
     /// Writes the merged accounts and keeps a step that takes the merge back: `survivors` as they were, and the absorbed accounts
     /// (`merging`, each mapped to its survivor, whose History keeps their passwords and codes), which went to Trash.
     private func commitMerge(
