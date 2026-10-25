@@ -4,6 +4,9 @@
     "%@" : {
 
     },
+    "%@ looks like %@, but it is a different website. Add it only if you are sure." : {
+      "comment" : "Warning in the toolbar popover after a hand-picked login or code, when the page's website imitates one of the credential's own websites (a look-alike letter, a digit for a letter, a one-letter typo). First %@ is the page's website, second %@ is the credential's website it resembles, both as the address bar draws them (punycode). “Not Now” is then the default button."
+    },
     "%@ — %@" : {
       "localizations" : {
         "en" : {
@@ -192,6 +195,9 @@
     },
     "External app" : {
       "comment" : "Name given to a paired app when none was typed."
+    },
+    "Fill" : {
+      "comment" : "Default button of the Pick Credential… sheet: fills the chosen login or code into the right-clicked field. One word, a verb."
     },
     "Fill form controls together without submitting." : {
 
@@ -388,6 +394,9 @@
     "Search %@" : {
       "comment" : "Command palette site search hint, placeholder, and result detail. %@ is the website's name and should not be translated. Search is a verb."
     },
+    "Search Credentials" : {
+      "comment" : "Placeholder of the search field at the top of the Pick Credential… sheet; it searches titles, usernames and websites. Title Case."
+    },
     "Search in current tab" : {
 
     },
@@ -525,6 +534,9 @@
     },
     "Use Another Device or Key…" : {
 
+    },
+    "Use “%@” on %@?" : {
+      "comment" : "Headline of the toolbar popover after a login or code was picked by hand (Pick Credential…) on a website it is not saved for. First %@ is the credential's name (its username, or display name), second %@ is the page's website as the address bar draws it (punycode). Sentence case, a question."
     },
     "Usual web port only. Add a port to include another." : {
       "comment" : "Caption under a developer site that has no port. It covers port 80 for http and 443 for https only."
@@ -1210,6 +1222,9 @@
         }
       }
     },
+    "%lld tabs playing audio" : {
+      "comment" : "VoiceOver label of the speaker button when several tabs, in this window or in other windows of the same profile, are playing sound. %lld is the number of tabs, always 2 or more. Plural form of “1 tab playing audio”. Sentence case, no full stop."
+    },
     "%lld visits" : {
       "comment" : "Caption on a frequently-visited site tile on the start page; %lld is how many times the user opened that site. One line in a narrow tile, sentence case.",
       "localizations" : {
@@ -1322,6 +1337,9 @@
     "1 tab" : {
 
     },
+    "1 tab playing audio" : {
+      "comment" : "VoiceOver label of the speaker button when exactly one tab, in this window or in another window of the same profile, is playing sound. Singular form of “%lld tabs playing audio”. Sentence case, no full stop."
+    },
     "100 requests" : {
 
     },
@@ -1423,6 +1441,9 @@
     },
     "Add %@ key" : {
       "comment" : "Heading of the popover where an API key is pasted, shown when no key is stored yet. %@ is the provider's name, e.g. OpenAI or Anthropic — vendor names, leave as is."
+    },
+    "Add %@ to its websites." : {
+      "comment" : "Line under “Use “%@” on %@?” in the toolbar popover: what Add Website does. %@ is the page's website as the address bar draws it (punycode). Sentence."
     },
     "Add a provider" : {
       "comment" : "Settings → Assistant. Title of the page listing providers not yet set up."
@@ -1635,6 +1656,9 @@
     },
     "Another entry here holds the same item from Passwords." : {
       "comment" : "Row caption in the Review Sync Changes sheet; information only. Passwords is Apple’s app."
+    },
+    "Another Window" : {
+      "comment" : "Small grey mark after the website of a tab in the speaker's list, when that tab is in another window of the same profile than the one the list is open in. It is joined to the website with a dot, for example “example.com · Another Window”. Title Case, a noun phrase."
     },
     "Answer…" : {
 
@@ -3608,6 +3632,9 @@
     "WSurf moves them to Trash on your other devices that sync this vault. You can restore them there." : {
       "comment" : "Message of the confirmation for Delete on Other Devices. Trash is the vault’s Trash."
     },
+    "WSurf muted" : {
+      "comment" : "VoiceOver label of the speaker button (at the foot of the sidebar, in the Minimal bar and in the micro window's bar) while all of WSurf is muted. A short state, no verb, no full stop. The button stays on screen while WSurf is muted so that it can be unmuted."
+    },
     "WSurf saves chat history on this Mac. Your messages are still sent to OpenAI to generate replies." : {
 
     },
@@ -3757,6 +3784,9 @@
           }
         }
       }
+    },
+    "Micro Window" : {
+      "comment" : "The same small mark when the tab is the page of a micro window (a small window that shows only one page). Title Case, like the menu item “Move to Micro Window”."
     },
     "microphone" : {
       "comment" : "Lowercase name of one website permission, inserted mid-sentence into the confirmation: Are you sure you want to remove the microphone setting for every website? Deliberately lowercase — do not capitalise it, even in languages that capitalise nouns. The capitalised row label Microphone is a separate string."
@@ -3934,8 +3964,14 @@
     "Mute This Tab" : {
       "comment" : "Tooltip on the speaker button in the toolbar, which acts on the tab currently on screen. “This Tab” distinguishes it from the sidebar's per-row control. Title Case."
     },
+    "Mute WSurf" : {
+      "comment" : "Item in the View menu (shortcut ⌃⌘M), item in the right-click menu of the speaker button at the foot of the sidebar (and in the Minimal bar and the micro window's bar), and the button at the bottom of the list that opens when the pointer rests on that speaker. It silences every tab in every window of WSurf at once; each tab's own mute setting is given back by “Unmute WSurf”. The menu item changes its title to “Unmute WSurf” while WSurf is muted. Title Case verb phrase; WSurf is the app's name and is never translated. The speaker button itself has no tooltip."
+    },
     "Muted" : {
       "comment" : "Option in the Autoplay segmented control on the Websites settings page: video may start on its own but sound waits for a click. A past participle describing the media; space in a segment is tight."
+    },
+    "Mutes every tab in every window." : {
+      "comment" : "VoiceOver hint of the speaker button while tabs are playing sound and WSurf is not muted: it says what pressing the button does. Full sentence with a full stop, third person."
     },
     "My server" : {
       "comment" : "Placeholder text in the Name field of the custom endpoint form — an example of what to type, not a value the app uses."
@@ -4054,6 +4090,9 @@
     "No matches" : {
       "comment" : "Shown in place of the website-data list when the filter text matches no website in it."
     },
+    "No Matching Credentials" : {
+      "comment" : "Shown in the Pick Credential… sheet when the search matches nothing. Title Case."
+    },
     "No microphone signal detected. Check your input volume and microphone mode in macOS." : {
 
     },
@@ -4099,6 +4138,9 @@
     "No saved cards" : {
 
     },
+    "No Saved Credentials" : {
+      "comment" : "Shown in the Pick Credential… sheet when the unlocked vaults hold no login and no verification code. Title Case."
+    },
     "No saved permissions" : {
       "comment" : "Title of the placeholder row in the Assistant permissions section of the Privacy settings page when no website has a standing grant. “Always Allow” is the button that creates one, so keep the wording recognisably the same as that button's."
     },
@@ -4107,6 +4149,9 @@
     },
     "No Tab Available to Share" : {
 
+    },
+    "No tab is playing audio" : {
+      "comment" : "Heading of the speaker's list when WSurf is muted and no tab is playing any sound at the moment; the list then holds only the “Unmute WSurf” button. Sentence case, no full stop, like a short status."
     },
     "No tabs" : {
       "comment" : "Shown where a tab count would be, when a profile has none. A fragment, not a sentence."
@@ -4227,6 +4272,9 @@
     },
     "on this page" : {
       "comment" : "Fragment inserted into the dialog asking the user to approve an action the assistant wants to take, used when the website’s name is unknown: The assistant wants to click “Pay now” on this page. The alternative fragment, which names the site, is on %@."
+    },
+    "On This Website" : {
+      "comment" : "Section header in the Pick Credential… sheet over the logins and codes saved for the page's website (or another website of the same domain). Title Case."
     },
     "On your other devices" : {
       "comment" : "Title of the Profiles section that lists profiles whose vaults another Mac syncs through iCloud. Sentence case."
@@ -4393,6 +4441,9 @@
     "Other Pane" : {
       "comment" : "Menu command that moves focus to the second of two pages shown at once, so the address bar and Find follow it. Title Case. A noun phrase naming where focus goes, not a verb."
     },
+    "Other Websites" : {
+      "comment" : "Section header in the Pick Credential… sheet over the logins and codes saved for other websites. Title Case."
+    },
     "Other websites" : {
       "comment" : "Label of the row that sets the answer for every website not listed individually below it, in the Websites permissions section. A noun phrase, not a heading."
     },
@@ -4510,8 +4561,14 @@
     "Phone from Contacts" : {
 
     },
+    "Pick a Credential for %@" : {
+      "comment" : "Title of the Pick Credential… sheet. %@ is the website of the right-clicked field as the address bar draws it (punycode, no sign-in details, port when not 443), e.g. “login.example.com”. Title Case."
+    },
     "Pick an option in a dropdown menu." : {
       "comment" : "Caption for the Choose From Menus tool in assistant settings."
+    },
+    "Pick Credential…" : {
+      "comment" : "Item at the top of a web page's context menu when the right-click landed in an editable field, in both engines. Opens a sheet to choose a saved login or verification code for that field. Title Case, ends in an ellipsis because it opens a sheet. Also used inside “Right-click the field and choose Pick Credential… to try again.”"
     },
     "Picture in Picture" : {
       "comment" : "Tooltip on the button that floats the video in a system Picture in Picture window. It is used twice: beside the address field, left of the speaker, for the tab you are looking at, and on the media player in the sidebar. Apple feature name; use the platform glossary. Title Case."
@@ -4542,6 +4599,9 @@
     },
     "Play Videos" : {
       "comment" : "Tool name in assistant settings: finding and playing a video."
+    },
+    "Playing Audio" : {
+      "comment" : "Small heading above the list of tabs that are playing sound, which opens when the pointer rests on the speaker button; also the VoiceOver label of that list. Title Case, a noun phrase like a section title."
     },
     "Pop-up windows" : {
 
@@ -5100,6 +5160,9 @@
     "right ⌥" : {
       "comment" : "Name of one physical modifier key in the shortcut recorder in Settings, where the two sides of the keyboard have to be told apart. Only the side word is translated — the symbol is the glyph macOS prints on the key, so keep it exactly and keep it beside the word. Very tight: this is a key cap. The glyph is Option."
     },
+    "Right-click the field and choose Pick Credential… to try again." : {
+      "comment" : "Informative text of the “Couldn’t Fill Saved Details” alert after Pick Credential…, when the field, the page or the vault changed before the fill, or the page took nothing. Must name the menu item exactly as “Pick Credential…”. Sentence."
+    },
     "Route your traffic through a proxy" : {
       "comment" : "One bullet in the list of what a browser extension will be able to do, shown in the install confirmation dialog. Traffic means the user’s network traffic. It follows the line It will also be able to:, so it is a bare verb phrase and takes no final full stop."
     },
@@ -5537,6 +5600,9 @@
     },
     "Show what went wrong" : {
       "comment" : "Tooltip on the warning button beside an extension that reported problems; pressing it opens a panel listing them. Show is a verb."
+    },
+    "Show “%@”" : {
+      "comment" : "VoiceOver action of the speaker button (one for each tab that is playing sound), item of the speaker's right-click menu (one for each such tab), and VoiceOver label of a tab in the list that opens from the speaker. It takes you to that tab: its window comes forward, its space and the tab are shown, and its row is scrolled into view in the sidebar. %@ is the title of the tab (a page title, never translated). The quotation marks are curly. Title Case verb phrase."
     },
     "Showing the original page" : {
       "comment" : "VoiceOver announcement after a translation is removed and the page's original text is back."
@@ -6200,6 +6266,9 @@
     "This file type isn’t supported. Attach an image, PDF, RTF, or text file." : {
 
     },
+    "This form sends what you type to another website, so nothing was filled." : {
+      "comment" : "Informative text of the “Couldn’t Fill Saved Details” alert after Pick Credential…, when the chosen login's password or verification code would have gone into a form whose action is on another website. Nothing was filled. Sentence."
+    },
     "This image couldn’t be prepared." : {
 
     },
@@ -6413,6 +6482,9 @@
     "Unlock one of this profile’s vaults first, then add this vault." : {
       "comment" : "Caption of the Vault on your other devices card when no vault of the profile is unlocked to approve adding another."
     },
+    "Unlock Other Vaults…" : {
+      "comment" : "Button at the bottom left of the Pick Credential… sheet, shown while another vault of the profile is locked: unlocks one (Touch ID or passkey) and lists its entries too. Title Case, ellipsis because it asks for authentication."
+    },
     "Unmute" : {
       "comment" : "Tooltip on the same speaker button in the media dock once sound is off; it lets the sound back. Verb, one word; pairs with “Mute”."
     },
@@ -6424,6 +6496,12 @@
     },
     "Unmute This Tab" : {
       "comment" : "Tooltip on the toolbar's speaker button once the current tab has been silenced. Title Case."
+    },
+    "Unmute WSurf" : {
+      "comment" : "The same menu item, right-click item and list button while WSurf is muted: it ends the mute of all of WSurf and puts back each tab's own mute setting. Title Case verb phrase, the opposite of “Mute WSurf”."
+    },
+    "Unmutes WSurf and gives each tab its own setting back." : {
+      "comment" : "VoiceOver hint of the speaker button while WSurf is muted: it says what pressing the button does. Full sentence with a full stop, third person, like other hints."
     },
     "Unpin" : {
       "comment" : "Folder context-menu command or drag label that takes a row out of the pinned section. Imperative verb, one word."
