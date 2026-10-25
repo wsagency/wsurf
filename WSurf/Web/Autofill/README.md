@@ -71,8 +71,17 @@ contact's title; the credential's item is read again on the pick under the same 
 fills only after Touch ID or the Mac password. Contacts and addresses need only the unlocked vault. While every vault of the profile
 is locked, the field gets one "Unlock Credentials…" row, as a login field does; nothing is read before the unlock. A credential's
 first address, first name and its custom fields with the ids `email` and `organization` fill as one contact; a card whose number
-fails the card check, or that has expired, is not offered. No card or address at all is offered in a tab the assistant or a
-connected app controls (`BrowserTab.isUnderAssistantControl`), so none is filled into a page an agent reads.
+fails the card check, or that has expired, is not offered.
+
+Nothing at all is offered in a tab an agent controls: while the assistant works
+there, or a connected app is in a call on it or holds it (the AI mark;
+`BrowserTab.isAgentControlled`, the predicate Pick Credential… uses too), no
+field of any frame gets the password, code, card or address dropdown
+(`AutofillSuggestions.offerOrigin`), a fill under way is refused at its dispatch
+(`requireAuthority`), and nothing is staged or offered for saving. Control
+starting takes the tab's save offers and open dropdown away; when it ends, the
+next focus is offered again. An agent could otherwise open the dropdown, pick a
+row and read the filled field back.
 
 Saving a typed card or address goes through the save offer, like a password: only Save writes, as a new entry (or, for a card an
 unlocked vault holds with other details, an update of its card item) in the vault the offer read, else the default vault, chosen and
@@ -147,8 +156,7 @@ reports for that frame. The dropdown, Pick Credential…, save offers, card and
 address filling and Input History then work there for the frame's own origin,
 exactly as in WebKit and as for a page of that origin
 (`BrowserFrame.autofillOrigin`), under the same page-level rules (no private
-window, no card or address and no Input History in a tab an agent or connected
-app controls). Nothing is filled without the person's
+window, nothing at all in a tab an agent or connected app controls). Nothing is filled without the person's
 choice in any frame: there is no fill on load, only a dropdown row or Pick
 Credential…, and a password or code still goes only into a form that sends it
 to the same site. An opaque (sandboxed) frame, an inheriting about:blank or

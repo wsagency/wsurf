@@ -174,10 +174,8 @@ final class AutofillSuggestions {
               let documentID = body["documentID"] as? String, UUID(uuidString: documentID) != nil,
               let formID = body["formID"] as? String, Int(formID) ?? 0 > 0,
               let fieldID = body["fieldID"] as? String, Int(fieldID) ?? 0 > 0,
-              AutofillSaveCoordinator.shared.isEnabled(kind, context: context),
-              let rawURL = body["url"] as? String, let frameURL = URL(string: rawURL),
-              let topURL = page.url, SavedPassword.origin(for: topURL) != nil,
-              let origin = message.frameInfo.autofillOrigin(reportedURL: frameURL), page.hasOnlySecureContent,
+              let origin = Self.offerOrigin(for: message, kind: kind),
+              let rawURL = body["url"] as? String, let frameURL = URL(string: rawURL), let topURL = page.url,
               body["rect"] is [String: Double],
               Self.canPresent(in: page) else { return }
         let rawRect = body["rect"]
@@ -227,7 +225,7 @@ final class AutofillSuggestions {
             records = await managerSuggestions(for: request, origin: origin, presentation: id)
         } else {
             // A tab the assistant or a connected app controls is offered no card or address at all.
-            guard !isUnderAssistantControl(page) else { return false }
+            guard !Self.isAgentControlled(page) else { return false }
             // The cards and addresses still in the old Keychain lists, until the person confirms their move into the vault.
             records = try? await Task.detached {
                 try AutofillSaveIndex.suggestions(kind: kind, origin: origin, profileID: profileID)
@@ -377,7 +375,7 @@ final class AutofillSuggestions {
         guard request.page.context === context, presentation == presentationID, requests[ObjectIdentifier(request.page)] === request else {
             return []
         }
-        switch Self.vaultItemRows(kind: request.kind, underAssistantControl: isUnderAssistantControl(request.page), allVaultsLocked: allLocked) {
+        switch Self.vaultItemRows(kind: request.kind, underAssistantControl: Self.isAgentControlled(request.page), allVaultsLocked: allLocked) {
         case .none:
             return []
         case .unlock:
@@ -417,17 +415,12 @@ final class AutofillSuggestions {
         return result
     }
 
-    /// A page with no session of its own fails closed: it is not known to be the person's.
-    private func isUnderAssistantControl(_ page: BrowserPage) -> Bool {
-        AutofillSaveCoordinator.shared.session(for: page)?.isUnderAssistantControl() ?? true
-    }
-
     /// The vault branch of a card or address fill, like `managerFill`: the item is read again here under the unlock, revision and
     /// write generation its row was shown under, a card asks for Touch ID, and the returned closure delivers only if all of that and
     /// the request's native authority still hold at the engine's dispatch boundary.
     private func vaultItemFill(_ id: UUID, request: Request, in page: BrowserPage) async throws -> @MainActor @Sendable () throws -> [String: Any] {
         guard let row = request.itemRows[id], let manager = manager(for: request, vault: row.vaultID), let grant = request.grants[row.vaultID],
-              let generation = manager.stableGeneration, !isUnderAssistantControl(page) else { throw ContactAutofillError.changedPage }
+              let generation = manager.stableGeneration, !Self.isAgentControlled(page) else { throw ContactAutofillError.changedPage }
         let snapshot = try await manager.snapshot()
         guard manager.authorizationEpoch == grant.epoch, manager.stableGeneration == generation, snapshot.vaultID == row.vaultID,
               snapshot.revision == grant.revision, let account = snapshot.accounts.first(where: { $0.id == row.accountID }),
@@ -450,7 +443,7 @@ final class AutofillSuggestions {
             guard let self, let page else { throw ContactAutofillError.changedPage }
             try self.requireAuthority(request, in: page)
             guard self.manager(for: request, vault: row.vaultID) === manager, manager.stableGeneration == generation,
-                  manager.authorizationEpoch == epoch, !self.isUnderAssistantControl(page) else {
+                  manager.authorizationEpoch == epoch, !Self.isAgentControlled(page) else {
                 throw ContactAutofillError.changedPage
             }
             return Self.fillArguments(request, fields: values)
@@ -661,7 +654,8 @@ final class AutofillSuggestions {
               request.kind != .password || request.isLocked || managersAreCurrent(for: request)
                 || (request.grants.isEmpty && request.actions.values.contains(.passkey)),
               AutofillSaveCoordinator.shared.isEnabled(request.kind, context: request.context), page.url == request.topURL,
-              page.hasOnlySecureContent, page.window != nil, !page.isHiddenOrHasHiddenAncestor else { throw ContactAutofillError.changedPage }
+              page.hasOnlySecureContent, page.window != nil, !page.isHiddenOrHasHiddenAncestor,
+              !Self.isAgentControlled(page) else { throw ContactAutofillError.changedPage }
     }
 
     private func validate(_ request: Request, in page: BrowserPage, requiresFocus: Bool = false) async throws {
@@ -802,7 +796,7 @@ final class AutofillSuggestions {
                 // A login, or a card or address of the credentials vault, is not read here: it is read after the final checks below.
                 var fields: [String: Any] = [:]
                 if request.kind != .password, request.itemRows[id] == nil {
-                    guard !self.isUnderAssistantControl(page) else { throw ContactAutofillError.changedPage }
+                    guard !Self.isAgentControlled(page) else { throw ContactAutofillError.changedPage }
                     fields = try await self.keychainFields(id, request: request)
                 }
                 try await self.validate(request, in: page)
@@ -824,7 +818,7 @@ final class AutofillSuggestions {
                     prepare = { [weak self, weak page] in
                         guard let self, let page else { throw ContactAutofillError.changedPage }
                         try self.requireAuthority(request, in: page)
-                        guard !self.isUnderAssistantControl(page) else { throw ContactAutofillError.changedPage }
+                        guard !Self.isAgentControlled(page) else { throw ContactAutofillError.changedPage }
                         return Self.fillArguments(request, fields: values)
                     }
                 }

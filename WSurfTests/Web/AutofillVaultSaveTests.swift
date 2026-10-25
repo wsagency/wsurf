@@ -152,17 +152,17 @@ struct AutofillVaultSaveTests {
         try await withSession { session, _, vaults in
             let manager = vaults[0].manager
             let before = try await manager.snapshot().revision
-            session.isUnderAssistantControl = { true }
+            session.isAgentControlled = { true }
 
             await session.offer(.card(try card()), origin: Self.page)
             await session.offer(.contact(contact()), origin: Self.page)
             #expect(session.current == nil)
 
             // An offer made before the assistant took the tab saves nothing after.
-            session.isUnderAssistantControl = { false }
+            session.isAgentControlled = { false }
             await session.offer(.card(try card()), origin: Self.page)
             let offer = try #require(session.current)
-            session.isUnderAssistantControl = { true }
+            session.isAgentControlled = { true }
             await session.save(offer)
 
             #expect(session.current == nil)

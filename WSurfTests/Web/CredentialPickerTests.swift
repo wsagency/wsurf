@@ -243,14 +243,15 @@ struct CredentialPickerTests {
 
         /// The whole pick for `target`, with `choose` standing in for the person at the sheet.
         func pick(
-            _ target: CredentialPicker.Target, choose: @escaping @MainActor ([CredentialPicker.Row]) async -> CredentialPicker.Answer?
+            _ target: CredentialPicker.Target, allowed: @escaping @MainActor @Sendable () -> Bool = { true },
+            choose: @escaping @MainActor ([CredentialPicker.Row]) async -> CredentialPicker.Answer?
         ) async -> CredentialPicker.Outcome {
             CredentialPicker.answersForTesting[profile.id] = { [weak self] rows in
                 self?.offered.append(rows)
                 return await choose(rows)
             }
             defer { CredentialPicker.answersForTesting[profile.id] = nil }
-            return await CredentialPicker.shared.run(target, in: page, window: window, allowed: { true })
+            return await CredentialPicker.shared.run(target, in: page, window: window, allowed: allowed)
         }
 
         func value(_ id: String) async throws -> String? {
@@ -288,6 +289,42 @@ struct CredentialPickerTests {
         <div><input id="pin" name="pin" inputmode="numeric" maxlength="6"><button>Verify</button></div>
         <form action="https://collector.example/take"><input id="xu"><input id="xp" type="password"></form>
         """#
+
+    /// The person chose a login and the fill is under way when the assistant or a connected app takes the tab: nothing is filled.
+    /// Once it lets go, the same pick fills.
+    @Test(.boundedWebViews, arguments: ["assistant", "connected app call", "connected app holds"])
+    func aPickUnderWayIsRefusedWhenAnAgentTakesTheTab(controller: String) async throws {
+        try await withFlow { flow, vaults in
+            let ada = account("ada")
+            try await VaultManagerFixture.save([ada], in: vaults[0])
+            try await flow.load(Self.login)
+            let tab = BrowserTab(opensBlank: false, context: flow.page.context)
+            let connection = UUID()
+            let control: @MainActor (Bool) -> Void = { on in
+                switch controller {
+                case "assistant":
+                    tab.setAgentWorking(on)
+                case "connected app call":
+                    tab.setExternalAutomationWorking(on)
+                default:
+                    tab.processState.setExternalController(connection, holds: on)
+                }
+            }
+            let allowed: @MainActor @Sendable () -> Bool = { tab.allowsCredentialPicker }
+            let refused = await flow.pick(try await flow.rightClick("au"), allowed: allowed) { rows in
+                control(true)
+                return rows.first { $0.accountID == ada.id && $0.fill == .login }.map { .row($0.id) }
+            }
+            #expect(refused == .nothing)
+            #expect(try await flow.values(["au", "ap"]) == ["", ""])
+
+            control(false)
+            let filled = await flow.pick(try await flow.rightClick("au"), allowed: allowed) { rows in
+                rows.first { $0.accountID == ada.id && $0.fill == .login }.map { .row($0.id) }
+            }
+            #expect(filled == .filled(2))
+        }
+    }
 
     @Test(.boundedWebViews) func aLockedVaultIsUnlockedFirstAndNothingIsFilledWhenThePersonCancels() async throws {
         let passkeys = VaultPasskeys()

@@ -570,6 +570,40 @@ struct CrossSiteFrameAutofillTests {
         }
     }
 
+    /// A fill already under way when an agent takes the tab is refused at the engine's dispatch, where every fill's arguments are made
+    /// (`AutofillSuggestions.requireAuthority` asks the same predicate there), in the page's frame and in a cross-site frame; once the
+    /// agent lets go, the same fill lands.
+    @Test(arguments: BrowserEngine.allCases)
+    func aFillUnderWayIsRefusedWhenAnAgentTakesTheTab(engine: BrowserEngine) async throws {
+        try await withPage(engine, "/") { harness in
+            let page = harness.page
+            let tab = BrowserTab(opensBlank: false, context: page.context)
+            AutofillSaveCoordinator.shared.install(in: page, session: tab.autofillSave)
+            let frame = try await harness.ready("localhost")
+            for (target, id) in [(nil, "tp"), (frame, "fp")] as [(BrowserFrame?, String)] {
+                let underWay = Task { try await fill(id, with: "dummy-secret", in: target, of: page) }
+                tab.setAgentWorking(true)
+                await #expect(throws: (any Error).self, "\(id): refused once the agent took the tab") { try await underWay.value }
+                #expect(try await harness.value(id, in: target) == "")
+
+                tab.setAgentWorking(false)
+                try await fill(id, with: "dummy-secret", in: target, of: page)
+                #expect(try await harness.value(id, in: target) == "dummy-secret")
+            }
+        }
+    }
+
+    /// A fill through the dispatch boundary, whose arguments exist only if no agent controls the tab when it is sent.
+    private func fill(_ id: String, with value: String, in frame: BrowserFrame?, of page: BrowserPage) async throws {
+        _ = try await page.callAsyncJavaScript(
+            "document.getElementById(id).value = value; return 1;", in: frame, contentWorld: PasswordAutofill.world,
+            prepareArguments: {
+                guard !AutofillSuggestions.isAgentControlled(page) else { throw ContactAutofillError.changedPage }
+                return ["id": id, "value": value]
+            }
+        )
+    }
+
     @MainActor
     private final class PreparedCount {
         var value = 0

@@ -334,6 +334,8 @@ final class BrowserTab: Identifiable {
         find.driver = .browserPage { [weak self] in self?.shownPage }
         reader.driver = .page { [weak self] in self?.liveView }
         assistantAccess.onPolicyChanged = { [weak self] in self?.releaseInvalidDevelopment() }
+        autofillSave.isAgentControlled = { [weak self] in self?.isAgentControlled ?? true }
+        processState.onControlChange = { [weak self] in self?.agentControlChanged() }
         if opensStartPage {
             permitSystemPage(SystemPages.start)
             page.load(URLRequest(url: SystemPages.start))

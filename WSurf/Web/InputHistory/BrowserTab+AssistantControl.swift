@@ -13,9 +13,27 @@ extension BrowserTab {
         isAgentWorking || processState.isExternalAutomationWorking
     }
 
+    /// The assistant works in this tab, or a connected app is in a call on it or holds it (the AI mark). Whatever an agent can read
+    /// on the page must never be a filled secret, so nothing is offered for autofill then: no Pick Credential…
+    /// (`allowsCredentialPicker`), no password, code, card or address suggestion and no save offer (`AutofillSaveSession.isAgentControlled`,
+    /// asked again at every fill's dispatch). The one predicate for all of them.
+    var isAgentControlled: Bool {
+        isUnderAssistantControl || !processState.externalControllers.isEmpty
+    }
+
     /// The tab's part of whether Pick Credential… is offered (`CredentialPicker.isOffered` adds the vault's): never in a private
-    /// window, never while the assistant works here or while a connected app holds the tab, and never on an internal page.
+    /// window, never while an agent controls the tab (`isAgentControlled`), and never on an internal page.
     var allowsCredentialPicker: Bool {
-        !isPrivate && !isClosed && !isUnderAssistantControl && processState.externalControllers.isEmpty && internalPage == nil
+        !isPrivate && !isClosed && !isAgentControlled && internalPage == nil
+    }
+
+    /// Control started: no offer of the tab stays on screen, and nothing staged before it is offered afterwards. Offers come back with
+    /// the next focus once control ends.
+    func agentControlChanged() {
+        guard isAgentControlled else { return }
+        autofillSave.clear()
+        if let liveView {
+            AutofillSuggestions.shared.dismiss(in: liveView)
+        }
     }
 }

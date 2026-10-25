@@ -104,7 +104,7 @@ struct VaultItemAutofillTests {
     }
 
     @Test func aTabStartsWithoutAssistantControl() {
-        // The tab sets the real answer when it installs its page; until then the panel treats the page as the person's own.
-        #expect(AutofillSaveSession().isUnderAssistantControl() == false)
+        // A session no tab owns reports no control; every tab sets its own predicate (`BrowserTab.isAgentControlled`) when it is made.
+        #expect(AutofillSaveSession().isAgentControlled() == false)
     }
 }
