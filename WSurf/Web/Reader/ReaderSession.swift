@@ -40,6 +40,10 @@ final class ReaderSession {
     /// This tab's listener, with its own on-device voice. It is made when Reader first needs it, so a tab that never reads aloud
     /// has no speech synthesizer. Tests put one in.
     @ObservationIgnored var speaker: ReaderListener?
+    /// WSurf is muted: whatever this tab reads aloud, now or later, waits for it to be unmuted (`BrowserApplication.silenceSpeech`).
+    @ObservationIgnored var isSilenced = false {
+        didSet { speaker?.setSilenced(isSilenced) }
+    }
     @ObservationIgnored var retryDelay: Duration = .milliseconds(1500)
     @ObservationIgnored private var probing: Int?
 
@@ -133,6 +137,7 @@ final class ReaderSession {
             return speaker
         }
         let made = ReaderListener(output: AppleSpeechOutput())
+        made.setSilenced(isSilenced)
         speaker = made
         return made
     }

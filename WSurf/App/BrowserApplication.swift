@@ -251,6 +251,9 @@ final class BrowserApplication {
         precondition(!windows.contains { $0.windowID == coordinator.windowID })
         coordinator.application = self
         windows.append(coordinator)
+        if isMuted {
+            coordinator.silenceSpeech(true)
+        }
         if !coordinator.profiles.isPrivate, !coordinator.isMicro {
             defaults.removeObject(forKey: Self.closedAsLastKey)
         }
