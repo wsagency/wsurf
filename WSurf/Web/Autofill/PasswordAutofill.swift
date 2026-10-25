@@ -65,6 +65,8 @@ final class PasswordAutofill {
             }
             AutofillDiagnostics.note(.scriptReady, kind: .password)
             applyPolicy(in: message.page, frame: message.frameInfo)
+        } else if let body = message.body as? [String: Any], body["action"] as? String == "context" {
+            CredentialPicker.shared.noteContext(message)
         } else {
             AutofillSuggestions.shared.receive(message, kind: .password, world: Self.world, bridge: "__wsurfPasswords")
         }

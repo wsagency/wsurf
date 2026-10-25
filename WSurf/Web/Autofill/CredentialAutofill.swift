@@ -128,15 +128,20 @@ nonisolated enum CredentialAccountSelection {
         return siblingWebsite(of: account, for: origin, site: site, sites: &sites) != nil
     }
 
-    /// Whether `origin` may be added to `account`: an account of a sibling website, not saved for `origin` yet, with room under
-    /// `CredentialAccount.websiteLimit`. A full account is never made room in by dropping another website.
-    static func canAddWebsite(_ origin: String, to account: CredentialAccount) -> Bool {
-        account.origins.count < CredentialAccount.websiteLimit && isSibling(account, of: origin)
+    /// Whether `origin` may be added to `account`: an account of a sibling website (or, with `anySite`, one the person picked by hand
+    /// for this page in Pick Credential…), not saved for `origin` yet, with room under `CredentialAccount.websiteLimit`. `origin` must
+    /// be a normalized HTTPS origin. A full account is never made room in by dropping another website.
+    static func canAddWebsite(_ origin: String, to account: CredentialAccount, anySite: Bool = false) -> Bool {
+        guard account.origins.count < CredentialAccount.websiteLimit else { return false }
+        guard anySite else { return isSibling(account, of: origin) }
+        return !account.origins.contains(origin) && URL(string: origin).flatMap(CredentialAccount.origin(for:)) == origin
     }
 
     /// The accounts with `origin` added to the account `id`, and nothing else changed.
-    static func addingWebsite(_ origin: String, to id: UUID, in accounts: [CredentialAccount]) throws -> [CredentialAccount] {
-        guard let index = accounts.firstIndex(where: { $0.id == id }), canAddWebsite(origin, to: accounts[index]) else {
+    static func addingWebsite(
+        _ origin: String, to id: UUID, in accounts: [CredentialAccount], anySite: Bool = false
+    ) throws -> [CredentialAccount] {
+        guard let index = accounts.firstIndex(where: { $0.id == id }), canAddWebsite(origin, to: accounts[index], anySite: anySite) else {
             throw CredentialVaultError.invalidData
         }
         var accounts = accounts

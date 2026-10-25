@@ -298,9 +298,19 @@ extension BrowserTab {
                     self?.onSummarizeLink?(url, anchor ?? TabNavigationDelegate.pointer(in: view))
                 }
                 tabView.onZoomChanged = { [weak self] in self?.zoomDidChange() }
+                tabView.canPickCredential = { [weak self, weak view] in
+                    guard let self, let view, liveView === view else { return false }
+                    return CredentialPicker.isOffered(in: view, allowedByTab: allowsCredentialPicker)
+                }
+                tabView.onPickCredential = { [weak self, weak view] menu in self?.pickCredential(in: view, menu: menu) }
             }
         } else if let chromium = view.chromium {
             installChromiumCallbacks(on: chromium, in: view)
+            chromium.canPickCredential = { [weak self, weak view] in
+                guard let self, let view, liveView === view else { return false }
+                return CredentialPicker.isOffered(in: view, allowedByTab: allowsCredentialPicker)
+            }
+            chromium.onPickCredential = { [weak self, weak view] menu in self?.pickCredential(in: view, menu: menu) }
         }
 
         context.webViewPool.configurePage?(view)
@@ -407,6 +417,15 @@ extension BrowserTab {
             guard let self, let view, self.liveView === view, view.chromium != nil,
                   permission == .camera || permission == .microphone, policy != .deny else { return }
             changeChromiumCapture(in: view, permission: permission, revoke: false)
+        }
+    }
+
+    /// Pick Credential… from the page's context menu. The tab's policy is asked again before every step of the picker.
+    private func pickCredential(in view: BrowserPage?, menu: CredentialPicker.Menu) {
+        guard let view, liveView === view else { return }
+        CredentialPicker.shared.pick(in: view, menu: menu) { [weak self, weak view] in
+            guard let self, let view else { return false }
+            return liveView === view && allowsCredentialPicker
         }
     }
 

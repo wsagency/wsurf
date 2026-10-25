@@ -12,4 +12,10 @@ extension BrowserTab {
     var isUnderAssistantControl: Bool {
         isAgentWorking || processState.isExternalAutomationWorking
     }
+
+    /// The tab's part of whether Pick Credential… is offered (`CredentialPicker.isOffered` adds the vault's): never in a private
+    /// window, never while the assistant works here or while a connected app holds the tab, and never on an internal page.
+    var allowsCredentialPicker: Bool {
+        !isPrivate && !isClosed && !isUnderAssistantControl && processState.externalControllers.isEmpty && internalPage == nil
+    }
 }

@@ -38,8 +38,12 @@ extension BrowserTab {
                 tabView.profileContext = nil
                 tabView.onPeekLink = nil
                 tabView.onSummarizeLink = nil
+                tabView.canPickCredential = nil
+                tabView.onPickCredential = nil
             }
         }
+        outgoing.chromium?.canPickCredential = nil
+        outgoing.chromium?.onPickCredential = nil
         outgoing.removeFromSuperview()
         progressObservation = nil
         loadingObservation = nil

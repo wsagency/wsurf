@@ -32,25 +32,6 @@ final class AutofillSaveSession: NSObject {
         /// dismissed or replaced by an offer from the page the user is on.
         var isGone = false
     }
-    /// The page's website, to be added to a saved credential of a sibling website instead of saving a copy of that login. Identity
-    /// only: no secret is held, and confirming reads the credential again under the unlock the offer was made under.
-    nonisolated struct WebsiteOffer: Identifiable, Sendable {
-        let id = UUID()
-        /// The website to add: the page's origin.
-        let origin: String
-        let accountID: UUID
-        /// What the dropdown calls the credential, and the username it must still have when the offer is confirmed.
-        let name: String
-        let username: String
-        let managerEpoch: UInt64
-        let documentID: String
-        let liveOrigin: String
-        let fingerprint: String
-
-        var host: String {
-            String(origin.dropFirst("https://".count))
-        }
-    }
     private(set) var offers: [Offer] = []
     private(set) var websiteOffer: WebsiteOffer?
     private(set) var isBusy = false
@@ -76,6 +57,7 @@ final class AutofillSaveSession: NSObject {
         var deadline: ContinuousClock.Instant?; var epoch: UInt64?
     }
     @ObservationIgnored var username: UsernameStep?
+    @ObservationIgnored var manualPick: ManualPick?
     @ObservationIgnored let submissions = AutofillSubmissionTracker()
     /// Whether the assistant or a connected app controls the tab right now (`BrowserTab.isUnderAssistantControl`). The fill panel
     /// then offers no card or address, so none is ever filled into a page an agent reads, and no card or address is offered for saving.
@@ -90,6 +72,7 @@ final class AutofillSaveSession: NSObject {
     }
     func clear() {
         revision += 1; offers = []; websiteOffer = nil; isPopoverPresented = false; username = nil; submissions.clear(); error = nil
+        manualPick = nil
         expiry?.cancel(); expiry = nil
         vaultAccessEnded()
     }
@@ -330,7 +313,8 @@ final class AutofillSaveSession: NSObject {
             if target == nil, let sibling = await siblingAccount(for: login, origin: origin) {
                 guard revision == self.revision else { return }
                 await offerWebsite(
-                    accountID: sibling.accountID, epoch: sibling.epoch, origin: origin, documentID: documentID, liveOrigin: liveOrigin
+                    accountID: sibling.accountID, epoch: sibling.epoch, origin: origin, documentID: documentID, liveOrigin: liveOrigin,
+                    manual: sibling.manual
                 )
                 return
             }
@@ -411,19 +395,21 @@ final class AutofillSaveSession: NSObject {
     /// The one credential, in the profile's unlocked vaults, that `login` repeats exactly (username and password) on a sibling
     /// website of `origin` and that has room for `origin`, while no credential for `origin` itself has that username. Saving the
     /// login would make a copy of it, so adding the website is offered instead. Of several such credentials only the one just filled
-    /// here is taken; the others are never guessed between.
-    private func siblingAccount(for login: SavedPassword, origin: String) async -> (accountID: UUID, epoch: UInt64)? {
+    /// here is taken; the others are never guessed between. Failing that, the credential the person just picked by hand for this
+    /// website (`manualPick`) when the login repeats it exactly: `manual` is then true.
+    private func siblingAccount(for login: SavedPassword, origin: String) async -> (accountID: UUID, epoch: UInt64, manual: Bool)? {
         guard let context, !context.profile.isPrivate, let page, page.context === context, let origin = managerOrigin(origin),
-              CredentialAccountSelection.site(of: origin) != nil,
               let listing = try? await CredentialManager.store(for: context.profile).listing() else { return nil }
         let listed = Set(listing.map(\.vaultID))
         var found: [(accountID: UUID, epoch: UInt64)] = []
+        let hasSiblings = CredentialAccountSelection.site(of: origin) != nil
         for manager in CredentialManager.unlockedManagers(for: context.profile) where listed.contains(manager.vaultID) {
             guard let epoch = manager.authorizationEpoch, let snapshot = try? await manager.snapshot(),
                   manager.authorizationEpoch == epoch else { continue }
             if snapshot.accounts.contains(where: { $0.origins.contains(origin) && $0.username == login.username }) {
                 return nil
             }
+            guard hasSiblings else { continue }
             for (account, _) in CredentialAccountSelection.siblings(in: snapshot.accounts, origin: origin, entered: nil)
             where account.username == login.username && account.password == login.password
                 && CredentialAccountSelection.canAddWebsite(origin, to: account) {
@@ -431,14 +417,28 @@ final class AutofillSaveSession: NSObject {
             }
         }
         let pick = livePick(origin: origin, username: login.username)
-        return found.count == 1 ? found[0] : found.first { $0.accountID == pick?.accountID && $0.epoch == pick?.epoch }
+        if let sibling = found.count == 1 ? found[0] : found.first(where: { $0.accountID == pick?.accountID && $0.epoch == pick?.epoch }) {
+            return (sibling.accountID, sibling.epoch, false)
+        }
+        guard let picked = manualPick, picked.origin == origin, ContinuousClock.now < picked.deadline,
+              let manager = manager(epoch: picked.epoch), let snapshot = try? await manager.snapshot(),
+              self.manager(epoch: picked.epoch) === manager,
+              let account = snapshot.accounts.first(where: { $0.id == picked.accountID }),
+              account.username == login.username, account.password == login.password,
+              CredentialAccountSelection.canAddWebsite(origin, to: account, anySite: true) else { return nil }
+        return (account.id, picked.epoch, true)
     }
 
     /// Offers to add `origin` to the credential `accountID` of the vault leased under `epoch`: a credential of a sibling website
-    /// that was just filled here, or whose login was just submitted here. Nothing is written until `addWebsite`, and only then.
-    func offerWebsite(accountID: UUID, epoch: UInt64, origin: String, documentID: String, liveOrigin: String? = nil) async {
+    /// that was just filled here, or whose login was just submitted here, or (`manual`) any credential the person just picked by hand
+    /// for this page. Nothing is written until `addWebsite`, and only then. A website the bar cannot draw as a plain name is never
+    /// offered, and a manual offer says when the page imitates one of the credential's websites.
+    func offerWebsite(
+        accountID: UUID, epoch: UInt64, origin: String, documentID: String, liveOrigin: String? = nil, manual: Bool = false
+    ) async {
         guard let context, AutofillSaveCoordinator.shared.isEnabled(.password, context: context),
-              let page, page.context === context, let origin = managerOrigin(origin), let manager = manager(epoch: epoch) else { return }
+              let page, page.context === context, let origin = managerOrigin(origin), let manager = manager(epoch: epoch),
+              WebsiteLookalike.displayHost(of: origin) != nil else { return }
         let revision = revision
         let liveOrigin = liveOrigin ?? origin
         let fingerprint = websiteFingerprint(origin: origin, accountID: accountID)
@@ -453,7 +453,7 @@ final class AutofillSaveSession: NSObject {
             return
         }
         guard let account = snapshot.accounts.first(where: { $0.id == accountID }),
-              CredentialAccountSelection.canAddWebsite(origin, to: account) else { return }
+              CredentialAccountSelection.canAddWebsite(origin, to: account, anySite: manual) else { return }
         if !documentID.isEmpty, await !liveness(page, documentID, liveOrigin) {
             AutofillDiagnostics.note(.offerDroppedNotLive, kind: .password)
             return
@@ -466,7 +466,8 @@ final class AutofillSaveSession: NSObject {
         websiteOffer = WebsiteOffer(
             origin: origin, accountID: accountID,
             name: CredentialAccountSelection.title(account, origin: account.origins.first ?? origin), username: account.username,
-            managerEpoch: epoch, documentID: documentID, liveOrigin: liveOrigin, fingerprint: fingerprint
+            managerEpoch: epoch, documentID: documentID, liveOrigin: liveOrigin, fingerprint: fingerprint,
+            isManual: manual, lookalike: manual ? WebsiteLookalike.imitated(by: origin, among: account.origins) : nil
         )
         isPopoverPresented = true
         error = nil
@@ -495,7 +496,9 @@ final class AutofillSaveSession: NSObject {
                   snapshot.accounts.first(where: { $0.id == offer.accountID })?.username == offer.username else {
                 throw CredentialVaultError.staleRevision
             }
-            let accounts = try CredentialAccountSelection.addingWebsite(offer.origin, to: offer.accountID, in: snapshot.accounts)
+            let accounts = try CredentialAccountSelection.addingWebsite(
+                offer.origin, to: offer.accountID, in: snapshot.accounts, anySite: offer.isManual
+            )
             _ = try await manager.commit(
                 accounts, expectedRevision: snapshot.revision, authorizedEpoch: offer.managerEpoch, cause: CredentialChangeCause.addWebsite,
                 changing: [offer.accountID]

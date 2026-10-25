@@ -609,7 +609,18 @@ extension ChromiumClient {
 
     func makeContextMenuHandler() {
         let handler = ChromiumInterop.allocate(cef_context_menu_handler_t.self, owner: self)
-        handler.pointee.on_before_context_menu = { _, browser, frame, params, model in
+        handler.pointee.on_before_context_menu = { handlerSelf, browser, frame, params, model in
+            if let client = ChromiumClient.owner(handlerSelf.map(UnsafeMutableRawPointer.init)), let params, let model {
+                let editable = params.pointee.is_editable?(params) == 1
+                let clicked = frame.map { frame in
+                    CredentialPicker.ChromiumFrame(
+                        id: ChromiumInterop.takeString(frame.pointee.get_identifier?(frame)),
+                        url: URL(string: ChromiumInterop.takeString(frame.pointee.get_url?(frame))),
+                        isMain: frame.pointee.is_main?(frame) == 1
+                    )
+                }
+                MainActor.assumeIsolated { client.offerCredentialPicker(in: model, editable: editable, frame: clicked) }
+            }
             ChromiumClient.releaseBrowser(browser)
             ChromiumClient.releaseFrame(frame)
             ChromiumClient.release(params.map(UnsafeMutableRawPointer.init))
@@ -623,17 +634,44 @@ extension ChromiumClient {
             ChromiumClient.release(callback.map(UnsafeMutableRawPointer.init))
             return 0
         }
-        handler.pointee.on_context_menu_command = { _, browser, frame, params, _, _ in
+        handler.pointee.on_context_menu_command = { handlerSelf, browser, frame, params, command, _ in
             ChromiumClient.releaseBrowser(browser)
             ChromiumClient.releaseFrame(frame)
             ChromiumClient.release(params.map(UnsafeMutableRawPointer.init))
-            return 0
+            guard command == ChromiumClient.pickCredentialCommand,
+                  let client = ChromiumClient.owner(handlerSelf.map(UnsafeMutableRawPointer.init)) else { return 0 }
+            return MainActor.assumeIsolated { client.runCredentialPicker() } ? 1 : 0
         }
         handler.pointee.on_context_menu_dismissed = { _, browser, frame in
             ChromiumClient.releaseBrowser(browser)
             ChromiumClient.releaseFrame(frame)
         }
         contextMenuPointer = handler
+    }
+
+    /// The Pick Credential… command: the first id CEF leaves to the embedder.
+    nonisolated static let pickCredentialCommand = Int32(MENU_ID_USER_FIRST.rawValue)
+
+    /// Puts Pick Credential… at the top of an editable field's menu when the tab offers it, and remembers which frame the engine says
+    /// was right-clicked and when.
+    func offerCredentialPicker(in model: UnsafeMutablePointer<cef_menu_model_t>, editable: Bool, frame: CredentialPicker.ChromiumFrame?) {
+        pickCredentialMenu = nil
+        guard editable, let page, page.canPickCredential?() == true else { return }
+        let added = ChromiumInterop.withString(String(localized: "Pick Credential…")) {
+            model.pointee.insert_item_at?(model, 0, Self.pickCredentialCommand, $0)
+        }
+        guard added == 1 else { return }
+        if (model.pointee.get_count?(model) ?? 0) > 1 {
+            _ = model.pointee.insert_separator_at?(model, 1)
+        }
+        pickCredentialMenu = CredentialPicker.Menu(opened: .now, chromiumFrame: frame)
+    }
+
+    func runCredentialPicker() -> Bool {
+        guard let menu = pickCredentialMenu, let page else { return false }
+        pickCredentialMenu = nil
+        page.onPickCredential?(menu)
+        return true
     }
 
     func makeDialogHandler() {
