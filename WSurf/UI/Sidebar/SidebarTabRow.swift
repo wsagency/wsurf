@@ -287,6 +287,7 @@ struct SidebarTabRow: View {
                 : nil,
             radius: radius
         )
+        .overlay { SidebarRevealPulse(browser: browser, tabID: tab.id, radius: radius) }
         .opacity(isLifted ? 0 : 1)
         .contentShape(Rectangle())
         .onGeometryChange(for: CGRect.self) { $0.frame(in: .named(context.space)) } action: {
@@ -294,6 +295,14 @@ struct SidebarTabRow: View {
             context.followPreview(of: item, id: tab.id)
         }
         .onAppear { rowFrame.appear(item, in: context.frames) }
+        // The list holds still while a title is being edited, so it needs to know.
+        .onChange(of: isRenaming) { _, renaming in
+            if renaming {
+                browser.tabRenameID = tab.id
+            } else if browser.tabRenameID == tab.id {
+                browser.tabRenameID = nil
+            }
+        }
         .onTapGesture { tapped() }
         .onMiddleClick {
             coordinator.tabPreview.dismiss()
@@ -310,6 +319,9 @@ struct SidebarTabRow: View {
         .onDisappear {
             coordinator.tabPreview.unhover(tab.id)
             rowFrame.forget(item, in: context.frames)
+            if browser.tabRenameID == tab.id {
+                browser.tabRenameID = nil
+            }
         }
         .help(sidebarStyle == .icons ? Text(verbatim: tab.title) : Text(verbatim: ""))
         .popover(isPresented: Binding(

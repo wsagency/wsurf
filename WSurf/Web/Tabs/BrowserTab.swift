@@ -32,7 +32,15 @@ final class BrowserTab: Identifiable {
         get { customTitle.isEmpty ? pageTitle : customTitle }
         set { pageTitle = newValue }
     }
-    var urlString = ""
+    var urlString = "" {
+        didSet {
+            guard oldValue.isEmpty, !urlString.isEmpty, let onFirstAddress else { return }
+            self.onFirstAddress = nil
+            onFirstAddress()
+        }
+    }
+    /// Called once, when a tab that opened with no address gets one: the moment a person has typed where it goes.
+    var onFirstAddress: (() -> Void)?
     var isLoading = false
     var isFavorite = false
     var favicon: NSImage?
@@ -421,6 +429,7 @@ final class BrowserTab: Identifiable {
         onChromiumDownloadProgress = nil
         hasActiveDownload = nil
         onNavigationStarted = nil
+        onFirstAddress = nil
         onNavigationFinished = nil
         onNavigationOutsideExtension = nil
         onNewWindow = nil

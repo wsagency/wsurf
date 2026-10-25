@@ -28,13 +28,39 @@ nonisolated enum AlignmentSource: String, CaseIterable, CustomStringConvertible,
     /// A folder row, shut and open.
     case folderShut
     case folderOpen
+    /// A folder row that wears a symbol a person chose: tall, wide, round and thin ones.
+    case folderStar
+    case folderBriefcase
+    case folderCart
+    case folderTerminal
 
     var description: String {
         rawValue
     }
 
     var isFolder: Bool {
-        self == .folderShut || self == .folderOpen
+        switch self {
+        case .folderShut, .folderOpen, .folderStar, .folderBriefcase, .folderCart, .folderTerminal:
+            true
+        default:
+            false
+        }
+    }
+
+    /// The symbol a person chose for the folder, or nil for the plain folder.
+    var chosenSymbol: String? {
+        switch self {
+        case .folderStar:
+            "star.fill"
+        case .folderBriefcase:
+            "briefcase"
+        case .folderCart:
+            "cart"
+        case .folderTerminal:
+            "terminal"
+        default:
+            nil
+        }
     }
 }
 
@@ -105,7 +131,7 @@ nonisolated enum AlignmentMatrix {
             }
         }
         let folders: [(Double, Double, TabFolderSize)] = [(16, 12, .normal), (12, 20, .large), (24, 10, .largest), (20, 16, .larger)]
-        for source in [AlignmentSource.folderShut, .folderOpen] {
+        for source in [AlignmentSource.folderShut, .folderOpen, .folderStar, .folderBriefcase, .folderCart, .folderTerminal] {
             for (icon, font, size) in folders {
                 cells.append(AlignmentCell(source: source, iconSize: icon, fontSize: font, folderSize: size))
             }
@@ -345,6 +371,7 @@ struct SidebarIconAlignmentTests {
             folder.isExpanded = cell.source == .folderOpen
             folder.size = cell.folderSize
             folder.color = .red
+            folder.symbol = cell.source.chosenSymbol
             // The tab opened last is the current one and is filled; the rows measured are not it.
             _ = fixture.browser.newTab()
             total = cell.source == .folderOpen

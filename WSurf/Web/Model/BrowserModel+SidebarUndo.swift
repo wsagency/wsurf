@@ -45,6 +45,8 @@ extension BrowserModel {
         } else if isVisibleInSplit(tab) {
             tab.realizeDeferredSession()
         }
+        // Reopen Last Closed Tab and undoing a close both bring a tab back that may not be on screen.
+        revealInSidebar(tab)
         registerSidebarUndo(named: String(localized: "Close Tab")) { model in
             guard let restored = model.tab(id: record.id) else { return }
             model.close(restored)

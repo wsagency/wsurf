@@ -70,6 +70,8 @@ struct WorkspaceList<TopBar: View, BottomBar: View>: View {
     @State private var reopening: [UUID] = []
     @State private var dwelling: UUID?
     @State private var dwell: Task<Void, Never>?
+    /// True while a finger or trackpad scrolls the list, and while it coasts to a stop.
+    @State private var isScrolling = false
 
     private var model: SidebarDragModel {
         coordinator.sidebarDrag
@@ -141,17 +143,20 @@ struct WorkspaceList<TopBar: View, BottomBar: View>: View {
             .onTapGesture { selection.takeKeyboard() }
             .contextMenu { emptySpaceMenu }
             .animation(Theme.Motion.drift, value: bottomClearance)
-        if loadsLazily {
-            LazyVStack(spacing: spacing) {
-                rows
-                room
-            }
-        } else {
-            VStack(spacing: spacing) {
-                rows
-                room
+        Group {
+            if loadsLazily {
+                LazyVStack(spacing: spacing) {
+                    rows
+                    room
+                }
+            } else {
+                VStack(spacing: spacing) {
+                    rows
+                    room
+                }
             }
         }
+        .environment(\.sidebarPulsesRevealedRows, true)
     }
 
     @ViewBuilder
@@ -201,6 +206,13 @@ struct WorkspaceList<TopBar: View, BottomBar: View>: View {
                 proxy.scrollTo(SidebarItem.folder(id), anchor: .center)
             }
         }
+        .onScrollPhaseChange { _, phase in
+            isScrolling = phase == .interacting || phase == .decelerating
+        }
+        .onChange(of: browser.sidebarReveal) { _, reveal in
+            guard let reveal else { return }
+            Task { @MainActor in await show(reveal, with: proxy) }
+        }
         .scrollIndicators(.never)
         .scrollEdgeEffectHidden(true, for: .bottom)
         .mask {
@@ -246,6 +258,30 @@ struct WorkspaceList<TopBar: View, BottomBar: View>: View {
         .onChange(of: browser.favorites.map(\.id)) { _, _ in
             selection.excludeFavorites(browser.favorites)
         }
+        }
+    }
+
+    /// Scrolls to the row of a tab that was just opened, unless something else has the list: a drag, a rename, or the
+    /// person's own scrolling. The row may not be built yet (the list is lazy), so this waits for it where it must.
+    private func show(_ reveal: SidebarReveal, with proxy: ScrollViewProxy) async {
+        await Task.yield()
+        let steps = SidebarRevealPlan.steps(
+            for: reveal.tabID,
+            in: browser.sidebarTree,
+            isDrawn: { frames[$0] != nil },
+            isDragging: drag != nil,
+            isRenaming: browser.folderRenameID != nil || browser.tabRenameID != nil,
+            isScrolling: isScrolling
+        )
+        for (index, step) in steps.enumerated() {
+            if index > 0 {
+                // The folder is on its way in; its rows come with it.
+                for _ in 0..<30 where frames[.tab(reveal.tabID)] == nil {
+                    try? await Task.sleep(for: .milliseconds(16))
+                }
+            }
+            guard browser.sidebarReveal == reveal, drag == nil, !isScrolling else { return }
+            proxy.scrollTo(step.item, anchor: step.anchor)
         }
     }
 
@@ -654,9 +690,9 @@ struct SidebarDragChip: View {
             if let folder = browser.folder(id: id) {
                 HStack(spacing: SidebarMetrics.rowIconSpacing) {
                     SidebarSymbol(
-                        "folder.fill", size: 10.5 * SidebarMetrics.rowIconSize / 16, box: SidebarMetrics.rowIconSize
+                        folder.glyph(isOpen: false), size: 10.5 * SidebarMetrics.rowIconSize / 16, box: SidebarMetrics.rowIconSize
                     )
-                    .foregroundStyle(folder.color.tint(opacity: BrowserSettings.application.chromeShape.folderColorOpacity))
+                    .foregroundStyle(folder.tint(opacity: BrowserSettings.application.chromeShape.folderColorOpacity))
                     if sidebarStyle == .full {
                         Text(verbatim: folder.name)
                             .font(BrowserSettings.application.sidebarFont)

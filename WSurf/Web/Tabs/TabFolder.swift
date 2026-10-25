@@ -62,6 +62,10 @@ final class TabFolder: Identifiable {
     /// Draws the icons of the tabs inside the folder in the folder's color, and those of the folders inside it that
     /// do not tint on their own. Off by default.
     var tintsIcons = false
+    /// A color a person chose with the color panel. It takes the place of `color` while it is set; nil is the preset.
+    var customColor: CustomFolderColor?
+    /// The SF Symbol a person chose to stand for the folder; nil is the plain folder icon, which opens and shuts.
+    var symbol: String?
     /// The space the folder and everything in it belong to; nil while the folder is pinned or inside a pinned folder.
     var spaceID: UUID?
 

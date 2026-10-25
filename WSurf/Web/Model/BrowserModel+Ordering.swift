@@ -540,9 +540,49 @@ extension BrowserModel {
         scheduleSave()
     }
 
+    /// A preset color. It also puts a color the person chose out of use. One undo step.
     func setFolderColor(_ color: TabFolderColor, for folder: TabFolder) {
-        guard folder.color != color else { return }
+        setFolderLook(color: color, customColor: nil, for: folder)
+    }
+
+    /// A color the person chose. One undo step, unless `registersUndo` is false: the color panel changes the color
+    /// again and again while a person drags in it, and only the first change of the drag is a step.
+    /// Returns whether the folder changed.
+    @discardableResult
+    func setFolderCustomColor(_ custom: CustomFolderColor, for folder: TabFolder, registersUndo: Bool = true) -> Bool {
+        setFolderLook(color: folder.color, customColor: custom, for: folder, registersUndo: registersUndo)
+    }
+
+    @discardableResult
+    private func setFolderLook(
+        color: TabFolderColor, customColor: CustomFolderColor?, for folder: TabFolder, registersUndo: Bool = true
+    ) -> Bool {
+        guard foldersByID[folder.id] === folder, folder.color != color || folder.customColor != customColor else { return false }
+        if registersUndo {
+            let previous = (color: folder.color, custom: folder.customColor)
+            let id = folder.id
+            registerSidebarUndo(named: String(localized: "Change Folder Color")) { model in
+                guard let folder = model.folder(id: id) else { return }
+                model.setFolderLook(color: previous.color, customColor: previous.custom, for: folder)
+            }
+        }
         folder.color = color
+        folder.customColor = customColor
+        scheduleSave()
+        return true
+    }
+
+    /// One undo step. nil is the plain folder icon. A pinned folder's symbol goes to the profile with the rest of its row.
+    func setFolderSymbol(_ symbol: String?, for folder: TabFolder) {
+        let symbol = symbol.flatMap { $0.isEmpty ? nil : $0 }
+        guard foldersByID[folder.id] === folder, folder.symbol != symbol else { return }
+        let previous = folder.symbol
+        let id = folder.id
+        registerSidebarUndo(named: String(localized: "Change Folder Icon")) { model in
+            guard let folder = model.folder(id: id) else { return }
+            model.setFolderSymbol(previous, for: folder)
+        }
+        folder.symbol = symbol
         scheduleSave()
     }
 
