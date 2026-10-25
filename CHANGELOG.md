@@ -5,6 +5,35 @@ This file preserves release notes inherited from the upstream
 describe upstream Linen releases, not releases published by WSurf. New WSurf
 release notes will be added above this provenance record.
 
+## 0.1.14 (build 14) — 2026-10-26
+
+Everything since 0.1.13 (build 13). None of the screens and prompts below has been checked by hand.
+
+### Passwords, passkeys and autofill
+
+- Chromium tabs: a login or code field inside a frame from another website (a cross-site iframe, such as an embedded sign-in or payment frame) now gets the dropdown and Pick Credential…, as in WebKit tabs. The suggestions, the Pick Credential… sheet and the offer to save a login you typed there all use that frame’s own website, never the page around it: a frame cannot claim the page’s website, and the page cannot speak for the frame. Nothing is filled until you choose a row or press Fill, and a password or code still goes only into a form that sends it to the same website. Cards and addresses work in these frames as they do in WebKit, and a card still asks for Touch ID.
+- While the assistant or a connected app controls a tab (it is working in it, is in the middle of a call on it, or holds it), WSurf now offers nothing there: no saved password, verification code, card or address in the dropdown, and no offer to save a login or card. This holds in WebKit and Chromium tabs and in every frame, and a fill that was already under way when the tab was taken is refused. Until now the password and code dropdown could still be opened in such a tab. When the agent lets go, the next click in a field asks again; a login typed while it held the tab is not offered for saving afterwards, and neither is an offer that was waiting when it took the tab.
+- Chromium tabs: a sandboxed frame (an iframe whose sandbox gives it no origin of its own) is no longer trusted for autofill. Chromium reports such a frame under the website that embeds it, and WSurf used to take that at its word, so a sandboxed frame of the same website could be offered that website’s logins and saves. It now gets nothing, as in WebKit. In frames from other websites the same goes for an empty (about:blank), srcdoc, data: or blob: document.
+- Settings › Credentials › Suggested Merges now suggests only credentials of the same website and the same username. A website is the host and the port, ignoring a leading www., so dev5.example.com and htz.example.com are different websites even with the same username and password, and so are two ports of one host. Numbered copies such as “name (1)” are still suggested, within one website, and so is a password, passkey or verification code saved apart for the same website. The same password, or a similar site name, is no longer a reason. Each suggestion says why under its title: “Same website and username”, “Copy (1) of “name””, and so on.
+- Merging, cancelling or choosing Not the Same from Suggested Merges now comes back to the list instead of closing the sheet. The list keeps its place and selects the next suggestion, and the last one selects the one before it. For a moment after a merge the row buttons and Merge All Identical are dimmed until the new list is ready, so nothing is merged from an old list.
+- Not the Same on a suggestion says those credentials are different, and WSurf never suggests merging them again, whatever you edit or merge afterwards. Dismissed (n) lists them, Suggest Again brings a group back, and each is one Undo. The choice is kept with the vault entry (the ids of the credentials it is not the same as, nothing else) and syncs with it once iCloud vault sync is turned on.
+
+### Sound
+
+- Sound from a player inside an iframe now counts as the tab playing, in WebKit tabs and in Chromium tabs, frames from other websites included: the speaker appears, the tab is in its list, and the tab is not put to sleep while it plays. Such a tab also takes part in the media panel like any tab that plays. Mute WSurf and a tab’s Mute reach those players as well, and in Chromium tabs they also use Chromium’s own mute, which covers frames and Web Audio that WSurf’s script cannot reach.
+- Mute WSurf (the speaker, or View › Mute WSurf, ⌃⌘M) now also silences the assistant’s voice and Read Aloud. The assistant stops speaking and does not speak new answers while WSurf is muted, an answer’s Read Aloud button does nothing, and a voice conversation in progress ends; starting one while muted tells you to unmute. Read Aloud of an article pauses where it is and goes on from the same sentence when you unmute, and one you start while muted waits and speaks when you unmute. The setting that mutes the assistant’s voice is not changed: unmuting WSurf never turns on a voice you had muted. Nothing is kept after a restart.
+- With the sidebar hidden (⌃⌘S), the speaker now sits in the toolbar, at the right of the address field before the connection badge and the extension icons, while a tab plays or WSurf is muted. It has the same list, the same click to mute and the same right-click menu. With the sidebar shown, or peeking, the sidebar’s speaker is the only one.
+
+### Under the hood
+
+- The string catalog now holds every string the app uses: about 1,170 were missing, most of them from Settings › Credentials, each with a note for translators. A new check, `Tools/check-string-catalog.py`, lists what a build uses that the catalog lacks. Nothing changes on screen.
+
+### Known issues
+
+- Credentials saved for login.example.com and for example.com are not suggested for merging, because only a leading www. counts as the same website; select both and use Merge With… to join them.
+- When an iframe is removed while it plays, the tab can still show as playing for about half a second.
+- The two known issues of 0.1.13 (no dropdown or Pick Credential… in cross-site frames in Chromium tabs, and a speaker that did not notice sound inside iframes) are gone; the known issues of 0.1.12 are unchanged.
+
 ## 0.1.13 (build 13) — 2026-10-25
 
 Everything since 0.1.11 (build 11); 0.1.12 was not released, so its notes below are part of this build. None of the screens and prompts in either section has been checked by hand.
