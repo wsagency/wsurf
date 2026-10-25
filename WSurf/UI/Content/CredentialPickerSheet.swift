@@ -8,8 +8,21 @@ import SwiftUI
 /// website's first. It shows titles, usernames and websites only; nothing secret ever reaches it.
 @MainActor
 enum CredentialPickerSheet {
-    /// The person's answer; nil for Cancel, Escape or a window that went away.
-    static func present(rows: [CredentialPicker.Row], host: String, canUnlock: Bool, in window: NSWindow) async -> CredentialPicker.Answer? {
+    /// The sheets on screen: their profile, the sheet and its window.
+    private static var open: [(profileID: UUID, sheet: NSWindow, window: NSWindow)] = []
+
+    /// Ends the sheets of `profileID` (all with nil) as a Cancel: its vault access ended or the autofill policy changed, so the list
+    /// of titles does not stay on screen.
+    static func dismiss(profileID: UUID? = nil) {
+        for entry in open where profileID == nil || entry.profileID == profileID {
+            entry.window.endSheet(entry.sheet)
+        }
+    }
+
+    /// The person's answer; nil for Cancel, Escape, a window that went away or `dismiss`.
+    static func present(
+        rows: [CredentialPicker.Row], host: String, canUnlock: Bool, profileID: UUID, in window: NSWindow
+    ) async -> CredentialPicker.Answer? {
         await withCheckedContinuation { continuation in
             final class Once {
                 var continuation: CheckedContinuation<CredentialPicker.Answer?, Never>?
@@ -22,6 +35,7 @@ enum CredentialPickerSheet {
             let finish: @MainActor @Sendable (CredentialPicker.Answer?) -> Void = { [weak window, weak sheet] answer in
                 guard let resume = once.continuation else { return }
                 once.continuation = nil
+                open.removeAll { $0.sheet === sheet }
                 if let closing = once.closing {
                     NotificationCenter.default.removeObserver(closing)
                 }
@@ -37,6 +51,7 @@ enum CredentialPickerSheet {
             once.closing = NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: window, queue: .main) { _ in
                 MainActor.assumeIsolated { finish(nil) }
             }
+            open.append((profileID, sheet, window))
             window.beginSheet(sheet) { _ in finish(nil) }
         }
     }

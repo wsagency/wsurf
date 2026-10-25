@@ -244,9 +244,12 @@ struct CredentialPickerScriptTests {
     }
 
     @Test(.boundedWebViews, arguments: BrowserEngine.allCases)
-    func aCodeSplitOverBoxesGoesBoxByBox(engine: BrowserEngine) async throws {
+    func aCodeSplitOverBoxesGoesBoxByBoxFromTheFirstWhicheverWasRightClicked(engine: BrowserEngine) async throws {
         try await withHarness(engine) { harness in
-            let click = try await harness.rightClick("d1")
+            let short = try await harness.rightClick("d1")
+            #expect(try await harness.fill(short, ["code": "1234"]) == 0, "six boxes are not a four-digit code's")
+
+            let click = try await harness.rightClick("d3")
             #expect(click.body["field"] as? String == "code")
 
             #expect(try await harness.fill(click, ["code": "246813"]) == 6)
@@ -256,11 +259,13 @@ struct CredentialPickerScriptTests {
     }
 
     @Test(.boundedWebViews, arguments: BrowserEngine.allCases)
-    func aPasswordIsNeverFilledIntoAFormThatSendsItToAnotherSite(engine: BrowserEngine) async throws {
+    func aPasswordOrCodeIsNeverFilledIntoAFormThatSendsItToAnotherSite(engine: BrowserEngine) async throws {
         try await withHarness(engine) { harness in
             let click = try await harness.rightClick("xu")
-
             #expect(try await harness.fill(click, ["username": "ada", "password": "dummy-secret"]) == -1)
+
+            let again = try await harness.rightClick("xu")
+            #expect(try await harness.fill(again, ["code": "123456"]) == -1)
 
             #expect(try await harness.values(["xu", "xp"]) == ["", ""], "nothing at all is filled")
         }

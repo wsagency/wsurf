@@ -70,15 +70,18 @@ nonisolated enum PasswordAutofillScript {
       }, true);
       const picked = (token,url) => enabled && !!token && pick.token === token && pick.url === url && location.href === url &&
         !!pick.target?.isConnected && pickable(pick.target);
-      // A code split over boxes of a character or a few goes box by box from the right-clicked one; null when they are not there.
+      // A code split over boxes of a character or a few goes into exactly those boxes, from the first, whichever one was
+      // right-clicked: the nearest container whose boxes of that size in the same form are exactly as many as the code needs.
+      // More boxes than that, or too few, is no split code: null.
       const boxes = (target,length) => {
         const size = target.maxLength;
         if (!(size > 0 && size < length)) return [target];
-        const count = Math.ceil(length / size);
+        const count = Math.ceil(length / size), scope = forms.scope(target);
         for (let node = forms.parent(target), depth = 0; node && depth < 5; node = forms.parent(node), depth++) {
-          const all = forms.elements(node).filter(el => el instanceof HTMLInputElement && el.maxLength === size && pickable(el));
-          const start = all.indexOf(target);
-          if (start >= 0 && all.length - start >= count) return all.slice(start, start + count);
+          const all = forms.elements(node).filter(el => el instanceof HTMLInputElement && el.maxLength === size && pickable(el) &&
+            forms.scope(el) === scope);
+          if (all.length === count && all.includes(target)) return all;
+          if (all.length > count) return null;
         }
         return null;
       };
@@ -89,11 +92,13 @@ nonisolated enum PasswordAutofillScript {
         el.dispatchEvent(new Event('change',{bubbles:true}));
         return 1;
       };
-      // How many fields took a value; -1 when a password would go to a form that sends it to another site, so nothing was filled.
+      // How many fields took a value; -1 when a password or a code would go to a form that sends it to another site, so nothing was
+      // filled.
       const pickFill = (token,url,login) => {
         if (!picked(token,url)) return 0;
         const target = pick.target;
         if (typeof login?.code === 'string') {
+          if (!forms.safe(forms.group(target)?.root)) return -1;
           const list = boxes(target, login.code.length);
           if (!list) return 0;
           pick.token = null;

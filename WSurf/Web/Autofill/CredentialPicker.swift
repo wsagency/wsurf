@@ -75,7 +75,7 @@ final class CredentialPicker {
     enum Failure: Equatable {
         /// The field, the page or the vault changed, or the page took nothing.
         case noField
-        /// The password would have gone to a form that sends it to another website: nothing was filled.
+        /// The password or code would have gone to a form that sends it to another website: nothing was filled.
         case unsafeForm
     }
 
@@ -105,11 +105,12 @@ final class CredentialPicker {
 
     /// Whether a page may offer Pick Credential… now, before anything is read: the tab's own policy (`allowedByTab`: no agent or
     /// connected app controls it, it is no internal page), never a private window, only while password autofill is on, and only on a
-    /// secure HTTPS page in a window.
+    /// secure HTTPS page shown in a window.
     static func isOffered(in page: BrowserPage, allowedByTab: Bool) -> Bool {
         let context = page.context
         return allowedByTab && !context.profile.isPrivate && AutofillSaveCoordinator.shared.isEnabled(.password, context: context)
             && page.url.flatMap(SavedPassword.origin(for:)) != nil && page.hasOnlySecureContent && page.window != nil
+            && !page.isHiddenOrHasHiddenAncestor
     }
 
     /// A trusted right-click as the frame's script reported it: an editable text field with a fresh token, or nothing (which
@@ -162,12 +163,25 @@ final class CredentialPicker {
         picking.insert(key)
         Task { [weak self, weak page] in
             guard let self, let page else { return }
+            guard await Self.isNamedFrame(target, by: menu, in: page) else {
+                self.picking.remove(key)
+                NSSound.beep()
+                return
+            }
             let outcome = await self.run(target, in: page, window: window, allowed: allowed)
             self.picking.remove(key)
             if case .failed(let failure) = outcome, page.window === window {
                 await Self.report(failure, in: window)
             }
         }
+    }
+
+    /// Chromium names the right-clicked frame by its own id, which need not be the DevTools id the script's frame carries. The URL
+    /// then names it only while no other live frame of the page has that URL, the rule of `ChromiumPage.frame(id:requestURL:isMainFrame:)`.
+    private static func isNamedFrame(_ target: Target, by menu: Menu, in page: BrowserPage) async -> Bool {
+        guard let named = menu.chromiumFrame, target.frame.chromiumID != named.id else { return true }
+        guard let chromium = page.chromium, let live = try? await chromium.frames() else { return false }
+        return live.filter { $0.isMainFrame == named.isMain && $0.request.url == named.url }.count == 1
     }
 
     /// Unlock if every vault is locked, list, let the person choose, fill. Every suspension is followed by the same check: the page,
@@ -189,7 +203,7 @@ final class CredentialPicker {
                     return .nothing
                 }
             }
-            guard let reading = await read(for: target), isCurrent() else { return .nothing }
+            guard isCurrent(), let reading = await read(for: target), isCurrent() else { return .nothing }
             switch await choose(reading, target: target, in: window) {
             case .row(let id)?:
                 guard isCurrent() else { return .nothing }
@@ -243,7 +257,9 @@ final class CredentialPicker {
             return await answer(reading.rows)
         }
         guard let host = WebsiteLookalike.displayHost(of: target.origin) else { return nil }
-        return await CredentialPickerSheet.present(rows: reading.rows, host: host, canUnlock: reading.hasLockedVault, in: window)
+        return await CredentialPickerSheet.present(
+            rows: reading.rows, host: host, canUnlock: reading.hasLockedVault, profileID: target.context.profile.id, in: window
+        )
     }
 
     /// The chosen credential is read again under the unlock and revision it was listed under, and delivered into the right-clicked
@@ -321,7 +337,7 @@ final class CredentialPicker {
         alert.messageText = String(localized: "Couldn’t Fill Saved Details")
         alert.informativeText = switch failure {
         case .unsafeForm:
-            String(localized: "This form sends what you type to another website, so the password wasn’t filled.")
+            String(localized: "This form sends what you type to another website, so nothing was filled.")
         case .noField:
             String(localized: "Right-click the field and choose Pick Credential… to try again.")
         }

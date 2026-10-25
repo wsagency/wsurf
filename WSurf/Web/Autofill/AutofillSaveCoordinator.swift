@@ -738,6 +738,7 @@ final class AutofillSaveCoordinator {
     /// synchronously.
     func vaultAccessEnded(profileID: UUID) {
         AutofillSuggestions.shared.vaultAccessEnded(profileID: profileID)
+        CredentialPickerSheet.dismiss(profileID: profileID)
         for session in sessions.objectEnumerator()?.allObjects as? [AutofillSaveSession] ?? []
         where session.context?.profile.id == profileID {
             session.vaultAccessEnded()
@@ -818,6 +819,7 @@ final class AutofillSaveCoordinator {
 
     func refreshPolicy() {
         AutofillSuggestions.shared.reset()
+        CredentialPickerSheet.dismiss()
         for page in sessions.keyEnumerator().allObjects.compactMap({ $0 as? BrowserPage }) {
             sessions.object(forKey: page)?.refreshPolicy()
             for frame in frames[ObjectIdentifier(page)].map({ Array($0.values.values) }) ?? [] {
