@@ -739,4 +739,82 @@ struct MediaScriptTests {
         _ = try await webView.evaluateJavaScript("\(post("wsurf-resend")); true")
         #expect(await waitUntil { frameReports(collector).contains { $0.playing && $0.key == key } }, "it says so again")
     }
+    // MARK: - Who lifts a mute
+
+    /// The page's `muted` read without a user gesture: the public script call grants one, which is user activation, and a test of
+    /// what happens without it must not give it.
+    private func quietMuted(_ webView: WKWebView, _ selector: String) async -> Bool? {
+        (try? await webView.evaluate(
+            "document.querySelector('\(selector)').muted", asFunction: false, in: nil, in: .page
+        )) as? Bool
+    }
+
+    private func quietRun(_ webView: WKWebView, _ script: String) async throws {
+        _ = try await webView.evaluate("\(script); true", asFunction: false, in: nil, in: .page)
+    }
+
+    private func mutedPage() async throws -> (WKWebView, Collector) {
+        let (webView, collector) = await player(hasVideo: false)
+        try await quietRun(webView, "const song = document.createElement('audio'); song.id = 'song'; document.body.append(song)")
+        try #require(await waitUntil {
+            (try? await webView.evaluate("document.querySelector('#song').__wsurfBound === true", asFunction: false, in: nil, in: .page)) as? Bool == true
+        })
+        try await quietRun(webView, post("wsurf-mute:1"))
+        try #require(await waitUntil { await quietMuted(webView, "#song") == true })
+        collector.messages.removeAll()
+        return (webView, collector)
+    }
+
+    /// Waits until the page has no user activation: the public script calls the test's own setup made grant it for a few seconds.
+    private func quietPage(_ webView: WKWebView) async throws {
+        try #require(await waitUntil(timeout: .seconds(30)) {
+            (try? await webView.evaluate("navigator.userActivation.isActive", asFunction: false, in: nil, in: .page)) as? Bool == false
+        }, "the page still has user activation")
+    }
+
+    /// An advertisement does this: its own script lifts the mute, with no one having pressed anything.
+    @Test func aScriptThatUnmutesAPlayerOnItsOwnIsSilencedAgainAndTheMuteStays() async throws {
+        let (webView, collector) = try await mutedPage()
+        try await quietPage(webView)
+
+        try await quietRun(webView, "document.getElementById('song').muted = false")
+        #expect(await waitUntil { await quietMuted(webView, "#song") == true }, "the player is silenced again at once")
+        try await Task.sleep(for: .milliseconds(250))
+        #expect(!collector.messages.contains { $0.hasPrefix("tabunmuted") }, "and the app is not told the person unmuted it")
+
+        try await quietRun(webView, "const late = document.createElement('audio'); late.id = 'late'; document.body.append(late)")
+        #expect(await waitUntil { await quietMuted(webView, "#late") == true }, "the page is still muted: a player made later is born so")
+    }
+
+    /// The person pressed the player's own control: the frame has user activation, and the page's script lifts the mute. A real
+    /// press cannot be made here without a system event, and WebKit's script gesture is not user activation, so the activation is
+    /// stood in for, as `stand` does for the rest of what a player answers.
+    @Test func anUnmuteWithUserActivationIsReportedAsTheUsers() async throws {
+        let (webView, collector) = try await mutedPage()
+        try await quietRun(webView, """
+        Object.defineProperty(navigator, 'userActivation', { configurable: true, get() { return { hasBeenActive: true, isActive: true }; } })
+        """)
+
+        try await quietRun(webView, "document.getElementById('song').muted = false")
+        #expect(await waitUntil { collector.messages.contains("tabunmuted") }, "the person unmuted it")
+        #expect(await quietMuted(webView, "#song") == false, "and it stays unmuted until the app answers")
+    }
+
+    /// A frame has the person's own input or it has not: a script cannot make one, so a frame that unmutes its player on its own is
+    /// silenced again even while its page has user activation.
+    @Test func aFrameThatUnmutesItsPlayerWithoutTheInputItselfIsSilencedAgain() async throws {
+        let (webView, collector) = await player(hasVideo: false)
+        try await addFrame("a", to: webView)
+        try #require(await waitUntil { frameReports(collector).contains { $0.playing } })
+        try await quietRun(webView, post("wsurf-mute:1"))
+        let song = "document.getElementById('a').contentDocument.getElementById('song')"
+        try #require(await waitUntil { (try? await webView.evaluate("\(song).muted", asFunction: false, in: nil, in: .page)) as? Bool == true })
+        collector.messages.removeAll()
+
+        // With user activation in the page (the public call grants it, and a same-origin frame shares it): still no input in the frame.
+        _ = try await webView.evaluateJavaScript("\(song).muted = false; true")
+        #expect(await waitUntil { (try? await webView.evaluate("\(song).muted", asFunction: false, in: nil, in: .page)) as? Bool == true }, "silenced again")
+        try await Task.sleep(for: .milliseconds(250))
+        #expect(!collector.messages.contains { $0.hasPrefix("tabunmuted") }, "no report from a frame the person did not touch")
+    }
 }

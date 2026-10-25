@@ -48,6 +48,14 @@ enum MediaScript {
           try { f.contentWindow.postMessage('wsurf-mute:' + (on ? 1 : 0), '*'); } catch (e) {}
         });
       }
+      // The person's own input in this frame: a page script cannot fake it (`isTrusted`). It tells a frame the person pointed at from
+      // one that merely holds a player they did not touch, an advertisement for one.
+      let lastInputAt = -1e9;
+      ['pointerdown', 'mousedown', 'keydown', 'touchstart'].forEach(function (name) {
+        document.addEventListener(name, function (event) {
+          if (event.isTrusted) { lastInputAt = performance.now(); }
+        }, { capture: true, passive: true });
+      });
       function audible(m) {
         if (m.paused || m.ended) { return false; }
         if (m.muted ? m.__wsurfMuted !== true : m.volume <= 0) { return false; }
@@ -386,9 +394,16 @@ enum MediaScript {
           ['play', 'pause', 'ended', 'emptied', 'volumechange']
             .forEach(function (name) { found.addEventListener(name, reportAudio); });
           found.addEventListener('volumechange', function () {
-            if (muteAll && !found.muted) {
+            if (!muteAll || found.muted) { return; }
+            // Only the person lifts a mute, by pressing the player's own control: the frame has just had user activation (a click,
+            // a key), and a frame that is not the page's has had the input itself. A page script that sets `muted = false` on
+            // its own (an advertisement does) has neither: the player is silenced again at once, and the mute stays.
+            const acted = navigator.userActivation?.isActive === true;
+            if (acted && (isTop || performance.now() - lastInputAt < 5000)) {
               muteAll = false;
-              post('tabunmuted');
+              post(isTop ? 'tabunmuted' : 'tabunmuted:direct');
+            } else {
+              silence(found);
             }
           });
           found.addEventListener('ended', function () { post('ended'); });

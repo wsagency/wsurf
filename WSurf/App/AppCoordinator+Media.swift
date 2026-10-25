@@ -128,11 +128,22 @@ extension AppCoordinator {
                   tab.hasVideo != hasVideo else { return }
             tab.hasVideo = hasVideo
         }
-        media.onTabUnmuted = { [weak self] page in
-            guard let self, let tab = browser.tabs.first(where: { $0.isMaterialised && $0.page === page }),
-                  tab.isMuted else { return }
-            // The page's own control unmuted one player: the tab is unmuted, and what the app silenced beside it is let go.
-            setMuted(false, tab: tab)
+        media.onTabUnmuted = { [weak self] page, isTheUsers in
+            guard let self,
+                  let tab = browser.tabs.first(where: { $0.isMaterialised && $0.page === page }) ?? peek.tab.flatMap({
+                      $0.liveView === page ? $0 : nil
+                  })
+            else { return }
+            switch MediaCenter.answer(toUnmute: isTheUsers, isWSurfMuted: isWSurfMuted, isTabMuted: tab.isMuted) {
+            case .liftTabMute:
+                // The person pressed the page's own control: the tab is unmuted, and what the app silenced beside it is let go.
+                setMuted(false, tab: tab)
+            case .putMuteBack:
+                // Mute WSurf, or a page script: the page's players are silenced again, and its script has the mute again.
+                MediaCenter.setMuted(true, on: tab.page)
+            case .ignore:
+                break
+            }
         }
         media.onPageStarted = { [weak self] page in
             guard let self,

@@ -64,7 +64,9 @@ final class MediaCenter {
     var onReturnedInline: ((BrowserPage) -> Void)?
     var onTabAudioChanged: ((BrowserPage, Bool) -> Void)?
     var onTabVideoChanged: ((BrowserPage, Bool) -> Void)?
-    var onTabUnmuted: ((BrowserPage) -> Void)?
+    /// A player of the page was unmuted. `isTheUsers`: it was the person, by the player's own control, in the page's own frame or
+    /// in the frame they pointed at (`isUsersUnmute`).
+    var onTabUnmuted: ((BrowserPage, _ isTheUsers: Bool) -> Void)?
     /// A page began a new document. It starts unmuted whatever its tab asked for, so the window mutes it again.
     var onPageStarted: ((BrowserPage) -> Void)?
     var onPictureOutChanged: ((BrowserPage, Bool) -> Void)?
@@ -106,8 +108,8 @@ final class MediaCenter {
             updateAudio(of: page) { $0.startDocument() }
             onPageStarted?(page)
         }
-        if message == "tabunmuted" {
-            onTabUnmuted?(page)
+        if message == "tabunmuted" || message == "tabunmuted:direct" {
+            onTabUnmuted?(page, Self.isUsersUnmute(message, isMainFrame: isMainFrame))
             return
         }
         if message == "frames:moved" {
@@ -390,14 +392,42 @@ final class MediaCenter {
 
     /// The page's players are muted by its script, in each frame the script runs in. Chromium is told as well: its own mute
     /// covers what the script cannot reach, such as Web Audio.
+    /// Whether a page's report that a player was unmuted comes from where the person's press can have been: the page's own frame,
+    /// or a frame that says the input was its own (`tabunmuted:direct`). Which other frame holds the element they pressed is not
+    /// known here, so another frame's plain report is not theirs. The script only reports at all after user activation.
+    nonisolated static func isUsersUnmute(_ message: String, isMainFrame: Bool) -> Bool {
+        isMainFrame ? message.hasPrefix("tabunmuted") : message == "tabunmuted:direct"
+    }
+
+    enum UnmuteAnswer: Equatable {
+        /// The person unmuted the tab by the page's own control.
+        case liftTabMute
+        /// Not theirs to do, or Mute WSurf is on: the page dropped its mute, and is told to have it again.
+        case putMuteBack
+        case ignore
+    }
+
+    /// What the app does with a page's report that a player was unmuted. While WSurf is muted nothing in a page lifts the mute, the
+    /// person's press included: only the speaker, ⌃⌘M and the menu do. A tab's own mute is lifted only by the person.
+    nonisolated static func answer(toUnmute isTheUsers: Bool, isWSurfMuted: Bool, isTabMuted: Bool) -> UnmuteAnswer {
+        if isWSurfMuted {
+            return .putMuteBack
+        }
+        guard isTabMuted else { return .ignore }
+        return isTheUsers ? .liftTabMute : .putMuteBack
+    }
+
     static func setMuted(_ muted: Bool, on page: BrowserPage) {
         post("wsurf-mute:\(muted ? 1 : 0)", to: page, userGesture: true)
         page.chromium?.setAudioMuted(muted)
     }
 
     /// `userGesture` for the person's own press on WSurf's controls, so its play is theirs under any auto-play answer;
-    /// WSurf's own requests (resend, rect, reveal, Picture in Picture setup) carry none.
+    /// WSurf's own requests (resend, rect, reveal, Picture in Picture setup) carry none. A mute never does, though the person
+    /// pressed for it: a gesture is user activation for the page, and the page's script would take the activation of WSurf's mute
+    /// button for the person's press on the player's own control, and lift the mute with it.
     static func post(_ message: String, to page: BrowserPage, userGesture: Bool = false) {
+        let userGesture = userGesture && message != "wsurf-mute:1"
         guard let data = try? JSONSerialization.data(withJSONObject: message, options: [.fragmentsAllowed]),
               let escaped = String(data: data, encoding: .utf8) else { return }
         Task { @MainActor in
