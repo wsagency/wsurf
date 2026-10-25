@@ -38,6 +38,10 @@ final class BrowserModel {
             folder(id: id)?.nameRevision += 1
         }
     }
+    /// The tab whose title is being edited in the sidebar, if any. A row sets it while its field is open.
+    var tabRenameID: UUID?
+    /// The tab the sidebar was last asked to show, and when; nil once its highlight is over. See `revealInSidebar`.
+    var sidebarReveal: SidebarReveal?
 
     private let webViewFactory: (@MainActor () -> WKWebView)?
 
@@ -438,6 +442,9 @@ final class BrowserModel {
         if let url {
             tab.load(url, transition: transition)
         }
+        if transition != .agent {
+            revealWhenAddressed(tab, hasAddress: url != nil || adopting != nil)
+        }
         scheduleSave()
         return tab
     }
@@ -488,6 +495,7 @@ final class BrowserModel {
         insert(tab, after: opener)
         onTabOpened?(tab)
         activeTabID = tab.id
+        revealInSidebar(tab)
         scheduleSave()
     }
 
@@ -555,6 +563,7 @@ final class BrowserModel {
         sidebarDidChange()
         onTabOpened?(copy)
         activeTabID = copy.id
+        revealInSidebar(copy)
         scheduleSave()
         return copy
     }
