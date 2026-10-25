@@ -14,6 +14,10 @@ import Observation
 /// is about to, and afterwards when the page or anything else that keeps the bar changes. So the bar comes down as the prompt
 /// appears even when it is up out of the way, and what it cannot tell holds the bar rather than missing it. Durations are
 /// inputs so a test does not wait seconds.
+///
+/// The Minimal window's bar uses the same model with `restsRevealed`: there the bar is shown until the page scrolls down,
+/// and scrolling up, a new page or a new site brings it back to rest. The pointer at its edge and every rule above still
+/// hold it as they hold the micro bar.
 @MainActor
 @Observable
 final class MicroReveal {
@@ -22,6 +26,9 @@ final class MicroReveal {
     /// Sheets and popovers open on the window right now. A prompt of the page's is one of them.
     private(set) var openPrompts = 0
     @ObservationIgnored private(set) var pointerInZone = false
+    /// Shown unless the page was scrolled down: the Minimal bar. The micro bar rests hidden.
+    @ObservationIgnored let restsRevealed: Bool
+    @ObservationIgnored private(set) var isScrolledAway = false
     @ObservationIgnored var hideDelay: Duration
     @ObservationIgnored var hostFlash: Duration
     /// What keeps the bar down whatever the pointer does. Anything it cannot tell is a reason to keep it.
@@ -37,12 +44,15 @@ final class MicroReveal {
     @ObservationIgnored private var popovers: Set<ObjectIdentifier> = []
     @ObservationIgnored private var tokens: [any NSObjectProtocol] = []
     @ObservationIgnored private var isStopped = false
+    /// Bumped at every start, so a watcher left over from an earlier run never re-arms itself.
+    @ObservationIgnored private var generation = 0
     @ObservationIgnored private var check: Task<Void, Never>?
     @ObservationIgnored private var flash: Task<Void, Never>?
 
     init(
         hideDelay: Duration = MicroShell.hideDelay,
         hostFlash: Duration = MicroShell.hostFlash,
+        restsRevealed: Bool = false,
         window: @escaping () -> NSWindow? = { nil },
         host: @escaping () -> String? = { nil },
         focusToken: @escaping () -> Int = { 0 },
@@ -51,6 +61,8 @@ final class MicroReveal {
     ) {
         self.hideDelay = hideDelay
         self.hostFlash = hostFlash
+        self.restsRevealed = restsRevealed
+        isRevealed = restsRevealed
         self.window = window
         self.host = host
         self.focusToken = focusToken
@@ -59,14 +71,21 @@ final class MicroReveal {
     }
 
     private var holds: Bool {
-        pointerInZone || isFlashing || openPrompts > 0 || pending() || keeps()
+        restsHere || pointerInZone || isFlashing || openPrompts > 0 || pending() || keeps()
+    }
+
+    /// The Minimal bar at rest: nothing scrolled it away. Ending it is always an explicit call, so it needs no checking.
+    private var restsHere: Bool {
+        restsRevealed && !isScrolledAway
     }
 
     // MARK: - Watching
 
-    /// Starts watching the window and the page. Once.
+    /// Starts watching the window and the page. Again after `stop()`, for a view that comes back.
     func start() {
-        guard tokens.isEmpty, !isStopped else { return }
+        guard tokens.isEmpty else { return }
+        isStopped = false
+        generation &+= 1
         lastHost = host()
         lastToken = focusToken()
         // `object: nil` and no queue: the window may not exist yet, and the bar must come down before the prompt does.
@@ -113,12 +132,14 @@ final class MicroReveal {
     // ponytail: Observation re-arms after each change, so there is one watcher; it reads what keeps the bar and where the page is.
     private func watchInputs() {
         guard !isStopped else { return }
+        let run = generation
         withObservationTracking {
             _ = host()
             _ = focusToken()
             _ = keeps()
         } onChange: { [weak self] in
             Task { @MainActor [weak self] in
+                guard self?.generation == run else { return }
                 self?.inputsChanged()
             }
         }
@@ -126,6 +147,7 @@ final class MicroReveal {
 
     private func watchPending() {
         guard !isStopped else { return }
+        let run = generation
         withObservationTracking {
             _ = pending()
         } onChange: { [weak self] in
@@ -135,6 +157,7 @@ final class MicroReveal {
                 self?.show()
             }
             Task { @MainActor [weak self] in
+                guard self?.generation == run else { return }
                 self?.update()
                 self?.watchPending()
             }
@@ -200,9 +223,27 @@ final class MicroReveal {
         if holds {
             isRevealed = true
         }
-        if isRevealed {
+        if isRevealed, !restsHere {
             scheduleCheck()
         }
+    }
+
+    /// The page scrolled: down puts a resting bar away at once unless something holds it, up brings it back to rest.
+    func scrolled(towardTop: Bool) {
+        guard !isStopped else { return }
+        isScrolledAway = !towardTop
+        if !towardTop, !holds {
+            hide()
+        } else {
+            update()
+        }
+    }
+
+    /// Back to rest, as if nothing had scrolled: another tab, another page, the bar moved to the other edge.
+    func rest() {
+        guard !isStopped else { return }
+        isScrolledAway = false
+        update()
     }
 
     /// Brings the bar down for a moment, as the address command does before the address has the keyboard.
@@ -215,6 +256,7 @@ final class MicroReveal {
     /// The page moved to another site: the address shows for `hostFlash`, so a page never has the window to itself.
     func siteChanged() {
         guard !isStopped else { return }
+        isScrolledAway = false
         isFlashing = true
         isRevealed = true
         flash?.cancel()
@@ -248,7 +290,9 @@ final class MicroReveal {
             try? await Task.sleep(for: hideDelay)
             guard !Task.isCancelled else { return }
             check = nil
-            if holds {
+            if restsHere {
+                return
+            } else if holds {
                 scheduleCheck()
             } else {
                 hide()

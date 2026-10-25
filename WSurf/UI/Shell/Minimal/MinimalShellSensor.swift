@@ -6,11 +6,14 @@ import AppKit
 import SwiftUI
 
 /// What the Minimal window feels without drawing anything: the page scrolling (to slide the bar away and back), the
-/// pointer reaching the bar's edge, clicks (to close the tab list), and it keeps the traffic lights hidden unless the tab
-/// list is open or the window is in full screen.
+/// pointer at the bar's edge (to bring it back while the pointer stays there), clicks (to close the tab list), and it keeps
+/// the traffic lights hidden unless the tab list is open or the window is in full screen.
 struct MinimalShellSensor: NSViewRepresentable {
     let onScroll: (Bool) -> Void
-    let onEdge: (MinimalBarEdge) -> Void
+    /// The edge the bar floats at, and how far in from it the pointer counts as being there.
+    var edge: MinimalBarEdge = .bottom
+    var zoneHeight: CGFloat = MicroShell.revealBand
+    var onPointerInZone: (Bool) -> Void = { _ in }
     let onPointerDown: (CGPoint) -> Void
     var pinsWindowControls = false
 
@@ -20,8 +23,9 @@ struct MinimalShellSensor: NSViewRepresentable {
 
     func updateNSView(_ view: SensorView, context: Context) {
         view.onScroll = onScroll
-        view.onEdge = onEdge
+        view.onPointerInZone = onPointerInZone
         view.onPointerDown = onPointerDown
+        view.zone = (edge, zoneHeight)
         view.pinsWindowControls = pinsWindowControls
     }
 
@@ -49,8 +53,15 @@ struct MinimalShellSensor: NSViewRepresentable {
 
     final class SensorView: NSView {
         var onScroll: ((Bool) -> Void)?
-        var onEdge: ((MinimalBarEdge) -> Void)?
+        var onPointerInZone: ((Bool) -> Void)?
         var onPointerDown: ((CGPoint) -> Void)?
+        var zone: (edge: MinimalBarEdge, height: CGFloat) = (.bottom, MicroShell.revealBand) {
+            didSet {
+                if zone != oldValue {
+                    updateTrackingAreas()
+                }
+            }
+        }
         var pinsWindowControls = false {
             didSet {
                 if pinsWindowControls != oldValue {
@@ -59,13 +70,10 @@ struct MinimalShellSensor: NSViewRepresentable {
             }
         }
 
-        private static let bottomEdge: CGFloat = 56
-
         private var monitor: Any?
         private var fullScreenObservers: [any NSObjectProtocol] = []
         private var travel = ScrollTravel()
-        private var topArea: NSTrackingArea?
-        private var bottomArea: NSTrackingArea?
+        private var area: NSTrackingArea?
 
         override func hitTest(_ point: NSPoint) -> NSView? {
             nil
@@ -114,30 +122,35 @@ struct MinimalShellSensor: NSViewRepresentable {
             setWindowControlsHidden(false)
         }
 
+        /// One zone at the bar's edge, as the micro window's: thin while the bar is away, as deep as the bar while it shows,
+        /// so the pointer can move onto the bar without it leaving. It reports leaving too, so the bar goes again.
         override func updateTrackingAreas() {
             super.updateTrackingAreas()
-            for area in [topArea, bottomArea].compactMap(\.self) {
+            if let area {
                 removeTrackingArea(area)
             }
-            let options: NSTrackingArea.Options = [.mouseEnteredAndExited, .activeInKeyWindow]
-            let top = NSRect(x: 0, y: bounds.maxY - Theme.topBarHeight, width: bounds.width, height: Theme.topBarHeight)
-            let bottom = NSRect(x: 0, y: 0, width: bounds.width, height: Self.bottomEdge)
-            topArea = NSTrackingArea(rect: top, options: options, owner: self, userInfo: ["edge": "top"])
-            bottomArea = NSTrackingArea(rect: bottom, options: options, owner: self, userInfo: ["edge": "bottom"])
-            for area in [topArea, bottomArea].compactMap(\.self) {
-                addTrackingArea(area)
+            let rect = Self.zoneRect(edge: zone.edge, height: zone.height, in: bounds)
+            var options: NSTrackingArea.Options = [.mouseEnteredAndExited, .activeAlways]
+            // A zone rebuilt under a pointer that is already in it never sees an enter, so it has to be told to expect the exit.
+            if let window, rect.contains(convert(window.mouseLocationOutsideOfEventStream, from: nil)) {
+                options.insert(.assumeInside)
             }
+            let rebuilt = NSTrackingArea(rect: rect, options: options, owner: self, userInfo: nil)
+            addTrackingArea(rebuilt)
+            area = rebuilt
+        }
+
+        static func zoneRect(edge: MinimalBarEdge, height: CGFloat, in bounds: NSRect) -> NSRect {
+            let height = min(max(height, 0), bounds.height)
+            return NSRect(x: 0, y: edge == .top ? bounds.maxY - height : bounds.minY, width: bounds.width, height: height)
         }
 
         override func mouseEntered(with event: NSEvent) {
-            switch event.trackingArea?.userInfo?["edge"] as? String {
-            case "top":
-                onEdge?(.top)
-            case "bottom":
-                onEdge?(.bottom)
-            default:
-                break
-            }
+            onPointerInZone?(true)
+        }
+
+        override func mouseExited(with event: NSEvent) {
+            onPointerInZone?(false)
         }
 
         private func note(_ event: NSEvent) {

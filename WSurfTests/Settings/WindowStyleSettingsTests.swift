@@ -122,7 +122,7 @@ struct WindowStyleSettingsTests {
         try withSettings { settings, _ in
             #expect(settings.windowStyle == .standard)
             #expect(settings.minimalBarEdge == .bottom)
-            #expect(!settings.hidesMinimalBar)
+            #expect(settings.hidesMinimalBar, "the bar floats over the end of the page, so it gets out of the way by default")
         }
     }
 
@@ -131,16 +131,16 @@ struct WindowStyleSettingsTests {
             let profile = BrowserSettings(defaults: defaults, appliesAppearanceGlobally: false, application: settings)
             profile.windowStyle = .minimal
             profile.minimalBarEdge = .top
-            profile.hidesMinimalBar = true
-            #expect(settings.windowStyle == .minimal && settings.minimalBarEdge == .top && settings.hidesMinimalBar)
+            profile.hidesMinimalBar = false
+            #expect(settings.windowStyle == .minimal && settings.minimalBarEdge == .top && !settings.hidesMinimalBar)
             #expect(defaults.string(forKey: BrowserSettings.Key.windowStyle) == "minimal")
             #expect(defaults.string(forKey: BrowserSettings.Key.minimalBarEdge) == "top")
 
             let reopened = BrowserSettings(defaults: defaults, appliesAppearanceGlobally: false)
-            #expect(reopened.windowStyle == .minimal && reopened.minimalBarEdge == .top && reopened.hidesMinimalBar)
+            #expect(reopened.windowStyle == .minimal && reopened.minimalBarEdge == .top && !reopened.hidesMinimalBar)
 
             settings.resetToDefaults()
-            #expect(settings.windowStyle == .standard && settings.minimalBarEdge == .bottom && !settings.hidesMinimalBar)
+            #expect(settings.windowStyle == .standard && settings.minimalBarEdge == .bottom && settings.hidesMinimalBar)
         }
     }
 
