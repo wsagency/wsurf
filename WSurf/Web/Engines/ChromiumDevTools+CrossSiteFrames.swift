@@ -23,12 +23,14 @@ extension ChromiumDevTools {
     }
 
     /// What runs in Chromium's cross-site frames. WebKit runs every all-frames script in every frame; Chromium runs only these
-    /// there, and never a page-world script. A feature opts in with one entry. Iframe audio, for example, would add
-    /// `CrossSiteFrameScripts(world: BrowserPage.servicesWorld, scripts: [MediaScript.source],
-    /// handlers: [MediaCenter.frameScriptHandlerName])`: the services world is shared, so only that script and handler.
+    /// there, and never a page-world script. A feature opts in with one entry.
     static let crossSiteFrameScripts = [
         // Autofill, Pick Credential…, save offers and Input History. Nothing else is in this world.
         CrossSiteFrameScripts(world: AutofillPage.world),
+        // Iframe audio: the services world is shared (SiteContentGuard, PageActivityMonitor, …), so only the media script and its
+        // handler. Neither reaches the autofill world, and the autofill script and handlers never reach this one.
+        CrossSiteFrameScripts(world: BrowserPage.servicesWorld, scripts: [MediaScript.source],
+                              handlers: [MediaCenter.frameScriptHandlerName]),
     ]
 
     static func runsInCrossSiteFrames(_ script: Script) -> Bool {
@@ -140,6 +142,8 @@ extension ChromiumDevTools {
         closed = true
         let documents = framesByID.values.map(\.documentID)
         frameRevision &+= 1
+        // What these frames said about their sound is over; they send no `Page.frameDetached` when their session ends as a whole.
+        page?.owner?.onFramesRetired?(Set(framesByID.keys))
         framesByID.removeAll()
         contextsByUniqueID.removeAll()
         uniqueIDByExecutionID.removeAll()

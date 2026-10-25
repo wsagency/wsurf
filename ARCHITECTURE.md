@@ -149,8 +149,9 @@ that process's frames, isolated-world contexts and bindings. A message from the
 frame names Chromium's frame and origin for it; such a frame is never a main
 frame, and is trusted only when its own address is of its origin. Only the
 worlds, scripts and handlers listed in
-`ChromiumDevTools.crossSiteFrameScripts` run there (autofill today; never the
-page world), one level deeper too. Calls aimed at such a frame go to its
+`ChromiumDevTools.crossSiteFrameScripts` run there (autofill, and the media
+script and its handler for iframe audio; never the page world), one level
+deeper too. Calls aimed at such a frame go to its
 session; when Chromium detaches it, its pending calls fail and its documents end.
 
 ## Page translation

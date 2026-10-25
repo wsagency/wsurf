@@ -36,12 +36,11 @@ struct AudioFrameEngineTests {
         }
     }
 
-    /// What every case runs: WebKit with all three. Chromium runs a frame of another site in a process of its own, where no script
-    /// reaches it until the cross-site frame sessions run one (`ChromiumDevTools.crossSiteFrameScripts`), so it has the two origins
-    /// of its own process.
+    /// What every case runs: both engines with all three. Chromium runs a frame of another site in a process of its own, where
+    /// the media script reaches it through the cross-site frame sessions (`ChromiumDevTools.crossSiteFrameScripts`).
     nonisolated static let scriptable: [(BrowserEngine, Origin)] = [
         (.webKit, .same), (.webKit, .otherOrigin), (.webKit, .otherSite),
-        (.chromium, .same), (.chromium, .otherOrigin),
+        (.chromium, .same), (.chromium, .otherOrigin), (.chromium, .otherSite),
     ]
 
     private static let player = """

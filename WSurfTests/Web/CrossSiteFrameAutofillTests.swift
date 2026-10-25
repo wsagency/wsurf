@@ -24,6 +24,8 @@ struct CrossSiteFrameAutofillTests {
         let port: Int
         private(set) var posts: [(name: String, body: [String: Any], frame: BrowserFrame)] = []
         private(set) var invalidated: [String] = []
+        /// What the services world's handlers heard (`withPage(media: true)`).
+        private(set) var servicesPosts: [(name: String, body: Any, frame: BrowserFrame)] = []
 
         init(page: BrowserPage, window: NSWindow, port: Int) {
             self.page = page
@@ -39,6 +41,10 @@ struct CrossSiteFrameAutofillTests {
         func receive(_ message: BrowserScriptMessage) {
             guard let body = message.body as? [String: Any] else { return }
             posts.append((message.name, body, message.frameInfo))
+        }
+
+        func receiveFromServices(_ message: BrowserScriptMessage) {
+            servicesPosts.append((message.name, message.body, message.frameInfo))
         }
 
         func posted(_ action: String, by name: String = "wsurfPasswords") -> [(body: [String: Any], frame: BrowserFrame)] {
@@ -186,7 +192,9 @@ struct CrossSiteFrameAutofillTests {
         "<!doctype html><html><body>\(body)</body></html>"
     }
 
-    private func withPage(_ engine: BrowserEngine, _ path: String, body: (Harness) async throws -> Void) async throws {
+    /// `media`: the iframe-audio script and its handler in the services world as the app installs them, plus a stand-in for another
+    /// service's handler there.
+    private func withPage(_ engine: BrowserEngine, _ path: String, media: Bool = false, body: (Harness) async throws -> Void) async throws {
         let server = try await HTTPFixtureServer.start(routes: Self.routes)
         defer { withExtendedLifetime(server) {} }
         let url = try server.url(path)
@@ -210,6 +218,12 @@ struct CrossSiteFrameAutofillTests {
         page.installScript(AutofillSaveScript.clientSource, in: AutofillPage.world, injectionTime: .atDocumentStart, forMainFrameOnly: false)
         for name in ["wsurfPasswords", "wsurfAutofillSave"] {
             page.addScriptMessageHandler(name: name, in: PasswordAutofill.world) { harness.receive($0) }
+        }
+        if media {
+            page.installScript(MediaScript.source, in: BrowserPage.servicesWorld, injectionTime: .atDocumentStart, forMainFrameOnly: false)
+            for name in [MediaCenter.frameScriptHandlerName, "wsurfSiteGuard"] {
+                page.addScriptMessageHandler(name: name, in: BrowserPage.servicesWorld) { harness.receiveFromServices($0) }
+            }
         }
         // A page-world handler of the same name: the page's main world gets a relay, which must reach it alone.
         page.addScriptMessageHandler(name: "wsurfPasswords", in: .page) { harness.receive(BrowserScriptMessage(
@@ -247,6 +261,51 @@ struct CrossSiteFrameAutofillTests {
             #expect(chromium.devTools.sessions.count == 1, "the cross-site frame has a session of its own")
             #expect(try await chromium.isLive(frame: frame))
             #expect(try await chromium.devTools.framesIncludingCrossSiteFrames().contains { $0.chromiumID == frame.chromiumID })
+        }
+    }
+
+    /// Chromium only. The media script runs in the services world of a cross-site frame and nowhere else there: the autofill
+    /// world has none of it and the services world none of autofill's, and what the services world sends reaches the media handler
+    /// alone, never an autofill handler nor another service's.
+    @Test func theMediaScriptReachesACrossSiteFrameInTheServicesWorldOnly() async throws {
+        try await withPage(.chromium, "/", media: true) { harness in
+            let frame = try await harness.ready("localhost")
+            let services = BrowserPage.servicesWorld
+            func probe(in world: WKContentWorld) async throws -> [String: Any] {
+                let script = """
+                    return {media: window.__wsurfMedia === true, passwords: typeof globalThis.__wsurfPasswords,
+                            save: typeof globalThis.__wsurfAutofillSave, send: typeof globalThis.__wsurfSend};
+                    """
+                return try #require(try await harness.page.callAsyncJavaScript(script, in: frame, contentWorld: world) as? [String: Any])
+            }
+            let inServices = try await probe(in: services)
+            #expect(inServices["media"] as? Bool == true, "the media script runs in the frame's services world")
+            #expect(inServices["passwords"] as? String == "undefined" && inServices["save"] as? String == "undefined",
+                    "none of autofill's globals are in the services world")
+            let inAutofill = try await probe(in: PasswordAutofill.world)
+            #expect(inAutofill["media"] as? Bool == false, "the media script is not in the autofill world")
+            #expect(inAutofill["passwords"] as? String == "object")
+            // The page's own world: nothing of ours, or no access at all.
+            if let inPage = try? await probe(in: .page) {
+                #expect(inPage["media"] as? Bool == false && inPage["send"] as? String == "undefined" && inPage["passwords"] as? String == "undefined",
+                        "the page world of the frame has nothing of ours")
+            }
+
+            // From the services world: an autofill handler and another service's handler, then the media handler's own word.
+            let marker = UUID().uuidString
+            try await harness.page.callAsyncJavaScript("""
+                globalThis.__wsurfSend('wsurfPasswords', {action: 'context', marker, token: 'forged', field: 'text', url: location.href});
+                globalThis.__wsurfSend('wsurfAutofillSave', {action: 'stage', marker});
+                globalThis.__wsurfSend('wsurfSiteGuard', {marker});
+                globalThis.__wsurfSend('wsurfpip', 'settled:' + marker);
+                """, arguments: ["marker": marker], in: frame, contentWorld: services)
+            try #require(await waitUntil { harness.servicesPosts.contains { ($0.body as? String) == "settled:" + marker } })
+            let word = try #require(harness.servicesPosts.first { ($0.body as? String) == "settled:" + marker })
+            #expect(word.name == MediaCenter.frameScriptHandlerName)
+            #expect(!word.frame.isMainFrame && word.frame.securityOrigin.host == "localhost" && word.frame.chromiumParentID != nil,
+                    "the media handler hears the frame itself, which Chromium reported")
+            #expect(harness.servicesPosts.allSatisfy { $0.name == MediaCenter.frameScriptHandlerName }, "another service's handler heard nothing")
+            #expect(harness.posts.allSatisfy { ($0.body["marker"] as? String) != marker }, "no autofill handler heard the services world")
         }
     }
 
@@ -495,12 +554,30 @@ struct CrossSiteFrameAutofillTests {
         #expect(!ChromiumDevTools.runsInCrossSiteFrames(Script(source: "x", worldName: autofill, injectionTime: .atDocumentStart, mainFrameOnly: true)))
         #expect(!ChromiumDevTools.runsInCrossSiteFrames(Script(source: "x", worldName: "", injectionTime: .atDocumentStart, mainFrameOnly: false)),
                 "never the page world")
+        // The services world is shared with other features: only the media script and its handler reach a cross-site frame.
+        let services = BrowserPage.servicesWorld.name ?? ""
+        #expect(ChromiumDevTools.runsInCrossSiteFrames(Script(
+            source: MediaScript.source, worldName: services, injectionTime: .atDocumentStart, mainFrameOnly: false
+        )))
         #expect(!ChromiumDevTools.runsInCrossSiteFrames(Script(
-            source: MediaScript.source, worldName: BrowserPage.servicesWorld.name ?? "", injectionTime: .atDocumentStart, mainFrameOnly: false
-        )), "the services world is not listed (yet)")
+            source: MediaScript.source, worldName: services, injectionTime: .atDocumentStart, mainFrameOnly: true
+        )))
+        #expect(!ChromiumDevTools.runsInCrossSiteFrames(Script(
+            source: MediaScript.source, worldName: "", injectionTime: .atDocumentStart, mainFrameOnly: false
+        )), "the media script never runs in the page world")
+        #expect(!ChromiumDevTools.runsInCrossSiteFrames(Script(
+            source: "another service's script", worldName: services, injectionTime: .atDocumentStart, mainFrameOnly: false
+        )), "no other script of the services world")
         #expect(ChromiumDevTools.hearsCrossSiteFrames(.init(name: "wsurfPasswords", worldName: autofill)))
         #expect(!ChromiumDevTools.hearsCrossSiteFrames(.init(name: "wsurfPasswords", worldName: "")))
-        #expect(!ChromiumDevTools.hearsCrossSiteFrames(.init(name: "wsurfpip", worldName: BrowserPage.servicesWorld.name ?? "")))
+        #expect(ChromiumDevTools.hearsCrossSiteFrames(.init(name: MediaCenter.frameScriptHandlerName, worldName: services)))
+        #expect(!ChromiumDevTools.hearsCrossSiteFrames(.init(name: MediaCenter.frameScriptHandlerName, worldName: "")),
+                "never the page world's")
+        #expect(!ChromiumDevTools.hearsCrossSiteFrames(.init(name: "wsurfPasswords", worldName: services)),
+                "an autofill handler is never heard from the services world")
+        for other in ["wsurfSiteGuard", "wsurfPageActivity", "wsurfScrollPosition"] {
+            #expect(!ChromiumDevTools.hearsCrossSiteFrames(.init(name: other, worldName: services)), "no other handler of the services world")
+        }
     }
 
     /// The page's session takes a cross-site frame session's messages itself, whole, and leaves its own to CEF, also when one of

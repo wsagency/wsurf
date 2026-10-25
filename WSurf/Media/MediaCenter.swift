@@ -389,7 +389,7 @@ final class MediaCenter {
     }
 
     /// The page's players are muted by its script, in each frame the script runs in. Chromium is told as well: its own mute
-    /// covers what the script cannot reach, a frame of another site and Web Audio.
+    /// covers what the script cannot reach, such as Web Audio.
     static func setMuted(_ muted: Bool, on page: BrowserPage) {
         post("wsurf-mute:\(muted ? 1 : 0)", to: page, userGesture: true)
         page.chromium?.setAudioMuted(muted)
