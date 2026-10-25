@@ -813,3 +813,23 @@ WSurf commits, all on branches cut from `c1db97b8022c3148df2bffbdb241e8572ea4e8d
 - Strings (row 8): `b04dcb527ea19fe2b859ae93ce5d6502c02570ab`. This record is a later commit on the same branch.
 
 Checks run on each slice's own branch (Pro, own DerivedData, unsigned Debug arm64, suffixed identity checked by `Tools/check-built-identity.py`, through the Pro lock): A 243 tests in 15 suites passed; B 226 tests in 13 suites passed (and the Clear History tests failed before the guard, 14 issues, and passed after it); C 153 tests in 14 suites passed, plus a mutation run where all 7 deliberate breaks were caught; D 353 tests in 47 suites and 231 in 16 suites passed; E1 294 tests in 26 suites and its performance cases passed; P (pinned tabs) 254 tests in 18 suites passed. The integrated candidate's checks are in its release notes and integration handoff, not here. Not run for any row: a Stage app smoke in a WebKit and a Chromium tab, which the intake rules require for UI and page items before VERIFIED.
+
+## WSurf 0.1.12 candidate: database and default changes
+
+Not upstream provenance: this build takes no Linen commits. It is `cb3951fa420e94cc6b1e5ea1486759c29ca93a74` (the signed 0.1.11) plus two WSurf branches, merged `--no-ff` into `feature/release-0.1.12-20261025` (candidate 0.1.12, build 12): `fix/sidebar-reveal-0.1.12` at `9fa71083f5199a3459045fb8f1957b539805ceff` (commits `68e05a8263ce7c69b172d37c354951b808a72d29`, `07747243e1fb99ca9439983ce0362ee792585d94`, `9fa71083f5199a3459045fb8f1957b539805ceff`) and `fix/minimal-micro-0.1.12` at `37a5231c7e82820893b3406cfa13df841143a068` (commits `20886937e1160808bec6a9f025638d2d4bab5149`, `fe5f52cfdc5f01e0532d20cc93e8919575403102`, `37a5231c7e82820893b3406cfa13df841143a068`). Not merged to `main`, no PR, not deployed.
+
+### Database changes in the 0.1.12 candidate
+
+All additive and nullable, added by `AppDatabase` on every open after a `db.columns(in:)` check (the `tintsIcons` pattern); no registered GRDB migration, nothing back-filled, nothing reaches CloudKit. An older build ignores the new columns (it writes with explicit column lists and reads by name).
+
+| Change | Source | Notes |
+|---|---|---|
+| `sessionFolder.customColor TEXT`, `profilePin.customColor TEXT` | WSurf sidebar reveal (`fix/sidebar-reveal-0.1.12`, folder color) | `#RRGGBB`, the color a person chose for a folder in the color panel. NULL, or text that does not parse, is the preset `color`. A preset chosen afterwards sets it back to NULL. A pinned folder keeps it in `profilePin`, any other folder in `sessionFolder` with its window. An older build shows the preset color. |
+| `sessionFolder.symbol TEXT`, `profilePin.symbol TEXT` | WSurf sidebar reveal (`fix/sidebar-reveal-0.1.12`, folder icon) | The name of the SF Symbol chosen for a folder. NULL is the plain folder icon; a name this Mac does not have reads as NULL. An older build shows the plain folder. |
+| `sessionTab.microTabID BLOB` | WSurf Minimal and micro (`fix/minimal-micro-0.1.12`, the micro window's row) | The id of the tab in a micro window that this row stands for. NULL is a tab: every row saved before and every real tab. Only an id is stored, never an address. A row whose micro window did not come back at launch becomes an ordinary unloaded row. An older build ignores the column and restores an ordinary unloaded tab next to its micro window. |
+
+Folder custom colors and icons are not synced to other devices (folder properties ride the window session and the profile pins only, as size and Tint Icons as Folder do).
+
+### Setting default changed
+
+`appearance.minimalBarAutoHide` ("Hide the bar while scrolling", Settings > Appearance > Window) now **reads as on when unset** (`BrowserSettings.swift`), and Reset to Defaults turns it on. No stored value is migrated: an install that explicitly turned it off keeps the explicit off, and one that never touched it now gets the new default (reading the default writes nothing).
