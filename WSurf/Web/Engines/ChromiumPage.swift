@@ -70,6 +70,10 @@ final class ChromiumPage: NSView {
     /// A screen share this page was granted. `captureChanged` reports device capture only.
     var displayCaptureStarted: (() -> Void)?
     var onCloseRequested: (() -> Void)?
+    /// Pick Credential…: whether the tab offers it now (`CredentialPicker.isOffered`), and what choosing it does. `ChromiumClient` adds
+    /// the item to an editable field's menu.
+    var canPickCredential: (() -> Bool)?
+    var onPickCredential: ((CredentialPicker.Menu) -> Void)?
     var permissionDecision: ((BrowserFrame, [WebPermission]) async -> Bool)?
     var downloadDecision: ((CefDownload, String, @escaping (CefDownloadDecision) -> Void) -> Void)?
     var downloadProgress: ((CefDownload) -> Void)?

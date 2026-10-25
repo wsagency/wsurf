@@ -87,6 +87,19 @@ struct PasswordAutofillTrackerTests {
             return answer as? Int ?? 0
         }
 
+        /// Fills a verification code through the same transport, as a code row (or a sibling's code row) delivers it.
+        func fill(_ selection: [String: Any], code: String) async throws -> Int {
+            var arguments = request(selection)
+            arguments["bridge"] = "__wsurfPasswords"
+            arguments["fields"] = ["code": code]
+            nonisolated(unsafe) let values = arguments
+            let answer = try await page.callAsyncJavaScript(
+                "if (globalThis.__wsurfAutofillForms?.documentID !== documentID) return 0; return globalThis[bridge]?.fill(token, url, fields) || 0;",
+                in: nil, contentWorld: PasswordAutofill.world, prepareArguments: { values }
+            )
+            return answer as? Int ?? 0
+        }
+
         func value(_ id: String) async throws -> String? {
             try await run("return document.getElementById(id).value;", ["id": id]) as? String
         }
@@ -188,6 +201,26 @@ struct PasswordAutofillTrackerTests {
                 #expect(selection["kind"] as? String == "username", "\(id) on \(engine)")
                 #expect(selection["webauthn"] as? Bool == expected, "\(id) on \(engine)")
             }
+        }
+    }
+
+    /// A code chosen in the dropdown (an exact match or a sibling website's) goes into the code field alone: not into the other
+    /// fields of its form, not into another form's code field.
+    @Test(.boundedWebViews, arguments: BrowserEngine.allCases)
+    func aCodeFillReachesTheCodeFieldAlone(engine: BrowserEngine) async throws {
+        let html = """
+            <form><input id="code" name="totp"><input id="remember" name="device"><button>Verify</button></form>
+            <form><input id="elsewhere" autocomplete="one-time-code"><button>Verify</button></form>
+            """
+        try await withHarness(engine, html) { harness in
+            let selection = try await harness.select("code")
+            #expect(selection["field"] as? String == "totp", "a field named totp is a code field on \(engine)")
+
+            #expect(try await harness.fill(selection, code: "94287082") == 1)
+
+            #expect(try await harness.value("code") == "94287082")
+            #expect(try await harness.value("remember") == "")
+            #expect(try await harness.value("elsewhere") == "")
         }
     }
 

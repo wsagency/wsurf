@@ -61,6 +61,10 @@ final class TabWebView: WKWebView {
     var onOpenLinkInNewWindow: ((URL, Bool) -> Void)?
     var onPeekLink: ((URL) -> Void)?
     var onSummarizeLink: ((URL, CGPoint?) -> Void)?
+    /// Pick Credential…: whether the tab offers it now (`CredentialPicker.isOffered`), and what choosing it does.
+    var canPickCredential: (() -> Bool)?
+    var onPickCredential: ((CredentialPicker.Menu) -> Void)?
+    private var pickCredentialMenu: CredentialPicker.Menu?
 
     var onZoomChanged: (() -> Void)?
 
@@ -183,6 +187,17 @@ final class TabWebView: WKWebView {
             TabContextMenu.sinkLinkTail(in: menu)
         }
         TabContextMenu.sinkInspect(in: menu)
+        pickCredentialMenu = nil
+        if TabContextMenu.isEditable(menu), canPickCredential?() == true {
+            TabContextMenu.addPickCredential(to: menu, target: self, action: #selector(pickCredential))
+            pickCredentialMenu = CredentialPicker.Menu(opened: .now)
+        }
+    }
+
+    @objc private func pickCredential() {
+        guard let menu = pickCredentialMenu else { return }
+        pickCredentialMenu = nil
+        onPickCredential?(menu)
     }
 
     @discardableResult

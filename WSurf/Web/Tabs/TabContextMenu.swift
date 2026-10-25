@@ -29,6 +29,28 @@ enum TabContextMenu {
         return [window, privateWindow]
     }
 
+    static let pasteItem = "WKMenuItemIdentifierPaste"
+
+    /// WebKit offers Paste only where the right-click landed in something editable.
+    static func isEditable(_ menu: NSMenu) -> Bool {
+        menu.items.contains { $0.identifier?.rawValue == pasteItem }
+    }
+
+    /// "Pick Credential…" at the top of the menu, then a separator. The caller decides that the field is editable and that the
+    /// policy offers it (`CredentialPicker.isOffered`).
+    @discardableResult
+    static func addPickCredential(to menu: NSMenu, target: AnyObject, action: Selector) -> NSMenuItem {
+        let item = NSMenuItem(title: String(localized: "Pick Credential…"), action: action, keyEquivalent: "")
+        item.identifier = CredentialPicker.menuItemIdentifier
+        item.target = target
+        item.image = NSImage(systemSymbolName: "key", accessibilityDescription: nil)
+        menu.insertItem(item, at: 0)
+        if menu.numberOfItems > 1 {
+            menu.insertItem(.separator(), at: 1)
+        }
+        return item
+    }
+
     static let linkTail = [
         "WKMenuItemIdentifierCopyLink",
         "WKMenuItemIdentifierShareMenu",

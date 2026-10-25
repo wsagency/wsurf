@@ -106,7 +106,11 @@ private extension AutofillSaveSession.Offer {
 
 private extension AutofillSaveSession.WebsiteOffer {
     var title: LocalizedStringResource {
-        "Add \(host) to “\(name)”?"
+        isManual ? "Use “\(name)” on \(host)?" : "Add \(host) to “\(name)”?"
+    }
+
+    var explanation: LocalizedStringResource {
+        isManual ? "Add \(host) to its websites." : "This saved login is then offered on \(host) too. No copy is saved."
     }
 }
 
@@ -127,11 +131,20 @@ private struct AutofillWebsitePopover: View {
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 5) {
                     Text(offer.title).font(.headline)
-                    Text("This saved login is then offered on \(offer.host) too. No copy is saved.")
+                    Text(offer.explanation)
                         .font(Theme.Font.label)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            if let original = offer.lookalike {
+                Label {
+                    Text("\(offer.host) looks like \(original), but it is a different website. Add it only if you are sure.")
+                        .fixedSize(horizontal: false, vertical: true)
+                } icon: {
+                    Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                }
+                .font(Theme.Font.label)
             }
             if let error = session.error {
                 Text(verbatim: error)
@@ -145,9 +158,17 @@ private struct AutofillWebsitePopover: View {
                     Spinner(size: 14)
                 }
                 Spacer(minLength: 0)
-                Button("Not Now") { session.dismissWebsite(offer) }
-                Button("Add Website") { Task { await session.addWebsite(offer) } }
-                    .buttonStyle(.borderedProminent)
+                // A look-alike page makes "Not Now" the default: adding takes a deliberate click.
+                if offer.lookalike != nil {
+                    Button("Add Website") { Task { await session.addWebsite(offer) } }
+                    Button("Not Now") { session.dismissWebsite(offer) }
+                        .buttonStyle(.borderedProminent)
+                        .keyboardShortcut(.defaultAction)
+                } else {
+                    Button("Not Now") { session.dismissWebsite(offer) }
+                    Button("Add Website") { Task { await session.addWebsite(offer) } }
+                        .buttonStyle(.borderedProminent)
+                }
             }
             .controlSize(.regular)
             .disabled(session.isBusy)

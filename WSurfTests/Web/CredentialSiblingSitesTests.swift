@@ -60,6 +60,46 @@ struct CredentialSiblingSitesTests {
         #expect(CredentialAccountSelection.siblings(in: [empty], origin: Self.page, entered: nil).isEmpty)
     }
 
+    private static let generator = TOTPGenerator(
+        secret: Data("12345678901234567890".utf8), algorithm: .sha1, period: 30, digits: 8, issuer: nil, userName: nil
+    )
+
+    private func codes(origins: [String]) -> CredentialAccount {
+        var saved = account("", password: nil, origins: origins)
+        saved.totp = Self.generator
+        return saved
+    }
+
+    /// The owner's authenticator case: a code saved for example.com is offered on login.example.com, behind "Check other logins".
+    @Test func aCodeOfTheParentDomainIsOfferedOnASubdomain() {
+        let parent = codes(origins: ["https://example.test"])
+        let login = account("ada", origins: ["https://www.example.test"])
+        let found = CredentialAccountSelection.siblings(in: [login, parent], origin: Self.page, entered: nil, field: .totp)
+        #expect(found.map { $0.account.id } == [parent.id], "a code field lists codes only, not logins")
+        #expect(found.map { $0.website } == ["https://example.test"])
+        let forPasswords = CredentialAccountSelection.siblings(in: [login, parent], origin: Self.page, entered: nil)
+        #expect(forPasswords.map { $0.account.id } == [login.id], "a password field still lists logins only")
+        // RFC 6238 appendix B, SHA-1, eight digits.
+        let at = Date(timeIntervalSince1970: 59)
+        #expect(CredentialAccountSelection.totpCode(for: parent, origin: Self.page, at: at) == nil, "never without the explicit pick")
+        #expect(CredentialAccountSelection.totpCode(for: parent, origin: Self.page, at: at, sibling: true) == "94287082")
+    }
+
+    @Test func aCodeOfAnotherDomainOrALookAlikeIsNeverOffered() {
+        let other = codes(origins: ["https://other.test"])
+        let paypal = codes(origins: ["https://paypal.com"])
+        let lookAlike = codes(origins: ["https://paypa1.com"])
+        let publicSuffix = codes(origins: ["https://a.github.io"])
+        #expect(CredentialAccountSelection.siblings(in: [other], origin: Self.page, entered: nil, field: .totp).isEmpty)
+        let onPaypal = CredentialAccountSelection.siblings(in: [lookAlike, paypal], origin: "https://login.paypal.com", entered: nil, field: .totp)
+        #expect(onPaypal.map { $0.account.id } == [paypal.id], "paypa1.com is another registrable domain")
+        #expect(CredentialAccountSelection.siblings(in: [paypal], origin: "https://login.paypa1.com", entered: nil, field: .totp).isEmpty)
+        #expect(CredentialAccountSelection.siblings(in: [publicSuffix], origin: "https://b.github.io", entered: nil, field: .totp).isEmpty)
+        let at = Date(timeIntervalSince1970: 59)
+        #expect(CredentialAccountSelection.totpCode(for: lookAlike, origin: "https://login.paypal.com", at: at, sibling: true) == nil)
+        #expect(CredentialAccountSelection.totpCode(for: other, origin: Self.page, at: at, sibling: true) == nil)
+    }
+
     @Test func typingFiltersSiblingsLikeTheDefaultList() {
         let ada = account("ada@example.test", origins: ["https://www.example.test"])
         let bob = account("bob@example.test", origins: ["https://app.example.test"])
@@ -73,8 +113,10 @@ struct CredentialSiblingSitesTests {
         #expect(CredentialDropdown.plan(exact: 1, siblings: 3, origin: Self.page, field: .password) == .accounts)
         #expect(CredentialDropdown.plan(exact: 0, siblings: 3, origin: Self.page, field: .password) == .siblings(site: "example.test"))
         #expect(CredentialDropdown.plan(exact: 0, siblings: 0, origin: Self.page, field: .password) == .empty)
-        // A verification-code field never borrows another website's code.
-        #expect(CredentialDropdown.plan(exact: 0, siblings: 3, origin: Self.page, field: .totp) == .empty)
+        // A verification-code field offers the codes of sibling websites the same way (owner's rule, 0.1.13).
+        #expect(CredentialDropdown.plan(exact: 0, siblings: 3, origin: Self.page, field: .totp) == .siblings(site: "example.test"))
+        #expect(CredentialDropdown.plan(exact: 1, siblings: 3, origin: Self.page, field: .totp) == .accounts)
+        #expect(CredentialDropdown.plan(exact: 0, siblings: 0, origin: Self.page, field: .totp) == .empty)
         #expect(CredentialDropdown.plan(exact: 0, siblings: 3, origin: "https://192.0.2.1", field: .password) == .empty)
     }
 }

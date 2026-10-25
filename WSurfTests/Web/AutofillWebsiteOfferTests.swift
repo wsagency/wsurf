@@ -219,6 +219,31 @@ struct AutofillWebsiteOfferTests {
         }
     }
 
+    /// A verification code picked from "Check other logins" is offered the page's website afterwards, so the next time it is an exact
+    /// match; accepting adds exactly that website.
+    @Test(.boundedWebViews) func aSiblingCodeUsedHereIsOfferedThePagesWebsite() async throws {
+        #expect(AutofillSuggestions.offersWebsiteAfterFill(kind: .password, fromSiblingRow: true))
+        #expect(!AutofillSuggestions.offersWebsiteAfterFill(kind: .password, fromSiblingRow: false), "an exact match needs nothing")
+        #expect(!AutofillSuggestions.offersWebsiteAfterFill(kind: .card, fromSiblingRow: true))
+        try await withSession { session, vaults in
+            var codes = account("", origins: ["https://example.test"])
+            codes.password = nil
+            codes.totp = TOTPGenerator(secret: Data([1, 2, 3]), algorithm: .sha1, period: 30, digits: 6, issuer: nil, userName: nil)
+            try await VaultManagerFixture.save([codes], in: vaults[0])
+            let epoch = try #require(vaults[0].manager.authorizationEpoch)
+
+            await session.offerWebsite(accountID: codes.id, epoch: epoch, origin: Self.page, documentID: "")
+
+            let offer = try #require(session.websiteOffer)
+            #expect(offer.accountID == codes.id && !offer.isManual && offer.lookalike == nil && offer.host == "login.example.test")
+            await session.addWebsite(offer)
+            let saved = try #require(try await vaults[0].manager.snapshot().accounts.first)
+            #expect(saved.origins == ["https://example.test", Self.page])
+            let rows = CredentialAccountSelection.suggestions([saved], origin: Self.page, pageURL: nil, entered: nil, field: .totp)
+            #expect(rows.map(\.id) == [codes.id], "the code is now offered here directly")
+        }
+    }
+
     @Test func addingAWebsiteChangesOnlyThatCredentialsWebsites() throws {
         let ada = account("ada"), bob = account("bob")
         let added = try CredentialAccountSelection.addingWebsite(Self.page, to: ada.id, in: [ada, bob])

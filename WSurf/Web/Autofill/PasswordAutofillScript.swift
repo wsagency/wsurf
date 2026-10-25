@@ -49,6 +49,83 @@ nonisolated enum PasswordAutofillScript {
         return enabled && (!!fields(target) || !!otp(target));
       }, extra);
       const eligible = (token,url) => enabled && suggestions.valid(state,token,url) && (!!fields(state.target) || !!otp(state.target));
+      // Pick Credential…: the field the person right-clicked in this frame, taken only from a trusted contextmenu event. Native keeps
+      // the latest one per page, and fills only that field (and its partner), only in this frame, once the person has picked.
+      const pick = {target:null, token:null, url:null};
+      const pickable = el => el instanceof HTMLInputElement &&
+        ['text','email','tel','number','password','search','url'].includes(el.type) && forms.rendered(el);
+      const secret = el => el.type === 'password' || ['current-password','new-password'].includes(forms.field(el)?.kind);
+      const current = el => secret(el) && forms.field(el)?.kind !== 'new-password';
+      // What the field looks like to the picker, which lists codes first for a code field: only an ordering hint.
+      const pickKind = el => forms.field(el)?.kind === 'one-time-code' || el.maxLength === 1 ||
+        el.inputMode === 'numeric' && el.maxLength > 0 && el.maxLength <= 8 ? 'code' : secret(el) ? 'password' : 'text';
+      document.addEventListener('contextmenu', event => {
+        if (!event.isTrusted || !enabled) return;
+        const target = event.composedPath()[0];
+        const fits = pickable(target);
+        pick.target = fits ? target : null;
+        pick.token = fits ? crypto.randomUUID() : null;
+        pick.url = location.href;
+        channel?.postMessage({action:'context',token:pick.token,url:pick.url,documentID:forms.documentID,field:fits ? pickKind(target) : ''});
+      }, true);
+      const picked = (token,url) => enabled && !!token && pick.token === token && pick.url === url && location.href === url &&
+        !!pick.target?.isConnected && pickable(pick.target);
+      // A code split over boxes of a character or a few goes into exactly those boxes, from the first, whichever one was
+      // right-clicked: the nearest container whose boxes of that size in the same form are exactly as many as the code needs.
+      // More boxes than that, or too few, is no split code: null.
+      const boxes = (target,length) => {
+        const size = target.maxLength;
+        if (!(size > 0 && size < length)) return [target];
+        const count = Math.ceil(length / size), scope = forms.scope(target);
+        for (let node = forms.parent(target), depth = 0; node && depth < 5; node = forms.parent(node), depth++) {
+          const all = forms.elements(node).filter(el => el instanceof HTMLInputElement && el.maxLength === size && pickable(el) &&
+            forms.scope(el) === scope);
+          if (all.length === count && all.includes(target)) return all;
+          if (all.length > count) return null;
+        }
+        return null;
+      };
+      const put = (el,value) => {
+        el.setAttribute('data-wsurf-password','');
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(el,value);
+        el.dispatchEvent(new Event('input',{bubbles:true,composed:true}));
+        el.dispatchEvent(new Event('change',{bubbles:true}));
+        return 1;
+      };
+      // How many fields took a value; -1 when a password or a code would go to a form that sends it to another site, so nothing was
+      // filled.
+      const pickFill = (token,url,login) => {
+        if (!picked(token,url)) return 0;
+        const target = pick.target;
+        if (typeof login?.code === 'string') {
+          if (!forms.safe(forms.group(target)?.root)) return -1;
+          const list = boxes(target, login.code.length);
+          if (!list) return 0;
+          pick.token = null;
+          const size = list.length > 1 ? target.maxLength : login.code.length;
+          list.forEach((el,index) => put(el, login.code.slice(index * size, (index + 1) * size)));
+          return list.length;
+        }
+        const group = forms.group(target);
+        const fields = (group?.fields || []).map(field => field.element).filter(pickable);
+        const at = fields.indexOf(target);
+        let username = null, password = null;
+        if (secret(target)) {
+          password = target;
+          username = group?.usernames.map(field => field.element).find(el => pickable(el) && !secret(el)) ||
+            fields.slice(0, Math.max(at, 0)).filter(el => !secret(el)).pop() || null;
+        } else {
+          username = target;
+          password = fields.slice(at + 1).find(current) || fields.find(current) || null;
+        }
+        const hasPassword = typeof login?.password === 'string';
+        if (hasPassword && password && !forms.safe(group?.root)) return -1;
+        pick.token = null;
+        let count = 0;
+        if (username && typeof login?.username === 'string' && login.username) count += put(username, login.username);
+        if (password && hasPassword) count += put(password, login.password);
+        return count;
+      };
       globalThis.__wsurfPasswords = {
         setEnabled(value) {
           const changed = enabled !== (value === true);
@@ -59,6 +136,8 @@ nonisolated enum PasswordAutofillScript {
         // A vault was unlocked: the field that is still focused is selected again, and its select carries the same token.
         refresh() { if (enabled) tracker.refresh(); },
         eligible,
+        pickTarget(token,url) { return picked(token,url) ? pickKind(pick.target) : null; },
+        pickFill,
         bounds(token,url) { return eligible(token,url) ? suggestions.geometry(state.target) : null; },
         fill(token,url,login) {
           if (!eligible(token,url)) return 0;

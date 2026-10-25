@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 WSurf Agency
 // SPDX-License-Identifier: Apache-2.0
 
+import AppKit
 import Foundation
 
 /// Quick search over the rows of one fill dropdown. It runs in WSurf, over the rows that were already read for this origin: the
@@ -132,6 +133,29 @@ nonisolated enum AutofillSuggestionSearch {
             return (state, .consume)
         case .other:
             return (state, .dismissAndPass)
+        }
+    }
+}
+
+nonisolated extension AutofillSuggestionSearch.KeyInput {
+    /// A key-down as the dropdown sees it. Function keys report private-use characters and Tab reports a control character: neither is text.
+    init(_ event: NSEvent) {
+        switch event.keyCode {
+        case 125:
+            self = .down
+        case 126:
+            self = .up
+        case 36, 76:
+            self = .enter
+        case 53:
+            self = .escape
+        case 51:
+            self = .backspace
+        default:
+            let isText = event.characters.map { text in
+                text.count == 1 && text.unicodeScalars.allSatisfy { !CharacterSet.controlCharacters.contains($0) && !(0xF700...0xF8FF).contains($0.value) }
+            } ?? false
+            self = isText ? .character(event.characters ?? "") : .other
         }
     }
 }

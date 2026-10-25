@@ -54,7 +54,7 @@ nonisolated enum PageDialogText {
     }
 
     /// `normalized` with digits and symbols that stand in for letters read as those letters: "p4ssw0rd", "0tp".
-    private static func leet(_ text: String) -> String {
+    static func leet(_ text: String) -> String {
         String(text.map { substitutions[$0] ?? $0 })
     }
 

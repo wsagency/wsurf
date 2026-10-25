@@ -142,6 +142,8 @@ final class ChromiumClient {
     private(set) var isClosed = false
     private var nativeDocuments: [String: UInt64] = [:]
     private var documentEpoch: UInt64 = 0
+    /// The open context menu offers Pick Credential…: when it opened and which frame was right-clicked.
+    var pickCredentialMenu: CredentialPicker.Menu?
 
     init(page: ChromiumPage) {
         self.page = page

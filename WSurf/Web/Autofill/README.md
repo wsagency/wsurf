@@ -40,15 +40,16 @@ elsewhere, another window, a lookup that found nothing): the next focus or click
 on the same field, which the page script reports with the same field token,
 starts a new lookup instead of being taken for the old one.
 
-A password list holds only accounts saved for the page's exact origin. When it
-would be empty but an unlocked vault holds accounts for another HTTPS website of
-the same registrable domain (public-suffix aware, so `a.github.io` and
-`b.github.io` are not related), the panel shows one row, "Check other logins
-for *.example.com". Choosing it lists those accounts, each with the website it
-is saved for. Only titles and websites are shown; the chosen account's secret
-is read again at delivery and filled exactly like a normal choice.
+A password or verification-code list holds only accounts saved for the page's
+exact origin. When it would be empty but an unlocked vault holds accounts (for
+a code field: codes) for another HTTPS website of the same registrable domain
+(public-suffix aware, so `a.github.io` and `b.github.io` are not related, and a
+look-alike domain never is), the panel shows one row, "Check other logins for
+*.example.com". Choosing it lists those accounts, each with the website it is
+saved for. Only titles and websites are shown; the chosen account's secret or
+fresh code is read again at delivery and filled exactly like a normal choice.
 
-After such a fill, and when a submitted login repeats one saved for a sibling
+After such a fill (a code too), and when a submitted login repeats one saved for a sibling
 website exactly (username and password) while nothing for the page has that
 username, the address-bar popover offers "Add login.example.com to “ada”?"
 instead of saving a copy. When several sibling credentials repeat the login, only
@@ -185,6 +186,32 @@ exercised end to end:
   The vault's own unlock passkey (relying party wsurf.app) is a separate
   native ceremony and is not part of this.
 
+### Pick Credential…
+
+When the automatic offer does not open, a right-click on an editable field
+offers "Pick Credential…" (`CredentialPicker`, both engines). It is never
+offered in a private window, while password autofill is off, on a page that is
+not a secure HTTPS page, on an internal page, or in a tab the assistant or a
+connected app controls; every step asks again.
+
+- The field is the one the frame's own script saw a trusted contextmenu event
+  on (`__wsurfPasswords`, action `context`), in the frame the engine reported.
+  A later right-click replaces it; a right-click on anything else forgets it.
+- A locked profile is unlocked through the ordinary unlock first. The sheet
+  lists logins and verification codes of the unlocked vaults, this website's
+  (and its siblings') first; titles, usernames and websites only.
+- The chosen entry is read again under the unlock and revision it was listed
+  under. The fill goes to the right-clicked field and its partner in that
+  frame only, once, and only if its form sends to the same site: a login fills
+  the username and, only into a password field, the password; a code goes into
+  the field, or into exactly the boxes of a split code, from the first. The
+  sheet closes when the vault locks or the autofill policy changes.
+- Used on a website it is not saved for, the entry is offered that website
+  (the website popover, "Use … on …?"). Accepting is one vault commit with the
+  `add-website` cause, one History version; declining stores nothing. A page
+  that imitates one of the entry's websites (`WebsiteLookalike`) is named in the
+  popover and "Not Now" is the default.
+
 ## Input History
 
 Input History (`WSurf/Web/InputHistory`, the Input History section of Settings › Autofill › Vault)
@@ -274,5 +301,9 @@ Use synthetic credentials and card details on a test page.
   has no passkey for the site, and with one that does. The first sheet must look
   alike to the page (it sees nothing until you answer), and "Use Another Device
   or Key…" must be the only way to the system's authenticator.
+- Pick Credential…: right-click a code field the dropdown ignores, a login in an
+  iframe, and a split six-box code; check that only that field (and its
+  partner) is filled, and that "Use … on …?" appears only for an entry saved
+  for another website.
 - Not performed: Settings keyboard and VoiceOver, real passkey unlock (PRF),
   user presence and verification, Apple Passwords transfers, and Stage UI runs.
