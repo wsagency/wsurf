@@ -35,6 +35,7 @@ extract every literal that is localized at run time (the second branch of a tern
 switch-case tuples, String(localized:) with a ternary inside). A key used only there is never reported missing, and a catalog
 key for it is listed as stale; the "quoted text in source" note on a stale key marks that case.
 """
+from collections.abc import Sequence
 import json
 from pathlib import Path
 import re
@@ -113,7 +114,7 @@ def pattern(literal: str) -> re.Pattern[str]:
     return re.compile('^' + SPECIFIER.join(re.escape(part) for part in literal.split(HOLE)) + '$')
 
 
-def compare(used: set[str], catalog: dict[str, dict], patterns=()) -> tuple[list[str], list[str]]:
+def compare(used: set[str], catalog: dict[str, dict], patterns: Sequence[re.Pattern[str]] = ()) -> tuple[list[str], list[str]]:
     """Returns (missing, stale) keys, each sorted. A catalog entry marked manual, or that a package literal fits, is never stale."""
     missing = sorted(used - catalog.keys())
     stale = sorted(k for k, v in catalog.items()
@@ -167,7 +168,9 @@ def report(derived_data: Path, strict: bool) -> int:
 
 
 def self_test() -> None:
-    patterns = [pattern(decode(r'x = String(localized: "“\(name)” \(a.b(1, 2)) \u{2019} \"q\"")', len(r'x = ' + CALL)))]
+    text = decode(r'x = String(localized: "“\(name)” \(a.b(1, 2)) \u{2019} \"q\"")', len(r'x = ' + CALL))
+    assert text is not None
+    patterns = [pattern(text)]
     assert patterns[0].match('“%@” %lld ’ "q"') and not patterns[0].match('“%@” ’ "q"')
     assert decode('"open', 1) is None
     missing, stale = compare({'a', 'b'}, {'b': {}, 'c': {}, 'd': {'extractionState': 'manual'}, 'e': {'extractionState': 'stale'},
