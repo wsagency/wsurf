@@ -5,6 +5,28 @@ This file preserves release notes inherited from the upstream
 describe upstream Linen releases, not releases published by WSurf. New WSurf
 release notes will be added above this provenance record.
 
+## 0.1.12 (build 12) — 2026-10-25
+
+Everything since 0.1.11 (build 11). None of the screens and prompts below has been checked by hand.
+
+### Tabs and sidebar
+
+- A new tab scrolls into view in the sidebar and its row pulses gently, twice, so you can see where it went. This happens when a tab gets an address (⌘T and Return, a link opened in a new tab or in the background, a page opened by another app, Reopen Last Closed Tab, Duplicate): the list scrolls to put the row in the middle, as far as the list allows, and opens any shut folder around it. A blank new tab waits until you type an address. The list holds still while you drag a row, rename a tab or folder, or scroll it yourself, and the address field keeps the keyboard. With Reduce Motion the pulse is one highlight that fades.
+- Folders can have a color and an icon of their own. Right-click a folder › Custom Color… opens the color panel and the folder changes as you drag in it; a swatch afterwards goes back to a preset. Icon… opens a search of SF Symbols to use in place of the folder icon, and Default puts the plain folder back. Each is one Undo. Folder color opacity, Size and Tint Icons as Folder work with them, and a color too close to the sidebar’s own is made lighter or darker until it can be seen. A pinned folder keeps them with the profile’s pins. They are not synced to other devices.
+- A tab moved to a micro window stays in the sidebar, in the same place, folder and space, with a small micro window mark. Its row follows the page’s title and address. Click the row to bring the page back where it was, without reloading it, and the empty micro window closes; Option-click, or right-click › Show Micro Window, brings the micro window forward instead. Closing the micro window removes the row, and after a restart the row and its micro window come back together. The row is not a second copy of the page: it is never loaded, connected apps, the assistant and iCloud tabs do not list it, and closing the row closes no page.
+
+### Window
+
+- The Minimal bar now hides while you scroll down, so the end of a page is readable, and comes back when you scroll up or point at its edge. It follows the trackpad, the wheel, Space, the arrow keys, Page Down and End, on WebKit and Chromium pages. It stays while you edit the address or use Find, while the tab list is open, while a dialog, sign-in, certificate, permission, password-save or passkey prompt is up, and for a moment when you go to another website. The same goes for the bar at the top.
+- Settings › Appearance › Window › Hide the bar while scrolling is now on by default. A Mac that turned it off keeps it off, and Reset to Defaults turns it on.
+
+### Known issues
+
+- A page with no website address (a local file, `data:` or `about:`) keeps the Minimal bar shown, so its end can still sit under the bar.
+- A web app that scrolls an area inside the page, not the page itself, moves the Minimal bar with the trackpad or wheel only, not with the keyboard.
+- The micro window mark is not drawn in the icons-only sidebar; its tooltip and menu still work there.
+- The known issues of 0.1.11 are unchanged.
+
 ## 0.1.11 (build 11) — 2026-10-24
 
 Everything since 0.1.10 (build 10). None of the screens and prompts below has been checked by hand.
