@@ -8,7 +8,8 @@ import SwiftUI
 /// The Minimal window's floating bar. Its middle is the same Ask surface as the toolbar's, so it carries the address,
 /// asking the assistant and its replies, agent questions, the engine badge, the password and passkey save badge, Input
 /// History, Reader, translation and site controls. Around it: the tab list button, Back/Forward/Reload, the AI mark of a
-/// tab an app controls, the external-connection badge with Stop, downloads while they run, extensions and the side panel.
+/// tab an app controls, the external-connection badge with Stop, the speaker while anything plays or WSurf is muted,
+/// downloads while they run, extensions and the side panel.
 struct IslandBar: View {
     let browser: BrowserModel
     let coordinator: AppCoordinator
@@ -89,6 +90,7 @@ struct IslandBar: View {
                 ExternalControlMark(tab: tab, coordinator: coordinator)
             }
             ExternalConnectionBadge(server: coordinator.mcpServer, browser: browser)
+            AudioIndicatorButton(coordinator: coordinator, style: .bar, listEdge: edge == .bottom ? .top : .bottom)
             if browser.downloads.activeCount > 0 {
                 SidebarDownloadsButton(coordinator: coordinator)
             }

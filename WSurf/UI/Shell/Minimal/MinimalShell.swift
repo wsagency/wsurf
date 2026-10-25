@@ -150,8 +150,8 @@ struct MinimalShell: View {
                     closePeekedTabListUnlessPointerOnIt()
                 }
             }
-            .onChange(of: coordinator.isProfileSwitcherOpen) { _, isOpen in
-                if !isOpen {
+            .onChange(of: coordinator.holdsPeek) { _, isHeld in
+                if !isHeld {
                     closePeekedTabListUnlessPointerOnIt()
                 }
             }
@@ -190,7 +190,7 @@ struct MinimalShell: View {
         guard PeekExit.endsTabListPeek(
             isPeeking: isPeeking && coordinator.isMinimalTabListOpen,
             isPinned: isPinned,
-            isProfileSwitcherOpen: coordinator.isProfileSwitcherOpen,
+            isProfileSwitcherOpen: coordinator.holdsPeek,
             pointer: pointerGone ? nil : coordinator.pointerInShell,
             frame: Self.peekedListFrame(
                 shell: shellFrame, sidebarWidth: coordinator.sidebar.width, margin: settings.chromeShape.pageSpacing
@@ -202,7 +202,7 @@ struct MinimalShell: View {
     /// A click beside the open list closes it, unless it lands on the bar's tab button (which toggles it itself) or the
     /// profile switcher the list opened. `height` is the window's, strip included: the point is a window point.
     private func closeTabList(unlessAt windowPoint: CGPoint, height: CGFloat) {
-        guard coordinator.isMinimalTabListOpen, !coordinator.isProfileSwitcherOpen else { return }
+        guard coordinator.isMinimalTabListOpen, !coordinator.holdsPeek else { return }
         let point = CGPoint(x: windowPoint.x, y: height - windowPoint.y)
         guard !tabListFrame.contains(point), !tabButtonFrame.contains(point) else { return }
         coordinator.isMinimalTabListOpen = false

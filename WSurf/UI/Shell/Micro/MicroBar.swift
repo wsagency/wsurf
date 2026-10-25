@@ -39,6 +39,8 @@ struct MicroBar: View {
             AskSurface(placement: .toolbar, browser: browser, coordinator: coordinator)
                 .holdsWindowStillOnHover()
 
+            AudioIndicatorButton(coordinator: coordinator, style: .bar, listEdge: .bottom)
+
             ToolbarButton(
                 symbol: coordinator.floatsOnTop ? "square.3.layers.3d.top.filled" : "square.3.layers.3d",
                 enabled: true,

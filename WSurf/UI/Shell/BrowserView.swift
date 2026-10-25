@@ -284,8 +284,8 @@ struct BrowserView: View {
                     endPeekUnlessPointerOnSidebar()
                 }
             }
-            .onChange(of: coordinator.isProfileSwitcherOpen) { _, isOpen in
-                if !isOpen {
+            .onChange(of: coordinator.holdsPeek) { _, isHeld in
+                if !isHeld {
                     endPeekUnlessPointerOnSidebar()
                 }
             }
@@ -338,7 +338,7 @@ struct BrowserView: View {
             isPeeking: sidebar.isPeeking,
             isSidebarVisible: sidebar.isVisible,
             isResizing: sidebar.isDragging,
-            isProfileSwitcherOpen: coordinator.isProfileSwitcherOpen,
+            isProfileSwitcherOpen: coordinator.holdsPeek,
             pointer: pointerGone ? nil : coordinator.pointerInShell,
             frame: sidebarFrame,
             // Read from the coordinator, not the environment: the watch calls this long after the body that made it.
