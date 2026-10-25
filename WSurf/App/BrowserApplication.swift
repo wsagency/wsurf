@@ -184,6 +184,7 @@ final class BrowserApplication {
                 openSavedWindow(window, of: profile, show: show)
             }
         }
+        relinkMicroPlaceholders()
     }
 
     private func openSavedWindow(_ saved: BrowserModel.SavedBrowserWindow, of profile: Profile, show: Bool = true) {
@@ -339,6 +340,7 @@ final class BrowserApplication {
     func reopenLastClosedWindow() {
         guard let (profile, saved) = mostRecentlyClosedWindow() else { return }
         openSavedWindow(saved, of: profile)
+        relinkMicroPlaceholders()
     }
 
     private func mostRecentlyClosedWindow() -> (Profile, BrowserModel.SavedBrowserWindow)? {

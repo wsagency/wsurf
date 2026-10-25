@@ -123,6 +123,8 @@ final class BrowserModel {
     var onTabTransferredOut: ((BrowserTab, Int) -> Void)?
     var onTabTransferredIn: ((BrowserTab, BrowserModel, Int) -> Void)?
     var onActiveTabChanged: ((BrowserTab?, BrowserTab?) -> Void)?
+    /// Asked to bring forward a row that stands for a page in a micro window, which is never in front itself.
+    var onActivatingMicroPlaceholder: ((BrowserTab) -> Void)?
     var onAnchorChanged: ((UUID, UUID) -> Void)?
     var onContentProcessTerminated: ((BrowserTab) -> Void)?
     var onPageRetired: ((BrowserTab, BrowserPage) -> Void)?

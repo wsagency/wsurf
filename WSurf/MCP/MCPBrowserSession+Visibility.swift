@@ -21,7 +21,7 @@ extension MCPBrowserSession {
 
     /// The tabs of this window the connection holds a grant for, in tab order.
     var sharedTabs: [BrowserTab] {
-        browser.tabs.filter { grants[$0.id] != nil }
+        browser.tabs.filter { grants[$0.id] != nil && $0.microTabID == nil }
     }
 
     /// Whether the connection can still act in its window: it holds a grant for a tab or a development lease. The badge

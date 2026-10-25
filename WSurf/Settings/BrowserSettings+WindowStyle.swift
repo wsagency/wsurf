@@ -79,7 +79,8 @@ extension BrowserSettings {
         }
     }
 
-    /// The Minimal bar slides away while the page scrolls down and comes back when it scrolls up.
+    /// The Minimal bar slides away while the page scrolls down and comes back when it scrolls up. On by default: the bar
+    /// floats over the end of the page, which could not be read otherwise.
     var hidesMinimalBar: Bool {
         get { globalValue(\.hidesMinimalBar, storage: storedHidesMinimalBar) }
         set {
@@ -102,7 +103,7 @@ extension BrowserSettings {
         showsFullAddress = false
         windowStyle = .standard
         minimalBarEdge = .bottom
-        hidesMinimalBar = false
+        hidesMinimalBar = true
         keepsMinimalSidebarOpen = false
     }
 }

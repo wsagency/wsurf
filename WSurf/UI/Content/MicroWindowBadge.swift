@@ -53,3 +53,43 @@ struct MicroWindowBadge: View {
         }
     }
 }
+
+/// The mark on a sidebar row whose page is in a micro window, in the micro window's symbol. The row stays where the page
+/// was; clicking it brings the page back, Option-clicking it shows the micro window.
+struct MicroRowBadge: View {
+    let tab: BrowserTab
+
+    static let extent: CGFloat = 16
+
+    var body: some View {
+        if tab.microTabID != nil {
+            Image(systemName: "arrow.up.forward.square")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .frame(width: Self.extent, height: Self.extent)
+                .help(Text("In a micro window. Click to move it back here, or Option-click to show the micro window."))
+                .accessibilityLabel(Text("In Micro Window"))
+        }
+    }
+}
+
+/// The context menu items of a row whose page is in a micro window: show that window, or move the page back.
+struct MicroRowMenuItems: View {
+    let tab: BrowserTab
+    let coordinator: AppCoordinator
+
+    var body: some View {
+        if tab.microTabID != nil {
+            Button {
+                coordinator.openMicroPlaceholder(tab, showingWindow: true)
+            } label: {
+                Label("Show Micro Window", systemImage: "arrow.up.forward.square")
+            }
+            Button {
+                coordinator.openMicroPlaceholder(tab)
+            } label: {
+                Label("Move Back to Main Window", systemImage: "arrow.down.backward.square")
+            }
+        }
+    }
+}

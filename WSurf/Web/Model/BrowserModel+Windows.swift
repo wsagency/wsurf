@@ -45,6 +45,7 @@ extension BrowserModel {
         source.closedTabs.removeAll { $0.id == tab.id }
         closedTabs.removeAll { $0.id == tab.id }
         func neighbor(in list: [BrowserTab]) -> BrowserTab? {
+            let list = list.filter { $0 === tab || $0.microTabID == nil }
             guard let index = list.firstIndex(where: { $0 === tab }) else { return nil }
             return list.dropFirst(index + 1).first ?? list.prefix(index).last
         }

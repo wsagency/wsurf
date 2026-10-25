@@ -102,6 +102,8 @@ extension BrowserModel {
         /// The last visit the tab recorded and its trail, so a restored tab goes on with them. See `HistoryStore.record`.
         var lastVisit: Int64?
         var visitTrail: Int64?
+        /// Set on a row that stands for a page in a micro window; see `BrowserTab.microTabID`.
+        var microTabID: UUID?
     }
 
     private nonisolated struct FolderRecord: Codable, FetchableRecord, PersistableRecord, Sendable {
@@ -299,7 +301,8 @@ extension BrowserModel {
                 lastActiveAt: tab.lastActiveAt,
                 spaceID: tab.spaceID,
                 lastVisit: lastVisitID[tab.id]?.visit,
-                visitTrail: lastVisitID[tab.id]?.trail
+                visitTrail: lastVisitID[tab.id]?.trail,
+                microTabID: tab.microTabID
             )
         }
         writtenStateGeneration = writtenStateGeneration.filter { id, _ in
@@ -398,8 +401,8 @@ extension BrowserModel {
                 sql: """
                     INSERT INTO sessionTab
                         (id, windowID, title, customTitle, url, state, pinnedURL, pinnedTitle,
-                         internalPage, isActive, isFavorite, pinID, lastActiveAt, spaceID, lastVisit, visitTrail)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         internalPage, isActive, isFavorite, pinID, lastActiveAt, spaceID, lastVisit, visitTrail, microTabID)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(id) DO UPDATE SET
                         windowID = excluded.windowID,
                         title = excluded.title,
@@ -415,13 +418,14 @@ extension BrowserModel {
                         lastActiveAt = excluded.lastActiveAt,
                         spaceID = excluded.spaceID,
                         lastVisit = excluded.lastVisit,
-                        visitTrail = excluded.visitTrail
+                        visitTrail = excluded.visitTrail,
+                        microTabID = excluded.microTabID
                     """,
                 arguments: [
                     tab.id, tab.windowID, tab.title, tab.customTitle, tab.url, tab.state,
                     tab.pinnedURL, tab.pinnedTitle,
                     tab.internalPage?.rawValue, tab.isActive, tab.isFavorite, tab.pinID, tab.lastActiveAt, tab.spaceID,
-                    tab.lastVisit, tab.visitTrail,
+                    tab.lastVisit, tab.visitTrail, tab.microTabID,
                 ]
             )
         }
@@ -514,7 +518,7 @@ extension BrowserModel {
         let profileHoldsPins = store.isAvailable
 
         let now = Date()
-        let activeID = (ordered.first { $0.isActive } ?? ordered.first)?.id
+        let activeID = (ordered.first { $0.isActive } ?? ordered.first { $0.microTabID == nil })?.id
         let grids = Self.grids(from: storedTrees) + Self.grids(fromFlat: storedPanes)
         let onScreen = Set(activeID.map { id in
             [id] + (grids.first { $0.contains(id) }?.tabs ?? [])
@@ -539,6 +543,7 @@ extension BrowserModel {
             tab.isFavorite = record.isFavorite
             tab.pinID = record.pinID
             tab.spaceID = record.spaceID
+            tab.microTabID = record.microTabID
             tab.lastActiveAt = Self.restoredUse(record.lastActiveAt, savedAt: stored.savedAt, now: now)
             lastVisitID[tab.id] = record.lastVisit.map { VisitMemory(visit: $0, trail: record.visitTrail) }
             tab.deferRestore(state: record.state, url: restoredURL)

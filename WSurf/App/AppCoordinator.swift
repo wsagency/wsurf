@@ -610,6 +610,11 @@ final class AppCoordinator {
     }
 
     func openTab(_ tab: BrowserTab) {
+        // The row of a page in a micro window: a click brings the page back, an Option-click shows the micro window.
+        if tab.microTabID != nil {
+            openMicroPlaceholder(tab, showingWindow: NSEvent.modifierFlags.contains(.option))
+            return
+        }
         browser.activate(tab)
     }
 

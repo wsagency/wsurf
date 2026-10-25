@@ -23,7 +23,9 @@ extension BrowserModel {
             tree.rows(in: parent).compactMap { item in
                 switch item {
                 case .tab(let id):
-                    guard let tab = liveTabs[id], tab.pinID == nil, !tab.isPrivate, tab.extensionBaseURL == nil else { return nil }
+                    // A row standing for a page in a micro window is not a page here; the micro window reports the page.
+                    guard let tab = liveTabs[id], tab.pinID == nil, tab.microTabID == nil, !tab.isPrivate, tab.extensionBaseURL == nil
+                    else { return nil }
                     return SessionNode.tab(id: tab.id, title: tab.title, url: tab.urlString)
                 case .folder(let id):
                     guard !profileFolderIDs.contains(id), let folder = liveFolders[id] else { return nil }

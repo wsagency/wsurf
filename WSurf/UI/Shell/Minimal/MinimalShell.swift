@@ -10,13 +10,18 @@ import SwiftUI
 /// media), floating. Its open state is `AppCoordinator.isMinimalTabListOpen`; the Standard sidebar's state is never touched.
 /// Kept open (`BrowserSettings.keepsMinimalSidebarOpen`) the list stays where it slides to, `pinnedInset` wide with its
 /// margin, `BrowserView` lays the page out beside it and the bar centers over the page.
+///
+/// The page is laid out the whole height of the window and the bar floats over its end. So that the end can be read, the
+/// bar slides away while the page scrolls down (the wheel, the keyboard or the page's own script, on either engine), and
+/// comes back when it scrolls up, when the pointer rests at the bar's edge, and whenever the micro window's rules want the
+/// address in sight (`MicroReveal`, `MicroShell.keepsBar`): another site, a prompt, the address being edited.
 struct MinimalShell: View {
     let browser: BrowserModel
     let coordinator: AppCoordinator
     /// How far from the window's leading edge the page starts while the tab list is kept open; 0 while it floats.
     var pinnedInset: CGFloat = 0
 
-    @State private var isIslandRaised = true
+    @State private var reveal: MicroReveal
     /// Opened by resting the pointer on the left edge, so it closes again when the pointer leaves it or the app.
     @State private var isPeeking = false
     @State private var tabButtonFrame: CGRect = .zero
@@ -25,6 +30,13 @@ struct MinimalShell: View {
     @State private var peekWatch = PeekWatch()
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.titleStripInset) private var titleStripInset
+
+    init(browser: BrowserModel, coordinator: AppCoordinator, pinnedInset: CGFloat = 0) {
+        self.browser = browser
+        self.coordinator = coordinator
+        self.pinnedInset = pinnedInset
+        _reveal = State(initialValue: coordinator.makeMinimalReveal())
+    }
 
     private var isPinned: Bool {
         pinnedInset > 0
@@ -38,15 +50,6 @@ struct MinimalShell: View {
         reduceMotion ? nil : Theme.Motion.settle
     }
 
-    /// While the bar says something, it stays: listening, a reply, a notice, a status or a question.
-    private var chromeIsBusy: Bool {
-        coordinator.state == .listening
-            || coordinator.statusMessage != nil
-            || coordinator.notice != nil
-            || coordinator.agentReply.message(inAnchor: browser.activeAnchorID) != nil
-            || coordinator.pendingAgentQuestion(inChrome: true) != nil
-    }
-
     var body: some View {
         let edge = settings.minimalBarEdge
         let spacing = settings.chromeShape.pageSpacing
@@ -55,15 +58,16 @@ struct MinimalShell: View {
         GeometryReader { proxy in
             ZStack(alignment: .leading) {
                 MinimalShellSensor(
-                    onScroll: { towardTop in
-                        guard settings.hidesMinimalBar, !chromeIsBusy, !coordinator.isMinimalTabListOpen else { return }
-                        raiseIsland(towardTop)
-                    },
-                    onEdge: { if $0 == edge { raiseIsland(true) } },
+                    onScroll: { reveal.scrolled(towardTop: $0) },
+                    edge: edge,
+                    zoneHeight: reveal.isRevealed ? IslandBar.height + gap + 8 : MicroShell.revealBand,
+                    onPointerInZone: { reveal.pointer(inZone: $0) },
                     onPointerDown: { closeTabList(unlessAt: $0, height: proxy.size.height + titleStripInset) },
                     pinsWindowControls: coordinator.isMinimalTabListOpen || isPinned
                 )
                 .allowsHitTesting(false)
+
+                PageScrollWatch(browser: browser) { reveal.scrolled(towardTop: $0) }
 
                 // No toolbar to hold: the gutter above the page moves the window, like the bar's own ground.
                 WindowDragArea()
@@ -76,7 +80,8 @@ struct MinimalShell: View {
                         available: proxy.size.width - pinnedInset - 2 * gap
                     ))
                     .padding(edge == .top ? .top : .bottom, gap)
-                    .offset(y: isIslandRaised ? 0 : (edge == .top ? -1 : 1) * (IslandBar.height + gap + 24))
+                    .offset(y: reveal.isRevealed ? 0 : (edge == .top ? -1 : 1) * (IslandBar.height + gap + 24))
+                    .allowsHitTesting(reveal.isRevealed)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: edge == .top ? .top : .bottom)
                     .padding(.leading, pinnedInset)
 
@@ -95,15 +100,16 @@ struct MinimalShell: View {
         .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { shellFrame = $0 }
         .animation(motion, value: coordinator.isMinimalTabListOpen)
         .animation(motion, value: isPinned)
-        .animation(motion, value: isIslandRaised)
+        .animation(motion, value: reveal.isRevealed)
+        .onAppear { reveal.start() }
         .onChange(of: browser.activeTab?.id) { old, _ in
-            raiseIsland(true)
+            reveal.rest()
             // Picking another tab closes the list; closing the current one leaves it open to pick the next.
             if browser.tabs.contains(where: { $0.id == old }) {
                 coordinator.isMinimalTabListOpen = false
             }
         }
-        .onChange(of: browser.activeTab?.urlString) { _, _ in raiseIsland(true) }
+        .onChange(of: browser.activeTab?.urlString) { _, _ in reveal.rest() }
         .onChange(of: coordinator.isPaletteOpen) { _, isOpen in
             if isOpen {
                 coordinator.isMinimalTabListOpen = false
@@ -120,19 +126,11 @@ struct MinimalShell: View {
                 isPeeking = false
             }
         }
-        .onChange(of: coordinator.addressBarFocusToken) { _, _ in raiseIsland(true) }
-        .onChange(of: chromeIsBusy) { _, busy in
-            if busy {
-                raiseIsland(true)
-            }
+        .onChange(of: edge) { _, _ in reveal.rest() }
+        .onDisappear {
+            reveal.stop()
+            coordinator.isMinimalTabListOpen = false
         }
-        .onChange(of: settings.hidesMinimalBar) { _, hides in
-            if !hides {
-                raiseIsland(true)
-            }
-        }
-        .onChange(of: edge) { _, _ in raiseIsland(true) }
-        .onDisappear { coordinator.isMinimalTabListOpen = false }
     }
 
     private func tabList(width: CGFloat, inset: CGFloat) -> some View {
@@ -209,9 +207,57 @@ struct MinimalShell: View {
         guard !tabListFrame.contains(point), !tabButtonFrame.contains(point) else { return }
         coordinator.isMinimalTabListOpen = false
     }
+}
 
-    private func raiseIsland(_ raised: Bool) {
-        guard raised != isIslandRaised else { return }
-        isIslandRaised = raised
+/// Where the page in front says it is scrolled to (`ScrollPositionMonitor`, the page's own script on either engine, so the
+/// keyboard, Find, links to a heading and the page's own scrolling count as much as the wheel). In a view of its own, so a
+/// page that scrolls redraws nothing else.
+private struct PageScrollWatch: View {
+    let browser: BrowserModel
+    let onScroll: (Bool) -> Void
+
+    private struct Mark: Equatable {
+        var tab: UUID?
+        var y: Double
+    }
+
+    var body: some View {
+        Color.clear
+            .frame(width: 0, height: 0)
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+            .onChange(of: Mark(tab: browser.activeTab?.id, y: browser.activeTab?.lastReportedScrollY ?? 0)) { old, new in
+                // Another tab is not a scroll; a new document starts again at 0, which reads as scrolling up.
+                guard old.tab == new.tab, abs(new.y - old.y) > MinimalShellSensor.ScrollTravel.threshold else { return }
+                onScroll(new.y < old.y)
+            }
+    }
+}
+
+extension AppCoordinator {
+    /// The Minimal bar's reveal: shown at rest, and held by everything that holds the micro bar, the address being edited,
+    /// a prompt, a save offer, a question, VoiceOver, a page with no address to show, plus the open tab list and the setting
+    /// being off. A window that is gone, or a state that cannot be read, keeps the bar.
+    func makeMinimalReveal() -> MicroReveal {
+        // The window the page is drawn in, should the window's host not be known (a view hosted on its own).
+        let window: () -> NSWindow? = { [weak self] in self?.nativeWindow ?? self?.browser.activeTab?.liveView?.window }
+        return MicroReveal(
+            restsRevealed: true,
+            window: window,
+            host: { [weak self] in MicroShell.host(of: self?.browser.activeTab?.urlString) },
+            focusToken: { [weak self] in self?.addressBarFocusToken ?? 0 },
+            pending: { [weak self] in self?.hasPendingPagePrompt ?? true },
+            keeps: { [weak self] in
+                guard let self else { return true }
+                return !BrowserSettings.application.hidesMinimalBar
+                    || isMinimalTabListOpen
+                    || MicroShell.keepsBar(
+                        browser: browser,
+                        coordinator: self,
+                        isEditing: MicroShell.isEditing(in: window()),
+                        voiceOver: NSWorkspace.shared.isVoiceOverEnabled
+                    )
+            }
+        )
     }
 }

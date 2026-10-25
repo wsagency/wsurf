@@ -36,6 +36,11 @@ struct IslandBar: View {
         height / 2 * min(max(cornerScale, 0), 1)
     }
 
+    /// The window's tabs, without the rows that stand for its pages in micro windows.
+    static func tabCount(of browser: BrowserModel) -> Int {
+        browser.tabs.count(where: { $0.microTabID == nil })
+    }
+
     static func tabCountSymbol(_ count: Int) -> String {
         (1...50).contains(count) ? "\(count).square" : "square.on.square"
     }
@@ -65,7 +70,7 @@ struct IslandBar: View {
 
         HStack(spacing: 4) {
             ToolbarButton(
-                symbol: Self.tabCountSymbol(browser.tabs.count),
+                symbol: Self.tabCountSymbol(Self.tabCount(of: browser)),
                 enabled: true,
                 isOn: showsTabList,
                 help: String(localized: tabListLabel)

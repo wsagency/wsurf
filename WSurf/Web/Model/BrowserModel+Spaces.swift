@@ -26,8 +26,9 @@ extension BrowserModel {
         currentSpaceID == nil ? tabs : tabs.filter(isShown)
     }
 
+    /// The tab on screen when none is chosen. Never a row that stands for a page in a micro window.
     var firstShownTab: BrowserTab? {
-        currentSpaceID == nil ? tabs.first : tabs.first(where: isShown)
+        tabs.first { $0.microTabID == nil && isShown($0) }
     }
 
     func spaceID(ofItem item: SidebarItem) -> UUID? {

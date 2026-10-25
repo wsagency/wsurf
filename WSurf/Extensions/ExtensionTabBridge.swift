@@ -142,7 +142,8 @@ final class ExtensionWindowAdapter: NSObject, WKWebExtensionWindow {
 
     func tabs(for context: WKWebExtensionContext) -> [any WKWebExtensionTab] {
         guard let browser, let manager, manager.owns(self) else { return [] }
-        return browser.tabs.map { manager.adapter(for: $0) }
+        // A row that stands for a page in a micro window is not a tab of this window.
+        return browser.tabs.filter { $0.microTabID == nil }.map { manager.adapter(for: $0) }
     }
 
     func activeTab(for context: WKWebExtensionContext) -> (any WKWebExtensionTab)? {

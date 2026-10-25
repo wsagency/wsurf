@@ -274,8 +274,9 @@ extension MCPBrowserSession {
     /// Persistent state only: whether this connection still shares `id`. A task's own cancellation is not part of it, because
     /// another connection evaluates this through the owner's `isAuthorized` (lease release) from its own, possibly cancelled, task.
     func sharedTab(_ id: UUID) -> BrowserTab? {
+        // A row that stands for a page in a micro window is not a page a connection can act on.
         guard isConnected, available(),
-            let grant = grants[id], let tab = browser.tabs.first(where: { $0.id == id }),
+            let grant = grants[id], let tab = browser.tabs.first(where: { $0.id == id }), tab.microTabID == nil,
             !tab.isPrivate, !tab.isClosed, let url = webURL(of: tab)
         else { return nil }
         let origin = SitePermissions.origin(for: url)
