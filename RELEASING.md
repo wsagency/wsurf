@@ -472,6 +472,39 @@ Mac:
 10. Staple the ticket to the disk image with `staple`.
 11. Attach the disk image, the zip file **and** `appcast.xml` to the release.
 
+## Local development-signed candidates
+
+The candidates tried by hand on the owner's Macs (development-signed, `WSURF_BUNDLE_ID_SUFFIX` empty) are built in the configuration
+that ships. A Debug app is 477 MB on disk (a 145 MB debug dylib, coverage counters, unoptimised code) and as slow as the code can be;
+`release.yml` and `tip.yml` already archive Release, so the local candidate should too.
+
+- **Build** with `xcodebuild archive -configuration Release -destination 'generic/platform=macOS'`, the `release.yml` command with the
+  development identity and profiles, and `ENABLE_DEBUG_DYLIB=NO ENABLE_PREVIEWS=NO`. An archive strips the executables and writes
+  `dSYMs/`: keep them with the build's evidence, they are what symbolicates a crash of that exact build. A plain `xcodebuild build`
+  of the scheme turns on code coverage, because the scheme's test action enables it, and leaves the debug map in the binary. An
+  archive does neither, and `xcodebuild` refuses `-enableCodeCoverage` for it ("only supported when testing").
+- **Assert the result** instead of trusting the settings: no `*.debug.dylib` or `__preview.dylib`, no `__llvm_prf` or `__LLVM_COV`
+  section in any Mach-O, a host `__LINKEDIT` of a few MB (the Debug build's was 80 MB) and exactly the kept Chromium languages.
+- **Chromium languages.** `Tools/embed-chromium.sh` keeps the locale paks named in `WSURF_CEF_LOCALES` (lproj names separated by
+  spaces, default `en en_GB hr`, `en` required, set but empty keeps all) and removes the rest before the first signature: 217 of 220
+  directories, 47 MB. The list is part of the embed fingerprint. Pages see the same languages with or without them: the app declares
+  only `en`, so Chromium loads its en-US strings and CEF reports `en-US,en` whatever the system languages are
+  (`ChromiumLanguageTests`).
+- **Install copy.** Stage with `ditto --hfsCompression <verified unzipped app> <staged app>`: about 169 MB on disk instead of 316.
+  Never `ditto -x -k --hfsCompression`, which produced an incomplete tree. Whatever copies the app later without the flag (Finder,
+  `cp`, `ditto` alone) loses the compression.
+- **Tests stay Debug.** Never host tests in the Release configuration: its bundle identifier is fixed and Stage mode is compiled out.
+  `CredentialStore` now isolates tests in every configuration, but nothing else promises that for a Release test host. The
+  candidate gate adds one optimised host, a Debug build with `SWIFT_OPTIMIZATION_LEVEL=-O ENABLE_DEBUG_DYLIB=NO
+  ENABLE_HARDENED_RUNTIME=NO`, that runs the Performance plan and a short smoke subset. It catches bugs only the optimiser causes,
+  which the Debug binary cannot show. Performance budgets stay the Debug budgets.
+- **What differs at runtime**, from the `#if DEBUG` sites: Stage mode is gone (screenshot and staged-profile work needs a Debug build),
+  extension contexts are not inspectable, WebAuthn counts and `AutofillDiagnostics.policyFailed` log less, Swift `assert`s are compiled
+  out, and `MoveToApplications` offers to move a copy that does not run from `/Applications` (never launch a candidate from its
+  staging path). A development-signed Release build is expected not to carry `com.apple.security.get-task-allow`: no lldb,
+  Instruments or `sample` on the installed candidate. The candidate verifier reports that as a named entitlement difference that needs
+  the owner's approval.
+
 ## Preview builds
 
 WSurf has two update channels. A release is the default. A preview build comes
