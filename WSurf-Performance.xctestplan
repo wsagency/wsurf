@@ -35,6 +35,7 @@
       "parallelizable" : false,
       "selectedTests" : [
         "BrowserPerformanceTests",
+        "ChromiumLoadPerformanceTests",
         "CredentialListPerformanceTests",
         "HistoryPerformanceTests",
         "ListPerformanceTests",

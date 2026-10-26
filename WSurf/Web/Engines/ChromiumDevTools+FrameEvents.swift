@@ -5,16 +5,39 @@ import Foundation
 import WebKit
 
 extension ChromiumDevTools {
+    /// An event of the page's session as CEF hands it over: its name and its parameters as JSON. Network events, which are on for the
+    /// whole page and come in fives for every resource, are not parsed when nothing acts on them (`isWanted`).
     func receiveEvent(name: String, pointer: UnsafeRawPointer?, size: Int) {
         guard !closed, size <= 8 * 1_048_576 else { return }
+        loadStatistics.eventsReceived += 1
+        guard isWanted(event: name, pointer: pointer, size: size) else { return }
         let params: [String: Any]
         if size == 0 {
             params = [:]
         } else {
+            loadStatistics.eventsParsed += 1
             guard let value = try? Self.jsonObject(pointer, size: size) as? [String: Any] else { return }
             params = value
         }
         receiveEvent(name: name, params: params)
+    }
+
+    /// Whether anything acts on this event, decided before its parameters are parsed: a diagnostics capture takes its own events,
+    /// and `eventHandlers` is both the dispatch and the list of everything else the session listens to. Chromium also reports
+    /// every resource's response, of which only a document's is used; the others are told apart by the bytes, where "Document" is
+    /// the one type no other resource has.
+    private func isWanted(event name: String, pointer: UnsafeRawPointer?, size: Int) -> Bool {
+        if diagnosticsSink != nil, Self.diagnosticEvents.contains(name) {
+            return true
+        }
+        guard Self.eventHandlers[name] != nil else { return false }
+        return name != "Network.responseReceived" || Self.contains("Document", in: pointer, size: size)
+    }
+
+    /// Whether the `size` bytes at `pointer` contain `needle`.
+    static func contains(_ needle: StaticString, in pointer: UnsafeRawPointer?, size: Int) -> Bool {
+        guard let pointer, size >= needle.utf8CodeUnitCount else { return false }
+        return memmem(pointer, size, needle.utf8Start, needle.utf8CodeUnitCount) != nil
     }
 
     /// A cross-site frame's session hears only what concerns its own frames: never the page's security state, responses,
@@ -24,53 +47,57 @@ extension ChromiumDevTools {
         "Target.attachedToTarget", "Target.detachedFromTarget", "Target.targetCrashed",
     ]
 
+    /// Every event the page's session acts on, by name. The dispatch and the filter in front of the parse are this one table.
+    private static let eventHandlers: [String: @MainActor (ChromiumDevTools, [String: Any]) -> Void] = [
+        "Target.attachedToTarget": { $0.attachedToTarget($1) },
+        "Target.detachedFromTarget": { $0.detachedFromTarget($1) },
+        "Target.targetCrashed": { $0.targetCrashed($1) },
+        // Runtime events arrive only while a diagnostics capture enables the domain.
+        "Runtime.executionContextCreated": { $0.contextCreated($1) },
+        "Runtime.executionContextDestroyed": { $0.executionContextDestroyed($1) },
+        "Runtime.executionContextsCleared": { $0.executionContextsCleared($1) },
+        "Runtime.bindingCalled": { $0.bindingCalled($1) },
+        "Page.frameNavigated": { $0.frameNavigated($1) },
+        "Page.navigatedWithinDocument": { $0.navigatedWithinDocument($1) },
+        "Page.frameDetached": { $0.frameDetached($1) },
+        "Network.responseReceived": { $0.documentResponseReceived($1) },
+        "Security.securityStateChanged": { $0.securityStateChanged($1) },
+        "Security.visibleSecurityStateChanged": { $0.visibleSecurityStateChanged($1) },
+    ]
+
     func receiveEvent(name: String, params: [String: Any]) {
         guard !closed, sessionID == nil || Self.crossSiteFrameEvents.contains(name) else { return }
         if let diagnosticsSink, Self.diagnosticEvents.contains(name) {
             diagnosticsSink(name, params)
         }
-        switch name {
-        case "Target.attachedToTarget":
-            attachedToTarget(params)
-        case "Target.detachedFromTarget":
-            detachedFromTarget(params)
-        case "Target.targetCrashed":
-            targetCrashed(params)
-        // Runtime events arrive only while a diagnostics capture enables the domain.
-        case "Runtime.executionContextCreated":
-            contextCreated(params)
-        case "Runtime.executionContextDestroyed":
-            if let executionID = params["executionContextId"] as? Int, let documentID = removeContexts(executionID: executionID) {
-                invalidateCredentialContexts(documents: [documentID], pageWide: false)
-            }
-        case "Runtime.executionContextsCleared":
-            let hadContexts = !contextsByUniqueID.isEmpty
-            contextsByUniqueID.removeAll()
-            uniqueIDByExecutionID.removeAll()
-            if hadContexts {
-                invalidateCredentialContexts(documents: [], pageWide: true)
-            }
-        case "Runtime.bindingCalled":
-            bindingCalled(params)
-        case "Page.frameNavigated":
-            frameNavigated(params)
-        case "Page.navigatedWithinDocument":
-            navigatedWithinDocument(params)
-        case "Page.frameDetached":
-            frameDetached(params)
-        case "Network.responseReceived":
-            documentResponseReceived(params)
-        case "Security.securityStateChanged":
-            if let state = params["securityState"] as? String {
-                page?.didChangeSecurity(state == "secure")
-            }
-        case "Security.visibleSecurityStateChanged":
-            if let visible = params["visibleSecurityState"] as? [String: Any],
-               let state = visible["securityState"] as? String {
-                page?.didChangeSecurity(state == "secure")
-            }
-        default:
-            break
+        Self.eventHandlers[name]?(self, params)
+    }
+
+    private func executionContextDestroyed(_ params: [String: Any]) {
+        if let executionID = params["executionContextId"] as? Int, let documentID = removeContexts(executionID: executionID) {
+            invalidateCredentialContexts(documents: [documentID], pageWide: false)
+        }
+    }
+
+    private func executionContextsCleared(_ params: [String: Any]) {
+        let hadContexts = !contextsByUniqueID.isEmpty
+        contextsByUniqueID.removeAll()
+        uniqueIDByExecutionID.removeAll()
+        if hadContexts {
+            invalidateCredentialContexts(documents: [], pageWide: true)
+        }
+    }
+
+    private func securityStateChanged(_ params: [String: Any]) {
+        if let state = params["securityState"] as? String {
+            page?.didChangeSecurity(state == "secure")
+        }
+    }
+
+    private func visibleSecurityStateChanged(_ params: [String: Any]) {
+        if let visible = params["visibleSecurityState"] as? [String: Any],
+           let state = visible["securityState"] as? String {
+            page?.didChangeSecurity(state == "secure")
         }
     }
 
@@ -185,13 +212,7 @@ extension ChromiumDevTools {
         if restoredFromCache {
             // While a diagnostics capture enables the Runtime domain, cached contexts are replayed before the restored
             // frame's navigation event.
-            var index = contextsByUniqueID.startIndex
-            while index != contextsByUniqueID.endIndex {
-                if contextsByUniqueID[index].value.frameID == parsed.id {
-                    contextsByUniqueID.values[index].documentID = parsed.documentID
-                }
-                contextsByUniqueID.formIndex(after: &index)
-            }
+            contextsByUniqueID.setDocument(parsed.documentID, ofFrame: parsed.id)
         }
         if !parsed.documentID.isEmpty {
             // The page's own commit work (the startup history reset) goes first; binding sends renderer round trips.
@@ -280,9 +301,7 @@ extension ChromiumDevTools {
         guard name.isEmpty else {
             return try await isolatedContext(frameID: frameID, documentID: frame.documentID, worldName: name)
         }
-        if let existing = contextsByUniqueID.values.first(where: {
-            $0.frameID == frameID && $0.documentID == frame.documentID && $0.worldName.isEmpty
-        }) { return existing }
+        if let existing = contextsByUniqueID.context(frameID: frameID, documentID: frame.documentID, worldName: "") { return existing }
         // Without the Runtime domain the main frame's main world is Chromium's default context. A subframe's main world is
         // reached through an object of it: unlike a context ID, an object ID names its renderer process, so a call made
         // with it never reaches another document.
@@ -324,9 +343,7 @@ extension ChromiumDevTools {
     /// record's key also names the frame and document.
     func isolatedContext(frameID: String, documentID: String, worldName: String) async throws -> ContextState {
         var context: ContextState
-        if let existing = contextsByUniqueID.values.first(where: {
-            $0.frameID == frameID && $0.documentID == documentID && $0.worldName == worldName
-        }) {
+        if let existing = contextsByUniqueID.context(frameID: frameID, documentID: documentID, worldName: worldName) {
             context = existing
         } else {
             let response = try await command("Page.createIsolatedWorld", params: [

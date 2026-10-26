@@ -26,10 +26,28 @@ final class ChromiumDevTools {
     /// The page's session only: the session each pending command went to, when not its own.
     private var pendingSessions: [Int: String] = [:]
     /// MCP development diagnostics. Nil unless a lease is capturing.
-    private(set) var diagnosticsSink: ((String, [String: Any]) -> Void)?
+    /// Set by `startDiagnostics`; a test sets it directly.
+    var diagnosticsSink: ((String, [String: Any]) -> Void)?
     private var diagnosticsOwner: ObjectIdentifier?
     /// Sees every command as it is sent, for tests.
     var commandObserver: ((String, [String: Any]) -> Void)?
+
+    /// What this connection has spent on protocol traffic, as counters: the page's session counts for the frame sessions under it.
+    /// They cost an addition per event; tests and the Chromium load benchmark read them.
+    struct LoadStatistics: Equatable {
+        /// Events CEF handed to the page's session.
+        var eventsReceived = 0
+        /// Of those, the ones whose parameters were parsed as JSON.
+        var eventsParsed = 0
+        /// Messages of a cross-site frame session, which are always parsed whole.
+        var sessionMessagesParsed = 0
+        /// Cross-site frames held until their session had registered its scripts: how many, the sum and the longest hold
+        /// (from the frame's attach to the answer of the command that lets it run).
+        var framePauses = 0
+        var framePauseTotal: Duration = .zero
+        var framePauseMax: Duration = .zero
+    }
+    var loadStatistics = LoadStatistics()
     private(set) var prepared = false
     private var preparing = false
     private var prepareWaiters: [CheckedContinuation<Void, Error>] = []
@@ -97,7 +115,7 @@ final class ChromiumDevTools {
     /// Documents whose own `origin` was read in WSurf's isolated world: false when it is not the security origin Chromium reports
     /// (`verifyOrigin`), which then is never trusted.
     var documentOrigins: [String: Bool] = [:]
-    var contextsByUniqueID: [String: ContextState] = [:]
+    var contextsByUniqueID = ContextTable()
     var uniqueIDByExecutionID: [Int: String] = [:]
     var scripts: [Script] = []
     var handlers: [HandlerKey: Handler] = [:]
@@ -202,14 +220,13 @@ final class ChromiumDevTools {
         preparing = true
         do {
             // No Runtime.enable: pages can detect it. Contexts come from Page.createIsolatedWorld instead.
-            _ = try await command("Page.enable")
-            // A cross-site frame's security state and responses are not the page's: its session reads neither.
-            if sessionID == nil {
-                _ = try await command("Security.enable")
-                _ = try await command("Network.enable")
-            }
             // Before the loop: nothing may suspend between its last check and `prepared`, or a script added meanwhile is lost.
-            try await attachCrossSiteFrames()
+            // A cross-site frame's security state and responses are not the page's: its session enables neither.
+            if sessionID == nil {
+                try await preparePageSession()
+            } else {
+                try await prepareFrameSession()
+            }
 
             while true {
                 if let index = scripts.firstIndex(where: { $0.identifier == nil }) {
@@ -518,8 +535,13 @@ final class ChromiumDevTools {
 
     func installScript(_ source: String, in world: WKContentWorld,
                        injectionTime: WKUserScriptInjectionTime, forMainFrameOnly: Bool) {
+        let name = worldName(world)
+        // Each autofill feature installs the shared form script before its own: once is enough, as in WebKit.
+        guard !scripts.contains(where: {
+            $0.worldName == name && $0.injectionTime == injectionTime && $0.mainFrameOnly == forMainFrameOnly && $0.source == source
+        }) else { return }
         let index = scripts.count
-        scripts.append(Script(source: source, worldName: worldName(world), injectionTime: injectionTime,
+        scripts.append(Script(source: source, worldName: name, injectionTime: injectionTime,
                               mainFrameOnly: forMainFrameOnly))
         if sessionID == nil, Self.runsInCrossSiteFrames(scripts[index]) {
             for session in sessions.values {
@@ -615,6 +637,11 @@ final class ChromiumDevTools {
         Task { @MainActor [weak self] in
             guard let self, !self.closed else { return }
             try? await self.installBinding(worldName: key.worldName)
+            // A cross-site frame's session binds the world too when its handler hears such frames, for the documents to come.
+            guard Self.hearsCrossSiteFrames(key) else { return }
+            for session in Array(self.sessions.values) where !session.closed && session.prepared {
+                try? await session.installBinding(worldName: key.worldName)
+            }
         }
     }
 
@@ -645,7 +672,7 @@ final class ChromiumDevTools {
     /// Registers, for new documents, the `__wsurfSend(name, body)` that scripts of `worldName` call. In an isolated world it
     /// queues messages until native binds that document's context (`isolatedContext`). The page world gets no binding: a
     /// relay there dispatches a DOM event that the page bridge world forwards, attributed to the page-world handlers.
-    private func installBinding(worldName: String) async throws {
+    func installBinding(worldName: String) async throws {
         guard !bindingWorlds.contains(worldName), needsBinding(worldName) else { return }
         // Claimed before the first await, so a concurrent call cannot register the same scripts twice.
         bindingWorlds.insert(worldName)
@@ -667,14 +694,23 @@ final class ChromiumDevTools {
         }
     }
 
-    /// A page-world script alone (such as one that only marshals DOM events) gets no relay; a page-world handler does.
-    private func needsBinding(_ worldName: String) -> Bool {
-        !worldName.isEmpty || handlers.keys.contains { $0.worldName.isEmpty }
+    /// A world gets the `__wsurfSend` shim when something can use it: a handler that hears this session's frames (the handlers are
+    /// the page's session's, and a cross-site frame's hears only those listed for such frames), or, for an isolated world, a script
+    /// that calls it. A world with neither, such as the pull-to-refresh wheel watch's, is left unbound: no document costs it a
+    /// context, a binding and four commands. A page-world script alone (such as one that only marshals DOM events) gets no relay.
+    func needsBinding(_ worldName: String) -> Bool {
+        if worldName == Self.pageBridgeWorld {
+            return needsBinding("")
+        }
+        let heard = (root ?? self).handlers.keys.contains {
+            $0.worldName == worldName && (sessionID == nil || Self.hearsCrossSiteFrames($0))
+        }
+        return heard || (!worldName.isEmpty && scripts.contains { $0.worldName == worldName && $0.source.contains("__wsurfSend") })
     }
 
     /// Native calls `__wsurfAttach` after Runtime.addBinding put the native function on this context's global object; the
     /// messages queued until then go out in order.
-    private static let bindingSource = """
+    static let bindingSource = """
         (() => {
           if (Object.prototype.hasOwnProperty.call(globalThis, '__wsurfSend')) return;
           const queue = [];
@@ -734,20 +770,27 @@ final class ChromiumDevTools {
         """
     }
 
-    private func install(_ script: Script) async throws -> String {
-        let source: String
+    func install(_ script: Script) async throws -> String {
+        try await register(registrationSource(script), worldName: script.worldName)
+    }
+
+    /// What Chromium runs for `script` in each new document: its injection time and frame scope are made here.
+    func registrationSource(_ script: Script) -> String {
         if script.injectionTime == .atDocumentStart {
-            source = script.mainFrameOnly
+            return script.mainFrameOnly
                 ? "if (window === window.top) {\n\(script.source)\n}"
                 : script.source
-        } else {
-            let body = script.mainFrameOnly ? "if (window === window.top) {\n\(script.source)\n}" : script.source
-            source = "(() => { const run = () => {\n\(body)\n}; " +
-                "if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', run, {once: true}); " +
-                "else queueMicrotask(run); })();"
         }
+        let body = script.mainFrameOnly ? "if (window === window.top) {\n\(script.source)\n}" : script.source
+        return "(() => { const run = () => {\n\(body)\n}; " +
+            "if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', run, {once: true}); " +
+            "else queueMicrotask(run); })();"
+    }
+
+    /// Registers `source` to run in each new document, in `worldName` (the page's world when empty).
+    func register(_ source: String, worldName: String) async throws -> String {
         var params: [String: Any] = ["source": source]
-        if !script.worldName.isEmpty { params["worldName"] = script.worldName }
+        if !worldName.isEmpty { params["worldName"] = worldName }
         let response = try await command("Page.addScriptToEvaluateOnNewDocument", params: params)
         guard let identifier = response["identifier"] as? String else {
             throw ChromiumError.protocolFailure("Page.addScriptToEvaluateOnNewDocument returned no identifier.")
