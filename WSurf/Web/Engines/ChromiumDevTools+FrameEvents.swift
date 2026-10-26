@@ -7,10 +7,12 @@ import WebKit
 extension ChromiumDevTools {
     func receiveEvent(name: String, pointer: UnsafeRawPointer?, size: Int) {
         guard !closed, size <= 8 * 1_048_576 else { return }
+        loadStatistics.eventsReceived += 1
         let params: [String: Any]
         if size == 0 {
             params = [:]
         } else {
+            loadStatistics.eventsParsed += 1
             guard let value = try? Self.jsonObject(pointer, size: size) as? [String: Any] else { return }
             params = value
         }

@@ -30,6 +30,23 @@ final class ChromiumDevTools {
     private var diagnosticsOwner: ObjectIdentifier?
     /// Sees every command as it is sent, for tests.
     var commandObserver: ((String, [String: Any]) -> Void)?
+
+    /// What this connection has spent on protocol traffic, as counters: the page's session counts for the frame sessions under it.
+    /// They cost an addition per event; tests and the Chromium load benchmark read them.
+    struct LoadStatistics: Equatable {
+        /// Events CEF handed to the page's session.
+        var eventsReceived = 0
+        /// Of those, the ones whose parameters were parsed as JSON.
+        var eventsParsed = 0
+        /// Messages of a cross-site frame session, which are always parsed whole.
+        var sessionMessagesParsed = 0
+        /// Cross-site frames held until their session had registered its scripts: how many, the sum and the longest hold
+        /// (from the frame's attach to the answer of the command that lets it run).
+        var framePauses = 0
+        var framePauseTotal: Duration = .zero
+        var framePauseMax: Duration = .zero
+    }
+    var loadStatistics = LoadStatistics()
     private(set) var prepared = false
     private var preparing = false
     private var prepareWaiters: [CheckedContinuation<Void, Error>] = []
