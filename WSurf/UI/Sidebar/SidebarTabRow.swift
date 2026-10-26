@@ -357,13 +357,7 @@ struct SidebarTabRow: View {
         } label: {
             Label("Duplicate Tab", systemImage: "plus.square.on.square")
         }
-        if let anchor = browser.activeTab, anchor !== tab {
-            Button {
-                coordinator.split(anchor, with: tab, axis: .sideBySide)
-            } label: {
-                Label("Open Beside Current Page", systemImage: "rectangle.split.2x1")
-            }
-        }
+        OpenBesideCurrentPageItem(tab: tab, browser: browser, coordinator: coordinator)
         if browser.splits.contains(tab.id) {
             Button {
                 browser.dissolveSplit(containing: tab)
@@ -415,6 +409,24 @@ struct SidebarTabRow: View {
                 }
             } label: {
                 Label("Remove Other Tabs", systemImage: "trash")
+            }
+        }
+    }
+}
+
+/// Open Beside Current Page, in a view of its own: a row builds its context menu with its body, so a menu item that read which
+/// tab is current there would draw every row again on each tab switch.
+private struct OpenBesideCurrentPageItem: View {
+    let tab: BrowserTab
+    let browser: BrowserModel
+    let coordinator: AppCoordinator
+
+    var body: some View {
+        if let anchor = browser.activeTab, anchor !== tab {
+            Button {
+                coordinator.split(anchor, with: tab, axis: .sideBySide)
+            } label: {
+                Label("Open Beside Current Page", systemImage: "rectangle.split.2x1")
             }
         }
     }
