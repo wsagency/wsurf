@@ -278,4 +278,15 @@ struct CredentialStoreTests {
             ) == "manual-token"
         )
     }
+
+    /// The service is chosen by `serviceName`, which has no `#if DEBUG`: a test host hosted by a Release build gets its own
+    /// service too, and never the installed app's.
+    @Test func aTestHostNeverUsesTheInstalledAppsKeychainService() {
+        #expect(CredentialStore.serviceName(isRunningTests: false, processID: 41) == "io.wsagency.wsurf")
+        #expect(CredentialStore.serviceName(isRunningTests: true, processID: 41) == "io.wsagency.wsurf.tests.41")
+        #expect(CredentialStore.productionService == "io.wsagency.wsurf")
+        #expect(AppDatabase.isRunningTests)
+        #expect(CredentialStore.service != CredentialStore.productionService)
+        #expect(CredentialStore.service.hasPrefix(CredentialStore.productionService + "."))
+    }
 }
