@@ -116,6 +116,28 @@ final class TabWebView: WKWebView {
     private var contextLinkURL: URL?
     private var contextLinkAnchor: CGPoint?
 
+    /// WebKit does not call the window that follows a choice from its context menu (Open Link in New Tab and the like) the
+    /// person's own: for `createWebViewWith` it is not user-initiated, as a script's pop-up is not, so the pop-up gate would
+    /// refuse it. Choosing the item is the person's act, so each of those items is wrapped to record it, then does what it did
+    /// (`takeNewWindowChoice`).
+    private var wrappedNewWindowItems: [(item: NSMenuItem, target: AnyObject?, action: Selector?)] = []
+    private var newWindowChoice: ContinuousClock.Instant?
+    private static let newWindowChoiceLifetime = Duration.seconds(2)
+
+    @objc private func chooseNewWindowItem(_ sender: NSMenuItem) {
+        guard let wrapped = wrappedNewWindowItems.first(where: { $0.item === sender }), let action = wrapped.action else { return }
+        newWindowChoice = .now
+        NSApp.sendAction(action, to: wrapped.target, from: sender)
+    }
+
+    /// Whether the person chose one of WebKit's New Tab items a moment ago, which is what a window WebKit asks for now is. True
+    /// once per choice.
+    func takeNewWindowChoice() -> Bool {
+        defer { newWindowChoice = nil }
+        guard let chosen = newWindowChoice else { return false }
+        return chosen.duration(to: .now) < Self.newWindowChoiceLifetime
+    }
+
     private static let reloadItem = "WKMenuItemIdentifierReload"
     private static let openLinkItem = "WKMenuItemIdentifierOpenLinkInNewWindow"
 
@@ -151,6 +173,7 @@ final class TabWebView: WKWebView {
 
     override func willOpenMenu(_ menu: NSMenu, with event: NSEvent) {
         super.willOpenMenu(menu, with: event)
+        wrappedNewWindowItems.removeAll()
         var reloadIndex: Int?
         var linkIndex: Int?
         for (index, item) in menu.items.enumerated() {
@@ -162,6 +185,9 @@ final class TabWebView: WKWebView {
 
             if let title = Self.newWindowItems[identifier] {
                 item.title = String(localized: title)
+                wrappedNewWindowItems.append((item, item.target, item.action))
+                item.target = self
+                item.action = #selector(chooseNewWindowItem(_:))
             }
 
             if identifier == Self.reloadItem {
