@@ -28,8 +28,16 @@ identity="${EXPANDED_CODE_SIGN_IDENTITY:--}"
 signOptions=(--options runtime --timestamp)
 # Match Xcode's ad-hoc builds; hardened library validation requires a real signing team.
 [[ "$identity" != - ]] || signOptions=(--timestamp=none)
+# Chromium's own UI strings are one Resources/<name>.lproj/locale.pak per language (55 languages plus 165 gender stubs, 47 MB).
+# Only the lproj names in WSURF_CEF_LOCALES (space separated) are kept; Chromium falls back to en-US for a language without a
+# pak, and WSurf's own UI is English only. `en` is that fallback and must stay. Set but empty keeps every language.
+locales="${WSURF_CEF_LOCALES-en en_GB hr}"
+if [[ -n "${locales// /}" && " $locales " != *" en "* ]]; then
+    echo "error: WSURF_CEF_LOCALES must contain en (Chromium's fallback language): '$locales'" >&2
+    exit 1
+fi
 helperHash=$(/usr/bin/shasum -a 256 "$helper")
-fingerprint="$version|$identity|${helperHash%% *}|${signOptions[*]}|$PRODUCT_BUNDLE_IDENTIFIER"
+fingerprint="$version|$identity|${helperHash%% *}|${signOptions[*]}|$PRODUCT_BUNDLE_IDENTIFIER|locales=${locales:-all}"
 contents="$TARGET_BUILD_DIR/$CONTENTS_FOLDER_PATH"
 frameworks="$contents/Frameworks"
 resources="$contents/Resources"
@@ -43,6 +51,15 @@ fi
 
 mkdir -p "$frameworks" "$resources"
 /usr/bin/ditto "$framework" "$frameworks/Chromium Embedded Framework.framework"
+if [[ -n "${locales// /}" ]]; then
+    # Before the first sign, so the framework's seal covers exactly what ships. ditto only adds files, so a list that
+    # changed since the last embed is applied from the full set again, never from the previous result.
+    while IFS= read -r -d '' lproj; do
+        name=$(basename "$lproj" .lproj)
+        [[ " $locales " == *" $name "* ]] || rm -rf "$lproj"
+    done < <(/usr/bin/find "$frameworks/Chromium Embedded Framework.framework/Versions/A/Resources" \
+        -maxdepth 1 -type d -name '*.lproj' -print0)
+fi
 cp -f "$package/LICENSE" "$resources/CefSwift.LICENSE.txt"
 cp -f "$package/Sources/CCef/LICENSE.CEF.txt" "$resources/Chromium.LICENSE.txt"
 
