@@ -77,7 +77,9 @@ final class BrowserProfileContext {
         settings = BrowserSettings(sessionDefaults: defaults, application: .application)
         sitePermissions = SitePermissions(storageURL: profile.permissionsFile, persists: !profile.isPrivate)
         pageZoom = PageZoomStore(file: profile.zoomFile, persists: !profile.isPrivate)
-        contentBlocker = ContentBlocker(defaults: defaults, settings: settings, persists: !profile.isPrivate)
+        contentBlocker = ContentBlocker(
+            defaults: defaults, settings: settings, persists: !profile.isPrivate, scope: profile.id.uuidString
+        )
         favicons = FaviconLoader(cacheDirectory: FaviconLoader.cacheDirectory(for: owner))
         favicons.persistsToDisk = !profile.isPrivate
         if profile.isPrivate {
