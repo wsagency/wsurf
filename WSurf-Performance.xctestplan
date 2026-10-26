@@ -38,9 +38,11 @@
         "ChromiumLoadPerformanceTests",
         "CredentialListPerformanceTests",
         "HistoryPerformanceTests",
+        "LaunchPerformanceTests",
         "ListPerformanceTests",
         "PageWatchPerformanceTests",
         "ReaderPerformanceTests",
+        "SidebarPerformanceTests",
         "ThemePerformanceTests",
         "VaultScalePerformanceTests"
       ],

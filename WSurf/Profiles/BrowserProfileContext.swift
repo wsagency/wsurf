@@ -3,6 +3,7 @@
 // Modified for WSurf by wsagency in 2026; based on Linen by Kavoye.
 
 import Foundation
+import os
 import WebKit
 
 /// Services shared by regular windows of one profile, or isolated to one private window.
@@ -47,11 +48,12 @@ final class BrowserProfileContext {
         persists: !profile.isPrivate && !AppDatabase.isRunningTests && AppDatabase.ownsSession,
         settings: settings
     )
-    lazy var history = HistoryStore(database: database)
+    // The intervals db.open, history.reload and convlog.load are for Instruments, next to "launch" (`LaunchSignpost`).
+    lazy var history = Pipeline.signposter.withIntervalSignpost("history.reload") { HistoryStore(database: database) }
     lazy var tabArchive = TabArchive(database: database)
     /// Nil in a private window: notes about the person are never kept there.
     lazy var assistantFacts: AssistantFacts? = profile.isPrivate ? nil : AssistantFacts(database: database, settings: modelSettings)
-    lazy var conversationLog = ConversationLog(database: database)
+    lazy var conversationLog = Pipeline.signposter.withIntervalSignpost("convlog.load") { ConversationLog(database: database) }
     /// Nil in a private window: nothing is watched there.
     lazy var pageWatches: PageWatchCenter? = profile.isPrivate ? nil : PageWatchCenter.live(for: self)
     /// Nil in a private window, which has no spaces.
@@ -65,7 +67,7 @@ final class BrowserProfileContext {
 
     init(profile: Profile, settingsOwner: Profile? = nil) {
         self.profile = profile
-        database = profile.makeDatabase()
+        database = Pipeline.signposter.withIntervalSignpost("db.open") { profile.makeDatabase() }
         dataStore = profile.makeDataStore()
         let owner = profile.isPrivate ? (settingsOwner ?? .original()) : profile
         let profileDefaults = ProfileSettingsStore.defaults(for: owner)

@@ -359,7 +359,9 @@ struct WorkspaceList<TopBar: View, BottomBar: View>: View {
             reopening = collapse(carried)
             coordinator.tabPreview.beginSuppression()
         }
-        model.drag?.translation = value.translation
+        if model.translation != value.translation {
+            model.translation = value.translation
+        }
 
         let inWindow = CGPoint(x: value.location.x + listOrigin.x, y: value.location.y + listOrigin.y)
         let overButton = newFolderDrop.frame.contains(inWindow)
@@ -527,7 +529,9 @@ struct WorkspaceList<TopBar: View, BottomBar: View>: View {
         }
     }
 
+    /// Runs at every step of a drag over the page or a drop target; it writes the list's state only when there is a dwell to end.
     private func rest() {
+        guard dwell != nil || dwelling != nil else { return }
         dwell?.cancel()
         dwell = nil
         dwelling = nil
@@ -572,12 +576,12 @@ struct SidebarDragOverlay: View {
 
     private func chipX(_ drag: SidebarDrag) -> CGFloat {
         guard !drag.landing else { return drag.origin.minX }
-        return drag.origin.minX + drag.translation.width
+        return drag.origin.minX + model.translation.width
     }
 
     private func chipY(_ drag: SidebarDrag) -> CGFloat {
         guard !drag.landing else { return model.frames[drag.lead]?.minY ?? drag.origin.minY }
-        return drag.origin.minY + drag.translation.height
+        return drag.origin.minY + model.translation.height
     }
 }
 

@@ -553,10 +553,8 @@ extension BrowserModel {
             tabs.append(tab)
             writtenStateGeneration[tab.id] = tab.sessionStateGeneration
             onTabOpened?(tab)
-            if tab.isFavorite {
-                tab.realizeDeferredSession()
-            }
         }
+        realizeAfterFirstFrame(tabs.filter(\.isFavorite))
 
         var foldersByStoredID: [UUID: TabFolder] = [:]
         for record in stored.folders where record.pinID == nil || !profileHoldsPins {
@@ -599,6 +597,20 @@ extension BrowserModel {
         Pipeline.log.notice(
             "session: restored \(self.tabs.count) of \(stored.tabs.count) stored tabs, \(self.folders.count) folders"
         )
+    }
+
+    /// Favorites load in the background whether or not they are shown, but not before the window has drawn: one per main run-loop
+    /// turn after it. One the person shows first, closes or moves away in the meantime is left alone. A quit before then keeps
+    /// its saved state, which an unloaded tab still holds.
+    private func realizeAfterFirstFrame(_ favorites: [BrowserTab]) {
+        guard !favorites.isEmpty else { return }
+        Task { [weak self] in
+            for tab in favorites {
+                await Task.yield()
+                guard let self, tabsByID[tab.id] === tab else { continue }
+                tab.realizeDeferredSession()
+            }
+        }
     }
 
     private static func restoredFolder(_ record: FolderRecord) -> TabFolder {

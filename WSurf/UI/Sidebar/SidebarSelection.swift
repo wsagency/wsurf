@@ -14,6 +14,8 @@ enum SidebarDestination: Hashable {
     }
 }
 
+/// Every drawn row reads `items` (`isSelected`), and `@Observable` reports a write even when the value does not change, so a
+/// write that changes nothing would draw every row again. Each change below writes only what it changes.
 @MainActor
 @Observable
 final class SidebarSelection {
@@ -34,8 +36,8 @@ final class SidebarSelection {
     }
 
     func select(_ item: SidebarItem) {
-        items = [item]
-        anchor = item
+        mark([item])
+        setAnchor(item)
     }
 
     func hold(_ active: SidebarItem?) {
@@ -52,25 +54,24 @@ final class SidebarSelection {
         } else {
             items.insert(item)
         }
-        anchor = item
-        ownsKeyboard = true
+        setAnchor(item)
+        takeKeys(true)
     }
 
     func anchor(on item: SidebarItem) {
-        items = []
-        anchor = item
+        mark([])
+        setAnchor(item)
     }
 
     func dropMarks() {
-        guard !items.isEmpty || ownsKeyboard else { return }
-        items = []
-        ownsKeyboard = false
+        mark([])
+        takeKeys(false)
     }
 
     func takeKeyboard() {
-        items = []
-        anchor = nil
-        ownsKeyboard = true
+        mark([])
+        setAnchor(nil)
+        takeKeys(true)
         keyboardRequestID += 1
     }
 
@@ -79,8 +80,8 @@ final class SidebarSelection {
             select(item)
             return
         }
-        items.formUnion(tree.range(from: anchor, to: item, isExpanded: isExpanded))
-        ownsKeyboard = true
+        mark(items.union(tree.range(from: anchor, to: item, isExpanded: isExpanded)))
+        takeKeys(true)
     }
 
     func selectAll(in tree: SidebarTree, isExpanded: @escaping (UUID) -> Bool) {
@@ -91,10 +92,9 @@ final class SidebarSelection {
     }
 
     func clear() {
-        guard !items.isEmpty || anchor != nil || ownsKeyboard else { return }
-        items = []
-        anchor = nil
-        ownsKeyboard = false
+        mark([])
+        setAnchor(nil)
+        takeKeys(false)
     }
 
     func prune(to live: Set<SidebarItem>) {
@@ -106,12 +106,10 @@ final class SidebarSelection {
     }
 
     func excludeFavorites(_ favorites: [BrowserTab]) {
-        for tab in favorites {
-            let item = SidebarItem.tab(tab.id)
-            items.remove(item)
-            if anchor == item {
-                anchor = nil
-            }
+        let favorites = Set(favorites.map { SidebarItem.tab($0.id) })
+        mark(items.subtracting(favorites))
+        if let anchor, favorites.contains(anchor) {
+            self.anchor = nil
         }
     }
 
@@ -121,6 +119,24 @@ final class SidebarSelection {
             return [item]
         }
         return tree.normalized(items)
+    }
+
+    private func mark(_ marked: Set<SidebarItem>) {
+        if items != marked {
+            items = marked
+        }
+    }
+
+    private func setAnchor(_ item: SidebarItem?) {
+        if anchor != item {
+            anchor = item
+        }
+    }
+
+    private func takeKeys(_ owns: Bool) {
+        if ownsKeyboard != owns {
+            ownsKeyboard = owns
+        }
     }
 }
 

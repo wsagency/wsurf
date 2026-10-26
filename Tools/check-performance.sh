@@ -357,10 +357,12 @@ check_average \
   '4096' \
   'Thousand-tab sidebar layout memory growth' \
   'kB'
+# WI-4 (2026-10-26): a row no longer reads the current tab in its context menu, so a switch draws the two rows that change. Two-run
+# Pro mean 0.0511 s, interleaved with the old code's 0.5321 s; budget twice the mean.
 check_average \
   'BrowserPerformanceTests/testSwitchingTabsOverAThousandRowSidebar()' \
   'com.apple.dt.XCTMetric_Clock.time.monotonic' \
-  '1.130' \
+  '0.102' \
   'Four tab switches over a sidebar of 1,000 tabs' \
   's'
 check_average \
@@ -380,6 +382,73 @@ check_average \
   'com.apple.dt.XCTMetric_Memory.physical' \
   '4096' \
   'Thousand-tab sidebar scrolling memory growth' \
+  'kB'
+# WI-4 (2026-10-26), two-run Pro means interleaved with the code before it, Debug. Budgets are twice the mean (memory at least
+# 4096 kB, else twice the median), so the old code fails the sidebar ones.
+# Ten clicks between two tabs over a 300-tab sidebar that draws every row: 0.4506 s (before 4.3661 s).
+check_average \
+  'SidebarPerformanceTests/testClickingBetweenTwoTabsOfASidebarThatDrawsEveryRow()' \
+  'com.apple.dt.XCTMetric_Clock.time.monotonic' \
+  '0.901' \
+  'Ten clicks over a 300-tab sidebar that draws every row' \
+  's'
+check_average \
+  'SidebarPerformanceTests/testClickingBetweenTwoTabsOfASidebarThatDrawsEveryRow()' \
+  'com.apple.dt.XCTMetric_Memory.physical' \
+  '4096' \
+  'Sidebar click memory growth' \
+  'kB'
+# A row dragged in place in 30 steps over 1,000 tabs: 0.3302 s (before 4.9937 s).
+check_average \
+  'SidebarPerformanceTests/testDraggingARowInPlaceOverAThousandRowSidebar()' \
+  'com.apple.dt.XCTMetric_Clock.time.monotonic' \
+  '0.660' \
+  'Thirty drag steps over a sidebar of 1,000 tabs' \
+  's'
+check_average \
+  'SidebarPerformanceTests/testDraggingARowInPlaceOverAThousandRowSidebar()' \
+  'com.apple.dt.XCTMetric_Memory.physical' \
+  '4096' \
+  'Sidebar drag memory growth' \
+  'kB'
+# A saved 300-tab window restored into the model: 0.0317 s (before 0.0315 s).
+check_average \
+  'LaunchPerformanceTests/testRestoringA300TabWindowIntoTheModel()' \
+  'com.apple.dt.XCTMetric_Clock.time.monotonic' \
+  '0.063' \
+  '300-tab window restored into the model' \
+  's'
+check_average \
+  'LaunchPerformanceTests/testRestoringA300TabWindowIntoTheModel()' \
+  'com.apple.dt.XCTMetric_Memory.physical' \
+  '4096' \
+  '300-tab restore memory growth' \
+  'kB'
+# Every window of a four-window launch restored and drawn, which the first window waited for before: 1.0226 s, 71730 kB.
+check_average \
+  'LaunchPerformanceTests/testOpeningEveryWindowOfAFourWindowLaunch()' \
+  'com.apple.dt.XCTMetric_Clock.time.monotonic' \
+  '2.045' \
+  'Four-window launch, every window restored and drawn' \
+  's'
+check_average \
+  'LaunchPerformanceTests/testOpeningEveryWindowOfAFourWindowLaunch()' \
+  'com.apple.dt.XCTMetric_Memory.physical' \
+  '143460' \
+  'Four-window launch memory growth' \
+  'kB'
+# The same launch to its first window, the one in front, restored and drawn before the others: 0.2877 s, 19743 kB.
+check_average \
+  'LaunchPerformanceTests/testOpeningTheFrontWindowOfAFourWindowLaunch()' \
+  'com.apple.dt.XCTMetric_Clock.time.monotonic' \
+  '0.575' \
+  'Four-window launch to the window in front' \
+  's'
+check_average \
+  'LaunchPerformanceTests/testOpeningTheFrontWindowOfAFourWindowLaunch()' \
+  'com.apple.dt.XCTMetric_Memory.physical' \
+  '39486' \
+  'Launch to the window in front memory growth' \
   'kB'
 check_average \
   'CredentialListPerformanceTests/testLayingOutThreeThousandCredentials()' \

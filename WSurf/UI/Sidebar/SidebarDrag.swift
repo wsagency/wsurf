@@ -13,7 +13,6 @@ struct SidebarDrag {
     let covered: Set<SidebarItem>
     let keepsSection: Bool
     let wasKept: Bool
-    var translation: CGSize = .zero
     var landing = false
 
     init(
@@ -63,7 +62,11 @@ enum SidebarDragGhost {
 @MainActor
 @Observable
 final class SidebarDragModel {
+    /// The list and every row read `drag`, so it changes only when a drag starts, lands or ends.
     var drag: SidebarDrag?
+    /// How far the pointer has moved since the drag began. It changes with every step of the drag and only the chip under the
+    /// pointer reads it (`SidebarDragOverlay`), so a step draws the chip and not the list.
+    var translation: CGSize = .zero
 
     let frames = SidebarFrames()
 
