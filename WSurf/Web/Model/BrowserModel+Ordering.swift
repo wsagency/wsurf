@@ -349,6 +349,8 @@ extension BrowserModel {
         tabs.removeAll { $0 === tab }
         storedTree = reconciledTree().removing([.tab(tab.id)])
         sidebarDidChange()
+        // The title this tab gave its last visit is written now: nothing renames that visit once the tab is gone.
+        history.flushPendingTitles()
         lastVisitID[tab.id] = nil
         openerByTab[tab.id] = nil
         recentlyActive.removeAll { $0 == tab.id }
