@@ -225,8 +225,8 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
         windowFeatures: WKWindowFeatures
     ) -> WKWebView? {
         guard let tab else { return nil }
-        // A window the person asked for from the context menu is theirs although WebKit does not say so (`TabWebView`).
-        let chosenFromMenu = (webView as? TabWebView)?.takeNewWindowChoice() == true
+        // The window the person chose from the context menu is theirs although WebKit does not say so; only that address is (`TabWebView`).
+        let chosenFromMenu = (webView as? TabWebView)?.takeNewWindowChoice(for: navigationAction.request.url) == true
         // WebKit hands over every pop-up (`javaScriptCanOpenWindowsAutomatically`): one the person did not start obeys
         // the website's answer here, so the page's `window.open` stays WebKit's own.
         if tab.popups.effective.blocks, !chosenFromMenu, !Self.isUserInitiated(navigationAction) {

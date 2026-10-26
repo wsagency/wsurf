@@ -112,7 +112,8 @@ final class TabWebView: WKWebView {
         onZoomChanged?()
     }
 
-    private var contextImageURL: URL?
+    /// The image or video the page's own hit test found under the right-click.
+    var contextImageURL: URL?
     private var contextLinkURL: URL?
     private var contextLinkAnchor: CGPoint?
     /// The link under the pointer as WebKit last reported it (`TabNavigationDelegate`), in any frame.
@@ -125,24 +126,48 @@ final class TabWebView: WKWebView {
 
     /// WebKit does not call the window that follows a choice from its context menu (Open Link in New Tab and the like) the
     /// person's own: for `createWebViewWith` it is not user-initiated, as a script's pop-up is not, so the pop-up gate would
-    /// refuse it. Choosing the item is the person's act, so each of those items is wrapped to record it, then does what it did
-    /// (`takeNewWindowChoice`).
+    /// refuse it. Choosing the item is the person's act, so the items that name the address they open are wrapped to record it:
+    /// the choice and that address, which the one window WebKit then asks for must have (`takeNewWindowChoice(for:)`), so a
+    /// page's own `window.open` in that moment is not the choice. Open Frame has no address to bind to and is not wrapped.
     private var wrappedNewWindowItems: [(item: NSMenuItem, target: AnyObject?, action: Selector?)] = []
-    private var newWindowChoice: ContinuousClock.Instant?
-    private static let newWindowChoiceLifetime = Duration.seconds(2)
+    private var newWindowChoice: (url: URL, at: ContinuousClock.Instant)?
+    /// How long WebKit may take, after the item's action, to ask for its window. The request is one message to the web process
+    /// and back: 1 to 6 ms after the choice in a hosted run on a loaded Mac (`OpenInNewTabTests`), so this is about forty times that.
+    /// A window that takes longer is refused like any pop-up, with its notice, which the person can allow.
+    var newWindowChoiceLifetime = Duration.milliseconds(250)
+    /// A menu that closes drops a choice older than this. A choice younger is its own menu's, made by the action that came
+    /// first, and its window is still on its way.
+    private static let choiceGraceAtClose = Duration.milliseconds(50)
+    private static let choiceItems: Set<String> = [
+        openLinkItem, "WKMenuItemIdentifierOpenImageInNewWindow", "WKMenuItemIdentifierOpenMediaInNewWindow",
+    ]
 
     @objc private func chooseNewWindowItem(_ sender: NSMenuItem) {
         guard let wrapped = wrappedNewWindowItems.first(where: { $0.item === sender }), let action = wrapped.action else { return }
-        newWindowChoice = .now
+        let address = sender.identifier?.rawValue == Self.openLinkItem ? linkAtContextMenu : contextImageURL
+        newWindowChoice = address.map { ($0, .now) }
         NSApp.sendAction(action, to: wrapped.target, from: sender)
     }
 
-    /// Whether the person chose one of WebKit's New Tab items a moment ago, which is what a window WebKit asks for now is. True
-    /// once per choice.
-    func takeNewWindowChoice() -> Bool {
-        defer { newWindowChoice = nil }
-        guard let chosen = newWindowChoice else { return false }
-        return chosen.duration(to: .now) < Self.newWindowChoiceLifetime
+    /// Whether `url` is the window the person just chose from the menu, which WebKit asks for now. True once per choice, and only
+    /// for the address that was chosen: another window is a page's own, and leaves the choice for the one that is the person's.
+    func takeNewWindowChoice(for url: URL?) -> Bool {
+        guard let choice = newWindowChoice else { return false }
+        guard choice.at.duration(to: .now) < newWindowChoiceLifetime else {
+            newWindowChoice = nil
+            return false
+        }
+        guard let url, url.absoluteString == choice.url.absoluteString else { return false }
+        newWindowChoice = nil
+        return true
+    }
+
+    /// A choice nobody used goes when a menu closes, as it does when a menu opens.
+    override func didCloseMenu(_ menu: NSMenu, with event: NSEvent?) {
+        super.didCloseMenu(menu, with: event)
+        if let choice = newWindowChoice, choice.at.duration(to: .now) > Self.choiceGraceAtClose {
+            newWindowChoice = nil
+        }
     }
 
     private static let reloadItem = "WKMenuItemIdentifierReload"
@@ -181,6 +206,7 @@ final class TabWebView: WKWebView {
     override func willOpenMenu(_ menu: NSMenu, with event: NSEvent) {
         super.willOpenMenu(menu, with: event)
         wrappedNewWindowItems.removeAll()
+        newWindowChoice = nil
         var reloadIndex: Int?
         var linkIndex: Int?
         for (index, item) in menu.items.enumerated() {
@@ -192,9 +218,11 @@ final class TabWebView: WKWebView {
 
             if let title = Self.newWindowItems[identifier] {
                 item.title = String(localized: title)
-                wrappedNewWindowItems.append((item, item.target, item.action))
-                item.target = self
-                item.action = #selector(chooseNewWindowItem(_:))
+                if Self.choiceItems.contains(identifier) {
+                    wrappedNewWindowItems.append((item, item.target, item.action))
+                    item.target = self
+                    item.action = #selector(chooseNewWindowItem(_:))
+                }
             }
 
             if identifier == Self.reloadItem {

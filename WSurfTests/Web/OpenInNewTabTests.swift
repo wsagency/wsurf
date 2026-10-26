@@ -68,6 +68,16 @@ struct OpenInNewTabTests {
         "/popup": .html(popup),
         "/auto": .html("<!doctype html><title>Auto</title><script>setTimeout(() => window.open('/target?via=auto'), 300);</script>"),
         "/target": .html("<!doctype html><title>Target</title><p>Target</p>"),
+        // A page that opens a pop-up every few milliseconds once it is told to, from a timer: no gesture started any of them.
+        "/menu-race": .html("""
+            <!doctype html><title>Race</title><style>body { margin: 0 }</style>
+            <a id="plain" href="/target?via=plain"
+               style="position: absolute; left: 20px; top: 10px; width: 240px; height: 30px; display: block">plain</a>
+            <script>
+              window.__spam = false;
+              setInterval(() => { if (window.__spam) { window.open('/target?via=spam'); } }, 5);
+            </script>
+            """),
     ]
 
     /// The centre of each element of the fixture in the opener's viewport, in points.
@@ -83,6 +93,15 @@ struct OpenInNewTabTests {
 
     private enum Button {
         case left, middle
+    }
+
+    /// What WebKit's hit test reports for the element under the pointer (`absoluteLinkURL`).
+    private final class HoverHit: NSObject {
+        @objc var absoluteLinkURL: URL?
+
+        init(_ url: URL?) {
+            absoluteLinkURL = url
+        }
     }
 
     /// What a person's pin does to the opener before the link is opened.
@@ -178,6 +197,28 @@ struct OpenInNewTabTests {
             }
         }
 
+        /// The address of link `id`, as WebKit reports it under the pointer.
+        private func address(of id: String) -> URL? {
+            let port = url.port ?? 0
+            switch id {
+            case "plain", "blank":
+                return URL(string: "http://127.0.0.1:\(port)/target?via=\(id)")
+            case "fplain":
+                return URL(string: "http://localhost:\(port)/target?via=frame-plain")
+            case "fblank":
+                return URL(string: "http://localhost:\(port)/target?via=frame-blank")
+            default:
+                return nil
+            }
+        }
+
+        /// WebKit tells the tab which link the pointer is over, in any frame, when the pointer moves onto it. A hosted test cannot
+        /// make WebKit see a pointer move, so the report is made as WebKit makes it.
+        private func reportHover(over link: URL?) {
+            guard let native = page.webKit else { return }
+            TabNavigationDelegate(tab: tab).webView(native, mouseDidMoveOverElement: HoverHit(link), withFlags: [], userInfo: nil)
+        }
+
         /// A middle-button event, as the system makes one: `NSEvent.mouseEvent` gives every other button number 0. It is only converted
         /// from a `CGEvent`, never posted, and carries no window, so its location is the one in the window.
         private func middleEvent(_ type: NSEvent.EventType, at location: NSPoint) -> NSEvent? {
@@ -235,6 +276,7 @@ struct OpenInNewTabTests {
                     ])
                 }
             } else {
+                reportHover(over: address(of: id))
                 let native = try #require(page.webKit)
                 let location = native.convert(point, to: nil)
                 for type in [NSEvent.EventType.rightMouseDown, .rightMouseUp] {
@@ -388,17 +430,41 @@ struct OpenInNewTabTests {
         }
     }
 
-    /// WebKit's own hit test, which finds a link in a frame, is only reported on a pointer move, which a hosted test cannot make
-    /// reach it; `OpenInNewTabMenuTests` has the WebKit side.
-    @Test
-    func theContextMenuOfALinkInACrossSiteFrameOpensItInANewWindowInChromium() async throws {
-        try await withRig(.chromium) { rig in
+    @Test(arguments: BrowserEngine.allCases)
+    func theContextMenuOfALinkInACrossSiteFrameOpensItInANewWindow(engine: BrowserEngine) async throws {
+        try await withRig(engine) { rig in
             var asked: [URL] = []
             rig.browser.onOpenInNewWindow = { _, url, _ in asked.append(url) }
             let chosen = try await rig.rightClick("fplain") { $0 == "Open Link in New Window" }
             try #require(chosen, "the menu offers Open Link in New Window in the frame; it offered \(rig.offered)")
             try #require(await waitUntil { !asked.isEmpty }, "a window was asked for")
             #expect(asked.map(\.path) == ["/target"] && asked.first?.query == "via=frame-plain")
+        }
+    }
+
+    @Test func theContextMenuOfALinkInACrossSiteFrameOpensItInPeekInWebKit() async throws {
+        try await withRig(.webKit) { rig in
+            var peeked: [URL] = []
+            rig.browser.onOpenInPeek = { _, url, _ in peeked.append(url) }
+            let chosen = try await rig.rightClick("fplain") { $0 == "Open Link in Peek" }
+            try #require(chosen, "the menu offers Open Link in Peek in the frame; it offered \(rig.offered)")
+            try #require(await waitUntil { !peeked.isEmpty }, "a peek was asked for")
+            #expect(peeked.first?.query == "via=frame-plain")
+        }
+    }
+
+    /// A page that keeps opening pop-ups from a timer, with no gesture, while the person chooses a New Tab item: the window the
+    /// person chose opens, and none of the page's own does, whatever moment it asks in.
+    @Test func aPagesOwnPopupsWhileTheMenuOpensItsWindowStayBlockedInWebKit() async throws {
+        try await withRig(.webKit, path: "/menu-race", popups: .blockAndNotify) { rig in
+            _ = try await rig.evaluate("window.__spam = true; 0")
+            let chosen = try await rig.rightClick("plain") { $0.lowercased().contains("open link in new tab") }
+            try #require(chosen, "the menu offers Open Link in New Tab; it offered \(rig.offered)")
+            let landed = try expectOpened(await rig.tab(via: "plain"), by: rig, "the context menu while the page opens pop-ups")
+            _ = try await rig.evaluate("window.__spam = false; 0")
+            try await rig.settle()
+            #expect(rig.opened == [landed], "the page's own windows stayed blocked: \(rig.opened.map(\.urlString))")
+            #expect(rig.tab.popups.blocked?.absoluteString.contains("via=spam") == true, "and were refused, not lost")
         }
     }
 
