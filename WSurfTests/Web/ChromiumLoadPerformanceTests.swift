@@ -12,11 +12,21 @@ import XCTest
 // of a page with many frames, the start-up commands of a tab, and the pause of cross-site frames until their scripts are in.
 //
 // These cases are reported, not budgeted (no entry in `Tools/check-performance.sh`): the clock of a case is in the result bundle's
-// metrics, and each case prints one `WSURF-LOAD-BENCH` line with the counts, which do not depend on the machine. The counts are
+// metrics, and each case prints `WSURF-LOAD-BENCH` lines with the main thread's CPU time and the counts, which do not depend on the machine. The counts are
 // asserted where they are the point of a change. A run on a quiet Mac, `-parallel-testing-enabled NO`, is the only fair one.
 // XCTest owns and runs one instance serially. Sendable lets its synchronous measurement callback enter the app target's main-actor
 // boundary.
 nonisolated final class ChromiumLoadPerformanceTests: XCTestCase, @unchecked Sendable {
+    /// The main thread's CPU time so far, in milliseconds. A load mostly waits for Chromium, so its clock moves little when the main
+    /// thread does less, and the work the main thread did is what this layer is about. (`XCTCPUMetric` aborts this test host.)
+    private static func mainThreadCPU() -> Double {
+        Double(clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID)) / 1_000_000
+    }
+
+    private static var metrics: [XCTMetric] {
+        [XCTClockMetric()]
+    }
+
     // MARK: Events
 
     /// 200 resources, five events each in the shapes Chromium sends them (about 1.6 KB, 1.1 KB, 2.8 KB, 0.9 KB and 0.1 KB), one
@@ -29,7 +39,14 @@ nonisolated final class ChromiumLoadPerformanceTests: XCTestCase, @unchecked Sen
             let events = (0..<200).flatMap { Self.events(ofResource: $0) }
             let repeats = 10
             var delivered = 0
-            measure(metrics: [XCTClockMetric()], options: .budgeted) {
+            var cpu = 0.0
+            var runs = 0
+            measure(metrics: Self.metrics, options: .budgeted) {
+                let began = Self.mainThreadCPU()
+                defer {
+                    cpu += Self.mainThreadCPU() - began
+                    runs += 1
+                }
                 for _ in 0..<repeats {
                     for event in events {
                         event.payload.withUnsafeBytes { bytes in
@@ -40,7 +57,8 @@ nonisolated final class ChromiumLoadPerformanceTests: XCTestCase, @unchecked Sen
                 }
             }
             let statistics = devTools.loadStatistics
-            print("WSURF-LOAD-BENCH case=events delivered=\(delivered) received=\(statistics.eventsReceived) parsed=\(statistics.eventsParsed)")
+            print("WSURF-LOAD-BENCH case=events delivered=\(delivered) received=\(statistics.eventsReceived) parsed=\(statistics.eventsParsed) "
+                + "mainCpuMsPerRun=\(String(format: "%.2f", cpu / Double(max(runs, 1))))")
             XCTAssertEqual(statistics.eventsReceived, delivered)
             withExtendedLifetime(native) {}
         }
@@ -142,8 +160,11 @@ nonisolated final class ChromiumLoadPerformanceTests: XCTestCase, @unchecked Sen
             var generator = SeededGenerator(seed: 1)
             let orders = (0..<20).map { _ in keys.shuffled(using: &generator) }
             var iterations = 0
-            measure(metrics: [XCTClockMetric()], options: .budgeted) {
+            var cpu = 0.0
+            measure(metrics: Self.metrics, options: .budgeted) {
                 iterations += 1
+                let began = Self.mainThreadCPU()
+                defer { cpu += Self.mainThreadCPU() - began }
                 runAndWait(timeout: 120) {
                     for order in orders {
                         for key in order {
@@ -155,7 +176,8 @@ nonisolated final class ChromiumLoadPerformanceTests: XCTestCase, @unchecked Sen
                     }
                 }
             }
-            print("WSURF-LOAD-BENCH case=contexts contexts=\(keys.count) lookups=\(lookups) found=\(found)")
+            print("WSURF-LOAD-BENCH case=contexts contexts=\(keys.count) lookups=\(lookups) found=\(found) "
+                + "mainCpuMsPerRun=\(String(format: "%.2f", cpu / Double(max(iterations, 1))))")
             XCTAssertEqual(found, lookups * iterations, "every context was found")
             withExtendedLifetime(native) {}
         }
@@ -312,23 +334,26 @@ nonisolated final class ChromiumLoadPerformanceTests: XCTestCase, @unchecked Sen
         var error: Error?
     }
 
+    /// Seven runs, the first of which is the warm-up. Plain loops and the clocks of this file, not `measure`: its manual start and stop
+    /// crashed the test host from inside XCTest now and then when driven from an async task.
+    private static let runs = 7
+
     /// A fresh Chromium tab's own start-up: from its attach to the end of its session's preparation, which the first load waits for
     /// (`ChromiumPage.ensureReady`). The browser itself is created before the clock starts.
     func testPreparingAChromiumTab() throws {
         try MainActor.assumeIsolated {
             try ChromiumRuntime.shared.ensureInitialized()
-            var options = XCTMeasureOptions.budgeted
-            options.invocationOptions = [.manuallyStart, .manuallyStop]
             var lines: [String] = []
-            measure(metrics: [XCTClockMetric()], options: options) {
+            for run in 0..<Self.runs {
                 runAndWait(timeout: 60) {
                     let harness = Harness()
                     harness.attach()
-                    self.startMeasuring()
+                    let began = Self.mainThreadCPU()
+                    let started = ContinuousClock.now
                     try await harness.native.ensureReady()
-                    self.stopMeasuring()
-                    let prepared = harness.run.firstCommand.map { Self.milliseconds(ContinuousClock.now - $0) } ?? -1
-                    lines.append("case=prepare prepareMs=\(String(format: "%.2f", prepared)) \(harness.commandSummary)")
+                    let wall = Self.milliseconds(ContinuousClock.now - started)
+                    let cpu = Self.mainThreadCPU() - began
+                    lines.append("case=prepare run=\(run) wallMs=\(String(format: "%.2f", wall)) mainCpuMs=\(String(format: "%.2f", cpu)) \(harness.commandSummary)")
                     await harness.close()
                 }
             }
@@ -361,25 +386,26 @@ nonisolated final class ChromiumLoadPerformanceTests: XCTestCase, @unchecked Sen
             runAndWait(timeout: 30) { serverBox.server = try await HTTPFixtureServer.start(routes: routes) }
             let server = try XCTUnwrap(serverBox.server)
             let url = try server.url("/")
-            var options = XCTMeasureOptions.budgeted
-            options.invocationOptions = [.manuallyStart, .manuallyStop]
             var lines: [String] = []
-            measure(metrics: [XCTClockMetric()], options: options) {
+            for run in 0..<Self.runs {
                 runAndWait(timeout: 90) {
                     let harness = Harness()
                     harness.attach()
                     try await harness.native.ensureReady()
                     let before = harness.run.commands
-                    self.startMeasuring()
+                    let began = Self.mainThreadCPU()
+                    let started = ContinuousClock.now
                     harness.page.load(URLRequest(url: url))
                     let finished = await waitUntil(timeout: .seconds(60)) {
                         harness.run.readyDocuments.count >= frames + 1 && harness.native.devTools.loadStatistics.framePauses >= frames
                     }
-                    self.stopMeasuring()
+                    let wall = Self.milliseconds(ContinuousClock.now - started)
+                    let cpu = Self.mainThreadCPU() - began
                     XCTAssertTrue(finished, "the page and its \(frames) frames ran their scripts")
                     let statistics = harness.native.devTools.loadStatistics
                     let loadCommands = harness.run.commands.reduce(0) { $0 + $1.value - before[$1.key, default: 0] }
-                    lines.append("case=load frames=\(frames) loadCommands=\(loadCommands) \(harness.commandSummary) "
+                    lines.append("case=load run=\(run) frames=\(frames) wallMs=\(String(format: "%.2f", wall)) mainCpuMs=\(String(format: "%.2f", cpu)) "
+                        + "loadCommands=\(loadCommands) \(harness.commandSummary) "
                         + "events=\(statistics.eventsReceived) parsed=\(statistics.eventsParsed) sessionParsed=\(statistics.sessionMessagesParsed) "
                         + "pauses=\(statistics.framePauses) pauseTotalMs=\(String(format: "%.2f", Self.milliseconds(statistics.framePauseTotal))) "
                         + "pauseMaxMs=\(String(format: "%.2f", Self.milliseconds(statistics.framePauseMax)))")
