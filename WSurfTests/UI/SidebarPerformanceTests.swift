@@ -116,7 +116,7 @@ nonisolated final class SidebarPerformanceTests: XCTestCase, @unchecked Sendable
                 )
                 rig.draw()
                 for step in 1...30 {
-                    model.drag?.translation = CGSize(width: CGFloat(step) * 2, height: 0)
+                    model.translation = CGSize(width: CGFloat(step) * 2, height: 0)
                     rig.draw()
                 }
                 model.drag = nil
