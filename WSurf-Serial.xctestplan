@@ -108,6 +108,7 @@
         "FolderNestingTests",
         "GlassSourceTests",
         "HistoryDayCollapseTests",
+        "HistoryPerformanceTests",
         "HistoryQueryTests",
         "HistoryStoreTests",
         "InputHistoryCredentialSaveTests",

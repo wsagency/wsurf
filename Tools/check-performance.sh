@@ -685,3 +685,62 @@ check_average \
   '6639' \
   'Restore of one credential from the Trash among 20,000 memory growth' \
   'kB'
+
+# History and database (HistoryPerformanceTests), six-sample means on the Pro (2026-10-27, Debug), seconds, before and after WI-3
+# (an index on historyVisit.fromVisit, the schema defined by migrations instead of on every open, one and two letter queries answered
+# from memory). Time budgets are twice the mean after, or a little more where the mean is a fraction of a millisecond; the old code
+# fails each of them.
+# case                                           before    after    budget
+# clearing 6,000 pages and 9,400 visits           3.105    0.148-0.180  0.320 (50,000 pages took 7 minutes in sqlite3 before the index)
+# opening a database of 50,000 pages              0.156    0.0085   0.020 (the full-text index was rebuilt from the pages at every open)
+# ten 1-2 letter searches, 50 pages each          0.0400   0.0003   0.002
+# ten 1-2 letter omnibox queries, ranking in      0.0517   0.0085   0.017 (the rest is Omnibox.relevance over 50 candidates)
+# Memory growth is zero or noise at this size, so every memory budget is the usual 4096 kB.
+check_average \
+  'HistoryPerformanceTests/testClearingALargeHistory()' \
+  'com.apple.dt.XCTMetric_Clock.time.monotonic' \
+  '0.320' \
+  'Clear History over 6,000 pages and 9,400 visits' \
+  's'
+check_average \
+  'HistoryPerformanceTests/testClearingALargeHistory()' \
+  'com.apple.dt.XCTMetric_Memory.physical' \
+  '4096' \
+  'Clear History memory growth' \
+  'kB'
+check_average \
+  'HistoryPerformanceTests/testOpeningAProfileDatabaseOfFiftyThousandPages()' \
+  'com.apple.dt.XCTMetric_Clock.time.monotonic' \
+  '0.020' \
+  'Opening a profile database of 50,000 history pages' \
+  's'
+check_average \
+  'HistoryPerformanceTests/testOpeningAProfileDatabaseOfFiftyThousandPages()' \
+  'com.apple.dt.XCTMetric_Memory.physical' \
+  '4096' \
+  'Opening a profile database memory growth' \
+  'kB'
+check_average \
+  'HistoryPerformanceTests/testSearchingForTheFirstLettersOfAQueryOverFiftyThousandPages()' \
+  'com.apple.dt.XCTMetric_Clock.time.monotonic' \
+  '0.002' \
+  'Ten searches of one or two letters over 50,000 pages' \
+  's'
+check_average \
+  'HistoryPerformanceTests/testSearchingForTheFirstLettersOfAQueryOverFiftyThousandPages()' \
+  'com.apple.dt.XCTMetric_Memory.physical' \
+  '4096' \
+  'First-letter search memory growth' \
+  'kB'
+check_average \
+  'HistoryPerformanceTests/testTypingTheFirstLettersOfAQueryOverFiftyThousandPages()' \
+  'com.apple.dt.XCTMetric_Clock.time.monotonic' \
+  '0.017' \
+  'Ten omnibox queries of one or two letters over 50,000 pages' \
+  's'
+check_average \
+  'HistoryPerformanceTests/testTypingTheFirstLettersOfAQueryOverFiftyThousandPages()' \
+  'com.apple.dt.XCTMetric_Memory.physical' \
+  '4096' \
+  'First-letter omnibox query memory growth' \
+  'kB'

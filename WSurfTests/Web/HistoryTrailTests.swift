@@ -445,13 +445,15 @@ struct HistoryTrailTests {
             "/end": .html("<!doctype html><title>End</title><p>End</p>"),
         ]) { rig in
             let a = try rig.url("/a"), b = try rig.url("/b"), end = try rig.url("/end")
+            // Each page is waited for until it has its title: the engine may report the title just after the load ends, and a
+            // title that arrives once the tab has gone on to the next page names nothing.
             let tab = rig.open(a)
-            try #require(await waitUntil { rig.urls == [a.absoluteString] }, "\(engine)")
+            try #require(await waitUntil { rig.urls == [a.absoluteString] && rig.titles == ["A"] }, "\(engine)")
 
             tab.load(b)
-            try #require(await waitUntil { rig.urls.first == b.absoluteString }, "\(engine)")
+            try #require(await waitUntil { rig.urls.first == b.absoluteString && rig.titles.first == "B" }, "\(engine)")
             tab.load(end)
-            try #require(await waitUntil { rig.urls.first == end.absoluteString }, "\(engine)")
+            try #require(await waitUntil { rig.urls.first == end.absoluteString && rig.titles.first == "End" }, "\(engine)")
 
             let visits = rig.model.history.visits
             #expect(visits.map(\.url) == [end.absoluteString, b.absoluteString, a.absoluteString], "\(engine)")
@@ -754,6 +756,10 @@ struct HistoryTrailTests {
 
         var urls: [String] {
             model.history.visits.map(\.url)
+        }
+
+        var titles: [String] {
+            model.history.visits.map(\.title)
         }
 
         func url(_ path: String) throws -> URL {

@@ -622,7 +622,7 @@ struct HistoryStoreTests {
 
         #expect(store.entries.first?.title == "[ENEY-6039] Tour cards stay on top - Jira")
         #expect(store.visits.first?.title == "[ENEY-6039] Tour cards stay on top - Jira")
-        #expect(store.search("tour cards").map(\.url) == [url])
+        #expect(store.search("tour cards").map(\.url) == [url], "a search finds the title that is still waiting to be written")
         #expect(HistoryStore(database: database).visits.first?.title == "[ENEY-6039] Tour cards stay on top - Jira")
     }
 
@@ -646,6 +646,7 @@ struct HistoryStoreTests {
         forgetting.perform(on: store, forgetting: visit)
 
         store.retitle(visit: visit, url: url, title: "A, finally titled")
+        store.flushPendingTitles()
 
         #expect(store.entries.isEmpty)
         #expect(store.visits.isEmpty)

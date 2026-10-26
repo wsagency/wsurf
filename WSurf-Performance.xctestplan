@@ -36,6 +36,7 @@
       "selectedTests" : [
         "BrowserPerformanceTests",
         "CredentialListPerformanceTests",
+        "HistoryPerformanceTests",
         "ListPerformanceTests",
         "PageWatchPerformanceTests",
         "ReaderPerformanceTests",
