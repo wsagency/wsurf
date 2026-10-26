@@ -5,6 +5,37 @@ This file preserves release notes inherited from the upstream
 describe upstream Linen releases, not releases published by WSurf. New WSurf
 release notes will be added above this provenance record.
 
+## 0.1.15 (build 15) — 2026-10-27
+
+Everything since 0.1.14 (build 14). None of the screens and prompts below has been checked by hand.
+
+### Links
+
+- Open Link in New Tab in the right-click menu works again in WebKit tabs. WebKit asked for its window the way a page asks for a pop-up, so WSurf blocked it as one on every website that blocks pop-ups, which is the default; Open Image in New Tab and Open Video in New Tab were blocked the same way. Chromium tabs gain Open Link in New Tab, Open Link in New Window and Open Link in New Private Window at the top of the menu on a link (a private tab offers only the private window); their menu had no link items before.
+- WSurf’s own link items in WebKit tabs (Open Link in New Window, New Private Window, Open Link in Peek, Summarize Link and Download Linked File) now work for a link inside a frame from another website, where they did nothing.
+
+### Security
+
+- Choosing Open Link in New Tab, Open Image in New Tab or Open Video in New Tab lets exactly that one address through the pop-up blocker, once, and only for a moment (a quarter of a second). A pop-up the page opens by itself in that moment, or any window for another address, is still blocked and cannot use up your choice. Open Frame in New Tab is still treated like any pop-up, because WSurf cannot read the address of another website’s frame.
+
+### Speed
+
+- Faster launch: the window that was in front when you quit opens first, and your other windows, your favorites and the assistant with its voices follow straight after it, one at a time. Quitting before they have opened keeps them for the next launch.
+- Much faster sidebar: clicking a row, dragging a row over a large list and switching tabs now redraw only the rows that change. In our tests on lists of 300 to 1,000 rows they take about a tenth of the time.
+- History: Clear History is much faster on a large history (about twenty times in our test, and no longer minutes for a very large one), and opening a profile is faster, because it no longer rebuilds the history search index every time. Page titles are saved in batches, up to two seconds after they change; a crash in those two seconds loses the title, not the visit. One- and two-letter address-bar queries answer instantly from your recent history.
+- Content blocker: the tracker rules are compiled only when they change, not on every launch, and the lists that earlier builds left behind are removed.
+- Chromium tabs: less work per page and per frame from another website, about a tenth less of the app’s own work while a page loads in our tests. Pages do not load sooner.
+
+### Smaller, faster build
+
+- The build is now an optimised Release build, and Chromium ships only the English and Croatian interface languages. The app is about a third smaller on disk. Websites see no difference: Chromium reports the same languages to them as before.
+
+### Known issues
+
+- One- and two-letter address-bar queries search only the newest 3,000 pages; three letters and the History page search everything.
+- Chromium tabs do not yet block `window.open` without a click, and open ⌘-click and middle-click tabs in front.
+- The known issues of 0.1.14 are unchanged.
+
 ## 0.1.14 (build 14) — 2026-10-26
 
 Everything since 0.1.13 (build 13). None of the screens and prompts below has been checked by hand.
