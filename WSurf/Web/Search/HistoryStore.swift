@@ -726,13 +726,16 @@ final class HistoryStore {
         guard !isLoaded else { return }
         isLoaded = true
         let visitLimit = visitLimit
-        let loaded = read { db -> ([Entry], [VisitedPage], Int) in
-            let entries = try Entry
-                .order(sql: "lastVisit DESC")
-                .limit(windowSize)
-                .fetchAll(db)
-            let visits = try Self.fetchVisits(db, limit: visitLimit + 1)
-            return (entries, visits, try Entry.fetchCount(db))
+        // The "history.reload" interval for Instruments, next to "launch": the one place the window is really read.
+        let loaded = Pipeline.signposter.withIntervalSignpost("history.reload") {
+            read { db -> ([Entry], [VisitedPage], Int) in
+                let entries = try Entry
+                    .order(sql: "lastVisit DESC")
+                    .limit(windowSize)
+                    .fetchAll(db)
+                let visits = try Self.fetchVisits(db, limit: visitLimit + 1)
+                return (entries, visits, try Entry.fetchCount(db))
+            }
         }
         guard let loaded else { return }
         storedEntries = loaded.0

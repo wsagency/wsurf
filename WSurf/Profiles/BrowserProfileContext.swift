@@ -48,8 +48,9 @@ final class BrowserProfileContext {
         persists: !profile.isPrivate && !AppDatabase.isRunningTests && AppDatabase.ownsSession,
         settings: settings
     )
-    // The intervals db.open, history.reload and convlog.load are for Instruments, next to "launch" (`LaunchSignpost`).
-    lazy var history = Pipeline.signposter.withIntervalSignpost("history.reload") { HistoryStore(database: database) }
+    // The intervals db.open and convlog.load are for Instruments, next to "launch" (`LaunchSignpost`). The history window is read by
+    // its first reader, not here, so its interval, history.reload, is in `HistoryStore.loadIfNeeded`.
+    lazy var history = HistoryStore(database: database)
     lazy var tabArchive = TabArchive(database: database)
     /// Nil in a private window: notes about the person are never kept there.
     lazy var assistantFacts: AssistantFacts? = profile.isPrivate ? nil : AssistantFacts(database: database, settings: modelSettings)
