@@ -619,7 +619,11 @@ extension ChromiumClient {
                         isMain: frame.pointee.is_main?(frame) == 1
                     )
                 }
-                MainActor.assumeIsolated { client.offerCredentialPicker(in: model, editable: editable, frame: clicked) }
+                let link = URL(string: ChromiumInterop.takeString(params.pointee.get_link_url?(params)))
+                MainActor.assumeIsolated {
+                    client.offerLinkItems(in: model, link: link, frameURL: clicked?.url)
+                    client.offerCredentialPicker(in: model, editable: editable, frame: clicked)
+                }
             }
             ChromiumClient.releaseBrowser(browser)
             ChromiumClient.releaseFrame(frame)
@@ -638,9 +642,10 @@ extension ChromiumClient {
             ChromiumClient.releaseBrowser(browser)
             ChromiumClient.releaseFrame(frame)
             ChromiumClient.release(params.map(UnsafeMutableRawPointer.init))
-            guard command == ChromiumClient.pickCredentialCommand,
-                  let client = ChromiumClient.owner(handlerSelf.map(UnsafeMutableRawPointer.init)) else { return 0 }
-            return MainActor.assumeIsolated { client.runCredentialPicker() } ? 1 : 0
+            guard let client = ChromiumClient.owner(handlerSelf.map(UnsafeMutableRawPointer.init)) else { return 0 }
+            return MainActor.assumeIsolated {
+                command == ChromiumClient.pickCredentialCommand ? client.runCredentialPicker() : client.openContextLink(command)
+            } ? 1 : 0
         }
         handler.pointee.on_context_menu_dismissed = { _, browser, frame in
             ChromiumClient.releaseBrowser(browser)
@@ -651,6 +656,46 @@ extension ChromiumClient {
 
     /// The Pick Credential… command: the first id CEF leaves to the embedder.
     nonisolated static let pickCredentialCommand = Int32(MENU_ID_USER_FIRST.rawValue)
+
+    /// The Open Link commands, the ids after it. A private tab offers no plain window, as a WebKit one does not
+    /// (`TabContextMenu.linkWindowItems`).
+    nonisolated static func linkCommands(isPrivate: Bool) -> [(id: Int32, opening: ChromiumPage.LinkOpening, title: LocalizedStringResource)] {
+        let all: [(id: Int32, opening: ChromiumPage.LinkOpening, title: LocalizedStringResource)] = [
+            (pickCredentialCommand + 1, .tab, "Open Link in New Tab"),
+            (pickCredentialCommand + 2, .window, "Open Link in New Window"),
+            (pickCredentialCommand + 3, .privateWindow, "Open Link in New Private Window"),
+        ]
+        return all.filter { $0.opening != .window || !isPrivate }
+    }
+
+    /// The engine's own menu has no item for a link (Back, Forward, Print, View Page Source), so a right-click on one gets what a
+    /// WebKit tab's menu has first: the link in a new tab, in a new window and in a new private window (a private tab offers the
+    /// last alone), as `TabContextMenu.linkWindowItems` does.
+    func offerLinkItems(in model: UnsafeMutablePointer<cef_menu_model_t>, link: URL?, frameURL: URL?) {
+        page?.contextLink = nil
+        guard let link, let page else { return }
+        var index = 0
+        for command in Self.linkCommands(isPrivate: page.context.profile.isPrivate) {
+            let added = ChromiumInterop.withString(String(localized: command.title)) {
+                model.pointee.insert_item_at?(model, index, command.id, $0)
+            }
+            if added == 1 {
+                index += 1
+            }
+        }
+        guard index > 0 else { return }
+        _ = model.pointee.insert_separator_at?(model, index)
+        page.contextLink = (link, frameURL)
+    }
+
+    /// Runs an Open Link command of the menu that is open, if `command` is one.
+    func openContextLink(_ command: Int32) -> Bool {
+        guard let page, let link = page.contextLink,
+              let opening = Self.linkCommands(isPrivate: false).first(where: { $0.id == command })?.opening else { return false }
+        page.contextLink = nil
+        page.openLinkFromMenu?(link.url, link.frameURL, opening)
+        return true
+    }
 
     /// Puts Pick Credential… at the top of an editable field's menu when the tab offers it, and remembers which frame the engine says
     /// was right-clicked and when.

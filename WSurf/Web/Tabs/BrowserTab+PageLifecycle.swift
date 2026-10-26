@@ -428,6 +428,31 @@ extension BrowserTab {
         }
     }
 
+    /// A page, or the person, asked for another window: it opens as a tab of its own, unless the pop-up blocker refuses a page's.
+    private func openChromiumWindow(_ url: URL, userGesture: Bool, sourceURL: URL?, sourceFrame: BrowserFrame?) {
+        if !ExternalApp.staysInWebView(url) {
+            offerChromiumExternalApp(url, sourceURL: sourceURL, sourceFrame: sourceFrame)
+            return
+        }
+        if popups.effective.blocks && !userGesture {
+            popups.note(url)
+            return
+        }
+        onOpenInNewTab?(url, userGesture)
+    }
+
+    /// An Open Link item of a Chromium page's context menu. A tab is the person's own choice, as a click is.
+    private func openChromiumLink(_ url: URL, from sourceURL: URL?, opening: ChromiumPage.LinkOpening, sourceFrame: BrowserFrame?) {
+        switch opening {
+        case .tab:
+            openChromiumWindow(url, userGesture: true, sourceURL: sourceURL, sourceFrame: sourceFrame)
+        case .window:
+            onOpenInNewWindow?(url, isPrivate)
+        case .privateWindow:
+            onOpenInNewWindow?(url, true)
+        }
+    }
+
     private func installChromiumCallbacks(on chromium: ChromiumPage, in view: BrowserPage) {
         chromium.navigationDecision = { [weak self, weak view] request, main, _, redirect, type, sourceURL, sourceFrame in
             guard let self, let view, self.liveView === view else { return false }
@@ -460,15 +485,11 @@ extension BrowserTab {
         }
         chromium.openWindow = { [weak self, weak view] url, userGesture, sourceURL, sourceFrame in
             guard let self, let view, self.liveView === view else { return }
-            if !ExternalApp.staysInWebView(url) {
-                offerChromiumExternalApp(url, sourceURL: sourceURL, sourceFrame: sourceFrame)
-                return
-            }
-            if popups.effective.blocks && !userGesture {
-                popups.note(url)
-                return
-            }
-            onOpenInNewTab?(url, userGesture)
+            openChromiumWindow(url, userGesture: userGesture, sourceURL: sourceURL, sourceFrame: sourceFrame)
+        }
+        chromium.openLinkFromMenu = { [weak self, weak view, weak chromium] url, sourceURL, opening in
+            guard let self, let view, self.liveView === view else { return }
+            openChromiumLink(url, from: sourceURL, opening: opening, sourceFrame: chromium?.sourceFrame(for: sourceURL))
         }
         chromium.onCloseRequested = { [weak self, weak view] in
             guard let self, let view, self.liveView === view else { return }
