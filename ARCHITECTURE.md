@@ -153,6 +153,11 @@ worlds, scripts and handlers listed in
 script and its handler for iframe audio; never the page world), one level
 deeper too. Calls aimed at such a frame go to its
 session; when Chromium detaches it, its pending calls fail and its documents end.
+The frame is held while its session starts up, so the session sends `Page.enable`, its own
+auto-attach and one registration per world (the world's relay, then its scripts in order, each in its own
+`try`) at once, and lets the frame run only after every answer is in. A script installed
+twice is registered once, a world is given the relay only when a handler hears it or one of its
+scripts sends, and the page session parses only the events something acts on.
 
 ## Page translation
 

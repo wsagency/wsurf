@@ -57,15 +57,14 @@ extension ChromiumDevTools {
         guard !closed else { throw sessionID == nil ? ChromiumError.closed : ChromiumError.staleFrame }
     }
 
-    private static let sessionKey = Data("\"sessionId\"".utf8)
-
     /// The page's session: takes a cross-site frame session's result or event (true), which CEF's parsed callbacks would hand
     /// on without its `sessionId`. False for the page's own messages, which go on to `receiveResult` and `receiveEvent`.
     func receiveSessionMessage(_ pointer: UnsafeRawPointer, size: Int) -> Bool {
         guard sessionID == nil, size > 0 else { return false }
+        // Only a message that names a session at all is parsed here; the page's own are left to CEF, and are not copied or read
+        // beyond a search for the name, which every message of the page, its results and its events, goes through.
+        guard Self.contains("\"sessionId\"", in: pointer, size: size) else { return false }
         let data = Data(bytesNoCopy: UnsafeMutableRawPointer(mutating: pointer), count: size, deallocator: .none)
-        // Only a message that names a session at all is parsed here; the page's own are left to CEF.
-        guard data.range(of: Self.sessionKey) != nil else { return false }
         loadStatistics.sessionMessagesParsed += 1
         guard let message = try? Self.jsonObject(data) as? [String: Any] else {
             // Chromium puts a session's ID last: one that ends so is dropped rather than handed to the page's session.
