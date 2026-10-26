@@ -36,9 +36,11 @@
       "selectedTests" : [
         "BrowserPerformanceTests",
         "CredentialListPerformanceTests",
+        "LaunchPerformanceTests",
         "ListPerformanceTests",
         "PageWatchPerformanceTests",
         "ReaderPerformanceTests",
+        "SidebarPerformanceTests",
         "ThemePerformanceTests",
         "VaultScalePerformanceTests"
       ],
