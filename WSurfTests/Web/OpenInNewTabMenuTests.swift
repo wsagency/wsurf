@@ -8,7 +8,8 @@ import WebKit
 
 @testable import WSurf
 
-/// The parts of the Open Link items of a context menu that need no page. `OpenInNewTabTests` drives the real menus of both engines.
+/// The parts of the Open Link items of a context menu that need no page: what a WebKit item records when it is chosen, and which
+/// items a Chromium menu gets. `OpenInNewTabTests` drives the real menus of both engines.
 @MainActor
 struct OpenInNewTabMenuTests {
     /// Stands for WebKit's menu target: what the item did before WSurf wrapped it.
