@@ -77,8 +77,9 @@ struct AppDatabase: Sendable {
                 withIntermediateDirectories: true
             )
             let pool = try DatabasePool(path: url.path, configuration: Self.configuration)
+            let hadMigrations = try pool.read { try !Self.migrator.hasCompletedMigrations($0) }
             try Self.migrator.migrate(pool)
-            try pool.write { try Self.defineSchema(in: $0) }
+            try Self.defineSchemaIfItChanged(in: pool, migrated: hadMigrations)
             writer = pool
             isEphemeral = false
         } catch {
@@ -101,7 +102,6 @@ struct AppDatabase: Sendable {
         // swiftlint:disable:next force_try
         let queue = try! DatabaseQueue(configuration: configuration)
         try? migrator.migrate(queue)
-        try? queue.write { try defineSchema(in: $0) }
         return queue
     }
 
@@ -115,6 +115,25 @@ struct AppDatabase: Sendable {
     }
 
     // MARK: - Schema
+
+    /// A migration cannot see a change made behind the app's back: a table that went missing from a database whose migrations
+    /// are all recorded, a column that was dropped. Every open used to repair those, since every open defined the schema. SQLite
+    /// counts the changes of a schema (`schema_version`). The count as of the last definition is kept in `user_version`, which
+    /// nothing else here uses, and an open that finds another count defines the schema once more and keeps the new one. The
+    /// check is two pragma reads. `migrated`: a migration ran in this open, and it defined the schema.
+    private nonisolated static func defineSchemaIfItChanged(in pool: DatabasePool, migrated: Bool) throws {
+        let changed = try pool.read { db in
+            try Int.fetchOne(db, sql: "PRAGMA schema_version") != Int.fetchOne(db, sql: "PRAGMA user_version")
+        }
+        guard changed else { return }
+        try pool.write { db in
+            if !migrated {
+                try defineSchema(in: db)
+            }
+            let version = try Int.fetchOne(db, sql: "PRAGMA schema_version") ?? 0
+            try db.execute(sql: "PRAGMA user_version = \(version)")
+        }
+    }
 
     private static var migrator: DatabaseMigrator {
         var migrator = DatabaseMigrator()
@@ -150,7 +169,43 @@ struct AppDatabase: Sendable {
             try defineSchema(in: db)
             try ProfilePinMigration.run(in: db)
         }
+        // The schema is defined by migrations, and not on every open (see `defineSchemaIfItChanged`). Until this one, every open
+        // ran `defineSchema`, and that is how a column added later (folder colors and symbols, trails, micro windows) reached a
+        // database whose migrations were all recorded. This migration runs it once more for such a database, then adds what
+        // clearing and pruning history lacked. A later change to `defineSchema` needs a migration after this one:
+        // `AppDatabaseMigrationTests.anUpgradedDatabaseHasTheSchemaOfANewOne` fails until it has one.
+        //
+        // Every statement is additive and idempotent. Foreign keys stay on (`.immediate`). The default `.deferred` check runs
+        // `PRAGMA foreign_key_check` over the whole database and would refuse to open one that holds a stray row, which every
+        // open until now accepted.
+        migrator.registerMigration("v4-indexes", foreignKeyChecks: .immediate) { db in
+            try defineSchema(in: db)
+            // `historyVisit.fromVisit` references its own table `ON DELETE SET NULL`. With no index, each deleted visit scanned the
+            // whole table for the visits that name it, so clearing or pruning a large history took quadratic time. The session
+            // and pin tables have the same cascades from their parents.
+            try db.create(index: "historyVisit_fromVisit", on: "historyVisit", columns: ["fromVisit"], options: .ifNotExists)
+            try db.create(index: "sessionItem_tabID", on: "sessionItem", columns: ["tabID"], options: .ifNotExists)
+            try db.create(index: "sessionItem_folderID", on: "sessionItem", columns: ["folderID"], options: .ifNotExists)
+            try db.create(index: "sessionItem_parentID", on: "sessionItem", columns: ["parentID"], options: .ifNotExists)
+            try db.create(index: "profilePin_parentID", on: "profilePin", columns: ["parentID"], options: .ifNotExists)
+            try narrowHistoryIndexTrigger(in: db)
+        }
         return migrator
+    }
+
+    /// GRDB's `synchronize(withTable:)` re-indexes a page on every update of its row, and a visit updates `visitCount` and
+    /// `lastVisit`, which the index does not hold. This is the same trigger behind a condition: the index is touched exactly
+    /// when `url` or `title` changes, so it never holds a row it should not. The name is kept on purpose. `defineSchema` creates
+    /// the trigger only when it is missing, and a build that still runs it on every open leaves this one alone.
+    private nonisolated static func narrowHistoryIndexTrigger(in db: Database) throws {
+        try db.execute(sql: """
+            DROP TRIGGER IF EXISTS "__historyPage_ft_au";
+            CREATE TRIGGER "__historyPage_ft_au" AFTER UPDATE OF "url", "title" ON "historyPage"
+            WHEN old."url" IS NOT new."url" OR old."title" IS NOT new."title" BEGIN
+                INSERT INTO "historyPage_ft"("historyPage_ft", "rowid", "url", "title") VALUES('delete', old."rowid", old."url", old."title");
+                INSERT INTO "historyPage_ft"("rowid", "url", "title") VALUES (new."rowid", new."url", new."title");
+            END;
+            """)
     }
 
     private nonisolated static func defineSessionFolders(in db: Database) throws {
