@@ -32,10 +32,6 @@ signOptions=(--options runtime --timestamp)
 # Only the lproj names in WSURF_CEF_LOCALES (space separated) are kept; Chromium falls back to en-US for a language without a
 # pak, and WSurf's own UI is English only. `en` is that fallback and must stay. Set but empty keeps every language.
 locales="${WSURF_CEF_LOCALES-en en_GB hr}"
-if [[ -n "${locales// /}" && " $locales " != *" en "* ]]; then
-    echo "error: WSURF_CEF_LOCALES must contain en (Chromium's fallback language): '$locales'" >&2
-    exit 1
-fi
 helperHash=$(/usr/bin/shasum -a 256 "$helper")
 fingerprint="$version|$identity|${helperHash%% *}|${signOptions[*]}|$PRODUCT_BUNDLE_IDENTIFIER|locales=${locales:-all}"
 contents="$TARGET_BUILD_DIR/$CONTENTS_FOLDER_PATH"
@@ -51,15 +47,9 @@ fi
 
 mkdir -p "$frameworks" "$resources"
 /usr/bin/ditto "$framework" "$frameworks/Chromium Embedded Framework.framework"
-if [[ -n "${locales// /}" ]]; then
-    # Before the first sign, so the framework's seal covers exactly what ships. ditto only adds files, so a list that
-    # changed since the last embed is applied from the full set again, never from the previous result.
-    while IFS= read -r -d '' lproj; do
-        name=$(basename "$lproj" .lproj)
-        [[ " $locales " == *" $name "* ]] || rm -rf "$lproj"
-    done < <(/usr/bin/find "$frameworks/Chromium Embedded Framework.framework/Versions/A/Resources" \
-        -maxdepth 1 -type d -name '*.lproj' -print0)
-fi
+# Before the first sign, so the framework's seal covers exactly what ships. ditto only adds files, so a list that changed since the
+# last embed is applied from the full set again, never from the previous result.
+/bin/bash "$SRCROOT/Tools/prune-chromium-locales.sh" "$frameworks/Chromium Embedded Framework.framework/Versions/A/Resources" "$locales"
 cp -f "$package/LICENSE" "$resources/CefSwift.LICENSE.txt"
 cp -f "$package/Sources/CCef/LICENSE.CEF.txt" "$resources/Chromium.LICENSE.txt"
 
