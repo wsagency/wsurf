@@ -6,19 +6,24 @@ import Foundation
 import Security
 
 nonisolated enum CredentialStore {
-    #if DEBUG
-    private static let service: String = {
+    /// The installed app's Keychain service.
+    static let productionService = "io.wsagency.wsurf"
+
+    /// The service of a process. A test host gets its own in every build configuration, so a test can never read or write
+    /// the installed app's items, even when it is hosted by a Release build.
+    static func serviceName(isRunningTests: Bool, processID: Int32) -> String {
+        isRunningTests ? "\(productionService).tests.\(processID)" : productionService
+    }
+
+    /// This process's service. Stage runs exist only in Debug builds and keep their own, as in the autofill vaults.
+    static let service: String = {
+        #if DEBUG
         if StageMode.isActive, let home = StageMode.home {
             return StageMode.defaultsSuiteName(for: home)
         }
-        if AppDatabase.isRunningTests {
-            return "io.wsagency.wsurf.tests.\(ProcessInfo.processInfo.processIdentifier)"
-        }
-        return "io.wsagency.wsurf"
+        #endif
+        return serviceName(isRunningTests: AppDatabase.isRunningTests, processID: ProcessInfo.processInfo.processIdentifier)
     }()
-    #else
-    private static let service = "io.wsagency.wsurf"
-    #endif
 
     struct Storage: Sendable {
         var read: @Sendable (String) -> String?
