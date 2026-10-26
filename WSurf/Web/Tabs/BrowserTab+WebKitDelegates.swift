@@ -281,6 +281,7 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
            hitTestResult.responds(to: NSSelectorFromString("absoluteLinkURL")) {
             url = hitTestResult.value(forKey: "absoluteLinkURL") as? URL
         }
+        (webView as? TabWebView)?.hoveredLinkURL = url
         tab?.noteHoveredLink(url, modifiers: flags, at: Self.pointer(in: webView))
     }
 

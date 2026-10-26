@@ -81,4 +81,55 @@ struct OpenInNewTabMenuTests {
         #expect(probe.chosen == [identifier], "once, not once per time the menu opened")
         #expect(view.takeNewWindowChoice())
     }
+
+    // MARK: - A link in a frame
+
+    /// The page's own hit test finds no link in a frame of another site, so WSurf's own items take the link WebKit reported under
+    /// the pointer (`hoveredLinkURL`). No page runs here, which leaves the page's hit test with nothing, as it has for a frame.
+    private func frameLinkMenu(hovering link: URL?, in view: TabWebView) throws -> NSMenu {
+        view.hoveredLinkURL = link
+        return try openedMenu(["WKMenuItemIdentifierOpenLinkInNewWindow"], target: Probe(), in: view)
+    }
+
+    @Test(.boundedWebViews) func aLinkInAFrameOpensInANewWindowAndAPrivateOne() throws {
+        let view = TabWebView(frame: NSRect(x: 0, y: 0, width: 400, height: 300), configuration: WebViewPool.makeConfiguration())
+        var asked: [(String, Bool)] = []
+        view.onOpenLinkInNewWindow = { asked.append(($0.absoluteString, $1)) }
+        let menu = try frameLinkMenu(hovering: URL(string: "https://frame.example/page"), in: view)
+
+        menu.performActionForItem(at: try item("WSurfOpenLinkInNewWindow", in: menu))
+        menu.performActionForItem(at: try item("WSurfOpenLinkInNewPrivateWindow", in: menu))
+
+        #expect(asked.map(\.0) == ["https://frame.example/page", "https://frame.example/page"])
+        #expect(asked.map(\.1) == [false, true])
+    }
+
+    @Test(.boundedWebViews) func aLinkInAFrameOpensInPeekAndIsSummarized() throws {
+        let view = TabWebView(frame: NSRect(x: 0, y: 0, width: 400, height: 300), configuration: WebViewPool.makeConfiguration())
+        var peeked: [String] = []
+        var summarized: [String] = []
+        view.onPeekLink = { peeked.append($0.absoluteString) }
+        view.onSummarizeLink = { url, _ in summarized.append(url.absoluteString) }
+        let menu = try frameLinkMenu(hovering: URL(string: "https://frame.example/page"), in: view)
+
+        for entry in menu.items {
+            let action = entry.action.map(NSStringFromSelector) ?? ""
+            if action == "peekAtContextLink" || action == "summarizeContextLink" {
+                menu.performActionForItem(at: menu.index(of: entry))
+            }
+        }
+
+        #expect(peeked == ["https://frame.example/page"] && summarized == ["https://frame.example/page"])
+    }
+
+    @Test(.boundedWebViews) func aLinkMenuWithNoLinkUnderThePointerOpensNothing() throws {
+        let view = TabWebView(frame: NSRect(x: 0, y: 0, width: 400, height: 300), configuration: WebViewPool.makeConfiguration())
+        var asked = 0
+        view.onOpenLinkInNewWindow = { _, _ in asked += 1 }
+        let menu = try frameLinkMenu(hovering: nil, in: view)
+
+        menu.performActionForItem(at: try item("WSurfOpenLinkInNewWindow", in: menu))
+
+        #expect(asked == 0)
+    }
 }

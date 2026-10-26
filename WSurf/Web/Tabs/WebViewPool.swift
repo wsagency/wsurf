@@ -115,6 +115,13 @@ final class TabWebView: WKWebView {
     private var contextImageURL: URL?
     private var contextLinkURL: URL?
     private var contextLinkAnchor: CGPoint?
+    /// The link under the pointer as WebKit last reported it (`TabNavigationDelegate`), in any frame.
+    var hoveredLinkURL: URL?
+    /// The link a context menu was opened on. The page's own hit test (`rightMouseDown`) finds one in the document it runs in
+    /// and none in a frame, which only WebKit's own hit test, behind the hover, can see into.
+    private var linkAtContextMenu: URL? {
+        contextLinkURL ?? hoveredLinkURL
+    }
 
     /// WebKit does not call the window that follows a choice from its context menu (Open Link in New Tab and the like) the
     /// person's own: for `createWebViewWith` it is not user-initiated, as a script's pop-up is not, so the pop-up gate would
@@ -257,17 +264,17 @@ final class TabWebView: WKWebView {
     }
 
     @objc private func openContextLinkInNewWindow(_ sender: NSMenuItem) {
-        guard let url = contextLinkURL else { return }
+        guard let url = linkAtContextMenu else { return }
         onOpenLinkInNewWindow?(url, sender.tag == 1)
     }
 
     @objc private func peekAtContextLink() {
-        guard let url = contextLinkURL else { return }
+        guard let url = linkAtContextMenu else { return }
         onPeekLink?(url)
     }
 
     @objc private func summarizeContextLink() {
-        guard let url = contextLinkURL else { return }
+        guard let url = linkAtContextMenu else { return }
         onSummarizeLink?(url, contextLinkAnchor)
     }
 
@@ -301,7 +308,7 @@ final class TabWebView: WKWebView {
 
     @objc private func startContextDownload(_ sender: NSMenuItem) {
         let isImage = sender.identifier?.rawValue == "WKMenuItemIdentifierDownloadImage"
-        guard let url = isImage ? contextImageURL : (contextLinkURL ?? contextImageURL) else { return }
+        guard let url = isImage ? contextImageURL : (linkAtContextMenu ?? contextImageURL) else { return }
         startDownload(using: URLRequest(url: url)) { [weak self] download in
             self?.onContextDownload?(download, url)
         }
