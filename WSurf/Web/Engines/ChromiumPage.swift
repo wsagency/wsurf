@@ -66,6 +66,14 @@ final class ChromiumPage: NSView {
     private var zoom: CGFloat = 1
     var navigationDecision: ((URLRequest, Bool, Bool, Bool, WKNavigationType, URL?, BrowserFrame?) -> Bool)?
     var openWindow: ((URL, Bool, URL?, BrowserFrame?) -> Void)?
+    /// How a link chosen from the context menu is opened.
+    nonisolated enum LinkOpening {
+        case tab, window, privateWindow
+    }
+    /// An Open Link item of the context menu was chosen: the link, the address of the frame it is in, and how to open it.
+    var openLinkFromMenu: ((URL, URL?, LinkOpening) -> Void)?
+    /// The link the open context menu was opened on, and the address of the frame it is in, for its Open Link items.
+    var contextLink: (url: URL, frameURL: URL?)?
     var captureChanged: ((Bool, Bool) -> Void)?
     /// A screen share this page was granted. `captureChanged` reports device capture only.
     var displayCaptureStarted: (() -> Void)?

@@ -132,4 +132,23 @@ struct OpenInNewTabMenuTests {
 
         #expect(asked == 0)
     }
+
+    // MARK: - Chromium
+
+    @Test func aChromiumLinkMenuOffersATabAWindowAndAPrivateWindow() {
+        let commands = ChromiumClient.linkCommands(isPrivate: false)
+
+        #expect(commands.map(\.opening) == [.tab, .window, .privateWindow])
+        #expect(Set(commands.map(\.id)).count == 3, "each has an id of its own")
+        #expect(!commands.map(\.id).contains(ChromiumClient.pickCredentialCommand))
+        #expect(commands.allSatisfy { (26_500...28_500).contains($0.id) }, "ids the engine leaves to the application")
+    }
+
+    @Test func aPrivateChromiumTabOffersNoPlainWindow() {
+        let commands = ChromiumClient.linkCommands(isPrivate: true)
+
+        #expect(commands.map(\.opening) == [.tab, .privateWindow])
+        #expect(commands.map(\.id) == ChromiumClient.linkCommands(isPrivate: false).filter { $0.opening != .window }.map(\.id),
+                "the same ids as in a plain tab")
+    }
 }
