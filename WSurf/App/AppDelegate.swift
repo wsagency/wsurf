@@ -3,6 +3,7 @@
 // Modified for WSurf by wsagency in 2026; based on Linen by Kavoye.
 
 import AppKit
+import os
 
 /// WSurf installs no SwiftUI `App` scene. SwiftUI replaces `NSApp.mainMenu`
 /// during launch and discards the shortcuts set before it.
@@ -16,14 +17,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        AppleSpeechVoiceCatalog.shared.prepare()
-        guard !isRunningTests else { return }
+        guard !isRunningTests else {
+            AppleSpeechVoiceCatalog.shared.prepare()
+            return
+        }
+        LaunchSignpost.begin()
         // Decrypted vault files an earlier run showed and could not remove (a crash, a forced quit).
         VaultFilePreviewFolder.shared.removeLeftovers()
         NSApp.setActivationPolicy(.regular)
         guard MoveToApplications.offerIfNeeded() != .relaunching else { return }
         Task {
             await application.bootstrap()
+            // Nothing speaks before a window is up. Apple's voice lookup warns when it runs inside a Swift task, so it runs from
+            // the main queue once launch has drawn its windows.
+            DispatchQueue.main.async {
+                AppleSpeechVoiceCatalog.shared.prepare()
+            }
             #if DEBUG
             if let coordinator = application.activeCoordinator {
                 AnimationProbe.runIfRequested(coordinator: coordinator)
@@ -91,5 +100,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard !isRunningTests else { return }
         VaultFilePreviewFolder.shared.removeAll()
         application.finishTermination()
+    }
+}
+
+/// Launch, for Instruments and the log: from `applicationDidFinishLaunching` to the first window ordered front. The interval is
+/// "launch" in the pipeline category, next to `db.open`, `history.reload` and `convlog.load` (`BrowserProfileContext`).
+@MainActor
+enum LaunchSignpost {
+    private static var started: (state: OSSignpostIntervalState, at: ContinuousClock.Instant)?
+
+    static func begin() {
+        started = (Pipeline.signposter.beginInterval("launch"), .now)
+    }
+
+    /// Ends the interval at the first window shown in front; every later one changes nothing.
+    static func windowShown() {
+        guard let started else { return }
+        self.started = nil
+        Pipeline.signposter.endInterval("launch", started.state)
+        let elapsed = (ContinuousClock.now - started.at).milliseconds
+        Pipeline.log.notice("launch: first window in front after \(elapsed, privacy: .public)ms")
     }
 }

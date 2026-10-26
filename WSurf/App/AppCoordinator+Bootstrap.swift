@@ -73,7 +73,7 @@ extension AppCoordinator {
         }
         linkPeek.begin()
         // A micro window has no onboarding to show and no release notes to open: those belong to the window to browse in.
-        if !isMicro, application == nil || application?.windows.count == 1 {
+        if !isMicro, application?.isOpeningFirstWindow ?? true {
             onboarding.beginIfNeeded()
         }
         if onboarding.isPresented {
@@ -97,14 +97,13 @@ extension AppCoordinator {
             updates.setChannel(settings.updateChannel)
             updates.start()
         }
-        if !isMicro, application == nil || application?.windows.count == 1 {
+        if !isMicro, application?.isOpeningFirstWindow ?? true {
             MoveToApplications.reregisterDefaultBrowserIfNeeded()
             releaseNotes.checkForNewVersion()
         }
         timing.mark("updates")
         Task { [extensions] in
-            await extensions.start()
-            await extensions.updateInstalledIfDue()
+            await extensions.startOnce()
         }
         activation.onPress = { [weak self] in
             guard let self, isKeyWindow, !onboarding.isPresented, microphoneIsReady() else { return }
@@ -152,7 +151,25 @@ extension AppCoordinator {
         modelProviders.resolve(configuration)
     }
 
+    /// At launch a window draws before its engine, the assistant's tools and the voices are built: they wait for the next turn of
+    /// the main queue, when the windows are on screen. What the first frame shows, the provider, model and effort chosen, is set
+    /// at once.
     func configureEngines() {
+        guard !isClosed else { return }
+        guard application?.isLaunching == true else {
+            configureEnginesNow()
+            return
+        }
+        LLMSettings.$scoped.withValue(modelSettings) {
+            configureEngineChoice()
+        }
+        DispatchQueue.main.async { [weak self] in
+            guard let self, application?.isTerminating != true else { return }
+            configureEnginesNow()
+        }
+    }
+
+    private func configureEnginesNow() {
         guard !isClosed else { return }
         LLMSettings.$scoped.withValue(modelSettings) {
             configureWindowEngines()
@@ -164,6 +181,18 @@ extension AppCoordinator {
         windows.forEach { $0.configureEngines() }
     }
 
+    /// The provider, model and reasoning effort the person chose, which the assistant's chip shows: settings only.
+    private func configureEngineChoice() {
+        selectedProvider = ProviderCatalog.shared.provider(id: modelSettings.providerID) ?? ProviderCatalog.openAI
+        selectedModel = modelSettings.model(for: selectedProvider)
+        selectedEffort = ReasoningCatalog.resolve(
+            modelSettings.reasoningEffort(for: selectedProvider),
+            for: selectedProvider,
+            model: selectedModel
+        )
+        supportsReasoningEffort = modelProviders.resolve(selectedProvider).capabilities.contains(.reasoning)
+    }
+
     private func configureWindowEngines() {
         let toolkit = AgentToolkit(
             browser: browser,
@@ -172,16 +201,9 @@ extension AppCoordinator {
             questions: agentQuestions
         )
         agentTurns.onCancel = { [weak self] in self?.agentQuestions.abandon() }
-        selectedProvider = ProviderCatalog.shared.provider(id: modelSettings.providerID) ?? ProviderCatalog.openAI
-        selectedModel = modelSettings.model(for: selectedProvider)
-        selectedEffort = ReasoningCatalog.resolve(
-            modelSettings.reasoningEffort(for: selectedProvider),
-            for: selectedProvider,
-            model: selectedModel
-        )
+        configureEngineChoice()
 
         let selected = modelProviders.resolve(selectedProvider)
-        supportsReasoningEffort = selected.capabilities.contains(.reasoning)
         let onDeviceFallback = modelProviders.resolve(ProviderCatalog.appleOnDevice)
         let hostedFallback = modelProviders.resolve(ProviderCatalog.openAI)
         let decision = AgentProviderSelection.decide(
@@ -433,6 +455,30 @@ extension AppCoordinator {
             return true
         }
         return closedInspector
+    }
+}
+
+private extension ExtensionManager {
+    /// The profile's running start, if one is: every window of a profile starts the same manager when it opens, as all of them do
+    /// at launch.
+    static var runningStarts: [ObjectIdentifier: Task<Void, Never>] = [:]
+
+    /// `start()` and the update check, one run at a time: a window that opens while a run is going waits for it instead of
+    /// starting another, which would read every manifest and write every shim again.
+    func startOnce() async {
+        let key = ObjectIdentifier(self)
+        if let running = Self.runningStarts[key] {
+            await running.value
+            return
+        }
+        // The task keeps the manager, so its identifier is not reused before the entry goes.
+        let run = Task {
+            await start()
+            await updateInstalledIfDue()
+        }
+        Self.runningStarts[key] = run
+        await run.value
+        Self.runningStarts[key] = nil
     }
 }
 

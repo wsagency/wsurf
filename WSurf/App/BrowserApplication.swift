@@ -22,6 +22,13 @@ final class BrowserApplication {
     private var privateSessionCleanups: [UUID: Task<Void, Never>] = [:]
     let updates = UpdateController()
     private var isReady = false
+    /// While a launch opens its saved windows (`beginLaunchRestore` to the end of `continueLaunchRestore`). A window opened then
+    /// draws before its assistant and voices are built (`AppCoordinator.configureEngines`).
+    @ObservationIgnored private(set) var isLaunching = false
+    /// While a launch's restore opens a window: whether it is the first in the restore order (`isOpeningFirstWindow`).
+    @ObservationIgnored private var launchOpensFirstWindow: Bool?
+    /// The rest of a launch that a quit stopped; a quit that is called off goes on with it (`cancelTermination`).
+    @ObservationIgnored private var interruptedLaunch: (() -> Void)?
     private var queuedURLs: [URL] = []
     private var usedProfiles: [UUID: BrowserProfileContext] = [:]
     private var focusOrder: [UUID] = []
@@ -119,7 +126,7 @@ final class BrowserApplication {
     }
 
     func bootstrap() async {
-        guard !isReady else { return }
+        guard !isReady, !isLaunching else { return }
         OutputDucker.restoreAfterUncleanExit()
         BrowserSettings.application.applyAppearance()
         // macOS forgets a runtime Dock icon when the app quits, so the choice is applied again at every launch.
@@ -133,7 +140,22 @@ final class BrowserApplication {
         let catalog = ProfileStore.shared
         InputHistory.shared.purgeAllProfilesAtLaunch(catalog.profiles)
         CloudSync.startIfAvailable(profiles: catalog.profiles)
-        restoreWindows(of: catalog.profiles)
+        let restore = beginLaunchRestore(of: catalog.profiles, lastWindowID: lastWindowID, launchProfileID: catalog.launchProfileID)
+        if restore.lead != nil {
+            // The window in front draws before the others are built.
+            await Task.yield()
+        }
+        finishLaunch(restore, lastWindowID: lastWindowID)
+    }
+
+    /// The rest of a launch once its windows are restored. A quit that began while they opened stops it before the next one; a
+    /// quit that is called off goes on from there (`cancelTermination`).
+    private func finishLaunch(_ restore: LaunchRestore, lastWindowID: UUID?) {
+        guard continueLaunchRestore(restore) else {
+            interruptedLaunch = { [weak self] in self?.finishLaunch(restore, lastWindowID: lastWindowID) }
+            return
+        }
+        let catalog = ProfileStore.shared
         // A micro window alone is not a launch: the person still gets a window to browse in.
         if !windows.contains(where: { !$0.isMicro }) {
             newWindow(profile: catalog.current)
@@ -170,37 +192,187 @@ final class BrowserApplication {
     /// closed last, but only when that window was the last regular window open and nothing opened after it. A window closed
     /// while others stayed open is left to Reopen Last Closed Window.
     func restoreWindows(of profiles: [Profile], show: Bool = true) {
-        let closedAsLast = takeWindowClosedAsLast()
-        for profile in profiles {
-            let context = BrowserProfileContext.shared(for: profile)
-            let saved = BrowserModel.savedWindows(in: context.database).reversed()
-            for window in saved where window.windowKind == .standard {
-                openSavedWindow(window, of: profile, show: show)
-            }
-            // Micro windows come after: one left open at quit must not hide that the regular window was closed last.
-            if let closedAsLast, closedAsLast.profileID == profile.id,
-               !windows.contains(where: { $0.context === context && !$0.isMicro }),
-               let window = BrowserModel.savedWindows(in: context.database, includeClosed: true)
-                .first(where: { $0.id == closedAsLast.windowID && $0.closedAt != nil }) {
-                openSavedWindow(window, of: profile, show: show)
-            }
-            for window in saved where window.windowKind == .micro {
-                openSavedWindow(window, of: profile, show: show)
-            }
+        for step in restoreSteps(of: profiles) {
+            open(step, show: show)
         }
         relinkMicroPlaceholders()
     }
 
-    private func openSavedWindow(_ saved: BrowserModel.SavedBrowserWindow, of profile: Profile, show: Bool = true) {
+    // MARK: - Launch
+
+    /// One window a launch brings back.
+    enum RestoreStep {
+        /// A window that was open when the app last quit.
+        case saved(BrowserModel.SavedBrowserWindow, Profile)
+        /// The regular window the person closed last. It opens only if its profile has no regular window open by its turn.
+        case closedAsLast(BrowserModel.SavedBrowserWindow, Profile)
+
+        var window: BrowserModel.SavedBrowserWindow {
+            switch self {
+            case .saved(let window, _), .closedAsLast(let window, _):
+                window
+            }
+        }
+
+        var profile: Profile {
+            switch self {
+            case .saved(_, let profile), .closedAsLast(_, let profile):
+                profile
+            }
+        }
+
+        var isSaved: Bool {
+            if case .saved = self {
+                return true
+            }
+            return false
+        }
+    }
+
+    /// A launch's restore: the windows in the order `restoreWindows` opens them, which one `beginLaunchRestore` opened first, and
+    /// how far `continueLaunchRestore` got.
+    @MainActor
+    final class LaunchRestore {
+        let steps: [RestoreStep]
+        /// The step of the window that ends up in front, opened before the others; nil when no restored window is (the launch
+        /// profile has none), and then every window opens in order.
+        let lead: Int?
+        /// The first step that opens a window: onboarding, release notes and the default-browser check belong to that window.
+        let first: Int?
+        fileprivate(set) var next = 0
+        fileprivate(set) var opened: [(step: Int, window: AppCoordinator)] = []
+
+        fileprivate init(steps: [RestoreStep], lead: Int?, first: Int?) {
+            self.steps = steps
+            self.lead = lead
+            self.first = first
+        }
+
+        var leadWindow: AppCoordinator? {
+            opened.first { $0.step == lead }?.window
+        }
+    }
+
+    /// The saved windows of `profiles` in the order a launch opens them: each profile's regular windows, used longest ago first,
+    /// then the window it closed last, then its micro windows. Takes the record of the window closed last.
+    private func restoreSteps(of profiles: [Profile]) -> [RestoreStep] {
+        let closedAsLast = takeWindowClosedAsLast()
+        var steps: [RestoreStep] = []
+        for profile in profiles {
+            let database = BrowserProfileContext.shared(for: profile).database
+            let saved = BrowserModel.savedWindows(in: database).reversed()
+            steps += saved.filter { $0.windowKind == .standard }.map { .saved($0, profile) }
+            // Micro windows come after: one left open at quit must not hide that the regular window was closed last.
+            if let closedAsLast, closedAsLast.profileID == profile.id,
+               let window = BrowserModel.savedWindows(in: database, includeClosed: true)
+                .first(where: { $0.id == closedAsLast.windowID && $0.closedAt != nil }) {
+                steps.append(.closedAsLast(window, profile))
+            }
+            steps += saved.filter { $0.windowKind == .micro }.map { .saved($0, profile) }
+        }
+        return steps
+    }
+
+    @discardableResult
+    private func open(_ step: RestoreStep, show: Bool) -> AppCoordinator? {
+        if case .closedAsLast = step {
+            let context = BrowserProfileContext.shared(for: step.profile)
+            guard !windows.contains(where: { $0.context === context && !$0.isMicro }) else { return nil }
+        }
+        return openSavedWindow(step.window, of: step.profile, show: show)
+    }
+
+    /// Starts a launch's restore with the window that ends up in front, so that it draws before the others are built;
+    /// `continueLaunchRestore` opens the others behind it, in the order `restoreWindows` opens them. The window in front is the
+    /// one `bootstrap` brings forward: the launch profile's last regular window, else the window used last, else the last regular
+    /// window. When the launch profile has no restored window nothing opens here, and the others open in order as before.
+    func beginLaunchRestore(of profiles: [Profile], lastWindowID: UUID?, launchProfileID: UUID?, show: Bool = true) -> LaunchRestore {
+        isLaunching = true
+        let steps = restoreSteps(of: profiles)
+        // Which steps open a window: the window closed last only for a profile with no regular window to restore. (A saved window
+        // whose ID cannot be remapped opens nothing either; that takes a failed database write and is not foreseen here.)
+        let opens = steps.map { step in
+            step.isSaved || !steps.contains { $0.isSaved && $0.window.windowKind == .standard && $0.profile.id == step.profile.id }
+        }
+        let regular = steps.indices.filter { opens[$0] && steps[$0].window.windowKind == .standard }
+        let lead: Int? = if let launchProfileID {
+            regular.last { steps[$0].profile.id == launchProfileID }
+        } else if let lastWindowID, let used = regular.first(where: { steps[$0].window.id == lastWindowID }) {
+            used
+        } else {
+            regular.last
+        }
+        let restore = LaunchRestore(steps: steps, lead: lead, first: opens.firstIndex(of: true))
+        if let lead, let window = openLaunchStep(lead, of: restore, show: show) {
+            restore.opened.append((lead, window))
+        }
+        return restore
+    }
+
+    /// Opens the rest of a launch's windows in order, each behind the window in front and above those opened before it, as they
+    /// stood when each came forward in turn; then `windows` and the focus order are what opening them one after another leaves.
+    /// A quit that begins first stops it before the next window and it returns false; the rest waits in `restore`. The windows
+    /// not opened keep their saved rows untouched, so the next launch brings them back.
+    @discardableResult
+    func continueLaunchRestore(_ restore: LaunchRestore, show: Bool = true) -> Bool {
+        let lead = restore.leadWindow
+        while restore.next < restore.steps.count {
+            guard !isTerminating else {
+                keepWindowClosedAsLast(of: restore)
+                return false
+            }
+            let step = restore.next
+            restore.next += 1
+            guard step != restore.lead, let window = openLaunchStep(step, of: restore, show: show && lead == nil) else { continue }
+            restore.opened.append((step, window))
+            if show, let lead {
+                window.nativeWindow?.order(.below, relativeTo: lead.nativeWindow?.windowNumber ?? 0)
+                focus(window)
+            }
+        }
+        relinkMicroPlaceholders()
+        let ordered = restore.opened.sorted { $0.step < $1.step }.map(\.window)
+        windows = ordered.filter { window in windows.contains { $0 === window } }
+            + windows.filter { window in !ordered.contains { $0 === window } }
+        if show, let lead {
+            focus(lead)
+        }
+        isLaunching = false
+        return true
+    }
+
+    private func openLaunchStep(_ step: Int, of restore: LaunchRestore, show: Bool) -> AppCoordinator? {
+        launchOpensFirstWindow = step == restore.first
+        defer { launchOpensFirstWindow = nil }
+        return open(restore.steps[step], show: show)
+    }
+
+    /// A quit that stops a launch before the window closed last opened puts its record back, so the next launch brings it back.
+    private func keepWindowClosedAsLast(of restore: LaunchRestore) {
+        for case .closedAsLast(let window, let profile) in restore.steps[restore.next...] {
+            let context = BrowserProfileContext.shared(for: profile)
+            guard !windows.contains(where: { $0.context === context && !$0.isMicro }) else { continue }
+            defaults.set([profile.id.uuidString, window.id.uuidString], forKey: Self.closedAsLastKey)
+        }
+    }
+
+    /// Whether the window opening now is the first one, which onboarding, release notes and the default-browser check belong to.
+    /// A launch opens the window in front before the others, so while it restores the restore order decides.
+    var isOpeningFirstWindow: Bool {
+        launchOpensFirstWindow ?? (windows.count == 1)
+    }
+
+    @discardableResult
+    private func openSavedWindow(_ saved: BrowserModel.SavedBrowserWindow, of profile: Profile, show: Bool = true) -> AppCoordinator? {
         var id = saved.id
         if id == BrowserModel.legacyWindowID || windows.contains(where: { $0.windowID == id }) {
             let uniqueID = UUID()
             guard BrowserModel.remapSavedWindow(
                 in: BrowserProfileContext.shared(for: profile).database, from: id, to: uniqueID
-            ) else { return }
+            ) else { return nil }
             id = uniqueID
         }
-        newWindow(profile: profile, windowID: id, restoring: true, show: show, kind: saved.windowKind)
+        return newWindow(profile: profile, windowID: id, restoring: true, show: show, kind: saved.windowKind)
     }
 
     private func takeWindowClosedAsLast() -> (profileID: UUID, windowID: UUID)? {
@@ -242,6 +414,7 @@ final class BrowserApplication {
         coordinator.prepareBrowser(restoring: restoring, show: show, urls: urls)
         if show {
             focus(coordinator)
+            LaunchSignpost.windowShown()
         }
         return coordinator
     }
@@ -442,7 +615,13 @@ final class BrowserApplication {
     func cancelTermination() {
         isTerminating = false
         CloudSync.shared?.cancelTermination()
-        mcpServer.resume()
+        if let resume = interruptedLaunch {
+            // The quit came while launch was still opening windows: launch goes on, and resumes the server as it does.
+            interruptedLaunch = nil
+            resume()
+        } else {
+            mcpServer.resume()
+        }
     }
 
     func endPrivateSession(_ context: BrowserProfileContext) {

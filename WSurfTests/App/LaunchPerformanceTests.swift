@@ -43,6 +43,20 @@ nonisolated final class LaunchPerformanceTests: XCTestCase, @unchecked Sendable 
         }
     }
 
+    /// The same launch to its first window: the window in front, the one used last, is restored, laid out and drawn while the
+    /// three others wait for it to be on screen (`BrowserApplication.beginLaunchRestore`).
+    func testOpeningTheFrontWindowOfAFourWindowLaunch() {
+        MainActor.assumeIsolated {
+            withLaunchFixture { profile, ids in
+                measureLaunch { app in
+                    _ = app.beginLaunchRestore(of: [profile], lastWindowID: ids[1], launchProfileID: nil, show: false)
+                    XCTAssertEqual(app.windows.map(\.windowID), [ids[1]])
+                    app.windows.forEach(Self.draw)
+                }
+            }
+        }
+    }
+
     // MARK: - Fixture
 
     /// `tabs` unloaded pages in `folders` folders, and a blank tab in front, which the window shows.
