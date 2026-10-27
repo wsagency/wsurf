@@ -201,13 +201,13 @@ struct SidebarAppearanceEvidenceTests {
         for scheme in [ColorScheme.light, .dark] {
             let name = scheme == .dark ? "dark" : "light"
             let ground = scheme == .dark ? Color(white: 0.12) : Color(white: 0.96)
-            let layout = AppearanceLayoutSection(settings: settings)
-                .environment(\.settingsHighlight, "appearance.layout")
+            let layout = SettingsCard { AppearanceLayoutSection(settings: settings, part: .sidebar) }
+                .environment(\.settingsHighlight, "appearance.sidebarLayout")
                 .frame(width: 560)
                 .padding(16)
                 .background(ground)
                 .environment(\.colorScheme, scheme)
-            pictures.append(("Settings > Appearance > Layout, \(name)", try rig.picture(of: layout).bitmap))
+            pictures.append(("Settings > Appearance > Sidebar > Layout, \(name)", try rig.picture(of: layout).bitmap))
             let colors = AppearanceColorsSection(settings: settings, scheme: scheme, isExpanded: .constant(true))
                 .frame(width: 560)
                 .padding(16)

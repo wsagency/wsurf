@@ -202,11 +202,46 @@ struct ThemeLayoutTests {
         }
     }
 
-    @Test func searchFindsTheLayoutCard() throws {
-        for query in ["corner", "edge", "favicon", "layout", "square"] {
-            #expect(SettingsIndex.search(query).contains { $0.id == "appearance.layout" }, "\(query)")
+    /// The layout knobs are one disclosure in the Window card and one in the Sidebar card, so each knob is found in the card that has it.
+    @Test func searchFindsTheLayoutOfTheWindowAndOfTheSidebar() throws {
+        for (query, id) in [
+            ("corner", "appearance.windowLayout"), ("square", "appearance.windowLayout"),
+            ("favicon", "appearance.sidebarLayout"), ("edge", "appearance.windowLayout"), ("edge", "appearance.sidebarLayout"),
+            ("layout", "appearance.windowLayout"), ("layout", "appearance.sidebarLayout"),
+        ] {
+            #expect(SettingsIndex.search(query).contains { $0.id == id }, "\(query)")
         }
-        let entry = try #require(SettingsIndex.all.first { $0.id == "appearance.layout" })
-        #expect(entry.targetAnchor == "appearance.layout")
+        for id in ["appearance.windowLayout", "appearance.sidebarLayout"] {
+            let entry = try #require(SettingsIndex.all.first { $0.id == id })
+            #expect(entry.targetAnchor == id)
+        }
+        #expect(!SettingsIndex.all.contains { $0.id == "appearance.layout" })
+    }
+
+    private func source(_ path: String) throws -> String {
+        try String(contentsOf: URL(filePath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appending(path: path), encoding: .utf8)
+    }
+
+    /// Search opens the row or card an entry names, so every entry of the Appearance page must name an anchor the page
+    /// draws. The Window and the Sidebar sections follow each other, and each holds the layout disclosure that is its own.
+    @Test func everyAppearanceEntryLandsOnAnAnchorTheSectionsDraw() throws {
+        let pages = try [
+            "AppearanceSettings", "AppearanceThemeSection", "AppearanceColorsSection", "AppearanceLayoutSection",
+            "AppearanceWindowSection", "AppearanceDockIconSection",
+        ].map { try source("WSurf/Settings/Pages/\($0).swift") }.joined()
+        for entry in SettingsIndex.all where entry.category == .appearance {
+            #expect(pages.contains("\"\(entry.targetAnchor)\""), "\(entry.id)")
+        }
+
+        let page = try source("WSurf/Settings/Pages/AppearanceSettings.swift")
+        let window = try #require(page.range(of: "AppearanceWindowSection(settings: settings)"))
+        let sidebar = try #require(page.range(of: "AppearanceSidebarSection(settings: settings"))
+        let dock = try #require(page.range(of: "AppearanceDockIconSection(settings: settings)"))
+        #expect(window.lowerBound < sidebar.lowerBound && sidebar.lowerBound < dock.lowerBound)
+        #expect(page.contains("AppearanceLayoutSection(settings: settings, part: .sidebar)"))
+        #expect(try source("WSurf/Settings/Pages/AppearanceWindowSection.swift")
+            .contains("AppearanceLayoutSection(settings: settings, part: .window)"))
     }
 }

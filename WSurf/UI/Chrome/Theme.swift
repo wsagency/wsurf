@@ -174,6 +174,9 @@ enum Theme {
 
     /// `base` with the hue, primary color and brightness of `change` laid over it. The primary color replaces the hue
     /// and, for an accent, the brightness too; surfaces keep their own and borrow at most a little of its saturation.
+    /// Brightness moves a color that fraction of the way to black (below 0) or to full brightness (above 0), so every
+    /// step changes a color that is not already there. Adding it instead left a dark surface flat black and a light one
+    /// flat for most of the slider, once the sum reached 0 or 1.
     static func customized(_ base: NSColor, change: PaletteChange, isAccent: Bool) -> NSColor {
         guard change.isActive, let rgb = base.usingColorSpace(.sRGB) else { return base }
         let primary = change.primary.map {
@@ -186,8 +189,9 @@ enum Theme {
         let hue = (Double(source.hueComponent) + change.hue + 1).truncatingRemainder(dividingBy: 1)
         let saturation = primary == nil ? rgb.saturationComponent
             : (isAccent ? source.saturationComponent : min(source.saturationComponent, 0.35))
-        let brightness = (isAccent && primary != nil ? source.brightnessComponent : rgb.brightnessComponent)
-            + CGFloat(change.brightness)
+        let start = isAccent && primary != nil ? source.brightnessComponent : rgb.brightnessComponent
+        let shift = CGFloat(change.brightness)
+        let brightness = shift < 0 ? start * (1 + shift) : start + (1 - start) * shift
         return NSColor(
             hue: CGFloat(hue), saturation: saturation,
             brightness: min(max(brightness, 0), 1), alpha: rgb.alphaComponent

@@ -526,6 +526,41 @@ struct ThemeBehaviorTests {
         }
     }
 
+    /// Each step of 10 % of the Brightness slider changes every ground that has room to move. The knob used to add the
+    /// step to a color's brightness and stop at black or full brightness, so a dark ground was flat black from -20 % and a
+    /// light one flat from +10 %, and half of the slider drew nothing. Room is 0.04 of the brightness, about one of 255
+    /// levels for each step: the near-white light grounds have less than that on their light side and are skipped.
+    @Test func everyBrightnessStepChangesTheGroundsThatHaveRoomToMove() {
+        func drawn(_ definition: ThemeDefinition, _ scheme: ColorScheme, _ brightness: Double) -> [NSColor] {
+            let variant = ResolvedVariant(
+                definition.variant(scheme), isDark: scheme == .dark, brightness: brightness, ground: definition.ground
+            )
+            return [variant.window, variant.sidebar, variant.surface].map { $0.srgb(scheme: scheme) }
+        }
+        func levels(_ color: NSColor) -> [Int] {
+            [color.redComponent, color.greenComponent, color.blueComponent].map { Int(($0 * 255).rounded()) }
+        }
+        var checked = 0
+        for definition in ThemeCatalog.builtIn {
+            for scheme in [ColorScheme.light, .dark] {
+                let base = drawn(definition, scheme, 0)
+                for direction in [-1.0, 1.0] {
+                    let steps = (0...10).map { drawn(definition, scheme, direction * Double($0) / 10) }
+                    for (index, ground) in base.enumerated() where (direction < 0 ? ground.brightnessComponent : 1 - ground.brightnessComponent) >= 0.04 {
+                        for step in 1...10 {
+                            #expect(
+                                levels(steps[step][index]) != levels(steps[step - 1][index]),
+                                "\(definition.id), \(scheme), ground \(index), \(Int(direction) * step * 10) %"
+                            )
+                            checked += 1
+                        }
+                    }
+                }
+            }
+        }
+        #expect(checked > 300, "\(checked) steps")
+    }
+
     @Test func readabilityCompositesOpacityWithoutChangingStoredColors() {
         let original = ThemeVariant(
             window: 0xFFFFFF, sidebar: 0xFFFFFF, text: 0,

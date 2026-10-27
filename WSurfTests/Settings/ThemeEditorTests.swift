@@ -516,6 +516,14 @@ struct ThemeEditorTests {
 
     // MARK: - Search
 
+    /// Save as Theme and Customize made the same copy, so there is one row, Customize. The words of the old row find it.
+    @Test func saveAsThemeIsFoundOnTheCustomizeRow() {
+        #expect(!SettingsIndex.all.contains { $0.id == "appearance.savedThemes" })
+        for query in ["save", "save as theme", "rename", "duplicate", "delete"] {
+            #expect(SettingsIndex.search(query).contains { $0.id == "appearance.customize" }, "\(query)")
+        }
+    }
+
     @Test func searchFindsCustomizeAndResetTheme() throws {
         for query in ["customize", "custom theme", "own theme"] {
             #expect(SettingsIndex.search(query).contains { $0.id == "appearance.customize" }, "\(query)")
