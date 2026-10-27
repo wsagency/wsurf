@@ -83,6 +83,14 @@ nonisolated final class LaunchPerformanceTests: XCTestCase, @unchecked Sendable 
     /// A profile of its own with four saved windows of 40 pages in 4 folders and a blank tab, oldest first, and their IDs.
     @MainActor
     func withLaunchFixture(_ body: (Profile, [UUID]) -> Void) {
+        // The first window shows onboarding unless this host's own defaults say it is done (the coordinator reads
+        // `StageMode.defaults`), and no test finishes it. So every pass paid for it, 0.15 to 0.85 s in the first window depending on
+        // what earlier tests had left in those defaults (a hidden sidebar made it cheap): the four-window launch took 1.0 to 1.6 s.
+        let defaults = StageMode.defaults
+        let completedKey = "onboarding.completed"
+        let completed = defaults.object(forKey: completedKey)
+        defaults.set(true, forKey: completedKey)
+        defer { defaults.set(completed, forKey: completedKey) }
         let catalog = ProfileStore.shared
         let previous = catalog.current
         let profile = catalog.add(name: "Launch performance")
