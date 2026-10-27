@@ -154,13 +154,9 @@ final class BrowserHost: NSObject, NSWindowDelegate {
         created.isMovableByWindowBackground = false
         created.tabbingMode = .disallowed
         created.isRestorable = false
-        created.onSideButton = { [weak coordinator] forward in
-            guard let tab = coordinator?.pageCommandTab else { return }
-            if forward {
-                tab.goForward()
-            } else {
-                tab.goBack()
-            }
+        created.sideButtonTab = { [weak coordinator] in
+            guard let coordinator, coordinator.context.settings.sideButtonsNavigate else { return nil }
+            return coordinator.pageCommandTab
         }
         created.delegate = self
         dropSavedTilingState()
@@ -560,14 +556,21 @@ nonisolated enum BrowserWindowMetrics {
 }
 
 private final class BrowserWindow: NSWindow {
-    var onSideButton: ((Bool) -> Void)?
+    /// The tab a mouse's side buttons move Back (3) and Forward (4), or nil when they are left to the page
+    /// (`BrowserSettings.sideButtonsNavigate`). The window takes them before any view, so they work over the sidebar, the
+    /// bars and either engine's page alike.
+    var sideButtonTab: (() -> BrowserTab?)?
 
     override func sendEvent(_ event: NSEvent) {
         switch event.type {
         case .otherMouseDown, .otherMouseUp, .otherMouseDragged:
-            guard event.buttonNumber == 3 || event.buttonNumber == 4 else { break }
+            guard event.buttonNumber == 3 || event.buttonNumber == 4, let tab = sideButtonTab?() else { break }
             if event.type == .otherMouseDown {
-                onSideButton?(event.buttonNumber == 4)
+                if event.buttonNumber == 4 {
+                    tab.goForward()
+                } else {
+                    tab.goBack()
+                }
             }
             return
         default:

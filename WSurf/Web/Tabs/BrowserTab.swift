@@ -87,7 +87,7 @@ final class BrowserTab: Identifiable {
     var canGoBack: Bool {
         _ = canGoBackInWeb
         guard isMaterialised else { return false }
-        return page.canGoBack
+        return page.canGoBack || pageBeforeEngineSwitch != nil || hasOpener?() == true
     }
 
     var canGoForward: Bool {
@@ -218,6 +218,13 @@ final class BrowserTab: Identifiable {
 
     var engineOverride: BrowserEngine?  // A tab opened to compare engines: wins over the site's setting, never written to it.
     var signInEngine: BrowserEngine?  // Holds a Google sign-in's redirect chain in WebKit (`noteNavigation`).
+    /// The page a load left when it moved the tab to the other engine, whose history starts empty: Back from its first page
+    /// returns there (`goBackAcrossEngines`), with WebKit's whole history; a Chromium page comes back by its address.
+    var pageBeforeEngineSwitch: (url: URL, state: Data?)?
+    /// For a tab a page opened: whether that page's tab is still open in the window, and going back to it, which closes this
+    /// tab. Back ends there once the tab's own history is spent, as in Safari (`BrowserModel.bindCallbacks`).
+    var hasOpener: (() -> Bool)?
+    var onBackToOpener: (() -> Void)?
     func preferredEngine(for url: URL?) -> BrowserEngine {
         guard extensionBaseURL == nil else { return .webKit }
         guard engineOverride == nil, let url else { return engineOverride ?? .webKit }
@@ -445,6 +452,8 @@ final class BrowserTab: Identifiable {
         onOpenInPeek = nil
         onSummarizeLink = nil
         onCloseRequested = nil
+        hasOpener = nil
+        onBackToOpener = nil
         onPictureInPictureChanged = nil
         onPictureReturnExpected = nil
         onDownload = nil

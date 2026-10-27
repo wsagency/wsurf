@@ -5538,6 +5538,12 @@
     "Show full website address" : {
       "comment" : "Title of a switch in the Browsing section of the General settings page. When on, the address bar shows the whole page address instead of only the website name."
     },
+    "Mouse side buttons go back and forward" : {
+      "comment" : "Title of a switch in the Browsing section of the General settings page. When on, the extra buttons on the side of a mouse (the ones most mice label back and forward) go back and forward in the page, like the Back and Forward commands."
+    },
+    "The back and forward buttons on the side of a mouse move through the page’s history. Turn off to leave them to websites." : {
+      "comment" : "Caption under the Mouse side buttons go back and forward switch on the General settings page. “Turn off” means turning the switch off, which lets websites receive those mouse buttons themselves."
+    },
     "Show in Finder" : {
       "comment" : "Tooltip on the small folder button beside a finished download, which reveals the file in the Finder. Finder is Apple’s app name — use Apple’s own name for it, and match Apple’s standard wording for this command."
     },

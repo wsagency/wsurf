@@ -62,6 +62,17 @@ extension BrowserSettings {
         }
     }
 
+    /// A mouse's side buttons (3 and 4) go Back and Forward anywhere in a browsing window, in both engines. App-wide, on by
+    /// default; off leaves the buttons to the website (`BrowserWindow.sendEvent`). Software that maps them to ⌘[ or to a
+    /// swipe sends that instead of the button, so WSurf goes back once either way.
+    var sideButtonsNavigate: Bool {
+        get { globalValue(\.sideButtonsNavigate, storage: storedSideButtonsNavigate) }
+        set {
+            setGlobal(\BrowserSettings.sideButtonsNavigate, storage: \BrowserSettings.storedSideButtonsNavigate,
+                      value: newValue, key: Key.mouseSideButtons)
+        }
+    }
+
     /// App-wide: every window follows it. Standard unless the person picks Minimal.
     var windowStyle: BrowserWindowStyle {
         get { globalValue(\.windowStyle, storage: storedWindowStyle) }
