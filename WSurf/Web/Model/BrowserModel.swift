@@ -195,11 +195,7 @@ final class BrowserModel {
             return activeTab !== tab && !tab.isFavorite && protectionReason(for: tab) == nil
         }
         tab.isFrontTab = { [weak self, weak tab] in self?.activeTab === tab }
-        // A peek is not one of the window's tabs: it is on screen while its panel is.
-        tab.isOnScreen = { [weak self, weak tab] in
-            guard let self, let tab else { return false }
-            return tabsByID[tab.id] !== tab || activeTab === tab || isVisibleInSplit(tab)
-        }
+        bindOnScreen(to: tab)
         tab.onNavigationOutsideExtension = { [weak self] url in
             self?.newTab(url: url)
         }
@@ -331,6 +327,14 @@ final class BrowserModel {
     /// page returns. A tab a person, an extension or an agent opened is absent, so an agent is told only about tabs its own
     /// page opened.
     var openerByTab: [UUID: UUID] = [:]
+
+    /// A peek is not one of the window's tabs: it is on screen while its panel is.
+    private func bindOnScreen(to tab: BrowserTab) {
+        tab.isOnScreen = { [weak self, weak tab] in
+            guard let self, let tab else { return false }
+            return tabsByID[tab.id] !== tab || activeTab === tab || isVisibleInSplit(tab)
+        }
+    }
 
     /// Back from the first page of a tab a page opened shows that page's tab again and closes this one, as in Safari.
     private func bindOpenerCallbacks(to tab: BrowserTab) {
