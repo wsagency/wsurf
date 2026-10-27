@@ -72,7 +72,8 @@ struct ThemeToolbarInkTests {
         reversed.light = wsurf.dark
         reversed.dark = wsurf.light
         let cases: [(ThemeDefinition, ThemeAdjustment, ColorScheme)] = [
-            (wsurf, ThemeAdjustment(darkBrightness: 0.4), .dark),
+            // +50 % lifts the dark window past the middle, where its own ink would flip to the other scheme.
+            (wsurf, ThemeAdjustment(darkBrightness: 0.5), .dark),
             (reversed, ThemeAdjustment(), .light),
         ]
         for (definition, adjustment, windowScheme) in cases {
@@ -95,7 +96,7 @@ struct ThemeToolbarInkTests {
     @Test func aPrivateDarkToolbarKeepsItsWindowInkWithoutChangingAppAppearance() throws {
         let appearance = NSApp.appearance
         let wsurf = try #require(ThemeCatalog.builtIn("wsurf"))
-        try withTheme(wsurf, adjustment: ThemeAdjustment(darkBrightness: 0.4)) { theme in
+        try withTheme(wsurf, adjustment: ThemeAdjustment(darkBrightness: 0.5)) { theme in
             let ground = theme.dark.window.srgb(scheme: .dark)
             let ink = try #require(Theme.controlOverride(in: .dark))
             let actual = try pixel(ToolbarButton(symbol: "square.fill", enabled: true) {},
