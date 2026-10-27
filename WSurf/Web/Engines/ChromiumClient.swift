@@ -519,14 +519,17 @@ final class ChromiumClient {
 
     func makePermissionHandler() {
         let handler = ChromiumInterop.allocate(cef_permission_handler_t.self, owner: self)
+        // WSurf answers every request, so Chromium's own camera and microphone values (`ChromiumRuntime.mirrorCapture`)
+        // never decide one: a request it cannot decide is cancelled, which denies it. Only one without a callback, which
+        // CEF does not send, is left to CEF, and Alloy style (the only one WSurf uses) denies that by default.
         handler.pointee.on_request_media_access_permission = { handlerSelf, browser, frame, origin, requested, callback in
             ChromiumClient.releaseBrowser(browser)
             defer { ChromiumClient.releaseFrame(frame) }
             guard let callback else { return 0 }
-            guard let client = ChromiumClient.owner(handlerSelf.map(UnsafeMutableRawPointer.init)) else {
-                ChromiumClient.release(UnsafeMutableRawPointer(callback)); return 0
-            }
             let raw = UnsafeMutableRawPointer(callback)
+            guard let client = ChromiumClient.owner(handlerSelf.map(UnsafeMutableRawPointer.init)) else {
+                ChromiumClient.cancelPermissionCallback(raw, media: true); ChromiumClient.release(raw); return 1
+            }
             let originText = ChromiumClient.string(origin)
             let known = UInt32(CEF_MEDIA_PERMISSION_DEVICE_AUDIO_CAPTURE.rawValue)
                 | UInt32(CEF_MEDIA_PERMISSION_DEVICE_VIDEO_CAPTURE.rawValue)

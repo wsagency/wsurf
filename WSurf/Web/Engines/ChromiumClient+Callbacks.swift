@@ -252,12 +252,6 @@ extension ChromiumClient {
         try await setCapturePermission(permission, setting: "denied")
     }
 
-    /// Restore the browser's prompt state after a site policy changes back to
-    /// Ask. This intentionally never grants permission.
-    func restoreCapturePrompt(_ permission: WebPermission) async throws {
-        try await setCapturePermission(permission, setting: "prompt")
-    }
-
     private func setCapturePermission(_ permission: WebPermission, setting: String) async throws {
         let name = try permissionName(permission)
         guard !isClosed, let page else { throw ChromiumError.closed }

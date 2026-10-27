@@ -8,22 +8,16 @@ import os
 import WebKit
 
 extension BrowserTab {
-    func changeChromiumCapture(in view: BrowserPage, permission: WebPermission, revoke: Bool) {
+    func revokeChromiumCapture(in view: BrowserPage, permission: WebPermission) {
         guard let chromium = view.chromium else { return }
         Task { [weak self, weak view] in
             do {
-                if revoke {
-                    try await chromium.revokeCapture(permission)
-                } else {
-                    try await chromium.restoreCapturePrompt(permission)
-                }
+                try await chromium.revokeCapture(permission)
             } catch {
                 guard let self, let view, self.liveView === view else { return }
                 // A failed revocation must not leave untracked live device access.
-                if revoke {
-                    await view.close()
-                    restartPage()
-                }
+                await view.close()
+                restartPage()
                 let alert = NSAlert()
                 alert.messageText = String(localized: "Could not change website device access")
                 alert.informativeText = error.localizedDescription
@@ -398,24 +392,19 @@ extension BrowserTab {
                 if let native = view.webKit {
                     native.setCameraCaptureState(.none)
                 } else {
-                    changeChromiumCapture(in: view, permission: permission, revoke: true)
+                    revokeChromiumCapture(in: view, permission: permission)
                 }
             case .microphone:
                 if let native = view.webKit {
                     native.setMicrophoneCaptureState(.none)
                 } else {
-                    changeChromiumCapture(in: view, permission: permission, revoke: true)
+                    revokeChromiumCapture(in: view, permission: permission)
                 }
             case .location:
                 onLocationRevoked?()
             case .notifications:
                 break
             }
-        }
-        permissions.onPolicyChanged = { [weak self, weak view] permission, policy in
-            guard let self, let view, self.liveView === view, view.chromium != nil,
-                  permission == .camera || permission == .microphone, policy != .deny else { return }
-            changeChromiumCapture(in: view, permission: permission, revoke: false)
         }
     }
 

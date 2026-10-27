@@ -58,7 +58,6 @@ extension BrowserTab {
         fullscreenObservation = nil
         secureContentObservation = nil
         permissions.onRevoke = nil
-        permissions.onPolicyChanged = nil
         navigationDelegate = nil
         let task = Task { [weak self] in
             await outgoing.close()

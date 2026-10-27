@@ -359,7 +359,15 @@ final class SitePermissions {
             records[origin, default: [:]][permission] = policy
         }
         scheduleSave()
+        if permission == .camera || permission == .microphone {
+            onCaptureChanged?([origin])
+        }
     }
+
+    /// Fired with the origins whose camera or microphone record changed, so Chromium's own permission state follows
+    /// (`ChromiumRuntime.mirrorCapture`). ponytail: a changed default is not sent; it can only add or drop a Deny, never an
+    /// Allow, and every page reads it at its next navigation.
+    var onCaptureChanged: (([String]) -> Void)?
 
     func setDefault(_ policy: PermissionPolicy, for permission: WebPermission) {
         defaults[permission] = policy == .deny ? .deny :
@@ -368,6 +376,7 @@ final class SitePermissions {
     }
 
     func removeAll(for permission: WebPermission) {
+        let origins = self.origins(for: permission)
         for origin in records.keys {
             records[origin]?[permission] = nil
             if records[origin]?.isEmpty == true {
@@ -375,6 +384,9 @@ final class SitePermissions {
             }
         }
         scheduleSave()
+        if permission == .camera || permission == .microphone {
+            onCaptureChanged?(origins)
+        }
     }
 
     /// Fired after any change to the stored Assistant Access records, whoever made it (a tab's own prompt answer, or
@@ -454,6 +466,7 @@ final class SitePermissions {
     }
 
     func removeEverything() {
+        let origins = Array(records.keys)
         records = [:]
         assistantRecords = [:]
         autoplayRecords = [:]
@@ -466,6 +479,7 @@ final class SitePermissions {
         noAutomaticPictureOrigins = []
         scheduleSave()
         onAssistantAccessChanged?()
+        onCaptureChanged?(origins)
     }
 
     func waitForPendingSave() async {
