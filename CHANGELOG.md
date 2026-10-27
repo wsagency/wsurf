@@ -9,6 +9,10 @@ release notes will be added above this provenance record.
 
 Everything since 0.1.15 (build 15). None of the screens and prompts below has been checked by hand.
 
+### Chromium tabs keep what you sign in to
+
+- Chromium tabs now keep logins, cookies, site storage and site settings after you quit WSurf. Until now every regular profile’s Chromium data lived in memory and was gone at quit, so you signed in again at every launch. Each profile has its own, under WSurf’s Application Support folder in Chromium, and two profiles never share. Private windows still keep nothing. Clear Browsing Data for all time, Website data, Clear Data on Quit and deleting a profile remove it, including the storage of a frame from another website that a page held. Chromium’s own history is switched off, so Clear History has nothing of Chromium’s to miss. Going back to 0.1.15 loses nothing: it ignores the new folders. Cookies are stored encrypted with the Keychain item “Chromium Safe Storage”, which macOS creates for WSurf the first time, or asks you once to allow if another app made it; Deny means logins are not kept. Camera, microphone, location and notification answers that Chromium’s own prompt stored are cleared at every start, so only WSurf’s choice answers.
+
 ### Camera and microphone
 
 - WebKit tabs: a tab that WSurf keeps alive off screen (a favorite that loads at launch, a tab kept for its sound) no longer takes the camera and microphone from the page in front. It used to be given them the moment it asked, WebKit then muted the other page, and Google Meet said the microphone was muted by the system. Now such a tab’s request waits until you show that tab, and is then decided by the website’s setting as before.
@@ -43,6 +47,8 @@ Everything since 0.1.15 (build 15). None of the screens and prompts below has be
 
 - One- and two-letter address-bar queries search only the newest 3,000 pages; three letters and the History page search everything.
 - Chromium tabs do not yet block `window.open` without a click, and open ⌘-click and middle-click tabs in front.
+- Removing one website in Website data removes the cookies that exact host set; a cookie a website set for its whole domain (from www.example.com for example.com) stays until you clear everything. This was true before, but Chromium’s cookies now stay across a quit.
+- Clear Browsing Data does not reach Chromium’s own small records of the sites you visited (the sites it must open over HTTPS, its site-engagement scores); they go when you delete the profile.
 - WebKit tabs that both use the camera or microphone still take it from each other: showing another tab that uses them mutes the first for good, and WSurf has no button to resume it.
 - Taking back camera or microphone access from a Chromium tab that is using it stops the devices by closing and reopening the page, and shows “Could not change website device access”.
 - Back after an engine switch goes back one step only: Forward does not return to the other engine, and a Chromium page comes back by its address, not with its history.
