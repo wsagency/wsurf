@@ -104,19 +104,21 @@ struct ChromiumCapturePermissionTests {
         await privateContext.endPrivateSession()
     }
 
-    /// What Chromium holds for an origin: camera, then microphone.
-    private func settings(_ origin: String, in raw: UnsafeMutablePointer<cef_request_context_t>) -> [cef_content_setting_values_t] {
+    /// What Chromium holds for an origin: camera, then microphone, or the `types` given.
+    private func settings(
+        _ origin: String, in raw: UnsafeMutablePointer<cef_request_context_t>,
+        types: [cef_content_setting_types_t] = [CEF_CONTENT_SETTING_TYPE_MEDIASTREAM_CAMERA, CEF_CONTENT_SETTING_TYPE_MEDIASTREAM_MIC]
+    ) -> [cef_content_setting_values_t] {
         ChromiumInterop.withString(origin) { url in
-            [CEF_CONTENT_SETTING_TYPE_MEDIASTREAM_CAMERA, CEF_CONTENT_SETTING_TYPE_MEDIASTREAM_MIC].map {
+            types.map {
                 raw.pointee.get_content_setting?(raw, url, url, $0) ?? CEF_CONTENT_SETTING_VALUE_NUM_VALUES
             }
         }
     }
 
     /// An Allow taken back while the profile had no Chromium context is gone from the next context before its first
-    /// document, though nothing could be written in between. Each context is an in-memory profile today (CEF refuses
-    /// `Profiles/<id>`), which a new context on the same cache path shares while an earlier one lives, as here. A disk
-    /// profile, which also keeps values across launches, is the next test.
+    /// document, though nothing could be written in between. The profile's disk profile keeps it, across launches too, and
+    /// a new context on the same profile shares it with an earlier one that still lives, as here.
     @Test(.boundedWebViews)
     func aNewContextCarriesNoGrantFromAnEarlierOne() async throws {
         let server = try await HTTPFixtureServer.start(routes: ["/": .html("<!doctype html><title>Capture</title>")])
@@ -160,8 +162,8 @@ struct ChromiumCapturePermissionTests {
     }
 
     /// On a disk profile Chromium keeps a camera value in its preferences, for the exact origin, across launches, whoever
-    /// wrote it (WSurf, Chromium's own prompt, a file edited outside); `clearCapturePreferences`, which the first write to
-    /// each context runs, empties those lists.
+    /// wrote it (WSurf, Chromium's own prompt, a file edited outside), and a location or notification answer from its own
+    /// prompt the same way; `clearPermissionPreferences`, which the first write to each context runs, empties those lists.
     @Test func clearingTheCaptureValuesEmptiesADiskProfile() async throws {
         try ChromiumRuntime.shared.ensureInitialized()
         // A direct child of the root, which CEF makes a disk profile.
@@ -174,17 +176,21 @@ struct ChromiumCapturePermissionTests {
         let raw = try #require(cef_request_context_create_context(&native, nil))
         defer { ChromiumInterop.release(UnsafeMutableRawPointer(raw)) }
         let site = "https://kept.test"
-        try #require(await waitUntil { ChromiumRuntime.clearCapturePreferences(raw) })
-        let untouched = settings("https://untouched.test", in: raw)
+        try #require(await waitUntil { ChromiumRuntime.clearPermissionPreferences(raw) })
+        let types = [
+            CEF_CONTENT_SETTING_TYPE_MEDIASTREAM_CAMERA, CEF_CONTENT_SETTING_TYPE_MEDIASTREAM_MIC, CEF_CONTENT_SETTING_TYPE_CAMERA_PAN_TILT_ZOOM,
+            CEF_CONTENT_SETTING_TYPE_GEOLOCATION, CEF_CONTENT_SETTING_TYPE_NOTIFICATIONS,
+        ]
+        let untouched = settings("https://untouched.test", in: raw, types: types)
         ChromiumInterop.withString(site) { url in
-            for type in [CEF_CONTENT_SETTING_TYPE_MEDIASTREAM_CAMERA, CEF_CONTENT_SETTING_TYPE_MEDIASTREAM_MIC] {
+            for type in types {
                 raw.pointee.set_content_setting?(raw, url, url, type, CEF_CONTENT_SETTING_VALUE_ALLOW)
             }
         }
-        #expect(settings(site, in: raw) == [CEF_CONTENT_SETTING_VALUE_ALLOW, CEF_CONTENT_SETTING_VALUE_ALLOW])
-        #expect(settings("https://other.kept.test", in: raw) == untouched)
-        #expect(ChromiumRuntime.clearCapturePreferences(raw))
-        #expect(settings(site, in: raw) == untouched)
+        #expect(settings(site, in: raw, types: types) == Array(repeating: CEF_CONTENT_SETTING_VALUE_ALLOW, count: types.count))
+        #expect(settings("https://other.kept.test", in: raw, types: types) == untouched)
+        #expect(ChromiumRuntime.clearPermissionPreferences(raw))
+        #expect(settings(site, in: raw, types: types) == untouched)
     }
 
     private nonisolated final class MediaCallbackRecord: @unchecked Sendable {

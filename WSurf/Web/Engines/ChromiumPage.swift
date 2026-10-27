@@ -118,6 +118,8 @@ final class ChromiumPage: NSView {
                 }
                 attachmentWaiters.removeAll()
             }
+            // A profile still loading from disk gets its browser in `ensureReady`, once it has loaded.
+            guard try ChromiumRuntime.shared.startContext(for: context) else { return }
             try materialize()
         } catch {
             owner?.onNavigationFailed?(navigation, error)
@@ -187,6 +189,8 @@ final class ChromiumPage: NSView {
     func ensureReady() async throws {
         guard !isClosed, !closing else { throw ChromiumError.closed }
         if raw == nil {
+            try await ChromiumRuntime.shared.prepareContext(for: context)
+            guard !isClosed, !closing else { throw ChromiumError.closed }
             try materialize()
         }
         guard let preparation else { throw ChromiumError.closed }
@@ -572,7 +576,7 @@ final class ChromiumPage: NSView {
     func didNavigate(frame: BrowserFrame, restoredFromCache: Bool) {
         guard !closing, !isClosed else { return }
         if let url = frame.request.url {
-            ChromiumRuntime.shared.recordOrigin(url, context: context)
+            ChromiumRuntime.shared.recordOrigin(url, under: frame.isMainFrame ? nil : owner?.url, context: context)
         }
         guard frame.isMainFrame else { return }
         guard !initialDocument,

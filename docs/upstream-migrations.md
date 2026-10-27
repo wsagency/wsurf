@@ -869,3 +869,30 @@ All additive; nothing is dropped, rewritten or back-filled, nothing reaches Clou
 | Content-blocker rule lists are named `WSurf.trackers.<profile id>.<24 hex digits of the SHA-256 of the rules>` and compiled only when WebKit has none of that name | `perf/history-db-0.1.15` | Before, `WSurf.trackers.<random UUID>` was compiled at every launch and never removed. After a list is ready, the profile's lists for other rules and every `WSurf.trackers.<UUID>` list of earlier builds are removed from WebKit's rule-list store; another profile's list and any other list stay. The rules are serialised with sorted keys so the hash is the same in every launch. A private window still uses its own temporary store and removes its list. 0.1.14 compiles under its own random name and leaves these lists alone (about 30 KB each). The compiled list of a profile that is deleted stays in the store. |
 
 Not persisted, though they change behaviour: page titles are written up to 2 s after they change (one transaction for all that wait; a crash in that window loses the title, not the visit); the History window of a profile is read by its first reader, not at open; a one- or two-letter query is answered from the newest 3,000 pages in memory, three or more letters from the full-text index as before.
+
+## WSurf 0.1.16 candidate: Chromium profiles on disk
+
+Not upstream provenance. Branch `fix/chromium-profile-persist-0.1.16`, cut from `fix/chromium-permission-state-0.1.16` (`115d2647`). Not merged to `main`, no PR, not deployed. It changes what is stored: a regular profile's Chromium tabs now keep cookies (so logins), site storage and Chromium's own preferences across a quit. Until 0.1.15 they were lost at every quit: WSurf passed `Chromium/Profiles/<id>` as the profile path, CEF refused it (a profile must be a direct child of `root_cache_path`, `Cannot create profile at path`) and gave each profile an in-memory profile instead. Nothing changes in the database, the settings or WebKit's data.
+
+### Layout under `~/Library/Application Support/WSurf/Chromium` (CEF's `root_cache_path`)
+
+| Path | Holds | Until 0.1.15 |
+|---|---|---|
+| `<profile id>/` | The Chromium profile of one regular WSurf profile, named by its UUID, created by its first Chromium tab: `Preferences`, `Cookies`, `Local Storage`, `IndexedDB`, `Service Worker`, `Cache`, `Code Cache`, `GPUCache` and the rest of a Chrome profile. | Did not exist (in memory). |
+| `Profiles/<profile id>/origins.json` | WSurf's list of the origins a profile's Chromium pages loaded (Website data, clearing), now with the top-level sites a cross-site frame was loaded under (`frames`, absent in older files and ignored by older builds). | Same file, same place; not moved. |
+| `Profiles/Erased/<profile id>` | An empty mark left by deleting a profile, removed with whatever Chromium wrote back into that profile's directory once CEF has stopped (at quit, or at the next launch). | New. |
+| `Default/`, `Global/`, `Local State` and Chromium's other root files | CEF's installation data and its own default profile. | Unchanged. |
+
+A private window still gets an in-memory profile of its own and writes nothing here. Chromium saves no history of its own in a disk profile (`history.saving_disabled`): WSurf keeps the history, and its Clear History could not reach Chromium's `History` and `Top Sites`. Chromium does keep origin-level records it uses itself (site engagement in `Preferences`, `DIPS`, `TransportSecurity`, `Network Persistent State`); WSurf's clearing does not reach those (Chrome's Clear Browsing Data does, through an API CEF does not offer). They go with the profile. A build before 0.1.16 ignores `<profile id>/` and still gets memory, so going back loses nothing and the data is there again for the next 0.1.16.
+
+### Size
+
+A profile that opened one local page held 2.8 MB (staged run). From there it grows like a Chrome profile: the HTTP cache, whose limit Chromium sets from free disk space (up to hundreds of MB), plus what sites store (IndexedDB, service workers, Cache Storage). Clear Browsing Data and Website data › Remove All empty the cache and the recorded sites' storage; nothing else trims the directory.
+
+### The install snapshot
+
+The snapshot step of the install copies all of `Application Support/WSurf` with `ditto --noclone`. It now also copies each profile's Chromium directory, cache included, so the snapshot is larger and slower, and it holds the profiles' logins (the cookie database). The snapshot directory stays `0700`. The caches under each `<profile id>/` (`Cache`, `Code Cache`, `GPUCache`, `DawnGraphiteCache`, `DawnWebGPUCache`) can be left out of a snapshot without losing anything a restore needs; the install script does not leave them out yet. A restored cookie database decrypts only with the same key (see Keychain).
+
+### Keychain (open owner decision)
+
+Cookie values on disk are encrypted (Chromium's OSCrypt). Tests and staged runs use Chromium's mock key (`--use-mock-keychain`) and never touch the Keychain. The product path is unchanged: CefKit's `.keychain`, so Chromium reads, or on first use creates, the Keychain item "Chromium Safe Storage" (account "Chromium") when it first writes a cookie to disk. Until 0.1.15 no disk profile ever stored a cookie. Whether 0.1.16 keeps the Keychain or uses the mock key is an owner decision recorded in the 0.1.16 handoff; this branch does not decide it.
