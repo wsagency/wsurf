@@ -165,6 +165,11 @@ final class PullToRefreshMonitor {
             self.monitor = nil
         }
         reset(animated: false)
+        // The closures capture their view, which owns this monitor through its State: left set, they keep the window's model and
+        // coordinator alive after it closes. `onAppear` sets them again before `start()`.
+        onChange = nil
+        pageProvider = nil
+        isCovered = nil
     }
 
     private func handle(_ event: NSEvent) {
