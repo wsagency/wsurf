@@ -15,6 +15,8 @@ final class ChromiumRuntime {
     private final class Context {
         nonisolated(unsafe) let raw: UnsafeMutablePointer<cef_request_context_t>
         let profileID: UUID
+        /// Chromium's camera and microphone values were cleared and written from the store (`mirrorCapture`).
+        var mirrorsCapture = false
 
         init(_ raw: UnsafeMutablePointer<cef_request_context_t>, profileID: UUID) {
             self.raw = raw
@@ -33,6 +35,8 @@ final class ChromiumRuntime {
 
     private(set) var rootDirectory: URL
     private var contexts: [UUID: Context] = [:]
+    /// Every origin `mirrorCapture` wrote, per regular profile, for the profile's next context. Never a private window's.
+    private var mirroredOrigins: [UUID: Set<String>] = [:]
     var privateOrigins: [UUID: [String: Date]] = [:]
     private let pages = NSHashTable<ChromiumPage>.weakObjects()
     private var hasShutdown = false
@@ -115,11 +119,31 @@ final class ChromiumRuntime {
     /// what `navigator.permissions.query` reads: Allow reports `granted`, as Chrome does after an Allow, Deny `denied`, and
     /// Ask `prompt`. Google Meet waits for its own button while it reads `prompt`. Each value covers the exact origin
     /// (Chromium's pattern has no wildcard) in this profile's context only, and only a context that exists:
-    /// `ChromiumPage.willNavigate` sets it again before every main-frame navigation, so a value Chromium kept on disk from
-    /// an earlier run never outlives the store. A device is still granted only through `permissionDecision`.
+    /// `ChromiumPage.willNavigate` sets it again before every main-frame navigation. A device is still granted only
+    /// through `permissionDecision`, and only a navigated top-level origin or a stored record is ever written, never a
+    /// frame's origin.
     func mirrorCapture(_ origins: [String], in owner: BrowserProfileContext) {
-        guard let context = contexts[owner.contextID]?.raw else { return }
+        guard let entry = contexts[owner.contextID] else { return }
+        let context = entry.raw
+        var origins = origins
+        if !entry.mirrorsCapture {
+            // The first write to a context starts from what the store says, so a change made while no context existed, or
+            // to the store's file outside WSurf, leaves nothing behind. A disk profile keeps these values across launches
+            // (CEF has no layer that does not), so both exception lists are emptied, whatever the origin. Today every
+            // context is an in-memory profile instead (CEF refuses `Profiles/<id>`, not a direct child of the root): it
+            // starts empty, but one cache path shares it while an earlier context lives, and it cannot be listed, so every
+            // origin written for this profile is written again. ponytail: a value Chromium wrote itself there (its own
+            // prompt) waits for that site's next navigation; `add_setting_observer` would catch it. Until the context is
+            // ready nothing is written, and each page's first navigation comes after that.
+            guard owner.profile.isPrivate || Self.clearCapturePreferences(context) else { return }
+            entry.mirrorsCapture = true
+            origins += [WebPermission.camera, .microphone].flatMap(owner.sitePermissions.origins(for:))
+            origins += mirroredOrigins[owner.profile.id, default: []]
+        }
         for origin in origins.map({ SitePermissions.webOrigin(for: URL(string: $0)) }) where !origin.isEmpty {
+            if !owner.profile.isPrivate {
+                mirroredOrigins[owner.profile.id, default: []].insert(origin)
+            }
             for (permission, type) in [
                 (WebPermission.camera, CEF_CONTENT_SETTING_TYPE_MEDIASTREAM_CAMERA), (.microphone, CEF_CONTENT_SETTING_TYPE_MEDIASTREAM_MIC),
             ] {
@@ -135,6 +159,18 @@ final class ChromiumRuntime {
                     context.pointee.set_content_setting?(context, url, url, type, value)
                 }
             }
+        }
+    }
+
+    /// Restores Chromium's camera and microphone exception lists to empty; false while the context is not ready.
+    static func clearCapturePreferences(_ context: UnsafeMutablePointer<cef_request_context_t>) -> Bool {
+        let preferences = UnsafeMutableRawPointer(context).assumingMemoryBound(to: cef_preference_manager_t.self)
+        return ["media_stream_camera", "media_stream_mic"].allSatisfy { name in
+            var error = cef_string_t()
+            defer { ccef_string_clear(&error) }
+            return ChromiumInterop.withString("profile.content_settings.exceptions.\(name)") {
+                preferences.pointee.set_preference?(preferences, $0, nil, &error)
+            } == 1
         }
     }
 

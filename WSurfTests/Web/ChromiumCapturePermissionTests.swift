@@ -103,4 +103,125 @@ struct ChromiumCapturePermissionTests {
         await ChromiumRuntime.shared.releaseContext(contextID: context.contextID)
         await privateContext.endPrivateSession()
     }
+
+    /// What Chromium holds for an origin: camera, then microphone.
+    private func settings(_ origin: String, in raw: UnsafeMutablePointer<cef_request_context_t>) -> [cef_content_setting_values_t] {
+        ChromiumInterop.withString(origin) { url in
+            [CEF_CONTENT_SETTING_TYPE_MEDIASTREAM_CAMERA, CEF_CONTENT_SETTING_TYPE_MEDIASTREAM_MIC].map {
+                raw.pointee.get_content_setting?(raw, url, url, $0) ?? CEF_CONTENT_SETTING_VALUE_NUM_VALUES
+            }
+        }
+    }
+
+    /// An Allow taken back while the profile had no Chromium context is gone from the next context before its first
+    /// document, though nothing could be written in between. Each context is an in-memory profile today (CEF refuses
+    /// `Profiles/<id>`), which a new context on the same cache path shares while an earlier one lives, as here. A disk
+    /// profile, which also keeps values across launches, is the next test.
+    @Test(.boundedWebViews)
+    func aNewContextCarriesNoGrantFromAnEarlierOne() async throws {
+        let server = try await HTTPFixtureServer.start(routes: ["/": .html("<!doctype html><title>Capture</title>")])
+        let elsewhere = try await HTTPFixtureServer.start(routes: ["/": .html("<!doctype html><title>Elsewhere</title>")])
+        defer { withExtendedLifetime((server, elsewhere)) {} }
+        let url = try server.url("/")
+        let origin = SitePermissions.origin(for: url)
+        let context = BrowserProfileContext(profile: Profile(id: UUID(), name: "Capture", symbol: "globe", color: .gray))
+        try ChromiumRuntime.shared.ensureInitialized()
+        context.sitePermissions.set(.allow, for: origin, .camera)
+        context.sitePermissions.set(.allow, for: origin, .microphone)
+        let page = BrowserPage(chromium: ChromiumPage(context: context))
+        let window = show(page)
+        defer { window.close() }
+        try await load(url, in: page)
+        try await expect(page, "granted,granted")
+        // Held, so Chromium keeps this profile as it was while the next context starts.
+        let held = try ChromiumRuntime.shared.withContext(for: context) { raw in
+            ChromiumInterop.retain(UnsafeMutableRawPointer(raw))
+            return raw
+        }
+        defer { ChromiumInterop.release(UnsafeMutableRawPointer(held)) }
+        await page.close()
+        await ChromiumRuntime.shared.releaseContext(contextID: context.contextID)
+        #expect(!ChromiumRuntime.shared.hasContext(contextID: context.contextID))
+
+        context.sitePermissions.set(.ask, for: origin, .camera)
+        context.sitePermissions.set(.ask, for: origin, .microphone)
+        #expect(settings(origin, in: held) == [CEF_CONTENT_SETTING_VALUE_ALLOW, CEF_CONTENT_SETTING_VALUE_ALLOW])
+
+        let next = BrowserPage(chromium: ChromiumPage(context: context))
+        window.contentView = next
+        try await load(try elsewhere.url("/"), in: next)
+        try ChromiumRuntime.shared.withContext(for: context) { raw in
+            #expect(settings(origin, in: raw) == settings("https://untouched.test", in: raw))
+        }
+        try await load(url, in: next)
+        try await expect(next, "prompt,prompt")
+        await next.close()
+        await ChromiumRuntime.shared.releaseContext(contextID: context.contextID)
+    }
+
+    /// On a disk profile Chromium keeps a camera value in its preferences, for the exact origin, across launches, whoever
+    /// wrote it (WSurf, Chromium's own prompt, a file edited outside); `clearCapturePreferences`, which the first write to
+    /// each context runs, empties those lists.
+    @Test func clearingTheCaptureValuesEmptiesADiskProfile() async throws {
+        try ChromiumRuntime.shared.ensureInitialized()
+        // A direct child of the root, which CEF makes a disk profile.
+        let path = ChromiumRuntime.shared.rootDirectory.appendingPathComponent("Capture-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: path, withIntermediateDirectories: true)
+        var native = cef_request_context_settings_t()
+        native.size = MemoryLayout<cef_request_context_settings_t>.stride
+        ChromiumInterop.setString(path.path, to: &native.cache_path)
+        defer { ccef_string_clear(&native.cache_path) }
+        let raw = try #require(cef_request_context_create_context(&native, nil))
+        defer { ChromiumInterop.release(UnsafeMutableRawPointer(raw)) }
+        let site = "https://kept.test"
+        try #require(await waitUntil { ChromiumRuntime.clearCapturePreferences(raw) })
+        let untouched = settings("https://untouched.test", in: raw)
+        ChromiumInterop.withString(site) { url in
+            for type in [CEF_CONTENT_SETTING_TYPE_MEDIASTREAM_CAMERA, CEF_CONTENT_SETTING_TYPE_MEDIASTREAM_MIC] {
+                raw.pointee.set_content_setting?(raw, url, url, type, CEF_CONTENT_SETTING_VALUE_ALLOW)
+            }
+        }
+        #expect(settings(site, in: raw) == [CEF_CONTENT_SETTING_VALUE_ALLOW, CEF_CONTENT_SETTING_VALUE_ALLOW])
+        #expect(settings("https://other.kept.test", in: raw) == untouched)
+        #expect(ChromiumRuntime.clearCapturePreferences(raw))
+        #expect(settings(site, in: raw) == untouched)
+    }
+
+    private nonisolated final class MediaCallbackRecord: @unchecked Sendable {
+        var continued: [UInt32] = []
+        var cancelled = 0
+    }
+
+    private func mediaCallback(_ record: MediaCallbackRecord) -> UnsafeMutablePointer<cef_media_access_callback_t> {
+        let callback = ChromiumInterop.allocate(cef_media_access_callback_t.self, owner: record)
+        callback.pointee.cont = { me, allowed in
+            ChromiumInterop.owner(MediaCallbackRecord.self, of: me.map(UnsafeMutableRawPointer.init))?.continued.append(allowed)
+        }
+        callback.pointee.cancel = { me in
+            ChromiumInterop.owner(MediaCallbackRecord.self, of: me.map(UnsafeMutableRawPointer.init))?.cancelled += 1
+        }
+        return callback
+    }
+
+    /// A media request WSurf cannot decide, with no client behind its handler or no frame, is cancelled here, never left to
+    /// Chromium, whose own value may say Allow.
+    @Test func aMediaRequestNobodyCanDecideIsCancelled() async throws {
+        let context = BrowserProfileContext(profile: .privateBrowsing())
+        let client = ChromiumClient(page: ChromiumPage(context: context))
+        client.makePermissionHandler()
+        let handler = try #require(client.permissionPointer)
+        defer { client.close() }
+        let request = try #require(handler.pointee.on_request_media_access_permission)
+        let microphone = UInt32(CEF_MEDIA_PERMISSION_DEVICE_AUDIO_CAPTURE.rawValue)
+
+        let ownerless = MediaCallbackRecord()
+        #expect(request(nil, nil, nil, nil, microphone, mediaCallback(ownerless)) == 1)
+        #expect(ownerless.cancelled == 1 && ownerless.continued.isEmpty)
+
+        // The handler's own client, but no frame to decide for.
+        let pageless = MediaCallbackRecord()
+        #expect(request(handler, nil, nil, nil, microphone, mediaCallback(pageless)) == 1)
+        #expect(pageless.cancelled == 1 && pageless.continued.isEmpty)
+        await context.endPrivateSession()
+    }
 }
