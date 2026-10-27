@@ -488,10 +488,13 @@ check_average \
   'kB'
 
 # Five-sample Pro baselines: 6.998171 s for 30 brightness steps; 0.109710 s for 20 themes.
+# The brightness budget was 14 s while half of the 30 steps changed no color. Since 0.1.16 (the brightness rule of
+# fix/theme-customize-0.1.16) every step changes the colors and repaints all rows: 8.1 to 8.6 s became 12.2 to 13.2 s, a factor of
+# 1.50 in the same host, so the budget is 21 s (14 x 1.50).
 check_average \
   'ThemePerformanceTests/testDraggingThemeBrightness()' \
   'com.apple.dt.XCTMetric_Clock.time.monotonic' \
-  '14.000' \
+  '21.000' \
   'Thirty brightness preview steps across 300 real sidebar rows' \
   's'
 check_average \
