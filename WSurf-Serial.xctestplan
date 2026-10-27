@@ -65,7 +65,6 @@
         "ChatMarkdownTableTests",
         "ChromeWashTests",
         "ChromeWebStoreTests",
-        "ChromiumLoadPerformanceTests",
         "CloudSyncGateTests",
         "CommandPaletteRankingTests",
         "ConnectedAppsSettingsTests",

@@ -11,7 +11,7 @@ import WebKit
 /// What Chromium's DevTools connection does for a page load and no more: a script installed twice is registered once, an event
 /// nothing acts on is never parsed, a world is bound only when something can use it, the isolated-context lookup is a
 /// dictionary's, and a cross-site frame's scripts go in as one burst before the frame runs. The cost itself is measured in
-/// `ChromiumLoadPerformanceTests`.
+/// `ChromiumLoadBenchmarkTests`.
 @MainActor
 @Suite(.serialized, .boundedWebViews)
 struct ChromiumLoadTests {

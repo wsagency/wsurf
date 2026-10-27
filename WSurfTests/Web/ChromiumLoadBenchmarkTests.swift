@@ -14,9 +14,18 @@ import XCTest
 // These cases are reported, not budgeted (no entry in `Tools/check-performance.sh`): the clock of a case is in the result bundle's
 // metrics, and each case prints `WSURF-LOAD-BENCH` lines with the main thread's CPU time and the counts, which do not depend on the machine. The counts are
 // asserted where they are the point of a change. A run on a quiet Mac, `-parallel-testing-enabled NO`, is the only fair one.
+//
+// Not in the WSurf-Performance plan, and not named `*PerformanceTests`, on purpose. `testPreparingAChromiumTab` and
+// `testLoadingAPageWithCrossSiteFrames` start CEF inside an XCTest method, and once CEF runs in an XCTest host, XCTest's CPU and
+// memory metrics crash it (`objc_release` in `-[MXMInstrument measureAutomatically:options:block:]`, on the first `measure` with
+// `XCTMemoryMetric` after it; `XCTCPUMetric` was seen to abort such a host too). In the Performance plan that cost the budgeted
+// case that ran next its metrics, and `Tools/check-performance.sh` then failed on the missing sample. This class measures only the
+// clock, which is unaffected, and no suite of the Serial plan uses a CPU or memory metric. Do not add one there. Run it alone, or
+// in the Serial plan.
+//
 // XCTest owns and runs one instance serially. Sendable lets its synchronous measurement callback enter the app target's main-actor
 // boundary.
-nonisolated final class ChromiumLoadPerformanceTests: XCTestCase, @unchecked Sendable {
+nonisolated final class ChromiumLoadBenchmarkTests: XCTestCase, @unchecked Sendable {
     /// The main thread's CPU time so far, in milliseconds. A load mostly waits for Chromium, so its clock moves little when the main
     /// thread does less, and the work the main thread did is what this layer is about. (`XCTCPUMetric` aborts this test host.)
     private static func mainThreadCPU() -> Double {
@@ -287,7 +296,7 @@ nonisolated final class ChromiumLoadPerformanceTests: XCTestCase, @unchecked Sen
                 run.firstCommand = run.firstCommand ?? .now
                 run.commands[method, default: 0] += 1
             }
-            ChromiumLoadPerformanceTests.installTheAppsScripts(on: page, run: run)
+            ChromiumLoadBenchmarkTests.installTheAppsScripts(on: page, run: run)
         }
 
         /// Puts the page in a window, which makes its browser and starts its session's preparation.
