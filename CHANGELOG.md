@@ -27,6 +27,10 @@ Everything since 0.1.15 (build 15). None of the screens and prompts below has be
 - Customize replaces the two rows that did the same thing, Customize and Save as Theme. Customize saves a copy of a built-in theme under a name (“Nord Custom”) with its brightness, material and layout, and opens its colors; a saved theme keeps Edit Colors, Rename, Duplicate and Delete. A Settings search for “save as theme” finds Customize.
 - Settings › Appearance now has a Window section and a Sidebar section side by side, each with its own Layout disclosure: page edge, corner rounding and page spacing under Window; tab and folder edges, sidebar margin, tab padding, folder indent and tab icons under Sidebar. The separate Layout card is gone, and Tint selected tab moved to Sidebar. Settings search finds each part under “Window layout” and “Sidebar layout”.
 
+### Downloads
+
+- Pointing at the Downloads button shows your five newest downloads, each with its name, its size or progress, and two buttons: Open, and Show in Finder. A file you moved or deleted is marked as such and its buttons are off. Pressing the button still opens the Downloads page, and so does Show All Downloads at the foot of the list. In a Minimal window the button is there only while a download runs, as before.
+
 ### Memory
 
 - A window you close now gives back its tabs. A window that had been drawn was kept alive by its pull-to-refresh gesture, with everything its tabs held, until you quit WSurf.
