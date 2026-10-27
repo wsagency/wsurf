@@ -266,7 +266,19 @@ final class BrowserTab: Identifiable {
     /// Whether this tab is the one in front. Only that tab asks its page for an article, so a window of background tabs does not
     /// scan them all. The model answers; a tab without one is never in front.
     @ObservationIgnored var isFrontTab: () -> Bool = { false }
+    /// Whether the person can see this tab: the one in front, a pane of the split on screen, or a peek. The model answers.
+    @ObservationIgnored var isOnScreen: () -> Bool = { true }
     let dialogs = PageDialogQueue()
+
+    /// Waits until the tab is on screen. False when `webView` stopped being its page first.
+    func untilOnScreen(_ webView: WKWebView) async -> Bool {
+        // ponytail: polls while a capture request waits; an event from the model if many ever wait at once.
+        while !isOnScreen() {
+            do { try await Task.sleep(for: .milliseconds(250)) } catch { return false }
+            guard !isClosed, liveView?.webKit === webView else { return false }
+        }
+        return true
+    }
 
     let isPrivate: Bool
 

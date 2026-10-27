@@ -422,6 +422,10 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
         @unknown default:
             return .deny
         }
+        // WebKit lets one page capture at a time and mutes the others, and it counts a tab WSurf keeps alive off screen (a
+        // favorite loading at launch, a parked tab) as visible. Granted at once, such a tab takes the camera and microphone from
+        // the page in front, which Meet reports as muted by the system; so it waits until it is shown.
+        guard await tab.untilOnScreen(webView) else { return .deny }
         for permission in wanted {
             guard await tab.permissions.decide(permission) else { return .deny }
         }

@@ -195,6 +195,11 @@ final class BrowserModel {
             return activeTab !== tab && !tab.isFavorite && protectionReason(for: tab) == nil
         }
         tab.isFrontTab = { [weak self, weak tab] in self?.activeTab === tab }
+        // A peek is not one of the window's tabs: it is on screen while its panel is.
+        tab.isOnScreen = { [weak self, weak tab] in
+            guard let self, let tab else { return false }
+            return tabsByID[tab.id] !== tab || activeTab === tab || isVisibleInSplit(tab)
+        }
         tab.onNavigationOutsideExtension = { [weak self] url in
             self?.newTab(url: url)
         }
