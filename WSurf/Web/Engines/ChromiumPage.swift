@@ -531,6 +531,8 @@ final class ChromiumPage: NSView {
         guard !closing, !isClosed, let url = request.url else { return }
         if initialDocument && url.absoluteString == "about:blank" { return }
         initialDocument = false
+        // Before the request is sent, so the new document reads the store's camera and microphone choice.
+        ChromiumRuntime.shared.mirrorCapture([url.absoluteString], in: context)
         if !awaitingNativeNavigation && !isRedirect {
             navigation = PageNavigation()
             navigationStarted = false
@@ -888,11 +890,6 @@ final class ChromiumPage: NSView {
     func revokeCapture(_ permission: WebPermission) async throws {
         guard let client else { throw ChromiumError.closed }
         try await client.revokeCapture(permission)
-    }
-
-    func restoreCapturePrompt(_ permission: WebPermission) async throws {
-        guard let client else { throw ChromiumError.closed }
-        try await client.restoreCapturePrompt(permission)
     }
 }
 

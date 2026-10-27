@@ -104,6 +104,10 @@ final class BrowserProfileContext {
                 }
             }
         }
+        sitePermissions.onCaptureChanged = { [weak self] origins in
+            guard let self else { return }
+            ChromiumRuntime.shared.mirrorCapture(origins, in: self)
+        }
         sitePermissions.onAssistantAccessChanged = { [weak self] in
             guard let self else { return }
             for browser in self.browsers.allObjects where browser.context === self && browser.sitePermissions === self.sitePermissions {

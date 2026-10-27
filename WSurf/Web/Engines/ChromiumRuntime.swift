@@ -111,6 +111,33 @@ final class ChromiumRuntime {
         contexts[contextID] != nil
     }
 
+    /// Mirrors the store's camera and microphone choices for these origins into Chromium's own permission state, which is
+    /// what `navigator.permissions.query` reads: Allow reports `granted`, as Chrome does after an Allow, Deny `denied`, and
+    /// Ask `prompt`. Google Meet waits for its own button while it reads `prompt`. Each value covers the exact origin
+    /// (Chromium's pattern has no wildcard) in this profile's context only, and only a context that exists:
+    /// `ChromiumPage.willNavigate` sets it again before every main-frame navigation, so a value Chromium kept on disk from
+    /// an earlier run never outlives the store. A device is still granted only through `permissionDecision`.
+    func mirrorCapture(_ origins: [String], in owner: BrowserProfileContext) {
+        guard let context = contexts[owner.contextID]?.raw else { return }
+        for origin in origins.map({ SitePermissions.webOrigin(for: URL(string: $0)) }) where !origin.isEmpty {
+            for (permission, type) in [
+                (WebPermission.camera, CEF_CONTENT_SETTING_TYPE_MEDIASTREAM_CAMERA), (.microphone, CEF_CONTENT_SETTING_TYPE_MEDIASTREAM_MIC),
+            ] {
+                let value = switch owner.sitePermissions.policy(for: origin, permission) {
+                case .allow:
+                    CEF_CONTENT_SETTING_VALUE_ALLOW
+                case .deny:
+                    CEF_CONTENT_SETTING_VALUE_BLOCK
+                case .ask:
+                    CEF_CONTENT_SETTING_VALUE_DEFAULT
+                }
+                ChromiumInterop.withString(origin) { url in
+                    context.pointee.set_content_setting?(context, url, url, type, value)
+                }
+            }
+        }
+    }
+
     private func makeContext(profileID: UUID, cacheDirectory: URL?) throws -> Context {
         var settings = cef_request_context_settings_t()
         settings.size = MemoryLayout<cef_request_context_settings_t>.stride
