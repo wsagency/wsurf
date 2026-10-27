@@ -312,6 +312,7 @@ struct ChromeIcon: View {
 extension ChromeIcon {
     static func rowControl(
         symbol: String,
+        isEnabled: Bool = true,
         help: String = "",
         action: @escaping () -> Void
     ) -> ChromeIcon {
@@ -319,6 +320,7 @@ extension ChromeIcon {
             symbol: symbol,
             size: 11,
             weight: .semibold,
+            isEnabled: isEnabled,
             isSubdued: true,
             extent: 20,
             help: help,

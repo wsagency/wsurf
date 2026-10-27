@@ -4807,6 +4807,9 @@
     "Reasoning summary" : {
 
     },
+    "Recent Downloads" : {
+      "comment" : "Heading of the small list that opens when the pointer rests on the Downloads button at the foot of the sidebar, and what VoiceOver calls that list. It names the few newest downloads it holds. Title Case."
+    },
     "Recent files" : {
       "comment" : "Description of the Downloads section in the start page editor. No final full stop."
     },
@@ -5505,6 +5508,9 @@
     "Show All" : {
       "comment" : "Serves two places at once: the standard macOS application-menu command that unhides all applications, and a button at the end of the start page’s history list that reveals the full list. Use Apple’s own wording for the system command, since that is the one users recognise. Title Case, Show is a verb."
     },
+    "Show All Downloads" : {
+      "comment" : "Button at the foot of the small list that opens over the Downloads button: it opens the full Downloads page. Title Case, tight."
+    },
     "Show All History" : {
       "comment" : "Menu bar command under History, shortcut ⌘Y, which opens the full history list. Title Case and established platform terminology."
     },
@@ -5585,6 +5591,9 @@
     },
     "Show Previous Tab" : {
       "comment" : "Menu bar command under Window, shortcuts ⇧⌘[ and ⌃⇧Tab, which switches to the tab before the current one. Title Case and established platform terminology."
+    },
+    "Show Recent Downloads" : {
+      "comment" : "VoiceOver action on the Downloads button at the foot of the sidebar. It opens the small list of the newest downloads, which otherwise opens only when the pointer rests on the button. Title Case."
     },
     "Show Side Panel" : {
 
@@ -8903,6 +8912,9 @@
     },
     "File missing" : {
       "comment" : "Caption under a file’s name in the Files section of the credential editor, shown instead of its size when the encrypted file is not found in the vault’s folder on this Mac. Sentence case, tight."
+    },
+    "File moved or deleted" : {
+      "comment" : "Short status under a finished download’s name in the small list over the Downloads button, shown instead of its size when the file is no longer where it was saved. Sentence case, tight."
     },
     "File Saved" : {
       "comment" : "Brief notice above the Credentials list after the user saved a decrypted copy of a file attached to a credential. Title Case, short."

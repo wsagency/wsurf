@@ -590,13 +590,23 @@ struct SidebarFavoriteButton: View {
     }
 }
 
+/// The Downloads button. Pointing at it lists the newest downloads, each with Open and Show in Finder (`RecentDownloadsList`);
+/// pressing it opens the Downloads page, which is also what VoiceOver and the keyboard use.
 struct SidebarDownloadsButton: View {
     let coordinator: AppCoordinator
+    /// The side of the button the list opens to.
+    var listEdge: Edge = .trailing
 
     @Environment(\.sidebarStyle) private var sidebarStyle
     @State private var hovering = false
+    @State private var showsList = false
+    @State private var overList = false
+    @State private var pending: Task<Void, Never>?
 
     private static let barWidth: CGFloat = 15
+    // The same moments as the speaker's list (`AudioIndicatorButton`).
+    private static let openDelay: Duration = .milliseconds(350)
+    private static let closeDelay: Duration = .milliseconds(220)
 
     private var downloads: DownloadManager {
         coordinator.browser.downloads
@@ -607,6 +617,8 @@ struct SidebarDownloadsButton: View {
 
     var body: some View {
         Button {
+            pending?.cancel()
+            showsList = false
             coordinator.showDownloads()
         } label: {
             VStack(spacing: isRunning ? 3 : 0) {
@@ -639,12 +651,49 @@ struct SidebarDownloadsButton: View {
         } action: { point in
             coordinator.downloadFlights.target = point
         }
-        .onHover { hovering = $0 }
+        .onHover { inside in
+            hovering = inside
+            settle()
+        }
         .animation(Theme.Motion.quick, value: hovering)
         .animation(Theme.Motion.settle, value: isRunning)
         .help(isRunning
               ? Text("Downloads — \(downloads.activeCount) in progress")
               : Text("Downloads"))
+        .accessibilityAction(named: Text("Show Recent Downloads")) { showsList = true }
+        .popover(isPresented: $showsList, arrowEdge: listEdge) {
+            RecentDownloadsList(downloads: downloads, showAll: coordinator.showDownloads) { showsList = false }
+                .onHover { inside in
+                    overList = inside
+                    settle()
+                }
+                .onExitCommand { showsList = false }
+        }
+        .onChange(of: showsList) { _, isOpen in
+            coordinator.isDownloadsListOpen = isOpen
+            // A list closed by a press inside it sends no exit, and the stale "inside" would keep the next one open.
+            if !isOpen {
+                overList = false
+            }
+        }
+        .onDisappear {
+            pending?.cancel()
+            showsList = false
+            coordinator.isDownloadsListOpen = false
+        }
+    }
+
+    /// Opens the list a moment after the pointer arrives and closes it a moment after the pointer has left both the button and
+    /// the list, so the way from one to the other does not close it.
+    private func settle() {
+        pending?.cancel()
+        let wanted = hovering || overList
+        guard wanted != showsList else { return }
+        pending = Task {
+            try? await Task.sleep(for: wanted ? Self.openDelay : Self.closeDelay)
+            guard !Task.isCancelled else { return }
+            showsList = wanted
+        }
     }
 }
 

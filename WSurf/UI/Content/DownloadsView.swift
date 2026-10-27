@@ -143,7 +143,7 @@ private struct DownloadFileRow: View, Equatable {
 
     var body: some View {
         HStack(spacing: 11) {
-            Image(systemName: hovering && item.state == .finished ? "arrow.up.forward.app" : symbol)
+            Image(systemName: hovering && item.state == .finished ? "arrow.up.forward.app" : item.listSymbol)
                 .font(.system(size: 14))
                 .foregroundStyle(item.state == .finished ? AnyShapeStyle(Theme.accent) : AnyShapeStyle(.secondary))
                 .transaction { $0.animation = nil }
@@ -242,12 +242,30 @@ private struct DownloadFileRow: View, Equatable {
         }
     }
 
-    private var symbol: String {
+    private var subtitle: Text {
         switch item.state {
+        case .failed(let why):
+            Text(verbatim: why)
+        case .cancelled:
+            Text("Canceled")
+        case .running, .finished, .interrupted:
+            if item.source.isEmpty {
+                Text(verbatim: item.sizeSummary)
+            } else {
+                Text("\(item.sizeSummary) · from \(item.source)")
+            }
+        }
+    }
+}
+
+extension DownloadManager.Item {
+    /// The symbol a download wears in a list: what it is doing, or once finished, what kind of file it is.
+    var listSymbol: String {
+        switch state {
         case .running:
             "arrow.down"
         case .finished:
-            Self.symbol(forFilename: item.filename)
+            Self.symbol(forFilename: filename)
         case .interrupted:
             "pause.circle"
         case .failed:
@@ -279,21 +297,6 @@ private struct DownloadFileRow: View, Equatable {
         let ext = (filename as NSString).pathExtension
         guard let type = UTType(filenameExtension: ext) else { return "doc" }
         return fileKindSymbols.first { type.conforms(to: $0.0) }?.1 ?? "doc"
-    }
-
-    private var subtitle: Text {
-        switch item.state {
-        case .failed(let why):
-            Text(verbatim: why)
-        case .cancelled:
-            Text("Canceled")
-        case .running, .finished, .interrupted:
-            if item.source.isEmpty {
-                Text(verbatim: item.sizeSummary)
-            } else {
-                Text("\(item.sizeSummary) · from \(item.source)")
-            }
-        }
     }
 }
 
