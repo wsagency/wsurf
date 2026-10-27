@@ -36,12 +36,6 @@ struct AppearanceThemeSection: View {
         !ThemeCatalog.isBuiltIn(settings.selectedTheme.id)
     }
 
-    private var saveCaption: LocalizedStringResource {
-        settings.canSaveAnotherTheme
-            ? "Keeps this theme’s colors, material, transparency, brightness and layout under a name you choose."
-            : "You have saved \(BrowserSettings.userThemeLimit) themes, the most WSurf keeps. Delete one to save another."
-    }
-
     private var deleteTitle: Text {
         Text("Delete “\(deleting?.name ?? "")”?")
     }
@@ -50,7 +44,10 @@ struct AppearanceThemeSection: View {
         if selectedThemeIsSaved {
             return "Edit this theme’s base colors, text and accent under Colors."
         }
-        return "Makes a copy named “\(settings.customThemeName(for: settings.selectedTheme))” that you can recolor and rename."
+        guard settings.canSaveAnotherTheme else {
+            return "You have saved \(BrowserSettings.userThemeLimit) themes, the most WSurf keeps. Delete one to save another."
+        }
+        return "Saves a copy named “\(settings.customThemeName(for: settings.selectedTheme))” with this theme’s brightness, material and layout, and opens its colors."
     }
 
     private var resetCaption: LocalizedStringResource {
@@ -147,11 +144,6 @@ struct AppearanceThemeSection: View {
             }
             .settingsAnchor("appearance.websiteTint")
             RowSeparator()
-            DetailRow(title: "Tint selected tab", caption: "Color tabs you select together using the website icon.") {
-                SettingsToggle($settings.refractsTabColor)
-            }
-            .settingsAnchor("appearance.refraction")
-            RowSeparator()
             DetailRow(title: "Customize", caption: customizeCaption) {
                 if selectedThemeIsSaved {
                     SettingsButton(title: "Edit Colors") { onEditColors() }
@@ -164,15 +156,6 @@ struct AppearanceThemeSection: View {
                 }
             }
             .settingsAnchor("appearance.customize")
-            RowSeparator()
-            DetailRow(title: "Save as Theme", caption: saveCaption) {
-                SettingsButton(title: "Save as Theme…") {
-                    settings.commitThemePreview()
-                    naming = .save(name: String(localized: "\(settings.selectedTheme.name) copy"))
-                }
-                .disabled(!settings.canSaveAnotherTheme)
-            }
-            .settingsAnchor("appearance.savedThemes")
             if selectedThemeIsSaved {
                 RowSeparator()
                 DetailRow(title: "This theme", controlWidth: nil) {
@@ -207,8 +190,6 @@ struct AppearanceThemeSection: View {
         .sheet(item: $naming) { request in
             ThemeNameSheet(naming: request) { name in
                 switch request {
-                case .save:
-                    _ = settings.saveTheme(named: name)
                 case .customize:
                     if settings.saveTheme(named: name) != nil {
                         onEditColors()

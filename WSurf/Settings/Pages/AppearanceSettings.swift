@@ -29,10 +29,9 @@ struct AppearanceSettings: View {
         SettingsPageHeader(title: "Appearance")
         AppearanceThemeSection(settings: settings, scheme: shownScheme, onEditColors: { isColorsExpanded = true })
         AppearanceColorsSection(settings: settings, scheme: shownScheme, isExpanded: $isColorsExpanded)
-        AppearanceLayoutSection(settings: settings)
         AppearanceWindowSection(settings: settings)
-        AppearanceDockIconSection(settings: settings)
         AppearanceSidebarSection(settings: settings, sidebar: coordinator.sidebar)
+        AppearanceDockIconSection(settings: settings)
         AppearanceZoomSection(settings: settings)
     }
 }
@@ -114,6 +113,15 @@ private struct AppearanceSidebarSection: View {
                 }
             }
             .settingsAnchor("appearance.sidebarFolderTint")
+
+            RowSeparator()
+            DetailRow(title: "Tint selected tab", caption: "Color tabs you select together using the website icon.") {
+                SettingsToggle($settings.refractsTabColor)
+            }
+            .settingsAnchor("appearance.refraction")
+
+            RowSeparator()
+            AppearanceLayoutSection(settings: settings, part: .sidebar)
         }
     }
 }

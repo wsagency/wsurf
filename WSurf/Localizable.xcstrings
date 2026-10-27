@@ -3555,7 +3555,7 @@
       "comment" : "Most recent tool used by an external MCP connection. The inserted action name is already localized."
     },
     "Layout" : {
-      "comment" : "Title of the Layout card in Settings › Appearance (a theme’s edges, corners and spacing), and VoiceOver name of the two window style choices on the setup screen. A noun."
+      "comment" : "Title of the Layout disclosure at the end of the Window and of the Sidebar section in Settings › Appearance (a theme’s edges, corners and spacing for that part of the window), and VoiceOver name of the two window style choices on the setup screen. A noun."
     },
     "Leave blank to keep the saved token" : {
 
@@ -7687,7 +7687,7 @@
       "comment" : "Tooltip and VoiceOver label of the “AI” mark on a tab’s sidebar row, favorite tile or split cell when one external app (such as Claude Code, connected by MCP) has control access to the tab. %@ is the app’s name, not translated."
     },
     "%@ copy" : {
-      "comment" : "Default name for a saved copy of a theme, used by Save as Theme, duplicating a theme and migrating old customizations. %@ is the theme’s name, such as Standard or Nord, giving “Nord copy”. Lowercase “copy” follows the name."
+      "comment" : "Default name for a saved copy of a theme, used by duplicating a theme and migrating old customizations. %@ is the theme’s name, such as Standard or Nord, giving “Nord copy”. Lowercase “copy” follows the name."
     },
     "%@ Custom" : {
       "comment" : "Name of the editable copy made from a built-in theme on the first color edit or with Customize. %@ is the built-in theme’s name, such as Nord, giving “Nord Custom”. Custom is an adjective that follows the name."
@@ -8382,8 +8382,11 @@
     "Choose the icon the Dock shows while WSurf is running." : {
       "comment" : "Settings search description for the “Dock icon” entry in Settings › Appearance. Dock is the macOS Dock; WSurf is the app’s name, not translated. Imperative."
     },
-    "Choose the page edge and spacing, tab and folder edges, corner rounding, sidebar margin, tab padding, folder indent for each level and tab icons of this theme." : {
-      "comment" : "Settings search description for the “Layout” entry in Settings › Appearance. A list of layout options of the current theme. Imperative."
+    "Choose the page edge, corner rounding and page spacing of this theme, in the Window section." : {
+      "comment" : "Settings search description for the “Window layout” entry in Settings › Appearance: the layout options of a theme that shape the page, found in the Window section. Imperative; theme means a set of colors and layout."
+    },
+    "Choose the tab and folder edges, sidebar margin, tab padding, folder indent for each level and tab icons of this theme, in the Sidebar section." : {
+      "comment" : "Settings search description for the “Sidebar layout” entry in Settings › Appearance: the layout options of a theme that shape the sidebar, found in the Sidebar section. Imperative; theme means a set of colors and layout."
     },
     "Choose the ZIP that Safari exported, or its PaymentCards.json file." : {
       "comment" : "Message line of the file-open panel opened by Choose File… in the payment cards import row of Settings › Autofill. ZIP is the archive format; PaymentCards.json is a file name and is not translated; Safari is not translated."
@@ -8683,7 +8686,7 @@
       "comment" : "Name of a kind of item in Settings › Credentials: the heading of the item’s box in the credential editor, an entry in the Add Item menu and a word in the export notice. Noun, sentence case. An item whose labelled fields the user defines. Plural noun."
     },
     "Customize" : {
-      "comment" : "Row title in Settings › Appearance › Theme whose button either edits the colors of a saved theme or makes an editable copy of a built-in one; also its Settings search result title. One word, a verb."
+      "comment" : "Row title in Settings › Appearance › Theme whose button either edits the colors of a saved theme or saves an editable copy of a built-in one and opens its colors; also its Settings search result title. One word, a verb."
     },
     "Customize Theme" : {
       "comment" : "Title of the sheet that asks for a name when the user customizes a built-in theme, which makes an editable copy; its default button is Create. Title Case; a verb phrase."
@@ -9219,9 +9222,6 @@
     "Keep Until I Delete" : {
       "comment" : "Destructive button of the alert “Keep everything you type until you delete it?”; confirms entries never expire. Title Case twin of the menu choice “Until I delete”."
     },
-    "Keeps this theme’s colors, material, transparency, brightness and layout under a name you choose." : {
-      "comment" : "Caption of the Save as Theme row in Settings › Appearance › Theme, describing what the Save as Theme… button does: stores the current theme as a new saved theme. Sentence case."
-    },
     "Keeps what you type on websites, including passwords, encrypted on this Mac for the time you choose. Opening it needs the vault that keeps it unlocked, then Touch ID or your Mac password; without a vault, Touch ID or your Mac password alone. Private windows are never recorded." : {
       "comment" : "Caption under the “Remember what I type” switch of Input History. “It” is the recorded history; “opening it” means showing the entries. A vault is the encrypted store for logins and passkeys. Touch ID is the Apple name."
     },
@@ -9321,17 +9321,11 @@
     "Low contrast: %@:1 on the window color. Aim for 4.5:1 or more." : {
       "comment" : "Warning under a text color in the Colors card in Settings › Appearance when it reads poorly on the window background. %@ is the measured contrast ratio as a number with one decimal, such as 3.2, followed by the literal :1. Keep 4.5:1 as is."
     },
-    "Make an editable copy of a built-in theme, named like “Nord Custom”, or edit the colors of your own theme." : {
-      "comment" : "Settings search description for the “Customize” entry in Settings › Appearance. “Nord Custom” is an example name made from a theme name and “Custom”. Imperative."
-    },
     "Make Default" : {
       "comment" : "Button on the Default vault row that makes the selected vault the default one, used by autofill and saving. Verb phrase, Title Case."
     },
     "Make this theme’s light or dark colors darker or lighter." : {
       "comment" : "Settings search description for the “Brightness” entry in Settings › Appearance (a slider). Imperative."
-    },
-    "Makes a copy named “%@” that you can recolor and rename." : {
-      "comment" : "Caption of the Customize row in Settings › Appearance › Theme when a built-in theme is selected; its button is Customize…. %@ is the suggested name of the new copy (the built-in theme’s name plus “Custom”), and is a name, not to be translated. Sentence case."
     },
     "Makes this theme’s dark colors darker or lighter." : {
       "comment" : "Caption of the Brightness row in Settings › Appearance › Theme while the dark appearance is shown; the light appearance shows the same sentence with “light colors”. Sentence case."
@@ -10077,6 +10071,9 @@
     "Same website, username and password as “%@”." : {
       "comment" : "Sentence in the status line of an import review row: the item is identical to the saved credential named in the quotes. %@ is that credential’s title and should not be translated. A sentence about what a merge adds follows."
     },
+    "Save an editable copy of a theme under a name and edit its colors, or edit the colors of your own theme. Saved themes can be renamed, duplicated or deleted." : {
+      "comment" : "Settings search description for the “Customize” entry in Settings › Appearance. It also stands in for the old Save as Theme entry, so a search for save, rename, duplicate or delete finds it. Imperative; theme means a set of colors and layout."
+    },
     "Save and fill" : {
       "comment" : "Section title at the top of the Settings tab of Settings › Autofill, above the switches for saving and filling passwords, payment cards, and contacts and addresses. Sentence case; “fill” means entering saved details into web forms."
     },
@@ -10086,17 +10083,8 @@
     "Save as Credential…" : {
       "comment" : "Item in an Input History entry’s “…” menu and context menu: opens a sheet to save the typed password as a login in the vault. Title Case, ellipsis because a sheet follows. “Credential” means a saved login."
     },
-    "Save as Theme" : {
-      "comment" : "Title of the Save as Theme sheet that asks for a name, the title of the Save as Theme row in Settings › Appearance, and its entry in Settings search. The sheet’s button, Save, saves the current theme under a new name. Title Case; a verb phrase."
-    },
-    "Save as Theme…" : {
-      "comment" : "Button in the Save as Theme row of Settings › Appearance › Theme: it opens a sheet to name and save the current theme as a new saved theme. A verb phrase, Title Case; the ellipsis means a sheet follows."
-    },
     "Save Copy…" : {
       "comment" : "Item in the ⋯ menu of an attached file in the credential editor; it saves a decrypted copy to a place the user chooses. Title Case, a verb phrase, ellipsis because a save panel follows. Also named in another message, so keep them the same."
-    },
-    "Save the current theme under a name, or duplicate, rename or delete your saved themes." : {
-      "comment" : "Settings search description for the “Save as Theme” entry in Settings › Appearance. Imperative; theme means a set of colors and layout."
     },
     "Save your credentials to another app first, if you want to keep them." : {
       "comment" : "Note beside the Export… button in the Delete Vault sheet. Sentence case."
@@ -10127,6 +10115,9 @@
     },
     "Saved with “%@”. The passkey stays tied to %@." : {
       "comment" : "Line in the details of a passkey part that will be saved into an existing credential. First %@ is that credential’s title, second %@ the website the passkey belongs to. Do not translate them."
+    },
+    "Saves a copy named “%@” with this theme’s brightness, material and layout, and opens its colors." : {
+      "comment" : "Caption of the Customize row in Settings › Appearance › Theme when a built-in theme is selected; its button is Customize…. %@ is the suggested name of the new copy (the built-in theme’s name plus “Custom”), and is a name, not to be translated. The copy keeps the theme’s brightness, material and layout settings, and the Colors section opens for it. Sentence case."
     },
     "Saves a new login for this website." : {
       "comment" : "Caption in the Save as Credential sheet of Input History when no matching login exists yet. Sentence."
@@ -10277,6 +10268,9 @@
     },
     "Sidebar font weight" : {
       "comment" : "Title of the “Font weight” row of Settings › Appearance (weight of the sidebar text) as it appears in Settings search results. Sentence case; weight means thickness of letters, not mass."
+    },
+    "Sidebar layout" : {
+      "comment" : "Title of the Sidebar layout entry in Settings search: the Layout options in the Sidebar section of Settings › Appearance (tab and folder edges, margin, padding, folder indent and tab icons). A noun phrase."
     },
     "Sidebar margin" : {
       "comment" : "Row title in the Layout card in Settings › Appearance, and the VoiceOver label of its slider: the space, in points, between the sidebar’s tabs and the window edge. Sentence case."
@@ -10636,7 +10630,7 @@
       "comment" : "VoiceOver label of the Hue slider in the Colors card in Settings › Appearance. Not shown visually."
     },
     "Theme name" : {
-      "comment" : "VoiceOver label of the Name text field in the Save as Theme, Customize Theme and Rename Theme sheets in Settings › Appearance. Not shown visually."
+      "comment" : "VoiceOver label of the Name text field in the Customize Theme and Rename Theme sheets in Settings › Appearance. Not shown visually."
     },
     "These can be suggested for merging again." : {
       "comment" : "Confirmation after Suggest Again, in the sheet and the page notice (with Undo)."
@@ -11118,6 +11112,9 @@
     "Window background" : {
       "comment" : "Row title in the Colors card in Settings › Appearance, and the VoiceOver label of its color picker: the theme’s base background color for the window. Sentence case; a noun phrase."
     },
+    "Window layout" : {
+      "comment" : "Title of the Window layout entry in Settings search: the Layout options in the Window section of Settings › Appearance (page edge, corner rounding and page spacing). A noun phrase."
+    },
     "Without a website" : {
       "comment" : "Row title in the Statistics section of Settings › Autofill; the number on the right is how many saved credentials have no website attached. Sentence case, a short noun phrase."
     },
@@ -11182,7 +11179,7 @@
       "comment" : "Message of the dialog that asks whether to delete a saved theme in Settings › Appearance. Sentence case."
     },
     "You have saved %lld themes, the most WSurf keeps. Delete one to save another." : {
-      "comment" : "Caption of the Save as Theme row in Settings › Appearance › Theme, replacing the normal caption when the limit of saved themes is reached (the button is then off). %lld is that limit, also the number of themes saved. Sentence case."
+      "comment" : "Caption of the Customize row in Settings › Appearance › Theme, replacing the normal caption when the limit of saved themes is reached (the button is then off). %lld is that limit, also the number of themes saved. Sentence case."
     },
     "You stopped this connection" : {
       "comment" : "Row in the Agent Activity log of an external app, recorded when the person pressed Stop on that connection. Past tense, “you” is the user."

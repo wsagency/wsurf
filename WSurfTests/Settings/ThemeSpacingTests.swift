@@ -358,8 +358,11 @@ struct ThemeSpacingTests {
     }
 
     @Test func searchFindsTheSpacingKnobs() {
-        for query in ["spacing", "margin", "padding", "flush", "indent", "nested", "subfolder", "level"] {
-            #expect(SettingsIndex.search(query).contains { $0.id == "appearance.layout" }, "\(query)")
+        for query in ["spacing", "flush"] {
+            #expect(SettingsIndex.search(query).contains { $0.id == "appearance.windowLayout" }, "\(query)")
+        }
+        for query in ["margin", "padding", "indent", "nested", "subfolder", "level"] {
+            #expect(SettingsIndex.search(query).contains { $0.id == "appearance.sidebarLayout" }, "\(query)")
         }
     }
 }

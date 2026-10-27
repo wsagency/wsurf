@@ -3,10 +3,25 @@
 
 import SwiftUI
 
-/// The shape knobs of the selected theme: page edge and spacing, row edges, corner rounding, sidebar margin, tab
+/// The shape knobs of the selected theme, one disclosure for each part of the chrome they shape. The Window card has the
+/// page edge, corner rounding and page spacing; the Sidebar card has the tab and folder edges, sidebar margin, tab
 /// padding, folder indent and tab icons. Like brightness, they belong to the theme, travel with a saved copy and never make one.
 struct AppearanceLayoutSection: View {
+    enum Part {
+        case window, sidebar
+
+        var anchor: String {
+            switch self {
+            case .window:
+                "appearance.windowLayout"
+            case .sidebar:
+                "appearance.sidebarLayout"
+            }
+        }
+    }
+
     @Bindable var settings: BrowserSettings
+    let part: Part
     @Environment(\.settingsHighlight) private var highlight
     @State private var isExpanded = false
     @State private var isEditing = false
@@ -24,72 +39,83 @@ struct AppearanceLayoutSection: View {
 
     var body: some View {
         let adjustment = settings.themeAdjustment
-        SettingsCard {
-            DisclosureGroup("Layout", isExpanded: $isExpanded) {
-                Text("Saved with this theme. Changing it never makes a copy.")
-                    .font(Theme.Font.label)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                DetailRow(title: "Page edge") {
-                    SegmentedControl(items: Self.edges, selection: adjustment.pageFrame, onSelect: { update(\.pageFrame, $0) })
-                }
-                RowSeparator()
-                DetailRow(title: "Tab and folder edges", caption: "Thin edge and None draw selected tabs without glass.") {
-                    SegmentedControl(items: Self.edges, selection: adjustment.rowFrame, onSelect: { update(\.rowFrame, $0) })
-                }
-                RowSeparator()
-                DetailRow(title: "Corner rounding", caption: "Rounds tabs, folders and the page.") {
-                    HStack(spacing: 8) {
-                        Slider(value: cornerScale, in: 0...1.5, step: 0.1, onEditingChanged: editingChanged)
-                            .frame(width: 140)
-                            .accessibilityLabel("Corner rounding")
-                            .accessibilityValue(cornerLabel)
-                        cornerLabel
-                            .monospacedDigit()
-                            .frame(width: 52, alignment: .trailing)
-                    }
-                }
-                RowSeparator()
-                pointSlider(
-                    "Page spacing", caption: "None puts the page against the window and the sidebar.",
-                    \.pageSpacing, in: ThemeAdjustment.pageSpacingRange, zero: "None"
-                )
-                RowSeparator()
-                pointSlider("Sidebar margin", caption: "The room between the tabs and the window edge.",
-                            \.sidebarMargin, in: ThemeAdjustment.sidebarMarginRange)
-                RowSeparator()
-                pointSlider("Tab padding", caption: "The room between a tab’s edge and its icon.",
-                            \.rowPadding, in: ThemeAdjustment.rowPaddingRange)
-                RowSeparator()
-                DetailRow(
-                    title: "Folder indent",
-                    caption: "Moves the tabs and folders inside an open folder in. Each level of folders takes its own step, and the steps add up."
-                ) {
-                    EmptyView()
-                }
-                indentSlider("Level 1", caption: "Directly inside a folder.", \.folderIndentLevel1)
-                RowSeparator()
-                indentSlider("Level 2", caption: "Inside a folder that is inside a folder.", \.folderIndentLevel2)
-                RowSeparator()
-                indentSlider("Level 3 and deeper", caption: "Every level below the second.", \.folderIndentLevel3)
-                RowSeparator()
-                DetailRow(title: "Tab icons", caption: "Unloaded tabs stay monochrome.") {
-                    SegmentedControl(items: Self.favicons, selection: adjustment.loadedFavicons, onSelect: { update(\.loadedFavicons, $0) })
-                }
-                RowSeparator()
-                pointSlider("Tab icon size", caption: "Rows grow with the icon.",
-                            \.tabIconSize, in: ThemeAdjustment.tabIconSizeRange)
+        DisclosureGroup("Layout", isExpanded: $isExpanded) {
+            Text("Saved with this theme. Changing it never makes a copy.")
+                .font(Theme.Font.label)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            switch part {
+            case .window:
+                windowRows(adjustment)
+            case .sidebar:
+                sidebarRows(adjustment)
             }
-            .disclosureGroupStyle(ClickableDisclosureStyle())
-            .padding(.vertical, SettingsMetrics.rowPaddingV)
         }
-        .settingsAnchor("appearance.layout")
+        .disclosureGroupStyle(ClickableDisclosureStyle())
+        .padding(.vertical, SettingsMetrics.rowPaddingV)
+        .settingsAnchor(part.anchor)
         .onChange(of: highlight, initial: true) { _, value in
-            if value == "appearance.layout" {
+            if value == part.anchor {
                 isExpanded = true
             }
         }
         .onDisappear { settings.commitThemePreview() }
+    }
+
+    @ViewBuilder
+    private func windowRows(_ adjustment: ThemeAdjustment) -> some View {
+        DetailRow(title: "Page edge") {
+            SegmentedControl(items: Self.edges, selection: adjustment.pageFrame, onSelect: { update(\.pageFrame, $0) })
+        }
+        RowSeparator()
+        DetailRow(title: "Corner rounding", caption: "Rounds tabs, folders and the page.") {
+            HStack(spacing: 8) {
+                Slider(value: cornerScale, in: 0...1.5, step: 0.1, onEditingChanged: editingChanged)
+                    .frame(width: 140)
+                    .accessibilityLabel("Corner rounding")
+                    .accessibilityValue(cornerLabel)
+                cornerLabel
+                    .monospacedDigit()
+                    .frame(width: 52, alignment: .trailing)
+            }
+        }
+        RowSeparator()
+        pointSlider(
+            "Page spacing", caption: "None puts the page against the window and the sidebar.",
+            \.pageSpacing, in: ThemeAdjustment.pageSpacingRange, zero: "None"
+        )
+    }
+
+    @ViewBuilder
+    private func sidebarRows(_ adjustment: ThemeAdjustment) -> some View {
+        DetailRow(title: "Tab and folder edges", caption: "Thin edge and None draw selected tabs without glass.") {
+            SegmentedControl(items: Self.edges, selection: adjustment.rowFrame, onSelect: { update(\.rowFrame, $0) })
+        }
+        RowSeparator()
+        pointSlider("Sidebar margin", caption: "The room between the tabs and the window edge.",
+                    \.sidebarMargin, in: ThemeAdjustment.sidebarMarginRange)
+        RowSeparator()
+        pointSlider("Tab padding", caption: "The room between a tab’s edge and its icon.",
+                    \.rowPadding, in: ThemeAdjustment.rowPaddingRange)
+        RowSeparator()
+        DetailRow(
+            title: "Folder indent",
+            caption: "Moves the tabs and folders inside an open folder in. Each level of folders takes its own step, and the steps add up."
+        ) {
+            EmptyView()
+        }
+        indentSlider("Level 1", caption: "Directly inside a folder.", \.folderIndentLevel1)
+        RowSeparator()
+        indentSlider("Level 2", caption: "Inside a folder that is inside a folder.", \.folderIndentLevel2)
+        RowSeparator()
+        indentSlider("Level 3 and deeper", caption: "Every level below the second.", \.folderIndentLevel3)
+        RowSeparator()
+        DetailRow(title: "Tab icons", caption: "Unloaded tabs stay monochrome.") {
+            SegmentedControl(items: Self.favicons, selection: adjustment.loadedFavicons, onSelect: { update(\.loadedFavicons, $0) })
+        }
+        RowSeparator()
+        pointSlider("Tab icon size", caption: "Rows grow with the icon.",
+                    \.tabIconSize, in: ThemeAdjustment.tabIconSizeRange)
     }
 
     private var cornerLabel: Text {

@@ -4,7 +4,8 @@
 
 import SwiftUI
 
-/// Chooses the window style, and where the Minimal bar floats. App-wide, not part of a theme.
+/// Chooses the window style, and where the Minimal bar floats. Those are app-wide, not part of a theme; the Layout
+/// disclosure at the end holds the theme's knobs for the page.
 struct AppearanceWindowSection: View {
     @Bindable var settings: BrowserSettings
 
@@ -52,6 +53,9 @@ struct AppearanceWindowSection: View {
                 .settingsAnchor("appearance.minimalBarAutoHide")
             }
             .disabled(settings.windowStyle != .minimal)
+
+            RowSeparator()
+            AppearanceLayoutSection(settings: settings, part: .window)
         }
     }
 }

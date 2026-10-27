@@ -5,16 +5,12 @@ import SwiftUI
 
 /// What the theme name sheet is for.
 enum ThemeNaming: Identifiable {
-    /// Saves the shown theme as a new one, suggesting `name`.
-    case save(name: String)
     /// Makes a custom theme from the shown one, suggesting `name`.
     case customize(name: String)
     case rename(ThemeDefinition)
 
     var id: String {
         switch self {
-        case .save:
-            "save"
         case .customize:
             "customize"
         case .rename(let theme):
@@ -23,7 +19,7 @@ enum ThemeNaming: Identifiable {
     }
 }
 
-/// Asks for a theme's name: when saving or customizing the shown theme and when renaming a saved one. Names are trimmed and made
+/// Asks for a theme's name: when customizing the shown theme and when renaming a saved one. Names are trimmed and made
 /// unique by the settings, so the sheet only keeps an empty or too long name from being sent.
 struct ThemeNameSheet: View {
     let naming: ThemeNaming
@@ -37,7 +33,7 @@ struct ThemeNameSheet: View {
         self.naming = naming
         self.commit = commit
         switch naming {
-        case .save(let name), .customize(let name):
+        case .customize(let name):
             _name = State(initialValue: name)
         case .rename(let theme):
             _name = State(initialValue: theme.name)
@@ -50,8 +46,6 @@ struct ThemeNameSheet: View {
 
     private var title: LocalizedStringResource {
         switch naming {
-        case .save:
-            "Save as Theme"
         case .customize:
             "Customize Theme"
         case .rename:
@@ -61,8 +55,6 @@ struct ThemeNameSheet: View {
 
     private var confirmTitle: LocalizedStringResource {
         switch naming {
-        case .save:
-            "Save"
         case .customize:
             "Create"
         case .rename:
