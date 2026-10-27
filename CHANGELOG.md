@@ -5,6 +5,45 @@ This file preserves release notes inherited from the upstream
 describe upstream Linen releases, not releases published by WSurf. New WSurf
 release notes will be added above this provenance record.
 
+## 0.1.16 (build 16) — 2026-10-27
+
+Everything since 0.1.15 (build 15). None of the screens and prompts below has been checked by hand.
+
+### Camera and microphone
+
+- WebKit tabs: a tab that WSurf keeps alive off screen (a favorite that loads at launch, a tab kept for its sound) no longer takes the camera and microphone from the page in front. It used to be given them the moment it asked, WebKit then muted the other page, and Google Meet said the microphone was muted by the system. Now such a tab’s request waits until you show that tab, and is then decided by the website’s setting as before.
+- Chromium tabs: a website you set to Allow now reports camera and microphone as allowed, as it does in Chrome. Google Meet and similar sites read this first and used to wait for their own “Allow microphone and camera” step, so no devices appeared. Only the exact website you allowed (same host and port, in the profile where you allowed it) reports it; another port, a private window (it keeps its own settings) and a site set to Ask or Block do not, and a frame from another website still cannot use the devices. Because Meet now starts the devices when the page loads, macOS asks for camera and microphone access at that moment the first time, as it does in Chrome.
+- Chromium tabs: setting a website’s camera or microphone back to Ask or to Allow in the address bar no longer ends in “Could not change website device access”.
+
+### Back and the mouse
+
+- Back now works from a page WSurf opened in the other rendering engine. A search result for a website you set to Chromium (or a WebKit website reached from a Chromium page) used to leave Back dimmed; Back now returns to the page you left, with its whole history in WebKit, and asks the same “Switch rendering engine?” question as before when the page holds work.
+- Back from the first page of a tab that a page opened (a link that opens in a new tab, a pop-up) now shows the page that opened it and closes the tab, as in Safari; ⇧⌘T brings the tab back. This holds only while the page that opened it is still open in the window.
+- Settings › General › Browsing has a new switch, “Mouse side buttons go back and forward”, on as before. Turn it off to leave the buttons on the side of a mouse to websites.
+
+### Themes and Appearance
+
+- Brightness now changes the colors along the whole slider. On most themes half of it did nothing, because the color had already reached black or white after 10 to 40 percent. A theme you saved with a brightness set will look different at the same slider position. A light theme’s window is already almost white, so lighter has little room there.
+- Customize replaces the two rows that did the same thing, Customize and Save as Theme. Customize saves a copy of a built-in theme under a name (“Nord Custom”) with its brightness, material and layout, and opens its colors; a saved theme keeps Edit Colors, Rename, Duplicate and Delete. A Settings search for “save as theme” finds Customize.
+- Settings › Appearance now has a Window section and a Sidebar section side by side, each with its own Layout disclosure: page edge, corner rounding and page spacing under Window; tab and folder edges, sidebar margin, tab padding, folder indent and tab icons under Sidebar. The separate Layout card is gone, and Tint selected tab moved to Sidebar. Settings search finds each part under “Window layout” and “Sidebar layout”.
+
+### Memory
+
+- A window you close now gives back its tabs. A window that had been drawn was kept alive by its pull-to-refresh gesture, with everything its tabs held, until you quit WSurf.
+
+### Under the hood
+
+- Two performance tests were made steady (the credential search waits for the page to settle, and the four-window launch is timed with the welcome tour done). Nothing changes on screen.
+
+### Known issues
+
+- One- and two-letter address-bar queries search only the newest 3,000 pages; three letters and the History page search everything.
+- Chromium tabs do not yet block `window.open` without a click, and open ⌘-click and middle-click tabs in front.
+- WebKit tabs that both use the camera or microphone still take it from each other: showing another tab that uses them mutes the first for good, and WSurf has no button to resume it.
+- Taking back camera or microphone access from a Chromium tab that is using it stops the devices by closing and reopening the page, and shows “Could not change website device access”.
+- Back after an engine switch goes back one step only: Forward does not return to the other engine, and a Chromium page comes back by its address, not with its history.
+- The known issues of 0.1.14 are unchanged.
+
 ## 0.1.15 (build 15) — 2026-10-27
 
 Everything since 0.1.14 (build 14). None of the screens and prompts below has been checked by hand.
