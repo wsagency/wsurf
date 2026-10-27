@@ -107,6 +107,29 @@ nonisolated final class CredentialListPerformanceTests: XCTestCase, @unchecked S
         return Double(elapsed.components.seconds) + Double(elapsed.components.attoseconds) / 1e18
     }
 
+    /// Waits until the process has used under 2 ms of CPU in each of two 50 ms ticks in a row (idle is 0.2 to 0.4 ms, work is 40 ms or
+    /// more), which means what a page starts when it appears has ended. False after 10 s.
+    @MainActor
+    private static func waitUntilIdle() async -> Bool {
+        func cpuSeconds() -> Double {
+            var usage = rusage()
+            getrusage(RUSAGE_SELF, &usage)
+            return [usage.ru_utime, usage.ru_stime].reduce(0) { $0 + Double($1.tv_sec) + Double($1.tv_usec) / 1e6 }
+        }
+        var last = cpuSeconds()
+        var quiet = 0
+        for _ in 0..<200 {
+            try? await Task.sleep(for: .milliseconds(50))
+            let now = cpuSeconds()
+            quiet = now - last < 0.002 ? quiet + 1 : 0
+            last = now
+            if quiet == 2 {
+                return true
+            }
+        }
+        return false
+    }
+
     // MARK: Tests
 
     /// The owner's hang: the unlocked page laid out 2,800 rows at once.
@@ -175,6 +198,10 @@ nonisolated final class CredentialListPerformanceTests: XCTestCase, @unchecked S
             Self.settle(host)
             let counted = await waitUntil { list.counts != nil }
             XCTAssertTrue(counted, "the page counts the kinds when it appears")
+            // When it appears the page also reads the whole vault and indexes it for merge suggestions, on several cores for 0.3 to
+            // 0.5 s. A search timed meanwhile takes 0.17 to 0.30 s, at rest 0.12 to 0.16: that overlap, not the search, was this case's one miss
+            // in an optimised run after other suites (0.31 s against 0.25).
+            let idle = await Self.waitUntilIdle()
 
             let clock = ContinuousClock()
             let started = clock.now
@@ -187,7 +214,7 @@ nonisolated final class CredentialListPerformanceTests: XCTestCase, @unchecked S
             print("[credential-list] search update, \(Self.count) credentials, 111 matches: \(elapsed)")
             XCTAssertTrue(found)
             XCTAssertEqual(list.counts?[.all], Self.count)
-            XCTAssertLessThan(elapsed, .milliseconds(250))
+            XCTAssertLessThan(elapsed, .milliseconds(250), "the page was idle before the search: \(idle)")
         }
     }
 
