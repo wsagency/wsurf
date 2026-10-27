@@ -121,6 +121,10 @@ nonisolated final class LaunchPerformanceTests: XCTestCase, @unchecked Sendable 
                 coordinator.nativeWindow?.contentView = nil
                 coordinator.nativeWindow?.close()
                 coordinator.browser.cancelPendingSave()
+                // The window and its SwiftUI graph go now, as they would with the process. Kept to the last pass, 28 of them
+                // were alive at once in the four-window case, and AttributeGraph's shared table, which does not shrink, made
+                // every SwiftUI view built later in this host slower (ListPerformanceTests and ThemePerformanceTests: +45 %).
+                coordinator.releaseWindowHost()
                 quitWindows.append(coordinator)
             }
         }
