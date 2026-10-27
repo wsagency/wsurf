@@ -74,7 +74,12 @@ extension DownloadManager.Item {
     /// The finished file, when it is still on disk. Nil while the download is running or stopped, and once the
     /// file has been moved or deleted, so Preview and Open With are offered only for a file that exists.
     var availableFile: URL? {
-        guard state == .finished, let destination,
+        state == .finished ? existingFile : nil
+    }
+
+    /// The file the download was saved to, in any state, when it is still on disk.
+    var existingFile: URL? {
+        guard let destination,
               FileManager.default.fileExists(atPath: destination.path(percentEncoded: false))
         else { return nil }
         return destination

@@ -92,7 +92,7 @@ struct IslandBar: View {
             ExternalConnectionBadge(server: coordinator.mcpServer, browser: browser)
             AudioIndicatorButton(coordinator: coordinator, style: .bar, listEdge: edge == .bottom ? .top : .bottom)
             if browser.downloads.activeCount > 0 {
-                SidebarDownloadsButton(coordinator: coordinator)
+                SidebarDownloadsButton(coordinator: coordinator, listEdge: edge == .bottom ? .top : .bottom)
             }
             if !coordinator.isShowingSettings {
                 StoreInstallButton(manager: coordinator.extensions, browser: browser)

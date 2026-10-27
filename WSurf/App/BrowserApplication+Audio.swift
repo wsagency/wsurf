@@ -187,8 +187,8 @@ extension AppCoordinator {
     }
 
     /// Something a peeking sidebar or tab list opened, which it waits for before it closes: the profile switcher, the list of
-    /// what plays.
+    /// what plays, the list of recent downloads.
     var holdsPeek: Bool {
-        isProfileSwitcherOpen || isAudioListOpen
+        isProfileSwitcherOpen || isAudioListOpen || isDownloadsListOpen
     }
 }

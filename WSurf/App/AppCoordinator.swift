@@ -173,6 +173,8 @@ final class AppCoordinator {
     var isProfileSwitcherOpen = false
     /// The list of tabs playing sound is open over the speaker (`AudioIndicatorButton`).
     var isAudioListOpen = false
+    /// The list of recent downloads is open over the Downloads button (`SidebarDownloadsButton`).
+    var isDownloadsListOpen = false
     /// The Minimal window's tab list. It never touches the Standard sidebar's `isVisible` or `isPeeking`.
     var isMinimalTabListOpen = false {
         didSet { if isMinimalTabListOpen != oldValue { applyHoverShield() } }
