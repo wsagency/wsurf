@@ -109,6 +109,7 @@ nonisolated final class LaunchPerformanceTests: XCTestCase, @unchecked Sendable 
     func measureLaunch(_ launch: @escaping @MainActor (BrowserApplication) -> Void) {
         let options = XCTMeasureOptions.budgeted
         options.invocationOptions = [.manuallyStart, .manuallyStop]
+        var quitWindows: [AppCoordinator] = []
         measure(metrics: [XCTClockMetric(), XCTMemoryMetric()], options: options) {
             let notifications = NotificationCenter()
             let app = BrowserApplication(defaults: InMemoryUserDefaults(inheriting: .standard), notifications: notifications)
@@ -120,7 +121,17 @@ nonisolated final class LaunchPerformanceTests: XCTestCase, @unchecked Sendable 
                 coordinator.nativeWindow?.contentView = nil
                 coordinator.nativeWindow?.close()
                 coordinator.browser.cancelPendingSave()
+                quitWindows.append(coordinator)
             }
+        }
+        // A window that closes while the app terminates skips its own teardown, since the process is about to end. This host does
+        // not end, so each window of every pass would keep its timers and observers for the rest of the run, redraw when a later
+        // case changes the theme, and cost it memory (ThemePerformanceTests.testDraggingThemeBrightness, which runs after this
+        // class, grew by 1 to 5 MB a pass with them). Close them for real now that no pass needs their saved rows; the window
+        // has no application any more, so the close is not taken for a quit.
+        for coordinator in quitWindows {
+            coordinator.application = nil
+            coordinator.windowDidClose()
         }
     }
 
