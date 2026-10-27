@@ -21,9 +21,16 @@ extension BrowserTab {
         return page.backForwardList.backList
     }
 
+    /// The person's Back: the page's own history first, then the page an engine switch left, then the tab's opener.
     func goBack() {
         page.stopLoading()
-        page.goBack()
+        if page.canGoBack {
+            page.goBack()
+        } else if pageBeforeEngineSwitch != nil {
+            goBackAcrossEngines()
+        } else if hasOpener?() == true {
+            onBackToOpener?()
+        }
     }
 
     func goForward() {

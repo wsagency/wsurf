@@ -118,6 +118,16 @@ struct GeneralSettings: View {
                 SettingsToggle($settings.showsFullAddress)
             }
             .settingsAnchor("general.fullAddress")
+
+            RowSeparator()
+
+            DetailRow(
+                title: "Mouse side buttons go back and forward",
+                caption: "The back and forward buttons on the side of a mouse move through the page’s history. Turn off to leave them to websites."
+            ) {
+                SettingsToggle($settings.sideButtonsNavigate)
+            }
+            .settingsAnchor("general.mouseSideButtons")
         }
 
         CommandPaletteSettings(settings: settings)

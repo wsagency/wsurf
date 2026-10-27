@@ -71,23 +71,20 @@ extension BrowserTab {
         urlString = url.absoluteString
         if liveView.map({ $0.engine != desired }) == true || retirement != nil || engineSwitchTask != nil {
             lastRequestedNavigation = nil
+            let left = liveView.flatMap { $0.engine != desired ? committedURL : nil }
+                .map { (url: $0, state: page.interactionState as? Data) }
             pendingNavigationTask = Task { [weak self] in
                 guard let self else { return nil }
-                if liveView.map({ $0.engine != desired }) == true
-                    && (hasEditedForm || isAgentWorking || isPlayingAudio || isSharingScreen
-                        || !permissions.live.isEmpty || hasActiveDownload?() == true) {
-                    guard await ConfirmAlert.destructive(
-                        "Switch rendering engine?",
-                        detail: "This reloads the website and may end active work, media, or downloads.",
-                        verb: "Switch Engine"
-                    ) else {
-                        if !Task.isCancelled {
-                            urlString = previous
-                        }
-                        return nil
+                if liveView.map({ $0.engine != desired }) == true, await !confirmsEngineSwitch() {
+                    if !Task.isCancelled {
+                        urlString = previous
                     }
+                    return nil
                 }
                 guard !Task.isCancelled, await replaceEngine(with: desired), !Task.isCancelled else { return nil }
+                if let left {
+                    pageBeforeEngineSwitch = left
+                }
                 let result = loadDirect(url)
                 lastRequestedNavigation = result
                 return result
@@ -97,6 +94,43 @@ extension BrowserTab {
         let result = loadDirect(url)
         lastRequestedNavigation = result
         return result
+    }
+
+    /// Back from the first page of the engine a load moved this tab to: the page that load left, in its own engine again.
+    func goBackAcrossEngines() {
+        guard let left = pageBeforeEngineSwitch else { return }
+        pendingNavigationTask?.cancel()
+        lastRequestedNavigation = nil
+        pendingNavigationTask = Task { [weak self] in
+            guard let self else { return nil }
+            let desired = preferredEngine(for: left.url)
+            if liveView.map({ $0.engine != desired }) == true, await !confirmsEngineSwitch() {
+                return nil
+            }
+            guard !Task.isCancelled else { return nil }
+            pageBeforeEngineSwitch = nil
+            urlString = left.url.absoluteString
+            pendingTransition = .backForward
+            guard await replaceEngine(with: desired), !Task.isCancelled else { return nil }
+            if let state = left.state, BrowserPage.canRestore(state, using: desired) {
+                page.interactionState = state
+                return nil
+            }
+            let result = loadDirect(left.url)
+            lastRequestedNavigation = result
+            return result
+        }
+    }
+
+    /// Moving to the other engine closes this page, with whatever it holds: the person confirms it first while it holds anything.
+    private func confirmsEngineSwitch() async -> Bool {
+        guard hasEditedForm || isAgentWorking || isPlayingAudio || isSharingScreen
+            || !permissions.live.isEmpty || hasActiveDownload?() == true else { return true }
+        return await ConfirmAlert.destructive(
+            "Switch rendering engine?",
+            detail: "This reloads the website and may end active work, media, or downloads.",
+            verb: "Switch Engine"
+        )
     }
 
     func loadDirect(_ url: URL) -> PageNavigation? {

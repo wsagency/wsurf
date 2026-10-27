@@ -229,6 +229,7 @@ final class BrowserModel {
             guard let tab else { return }
             self?.closeFromPage(tab)
         }
+        bindOpenerCallbacks(to: tab)
         tab.onPictureInPictureChanged = { [weak self, weak tab] isOut in
             guard let tab else { return }
             self?.onPictureInPictureChanged?(tab, isOut)
@@ -326,9 +327,23 @@ final class BrowserModel {
         }
     }
 
-    /// For a tab a page opened (a popup, or a link opened in a new tab), the tab of that page. A tab a person, an extension
-    /// or an agent opened is absent, so an agent is told only about tabs its own page opened.
+    /// For a tab a page opened (a popup, or a link opened in a new tab), the tab of that page, where Back from the tab's first
+    /// page returns. A tab a person, an extension or an agent opened is absent, so an agent is told only about tabs its own
+    /// page opened.
     var openerByTab: [UUID: UUID] = [:]
+
+    /// Back from the first page of a tab a page opened shows that page's tab again and closes this one, as in Safari.
+    private func bindOpenerCallbacks(to tab: BrowserTab) {
+        tab.hasOpener = { [weak self, weak tab] in
+            guard let self, let tab else { return false }
+            return openerByTab[tab.id].flatMap { tabsByID[$0] } != nil
+        }
+        tab.onBackToOpener = { [weak self, weak tab] in
+            guard let self, let tab, let opener = openerByTab[tab.id].flatMap({ tabsByID[$0] }) else { return }
+            activate(opener)
+            close(tab)
+        }
+    }
 
     /// The events that write History: a finished load, a move the page made itself, and a title that arrived later.
     private func bindHistoryCallbacks(to tab: BrowserTab) {
