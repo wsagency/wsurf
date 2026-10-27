@@ -490,9 +490,10 @@ that ships. A Debug app is 477 MB on disk (a 145 MB debug dylib, coverage counte
   directories, 47 MB. The list is part of the embed fingerprint. Pages see the same languages with or without them: the app declares
   only `en`, so Chromium loads its en-US strings and CEF reports `en-US,en` whatever the system languages are
   (`ChromiumLanguageTests`).
-- **Install copy.** Stage with `ditto --hfsCompression <verified unzipped app> <staged app>`: about 169 MB on disk instead of 316.
-  Never `ditto -x -k --hfsCompression`, which produced an incomplete tree. Whatever copies the app later without the flag (Finder,
-  `cp`, `ditto` alone) loses the compression.
+- **Install copy.** Stage with `ditto --noclone --hfsCompression <verified unzipped app> <staged app>`: about 162 to 172 MB on disk instead of 316.
+  `--noclone` is required on macOS 27: its `ditto` clones same-volume copies by default and `--hfsCompression` then compresses nothing (macOS 26 accepts the flag too).
+  Never `ditto -x -k --hfsCompression`, which produced an incomplete tree. A later Finder or `cp -R` copy loses the compression
+  (`ditto` and `cp -cR` keep it).
 - **Tests stay Debug.** Never host tests in the Release configuration: its bundle identifier is fixed and Stage mode is compiled out.
   `CredentialStore` now isolates tests in every configuration, but nothing else promises that for a Release test host. The
   candidate gate adds one optimised host, a Debug build with `SWIFT_OPTIMIZATION_LEVEL=-O ENABLE_DEBUG_DYLIB=NO
