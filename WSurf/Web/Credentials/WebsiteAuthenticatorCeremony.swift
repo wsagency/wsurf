@@ -212,12 +212,12 @@ extension WebsiteAuthenticator {
 
     // MARK: No vault
 
-    /// What a profile with no usable vault does with a passkey request: the same origin-bearing step a vault shows, because a page
-    /// must not be able to tell whether a profile has a vault. The request is checked exactly as the vault's ceremony checks it
-    /// first, so a malformed one fails the same way, and then the user is asked. The only way on is the system's authenticator
-    /// (`handOff`); every other answer is a refusal, and nothing is read, written, unlocked or verified.
+    /// What a profile with no usable vault does with a passkey request: the same origin-bearing step a vault with nothing for it
+    /// shows, because a page must not be able to tell whether a profile has a vault. The request is checked exactly as the vault's
+    /// ceremony checks it first, so a malformed one fails the same way, and then the user is told. Every answer is a refusal, and
+    /// nothing is read, written, unlocked or verified.
     @MainActor
-    static func offerSystemAuthenticator(
+    static func askWithNothingToOffer(
         _ request: WebAuthnRequest,
         context: WebAuthnContext,
         in anchor: ASPresentationAnchor,
@@ -291,10 +291,9 @@ extension WebsiteAuthenticator {
                     + " allowedIDBytes=[\(lengths(options.allowCredentials))] storedIDBytes=[\(lengths(sameRP.map(\.credentialID)))]"
             )
         }
-        // No matching passkey is still a user-visible decision, never an immediate error or an immediate hand-off: either would tell
-        // a page whether this vault holds a passkey for it, with no origin-bearing native step. The prompt names the site; with
-        // nothing to approve it offers only the way to the system's authenticator, and the page hears of it only if the user
-        // chose that. Dismissing it, or letting it expire, is the same refusal as dismissing a prompt that had an account to use.
+        // No matching passkey is still a user-visible step, never an immediate error: that would tell a page whether this vault
+        // holds a passkey for it, with no origin-bearing native step. The prompt names the site and has nothing to approve; every
+        // answer, or letting it expire, is the same refusal as dismissing a prompt that had an account to use.
         let decision = await interaction.decide(
             WebAuthnPrompt(
                 operation: .get,
@@ -561,7 +560,7 @@ extension WebsiteAuthenticator {
         return true
     }
 
-    /// A step's answer. Every refusal is logged here by case; a cancel is logged by whoever cancelled, and a hand-off by the adapter.
+    /// A step's answer. Every refusal is logged here by case; a cancel is logged by whoever cancelled.
     @MainActor
     private static func approval(_ decision: WebAuthnDecision, rpID: String, context: WebAuthnContext) throws -> UUID? {
         switch decision {
@@ -578,8 +577,6 @@ extension WebsiteAuthenticator {
             throw WebsiteAuthenticatorError.notAllowed
         case .cancelled:
             throw CancellationError()
-        case .handOff:
-            throw WebsiteAuthenticatorError.handOff
         }
     }
 

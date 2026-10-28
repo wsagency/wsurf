@@ -263,10 +263,6 @@ extension BrowserTab {
             guard let self, let view, !isClosed, liveView === view, isShowingRealPage, !isRestoring else { return }
             onInPageMove?()
         }
-        view.onOpenInChromium = { [weak self, weak view] url in
-            guard let self, let view, !isClosed, liveView === view else { return }
-            onOpenInChromium?(url)
-        }
         view.onLinkHovered = { [weak self, weak view] url in
             guard let view else { return }
             self?.noteHoveredLink(url, modifiers: NSEvent.modifierFlags, at: TabNavigationDelegate.pointer(in: view))

@@ -541,9 +541,6 @@
     "Unlock this vault to turn on sync." : {
       "comment" : "Caption of the Sync with iCloud switch, disabled, while the vault is locked. Sync needs the vault unlocked."
     },
-    "Use Another Device or Key…" : {
-
-    },
     "Use “%@” on %@?" : {
       "comment" : "Headline of the toolbar popover after a login or code was picked by hand (Pick Credential…) on a website it is not saved for. First %@ is the credential's name (its username, or display name), second %@ is the page's website as the address bar draws it (punycode). Sentence case, a question."
     },

@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import AppKit
-import AuthenticationServices
 import Foundation
 import Testing
 import WebKit
@@ -225,16 +224,18 @@ struct VerifyStepTests {
         }
     }
 
-    private func withRig(_ engine: BrowserEngine, _ placement: Placement, body: (Rig) async throws -> Void) async throws {
+    private func withRig(
+        _ engine: BrowserEngine, _ placement: Placement, privately: Bool = false, body: (Rig) async throws -> Void
+    ) async throws {
         let server = try await HTTPFixtureServer.start(routes: ["/probe": .html(Self.probe), "/host": .html(Self.host)])
         let port = try #require(server.url("/").port)
         let topURL = try #require(URL(string: placement == .top ? "http://localhost:\(port)/probe" : "http://127.0.0.1:\(port)/host"))
-        let profile = try await VaultManagerFixture.newProfile("Verify")
+        let profile = try await privately ? Profile.privateBrowsing() : VaultManagerFixture.newProfile("Verify")
         let context = BrowserProfileContext(profile: profile)
         for origin in ["http://localhost:\(port)", "http://127.0.0.1:\(port)"] {
             context.sitePermissions.setEngine(engine, for: SitePermissions.origin(for: URL(string: origin)))
         }
-        let tab = BrowserTab(opensBlank: false, context: context)
+        let tab = BrowserTab(opensBlank: false, privately: privately, context: context)
         switch engine {
         case .webKit:
             tab.adopt(BrowserPage(webKit: context.webViewPool.acquire(), context: context))
@@ -294,7 +295,7 @@ struct VerifyStepTests {
     /// one button that ends the request as the site's "cancelled". It offers no way out that cannot work: neither engine reaches Apple
     /// Passwords, a phone or a security key. A frame of another site gets the engine's WebAuthn: WebKit's refuses at once in a document
     /// without focus (a test window never has it), and Chromium's ends at once too (`WebAuthnScript.engineRefusal`) where it used to
-    /// show nothing and not end.
+    /// show nothing and not end (still pending after 100 s, for a request that asked for 4).
     @Test(.boundedWebViews, arguments: BrowserEngine.allCases, [Placement.top, .frame])
     func aPasskeyRequestAfterAClick(engine: BrowserEngine, placement: Placement) async throws {
         for operation in ["get", "create"] {
@@ -323,45 +324,20 @@ struct VerifyStepTests {
         }
     }
 
-    /// "Use Another Device or Key…" in a Chromium tab hands the page's request to CEF's own WebAuthn, which used to show nothing and
-    /// not end (still pending after 100 s, for a request that asked for 4). It now ends at once as not allowed.
+    /// A private Chromium page has no vault: WSurf's passkey script hands its request to CEF's own WebAuthn, which used to show
+    /// nothing and not end. It now ends at once as not allowed.
     @Test(.boundedWebViews)
-    func aChromiumHandOffEndsAtOnce() async throws {
-        try await withRig(.chromium, .top) { rig in
-            WebAuthnAdapter.interactionForTesting[rig.profile.id] = { HandOff() }
-            defer { WebAuthnAdapter.interactionForTesting[rig.profile.id] = nil }
+    func aPrivateChromiumPagesPasskeyRequestEndsAtOnce() async throws {
+        try await withRig(.chromium, .top, privately: true) { rig in
             try await rig.tell("{ plan: 'get' }")
             try await Task.sleep(for: .milliseconds(100))
             let clicked = ContinuousClock.now
             try await rig.click()
             let result = try #require(await rig.nextResult(after: 0), "the request ended")
             let seconds = clicked.duration(to: .now)
-            print("VERIFY handoff engine=chromium \(Self.line(result)) wall=\(seconds) sheets=\(rig.sheets)")
+            print("VERIFY private engine=chromium \(Self.line(result)) wall=\(seconds) sheets=\(rig.sheets)")
             #expect(result["outcome"] as? String == "NotAllowedError" && seconds < .seconds(2) && rig.sheets.isEmpty)
         }
-    }
-
-    /// A person who chooses "Use Another Device or Key…" on every sheet.
-    @MainActor private struct HandOff: WebAuthnCeremonyInteraction {
-        var canVerifyUser: Bool {
-            true
-        }
-
-        func decide(_ prompt: WebAuthnPrompt, in anchor: ASPresentationAnchor, until deadline: ContinuousClock.Instant?) async -> WebAuthnDecision {
-            .handOff
-        }
-
-        func offerStart(
-            operation: WebAuthnPrompt.Operation, origin: String, locked: Bool, in anchor: ASPresentationAnchor, until deadline: ContinuousClock.Instant?
-        ) async -> WebAuthnDecision {
-            .handOff
-        }
-
-        func verifyUser(reason: String, until deadline: ContinuousClock.Instant?) async throws {
-            throw WebsiteAuthenticatorError.notAllowed
-        }
-
-        func reportUnconfirmedRegistration(rpID: String, userName: String, in anchor: ASPresentationAnchor) {}
     }
 
     // MARK: - A frame of another site
@@ -396,6 +372,10 @@ struct VerifyStepTests {
         await rig.tab.waitForRetirement()
         rig.window.contentView = nil
         rig.window.close()
-        await VaultManagerFixture.erase(rig.profile)
+        if rig.profile.isPrivate {
+            await rig.tab.context.endPrivateSession()
+        } else {
+            await VaultManagerFixture.erase(rig.profile)
+        }
     }
 }

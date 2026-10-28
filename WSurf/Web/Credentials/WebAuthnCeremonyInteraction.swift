@@ -37,8 +37,6 @@ nonisolated enum WebAuthnDecision: Sendable, Equatable {
     case declined
     case expired
     case cancelled
-    /// "Use Another Device or Key…" (Chromium): the request is not the vault's. Nothing was written or signed.
-    case handOff
     /// The window could not show the step: hidden, minimised, or another sheet stayed up. A refusal, never queued.
     case unavailable
 }
@@ -52,8 +50,7 @@ protocol WebAuthnCeremonyInteraction {
     func decide(_ prompt: WebAuthnPrompt, in anchor: ASPresentationAnchor, until deadline: ContinuousClock.Instant?) async -> WebAuthnDecision
     /// Explicit origin-bearing native step before any unlock, verification or signing: always for a conditional
     /// (dropdown-started) request, and for a modal request whenever the vault is locked, so the system unlock sheet is never
-    /// the first thing a page can put in front of the user. Every step of the vault's own UI also offers the way out to the
-    /// system's authenticator, so the user is never stuck with the vault's answer.
+    /// the first thing a page can put in front of the user.
     func offerStart(operation: WebAuthnPrompt.Operation, origin: String, locked: Bool, in anchor: ASPresentationAnchor, until deadline: ContinuousClock.Instant?) async -> WebAuthnDecision
     /// Fresh system user verification. Returns only on success; every other outcome throws.
     func verifyUser(reason: String, until deadline: ContinuousClock.Instant?) async throws
@@ -63,10 +60,6 @@ protocol WebAuthnCeremonyInteraction {
 
 @MainActor
 struct NativeWebAuthnInteraction: WebAuthnCeremonyInteraction {
-    /// Whether the sheets offer "Use Another Device or Key…": Chromium pages only. WebKit's own WebAuthn needs Apple's browser
-    /// entitlement, which WSurf does not have, so a WebKit sheet offers no way out it cannot keep.
-    var offersHandOff = false
-
     /// Capability discovery only; a throwaway context is never an approval.
     var canVerifyUser: Bool {
         let context = LAContext()
@@ -90,9 +83,6 @@ struct NativeWebAuthnInteraction: WebAuthnCeremonyInteraction {
             alert.addButton(withTitle: prompt.operation == .create
                 ? String(localized: "Create Passkey") : String(localized: "Use Passkey"))
             alert.addButton(withTitle: String(localized: "Cancel"))
-            if offersHandOff {
-                alert.addButton(withTitle: Self.handOffTitle)
-            }
         }
 
         let popup = Self.makeChooser(for: prompt)
@@ -104,22 +94,10 @@ struct NativeWebAuthnInteraction: WebAuthnCeremonyInteraction {
         case .cancelled:
             return .cancelled
         case let .response(response):
-            if nothing {
-                return .declined
-            }
-            if response == .alertThirdButtonReturn {
-                return .handOff
-            }
-            guard response == .alertFirstButtonReturn else { return .declined }
+            guard !nothing, response == .alertFirstButtonReturn else { return .declined }
             guard let popup else { return .approved(choice: prompt.offersNewAccount ? nil : prompt.choices.first?.id) }
             return Self.decision(from: popup)
         }
-    }
-
-    /// The same words on every sheet that offers it (Chromium only). Choosing it hands the request to CEF's own WebAuthn, which
-    /// can reach no authenticator and shows nothing, so the request ends at once as not allowed (`WebAuthnScript.engineRefusal`).
-    static var handOffTitle: String {
-        String(localized: "Use Another Device or Key…")
     }
 
     /// The window is free for a step: a sheet still closing (the system's unlock sheet) is waited for, briefly.
@@ -141,23 +119,13 @@ struct NativeWebAuthnInteraction: WebAuthnCeremonyInteraction {
                 : String(localized: "You will choose an account next."))
         alert.addButton(withTitle: locked ? String(localized: "Unlock and Choose…") : String(localized: "Choose…"))
         alert.addButton(withTitle: String(localized: "Cancel"))
-        if offersHandOff {
-            alert.addButton(withTitle: Self.handOffTitle)
-        }
         switch await NativeSheet.present(alert, in: anchor, until: deadline) {
         case .expired:
             return .expired
         case .cancelled:
             return .cancelled
         case let .response(response):
-            switch response {
-            case .alertFirstButtonReturn:
-                return .approved(choice: nil)
-            case .alertThirdButtonReturn:
-                return .handOff
-            default:
-                return .declined
-            }
+            return response == .alertFirstButtonReturn ? .approved(choice: nil) : .declined
         }
     }
 

@@ -188,8 +188,7 @@ nonisolated extension WebAuthnWire {
                 return PageError(name: "InvalidStateError", message: "The authenticator was not able to process the request.")
             case .unsupported:
                 return PageError(name: "NotSupportedError", message: "No supported passkey option was requested.")
-            // A hand-off is delivered as its own message and never as an error; if one is ever mapped it is a refusal, not an engine call.
-            case .notAllowed, .expired, .invalidCredential, .handOff:
+            case .notAllowed, .expired, .invalidCredential:
                 return PageError(name: "NotAllowedError", message: "The request is not allowed by the user agent or the platform.")
             case .savedNotDelivered:
                 return PageError(name: "NotAllowedError", message: "The request could not be completed.")
