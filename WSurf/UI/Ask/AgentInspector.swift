@@ -71,7 +71,9 @@ extension AppCoordinator {
         let shown = (application?.windows ?? [])
             .filter { !$0.isClosed && $0.context === context }
             .flatMap { $0.browser.tabs.map(\.id) }
-        conversationLog.retainTabs(live.union(shown))
+        // A launch opens the window in front before the profile's other saved windows exist, and a closed window's tabs
+        // stay saved for Reopen Last Closed Window: the saved session keeps their conversations as well.
+        conversationLog.retainSessionTabs(including: live.union(shown))
         attention.retainAnchors(live)
     }
 }

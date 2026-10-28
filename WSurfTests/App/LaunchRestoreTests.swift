@@ -50,11 +50,14 @@ struct LaunchRestoreTests {
     }
 
     /// `count` windows of `profile` saved as open, used longest ago first, each with pages in a folder and a blank tab in front;
-    /// their IDs in that order and what each shows.
-    private func saveWindows(of profile: Profile, count: Int) -> (ids: [UUID], layouts: [UUID: [String]]) {
+    /// their IDs in that order, what each shows and the IDs of its tabs.
+    private func saveWindows(
+        of profile: Profile, count: Int
+    ) -> (ids: [UUID], layouts: [UUID: [String]], tabs: [UUID: [UUID]]) {
         let context = BrowserProfileContext.shared(for: profile)
         var ids: [UUID] = []
         var layouts: [UUID: [String]] = [:]
+        var tabs: [UUID: [UUID]] = [:]
         for index in 0..<count {
             let model = BrowserModel(context: context, windowID: UUID())
             let pages = (0..<4).map { model.addPage("https://window\(index)-page\($0).example/") }
@@ -64,8 +67,9 @@ struct LaunchRestoreTests {
             model.cancelPendingSave()
             ids.append(model.windowID)
             layouts[model.windowID] = layout(of: model)
+            tabs[model.windowID] = model.tabs.map(\.id)
         }
-        return (ids, layouts)
+        return (ids, layouts, tabs)
     }
 
     /// The steps of a quit after the delegate has saved every window: close the tabs, tell the app it terminates, let AppKit
@@ -175,6 +179,32 @@ struct LaunchRestoreTests {
             let reopened = try #require(next.windows.first { $0.windowID == closed.ids[0] })
             #expect(layout(of: reopened.browser) == closed.layouts[closed.ids[0]])
             finish(next)
+        }
+    }
+
+    // MARK: - The assistant's conversations
+
+    /// The window in front restores its tabs while the profile's other windows are still to open. What it keeps of the
+    /// assistant's memory must include the tabs those windows saved: their conversations belong to the same profile.
+    @Test func theWindowInFrontKeepsTheConversationsOfTheWindowsStillToOpen() async throws {
+        try await withProfiles(1) { profiles in
+            let saved = saveWindows(of: profiles[0], count: 2)
+            let context = BrowserProfileContext.shared(for: profiles[0])
+            let log = context.conversationLog
+            let laterTab = try #require(saved.tabs[saved.ids[1]]?.first)
+            log.completeTask(log.beginTask("saved in the second window", tabID: laterTab), response: "answer")
+            log.saveBlocking()
+
+            let app = run(InMemoryUserDefaults(inheriting: .standard))
+            let restore = app.beginLaunchRestore(of: profiles, lastWindowID: saved.ids[0], launchProfileID: nil, show: false)
+            #expect(app.windows.map(\.windowID) == [saved.ids[0]], "the second window is not open yet")
+            #expect(log.traces(forTab: laterTab).count == 1, "its conversation is still in memory")
+            #expect(ConversationLog(database: context.database).traces(forTab: laterTab).count == 1, "and in storage")
+
+            app.continueLaunchRestore(restore, show: false)
+            #expect(app.windows.map(\.windowID) == saved.ids)
+            #expect(log.traces(forTab: laterTab).map(\.response) == ["answer"], "the window opens with its conversation")
+            finish(app)
         }
     }
 
