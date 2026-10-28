@@ -894,7 +894,8 @@ extension OpenInNewTabTests {
     /// The first page of a Chromium pop-up starts before WSurf attaches to its browser, so WSurf's scripts run there late, once:
     /// password autofill is in and can talk to the app, and a passkey request reaches WSurf (the answer here is a refusal) instead
     /// of CEF's own WebAuthn, which shows nothing and does not end. Running them a second time installs nothing again. Both in a
-    /// pop-up tab that is shown and in one that never is.
+    /// pop-up tab that is shown, which is answered at once, and in one that never is, whose request WSurf holds until the tab is
+    /// shown and so ends at its deadline.
     @Test(arguments: [true, false])
     func aChromiumPopupsFirstPageGetsWSurfsScripts(shown: Bool) async throws {
         try await withRig(.chromium) { rig in
@@ -918,12 +919,22 @@ extension OpenInNewTabTests {
             _ = try await popup.evaluateJavaScript("globalThis.__wsurfSend('wsurfTestPing', 1); true", in: nil, contentWorld: world)
             #expect(await waitUntil { pings == 1 }, "and reaches the app")
 
+            // The page asks for 1 s, which WSurf raises to its 10 s minimum (`WebAuthnWire.minimumTimeout`).
             let started = ContinuousClock.now
-            let outcome = try await popup.callAsyncJavaScript("""
-                return await navigator.credentials.get({ publicKey: { challenge: new Uint8Array(16), timeout: 4000 } })
-                  .then(() => 'resolved', error => error.name);
-                """, in: nil, contentWorld: .page) as? String
-            #expect(outcome == "NotAllowedError" && started.duration(to: .now) < .seconds(3), "WSurf answered the passkey request")
+            _ = try await popup.evaluateJavaScript("""
+                navigator.credentials.get({ publicKey: { challenge: new Uint8Array(16), timeout: 1000 } })
+                  .then(() => { window.__outcome = 'resolved'; }, error => { window.__outcome = error.name; }); true
+                """, in: nil, contentWorld: .page)
+            if !shown {
+                // Not on screen, the tab holds the request in its queue until it is shown, where CEF's own WebAuthn never puts it.
+                #expect(await waitUntil(timeout: .seconds(5)) { landed.dialogs.waitsToBeShown }, "WSurf holds the request for its tab")
+            }
+            let outcome = { try await popup.evaluateJavaScript("window.__outcome", in: nil, contentWorld: .page) as? String }
+            try #require(await waitUntil(timeout: .seconds(20)) { try await outcome() != nil }, "the passkey request ended")
+            let elapsed = started.duration(to: .now)
+            #expect(try await outcome() == "NotAllowedError", "WSurf answered the passkey request")
+            #expect(shown ? elapsed < .seconds(3) : elapsed > .seconds(9) && elapsed < .seconds(15), "at once, or at its deadline: \(elapsed)")
+            #expect(await waitUntil { !landed.dialogs.waitsToBeShown }, "and the tab no longer holds it")
 
             // A second run installs nothing again: the same objects, one listener.
             _ = try await popup.evaluateJavaScript("globalThis.__before = globalThis.__wsurfPasswords; true", in: nil, contentWorld: world)

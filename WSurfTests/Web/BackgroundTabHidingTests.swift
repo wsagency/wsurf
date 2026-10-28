@@ -270,4 +270,25 @@ struct BackgroundTabHidingTests {
             #expect(background.isPlayingAudio)
         }
     }
+
+    /// Each rig is a profile of its own, but the rigs share one WebKit store, emptied in between: a store per rig spent the test
+    /// host's limited persistent stores (`Profile.dataStoreForTesting`), and the cases after the last one could not open a database.
+    @Test func rigsShareOneEmptiedWebKitStore() async throws {
+        var stores: [WKWebsiteDataStore] = []
+        var profiles: [UUID] = []
+        for mark in ["first", "second"] {
+            try await LiveWindowRig.with(engine: .webKit) { rig in
+                stores.append(rig.browser.context.dataStore)
+                profiles.append(rig.browser.context.profile.id)
+                let tab = try await rig.open("/still")
+                // A cookie is the host's whatever the port, so the second rig's server sees the first one's unless it was emptied.
+                let before = try await tab.page.evaluateJavaScript("document.cookie") as? String
+                #expect(before == "", "\(mark) rig: \(before ?? "nil")")
+                _ = try await tab.page.evaluateJavaScript("document.cookie = 'mark=\(mark); max-age=3600; path=/'; true")
+                #expect(try await tab.page.evaluateJavaScript("document.cookie") as? String == "mark=\(mark)")
+            }
+        }
+        #expect(stores.count == 2 && stores[0] === stores[1] && stores[0].isPersistent)
+        #expect(profiles.count == 2 && profiles[0] != profiles[1])
+    }
 }

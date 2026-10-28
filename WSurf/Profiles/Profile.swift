@@ -90,6 +90,14 @@ extension Profile {
         supportDirectory.appendingPathComponent("Spaces.json")
     }
 
+    #if DEBUG
+    /// Test hosts only: the WebKit store a throwaway profile uses instead of a persistent store of its own. WebKit's Networking
+    /// process takes sandbox extensions for each persistent store it ever serves and never gives them back, and after about 180
+    /// stores it can open no store's databases ("Unable to open database file on disk") until it restarts, which it does not
+    /// while any store is alive. A helper that makes a profile per case shares one store through this.
+    @MainActor static var dataStoreForTesting: [UUID: WKWebsiteDataStore] = [:]
+    #endif
+
     @MainActor
     func makeDataStore() -> WKWebsiteDataStore {
         if isPrivate {
@@ -98,6 +106,9 @@ extension Profile {
         #if DEBUG
         if StageMode.isActive, isOriginal {
             return StageMode.websiteDataStore()
+        }
+        if let store = Self.dataStoreForTesting[id] {
+            return store
         }
         #endif
         return isOriginal ? .default() : WKWebsiteDataStore(forIdentifier: id)
