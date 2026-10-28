@@ -421,6 +421,11 @@ CI runs the same command and stops the build if the result is different. The
 MIT and Apache licenses require their terms to be included with distributed
 binaries, so this file is required.
 
+CefSwift is vendored in `Packages/CefSwift`, so it is not in `Package.resolved`. The script
+reads its license from that folder (`licenseDirectory` in the script's `vendored` list).
+When you update the vendored copy, change the version there and in
+`Packages/CefSwift/WSURF-PATCHES.md`.
+
 ### The disk image
 
 The disk image contains `WSurf.app` and an `Applications` symlink. Finder

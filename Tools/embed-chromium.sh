@@ -3,9 +3,11 @@
 # SPDX-License-Identifier: Apache-2.0
 set -euo pipefail
 
-package="${WSURF_CEF_PACKAGE:-$BUILD_DIR/../../SourcePackages/checkouts/CefSwift}"
+# CefSwift is vendored (Packages/CefSwift, patches in its WSURF-PATCHES.md). The CEF framework it downloads goes to its gitignored
+# .cef/ folder, so a new worktree downloads it once, unless WSURF_CEF_PACKAGE names a package folder that already holds it.
+package="${WSURF_CEF_PACKAGE:-$SRCROOT/Packages/CefSwift}"
 if [[ ! -f "$package/CEF_VERSION.json" ]]; then
-    echo "error: CefSwift checkout not found at $package; resolve the project's Swift packages first." >&2
+    echo "error: CefSwift package not found at $package." >&2
     exit 1
 fi
 
