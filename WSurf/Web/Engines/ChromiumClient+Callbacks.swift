@@ -314,8 +314,10 @@ extension ChromiumClient {
             guard let browser else { return }
             // Parent owns the browser +1 returned by browser creation. This is
             // the callback's independent +1 and must always be released.
-            ChromiumClient.release(UnsafeMutableRawPointer(browser))
-            guard ChromiumClient.owner(handlerSelf.map(UnsafeMutableRawPointer.init)) != nil else { return }
+            defer { ChromiumClient.release(UnsafeMutableRawPointer(browser)) }
+            guard let client = ChromiumClient.owner(handlerSelf.map(UnsafeMutableRawPointer.init)) else { return }
+            // Only a pop-up's page takes it: every other browser is the one its page made itself.
+            MainActor.assumeIsolated { client.page?.adoptPopup(browser) }
         }
         life.pointee.do_close = { handlerSelf, browser in
             ChromiumClient.releaseBrowser(browser)
@@ -333,19 +335,40 @@ extension ChromiumClient {
                 client.close()
             }
         }
-        life.pointee.on_before_popup = { handlerSelf, browser, frame, _, targetURL, _, _, userGesture, _, _, _, _, _, _ in
+        life.pointee.on_before_popup = { handlerSelf, browser, frame, popupID, targetURL, _, disposition, userGesture, _, windowInfo, popupClient, _, extraInfo, _ in
             ChromiumClient.releaseBrowser(browser)
             let sourceURL = frame?.pointee.is_valid?(frame) == 1
                 ? URL(string: ChromiumInterop.takeString(frame?.pointee.get_url?(frame))) : nil
             ChromiumClient.releaseFrame(frame)
-            let url = URL(string: ChromiumClient.string(targetURL))
+            // The client and extra information CEF offers (the opener's) arrive with a reference that is ours to drop, kept or
+            // replaced; a replacement goes back with one of its own.
+            ChromiumClient.release(popupClient?.pointee.map(UnsafeMutableRawPointer.init))
+            ChromiumClient.release(extraInfo?.pointee.map(UnsafeMutableRawPointer.init))
+            // `window.open()` with no address opens about:blank, which its opener then writes or navigates.
+            let target = ChromiumClient.string(targetURL)
+            let url = target.isEmpty ? URL(string: "about:blank") : URL(string: target)
             guard let client = ChromiumClient.owner(handlerSelf.map(UnsafeMutableRawPointer.init)) else { return 1 }
             return MainActor.assumeIsolated {
                 guard let page = client.page, !client.isClosed, let url else { return 1 }
                 let sourceFrame = page.sourceFrame(for: sourceURL)
-                page.openWindow?(url, userGesture != 0, sourceURL, sourceFrame)
-                return 1
+                let gesture = userGesture != 0
+                guard let openPopup = page.openPopup else {
+                    page.openWindow?(url, gesture, sourceURL, sourceFrame)
+                    return 1
+                }
+                guard let host = openPopup(url, gesture, sourceURL, sourceFrame, disposition == CEF_WOD_NEW_BACKGROUND_TAB) else { return 1 }
+                guard let windowInfo, let popupClient, let hosted = host.hostPopup(id: popupID, opener: page, in: &windowInfo.pointee) else {
+                    host.popupAborted()
+                    return 1
+                }
+                popupClient.pointee = hosted
+                return 0
             }
+        }
+        life.pointee.on_before_popup_aborted = { handlerSelf, browser, popupID in
+            ChromiumClient.releaseBrowser(browser)
+            guard let client = ChromiumClient.owner(handlerSelf.map(UnsafeMutableRawPointer.init)) else { return }
+            MainActor.assumeIsolated { client.page?.pendingPopups[popupID]?.popupAborted() }
         }
         lifeSpanPointer = life
     }

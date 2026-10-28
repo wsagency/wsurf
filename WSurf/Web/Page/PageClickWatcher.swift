@@ -30,7 +30,8 @@ final class PageClickWatcher {
 
     private static let script = """
     (function () {
-      if (window !== window.top) { return; }
+      if (window !== window.top || window.__wsurfClickWatch) { return; }
+      window.__wsurfClickWatch = true;
       document.addEventListener('mousedown', function (event) {
         try { globalThis.__wsurfSend?.('wsurfClick', [event.clientX, event.clientY]); } catch (_) {}
       }, true);

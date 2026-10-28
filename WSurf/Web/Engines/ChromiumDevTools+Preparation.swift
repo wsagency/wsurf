@@ -9,8 +9,11 @@ import Foundation
 extension ChromiumDevTools {
     /// The page's session start-up, which the first load waits for: the domains it reads, then the auto-attach, one after the other.
     /// Its scripts are registered by `prepare`.
-    func preparePageSession() async throws {
+    func preparePageSession(marksNewDocuments: Bool = false) async throws {
         _ = try await command("Page.enable")
+        if marksNewDocuments {
+            try await markNewDocuments(registered: 0)
+        }
         _ = try await command("Security.enable")
         _ = try await command("Network.enable")
         try await attachCrossSiteFrames()

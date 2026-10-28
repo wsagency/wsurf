@@ -263,6 +263,8 @@ final class BrowserTab: Identifiable {
     var onNavigationFinished: ((Bool) -> Void)?
     var onNavigationOutsideExtension: ((URL) -> Void)?
     var onNewWindow: ((WKWebView, Bool) -> Void)?
+    /// A Chromium page's pop-up: the page that will host it, and whether to show it.
+    var onNewChromiumPopup: ((BrowserPage, Bool) -> Void)?
     var onOpenInNewTab: ((URL, Bool) -> Void)?
     var onOpenInNewWindow: ((URL, Bool) -> Void)?
     var onOpenInChromium: ((URL) -> Void)?
@@ -327,6 +329,7 @@ final class BrowserTab: Identifiable {
         id: UUID = UUID(),
         extensionHost: ExtensionPageHost? = nil,
         adopting: WKWebView? = nil,
+        adoptingPage: BrowserPage? = nil,
         restoring: Bool = false,
         opensBlank: Bool = true,
         privately: Bool = false,
@@ -348,13 +351,18 @@ final class BrowserTab: Identifiable {
         assistantAccess = TabAssistantAccessCenter(store: sitePermissions)
         permissions.persistsAnswers = !isPrivate
         assistantAccess.persistsAnswers = !isPrivate
-        let opensStartPage = opensBlank && adopting == nil && extensionHost == nil && !restoring
+        let opensStartPage = opensBlank && adopting == nil && adoptingPage == nil && extensionHost == nil && !restoring
         if opensStartPage {
             pageTitle = SystemPages.startTitle
         }
         if let adopting {
             // WebKit requires this exact view, with the opener's configuration attached.
             liveView = BrowserPage(webKit: adopting, context: context)
+            extensionBaseURL = nil
+        } else if let adoptingPage {
+            // A Chromium pop-up: CEF makes its browser in this page, with the opener's request context.
+            precondition(adoptingPage.context === context)
+            liveView = adoptingPage
             extensionBaseURL = nil
         } else if let extensionHost {
             liveView = BrowserPage(webKit: context.webViewPool.makeView(configuration: extensionHost.configuration), context: context)
@@ -477,6 +485,7 @@ final class BrowserTab: Identifiable {
         onNavigationFinished = nil
         onNavigationOutsideExtension = nil
         onNewWindow = nil
+        onNewChromiumPopup = nil
         onOpenInNewTab = nil
         onOpenInNewWindow = nil
         onOpenInChromium = nil
