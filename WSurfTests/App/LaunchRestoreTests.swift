@@ -214,4 +214,24 @@ struct LaunchRestoreTests {
         #expect(favorite.isDeferred, "nothing loads before the window draws")
         #expect(await waitUntil { !favorite.isDeferred }, "the favorite loads after it")
     }
+
+    /// A launch whose windows hold no Chromium tab leaves Chromium stopped, and so does the read of its framework that follows a
+    /// launch (`prepareInBackground`). CEF cannot be stopped in a process, so the check is that it is no more started than before.
+    @Test func aLaunchWithoutAChromiumTabLeavesChromiumStopped() async throws {
+        let runtime = ChromiumRuntime.shared
+        let wasRunning = runtime.isInitialized
+        try await withProfiles(1) { profiles in
+            _ = saveWindows(of: profiles[0], count: 2)
+            let app = run(InMemoryUserDefaults(inheriting: .standard))
+            let restore = app.beginLaunchRestore(of: profiles, lastWindowID: nil, launchProfileID: nil, show: false)
+            #expect(app.continueLaunchRestore(restore, show: false))
+            await runtime.prepareInBackground().value
+
+            #expect(runtime.isInitialized == wasRunning)
+            for coordinator in app.windows {
+                #expect(!runtime.hasContext(contextID: coordinator.context.contextID))
+            }
+            finish(app)
+        }
+    }
 }

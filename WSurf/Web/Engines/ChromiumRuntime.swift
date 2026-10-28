@@ -7,6 +7,7 @@ import CCefAppKit
 import CefKit
 import Darwin
 import Foundation
+import os
 
 @MainActor
 final class ChromiumRuntime {
@@ -99,10 +100,62 @@ final class ChromiumRuntime {
         // connection works in such a window, so its screenshots and waits would see a stale or blank page. WebKit tabs get the
         // same per controlled tab (`BrowserPage.ignoresWindowOcclusion`); a minimized window stays hidden in both.
         configuration.extraCommandLineSwitches = Self.extraCommandLineSwitches
-        try CefRuntime.shared.initialize(configuration: configuration)
+        // The main thread waits here for the framework load, CEF's own start and the check of the two against each other. CefKit
+        // does the three in one call, so there is one interval for them.
+        try Pipeline.signposter.withIntervalSignpost("cef.initialize") {
+            try CefRuntime.shared.initialize(configuration: configuration)
+        }
         // Our native clients own their browser lifetimes, not CefKit's browser registry.
         CEFApplication.setTerminateHandler(nil)
         // ponytail: CEF stays initialized until quit; a separate engine process is the upgrade if its idle RAM proves material.
+    }
+
+    /// Reads the CEF framework into the page cache on a utility thread, so that the first Chromium tab's `dlopen` finds it in
+    /// memory and does not wait for the disk on the main thread. Nothing is loaded and no process starts: CEF starts with the
+    /// first Chromium tab, as before. It reads only where Chromium has been used, because for a person who never opens a
+    /// Chromium tab the framework is 230 MB of reading with no use. Call after launch has drawn. The task ends when the read has
+    /// been requested; the app does not wait for it. The pipeline signposts show it as `cef.load`, beside `cef.initialize`, the
+    /// main thread's wait in `ensureInitialized`.
+    @discardableResult
+    func prepareInBackground() -> Task<Void, Never> {
+        guard !isInitialized, !hasShutdown, let framework = Self.frameworkBinary else { return Task {} }
+        let root = rootDirectory
+        return Task.detached(priority: .utility) {
+            guard Self.hasUsedChromium(root: root) else { return }
+            Pipeline.signposter.withIntervalSignpost("cef.load") {
+                Self.readAhead(framework)
+            }
+        }
+    }
+
+    /// The framework binary in the app bundle, where `CefRuntime` looks first.
+    private nonisolated static var frameworkBinary: URL? {
+        let name = "Chromium Embedded Framework"
+        return Bundle.main.privateFrameworksURL?
+            .appendingPathComponent("\(name).framework", isDirectory: true).appendingPathComponent(name)
+    }
+
+    /// Whether a page of this installation has loaded in Chromium: a profile's catalog of origins (`catalogDirectory`) exists
+    /// from its first navigation, and `erase` removes it with the profile.
+    nonisolated static func hasUsedChromium(root: URL) -> Bool {
+        let profiles = root.appendingPathComponent("Profiles", isDirectory: true).path
+        return ((try? FileManager.default.contentsOfDirectory(atPath: profiles)) ?? []).contains { UUID(uuidString: $0) != nil }
+    }
+
+    /// Asks the kernel to read `file` into the page cache, in chunks and without copying it to this process.
+    nonisolated static func readAhead(_ file: URL) {
+        let descriptor = open(file.path, O_RDONLY)
+        guard descriptor >= 0 else { return }
+        defer { close(descriptor) }
+        var info = stat()
+        guard fstat(descriptor, &info) == 0 else { return }
+        let chunk = Int64(8 << 20)
+        var offset: Int64 = 0
+        while offset < info.st_size {
+            var advice = radvisory(ra_offset: off_t(offset), ra_count: Int32(min(chunk, info.st_size - offset)))
+            guard fcntl(descriptor, F_RDADVISE, &advice) != -1 else { return }
+            offset += chunk
+        }
     }
 
     func withContext<T>(
