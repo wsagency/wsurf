@@ -118,6 +118,41 @@ nonisolated final class HistoryPerformanceTests: XCTestCase, @unchecked Sendable
         }
     }
 
+    /// Someone typing one word into the Start page's address field, over 50,000 pages: the queries of three to ten letters, which
+    /// search the full-text index. The surface's body reads the rows three times for each of them, as it does when the text changes
+    /// and again when a title or the assistant's status changes the page. The rows come from `AskSurfaceModel`, ranking included, and
+    /// a query needs one search however often they are read.
+    func testTypingAWordIntoTheAddressFieldOverFiftyThousandPages() throws {
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        MainActor.assumeIsolated {
+            let (store, database) = makeSearchedStore(in: directory)
+            let coordinator = AppCoordinator(browser: BrowserModel(database: .temporary(), history: store))
+            defer { coordinator.browser.cancelPendingSave() }
+            let model = AskSurfaceModel(placement: .startPage, browser: coordinator.browser, coordinator: coordinator)
+            model.fieldFocusDidChange(true)
+            let word = Array("githubwiki")
+            var rows = 0
+            var passes = 0
+            Omnibox.$agentOnlyForTesting.withValue(true) {
+                measure(metrics: [XCTClockMetric(), XCTMemoryMetric()], options: .budgeted) {
+                    passes += 1
+                    for length in 3...word.count {
+                        model.interaction.text = String(word.prefix(length))
+                        for _ in 0..<3 {
+                            rows = model.sections.flattened.count
+                        }
+                    }
+                }
+            }
+
+            XCTAssertEqual(rows, 3, "the question and the two pages found")
+            XCTAssertEqual(model.sectionComputations, passes * (word.count - 2), "one computation for each query")
+            try? database.writer.close()
+        }
+    }
+
     /// Opening a profile's database that already holds 50,000 pages, once for each profile at launch. Every open used to
     /// define the schema again, and defining the full-text index rebuilds it from the pages.
     func testOpeningAProfileDatabaseOfFiftyThousandPages() throws {

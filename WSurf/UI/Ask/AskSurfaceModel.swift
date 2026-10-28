@@ -167,8 +167,41 @@ final class AskSurfaceModel {
         AskContext.pages(browser: browser, mentionedTabIDs: mentionedTabIDs)
     }
 
+    /// The rows under the field. A history search runs on the main thread, and the surface's body runs for many reasons, so the
+    /// rows are computed when something they read has changed and read from here the rest of the time. What `resultSections` reads
+    /// is recorded as it runs (`withObservationTracking`), which keeps this in step with every input of it that is observable:
+    /// the text, focus, mentions, the site search, a previewed row, suggestions, the settings, the tabs and their titles.
+    var sections: [OmniboxSection] {
+        access(keyPath: \.sections)
+        if let cachedSections {
+            return cachedSections
+        }
+        sectionComputations += 1
+        let computed = withObservationTracking {
+            resultSections()
+        } onChange: { [weak self] in
+            // Runs where the change is made, before it lands: drop the rows now and let the next read compute them from the new state.
+            MainActor.assumeIsolated { self?.sectionsWentStale() }
+        }
+        cachedSections = computed
+        return computed
+    }
+
+    @ObservationIgnored private var cachedSections: [OmniboxSection]?
+    /// How often `sections` was computed rather than read, for the tests that hold it to once per change.
+    @ObservationIgnored private(set) var sectionComputations = 0
+
+    private func sectionsWentStale() {
+        guard cachedSections != nil else { return }
+        cachedSections = nil
+        withMutation(keyPath: \.sections) {}
+    }
+
+    /// The rows for the state now, computed afresh.
     func resultSections() -> [OmniboxSection] {
-        if isFocused, !isListening, let sections = suggestionPreview.sections {
+        // Nothing below shows without focus, so an unfocused surface reads nothing else and a change elsewhere leaves it alone.
+        guard isFocused else { return [] }
+        if !isListening, let sections = suggestionPreview.sections {
             return sections
         }
         if let searchSite {
