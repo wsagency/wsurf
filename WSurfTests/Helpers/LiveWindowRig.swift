@@ -58,6 +58,11 @@ struct LiveWindowRig {
         coordinator.browser
     }
 
+    /// The WebKit store of every rig's profile, emptied after each rig. A store per rig would cost the test host's Networking
+    /// process one of the about 180 persistent stores it can ever serve (`Profile.dataStoreForTesting`), and the cases that run
+    /// after the last one cannot open a database.
+    private static let dataStore = WKWebsiteDataStore(forIdentifier: UUID())
+
     /// Runs `body` in a window of a profile of its own, whose pages open on `engine` and may start sound, and closes it after.
     static func with(engine: BrowserEngine, _ body: @MainActor (LiveWindowRig) async throws -> Void) async throws {
         let never = ResponseGate()
@@ -69,6 +74,7 @@ struct LiveWindowRig {
         let catalog = ProfileStore.shared
         let previous = catalog.current
         let profile = catalog.add(name: "Live window")
+        Profile.dataStoreForTesting[profile.id] = dataStore
         let context = BrowserProfileContext.shared(for: profile)
         let origin = SitePermissions.origin(for: try server.url("/page"))
         context.sitePermissions.setEngine(engine, for: origin)
@@ -93,6 +99,8 @@ struct LiveWindowRig {
         }
         await ChromiumRuntime.shared.releaseContext(contextID: context.contextID)
         await catalog.remove(profile)
+        Profile.dataStoreForTesting[profile.id] = nil
+        await dataStore.removeData(ofTypes: WKWebsiteDataStore.allWebsiteDataTypes(), modifiedSince: .distantPast)
         catalog.markCurrent(previous)
         withExtendedLifetime((server, never)) {}
         if let failure {
