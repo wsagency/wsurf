@@ -80,6 +80,38 @@ struct WebViewParkingTests {
         )
     }
 
+    /// A favorite that is loaded but not shown waits in a host that hides it: hidden for as long as that host holds it, and shown
+    /// to the engine again by the shelf and by the next host, whatever that one does.
+    @Test func aHostThatHidesItsPageShowsItAgainWhenItLetsGo() {
+        let window = makeWindow()
+        let webView = WKWebView(
+            frame: NSRect(x: 0, y: 0, width: 600, height: 400),
+            configuration: WebViewPool.makeConfiguration()
+        )
+        let page = BrowserPage(webKit: webView, context: BrowserProfileContext(profile: .privateBrowsing()))
+        let hiding = WebViewContainer(page: page)
+        hiding.parksWhenIdle = true
+        hiding.hidesPage = true
+        hiding.frame = NSRect(x: 0, y: 0, width: 600, height: 400)
+        window.contentView?.addSubview(hiding)
+        #expect(page.superview === hiding)
+        #expect(page.isHidden, "held by a hiding host, the page is hidden")
+
+        hiding.hidesPage = false
+        #expect(!page.isHidden, "the host can show it again while it holds it")
+        hiding.hidesPage = true
+        #expect(page.isHidden)
+
+        hiding.removeFromSuperview()
+        #expect(page.superview is WebViewParkingShelf)
+        #expect(!page.isHidden, "a page that leaves a hiding host is not left hidden")
+
+        hiding.hidesPage = true
+        let second = host(page, in: window)
+        #expect(page.superview === second)
+        #expect(!page.isHidden, "the next host shows its page")
+    }
+
     /// The other setting is for hosts that own their view outright, and it has
     /// to keep meaning what it says: leave, and take the page with you.
     @Test func aHostThatDoesNotParkLetsTheViewLeaveTheWindow() {

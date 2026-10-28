@@ -7,16 +7,20 @@ import SwiftUI
 struct WebViewRepresentable: NSViewRepresentable {
     let page: BrowserPage
     var parksWhenIdle = false
+    /// The page stays loaded in its window but is not shown (`WebViewContainer.hidesPage`).
+    var hidesPage = false
     var onReady: (() -> Void)?
 
     func makeNSView(context: Context) -> WebViewContainer {
         let container = WebViewContainer(page: page, onReady: onReady)
         container.parksWhenIdle = parksWhenIdle
+        container.hidesPage = hidesPage
         return container
     }
 
     func updateNSView(_ nsView: WebViewContainer, context: Context) {
         nsView.parksWhenIdle = parksWhenIdle
+        nsView.hidesPage = hidesPage
         nsView.onReady = onReady
         nsView.install(page)
     }
@@ -94,6 +98,15 @@ final class WebViewParkingShelf: NSView {
 
 final class WebViewContainer: NSView {
     var parksWhenIdle = false
+    /// Hides the page while this view holds it. Both engines report the document of a hidden view as hidden, run no animation
+    /// frames and paint nothing for it; loading and sound go on, and timers are throttled as in any background tab. The page
+    /// must stay in its window all the same: Chromium builds its browser there, and a page out of the window stops playing.
+    var hidesPage = false {
+        didSet {
+            guard hidesPage != oldValue, let installedPage, installedPage.superview === self else { return }
+            installedPage.isHidden = hidesPage
+        }
+    }
     var onReady: (() -> Void)?
 
     private weak var installedPage: BrowserPage?
@@ -122,11 +135,7 @@ final class WebViewContainer: NSView {
             didReportReady = false
         }
         if let installedPage, installedPage !== page, installedPage.superview === self {
-            if parksWhenIdle {
-                WebViewParking.park(installedPage)
-            } else {
-                installedPage.removeFromSuperview()
-            }
+            release(installedPage)
         }
         installedPage = page
         attachIfHosted()
@@ -141,7 +150,18 @@ final class WebViewContainer: NSView {
             page.frame = page.frameInViewport(bounds)
         }
         addSubview(page)
+        page.isHidden = hidesPage
         reportReadyIfPossible()
+    }
+
+    /// Lets go of `page`, which is shown again by whatever holds it next.
+    private func release(_ page: BrowserPage) {
+        page.isHidden = false
+        if parksWhenIdle {
+            WebViewParking.park(page)
+        } else {
+            page.removeFromSuperview()
+        }
     }
 
     override func viewDidMoveToWindow() {
@@ -154,17 +174,13 @@ final class WebViewContainer: NSView {
         super.viewWillMove(toWindow: newWindow)
         guard newWindow == nil, parksWhenIdle,
               let installedPage, installedPage.superview === self else { return }
-        WebViewParking.park(installedPage)
+        release(installedPage)
     }
 
     func uninstall() {
         guard let installedPage else { return }
         if installedPage.superview === self {
-            if parksWhenIdle {
-                WebViewParking.park(installedPage)
-            } else {
-                installedPage.removeFromSuperview()
-            }
+            release(installedPage)
         }
         self.installedPage = nil
         didReportReady = false
