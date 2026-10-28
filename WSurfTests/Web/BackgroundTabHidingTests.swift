@@ -82,6 +82,88 @@ struct BackgroundTabHidingTests {
         }
     }
 
+    // MARK: - The wait
+
+    /// A tab that is switched away from and back within the wait never reports hidden, and is still drawing when it is back, so
+    /// going straight back finds it as it left it.
+    @Test(arguments: [BrowserEngine.webKit, .chromium])
+    func aTabSwitchedAwayFromAndBackWithinTheWaitIsNeverHidden(engine: BrowserEngine) async throws {
+        try await LiveWindowRig.with(engine: engine) { rig in
+            let clock = TestClock()
+            let first = try await rig.open("/page", grace: .seconds(10), clock: clock)
+            let front = try await rig.open("/still")
+            for round in 1...3 {
+                rig.browser.activate(first)
+                #expect(await waitUntil { await rig.isAnimating(first) }, "\(engine), round \(round): back in front it animates")
+                rig.browser.activate(front)
+                for _ in 0..<5 {
+                    try await Task.sleep(for: .milliseconds(200))
+                    let reported = await rig.state(of: first)
+                    #expect(reported == "visible", "\(engine), round \(round): left behind, within the wait, it reports \(reported ?? "nothing")")
+                }
+                #expect(await rig.isAnimating(first), "\(engine), round \(round): and it is still drawing")
+            }
+            #expect(await rig.marker(of: first) == "loaded", "it did not reload")
+        }
+    }
+
+    /// A tab still in the background when the wait ends is hidden and runs no frames.
+    @Test(arguments: [BrowserEngine.webKit, .chromium])
+    func aTabStillInTheBackgroundWhenTheWaitEndsIsHidden(engine: BrowserEngine) async throws {
+        try await LiveWindowRig.with(engine: engine) { rig in
+            let clock = TestClock()
+            let background = try await rig.open("/page", grace: .seconds(10), clock: clock)
+            let front = try await rig.open("/still")
+            try #require(rig.browser.activeTab === front)
+            try #require(await waitUntil { clock.pendingCount == 1 }, "the wait is running")
+            #expect(await rig.isAnimating(background), "\(engine): within the wait it is visible and animates")
+
+            clock.advance(by: .seconds(9))
+            #expect(await rig.isAnimating(background), "\(engine): a second before the end it still does")
+
+            clock.advance(by: .seconds(1))
+            let hidden = await waitUntil(timeout: .seconds(10)) { await rig.state(of: background) == "hidden" }
+            let reported = await rig.state(of: background) ?? "nothing"
+            #expect(hidden, "\(engine): when the wait ends it reports \(reported)")
+            let ran = await rig.framesInASecond(of: background)
+            #expect(ran >= 0 && ran <= 2, "\(engine): the hidden tab ran \(ran) frames in a second")
+            #expect(await rig.marker(of: background) == "loaded", "it did not reload")
+        }
+    }
+
+    /// Coming back ends a pending hide and the next wait starts from zero; so does a reason to stay shown.
+    @Test(arguments: [BrowserEngine.webKit, .chromium])
+    func comingBackOrBecomingNeededEndsAPendingHide(engine: BrowserEngine) async throws {
+        try await LiveWindowRig.with(engine: engine) { rig in
+            let clock = TestClock()
+            let first = try await rig.open("/page", grace: .seconds(10), clock: clock)
+            let front = try await rig.open("/still")
+            try #require(await waitUntil { clock.pendingCount == 1 })
+            clock.advance(by: .seconds(9))
+
+            rig.browser.activate(first)
+            #expect(await waitUntil { clock.pendingCount == 0 }, "\(engine): coming back cancels the wait")
+            clock.advance(by: .seconds(10))
+            #expect(await waitUntil { await rig.isAnimating(first) }, "\(engine): and nothing hides it")
+
+            rig.browser.activate(front)
+            try #require(await waitUntil { clock.pendingCount == 1 }, "leaving again starts a new wait")
+            clock.advance(by: .seconds(9))
+            #expect(await rig.isAnimating(first), "\(engine): the nine seconds before do not count")
+
+            first.isPictureOut = true
+            #expect(await waitUntil { clock.pendingCount == 0 }, "\(engine): a reason to stay shown cancels the wait")
+            clock.advance(by: .seconds(10))
+            #expect(await rig.isAnimating(first), "\(engine): and the page stays as it is")
+
+            first.isPictureOut = false
+            try #require(await waitUntil { clock.pendingCount == 1 }, "\(engine): the wait starts over when the reason ends")
+            clock.advance(by: .seconds(10))
+            let hidden = await waitUntil(timeout: .seconds(10)) { await rig.state(of: first) == "hidden" }
+            #expect(hidden, "\(engine): and the page hides when it is over")
+        }
+    }
+
     /// Going back and forth between two tabs hides one and shows the other every time, with the page left as it was.
     @Test(arguments: [BrowserEngine.webKit, .chromium])
     func twoTabsTakeTurnsBeingHiddenAndShown(engine: BrowserEngine) async throws {

@@ -126,6 +126,24 @@ final class BrowserTab: Identifiable {
     @ObservationIgnored var presentationClock: any Clock<Duration> = ContinuousClock()
     @ObservationIgnored var coverHold: Task<Void, Never>?
     @ObservationIgnored var isArmingPresentation = false
+    /// Whether the tab is on screen: the active tab, or a pane beside it. The model keeps it (`BrowserModel.noteFrontTabs`), and a
+    /// tab that leaves the front starts the wait before its page is hidden (`reconsiderBackgroundHiding`).
+    @ObservationIgnored var isInFront = false {
+        didSet {
+            guard isInFront != oldValue else { return }
+            hasBeenInFront = hasBeenInFront || isInFront
+            reconsiderBackgroundHiding()
+        }
+    }
+    @ObservationIgnored var hasBeenInFront = false
+    /// How long a tab that has been in front waits in the background before its page is hidden, so going straight back finds it
+    /// shown. `.zero` hides at once.
+    @ObservationIgnored var backgroundHidingGrace: Duration = .seconds(10)
+    @ObservationIgnored var backgroundClock: any Clock<Duration> = ContinuousClock()
+    @ObservationIgnored var backgroundHidingTask: Task<Void, Never>?
+    /// True once the tab's page is to be hidden whenever it is not shown: the tab is in the background, nothing needs the page
+    /// (`hidesInBackground`) and the wait is over. A kept-alive favorite hides by it, and a page on the shelf by its page's flag.
+    var hidesPageInBackground = false
     /// When this tab last stopped being in front, or was created. Monotonic, so time the Mac spends asleep counts as idle.
     @ObservationIgnored var lastForegroundAt = ContinuousClock.now
     /// When the person last used this tab, for the archive. Saved with the session, unlike `lastForegroundAt`.
@@ -450,6 +468,7 @@ final class BrowserTab: Identifiable {
         reader.pageChanged()
         pendingNavigationTask?.cancel()
         coverHold?.cancel()
+        backgroundHidingTask?.cancel()
         onChromiumDownload = nil
         onChromiumDownloadProgress = nil
         hasActiveDownload = nil

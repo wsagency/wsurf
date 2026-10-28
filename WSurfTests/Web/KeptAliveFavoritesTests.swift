@@ -47,6 +47,32 @@ struct KeptAliveFavoritesTests {
         }
     }
 
+    /// A favorite that has just left the front stays shown for the wait, so going straight back is as quick as it always was, and
+    /// is hidden when the wait is over.
+    @Test(arguments: [BrowserEngine.webKit, .chromium])
+    func aFavoriteStaysShownForTheWaitAndIsHiddenAfterIt(engine: BrowserEngine) async throws {
+        try await LiveWindowRig.with(engine: engine) { rig in
+            let clock = TestClock()
+            let favorite = try await rig.open("/page", grace: .seconds(10), clock: clock)
+            rig.browser.addFavorite(favorite)
+            try #require(favorite.isFavorite)
+            rig.browser.activate(favorite)
+            try #require(await waitUntil { await rig.isAnimating(favorite) })
+
+            let front = try await rig.open("/still")
+            try #require(rig.browser.activeTab === front)
+            try #require(await waitUntil { clock.pendingCount == 1 }, "the wait is running")
+            #expect(await rig.isAnimating(favorite), "\(engine): within the wait the favorite is visible and animates")
+
+            clock.advance(by: .seconds(10))
+            let hidden = await waitUntil(timeout: .seconds(10)) { await rig.state(of: favorite) == "hidden" }
+            let reported = await rig.state(of: favorite) ?? "nothing"
+            #expect(hidden, "\(engine): when the wait ends it reports \(reported)")
+            let ran = await rig.framesInASecond(of: favorite)
+            #expect(ran >= 0 && ran <= 2, "\(engine): the hidden favorite ran \(ran) frames in a second")
+        }
+    }
+
     /// A favorite that opens behind the tab in front (the way every favorite does at launch) loads without being shown, and is
     /// hidden while it does.
     @Test(arguments: [BrowserEngine.webKit, .chromium])

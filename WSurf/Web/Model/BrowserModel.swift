@@ -101,6 +101,7 @@ final class BrowserModel {
             let now = ContinuousClock.now
             stampPanes(of: oldValue, in: splits, at: now)
             stampForeground(at: now)
+            noteFrontTabs()
             if previous.map({ !isVisibleInSplit($0) }) ?? false {
                 previous?.refreshPreview()
                 previous?.noteHoveredLink(nil)
@@ -483,6 +484,18 @@ final class BrowserModel {
         }
     }
 
+    /// Tells each tab whether it is on screen, the active tab and the other panes of its split, so one that leaves starts the
+    /// wait before its page is hidden and one that comes back stops it (`BrowserTab.isInFront`).
+    func noteFrontTabs() {
+        var shown = Set(activeSplit?.tabs ?? [])
+        if let activeTabID {
+            shown.insert(activeTabID)
+        }
+        for tab in tabs {
+            tab.isInFront = shown.contains(tab.id)
+        }
+    }
+
     func insert(_ tab: BrowserTab, after opener: BrowserTab?) {
         // A page opened from another page stays in that page's space, even when it is not the space on screen.
         if tab.spaceID == nil, let space = opener?.spaceID {
@@ -599,6 +612,7 @@ final class BrowserModel {
         didSet {
             stampPanes(of: activeTabID, in: oldValue, at: .now)
             markVisibleTabsSeen()
+            noteFrontTabs()
         }
     }
 

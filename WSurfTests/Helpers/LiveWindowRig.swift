@@ -101,10 +101,15 @@ struct LiveWindowRig {
     }
 
     /// A tab on `path` that is in front once its page has loaded. A covered window must not decide what the pages report, so
-    /// WebKit pages ignore it (Chromium does for every page).
-    func open(_ path: String) async throws -> BrowserTab {
+    /// WebKit pages ignore it (Chromium does for every page). The tab hides its page at once when it leaves the front, unless it
+    /// is given a wait, which `clock` times.
+    func open(_ path: String, grace: Duration = .zero, clock: (any Clock<Duration>)? = nil) async throws -> BrowserTab {
         let url = try server.url(path)
         let tab = browser.newTab(url: url, engine: engine)
+        tab.backgroundHidingGrace = grace
+        if let clock {
+            tab.backgroundClock = clock
+        }
         tab.page.ignoresWindowOcclusion = true
         try #require(await waitUntil(timeout: .seconds(60)) { tab.page.url == url && !tab.page.isLoading })
         try #require(await waitUntil { tab.page.window === window })
