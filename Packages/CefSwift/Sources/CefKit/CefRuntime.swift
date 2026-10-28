@@ -391,7 +391,22 @@ public final class CefRuntime {
 
     func registerBrowser(_ browser: CefBrowser) {
         guard browser.id >= 0 else { return }
-        browsers[browser.id] = browser
+        if browsers.updateValue(browser, forKey: browser.id) == nil {
+            messagePump?.browserDidOpen()
+        }
+    }
+
+    /// Tells the runtime that the app created a browser itself, with raw CEF calls instead of ``CefBrowser``. While
+    /// any browser is alive the message pump keeps its safety-net timer; with none, an idle runtime schedules nothing
+    /// that repeats. Call this once the browser exists, and ``externalBrowserDidClose()`` once after its
+    /// `on_before_close`. Browsers made through ``CefBrowser`` are counted automatically.
+    public func externalBrowserDidOpen() {
+        messagePump?.browserDidOpen()
+    }
+
+    /// See ``externalBrowserDidOpen()``.
+    public func externalBrowserDidClose() {
+        messagePump?.browserDidClose()
     }
 
     /// All live browsers registered with the runtime. Used by ``CefBridge``
@@ -399,7 +414,9 @@ public final class CefRuntime {
     var activeBrowsers: [CefBrowser] { Array(browsers.values) }
 
     func unregisterBrowser(id: Int32) {
-        browsers[id] = nil
+        if browsers.removeValue(forKey: id) != nil {
+            messagePump?.browserDidClose()
+        }
         if isTerminationRequested && browsers.isEmpty {
             // Re-enter terminate:; with no browsers left it now proceeds.
             NSApp.terminate(nil)
