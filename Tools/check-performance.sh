@@ -515,6 +515,23 @@ check_average \
   '4096' \
   'Theme gallery memory growth' \
   'kB'
+# Six-sample means on the Pro (2026-10-28, Debug, load average 60 to 140), before and after the gallery cards compared what they draw
+# rather than their action, interleaved in one session: 0.522 / 0.530 / 0.531 s before, 0.299 / 0.291 / 0.350 s after (the last one at
+# load 100). So the budget sits between the two, not at twice the after mean: a card that redraws with every step puts the case back
+# at 0.53 s. The case hosts the Appearance pane's theme section alone, 17 ms a step before and 10 ms after. With the Settings page in
+# a window of 300 sidebar rows the same drag costs 153 to 170 ms a step before and 154 to 163 ms after (probe PA08, three runs each).
+check_average \
+  'ThemePerformanceTests/testPreviewingBrightnessWithTheGalleryOnScreen()' \
+  'com.apple.dt.XCTMetric_Clock.time.monotonic' \
+  '0.450' \
+  'Thirty brightness preview steps with the twenty-card theme gallery on screen' \
+  's'
+check_average \
+  'ThemePerformanceTests/testPreviewingBrightnessWithTheGalleryOnScreen()' \
+  'com.apple.dt.XCTMetric_Memory.physical' \
+  '4096' \
+  'Theme gallery brightness preview memory growth' \
+  'kB'
 
 # Long lists outside the sidebar (ListPerformanceTests). Six-sample means on the Pro (2026-10-24), seconds, port of Linen 0.9.3 b44a8393:
 # case                                   before      after   budget
