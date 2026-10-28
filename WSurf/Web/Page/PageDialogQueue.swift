@@ -337,14 +337,20 @@ final class PageDialogQueue {
     }
 
     /// The window to show a sheet for `view`'s page on, once the user can see the tab and the page is in a window: at once for
-    /// a tab in front, else when the tab comes to the front. Nil when the page went away or was sent elsewhere first.
+    /// a tab in front, else when the tab comes to the front. Nil when the page went away or was sent elsewhere first, or the
+    /// waiting task was cancelled (a passkey request that was aborted or timed out).
     func untilShown(_ view: NSView) async -> NSWindow? {
         weak let page = view
-        while page != nil {
+        while page != nil, !Task.isCancelled {
             if isOnScreen(), let window = page?.window {
                 return window
             }
-            guard await withCheckedContinuation({ screenWaiters.append($0) }) else { return nil }
+            let looksAgain = await withTaskCancellationHandler {
+                await withCheckedContinuation { screenWaiters.append($0) }
+            } onCancel: {
+                Task { @MainActor [weak self] in self?.screenChanged() }
+            }
+            guard looksAgain else { return nil }
         }
         return nil
     }
