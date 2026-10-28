@@ -170,7 +170,13 @@ private struct KeptAliveTabs: View {
                 && tab.page !== media.model.picturePage
         }
         ForEach(kept) { tab in
-            WebViewRepresentable(page: tab.page, parksWhenIdle: true)
+            // A favorite with nothing going on stays loaded and in its window but, once it has waited a while, hidden, so its page
+            // runs no animation frames and paints nothing (`BrowserTab.reconsiderBackgroundHiding`).
+            WebViewRepresentable(
+                page: tab.page,
+                parksWhenIdle: true,
+                hidesPage: media.controlledTabID != tab.id && tab.hidesPageInBackground
+            )
                 .id(tab.id)
                 .opacity(0)
                 .allowsHitTesting(false)
