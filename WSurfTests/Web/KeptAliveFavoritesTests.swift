@@ -14,157 +14,6 @@ import WebKit
 @MainActor
 @Suite(.serialized, .boundedWebViews)
 struct KeptAliveFavoritesTests {
-    /// Counts animation frames on a canvas, which the engine runs only while it counts the page visible. `playSong()` starts a
-    /// player the way a page does when it has something to say. Its element is told to play a file the server never sends, so
-    /// `paused` is false, nothing is decoded and nothing is heard: a page that plays for real in the test host leaves WebKit's GPU
-    /// process unresponsive for the cases after it. The element is made on demand because a file that never arrives would keep
-    /// WebKit's page loading.
-    private static let page = """
-        <!doctype html><title>Page</title><canvas id="c" width="300" height="200"></canvas>
-        <script>
-        window.__marker = 'loaded';
-        window.__frames = 0;
-        const context = document.getElementById('c').getContext('2d');
-        function frame(time) {
-          window.__frames++;
-          context.fillStyle = 'hsl(' + (time / 10 % 360) + ',60%,50%)';
-          context.fillRect(0, 0, 300, 200);
-          requestAnimationFrame(frame);
-        }
-        requestAnimationFrame(frame);
-        let song = null;
-        window.playSong = () => {
-          song = document.createElement('audio');
-          song.src = '/never';
-          document.body.append(song);
-          const play = () => {
-            if (song.paused) {
-              const attempt = song.play();
-              if (attempt) { attempt.catch(() => {}); }
-            }
-          };
-          play();
-          setInterval(play, 100);
-        };
-        window.songIsPlaying = () => song !== null && !song.paused;
-        </script>
-        """
-
-    private struct Rig {
-        let app: BrowserApplication
-        let coordinator: AppCoordinator
-        let window: NSWindow
-        let server: HTTPFixtureServer
-        let engine: BrowserEngine
-
-        var browser: BrowserModel {
-            coordinator.browser
-        }
-
-        /// A tab on `path` that is in front once its page has loaded. A covered window must not decide what the pages report, so
-        /// WebKit pages ignore it (Chromium does for every page).
-        func open(_ path: String) async throws -> BrowserTab {
-            let url = try server.url(path)
-            let tab = browser.newTab(url: url, engine: engine)
-            tab.page.ignoresWindowOcclusion = true
-            try #require(await waitUntil(timeout: .seconds(60)) { tab.page.url == url && !tab.page.isLoading })
-            try #require(await waitUntil { tab.page.window === window })
-            return tab
-        }
-
-        func state(of tab: BrowserTab) async -> String? {
-            (try? await tab.page.evaluateJavaScript("document.visibilityState")) as? String
-        }
-
-        func frames(of tab: BrowserTab) async -> Double {
-            (try? await tab.page.evaluateJavaScript("window.__frames")) as? Double ?? -1
-        }
-
-        func marker(of tab: BrowserTab) async -> String? {
-            (try? await tab.page.evaluateJavaScript("window.__marker")) as? String
-        }
-
-        func isAnimating(_ tab: BrowserTab) async -> Bool {
-            let first = await frames(of: tab)
-            try? await Task.sleep(for: .milliseconds(300))
-            let second = await frames(of: tab)
-            let visibility = await state(of: tab)
-            return first >= 0 && second > first && visibility == "visible"
-        }
-
-        /// Frames the page ran in a second, once it has been hidden for a moment.
-        func framesInASecond(of tab: BrowserTab) async -> Double {
-            try? await Task.sleep(for: .milliseconds(500))
-            let first = await frames(of: tab)
-            try? await Task.sleep(for: .seconds(1))
-            return await frames(of: tab) - first
-        }
-
-        /// The page starts a player, as a person's click on it would make it do.
-        func startPlaying(_ tab: BrowserTab) async throws {
-            _ = try await tab.page.evaluateJavaScript("window.playSong(); true", in: nil, contentWorld: .page, userGesture: true)
-        }
-
-        func isPlaying(_ tab: BrowserTab) async -> Bool? {
-            (try? await tab.page.evaluateJavaScript("window.songIsPlaying()")) as? Bool
-        }
-    }
-
-    private func withWindow(engine: BrowserEngine, _ body: @MainActor (Rig) async throws -> Void) async throws {
-        let never = ResponseGate()
-        let server = try await HTTPFixtureServer.start(routes: [
-            "/page": .html(Self.page),
-            "/never": .html("", gate: never),
-            "/still": .html("<!doctype html><title>Still</title><p>Nothing moves here.</p>"),
-        ])
-        let catalog = ProfileStore.shared
-        let previous = catalog.current
-        let profile = catalog.add(name: "Kept alive favorites")
-        let context = BrowserProfileContext.shared(for: profile)
-        let origin = SitePermissions.origin(for: try server.url("/page"))
-        context.sitePermissions.setEngine(engine, for: origin)
-        context.sitePermissions.setAutoplay(.allow, for: origin)
-        let app = BrowserApplication(defaults: InMemoryUserDefaults(inheriting: .standard), notifications: NotificationCenter())
-        let coordinator = app.newWindow(profile: profile, show: false)
-        coordinator.showBrowser(activate: false)
-        var failure: (any Error)?
-        do {
-            let window = try #require(coordinator.nativeWindow)
-            window.orderFrontRegardless()
-            try await body(Rig(app: app, coordinator: coordinator, window: window, server: server, engine: engine))
-        } catch {
-            failure = error
-        }
-        let tabs = coordinator.browser.tabs
-        for window in app.windows {
-            window.closeWindow()
-        }
-        for tab in tabs {
-            await tab.waitForRetirement()
-        }
-        await ChromiumRuntime.shared.releaseContext(contextID: context.contextID)
-        await catalog.remove(profile)
-        catalog.markCurrent(previous)
-        withExtendedLifetime((server, never)) {}
-        if let failure {
-            throw failure
-        }
-    }
-
-    /// Whether `image` shows anything but white and nothing: a snapshot of a page that did not paint is one or the other.
-    private func hasContent(_ image: NSImage) -> Bool {
-        guard let data = image.tiffRepresentation, let bitmap = NSBitmapImageRep(data: data) else { return false }
-        for y in 0..<bitmap.pixelsHigh {
-            for x in 0..<bitmap.pixelsWide {
-                guard let color = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.sRGB), color.alphaComponent > 0.5 else { continue }
-                if min(color.redComponent, color.greenComponent, color.blueComponent) < 0.9 {
-                    return true
-                }
-            }
-        }
-        return false
-    }
-
     // MARK: - Hidden
 
     /// The favorite is loaded and stays so (no reload when it comes back), but while another tab is in front its page is hidden
@@ -172,7 +21,7 @@ struct KeptAliveFavoritesTests {
     /// unshown window.
     @Test(arguments: [BrowserEngine.webKit, .chromium])
     func aFavoriteBehindAnotherTabIsHiddenAndStopsAnimating(engine: BrowserEngine) async throws {
-        try await withWindow(engine: engine) { rig in
+        try await LiveWindowRig.with(engine: engine) { rig in
             let favorite = try await rig.open("/page")
             rig.browser.addFavorite(favorite)
             try #require(favorite.isFavorite)
@@ -202,7 +51,7 @@ struct KeptAliveFavoritesTests {
     /// hidden while it does.
     @Test(arguments: [BrowserEngine.webKit, .chromium])
     func aFavoriteThatOpensBehindTheTabInFrontLoadsHidden(engine: BrowserEngine) async throws {
-        try await withWindow(engine: engine) { rig in
+        try await LiveWindowRig.with(engine: engine) { rig in
             let front = try await rig.open("/still")
             let url = try rig.server.url("/page")
             let favorite = rig.browser.newTab(url: url, activate: false, engine: engine)
@@ -232,7 +81,7 @@ struct KeptAliveFavoritesTests {
     /// the tab leaves the front, and one when the pointer rests on its row.
     @Test(arguments: [BrowserEngine.webKit, .chromium])
     func aHiddenFavoriteStillGivesItsPreview(engine: BrowserEngine) async throws {
-        try await withWindow(engine: engine) { rig in
+        try await LiveWindowRig.with(engine: engine) { rig in
             let favorite = try await rig.open("/page")
             rig.browser.addFavorite(favorite)
             rig.browser.activate(favorite)
@@ -247,7 +96,7 @@ struct KeptAliveFavoritesTests {
             favorite.refreshPreview()
             #expect(await waitUntil(timeout: .seconds(15)) { favorite.preview !== earlier }, "\(engine): a new preview of the hidden page")
             let image = try #require(favorite.preview)
-            #expect(hasContent(image), "\(engine): the preview of the hidden page is not blank")
+            #expect(LiveWindowRig.hasContent(image), "\(engine): the preview of the hidden page is not blank")
         }
     }
 
@@ -257,7 +106,7 @@ struct KeptAliveFavoritesTests {
     /// are heard.
     @Test(arguments: [BrowserEngine.webKit, .chromium])
     func aFavoriteThatPlaysAudioKeepsPlayingBehindAnotherTab(engine: BrowserEngine) async throws {
-        try await withWindow(engine: engine) { rig in
+        try await LiveWindowRig.with(engine: engine) { rig in
             let favorite = try await rig.open("/page")
             try await rig.startPlaying(favorite)
             try #require(await waitUntil { favorite.isPlayingAudio }, "the page plays")
@@ -280,7 +129,7 @@ struct KeptAliveFavoritesTests {
     /// A hidden favorite that starts to play is shown to the engine again, so what it plays is not cut short by being hidden.
     @Test(arguments: [BrowserEngine.webKit, .chromium])
     func aHiddenFavoriteThatStartsPlayingIsNoLongerHidden(engine: BrowserEngine) async throws {
-        try await withWindow(engine: engine) { rig in
+        try await LiveWindowRig.with(engine: engine) { rig in
             let favorite = try await rig.open("/page")
             rig.browser.addFavorite(favorite)
             let front = try await rig.open("/still")

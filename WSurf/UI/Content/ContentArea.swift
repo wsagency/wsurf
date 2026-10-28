@@ -171,11 +171,11 @@ private struct KeptAliveTabs: View {
         }
         ForEach(kept) { tab in
             // A favorite with nothing going on stays loaded and in its window but hidden, so its page runs no animation frames and
-            // paints nothing. A page that plays, captures, is driven from outside or has its video in a picture stays as it was.
+            // paints nothing (`BrowserTab.hidesInBackground` says which pages stay as they were).
             WebViewRepresentable(
                 page: tab.page,
                 parksWhenIdle: true,
-                hidesPage: media.controlledTabID != tab.id && tab.intrinsicProtectionReason == nil && !tab.isPictureOut
+                hidesPage: media.controlledTabID != tab.id && tab.hidesInBackground
             )
                 .id(tab.id)
                 .opacity(0)

@@ -62,12 +62,14 @@ enum WebKeyEcho {
 
 @MainActor
 enum WebViewParking {
-    /// Keeps `page` attached to `window` (its own window when nil) without showing it, so it keeps loading and rendering.
-    /// `size` replaces the page's current size. Without a shelf in that window the page is only removed.
+    /// Keeps `page` attached to `window` (its own window when nil) without showing it, so it keeps loading and, unless the page
+    /// hides while parked (`BrowserPage.hidesWhileParked`), rendering. `size` replaces the page's current size. Without a shelf
+    /// in that window the page is only removed.
     static func park(_ page: BrowserPage, in window: NSWindow? = nil, size: CGSize? = nil) {
         guard let shelf = (window ?? page.window)?.contentView?.subviews
             .first(where: { $0 is WebViewParkingShelf })
         else {
+            page.isHidden = false
             page.removeFromSuperview()
             return
         }
@@ -75,6 +77,8 @@ enum WebViewParking {
         page.removeFromSuperview()
         page.autoresizingMask = []
         page.frame = NSRect(x: 0, y: 0, width: max(size.width, 1), height: max(size.height, 1))
+        // Before it joins the shelf, so the engine never sees the page shown there for a moment.
+        page.isHidden = page.hidesWhileParked
         shelf.addSubview(page)
     }
 }
@@ -149,17 +153,25 @@ final class WebViewContainer: NSView {
         if bounds.width > 0, bounds.height > 0 {
             page.frame = page.frameInViewport(bounds)
         }
+        // A page that waited hidden on the shelf is shown before it joins this view, so it is drawing from the moment it is in
+        // the window and no frame shows it blank. A host that hides hides it once it is in: Chromium builds its browser as the
+        // page first reaches a window, and a browser built in a hidden view counts itself shown for good.
+        if !hidesPage {
+            page.isHidden = false
+        }
         addSubview(page)
-        page.isHidden = hidesPage
+        if hidesPage {
+            page.isHidden = true
+        }
         reportReadyIfPossible()
     }
 
-    /// Lets go of `page`, which is shown again by whatever holds it next.
+    /// Lets go of `page`: it waits on the shelf, hidden or not as it says, or leaves the window shown.
     private func release(_ page: BrowserPage) {
-        page.isHidden = false
         if parksWhenIdle {
             WebViewParking.park(page)
         } else {
+            page.isHidden = false
             page.removeFromSuperview()
         }
     }

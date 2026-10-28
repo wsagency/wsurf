@@ -52,6 +52,21 @@ final class BrowserPage: NSView {
         superview is WebViewParkingShelf
     }
 
+    /// Whether the page is hidden while it waits on the shelf. The shelf is in the window and no part of it is hidden, so both
+    /// engines count a parked page shown: it reports `visible` and runs animation frames at the display rate. A hidden page
+    /// reports `hidden`, runs none and paints nothing, and still loads and plays. The tab keeps this in step with what it is
+    /// doing (`BrowserTab.followBackgroundHiding`); a page nobody sets it on stays shown, as it always was.
+    var hidesWhileParked = false {
+        didSet {
+            guard hidesWhileParked != oldValue else { return }
+            if !hidesWhileParked {
+                isHidden = false
+            } else if isParked {
+                isHidden = true
+            }
+        }
+    }
+
     /// Key-value coding finds the private getter `_windowOcclusionDetectionEnabled` and setter `_setWindowOcclusionDetectionEnabled:`
     /// from this key; the underscored name as a key would match no setter and raise.
     private static let occlusionKey = "windowOcclusionDetectionEnabled"

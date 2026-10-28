@@ -112,6 +112,51 @@ struct WebViewParkingTests {
         #expect(!page.isHidden, "the next host shows its page")
     }
 
+    /// The shelf is in the window, so a page on it counts as shown unless it hides while parked. The tab says so: a page nobody
+    /// told waits shown, as it always did.
+    @Test func aPageThatHidesWhileParkedWaitsHiddenAndIsShownByTheNextHost() {
+        let window = makeWindow()
+        let webView = WKWebView(
+            frame: NSRect(x: 0, y: 0, width: 600, height: 400),
+            configuration: WebViewPool.makeConfiguration()
+        )
+        let page = BrowserPage(webKit: webView, context: BrowserProfileContext(profile: .privateBrowsing()))
+        let first = host(page, in: window)
+        page.hidesWhileParked = true
+        #expect(!page.isHidden, "a page in a host is shown whatever it would do on the shelf")
+
+        first.removeFromSuperview()
+        #expect(page.superview is WebViewParkingShelf)
+        #expect(page.isHidden, "on the shelf it is hidden")
+        #expect(page.window === window, "and still in its window")
+
+        page.hidesWhileParked = false
+        #expect(!page.isHidden, "shown again the moment nothing wants it hidden")
+        page.hidesWhileParked = true
+        #expect(page.isHidden)
+
+        let second = host(page, in: window)
+        #expect(page.superview === second)
+        #expect(!page.isHidden, "the next host has the page shown as it takes it")
+
+        second.removeFromSuperview()
+        #expect(page.isHidden, "it waits hidden again")
+        #expect(page.superview is WebViewParkingShelf)
+    }
+
+    /// A page nobody told to hide keeps waiting shown, which an embedded page that is never a tab's relies on.
+    @Test func aPageThatWasNotToldToHideWaitsShown() {
+        let window = makeWindow()
+        let webView = WKWebView(
+            frame: NSRect(x: 0, y: 0, width: 600, height: 400),
+            configuration: WebViewPool.makeConfiguration()
+        )
+        let page = BrowserPage(webKit: webView, context: BrowserProfileContext(profile: .privateBrowsing()))
+        host(page, in: window).removeFromSuperview()
+        #expect(page.superview is WebViewParkingShelf)
+        #expect(!page.isHidden)
+    }
+
     /// The other setting is for hosts that own their view outright, and it has
     /// to keep meaning what it says: leave, and take the page with you.
     @Test func aHostThatDoesNotParkLetsTheViewLeaveTheWindow() {

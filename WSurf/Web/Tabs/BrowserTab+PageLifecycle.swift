@@ -239,6 +239,7 @@ extension BrowserTab {
         precondition(view.context === context)
         translation.documentChanged()
         liveView = view
+        followBackgroundHiding(of: view)
         view.dialogs = dialogs
         dialogs.leaseHolder = { [weak self] in self?.dialogLeaseHolder }
         engine = view.engine
