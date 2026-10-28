@@ -179,6 +179,8 @@ final class BrowserApplication {
             showCredentialExchange()
         }
         mcpServer.resume()
+        // The front window has drawn. Chromium's framework is read into memory off the main thread, where Chromium was used.
+        ChromiumRuntime.shared.prepareInBackground()
         // Every regular profile's watches, whether or not a window of it is open. Each waits a minute before its first reading.
         for profile in catalog.profiles {
             BrowserProfileContext.shared(for: profile).pageWatches?.resume()
