@@ -350,8 +350,7 @@ final class BrowserModel {
             close(tab)
         }
         tab.onNewChromiumPopup = { [weak self, weak tab] page, activate in
-            // The pop-up stays in its opener's engine, whatever its site's setting: another engine would lose `window.opener`.
-            guard let opened = self?.newTab(activate: activate, adoptingPage: page, after: tab, engine: page.engine), let tab else { return }
+            guard let opened = self?.newTab(activate: activate, adoptingPage: page, after: tab), let tab else { return }
             self?.noteOpened(opened, by: tab)
         }
     }

@@ -430,7 +430,10 @@ extension BrowserTab {
             popups.note(url)
             return nil
         }
-        guard let onNewChromiumPopup else {
+        // The site's engine setting wins: a pop-up of a site set to WebKit (Google sign-in among them) opens as a plain WebKit tab,
+        // as before, and the page gets no window. One with no site of its own (about:blank) stays with its opener.
+        let origin = SitePermissions.origin(for: url)
+        guard let onNewChromiumPopup, origin.isEmpty || sitePermissions.engine(for: origin) == .chromium else {
             onOpenInNewTab?(url, userGesture)
             return nil
         }

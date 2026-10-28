@@ -33,6 +33,9 @@ struct OpenInNewTabTests {
         </form>
         <a id="oauth" class="box" style="top: 170px" href="#"
            onclick="window.__popup = window.open('/popup', 'oauth', 'width=400,height=300'); return false">oauth</a>
+        <a id="crossOauth" class="box" style="top: 210px" href="#"
+           onclick="window.__popup = window.open('http://localhost:' + location.port + '/popup', 'cross', 'width=400,height=300');
+                    return false">cross-site oauth</a>
         <script>
           window.__messages = [];
           window.addEventListener('message', event => window.__messages.push(JSON.stringify(event.data)));
@@ -143,6 +146,7 @@ struct OpenInNewTabTests {
         "open": CGPoint(x: 140, y: 105),
         "submit": CGPoint(x: 140, y: 145),
         "oauth": CGPoint(x: 140, y: 185),
+        "crossOauth": CGPoint(x: 140, y: 225),
         "fblank": CGPoint(x: 300 + 10 + 100, y: 10 + 10 + 15),
         "fplain": CGPoint(x: 300 + 10 + 100, y: 10 + 60 + 15),
     ].merging(verifyModes.enumerated().map { ("v-" + $1, CGPoint(x: 140, y: 25 + 40 * $0)) }) { first, _ in first }
@@ -681,6 +685,57 @@ struct OpenInNewTabTests {
         }
     }
 
+    // MARK: - History and the Start page
+
+    /// A middle-click on a row of History or of the Start page asks the model for this: a background tab next to the page in front.
+    /// The views' catchers read the event the window is handling, which a test cannot post, so this is the call they make.
+    @Test func aBackgroundTabFromHistoryOrTheStartPageOpensNextToThePageInFront() async throws {
+        let server = try await HTTPFixtureServer.start(routes: Self.routes)
+        defer { withExtendedLifetime(server) {} }
+        let browser = BrowserModel(database: .temporary())
+        let first = browser.addPage("https://one.example/")
+        let second = browser.addPage("https://two.example/")
+        browser.activate(first)
+
+        let opened = browser.newTab(url: try server.url("/target?via=history"), activate: false, after: browser.activeTab)
+
+        #expect(browser.activeTab === first && opened.isUnseen, "in the background")
+        let order = browser.tabs.map(\.id)
+        #expect(order.firstIndex(of: opened.id) == order.firstIndex(of: first.id).map { $0 + 1 }, "next to the page in front, not at the end")
+        #expect(order.contains(second.id))
+        #expect(opened.urlString.contains("via=history"))
+    }
+
+    // MARK: - A page that is pinned
+
+    @Test(arguments: BrowserEngine.allCases, [Opener.pinned, .inPinnedFolder])
+    func aLinkOpenedFromAPinnedPageLandsUnderThePinLine(engine: BrowserEngine, opener: Opener) async throws {
+        try await withRig(engine, opener: opener) { rig in
+            let kept = rig.browser.keptRunAtTop().count
+            try await rig.click("blank")
+            let landed = try expectOpened(await rig.tab(via: "blank"), by: rig, "a link from \(opener)")
+            let root = rig.browser.sidebarTree.rows(in: nil)
+            #expect(root.firstIndex(of: .tab(landed.id)) == kept, "just under the pin line")
+            #expect(rig.browser.sidebarTree.parent(of: .tab(landed.id)) == nil, "not in the pinned folder")
+            #expect(rig.browser.activeTab === landed)
+        }
+    }
+
+    @Test(arguments: BrowserEngine.allCases, [Opener.pinned, .inPinnedFolder])
+    func theContextMenuOfAPinnedPageOpensALinkUnderThePinLine(engine: BrowserEngine, opener: Opener) async throws {
+        try await withRig(engine, opener: opener) { rig in
+            let kept = rig.browser.keptRunAtTop().count
+            let chosen = try await rig.rightClick("plain") { $0.lowercased().contains("open link in new tab") }
+            try #require(chosen, "the menu offers Open Link in New Tab; it offered \(rig.offered) \(rig.offeredIdentifiers)")
+            let landed = try expectOpened(await rig.tab(via: "plain"), by: rig, "the context menu of \(opener)")
+            let root = rig.browser.sidebarTree.rows(in: nil)
+            #expect(root.firstIndex(of: .tab(landed.id)) == kept, "just under the pin line")
+        }
+    }
+}
+
+/// Pop-ups that talk to their opener, kept apart so the suite's body stays readable.
+extension OpenInNewTabTests {
     // MARK: - A pop-up that talks to its opener
 
     /// A sign-in pop-up reaches `window.opener`, in both engines: a Chromium tab's pop-up is the browser CEF made for it, hosted in
@@ -814,6 +869,27 @@ struct OpenInNewTabTests {
         withExtendedLifetime(server) {}
     }
 
+    /// The site's engine setting wins over the opener: a Chromium page's pop-up of a site set to WebKit (as Google sign-in is) opens
+    /// as a plain WebKit tab, and the page gets no window, as before the pop-up kept its opener. One of a site set to Chromium keeps it.
+    @Test(arguments: [BrowserEngine.webKit, .chromium])
+    func aChromiumPopupFollowsItsSitesEngine(site: BrowserEngine) async throws {
+        try await withRig(.chromium) { rig in
+            rig.permissions.setEngine(site, for: SitePermissions.origin(for: URL(string: "http://localhost:\(rig.url.port ?? 0)/")))
+            rig.showOpenedTabs()
+            try await rig.click("crossOauth")
+            let landed = try expectOpened(await waitForAnyTab(in: rig), by: rig, "a cross-site pop-up")
+            try #require(await waitUntil { landed.liveView?.engine == site && landed.urlString.hasSuffix("/popup") }, "\(landed.urlString)")
+            if site == .chromium {
+                try #require(await waitUntil { try await rig.messages().contains("{\"from\":\"popup\"}") }, "the pop-up reached window.opener")
+                #expect(try await rig.evaluate("window.__popup !== null") as? Bool == true)
+            } else {
+                try await rig.settle()
+                #expect(try await rig.evaluate("window.__popup === null") as? Bool == true, "the page got no window")
+                #expect(try await !rig.messages().contains("{\"from\":\"popup\"}"), "no opener")
+            }
+        }
+    }
+
     /// A private window's pop-up is private too and reads its opener's storage: CEF gives a pop-up its opener's request context.
     @Test func aChromiumPopupOfAPrivateWindowIsPrivate() async throws {
         try await withRig(.chromium, privately: true) { rig in
@@ -832,53 +908,5 @@ struct OpenInNewTabTests {
     private func waitForAnyTab(in rig: Rig) async -> BrowserTab? {
         _ = await waitUntil(timeout: .seconds(15)) { !rig.opened.isEmpty }
         return rig.opened.first
-    }
-
-    // MARK: - History and the Start page
-
-    /// A middle-click on a row of History or of the Start page asks the model for this: a background tab next to the page in front.
-    /// The views' catchers read the event the window is handling, which a test cannot post, so this is the call they make.
-    @Test func aBackgroundTabFromHistoryOrTheStartPageOpensNextToThePageInFront() async throws {
-        let server = try await HTTPFixtureServer.start(routes: Self.routes)
-        defer { withExtendedLifetime(server) {} }
-        let browser = BrowserModel(database: .temporary())
-        let first = browser.addPage("https://one.example/")
-        let second = browser.addPage("https://two.example/")
-        browser.activate(first)
-
-        let opened = browser.newTab(url: try server.url("/target?via=history"), activate: false, after: browser.activeTab)
-
-        #expect(browser.activeTab === first && opened.isUnseen, "in the background")
-        let order = browser.tabs.map(\.id)
-        #expect(order.firstIndex(of: opened.id) == order.firstIndex(of: first.id).map { $0 + 1 }, "next to the page in front, not at the end")
-        #expect(order.contains(second.id))
-        #expect(opened.urlString.contains("via=history"))
-    }
-
-    // MARK: - A page that is pinned
-
-    @Test(arguments: BrowserEngine.allCases, [Opener.pinned, .inPinnedFolder])
-    func aLinkOpenedFromAPinnedPageLandsUnderThePinLine(engine: BrowserEngine, opener: Opener) async throws {
-        try await withRig(engine, opener: opener) { rig in
-            let kept = rig.browser.keptRunAtTop().count
-            try await rig.click("blank")
-            let landed = try expectOpened(await rig.tab(via: "blank"), by: rig, "a link from \(opener)")
-            let root = rig.browser.sidebarTree.rows(in: nil)
-            #expect(root.firstIndex(of: .tab(landed.id)) == kept, "just under the pin line")
-            #expect(rig.browser.sidebarTree.parent(of: .tab(landed.id)) == nil, "not in the pinned folder")
-            #expect(rig.browser.activeTab === landed)
-        }
-    }
-
-    @Test(arguments: BrowserEngine.allCases, [Opener.pinned, .inPinnedFolder])
-    func theContextMenuOfAPinnedPageOpensALinkUnderThePinLine(engine: BrowserEngine, opener: Opener) async throws {
-        try await withRig(engine, opener: opener) { rig in
-            let kept = rig.browser.keptRunAtTop().count
-            let chosen = try await rig.rightClick("plain") { $0.lowercased().contains("open link in new tab") }
-            try #require(chosen, "the menu offers Open Link in New Tab; it offered \(rig.offered) \(rig.offeredIdentifiers)")
-            let landed = try expectOpened(await rig.tab(via: "plain"), by: rig, "the context menu of \(opener)")
-            let root = rig.browser.sidebarTree.rows(in: nil)
-            #expect(root.firstIndex(of: .tab(landed.id)) == kept, "just under the pin line")
-        }
     }
 }
