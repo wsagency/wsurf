@@ -135,7 +135,7 @@ struct SidebarTabRow: View {
     }
 
     private var trailingControls: some View {
-        SidebarTabActionButton(tab: tab, coordinator: coordinator)
+        SidebarTabActionButton(tab: tab, coordinator: coordinator, followsCommandKey: showsTrailingControls)
             .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { controlsWidth = $0 }
             .opacity(showsTrailingControls ? 1 : 0)
             .allowsHitTesting(showsTrailingControls)
@@ -358,20 +358,8 @@ struct SidebarTabRow: View {
             Label("Duplicate Tab", systemImage: "plus.square.on.square")
         }
         OpenBesideCurrentPageItem(tab: tab, browser: browser, coordinator: coordinator)
-        if browser.splits.contains(tab.id) {
-            Button {
-                browser.dissolveSplit(containing: tab)
-            } label: {
-                Label("Exit Split", systemImage: "rectangle")
-            }
-        }
-        if coordinator.canMoveToMicroWindow(tab) {
-            Button {
-                coordinator.moveToMicroWindow(tab)
-            } label: {
-                Label("Move to Micro Window", systemImage: "arrow.up.forward.square")
-            }
-        }
+        ExitSplitItem(tab: tab, browser: browser)
+        MoveToMicroWindowItem(tab: tab, coordinator: coordinator)
         MicroRowMenuItems(tab: tab, coordinator: coordinator)
         Divider()
 
@@ -396,21 +384,7 @@ struct SidebarTabRow: View {
         } label: {
             Label("Remove Tab", systemImage: "xmark")
         }
-        let others = browser.tabs.filter { $0 !== tab && !$0.isPinnedForProfile && browser.isShown($0) }
-        if !tab.isPinnedForProfile, !others.isEmpty {
-            Button(role: .destructive) {
-                let count = others.count
-                Task {
-                    guard await ConfirmAlert.destructive(
-                        "Remove \(count) tabs?",
-                        verb: "Remove Tabs"
-                    ) else { return }
-                    browser.closeOthers(tab)
-                }
-            } label: {
-                Label("Remove Other Tabs", systemImage: "trash")
-            }
-        }
+        RemoveOtherTabsItem(tab: tab, browser: browser)
     }
 }
 
@@ -427,6 +401,63 @@ private struct OpenBesideCurrentPageItem: View {
                 coordinator.split(anchor, with: tab, axis: .sideBySide)
             } label: {
                 Label("Open Beside Current Page", systemImage: "rectangle.split.2x1")
+            }
+        }
+    }
+}
+
+/// Remove Other Tabs, Exit Split and Move to Micro Window, in views of their own for the reason above: read in the row, the
+/// tabs, the splits and the window would make every drawn row draw again whenever a tab opens, closes or is pinned.
+private struct RemoveOtherTabsItem: View {
+    let tab: BrowserTab
+    let browser: BrowserModel
+
+    var body: some View {
+        if !tab.isPinnedForProfile {
+            let others = browser.tabs.filter { $0 !== tab && !$0.isPinnedForProfile && browser.isShown($0) }
+            if !others.isEmpty {
+                Button(role: .destructive) {
+                    let count = others.count
+                    Task {
+                        guard await ConfirmAlert.destructive(
+                            "Remove \(count) tabs?",
+                            verb: "Remove Tabs"
+                        ) else { return }
+                        browser.closeOthers(tab)
+                    }
+                } label: {
+                    Label("Remove Other Tabs", systemImage: "trash")
+                }
+            }
+        }
+    }
+}
+
+private struct ExitSplitItem: View {
+    let tab: BrowserTab
+    let browser: BrowserModel
+
+    var body: some View {
+        if browser.splits.contains(tab.id) {
+            Button {
+                browser.dissolveSplit(containing: tab)
+            } label: {
+                Label("Exit Split", systemImage: "rectangle")
+            }
+        }
+    }
+}
+
+private struct MoveToMicroWindowItem: View {
+    let tab: BrowserTab
+    let coordinator: AppCoordinator
+
+    var body: some View {
+        if coordinator.canMoveToMicroWindow(tab) {
+            Button {
+                coordinator.moveToMicroWindow(tab)
+            } label: {
+                Label("Move to Micro Window", systemImage: "arrow.up.forward.square")
             }
         }
     }
@@ -530,12 +561,15 @@ nonisolated enum SidebarTabAction: Equatable {
 struct SidebarTabActionButton: View {
     let tab: BrowserTab
     let coordinator: AppCoordinator
+    /// False for a button that is not shown. It stays in the row but does not read the Command key, so a press draws the one
+    /// row under the pointer and not every row that is drawn.
+    var followsCommandKey = true
 
     var body: some View {
         let action = SidebarTabAction.resolve(
             isPinned: tab.isPinnedForProfile,
             isDeferred: tab.isDeferred,
-            command: coordinator.linkModifiers.contains(.command)
+            command: followsCommandKey && coordinator.linkModifiers.contains(.command)
         )
         ChromeIcon.rowControl(symbol: action.symbol, help: String(localized: action.label)) {
             coordinator.tabPreview.dismiss()

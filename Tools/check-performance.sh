@@ -398,6 +398,35 @@ check_average \
   '4096' \
   'Sidebar click memory growth' \
   'kB'
+# 0.1.17, a row no longer reads every tab or the Command key. Pro, Debug, a sidebar of 1,000 tabs in 25 open folders with its first
+# rows drawn, the old code's run and the new code's an hour apart (load average 20 to 130). Three background tabs opened and closed:
+# 1.9498 s before, 0.2411 s and 0.2557 s after (alone, in the whole plan); the budget is twice the new mean. Command pressed and released
+# five times: 0.1274 s before; after, five passes of six take 0.0003 s and one takes 0.06 to 0.13 s (cause not found), so the mean is
+# 0.010 s to 0.026 s. The budget is half the old code's time: twice the new mean would be one stalled pass.
+check_average \
+  'SidebarPerformanceTests/testOpeningAndClosingBackgroundTabsOverAThousandRowSidebar()' \
+  'com.apple.dt.XCTMetric_Clock.time.monotonic' \
+  '0.510' \
+  'Three background tabs opened and closed over a sidebar of 1,000 tabs' \
+  's'
+check_average \
+  'SidebarPerformanceTests/testOpeningAndClosingBackgroundTabsOverAThousandRowSidebar()' \
+  'com.apple.dt.XCTMetric_Memory.physical' \
+  '4096' \
+  'Background tab churn memory growth' \
+  'kB'
+check_average \
+  'SidebarPerformanceTests/testPressingCommandOverAThousandRowSidebar()' \
+  'com.apple.dt.XCTMetric_Clock.time.monotonic' \
+  '0.060' \
+  'Command pressed and released five times over a sidebar of 1,000 tabs' \
+  's'
+check_average \
+  'SidebarPerformanceTests/testPressingCommandOverAThousandRowSidebar()' \
+  'com.apple.dt.XCTMetric_Memory.physical' \
+  '4096' \
+  'Command key memory growth' \
+  'kB'
 # A row dragged in place in 30 steps over 1,000 tabs: 0.3302 s (before 4.9937 s).
 check_average \
   'SidebarPerformanceTests/testDraggingARowInPlaceOverAThousandRowSidebar()' \
@@ -491,10 +520,12 @@ check_average \
 # The brightness budget was 14 s while half of the 30 steps changed no color. Since 0.1.16 (the brightness rule of
 # fix/theme-customize-0.1.16) every step changes the colors and repaints all rows: 8.1 to 8.6 s became 12.2 to 13.2 s, a factor of
 # 1.50 in the same host, so the budget is 21 s (14 x 1.50).
+# 0.1.17, a row no longer reads every tab: the same case, six samples, Pro, Debug, the code before and after that change an hour
+# apart: 13.762 s and 5.381 s alone, 5.517 s in the whole plan. The budget is twice the new mean, 11 s.
 check_average \
   'ThemePerformanceTests/testDraggingThemeBrightness()' \
   'com.apple.dt.XCTMetric_Clock.time.monotonic' \
-  '21.000' \
+  '11.000' \
   'Thirty brightness preview steps across 300 real sidebar rows' \
   's'
 check_average \
