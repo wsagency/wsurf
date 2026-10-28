@@ -52,6 +52,61 @@ nonisolated enum MinimalBarEdge: String, CaseIterable, Identifiable {
     }
 }
 
+/// When the Minimal bar floats out of the way. The bar floats over the end of the page, which could not be read otherwise, so
+/// the choice stays While scrolling unless the person picks another.
+nonisolated enum MinimalBarHiding: String, CaseIterable, Identifiable {
+    case never
+    case whileScrolling
+    case fiveSeconds
+    case tenSeconds
+    case thirtySeconds
+
+    var id: String {
+        rawValue
+    }
+
+    var label: LocalizedStringResource {
+        switch self {
+        case .never:
+            LocalizedStringResource("settings.minimalBarHide.never", defaultValue: "Never")
+        case .whileScrolling:
+            LocalizedStringResource("settings.minimalBarHide.whileScrolling", defaultValue: "While scrolling")
+        case .fiveSeconds:
+            LocalizedStringResource("settings.minimalBarHide.fiveSeconds", defaultValue: "After 5 seconds")
+        case .tenSeconds:
+            LocalizedStringResource("settings.minimalBarHide.tenSeconds", defaultValue: "After 10 seconds")
+        case .thirtySeconds:
+            LocalizedStringResource("settings.minimalBarHide.thirtySeconds", defaultValue: "After 30 seconds")
+        }
+    }
+
+    /// How long the bar rests unused before it goes; nil for the two choices that do not time it.
+    var interval: Duration? {
+        switch self {
+        case .never, .whileScrolling:
+            nil
+        case .fiveSeconds:
+            .seconds(5)
+        case .tenSeconds:
+            .seconds(10)
+        case .thirtySeconds:
+            .seconds(30)
+        }
+    }
+
+    /// The stored choice. Until 0.1.16 the key held a Bool: on was While scrolling, off was Never. A value this build cannot
+    /// read, or none, is While scrolling.
+    init(stored: Any?) {
+        if let name = stored as? String, let choice = Self(rawValue: name) {
+            self = choice
+        } else if let hides = stored as? Bool {
+            self = hides ? .whileScrolling : .never
+        } else {
+            self = .whileScrolling
+        }
+    }
+}
+
 extension BrowserSettings {
     /// The whole page address in the address bar instead of the website name. App-wide, off by default.
     var showsFullAddress: Bool {
@@ -90,13 +145,13 @@ extension BrowserSettings {
         }
     }
 
-    /// The Minimal bar slides away while the page scrolls down and comes back when it scrolls up. On by default: the bar
-    /// floats over the end of the page, which could not be read otherwise.
-    var hidesMinimalBar: Bool {
-        get { globalValue(\.hidesMinimalBar, storage: storedHidesMinimalBar) }
+    /// When the Minimal bar slides away: never, while the page scrolls down (the default, so the end of the page can be read),
+    /// or once it has gone unused for a few seconds. The pointer at the bar's edge brings it back under each choice.
+    var minimalBarHiding: MinimalBarHiding {
+        get { globalValue(\.minimalBarHiding, storage: storedMinimalBarHiding) }
         set {
-            setGlobal(\BrowserSettings.hidesMinimalBar, storage: \BrowserSettings.storedHidesMinimalBar,
-                      value: newValue, key: Key.minimalBarAutoHide)
+            setGlobal(\BrowserSettings.minimalBarHiding, storage: \BrowserSettings.storedMinimalBarHiding,
+                      value: newValue, key: Key.minimalBarAutoHide, encode: { $0.rawValue })
         }
     }
 
@@ -114,7 +169,7 @@ extension BrowserSettings {
         showsFullAddress = false
         windowStyle = .standard
         minimalBarEdge = .bottom
-        hidesMinimalBar = true
+        minimalBarHiding = .whileScrolling
         keepsMinimalSidebarOpen = false
     }
 }

@@ -15,6 +15,8 @@ import SwiftUI
 /// bar slides away while the page scrolls down (the wheel, the keyboard or the page's own script, on either engine), and
 /// comes back when it scrolls up, when the pointer rests at the bar's edge, and whenever the micro window's rules want the
 /// address in sight (`MicroReveal`, `MicroShell.keepsBar`): another site, a prompt, the address being edited.
+/// `BrowserSettings.minimalBarHiding` can instead keep the bar always, or put it away once it has gone unused for 5, 10 or
+/// 30 seconds; scrolling then means nothing.
 struct MinimalShell: View {
     let browser: BrowserModel
     let coordinator: AppCoordinator
@@ -236,21 +238,22 @@ private struct PageScrollWatch: View {
 
 extension AppCoordinator {
     /// The Minimal bar's reveal: shown at rest, and held by everything that holds the micro bar, the address being edited,
-    /// a prompt, a save offer, a question, VoiceOver, a page with no address to show, plus the open tab list and the setting
-    /// being off. A window that is gone, or a state that cannot be read, keeps the bar.
+    /// a prompt, a save offer, a question, VoiceOver, a page with no address to show, plus the open tab list. How it goes
+    /// (never, while the page scrolls, or after a time unused) is `BrowserSettings.minimalBarHiding`, read live. A window that
+    /// is gone, or a state that cannot be read, keeps the bar.
     func makeMinimalReveal() -> MicroReveal {
         // The window the page is drawn in, should the window's host not be known (a view hosted on its own).
         let window: () -> NSWindow? = { [weak self] in self?.nativeWindow ?? self?.browser.activeTab?.liveView?.window }
         return MicroReveal(
             restsRevealed: true,
+            hiding: { BrowserSettings.application.minimalBarHiding },
             window: window,
             host: { [weak self] in MicroShell.host(of: self?.browser.activeTab?.urlString) },
             focusToken: { [weak self] in self?.addressBarFocusToken ?? 0 },
             pending: { [weak self] in self?.hasPendingPagePrompt ?? true },
             keeps: { [weak self] in
                 guard let self else { return true }
-                return !BrowserSettings.application.hidesMinimalBar
-                    || isMinimalTabListOpen
+                return isMinimalTabListOpen
                     || MicroShell.keepsBar(
                         browser: browser,
                         coordinator: self,

@@ -3204,8 +3204,8 @@
     "Hide Tabs" : {
       "comment" : "The same command once the Minimal window’s list of tabs is open; it closes the list. Title Case."
     },
-    "Hide the bar while scrolling" : {
-      "comment" : "Title of a switch in Settings › Appearance › Window: the Minimal window’s floating bar slides away while the page scrolls down."
+    "Hide bar" : {
+      "comment" : "Title of a setting in Settings › Appearance › Window, and its Settings search title. A pop-up menu that chooses when the Minimal window’s floating bar slides away: never, while the page scrolls, or after it goes unused for a few seconds. Sentence case, short."
     },
     "Hide Video" : {
       "comment" : "Tooltip on the eye button in the media dock; it hides the picture while playback and the controls carry on. Title Case, narrow dock."
@@ -3945,6 +3945,9 @@
     },
     "Move Pointer" : {
 
+    },
+    "Move the pointer to the edge of the window to show the bar." : {
+      "comment" : "Caption under the Hide bar setting in Settings › Appearance › Window, and its Settings search description. It tells how to bring the Minimal window’s bar back after it has gone: the pointer at the window edge where the bar floats. Imperative with a final full stop."
     },
     "Move the video into Picture in Picture and back." : {
       "comment" : "Caption for the Picture in Picture tool in assistant settings."
@@ -5316,9 +5319,6 @@
     "Scroll page" : {
 
     },
-    "Scroll up or point at the edge to bring it back." : {
-      "comment" : "Caption of the Hide the bar while scrolling switch: how the hidden Minimal bar comes back."
-    },
     "search" : {
       "comment" : "Hint word printed beside a ↩ key cap under the address field, reading “↩ search”, shown when what is typed is not an address: pressing Return searches the web for it. One lowercase verb, tiny type."
     },
@@ -5480,6 +5480,66 @@
     },
     "Settings you changed for this website." : {
 
+    },
+    "settings.minimalBarHide.fiveSeconds" : {
+      "comment" : "Option in the Hide bar pop-up menu in Settings › Appearance › Window: the Minimal window’s floating bar slides away after it has gone unused for 5 seconds. Sentence case, short.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "After 5 seconds"
+          }
+        }
+      }
+    },
+    "settings.minimalBarHide.never" : {
+      "comment" : "Option in the Hide bar pop-up menu in Settings › Appearance › Window: the Minimal window’s floating bar always stays on screen. Sentence case, one short word.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Never"
+          }
+        }
+      }
+    },
+    "settings.minimalBarHide.tenSeconds" : {
+      "comment" : "Option in the Hide bar pop-up menu in Settings › Appearance › Window: the Minimal window’s floating bar slides away after it has gone unused for 10 seconds. Sentence case, short.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "After 10 seconds"
+          }
+        }
+      }
+    },
+    "settings.minimalBarHide.thirtySeconds" : {
+      "comment" : "Option in the Hide bar pop-up menu in Settings › Appearance › Window: the Minimal window’s floating bar slides away after it has gone unused for 30 seconds. Sentence case, short.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "After 30 seconds"
+          }
+        }
+      }
+    },
+    "settings.minimalBarHide.whileScrolling" : {
+      "comment" : "Option in the Hide bar pop-up menu in Settings › Appearance › Window: the Minimal window’s floating bar slides away while the page scrolls down and comes back when it scrolls up. This is the default. Sentence case, short.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "While scrolling"
+          }
+        }
+      }
     },
     "Settings…" : {
       "comment" : "Menu bar command in the application menu that opens the Settings window, shortcut ⌘,. Title Case with a real ellipsis. Use Apple’s own wording for the system Settings command."
@@ -6142,9 +6202,6 @@
     },
     "The list shows the known tracker domains this page refers to. A request that is stopped before it loads can be missing." : {
 
-    },
-    "The Minimal window’s bar slides away while the page scrolls down." : {
-      "comment" : "Search result description in Settings for the Hide the bar while scrolling switch."
     },
     "The model couldn’t group the tabs. Try again." : {
       "comment" : "Message shown when the Organize Tabs command asked the language model to sort the open tabs into folders and the reply could not be used. The model is the AI; try again is addressed to the person. Curly apostrophe."
