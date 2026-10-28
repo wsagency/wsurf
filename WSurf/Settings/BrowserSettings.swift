@@ -94,7 +94,8 @@ final class BrowserSettings {
         appDefaults.string(forKey: Key.windowStyle).flatMap(BrowserWindowStyle.init(rawValue:)) ?? .standard
     @ObservationIgnored lazy var storedMinimalBarEdge: MinimalBarEdge? =
         appDefaults.string(forKey: Key.minimalBarEdge).flatMap(MinimalBarEdge.init(rawValue:)) ?? .bottom
-    @ObservationIgnored lazy var storedHidesMinimalBar: Bool? = appDefaults.object(forKey: Key.minimalBarAutoHide) as? Bool ?? true
+    @ObservationIgnored lazy var storedMinimalBarHiding: MinimalBarHiding? =
+        MinimalBarHiding(stored: appDefaults.object(forKey: Key.minimalBarAutoHide))
     @ObservationIgnored lazy var storedKeepsMinimalSidebarOpen: Bool? =
         appDefaults.object(forKey: Key.minimalSidebarPinned) as? Bool ?? false
 

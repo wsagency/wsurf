@@ -189,7 +189,7 @@ struct MinimalBarScrollTests {
         window.orderFront(nil)
         var failure: (any Error)?
         do {
-            #expect(BrowserSettings.application.hidesMinimalBar, "on by default")
+            #expect(BrowserSettings.application.minimalBarHiding == .whileScrolling, "the default")
             let tab = browser.newTab(url: url)
             let page = tab.page
             try #require(await waitUntil { page.window === window && page.title == "Long" && !page.isLoading })

@@ -13,6 +13,10 @@ struct AppearanceWindowSection: View {
         .init(value: $0, label: $0.label)
     }
 
+    private static let hidingChoices: [SettingsMenu<MinimalBarHiding>.Option] = MinimalBarHiding.allCases.map {
+        .init(value: $0, label: String(localized: $0.label))
+    }
+
     var body: some View {
         SettingsSection(title: "Window", symbol: "macwindow") {
             DetailRow(
@@ -45,10 +49,10 @@ struct AppearanceWindowSection: View {
 
                 RowSeparator()
                 DetailRow(
-                    title: "Hide the bar while scrolling",
-                    caption: "Scroll up or point at the edge to bring it back."
+                    title: "Hide bar",
+                    caption: "Move the pointer to the edge of the window to show the bar."
                 ) {
-                    SettingsToggle($settings.hidesMinimalBar)
+                    SettingsMenu(options: Self.hidingChoices, selection: $settings.minimalBarHiding)
                 }
                 .settingsAnchor("appearance.minimalBarAutoHide")
             }

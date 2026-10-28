@@ -122,7 +122,32 @@ struct WindowStyleSettingsTests {
         try withSettings { settings, _ in
             #expect(settings.windowStyle == .standard)
             #expect(settings.minimalBarEdge == .bottom)
-            #expect(settings.hidesMinimalBar, "the bar floats over the end of the page, so it gets out of the way by default")
+            #expect(settings.minimalBarHiding == .whileScrolling,
+                    "the bar floats over the end of the page, so it gets out of the way by default")
+        }
+    }
+
+    @Test func theHideBarChoiceSurvivesARestartAndIsReadFromTheSwitchItReplaced() throws {
+        try withSettings { settings, defaults in
+            for choice in MinimalBarHiding.allCases {
+                settings.minimalBarHiding = choice
+                #expect(defaults.string(forKey: BrowserSettings.Key.minimalBarAutoHide) == choice.rawValue)
+                #expect(BrowserSettings(defaults: defaults, appliesAppearanceGlobally: false).minimalBarHiding == choice)
+            }
+        }
+        // The key held a Bool until 0.1.16: on hid the bar while scrolling, off kept it. Nothing stored, or a value no
+        // choice names, stays the default.
+        for (stored, expected) in [(true as Any, MinimalBarHiding.whileScrolling), (false, .never), ("sometimes", .whileScrolling)] {
+            try withSettings { _, defaults in
+                defaults.set(stored, forKey: BrowserSettings.Key.minimalBarAutoHide)
+                #expect(BrowserSettings(defaults: defaults, appliesAppearanceGlobally: false).minimalBarHiding == expected,
+                        "\(stored)")
+            }
+        }
+        try withSettings { _, defaults in
+            defaults.removeObject(forKey: BrowserSettings.Key.minimalBarAutoHide)
+            #expect(BrowserSettings(defaults: defaults, appliesAppearanceGlobally: false).minimalBarHiding == .whileScrolling)
+            #expect(defaults.object(forKey: BrowserSettings.Key.minimalBarAutoHide) == nil, "reading the default writes nothing")
         }
     }
 
@@ -131,16 +156,17 @@ struct WindowStyleSettingsTests {
             let profile = BrowserSettings(defaults: defaults, appliesAppearanceGlobally: false, application: settings)
             profile.windowStyle = .minimal
             profile.minimalBarEdge = .top
-            profile.hidesMinimalBar = false
-            #expect(settings.windowStyle == .minimal && settings.minimalBarEdge == .top && !settings.hidesMinimalBar)
+            profile.minimalBarHiding = .tenSeconds
+            #expect(settings.windowStyle == .minimal && settings.minimalBarEdge == .top && settings.minimalBarHiding == .tenSeconds)
             #expect(defaults.string(forKey: BrowserSettings.Key.windowStyle) == "minimal")
             #expect(defaults.string(forKey: BrowserSettings.Key.minimalBarEdge) == "top")
 
             let reopened = BrowserSettings(defaults: defaults, appliesAppearanceGlobally: false)
-            #expect(reopened.windowStyle == .minimal && reopened.minimalBarEdge == .top && !reopened.hidesMinimalBar)
+            #expect(reopened.windowStyle == .minimal && reopened.minimalBarEdge == .top && reopened.minimalBarHiding == .tenSeconds)
 
             settings.resetToDefaults()
-            #expect(settings.windowStyle == .standard && settings.minimalBarEdge == .bottom && settings.hidesMinimalBar)
+            #expect(settings.windowStyle == .standard && settings.minimalBarEdge == .bottom
+                && settings.minimalBarHiding == .whileScrolling)
         }
     }
 
@@ -181,11 +207,26 @@ struct WindowStyleSettingsTests {
         for (query, id) in [
             ("minimal", "appearance.window"), ("window style", "appearance.window"),
             ("bar position", "appearance.minimalBar"), ("auto hide", "appearance.minimalBarAutoHide"),
+            ("hide bar", "appearance.minimalBarAutoHide"), ("timer", "appearance.minimalBarAutoHide"),
+            ("inactivity", "appearance.minimalBarAutoHide"), ("always show", "appearance.minimalBarAutoHide"),
         ] {
             #expect(SettingsIndex.search(query).contains { $0.id == id }, "\(query)")
         }
         #expect(SettingsIndex.all.filter { $0.id.hasPrefix("appearance.minimal") || $0.id == "appearance.window" }
             .allSatisfy { $0.category == .appearance })
+    }
+
+    /// The Minimal window draws its tab list at full width whatever `SidebarLayout.style` is (`BrowserView`), so the switch has
+    /// no effect there: the Settings row is dimmed for it and says why, and search still reaches it.
+    @Test func theIconsOnlySwitchBelongsToTheStandardWindowAlone() throws {
+        #expect(BrowserWindowStyle.standard.offersIconsOnlySidebar)
+        #expect(!BrowserWindowStyle.minimal.offersIconsOnlySidebar)
+
+        let entry = try #require(SettingsIndex.all.first { $0.id == "appearance.sidebarStyle" })
+        #expect(entry.searchableDetail.contains("Minimal window"))
+        for query in ["icons only", "tab titles", "narrow"] {
+            #expect(SettingsIndex.search(query).contains { $0.id == "appearance.sidebarStyle" }, "\(query)")
+        }
     }
 
     @Test func searchFindsTheFullAddressRowInGeneral() throws {
