@@ -147,14 +147,28 @@ nonisolated final class CredentialListPerformanceTests: XCTestCase, @unchecked S
 
     /// The same layout under XCTest's metrics, which `Tools/check-performance.sh` holds to a budget. Every pass gets its own loaded
     /// model: closing a page forgets what its model showed, as leaving the page does.
+    ///
+    /// An unmeasured warm-up comes first: a few more layouts than the measured block makes, then a half second for the main run loop.
+    /// A closed window and its view graph are released when the run loop turns, which the measured block, being synchronous, never
+    /// lets it do. So in the first run in a test host every pass took new memory (about 14 MB each, the first 20) and the memory
+    /// budget's median read 4 to 6 MB, over 4096 kB, while a second run in the same host, reusing what the first returned, read
+    /// 0.1 to 0.2 MB. The warm-up takes that memory and the run loop gives it back, so the measured block, which is the same pass
+    /// as before, judges the repeated work and not the host's first growth.
     @MainActor
     func testLayingOutThreeThousandCredentials() async throws {
         try await withLargeVault { profile, vault in
             let options = XCTMeasureOptions.budgeted
+            let warmUps = options.iterationCount + 2
             var models: [CredentialSettingsModel] = []
-            for _ in 0..<(options.iterationCount + 3) {
+            for _ in 0..<(options.iterationCount + 3 + warmUps) {
                 try await models.append(loadedModel(profile, vault))
             }
+            for _ in 0..<warmUps {
+                let (host, window) = Self.mount(Self.page(models.removeLast()))
+                Self.settle(host)
+                window.close()
+            }
+            try await Task.sleep(for: .milliseconds(500))
             measure(metrics: [XCTClockMetric(), XCTMemoryMetric()], options: options) {
                 let (host, window) = Self.mount(Self.page(models.removeLast()))
                 Self.settle(host)
