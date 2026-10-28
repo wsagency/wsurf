@@ -98,6 +98,44 @@ nonisolated final class SidebarPerformanceTests: XCTestCase, @unchecked Sendable
         }
     }
 
+    /// A background tab opened and closed three times over a sidebar of 1,000 tabs in 25 open folders that is on screen, drawn after
+    /// each. The new row is far below the rows that are drawn, so no drawn row has changed and none should have to read every tab
+    /// to draw again.
+    func testOpeningAndClosingBackgroundTabsOverAThousandRowSidebar() {
+        MainActor.assumeIsolated {
+            let rig = Rig(pages: 1_000, folders: 25, everyRow: false)
+            let count = rig.browser.tabs.count
+            measure(metrics: [XCTClockMetric(), XCTMemoryMetric()], options: .budgeted) {
+                for _ in 0..<3 {
+                    let tab = rig.browser.newTab(url: nil, activate: false)
+                    rig.draw()
+                    rig.browser.close(tab)
+                    rig.draw()
+                }
+            }
+            XCTAssertEqual(rig.browser.tabs.count, count, "every tab that a pass opened was closed")
+            rig.close()
+        }
+    }
+
+    /// The Command key pressed and released five times over the same sidebar, drawn after each. A row changes with the key only
+    /// while it is hovered, so no other row needs to draw again.
+    func testPressingCommandOverAThousandRowSidebar() {
+        MainActor.assumeIsolated {
+            let rig = Rig(pages: 1_000, folders: 25, everyRow: false)
+            measure(metrics: [XCTClockMetric(), XCTMemoryMetric()], options: .budgeted) {
+                for _ in 0..<5 {
+                    rig.coordinator.linkModifiers = [.command]
+                    rig.draw()
+                    rig.coordinator.linkModifiers = []
+                    rig.draw()
+                }
+            }
+            XCTAssertTrue(rig.coordinator.linkModifiers.isEmpty)
+            rig.close()
+        }
+    }
+
     /// One row lifted and moved sideways in 30 steps over a sidebar of 1,000 tabs in 25 open folders, drawn after every step, then
     /// put down where it was. The row keeps its place, so a step moves only the chip under the pointer.
     func testDraggingARowInPlaceOverAThousandRowSidebar() {

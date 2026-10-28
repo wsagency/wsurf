@@ -1,9 +1,11 @@
 // SPDX-FileCopyrightText: 2026 WSurf Agency
 // SPDX-License-Identifier: Apache-2.0
 
+import AppKit
 import CoreGraphics
 import Foundation
 import Observation
+import SwiftUI
 import Testing
 
 @testable import WSurf
@@ -86,5 +88,48 @@ struct SidebarInvalidationTests {
             #expect(invalidates({ _ = model.translation }, by: { model.translation = CGSize(width: width + 1, height: 0) }))
         }
         #expect(invalidates({ _ = model.drag }, by: { model.drag?.landing = true }), "landing is a change of the drag")
+    }
+
+    /// A row builds its context menu with its body, so whatever the menu reads is read by the row. A row must not read the other
+    /// tabs (Remove Other Tabs), the splits (Exit Split) or the window (Move to Micro Window): they would draw every row that is
+    /// on screen again whenever a tab opens, closes or is pinned.
+    @Test func aRowReadsNothingAboutTheOtherTabs() {
+        let coordinator = AppCoordinator(browser: BrowserModel(database: .temporary()))
+        let browser = coordinator.browser
+        defer { browser.cancelPendingSave() }
+        let tab = browser.addPage("https://row.example/")
+        let other = browser.addPage("https://other.example/")
+        // The current tab has its own row, which does change when another tab opens; the row under test is not that one.
+        browser.activeTabID = browser.addPage("https://current.example/").id
+        let context = SidebarRowContext(
+            browser: browser,
+            coordinator: coordinator,
+            selection: browser.sidebarSelection,
+            drag: nil,
+            pinsCarried: false,
+            space: "invalidation",
+            frames: SidebarFrames()
+        )
+        let row = SidebarTabRow(tab: tab, depth: 0, context: context)
+        let read = { _ = row.body }
+
+        #expect(invalidates(read) { tab.title = "Renamed" }, "the row does read its own tab")
+        #expect(!invalidates(read) { _ = browser.newTab(url: nil, activate: false) }, "a tab opens")
+        #expect(!invalidates(read) { other.pinnedURL = URL(string: "https://other.example/") }, "another tab is pinned")
+        #expect(!invalidates(read) { browser.close(other) }, "another tab closes")
+    }
+
+    /// The button on the right of a row follows the Command key (it unloads instead of closing). One that is not shown must not read
+    /// the key: every row that is drawn has one, and a press would draw them all.
+    @Test func aCloseButtonThatIsNotShownDoesNotFollowTheCommandKey() {
+        let coordinator = AppCoordinator(browser: BrowserModel(database: .temporary()))
+        defer { coordinator.browser.cancelPendingSave() }
+        let tab = coordinator.browser.addPage("https://row.example/")
+        let hidden = SidebarTabActionButton(tab: tab, coordinator: coordinator, followsCommandKey: false)
+        let shown = SidebarTabActionButton(tab: tab, coordinator: coordinator)
+
+        #expect(invalidates({ _ = shown.body }, by: { coordinator.linkModifiers = [.command] }), "a shown button follows the key")
+        #expect(!invalidates({ _ = hidden.body }, by: { coordinator.linkModifiers = [] }), "the key comes up")
+        #expect(!invalidates({ _ = hidden.body }, by: { coordinator.linkModifiers = [.command] }), "the key goes down")
     }
 }

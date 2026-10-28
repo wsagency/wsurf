@@ -398,6 +398,35 @@ check_average \
   '4096' \
   'Sidebar click memory growth' \
   'kB'
+# 0.1.17, a row no longer reads every tab or the Command key. Pro, Debug, a sidebar of 1,000 tabs in 25 open folders with its first
+# rows drawn, the old code's run and the new code's an hour apart (load average 20 to 130). Three background tabs opened and closed:
+# 1.9498 s before, 0.2411 s and 0.2557 s after (alone, in the whole plan); the budget is twice the new mean. Command pressed and released
+# five times: 0.1274 s before; after, five passes of six take 0.0003 s and one takes 0.06 to 0.13 s (cause not found), so the mean is
+# 0.010 s to 0.026 s. The budget is half the old code's time: twice the new mean would be one stalled pass.
+check_average \
+  'SidebarPerformanceTests/testOpeningAndClosingBackgroundTabsOverAThousandRowSidebar()' \
+  'com.apple.dt.XCTMetric_Clock.time.monotonic' \
+  '0.510' \
+  'Three background tabs opened and closed over a sidebar of 1,000 tabs' \
+  's'
+check_average \
+  'SidebarPerformanceTests/testOpeningAndClosingBackgroundTabsOverAThousandRowSidebar()' \
+  'com.apple.dt.XCTMetric_Memory.physical' \
+  '4096' \
+  'Background tab churn memory growth' \
+  'kB'
+check_average \
+  'SidebarPerformanceTests/testPressingCommandOverAThousandRowSidebar()' \
+  'com.apple.dt.XCTMetric_Clock.time.monotonic' \
+  '0.060' \
+  'Command pressed and released five times over a sidebar of 1,000 tabs' \
+  's'
+check_average \
+  'SidebarPerformanceTests/testPressingCommandOverAThousandRowSidebar()' \
+  'com.apple.dt.XCTMetric_Memory.physical' \
+  '4096' \
+  'Command key memory growth' \
+  'kB'
 # A row dragged in place in 30 steps over 1,000 tabs: 0.3302 s (before 4.9937 s).
 check_average \
   'SidebarPerformanceTests/testDraggingARowInPlaceOverAThousandRowSidebar()' \
