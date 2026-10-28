@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Kavoye
 // SPDX-License-Identifier: Apache-2.0
 
+import AppKit
 import CCef
 import Foundation
 import WSurfVault
@@ -10,6 +11,77 @@ private struct ChromiumOriginCatalog: Codable {
     /// The top-level sites each origin was loaded under as a cross-site frame. Chromium keeps such a frame's storage under
     /// that site, where clearing the origin does not reach. Absent in files from before 0.1.16.
     var frames: [String: Set<String>]?
+}
+
+/// The origin catalog of every regular profile, read from its `origins.json` once and then kept. `recordOrigin` runs on the main
+/// thread for every frame of every page; reading, decoding, encoding and rewriting the file there cost 4.5 ms with 2,000 sites
+/// listed. `dirty` holds the profiles whose catalog is newer than its file.
+private final class ChromiumOriginStore {
+    private var catalogs: [UUID: ChromiumOriginCatalog] = [:]
+    /// When each catalog's file was last written (its modification date, as read).
+    private var written: [UUID: Date] = [:]
+    private(set) var dirty: Set<UUID> = []
+    var writer: Task<Void, Never>?
+    private var terminationObserver: NSObjectProtocol?
+
+    init() {
+        // AppKit posts this on the main thread and the observer runs before the post returns, as for the deferred settings
+        // writes, so what waits is written before the app quits.
+        terminationObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.willTerminateNotification, object: nil, queue: nil
+        ) { _ in
+            MainActor.assumeIsolated { ChromiumRuntime.shared.flushOriginCatalogs() }
+        }
+    }
+
+    func catalog(_ id: UUID, file: URL) -> ChromiumOriginCatalog {
+        if let kept = catalogs[id] {
+            return kept
+        }
+        let catalog = (try? Data(contentsOf: file)).flatMap { try? JSONDecoder().decode(ChromiumOriginCatalog.self, from: $0) }
+            ?? ChromiumOriginCatalog()
+        catalogs[id] = catalog
+        written[id] = (try? file.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast
+        return catalog
+    }
+
+    /// Notes a navigation in a catalog that `catalog(_:file:)` has read, in place. The date is always the latest, which
+    /// `clearData` relies on to keep a site that loaded again while it ran. True when the file now needs writing: the origin or
+    /// the frame's top-level site is new, or the file is more than a day old, so the dates in it stay about right.
+    func note(origin: String, frameSite: String?, in id: UUID, at now: Date) -> Bool {
+        guard catalogs[id] != nil else { return false }
+        var changed = catalogs[id]?.origins.updateValue(now, forKey: origin) == nil
+        if let frameSite, catalogs[id]?.frames?[origin]?.contains(frameSite) != true {
+            if catalogs[id]?.frames == nil {
+                catalogs[id]?.frames = [:]
+            }
+            catalogs[id]?.frames?[origin, default: []].insert(frameSite)
+            changed = true
+        }
+        changed = changed || now.timeIntervalSince(written[id] ?? .distantPast) > 86_400
+        if changed {
+            dirty.insert(id)
+        }
+        return changed
+    }
+
+    func replace(_ catalog: ChromiumOriginCatalog, for id: UUID) {
+        catalogs[id] = catalog
+    }
+
+    /// The catalog to write, marked as written.
+    func takeForWriting(_ id: UUID, at now: Date) -> ChromiumOriginCatalog? {
+        guard let catalog = catalogs[id] else { return nil }
+        dirty.remove(id)
+        written[id] = now
+        return catalog
+    }
+
+    func forget(_ id: UUID) {
+        catalogs[id] = nil
+        written[id] = nil
+        dirty.remove(id)
+    }
 }
 
 private nonisolated final class ChromiumCompletion {
@@ -55,28 +127,59 @@ private nonisolated final class ChromiumDeleteCookiesCompletion {
 }
 
 extension ChromiumRuntime {
+    private static let originStore = ChromiumOriginStore()
+    /// How long a new origin waits before the catalog is written, so a page that loads a dozen frames writes once. A crash in
+    /// that time loses those records; the next visit makes them again.
+    private static let originWriteDelay: Duration = .seconds(1)
+
+    private func originsFile(profileID: UUID) -> URL {
+        catalogDirectory(profileID: profileID).appendingPathComponent("origins.json")
+    }
+
     private func originCatalog(for context: BrowserProfileContext) -> ChromiumOriginCatalog {
         if context.profile.isPrivate {
             return ChromiumOriginCatalog(origins: privateOrigins[context.contextID] ?? [:])
         }
-        let url = catalogDirectory(profileID: context.profile.id).appendingPathComponent("origins.json")
-        guard let data = try? Data(contentsOf: url),
-              let catalog = try? JSONDecoder().decode(ChromiumOriginCatalog.self, from: data) else {
-            return ChromiumOriginCatalog()
-        }
-        return catalog
+        return Self.originStore.catalog(context.profile.id, file: originsFile(profileID: context.profile.id))
     }
 
+    /// Keeps the catalog and, for a regular profile, writes it now. The paths that clear or remove sites call this and stay
+    /// durable; `recordOrigin` writes later.
     private func saveOriginCatalog(_ catalog: ChromiumOriginCatalog, for context: BrowserProfileContext) {
         guard !context.privateSessionEnded else { return }
         if context.profile.isPrivate {
             privateOrigins[context.contextID] = catalog.origins
             return
         }
-        let directory = catalogDirectory(profileID: context.profile.id)
+        Self.originStore.replace(catalog, for: context.profile.id)
+        writeOriginCatalog(profileID: context.profile.id)
+    }
+
+    private func writeOriginCatalog(profileID: UUID) {
+        guard let catalog = Self.originStore.takeForWriting(profileID, at: Date()) else { return }
+        let directory = catalogDirectory(profileID: profileID)
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         guard let data = try? JSONEncoder().encode(catalog) else { return }
-        try? data.write(to: directory.appendingPathComponent("origins.json"), options: .atomic)
+        try? data.write(to: originsFile(profileID: profileID), options: .atomic)
+    }
+
+    private func scheduleOriginWrite() {
+        let store = Self.originStore
+        guard store.writer == nil else { return }
+        store.writer = Task { [self] in
+            guard (try? await Task.sleep(for: Self.originWriteDelay)) != nil else { return }
+            flushOriginCatalogs()
+        }
+    }
+
+    /// Writes every catalog that is newer than its file: after `originWriteDelay`, and when the app quits.
+    func flushOriginCatalogs() {
+        let store = Self.originStore
+        store.writer?.cancel()
+        store.writer = nil
+        for id in store.dirty {
+            writeOriginCatalog(profileID: id)
+        }
     }
 
     /// Whether this profile has a site that Chromium recorded data for. Chromium's own files in a regular profile's
@@ -102,17 +205,27 @@ extension ChromiumRuntime {
     }
 
     /// Records only navigated HTTP(S) origins, and for a frame the top-level site its storage is kept under (`topLevel` is
-    /// the page's address). Private contexts stay in memory and are discarded with the private session.
+    /// the page's address). Private contexts stay in memory and are discarded with the private session. A regular profile's
+    /// catalog is updated in memory and written once what is new has waited `originWriteDelay`; a site and frame already
+    /// listed cost a lookup.
     func recordOrigin(_ url: URL, under topLevel: URL? = nil, context: BrowserProfileContext) {
         guard !context.privateSessionEnded, ["http", "https"].contains(url.scheme?.lowercased()) else { return }
-        var catalog = originCatalog(for: context)
-        catalog.origins[url.originString] = Date()
-        if let site = topLevel.flatMap(Self.partitionSite), site != Self.partitionSite(of: url) {
-            var frames = catalog.frames ?? [:]
-            frames[url.originString, default: []].insert(site)
-            catalog.frames = frames
+        let origin = url.originString
+        guard !context.profile.isPrivate else {
+            var catalog = originCatalog(for: context)
+            catalog.origins[origin] = Date()
+            saveOriginCatalog(catalog, for: context)
+            return
         }
-        saveOriginCatalog(catalog, for: context)
+        var frameSite: String?
+        if let site = topLevel.flatMap(Self.partitionSite), site != Self.partitionSite(of: url) {
+            frameSite = site
+        }
+        let id = context.profile.id
+        _ = Self.originStore.catalog(id, file: originsFile(profileID: id))
+        if Self.originStore.note(origin: origin, frameSite: frameSite, in: id, at: Date()) {
+            scheduleOriginWrite()
+        }
     }
 
     /// The site Chromium partitions a cross-site frame's storage by: scheme and registrable domain (else host), no port.
@@ -132,6 +245,8 @@ extension ChromiumRuntime {
     func erase(profile: Profile) async throws {
         guard !profile.isOriginal, !profile.isPrivate else { return }
         await releaseContexts(profileID: profile.id)
+        // Nothing waits to be written about this profile once its files go.
+        Self.originStore.forget(profile.id)
         // Chromium writes some of a profile's files (TransportSecurity, Network Persistent State) back while it lets the
         // profile go, after its last context is gone, so the profile stays marked and `removeErasedProfiles` takes what is
         // left once CEF has stopped: at quit, or at the next launch after a crash.
@@ -217,19 +332,12 @@ extension ChromiumRuntime {
 
     }
 
+    /// The sites WSurf recorded Chromium data for, from the catalog alone: no browser is opened, and Chromium need not be running.
     func websiteDataEntries(context: BrowserProfileContext) async throws -> [WebsiteData.Entry] {
         guard hasStoredData(for: context) else { return [] }
-        let catalog = originCatalog(for: context)
-        var entries: [WebsiteData.Entry] = []
-        for origin in catalog.origins.keys.sorted() {
-            _ = try await command(
-                context: context,
-                method: "Storage.getUsageAndQuota",
-                params: ["origin": origin]
-            )
-            entries.append(.init(displayName: origin, types: WebsiteData.allTypes, engine: .chromium))
+        return originCatalog(for: context).origins.keys.sorted().map {
+            WebsiteData.Entry(displayName: $0, types: WebsiteData.allTypes, engine: .chromium)
         }
-        return entries
     }
 
     func removeWebsiteData(names: Set<String>, context: BrowserProfileContext) async throws {
