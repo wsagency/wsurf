@@ -267,10 +267,11 @@ open WSurf.xcodeproj
 Select the `WSurf` target, set your team in **Signing & Capabilities**, then
 build and run the `WSurf` scheme. Dependencies resolve automatically.
 
-The pinned CefSwift package supplies Chromium. `Tools/embed-chromium.sh` embeds
-the CEF framework, helper apps, and licenses and signs them with the build's
-identity. A production distribution requires proper signing; an ad-hoc debug
-build is not a verified release.
+The vendored CefSwift package (`Packages/CefSwift`, with small patches listed in its
+`WSURF-PATCHES.md`) supplies Chromium. `Tools/embed-chromium.sh` downloads the CEF
+framework once into the package's gitignored `.cef/` folder, then embeds it with the
+helper apps and licenses and signs them with the build's identity. A production
+distribution requires proper signing; an ad-hoc debug build is not a verified release.
 
 WSurf intentionally omits Apple's managed browser passkey entitlement. The app
 still needs a Developer ID profile authorizing its associated-domains,

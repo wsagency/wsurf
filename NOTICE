@@ -39,6 +39,14 @@ the Gruvbox entry is Tinted Theming's license and credits the palette's
 original authors as that project does. Names are used only to identify the
 palettes; WSurf is not endorsed by their authors.
 
+The Chromium bridge CefSwift, https://github.com/Rajaniraiyn/CefSwift at revision
+59cad64e124b8efdb6b2ee811963097bb6e689e8 (Copyright 2026 Rajaniraiyn, MIT License),
+is vendored in Packages/CefSwift. The Git history holds an unmodified copy as its own
+commit, and Packages/CefSwift/WSURF-PATCHES.md lists each WSurf patch (a change to the
+Chromium message pump). The package keeps its LICENSE, the BSD 3-Clause license of the
+Chromium Embedded Framework headers (Packages/CefSwift/Sources/CCef/LICENSE.CEF.txt)
+and its source headers. Its license text is also in WSurf/Support/Acknowledgements.json.
+
 Apple's iCloud Passwords extension is a separately licensed product. Its
 resources, the Apple credential vault, private signing keys, and provisioning
 profiles are not redistributed in this repository. Dependency/provider logos

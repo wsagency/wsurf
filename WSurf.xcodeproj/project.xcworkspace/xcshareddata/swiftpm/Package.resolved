@@ -10,14 +10,6 @@
       }
     },
     {
-      "identity" : "cefswift",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/Rajaniraiyn/CefSwift.git",
-      "state" : {
-        "revision" : "59cad64e124b8efdb6b2ee811963097bb6e689e8"
-      }
-    },
-    {
       "identity" : "eventsource",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/mattt/EventSource",

@@ -167,6 +167,8 @@ final class ChromiumPage: NSView {
         raw = created
         browserID = created.pointee.get_identifier?(created) ?? -1
         ChromiumRuntime.shared.register(self)
+        // CefKit keeps its message-pump safety net while a browser is alive, and stops it when none is.
+        CefRuntime.shared.externalBrowserDidOpen()
         do {
             withHost { $0.pointee.set_accessibility_state?($0, STATE_ENABLED) }
             guard let attached = try withHost({ host in try devTools.attach(to: host) }) else {
@@ -869,6 +871,7 @@ final class ChromiumPage: NSView {
         client = nil
         if let raw {
             ChromiumInterop.release(UnsafeMutableRawPointer(raw))
+            CefRuntime.shared.externalBrowserDidClose()
         }
         raw = nil
         ChromiumRuntime.shared.unregister(self)
