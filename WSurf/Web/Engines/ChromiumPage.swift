@@ -65,7 +65,16 @@ final class ChromiumPage: NSView {
     var hasUserAgentOverride = false
     private var zoom: CGFloat = 1
     var navigationDecision: ((URLRequest, Bool, Bool, Bool, WKNavigationType, URL?, BrowserFrame?) -> Bool)?
+    /// A link the person opened in a new tab (middle-click, Command-click): a plain tab, with no opener.
     var openWindow: ((URL, Bool, URL?, BrowserFrame?) -> Void)?
+    /// A pop-up the page opened (`window.open`, `target=_blank`): address, gesture, source, and whether it opens in the background.
+    /// Returns the page to host the browser CEF makes for it, which keeps `window.opener`; nil cancels it.
+    var openPopup: ((URL, Bool, URL?, BrowserFrame?, Bool) -> ChromiumPage?)?
+    /// This page's pop-ups CEF has not made yet, by pop-up ID: held, so a view CEF may still make a browser in stays alive.
+    var pendingPopups: [Int32: ChromiumPage] = [:]
+    /// While CEF makes this pop-up page's browser: its address, and the end of its opener's hold on it.
+    private var popupInCreation: (address: URL, release: @MainActor () -> Void)?
+    private var popupWaiters: [CheckedContinuation<Void, Never>] = []
     /// How a link chosen from the context menu is opened.
     nonisolated enum LinkOpening {
         case tab, window, privateWindow
@@ -86,8 +95,10 @@ final class ChromiumPage: NSView {
     var downloadDecision: ((CefDownload, String, @escaping (CefDownloadDecision) -> Void) -> Void)?
     var downloadProgress: ((CefDownload) -> Void)?
 
-    init(context: BrowserProfileContext) {
+    /// `popup`: a pop-up CEF is about to make here (`hostPopup`); until then the page makes no browser of its own, even when shown.
+    init(context: BrowserProfileContext, popup: URL? = nil) {
         self.context = context
+        popupInCreation = popup.map { ($0, {}) }
         super.init(frame: NSRect(x: 0, y: 0, width: 800, height: 600))
         autoresizingMask = [.width, .height]
     }
@@ -110,7 +121,7 @@ final class ChromiumPage: NSView {
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        guard window != nil, raw == nil, !closing, !isClosed else { return }
+        guard window != nil, raw == nil, !awaitsPopup, !closing, !isClosed else { return }
         do {
             defer {
                 for waiter in attachmentWaiters {
@@ -146,10 +157,7 @@ final class ChromiumPage: NSView {
         }
         var info = cef_window_info_t()
         info.size = MemoryLayout<cef_window_info_t>.stride
-        info.parent_view = Unmanaged.passUnretained(self).toOpaque()
-        info.bounds = cef_rect_t(x: 0, y: 0,
-            width: Int32(max(1, bounds.width.rounded())), height: Int32(max(1, bounds.height.rounded())))
-        info.runtime_style = CEF_RUNTIME_STYLE_ALLOY
+        embed(in: &info)
         var settings = cef_browser_settings_t()
         settings.size = MemoryLayout<cef_browser_settings_t>.stride
         Self.configureBrowserSettings(&settings, settings: context.settings)
@@ -164,8 +172,21 @@ final class ChromiumPage: NSView {
             throw ChromiumError.unavailable(String(localized: "Chromium could not open this tab."))
         }
         self.client = client
-        raw = created
-        browserID = created.pointee.get_identifier?(created) ?? -1
+        try adopt(created)
+    }
+
+    /// A browser CEF makes goes in this view, at its size.
+    private func embed(in info: inout cef_window_info_t) {
+        info.parent_view = Unmanaged.passUnretained(self).toOpaque()
+        info.bounds = cef_rect_t(x: 0, y: 0,
+            width: Int32(max(1, bounds.width.rounded())), height: Int32(max(1, bounds.height.rounded())))
+        info.runtime_style = CEF_RUNTIME_STYLE_ALLOY
+    }
+
+    /// Takes `browser`, whose reference is now this page's: its DevTools, then the preparation every load waits for.
+    private func adopt(_ browser: UnsafeMutablePointer<cef_browser_t>) throws {
+        raw = browser
+        browserID = browser.pointee.get_identifier?(browser) ?? -1
         ChromiumRuntime.shared.register(self)
         do {
             withHost { $0.pointee.set_accessibility_state?($0, STATE_ENABLED) }
@@ -188,6 +209,10 @@ final class ChromiumPage: NSView {
 
     func ensureReady() async throws {
         guard !isClosed, !closing else { throw ChromiumError.closed }
+        if raw == nil, awaitsPopup {
+            await withCheckedContinuation { popupWaiters.append($0) }
+            guard !isClosed, !closing else { throw ChromiumError.closed }
+        }
         if raw == nil {
             try await ChromiumRuntime.shared.prepareContext(for: context)
             guard !isClosed, !closing else { throw ChromiumError.closed }
@@ -865,8 +890,12 @@ final class ChromiumPage: NSView {
         pendingLoad?.cancel()
         preparation?.cancel()
         devTools.close()
-        client?.close()
-        client = nil
+        // A page still waiting for its pop-up keeps the client: CEF reports the browser or the abort to it.
+        if !awaitsPopup {
+            client?.close()
+            client = nil
+        }
+        endPopups()
         if let raw {
             ChromiumInterop.release(UnsafeMutableRawPointer(raw))
         }
@@ -897,19 +926,74 @@ final class ChromiumPage: NSView {
     }
 }
 
-/// Collects what `get_navigation_entries` reports.
-private final class NavigationEntryReader {
-    private(set) var total: Int?
-    private(set) var first: String?
-    private(set) var current = -1
+extension ChromiumPage {
+    /// CEF is still making this pop-up page's browser: attaching the view and `ensureReady` wait for it, and nothing makes another.
+    var awaitsPopup: Bool {
+        popupInCreation != nil
+    }
 
-    func record(url: String, isCurrent: Bool, index: Int, total: Int) {
-        self.total = total
-        if index == 0 {
-            first = url
+    /// Readies this pop-up page to host pop-up `id` of `opener` (`on_before_popup`): CEF makes it here, with this page's callbacks and
+    /// the opener's settings and request context (a private window's pop-up stays private). Returns the client with CEF's reference, or nil.
+    func hostPopup(id: Int32, opener: ChromiumPage, in info: inout cef_window_info_t) -> UnsafeMutablePointer<cef_client_t>? {
+        guard let reserved = popupInCreation, raw == nil, client == nil, !closing, !isClosed else { return nil }
+        let client = ChromiumClient(page: self)
+        let pointer = client.makeClient()
+        self.client = client
+        opener.pendingPopups[id] = self
+        popupInCreation = (reserved.address, { [weak opener] in opener?.pendingPopups[id] = nil })
+        embed(in: &info)
+        ChromiumInterop.retain(UnsafeMutableRawPointer(pointer))
+        return pointer
+    }
+
+    /// CEF made the pop-up's browser (`on_after_created`, whose reference stays the callback's). A page closed meanwhile closes it.
+    func adoptPopup(_ browser: UnsafeMutablePointer<cef_browser_t>) {
+        guard let creation = popupInCreation, raw == nil else { return }
+        popupInCreation = nil
+        creation.release()
+        defer { resumePopupWaiters() }
+        guard !closing, !isClosed else {
+            let host = browser.pointee.get_host?(browser)
+            host?.pointee.close_browser?(host, 1)
+            ChromiumInterop.release(host.map(UnsafeMutableRawPointer.init))
+            return
         }
-        if isCurrent {
-            current = index
+        ChromiumInterop.retain(UnsafeMutableRawPointer(browser))
+        do {
+            try adopt(browser)
+            // What WSurf sets over DevTools (the user agent); the browser settings came from the opener.
+            Task { [weak self] in
+                guard let self, (try? await applySettings(context.settings)) != nil else { return }
+                hasAppliedInitialSettings = true
+            }
+        } catch {
+            owner?.onNavigationFailed?(navigation, error)
         }
+    }
+
+    /// CEF did not make the pop-up (aborted, refused, or its opener closed first): the page loads it as a tab with no opener.
+    func popupAborted() {
+        guard let creation = popupInCreation, raw == nil else { return }
+        popupInCreation = nil
+        creation.release()
+        client?.close()
+        client = nil
+        resumePopupWaiters()
+        if !closing, !isClosed {
+            load(URLRequest(url: creation.address))
+        }
+    }
+
+    /// The page closed: nothing waits for its pop-up's browser any more, and its own pop-ups CEF has not made open without it.
+    fileprivate func endPopups() {
+        resumePopupWaiters()
+        let pending = pendingPopups.values
+        pendingPopups.removeAll()
+        pending.forEach { $0.popupAborted() }
+    }
+
+    private func resumePopupWaiters() {
+        popupWaiters.forEach { $0.resume() }
+        popupWaiters.removeAll()
     }
 }

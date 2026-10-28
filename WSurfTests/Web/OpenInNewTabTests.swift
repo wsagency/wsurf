@@ -62,7 +62,63 @@ struct OpenInNewTabTests {
         </script>
         """
 
+    /// The modes of `/verify`: what each button awaits between the click and `window.open`.
+    nonisolated static let verifyModes = ["direct", "timer", "late", "chain", "fetch", "slow"]
+
+    /// A "Verify" step: each button opens a pop-up that talks back to its opener and then closes itself, either at once or after
+    /// what payment and sign-in pages await first. `timer` waits 300 ms, `late` 1.5 s, `chain` two nested 300 ms timers, `fetch` a
+    /// request the server answers at once, `slow` one it holds for 2.5 s (`slowGate`).
+    private static let verify = """
+        <!doctype html><title>Verify</title>
+        <style>
+          body { margin: 0 }
+          .box { position: absolute; left: 20px; width: 240px; height: 30px; display: block; background: #cde }
+        </style>
+        \(verifyModes.enumerated().map { ##"<a id="v-\##($1)" class="box" style="top: \##(10 + 40 * $0)px" href="#">\##($1)</a>"## }.joined(separator: "\n"))
+        <script>
+          window.__verify = [];
+          window.__popups = {};
+          addEventListener('message', event => {
+            if (event.data?.from === 'verify-popup') __verify.push({ message: event.data.mode });
+          });
+          const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
+          const steps = {
+            direct: async () => {}, timer: () => wait(300), late: () => wait(1500),
+            chain: () => new Promise(resolve => setTimeout(() => setTimeout(resolve, 300), 300)),
+            fetch: () => fetch('/ping').then(response => response.text()), slow: () => fetch('/slow').then(response => response.text()),
+          };
+          for (const [mode, step] of Object.entries(steps)) {
+            document.getElementById('v-' + mode).addEventListener('click', async event => {
+              event.preventDefault();
+              await step();
+              const popup = window.open('/verify-popup?via=popup-' + mode + '&mode=' + mode, 'verify-' + mode, 'width=400,height=300');
+              __verify.push({ mode, opened: popup !== null });
+              if (popup) __popups[mode] = popup;
+            });
+          }
+        </script>
+        """
+
+    private static let verifyPopup = """
+        <!doctype html><title>Verify pop-up</title>
+        <script>
+          const mode = new URLSearchParams(location.search).get('mode');
+          // Whether WSurf's document-start scripts reached this first document: its passkey script replaces this function.
+          const scripts = String(window.PublicKeyCredential?.isConditionalMediationAvailable).includes('[native code]') ? 'engine' : 'wsurf';
+          document.title = 'popup:' + mode + ':' + (window.opener ? 'opener' : 'none') + ':' + scripts;
+          if (window.opener) window.opener.postMessage({ from: 'verify-popup', mode }, '*');
+          setTimeout(() => window.close(), 300);
+        </script>
+        """
+
+    /// Holds `/slow` until a test opens it.
+    private static let slowGate = ResponseGate()
+
     private static let routes: [String: HTTPFixtureServer.Response] = [
+        "/verify": .html(verify),
+        "/verify-popup": .html(verifyPopup),
+        "/ping": .html("ok"),
+        "/slow": .html("ok", gate: slowGate),
         "/": .html(opener),
         "/frame": .html(frame),
         "/popup": .html(popup),
@@ -89,7 +145,7 @@ struct OpenInNewTabTests {
         "oauth": CGPoint(x: 140, y: 185),
         "fblank": CGPoint(x: 300 + 10 + 100, y: 10 + 10 + 15),
         "fplain": CGPoint(x: 300 + 10 + 100, y: 10 + 60 + 15),
-    ]
+    ].merging(verifyModes.enumerated().map { ("v-" + $1, CGPoint(x: 140, y: 25 + 40 * $0)) }) { first, _ in first }
 
     private enum Button {
         case left, middle
@@ -151,8 +207,29 @@ struct OpenInNewTabTests {
             if let menuObserver {
                 NotificationCenter.default.removeObserver(menuObserver)
             }
-            window.contentView = nil
-            window.close()
+            for shown in [window] + tabWindows {
+                shown.contentView = nil
+                shown.close()
+            }
+        }
+
+        /// Windows that show the tabs the page opened (`showOpenedTabs`).
+        private var tabWindows: [NSWindow] = []
+        /// Every tab the page opened, in order, closed or not (`showOpenedTabs`).
+        private(set) var openedEver: [BrowserTab] = []
+
+        /// Shows each tab the page opens in a window of its own, as the browser window shows a tab a page opened: a Chromium page
+        /// starts loading only once it is shown.
+        func showOpenedTabs() {
+            browser.onTabOpened = { [weak self] tab in
+                guard let self else { return }
+                openedEver.append(tab)
+                let shown = NSWindow(contentRect: NSRect(x: 80, y: 80, width: 600, height: 400), styleMask: [.borderless], backing: .buffered, defer: false)
+                shown.isReleasedWhenClosed = false
+                shown.contentView = WebViewContainer(page: tab.page)
+                shown.orderBack(nil)
+                tabWindows.append(shown)
+            }
         }
 
         // MARK: Input
@@ -309,6 +386,11 @@ struct OpenInNewTabTests {
             try await Task.sleep(for: .milliseconds(500))
         }
 
+        func verifyReports() async throws -> [[String: Any]] {
+            let json = try await evaluate("JSON.stringify(window.__verify ?? [])") as? String ?? "[]"
+            return (try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [[String: Any]]) ?? []
+        }
+
         func messages() async throws -> [String] {
             let json = try await evaluate("JSON.stringify(window.__messages)") as? String ?? "[]"
             return (try? JSONDecoder().decode([String].self, from: Data(json.utf8))) ?? []
@@ -316,7 +398,7 @@ struct OpenInNewTabTests {
     }
 
     private func withRig(
-        _ engine: BrowserEngine, path: String = "/", opener: Opener = .plain, popups: PopupPolicy? = nil,
+        _ engine: BrowserEngine, path: String = "/", opener: Opener = .plain, popups: PopupPolicy? = nil, privately: Bool = false,
         body: (Rig) async throws -> Void
     ) async throws {
         let server = try await HTTPFixtureServer.start(routes: Self.routes)
@@ -334,6 +416,9 @@ struct OpenInNewTabTests {
             permissions.setPopups(popups, for: origin)
         }
         let browser = BrowserModel(database: .temporary(), sitePermissions: permissions)
+        if privately {
+            browser.adopt(database: .temporary(), sitePermissions: permissions, privately: true)
+        }
         let tab = browser.newTab(url: url)
         let window = NSWindow(contentRect: NSRect(x: 50, y: 50, width: 800, height: 500), styleMask: [.borderless], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
@@ -598,22 +683,149 @@ struct OpenInNewTabTests {
 
     // MARK: - A pop-up that talks to its opener
 
-    @Test func aSignInPopupKeepsItsOpenerInWebKit() async throws {
-        try await withRig(.webKit) { rig in
+    /// A sign-in pop-up reaches `window.opener`, in both engines: a Chromium tab's pop-up is the browser CEF made for it, hosted in
+    /// the new tab.
+    @Test(arguments: BrowserEngine.allCases)
+    func aSignInPopupKeepsItsOpener(engine: BrowserEngine) async throws {
+        try await withRig(engine) { rig in
+            rig.showOpenedTabs()
             try await rig.click("oauth")
-            let landed = try expectOpened(await rig.tab(via: "popup") ?? rig.opened.first, by: rig, "a sign-in pop-up")
+            let landed = try expectOpened(await waitForAnyTab(in: rig), by: rig, "a sign-in pop-up")
             try #require(await waitUntil { try await rig.messages().contains("{\"from\":\"popup\"}") }, "the pop-up reached window.opener")
-            #expect(landed.liveView?.webKit != nil)
+            #expect(landed.liveView?.engine == engine, "the pop-up stays in its opener's engine")
+            #expect(try await rig.evaluate("window.__popup !== null && !window.__popup.closed") as? Bool == true, "window.open returned the window")
+            try await rig.settle()
+            #expect(rig.opened.count == 1)
         }
     }
 
-    @Test func aSignInPopupOpensATabInChromium() async throws {
-        try await withRig(.chromium) { rig in
+    /// What a "Verify" button that opens a pop-up gets in each mode: what `window.open` returned, the tab that opened, whether the
+    /// pop-up reached its opener and could close itself, and whether the tab's pop-up badge took it instead.
+    @Test(arguments: BrowserEngine.allCases, verifyModes)
+    func aVerifyButtonOpensAPopupThatTalksToItsOpener(engine: BrowserEngine, mode: String) async throws {
+        try await withRig(engine, path: "/verify", popups: .blockAndNotify) { rig in
+            rig.showOpenedTabs()
+            if mode == "slow" {
+                Self.slowGate.close()
+            }
+            try await rig.click("v-" + mode)
+            if mode == "slow" {
+                _ = await Self.slowGate.waitForRequest()
+                try await Task.sleep(for: .seconds(2.5))
+                Self.slowGate.open()
+            }
+            let reported = await waitUntil(timeout: .seconds(10)) {
+                (try? await rig.verifyReports())?.contains { $0["mode"] as? String == mode } == true
+            }
+            let opened = rig.openedEver
+            var title = ""
+            if let popup = opened.first {
+                _ = await waitUntil(timeout: .seconds(5)) { popup.liveView?.title?.hasPrefix("popup:") == true || popup.isClosed }
+                title = popup.liveView?.title ?? ""
+            }
+            try await Task.sleep(for: .seconds(1.5))
+            let reports = try await rig.verifyReports()
+            let windowOpen = reports.first { $0["mode"] as? String == mode }?["opened"] as? Bool
+            let message = reports.contains { $0["message"] as? String == mode }
+            let closed = opened.first.map { !rig.browser.tabs.contains($0) }
+            print("""
+                VERIFY popup engine=\(engine) mode=\(mode) reported=\(reported) windowOpen=\(windowOpen.map(String.init) ?? "nil") \
+                tabs=\(opened.count) title=\(title) message=\(message) closedItself=\(closed.map(String.init) ?? "-") \
+                badge=\(rig.tab.popups.blocked?.query ?? "none")
+                """)
+            if engine == .webKit, mode == "late" {
+                // WebKit's own rule, the one Safari applies, lets a timer carry the click for a second, not 1.5 (`webKitsOwnRule…`).
+                #expect(windowOpen == false && opened.isEmpty, "blocked, as in Safari")
+                #expect(rig.tab.popups.blocked?.query?.contains("mode=late") == true, "the pop-up badge holds it")
+            } else {
+                #expect(windowOpen == true && message, "window.open returned the pop-up, and it reached its opener")
+                #expect(opened.count == 1 && closed == true, "one tab, which the pop-up's window.close() closed")
+                // The marker after it says whether WSurf's document-start scripts reached the pop-up's first page: in Chromium they do not
+                // yet (the page is CEF's before its scripts are registered), in WebKit they do.
+                #expect(title.contains(":opener:"), "the pop-up saw its opener: \(title)")
+                #expect(rig.tab.popups.blocked == nil)
+            }
+        }
+    }
+
+    /// Asks for no decision of its own: every window WebKit asks for is made, so what opens is what WebKit's own rule allowed.
+    private final class WindowMaker: NSObject, WKUIDelegate {
+        var asked: [String] = []
+        var views: [WKWebView] = []
+
+        func webView(
+            _ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for navigationAction: WKNavigationAction,
+            windowFeatures: WKWindowFeatures
+        ) -> WKWebView? {
+            asked.append(navigationAction.request.url?.query ?? "")
+            let view = WKWebView(frame: NSRect(x: 0, y: 0, width: 400, height: 300), configuration: configuration)
+            views.append(view)
+            return view
+        }
+    }
+
+    /// WebKit's own pop-up rule, the one Safari's blocker applies: a plain view that keeps WebKit's blocker on
+    /// (`javaScriptCanOpenWindowsAutomatically` off), so WebKit asks for a window only for a pop-up its rule allows. The same
+    /// `/verify` buttons, clicked through the window.
+    @Test(arguments: verifyModes)
+    func webKitsOwnRuleForAVerifyPopup(mode: String) async throws {
+        let server = try await HTTPFixtureServer.start(routes: Self.routes)
+        let configuration = WebViewPool.makeConfiguration()
+        configuration.preferences.javaScriptCanOpenWindowsAutomatically = false
+        let view = WKWebView(frame: NSRect(x: 0, y: 0, width: 800, height: 500), configuration: configuration)
+        let maker = WindowMaker()
+        view.uiDelegate = maker
+        let window = NSWindow(contentRect: NSRect(x: 50, y: 50, width: 800, height: 500), styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = view
+        window.orderBack(nil)
+        defer {
+            window.contentView = nil
+            window.close()
+        }
+        let url = try server.url("/verify")
+        view.load(URLRequest(url: url))
+        try #require(await waitUntil { view.url == url && !view.isLoading })
+        try await Task.sleep(for: .milliseconds(300))
+        // Read without a gesture: WebKit's public script calls would grant one.
+        func reports() async -> String {
+            (try? await view.evaluate("JSON.stringify(window.__verify ?? [])", asFunction: false, in: nil, in: .page)) as? String ?? ""
+        }
+        if mode == "slow" {
+            Self.slowGate.close()
+        }
+        let location = view.convert(try #require(Self.centers["v-" + mode]), to: nil)
+        for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+            window.sendEvent(try #require(NSEvent.mouseEvent(
+                with: type, location: location, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: type == .leftMouseDown ? 1 : 0
+            )))
+        }
+        if mode == "slow" {
+            _ = await Self.slowGate.waitForRequest()
+            try await Task.sleep(for: .seconds(2.5))
+            Self.slowGate.open()
+        }
+        let reported = await waitUntil(timeout: .seconds(10)) { await reports().contains("\"mode\":\"\(mode)\"") }
+        try await Task.sleep(for: .seconds(1))
+        print("VERIFY webkit-own-rule mode=\(mode) reported=\(reported) windowsAsked=\(maker.asked.count) \(await reports())")
+        // The rule WSurf's tab applies (`aVerifyButtonOpensAPopupThatTalksToItsOpener`): only the 1.5 s timer loses the click.
+        #expect(reported && maker.asked.count == (mode == "late" ? 0 : 1))
+        withExtendedLifetime(server) {}
+    }
+
+    /// A private window's pop-up is private too and reads its opener's storage: CEF gives a pop-up its opener's request context.
+    @Test func aChromiumPopupOfAPrivateWindowIsPrivate() async throws {
+        try await withRig(.chromium, privately: true) { rig in
+            let mark = "private\(UInt32.random(in: 1...UInt32.max))"
+            _ = try await rig.evaluate("document.cookie = '\(mark)=1'; 0")
+            rig.showOpenedTabs()
             try await rig.click("oauth")
             let landed = try #require(await waitForAnyTab(in: rig), "a tab opened for the pop-up")
-            #expect(landed.urlString.hasSuffix("/popup"))
-            try await rig.settle()
-            #expect(rig.opened.count == 1)
+            #expect(landed.isPrivate && rig.tab.isPrivate)
+            try #require(await waitUntil { try await rig.messages().contains("{\"from\":\"popup\"}") }, "the pop-up reached window.opener")
+            let cookie = try await landed.page.evaluateJavaScript("document.cookie") as? String
+            #expect(cookie?.contains("\(mark)=1") == true, "the pop-up reads its opener's cookie: \(cookie ?? "nil")")
         }
     }
 

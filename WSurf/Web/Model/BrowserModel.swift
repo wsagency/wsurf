@@ -157,13 +157,15 @@ final class BrowserModel {
         for url: URL? = nil,
         id: UUID = UUID(),
         adopting: WKWebView? = nil,
+        adoptingPage: BrowserPage? = nil,
         restoring: Bool = false
     ) -> BrowserTab {
-        let adopting = adopting ?? (restoring ? nil : webViewFactory?())
+        let adopting = adopting ?? (restoring || adoptingPage != nil ? nil : webViewFactory?())
         let tab = BrowserTab(
             id: id,
-            extensionHost: adopting == nil ? url.flatMap { extensionPageHost?($0) } : nil,
+            extensionHost: adopting == nil && adoptingPage == nil ? url.flatMap { extensionPageHost?($0) } : nil,
             adopting: adopting,
+            adoptingPage: adoptingPage,
             restoring: restoring,
             opensBlank: url == nil,
             sitePermissions: sitePermissions,
@@ -347,6 +349,11 @@ final class BrowserModel {
             activate(opener)
             close(tab)
         }
+        tab.onNewChromiumPopup = { [weak self, weak tab] page, activate in
+            // The pop-up stays in its opener's engine, whatever its site's setting: another engine would lose `window.opener`.
+            guard let opened = self?.newTab(activate: activate, adoptingPage: page, after: tab, engine: page.engine), let tab else { return }
+            self?.noteOpened(opened, by: tab)
+        }
     }
 
     /// The events that write History: a finished load, a move the page made itself, and a title that arrived later.
@@ -452,11 +459,12 @@ final class BrowserModel {
         url: URL? = nil,
         activate: Bool = true,
         adopting: WKWebView? = nil,
+        adoptingPage: BrowserPage? = nil,
         after opener: BrowserTab? = nil,
         transition: HistoryStore.Transition = .typed,
         engine: BrowserEngine? = nil
     ) -> BrowserTab {
-        let tab = makeTab(for: url, adopting: adopting)
+        let tab = makeTab(for: url, adopting: adopting, adoptingPage: adoptingPage)
         tab.engineOverride = engine
         insert(tab, after: opener)
         // With no active tab the first tab is the one on screen, so a tab inserted there is seen at once.
@@ -469,7 +477,7 @@ final class BrowserModel {
             tab.load(url, transition: transition)
         }
         if transition != .agent {
-            revealWhenAddressed(tab, hasAddress: url != nil || adopting != nil)
+            revealWhenAddressed(tab, hasAddress: url != nil || adopting != nil || adoptingPage != nil)
         }
         scheduleSave()
         return tab
