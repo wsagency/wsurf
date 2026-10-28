@@ -5,6 +5,54 @@ This file preserves release notes inherited from the upstream
 describe upstream Linen releases, not releases published by WSurf. New WSurf
 release notes will be added above this provenance record.
 
+## 0.1.17 (build 17) — 2026-10-28
+
+Everything since 0.1.16 (build 16). None of the screens and prompts below has been checked by hand. The speeds are from tests on a debug build under load, so they show how much less work is done, not what you will see.
+
+### Speed
+
+- Sidebar: opening or closing a tab over a long list, and pressing ⌘, no longer redraw every row. A row used to look at every tab in the window to build its right-click menu, and every row listened for the ⌘ key. The menus have the same items in the same order. In our test with 1,000 tabs, opening a background tab takes 0.24 s instead of 1.3 s, and pressing and releasing ⌘ takes a fraction of a millisecond instead of 75 ms. VoiceOver still finds the button at the end of every row.
+- Downloads: a running download now updates its progress bar and byte count at most ten times a second, instead of with every piece it receives. A fast download used to keep the Downloads page, the sidebar button and the Start page redrawing all the time. The last count is always shown exactly, a download that finishes, pauses or fails shows it at once, and the list is no longer written to disk for a byte count alone.
+- Address field: typing in the Start page’s address field searches your history once for each change you make, not once for each time the page redraws. In our test, eight searches of three to ten letters over 50,000 pages take about a third of the time.
+- Theme gallery: dragging Brightness with Settings › Appearance open redraws only the theme card that changes, not all twenty. In our test, 30 steps take 0.30 s instead of 0.52 s.
+- Chromium site count: Settings › Privacy and Website data now list the sites Chromium holds data for without starting Chromium. They used to open a hidden Chromium browser for every site, and start Chromium first if it was not running (1.2 s for 40 sites in our test). WSurf also keeps the list in memory instead of rewriting its file at every page and frame that loads. A site you visit for the first time is written to disk about a second later, or when you quit; if WSurf crashes in that second, Website data misses that site until you visit it again. Nothing Chromium stored is lost.
+- Chromium start: after launch, WSurf reads the Chromium framework into memory in the background, so the first Chromium tab of a session is less likely to wait for the disk. It does this only on a Mac where you have used Chromium before; otherwise nothing is read. Chromium itself still starts with the first Chromium tab.
+- Chromium idle: once you had opened a Chromium tab, WSurf woke up about 30 times a second for the rest of the session, even with every Chromium tab closed and the window hidden. With Chromium idle it now wakes up not at all (from 30 to 0 a second in our test). Chromium pages should load as quickly as before.
+- Background tabs rest: a tab that has been in the background for 10 seconds is now hidden from its page, as in any browser, so a page that animates (a dashboard, a chat, a favorite you keep loaded) no longer draws 60 frames a second behind the page you are looking at (60 to 0 in our test). This covers tabs WSurf keeps loaded off screen too, such as favorites. Switching back shows the page at once, and it takes a few frames to draw again. The page sees what any background tab sees: its timers run more slowly, and it is told when you switch away and back, so a page that saves when it is hidden saves then. A tab is never hidden while it plays sound or is shown in the media panel, has its video in Picture in Picture, uses the camera or microphone or shares the screen, holds a form you edited, is controlled by the assistant or a connected app, is a private tab, or is on a website you set to Keep this website loaded.
+
+### Minimal bar
+
+- Settings › Appearance › Window has a new menu, Hide bar, in place of the switch of that name. Choose Never, While scrolling (the default, and what Reset to Defaults sets), After 5 seconds, After 10 seconds or After 30 seconds. After a time, the Minimal window’s bar goes once nothing has held it for that long, and scrolling no longer matters. The pointer at the edge of the window, a prompt, a popover, the address you are editing, the open tab list, and a page that has no address all hold the bar, and the time starts again when they let go. Your earlier choice is kept: on is While scrolling, off is Never. **Going back to a build before 0.1.17 reads Never and the timed choices as While scrolling**, because the older build cannot read them.
+- Settings › Appearance › Icons only is dimmed while the Minimal window style is chosen, with a note that the Minimal window always shows tab titles. The switch had no effect there and applied when you went back to Standard; you can no longer set it from Minimal. Your choice is kept for Standard.
+
+### Assistant
+
+- The assistant no longer loses conversations at launch. While your first window opened, the assistant’s memory was cut down to the tabs of that window, before your other windows had opened, so the conversations about tabs in those windows were deleted, and so were those of a window you had closed but could still bring back with Reopen. They are now kept. A conversation that an earlier build already deleted is not restored.
+
+### Pop-ups, passkeys and dialogs
+
+- **[Phase 2, to be written when merged]** Pop-ups: a Chromium pop-up keeps `window.opener`, and a pop-up to a website WSurf routes to WebKit keeps the plain-tab behaviour it had.
+- **[Phase 2, to be written when merged]** Passkeys: a website that asks for a passkey WSurf cannot give now gets a one-button sheet, “No passkey for this website in WSurf”, instead of a prompt that hung; Chromium’s “Use Another Device or Key…” is gone.
+- **[Phase 2, to be written when merged]** Dialogs from a background tab: a JavaScript alert, confirm or prompt from a tab in the background waits until you show that tab.
+- **[Phase 2]** Check the known issue about `window.open` below once the pop-up branch is in, and drop this whole section if none of the three is merged.
+
+### Under the hood
+
+- CefSwift, the library that brings Chromium into WSurf, is now part of the source (`Packages/CefSwift`, revision 59cad64) instead of a download pinned in the project. It carries one patch, to its message pump, which is what stops the 30 wakeups a second above; `Packages/CefSwift/WSURF-PATCHES.md` lists it. A build from source now downloads the Chromium framework into that folder (about 336 MB, once). Nothing else about Chromium changes.
+- Ten performance budgets were added, and the brightness preview budget went from 21 s to 11 s, because rows no longer read every tab.
+
+### Known issues
+
+- One- and two-letter address-bar queries search only the newest 3,000 pages; three letters and the History page search everything.
+- Chromium tabs do not yet block `window.open` without a click, and open ⌘-click and middle-click tabs in front.
+- Removing one website in Website data removes the cookies that exact host set; a cookie a website set for its whole domain (from www.example.com for example.com) stays until you clear everything. This was true before, but Chromium’s cookies now stay across a quit.
+- Clear Browsing Data does not reach Chromium’s own small records of the sites you visited (the sites it must open over HTTPS, its site-engagement scores); they go when you delete the profile.
+- WebKit tabs that both use the camera or microphone still take it from each other: showing another tab that uses them mutes the first for good, and WSurf has no button to resume it.
+- Taking back camera or microphone access from a Chromium tab that is using it stops the devices by closing and reopening the page, and shows “Could not change website device access”.
+- Back after an engine switch goes back one step only: Forward does not return to the other engine, and a Chromium page comes back by its address, not with its history.
+- A page in a background tab runs its timers more slowly after 10 seconds, so a page that counts, polls or refreshes itself from a timer can fall behind until you show it. Set the website to Keep this website loaded to leave it as it was.
+- The known issues of 0.1.14 are unchanged.
+
 ## 0.1.16 (build 16) — 2026-10-27
 
 Everything since 0.1.15 (build 15). None of the screens and prompts below has been checked by hand.
