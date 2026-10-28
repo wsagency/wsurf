@@ -58,7 +58,7 @@ struct AskSurface: View {
     }
 
     var body: some View {
-        let sections = model.resultSections()
+        let sections = model.sections
         let activity = model.activity
         let restingContent = model.restingContent
         let status = surfaceStatus(activity: activity)

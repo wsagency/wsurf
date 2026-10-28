@@ -816,3 +816,22 @@ check_average \
   '4096' \
   'First-letter omnibox query memory growth' \
   'kB'
+
+# The Start page address field (AskSurfaceModel.sections over 50,000 pages), six-sample means on the Pro (2026-10-28, Debug), seconds: the
+# eight queries of three to ten letters, each read three times as the surface's body reads it. The rows were computed on every read; they
+# are now computed once per change, so the old code runs three searches where the new runs one.
+# case                                           before        after    budget
+# eight 3-10 letter queries, three reads each    0.055-0.065   0.017-0.019  0.036
+# Memory growth is zero at this size, so the memory budget is the usual 4096 kB.
+check_average \
+  'HistoryPerformanceTests/testTypingAWordIntoTheAddressFieldOverFiftyThousandPages()' \
+  'com.apple.dt.XCTMetric_Clock.time.monotonic' \
+  '0.036' \
+  'Eight address field queries of three to ten letters over 50,000 pages' \
+  's'
+check_average \
+  'HistoryPerformanceTests/testTypingAWordIntoTheAddressFieldOverFiftyThousandPages()' \
+  'com.apple.dt.XCTMetric_Memory.physical' \
+  '4096' \
+  'Address field query memory growth' \
+  'kB'
