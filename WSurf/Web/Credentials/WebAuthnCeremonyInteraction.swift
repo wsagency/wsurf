@@ -37,9 +37,6 @@ nonisolated enum WebAuthnDecision: Sendable, Equatable {
     case declined
     case expired
     case cancelled
-    /// "Use Another Device or Key…" (Chromium) or "Continue in Chromium" (WebKit): the request is not the vault's. Nothing was
-    /// written or signed.
-    case handOff
     /// The window could not show the step: hidden, minimised, or another sheet stayed up. A refusal, never queued.
     case unavailable
 }
@@ -53,8 +50,7 @@ protocol WebAuthnCeremonyInteraction {
     func decide(_ prompt: WebAuthnPrompt, in anchor: ASPresentationAnchor, until deadline: ContinuousClock.Instant?) async -> WebAuthnDecision
     /// Explicit origin-bearing native step before any unlock, verification or signing: always for a conditional
     /// (dropdown-started) request, and for a modal request whenever the vault is locked, so the system unlock sheet is never
-    /// the first thing a page can put in front of the user. Every step of the vault's own UI also offers the way out to the
-    /// system's authenticator, so the user is never stuck with the vault's answer.
+    /// the first thing a page can put in front of the user.
     func offerStart(operation: WebAuthnPrompt.Operation, origin: String, locked: Bool, in anchor: ASPresentationAnchor, until deadline: ContinuousClock.Instant?) async -> WebAuthnDecision
     /// Fresh system user verification. Returns only on success; every other outcome throws.
     func verifyUser(reason: String, until deadline: ContinuousClock.Instant?) async throws
@@ -64,9 +60,6 @@ protocol WebAuthnCeremonyInteraction {
 
 @MainActor
 struct NativeWebAuthnInteraction: WebAuthnCeremonyInteraction {
-    /// A WebKit page: the engine's own WebAuthn needs Apple's browser entitlement, so the way out is a Chromium tab instead.
-    var continuesInChromium = false
-
     /// Capability discovery only; a throwaway context is never an approval.
     var canVerifyUser: Bool {
         let context = LAContext()
@@ -83,18 +76,13 @@ struct NativeWebAuthnInteraction: WebAuthnCeremonyInteraction {
         alert.messageText = Self.title(for: prompt)
         alert.informativeText = Self.body(for: prompt)
         if nothing {
-            // Nothing of ours to approve, but the step is the same one with the same origin: the way on is the system's
-            // authenticator, and Cancel is Cancel.
-            alert.addButton(withTitle: handOffTitle)
-            alert.addButton(withTitle: String(localized: "Cancel"))
+            // Nothing of ours to approve, and no other authenticator either engine can reach (no Apple Passwords, phone or security
+            // key): the step names the site, sends the person to its other way to sign in, and ends as Cancel does.
+            alert.addButton(withTitle: String(localized: "OK"))
         } else {
             alert.addButton(withTitle: prompt.operation == .create
                 ? String(localized: "Create Passkey") : String(localized: "Use Passkey"))
             alert.addButton(withTitle: String(localized: "Cancel"))
-            alert.addButton(withTitle: handOffTitle)
-        }
-        if continuesInChromium {
-            alert.informativeText += "\n" + Self.chromiumReason
         }
 
         let popup = Self.makeChooser(for: prompt)
@@ -106,29 +94,11 @@ struct NativeWebAuthnInteraction: WebAuthnCeremonyInteraction {
         case .cancelled:
             return .cancelled
         case let .response(response):
-            if nothing {
-                return response == .alertFirstButtonReturn ? .handOff : .declined
-            }
-            if response == .alertThirdButtonReturn {
-                return .handOff
-            }
-            guard response == .alertFirstButtonReturn else { return .declined }
+            guard !nothing, response == .alertFirstButtonReturn else { return .declined }
             guard let popup else { return .approved(choice: prompt.offersNewAccount ? nil : prompt.choices.first?.id) }
             return Self.decision(from: popup)
         }
     }
-
-    /// The same words on every sheet that offers it. In Chromium, choosing it hands the request to the engine's own authenticator,
-    /// which reaches passkeys on a phone or a security key. In WebKit that hand-off cannot succeed, so the page is reopened in a
-    /// Chromium tab instead.
-    var handOffTitle: String {
-        continuesInChromium ? String(localized: "Continue in Chromium") : String(localized: "Use Another Device or Key…")
-    }
-
-    /// The one line a WebKit sheet adds to say why its way out is a Chromium tab.
-    static let chromiumReason = String(
-        localized: "WebKit tabs can’t use security keys, phones or Apple Passwords. A Chromium tab of this profile can; you may need to sign in there again."
-    )
 
     /// The window is free for a step: a sheet still closing (the system's unlock sheet) is waited for, briefly.
     static func windowIsFree(_ anchor: ASPresentationAnchor) async -> Bool {
@@ -147,24 +117,15 @@ struct NativeWebAuthnInteraction: WebAuthnCeremonyInteraction {
             + "\n" + (locked
                 ? String(localized: "Credential Manager is locked. You will unlock it, then choose an account.")
                 : String(localized: "You will choose an account next."))
-            + (continuesInChromium ? "\n" + Self.chromiumReason : "")
         alert.addButton(withTitle: locked ? String(localized: "Unlock and Choose…") : String(localized: "Choose…"))
         alert.addButton(withTitle: String(localized: "Cancel"))
-        alert.addButton(withTitle: handOffTitle)
         switch await NativeSheet.present(alert, in: anchor, until: deadline) {
         case .expired:
             return .expired
         case .cancelled:
             return .cancelled
         case let .response(response):
-            switch response {
-            case .alertFirstButtonReturn:
-                return .approved(choice: nil)
-            case .alertThirdButtonReturn:
-                return .handOff
-            default:
-                return .declined
-            }
+            return response == .alertFirstButtonReturn ? .approved(choice: nil) : .declined
         }
     }
 
@@ -288,6 +249,9 @@ struct NativeWebAuthnInteraction: WebAuthnCeremonyInteraction {
             lines.append(prompt.operation == .get
                 ? String(localized: "No passkey for this website in WSurf.")
                 : String(localized: "WSurf can’t save a passkey here: Credential Manager has no vault yet."))
+            lines.append(prompt.operation == .get
+                ? String(localized: "Choose another way to sign in on the website.")
+                : String(localized: "Choose another way to continue on the website."))
             return lines.joined(separator: "\n")
         }
         if prompt.operation == .get, prompt.choices.count == 1, let only = prompt.choices.first {

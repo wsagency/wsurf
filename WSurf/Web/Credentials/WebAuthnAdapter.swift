@@ -118,6 +118,10 @@ enum WebAuthnAdapter {
         // Document-start order is the contract: the frame registry, then the relay, then the route script, then the page
         // script. A page's profile never changes, so neither does its route, and the script is installed once.
         page.installScript(routeScript(for: page), in: world, injectionTime: .atDocumentStart, forMainFrameOnly: mainFrameOnly)
+        if page.chromium != nil {
+            // Before the page script, which keeps these as the engine's own: a private page's request ends at once too.
+            page.installScript(WebAuthnScript.engineRefusal, in: .page, injectionTime: .atDocumentStart, forMainFrameOnly: false)
+        }
         page.installScript(WebAuthnScript.page, in: .page, injectionTime: .atDocumentStart, forMainFrameOnly: mainFrameOnly)
         page.addScriptMessageHandler(name: WebAuthnScript.handlerName, in: world) { message in
             handle(message)
@@ -341,28 +345,6 @@ enum WebAuthnAdapter {
         }
     }
 
-    /// The user chose the system's authenticator: the page's own call runs in the engine once, in place of the vault's answer (see
-    /// the page script). It is only ever sent after one of our sheets was closed by that choice, never on the strength of what
-    /// the vault does or does not hold. The entry is retired first, so its expiry and a later cancel find nothing, and the
-    /// engine's own timeout and abort signal take over.
-    private static func handOff(_ entry: Entry, page: BrowserPage, context: WebAuthnContext?) async {
-        guard !entry.cancelled, entries[entry.key] === entry else { return }
-        // WebKit's own WebAuthn needs Apple's browser entitlement, so a hand-off there could only fail. The sheet said "Continue in
-        // Chromium": the page is reopened in a Chromium tab of this profile, and this request ends as any refusal does (a
-        // discovery stays pending).
-        if page.chromium == nil {
-            note("continue-in-chromium", entry)
-            if let url = page.url, ["http", "https"].contains(url.scheme?.lowercased() ?? "") {
-                page.onOpenInChromium?(url)
-            }
-            await finish(entry, page: page, context: context, error: WebsiteAuthenticatorError.notAllowed)
-            return
-        }
-        note("handoff-to-engine", entry)
-        retire(entry)
-        await deliver(["handoff": "modal"], key: entry.key, page: page, frame: entry.frame, entry: entry, context: context)
-    }
-
     private static func reject(_ key: Key, _ page: BrowserPage, _ frame: BrowserFrame, _ error: WebAuthnWire.PageError) {
         Task { await deliver(["error": ["name": error.name, "message": error.message]], key: key, page: page, frame: frame) }
     }
@@ -500,7 +482,7 @@ enum WebAuthnAdapter {
             busyWindows[ObjectIdentifier(anchor)] = entry
             claimed = anchor
             let interaction: any WebAuthnCeremonyInteraction = interactionForTesting[page.profileID]?()
-                ?? NativeWebAuthnInteraction(continuesInChromium: page.chromium == nil)
+                ?? NativeWebAuthnInteraction()
             let chosen = try await vault(for: entry, native: native, in: anchor, interaction: interaction)
             // The route and the prompt suspended: the request must still be this live document, in this window, before any
             // manager is bound to it. Nothing suspends between these checks and the binding.
@@ -537,9 +519,6 @@ enum WebAuthnAdapter {
                 noteUnconfirmedReceipt()
                 await deliver(["error": errorPayload(WebsiteAuthenticatorError.notAllowed)], key: entry.key, page: page, frame: entry.frame)
             }
-        } catch WebsiteAuthenticatorError.handOff {
-            // Nothing was written, signed or unlocked for it, and every sheet of ours is already closed.
-            await handOff(entry, page: page, context: context)
         } catch {
             // Whatever ended the run (also a discarded entry, which `finish` ignores), a saved passkey is never lost silently.
             noteUnconfirmedReceipt()
@@ -547,10 +526,9 @@ enum WebAuthnAdapter {
         }
     }
 
-    /// The vault that answers the request, or `nil` when the choice came to nothing (a cancel). Throws `handOff` only when the user
-    /// chose the system's authenticator in a sheet of ours, here (the vault prompt, or the step a profile with no vault shows) or in
-    /// the ceremony; never on the strength of what a vault holds. It reads the vault list and the open vaults' contents, never a
-    /// locked vault, and unlocks nothing.
+    /// The vault that answers the request, or `nil` when the choice came to nothing (a cancel). With no usable vault it shows the
+    /// same step a vault with nothing for the request shows, and refuses. It reads the vault list and the open vaults' contents,
+    /// never a locked vault, and unlocks nothing.
     private static func vault(
         for entry: Entry, native: WebAuthnContext, in anchor: ASPresentationAnchor, interaction: some WebAuthnCeremonyInteraction
     ) async throws -> CredentialManager? {
@@ -570,10 +548,10 @@ enum WebAuthnAdapter {
                 profile: profile, origin: native.origin, passkeyRPID: rpID, allowed: options.allowCredentials
             )
         }
-        // No usable vault: the user is asked all the same, in the same words as by a vault with nothing for the request, so a page
-        // cannot tell the two apart. The system's authenticator is the only way on.
+        // No usable vault: the user is told all the same, in the same words as by a vault with nothing for the request, so a page
+        // cannot tell the two apart.
         if case .unavailable = route {
-            try await WebsiteAuthenticator.offerSystemAuthenticator(entry.parsed.request, context: native, in: anchor, interaction: interaction)
+            try await WebsiteAuthenticator.askWithNothingToOffer(entry.parsed.request, context: native, in: anchor, interaction: interaction)
         }
         let chosen: CredentialManager?
         if case .needsUnlock(let only) = route {
@@ -581,14 +559,9 @@ enum WebAuthnAdapter {
             // nameless sheet is the first thing a page can show.
             chosen = try? CredentialManager.forVault(profile, vaultID: only.vaultID)
         } else {
-            switch await route.select(profile: profile, offersHandOff: true, continuesInChromium: entry.page?.chromium == nil, in: anchor) {
-            case .vault(let manager):
-                chosen = manager
-            case .handOff:
-                throw WebsiteAuthenticatorError.handOff
-            case .none:
+            chosen = await route.resolve(profile: profile, in: anchor)
+            if chosen == nil {
                 note("vault-choice-cancelled", entry)
-                chosen = nil
             }
         }
         return chosen

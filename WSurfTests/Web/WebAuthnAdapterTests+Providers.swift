@@ -236,14 +236,6 @@ extension WebAuthnAdapterTests {
 
     private final class FrameBox { var frame: BrowserFrame? }
 
-    /// The pages a WebKit passkey sheet's "Continue in Chromium" asked to reopen (the tab's `onOpenInChromium`).
-    private final class Reopened {
-        var paths: [String] = []
-        init(_ page: BrowserPage) {
-            page.onOpenInChromium = { [weak self] url in self?.paths.append(url.path) }
-        }
-    }
-
     /// The main frame as a script message from the live document carries it: what the fill dropdown holds for a field there.
     private func messageFrame(of page: BrowserPage) async throws -> BrowserFrame {
         let name = "wsurfTestFrame", box = FrameBox()
@@ -376,26 +368,9 @@ extension WebAuthnAdapterTests {
         }
     }
 
-    /// The relay's result events as the page world sees them, minus the fence's own questions (see `recordResults`), that carry a
-    /// hand-off: the mode native named.
-    private func handOffs(of page: BrowserPage) async throws -> [String] {
-        try await results(of: page).compactMap { $0["handoff"] as? String }
-    }
-
-    /// The way out of the vault was taken: on Chromium the request was handed to the engine; on WebKit, where that cannot succeed
-    /// without Apple's browser entitlement, the page was reopened in Chromium and this request refused.
-    private func tookTheWayOut(_ page: BrowserPage, _ engine: BrowserEngine, _ reopened: Reopened) async throws -> Bool {
-        let events = try await results(of: page)
-        if engine == .chromium {
-            return events.compactMap { $0["handoff"] as? String } == ["modal"]
-        }
-        return reopened.paths == ["/"] && events.count == 1 && (events[0]["error"] as? [String: Any])?["name"] as? String == "NotAllowedError"
-    }
-
     /// What a page can see of a profile's vault: nothing. The same request makes the same observable sequence, whether the profile
     /// has no vault, an open vault with no passkey for the site, or a locked one: nothing at all until the user answers the
-    /// step, then the same single ending for the same answer. Only the explicit choice of the system's authenticator reaches
-    /// the engine.
+    /// step, then the same single ending for the same answer.
     private enum ProfileVault: CaseIterable { case noVault, openVaultWithNoMatch, lockedVault }
 
     /// A user whose answer to the first step is the test's to give, so what the page saw while the step was open can be read.
@@ -454,7 +429,6 @@ extension WebAuthnAdapterTests {
             WebAuthnAdapter.interactionForTesting[context.profile.id] = { user }
             defer { WebAuthnAdapter.interactionForTesting[context.profile.id] = nil }
             let page = try await realm.open(context)
-            let reopened = Reopened(page)
             try await recordResults(in: page)
             if create {
                 _ = try await page.evaluateJavaScript("""
@@ -474,9 +448,8 @@ extension WebAuthnAdapterTests {
             try await fence(page)
             for event in try await results(of: page) {
                 let error = event["error"] as? [String: Any]
-                trace.append("event: \(event["handoff"] as? String ?? "-") \(error?["name"] as? String ?? "-") \(error?["message"] as? String ?? "-")")
+                trace.append("event: \(error?["name"] as? String ?? "-") \(error?["message"] as? String ?? "-")")
             }
-            trace.append("reopened: \(reopened.paths)")
         } catch {
             await realm.close()
             throw error
@@ -487,10 +460,8 @@ extension WebAuthnAdapterTests {
 
     /// One case per answer: the comparison is between the vault states for the same answer, and each case opens one realm per
     /// state. Late in a full run a Chromium realm took about 12 s, so the four answers in one case passed the 120 s limit.
-    @Test(.boundedWebViews, arguments: [BrowserEngine.webKit, .chromium], [WebAuthnDecision.declined, .cancelled, .expired, .handOff])
-    func aModalRequestLooksTheSameToThePageInEveryVaultStateUntilTheUserChoosesTheSystem(
-        engine: BrowserEngine, decision: WebAuthnDecision
-    ) async throws {
+    @Test(.boundedWebViews, arguments: [BrowserEngine.webKit, .chromium], [WebAuthnDecision.declined, .cancelled, .expired])
+    func aModalRequestLooksTheSameToThePageInEveryVaultState(engine: BrowserEngine, decision: WebAuthnDecision) async throws {
         var traces: [[String]] = []
         for state in ProfileVault.allCases {
             traces.append(try await observe(state, engine: engine, answering: decision))
@@ -498,38 +469,23 @@ extension WebAuthnAdapterTests {
         #expect(traces.dropFirst().allSatisfy { $0 == traces[0] }, "\(decision): \(traces)")
         let first = try #require(traces.first)
         #expect(first.first == "while open: 0 events, 0 outcomes, steps 1", "nothing reaches the page before the user answers")
-        let events = first.dropFirst().dropLast()
-        if decision == .handOff, engine == .chromium {
-            #expect(events == ["event: modal - -"] && first.last == "reopened: []", "exactly one hand-off and no error")
-        } else if decision == .handOff {
-            // WebKit's own WebAuthn cannot run without Apple's browser entitlement: the choice reopens the page in Chromium, and
-            // this request ends as a refusal, never as a hand-off that could only fail.
-            #expect(events.count == 1 && events.first?.hasPrefix("event: - NotAllowedError ") == true)
-            #expect(first.last == "reopened: [\"/\"]")
-        } else {
-            #expect(events.count == 1 && events.first?.hasPrefix("event: - ") == true, "one refusal, never a hand-off")
-            #expect(first.last == "reopened: []")
-        }
+        let events = first.dropFirst()
+        #expect(events.count == 1 && events.first?.hasPrefix("event: ") == true, "one refusal")
     }
 
-    /// A registration asks the same question of a profile with no vault, and hands over only on the choice.
+    /// A registration asks the same question of a profile with no vault, and ends the same way.
     @Test(.boundedWebViews, arguments: [BrowserEngine.webKit, .chromium])
-    func aModalRegistrationLooksTheSameWithAndWithoutAVaultUntilTheUserChoosesTheSystem(engine: BrowserEngine) async throws {
-        for decision in [WebAuthnDecision.declined, .handOff] {
-            let without = try await observe(.noVault, engine: engine, answering: decision, create: true)
-            let with = try await observe(.openVaultWithNoMatch, engine: engine, answering: decision, create: true)
-            #expect(without == with, "\(decision)")
-            #expect(without.first == "while open: 0 events, 0 outcomes, steps 1")
-        }
+    func aModalRegistrationLooksTheSameWithAndWithoutAVault(engine: BrowserEngine) async throws {
+        let without = try await observe(.noVault, engine: engine, answering: .declined, create: true)
+        let with = try await observe(.openVaultWithNoMatch, engine: engine, answering: .declined, create: true)
+        #expect(without == with)
+        #expect(without.first == "while open: 0 events, 0 outcomes, steps 1")
     }
 
-    /// A discovery (a conditional request) is pending in exactly the same way in every vault state, and nothing is handed over
-    /// until the user picks "Use a Passkey…" in the fill dropdown and then chooses the system's authenticator. Declining the step
-    /// leaves it pending, and the row starts it again.
+    /// A discovery (a conditional request) is pending in exactly the same way in every vault state, and nothing starts until the
+    /// user picks "Use a Passkey…" in the fill dropdown. Declining the step leaves it pending, and the row starts it again.
     @Test(.boundedWebViews, arguments: [BrowserEngine.webKit, .chromium])
-    func aConditionalRequestIsPendingAlikeInEveryVaultStateAndHandedOverOnlyAfterThePasskeyRowAndTheChoice(
-        engine: BrowserEngine
-    ) async throws {
+    func aConditionalRequestIsPendingAlikeInEveryVaultStateAndStartsOnlyFromThePasskeyRow(engine: BrowserEngine) async throws {
         var traces: [[String]] = []
         for state in ProfileVault.allCases {
             let realm = try await Realm.start(engine: engine)
@@ -540,7 +496,6 @@ extension WebAuthnAdapterTests {
                 WebAuthnAdapter.interactionForTesting[context.profile.id] = { user }
                 defer { WebAuthnAdapter.interactionForTesting[context.profile.id] = nil }
                 let page = try await realm.open(context)
-                let reopened = Reopened(page)
                 try await recordResults(in: page)
                 try await requestConditionalGet(in: page)
                 try await fence(page)
@@ -552,22 +507,17 @@ extension WebAuthnAdapterTests {
                 try await fence(page)
                 trace.append("step open: \(try await results(of: page).count) events, \(try await outcomes(of: page).count) outcomes")
 
-                // Declining leaves the discovery pending, as it always does; the row asks again; only the choice hands over.
-                user.answer(.declined)
-                #expect(await waitUntil { !user.isOpen })
-                try await fence(page)
-                trace.append("declined: \(try await results(of: page).count) events, \(try await outcomes(of: page).count) outcomes")
-                #expect(try await pickPasskeyRow(in: page))
-                #expect(await waitUntil { user.isOpen && user.steps == 2 })
-                user.answer(.handOff)
-                if engine == .chromium {
-                    #expect(try await waitUntil { try await !results(of: page).isEmpty })
-                } else {
-                    // WebKit reopens the page in Chromium; the discovery stays pending here, as after any refusal.
-                    #expect(await waitUntil { !reopened.paths.isEmpty })
+                // Declining leaves the discovery pending, as it always does, and the row asks again.
+                for round in 1...2 {
+                    if round == 2 {
+                        #expect(try await pickPasskeyRow(in: page))
+                        #expect(await waitUntil { user.isOpen && user.steps == 2 })
+                    }
+                    user.answer(.declined)
+                    #expect(await waitUntil { !user.isOpen })
                     try await fence(page)
+                    trace.append("declined: \(try await results(of: page).count) events, \(try await outcomes(of: page).count) outcomes")
                 }
-                trace.append("chosen: \(try await results(of: page).compactMap { $0["handoff"] as? String }), reopened \(reopened.paths.count)")
             } catch {
                 await realm.close()
                 throw error
@@ -578,15 +528,14 @@ extension WebAuthnAdapterTests {
         #expect(traces.dropFirst().allSatisfy { $0 == traces[0] }, "\(traces)")
         #expect(traces.first == [
             "registered: 0 events, 0 outcomes, steps 0", "step open: 0 events, 0 outcomes", "declined: 0 events, 0 outcomes",
-            engine == .chromium ? "chosen: [\"modal\"], reopened 0" : "chosen: [], reopened 1",
+            "declined: 0 events, 0 outcomes",
         ])
     }
 
-    /// A locked vault with nothing for the site: the account step comes after the unlock and, on WebKit, its way out is a
-    /// Chromium tab of the profile (the page is reopened there and this request is refused); on Chromium the same answer hands
-    /// the request to the engine. Every outcome is recorded by its case.
+    /// A locked vault with nothing for the site: the account step comes after the unlock, has nothing to approve, and its answer is
+    /// a refusal. Every outcome is recorded by its case.
     @Test(.boundedWebViews, arguments: [BrowserEngine.webKit, .chromium])
-    func afterAnUnlockWithNoMatchWebKitOffersChromiumWhereChromiumHandsOff(engine: BrowserEngine) async throws {
+    func afterAnUnlockWithNoMatchTheAccountStepRefuses(engine: BrowserEngine) async throws {
         try await withRealm(engine) { realm in
             let passkeys = VaultPasskeys()
             let context = try await realm.context(passkeys: passkeys, vaults: [.locked])
@@ -598,7 +547,6 @@ extension WebAuthnAdapterTests {
                 WebAuthnRefusal.recordedForTesting[context.profile.id] = nil
             }
             let page = try await realm.open(context)
-            let reopened = Reopened(page)
             try await recordResults(in: page)
             try await requestModalGet(in: page)
 
@@ -606,21 +554,15 @@ extension WebAuthnAdapterTests {
             user.answer(.approved(choice: nil))
             #expect(await waitUntil { user.isOpen && user.steps == 2 }, "the account step, after the unlock")
             #expect(passkeys.assertions.count == 1, "the vault was unlocked")
-            user.answer(.handOff)
+            user.answer(.declined)
             #expect(try await waitUntil { try await !results(of: page).isEmpty })
             try await fence(page)
 
             let events = try await results(of: page)
             let recorded = WebAuthnRefusal.recordedForTesting[context.profile.id] ?? []
             #expect(events.count == 1)
-            if engine == .webKit {
-                #expect(reopened.paths == ["/"] && events.first?["handoff"] == nil)
-                #expect((events.first?["error"] as? [String: Any])?["name"] as? String == "NotAllowedError")
-                #expect(recorded == ["no-match", "continue-in-chromium", "ended:notAllowed"])
-            } else {
-                #expect(reopened.paths.isEmpty && events.first?["handoff"] as? String == "modal")
-                #expect(recorded == ["no-match", "handoff-to-engine"])
-            }
+            #expect((events.first?["error"] as? [String: Any])?["name"] as? String == "NotAllowedError")
+            #expect(recorded == ["no-match", "user-declined", "ended:notAllowed"], "\(recorded)")
         }
     }
 
@@ -780,57 +722,6 @@ extension WebAuthnAdapterTests {
             #expect(try await page.evaluateJavaScript("modal.length") as? Int == 0)
             user.answer(.declined)
             #expect(try await waitUntil { try await page.evaluateJavaScript("modal.join()") as? String == "NotAllowedError" })
-        }
-    }
-
-    /// "Use Another Device or Key…" on the offer a locked vault shows first: the request is handed over and the vault was never
-    /// unlocked for it. The vault's own unlock passkey is a separate ceremony and still opens it afterwards.
-    @Test(.boundedWebViews, arguments: [BrowserEngine.webKit, .chromium])
-    func anotherDeviceOrKeyOnTheLockedOfferHandsOverWithoutUnlocking(engine: BrowserEngine) async throws {
-        try await withRealm(engine) { realm in
-            let passkeys = VaultPasskeys()
-            let context = try await realm.context(passkeys: passkeys, vaults: [.locked])
-            let profileID = context.profile.id
-            let user = WebsiteAuthenticatorCeremonyTests.User()
-            user.offer = { _ in .handOff }
-            WebAuthnAdapter.interactionForTesting[profileID] = { user }
-            defer { WebAuthnAdapter.interactionForTesting[profileID] = nil }
-            let page = try await realm.open(context)
-            let reopened = Reopened(page)
-            let before = passkeys.assertions.count
-
-            try await recordResults(in: page)
-            try await requestModalGet(in: page)
-            #expect(try await waitUntil { try await tookTheWayOut(page, engine, reopened) })
-            #expect(user.offers == [true] && user.prompts.isEmpty && user.verifications == 0, "the offer was the only sheet")
-            #expect(passkeys.assertions.count == before, "no unlock passkey was used for the request")
-            #expect(CredentialManager.unlockedManagers(for: context.profile).isEmpty)
-
-            // The vault's own unlock still works, with its own passkey, after a request was handed over.
-            let listing = try await CredentialManager.store(for: context.profile).listing()
-            let vault = try CredentialManager.forVault(context.profile, vaultID: try #require(listing.first).vaultID, native: passkeys.native)
-            try await vault.unlock(in: VaultManagerFixture.anchor())
-            #expect(vault.isUnlocked && passkeys.assertions.count == before + 1)
-        }
-    }
-
-    /// The "which vault?" prompt of a passkey request offers the same way out, and taking it unlocks nothing.
-    @Test(.boundedWebViews, arguments: [BrowserEngine.webKit, .chromium])
-    func anotherDeviceOrKeyOnTheVaultChoiceHandsOverWithoutUnlocking(engine: BrowserEngine) async throws {
-        try await withRealm(engine) { realm in
-            let passkeys = VaultPasskeys()
-            let context = try await realm.context(passkeys: passkeys, vaults: [.locked, .locked])
-            let profileID = context.profile.id
-            VaultChoicePrompt.handOffForTesting.insert(profileID)
-            defer { VaultChoicePrompt.handOffForTesting.remove(profileID) }
-            let page = try await realm.open(context)
-            let reopened = Reopened(page)
-            let before = passkeys.assertions.count
-
-            try await recordResults(in: page)
-            try await requestModalGet(in: page)
-            #expect(try await waitUntil { try await tookTheWayOut(page, engine, reopened) })
-            #expect(passkeys.assertions.count == before && CredentialManager.unlockedManagers(for: context.profile).isEmpty)
         }
     }
 

@@ -136,6 +136,12 @@
     "Ask next time" : {
 
     },
+    "Choose another way to continue on the website." : {
+      "comment" : "Last line of the passkey sheet when WSurf cannot save a passkey for the website (no vault yet), after the line that says so. It sends the person back to the website’s own other option. Full sentence."
+    },
+    "Choose another way to sign in on the website." : {
+      "comment" : "Last line of the passkey sheet when WSurf holds no passkey for the website, after “No passkey for this website in WSurf.”. It sends the person back to the website’s own other way to sign in (some sites call it “Try another way”). Full sentence."
+    },
     "Choose a Developer profile to use this." : {
       "comment" : "Caption on a paired app’s row when its Without asking level is above Off but no Developer profile is chosen, so the level has no effect yet."
     },
@@ -534,9 +540,6 @@
     },
     "Unlock this vault to turn on sync." : {
       "comment" : "Caption of the Sync with iCloud switch, disabled, while the vault is locked. Sync needs the vault unlocked."
-    },
-    "Use Another Device or Key…" : {
-
     },
     "Use “%@” on %@?" : {
       "comment" : "Headline of the toolbar popover after a login or code was picked by hand (Pick Credential…) on a website it is not saved for. First %@ is the credential's name (its username, or display name), second %@ is the page's website as the address bar draws it (punycode). Sentence case, a question."
@@ -8544,9 +8547,6 @@
     "Contacts" : {
       "comment" : "Filter chip in the Vault tab, with a count after it: entries that hold a person’s name and an address together. A plural noun; tight."
     },
-    "Continue in Chromium" : {
-      "comment" : "Button on the passkey sheets of a WebKit tab. It reopens the page in a Chromium tab of the same profile, where security keys and phones work. Chromium is a browser engine name and stays as it is. Title Case, a verb phrase."
-    },
     "Control" : {
       "comment" : "Name of the access level, between Read only and Development, that lets a connected app click, type and navigate on a tab. Shown in small text beside the app’s name in the toolbar connection chip and the controlled-tab popover. A noun, not a verb."
     },
@@ -11141,9 +11141,6 @@
     },
     "WebKit" : {
       "comment" : "Name of one of the two browser engines a website can open in, as listed in a website’s engine choice (site controls popover and Website Settings) and inserted into sentences. WebKit is Apple’s engine and is never translated."
-    },
-    "WebKit tabs can’t use security keys, phones or Apple Passwords. A Chromium tab of this profile can; you may need to sign in there again." : {
-      "comment" : "Extra line added to the passkey sheets of a WebKit tab, explaining the “Continue in Chromium” button. WebKit and Chromium are browser engine names and stay as they are; Apple Passwords is Apple’s Passwords app. Full sentences."
     },
     "Webpages can carry hidden instructions aimed at connected apps. Allow this only if it’s what you asked for." : {
       "comment" : "Closing warning paragraph of the dialog that asks whether an external connection (a connected app) may answer a page’s prompt. Full sentences."

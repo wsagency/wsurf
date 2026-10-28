@@ -116,8 +116,6 @@ final class BrowserPage: NSView {
     /// Chromium only: these frames (the engine's ids) are gone, or show another document, so what they said is over.
     var onFramesRetired: ((Set<String>) -> Void)?
     var onZoomChanged: (() -> Void)?
-    /// Opens `url` in a new Chromium tab of the page's own profile ("Continue in Chromium" on a WebKit passkey sheet).
-    var onOpenInChromium: ((URL) -> Void)?
     /// The tab's dialog queue, which the engine's dialog handler asks before it shows a sheet.
     weak var dialogs: PageDialogQueue?
     private(set) var credentialGeneration: UInt64 = 0

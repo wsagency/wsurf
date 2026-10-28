@@ -267,7 +267,6 @@ final class BrowserTab: Identifiable {
     var onNewChromiumPopup: ((BrowserPage, Bool) -> Void)?
     var onOpenInNewTab: ((URL, Bool) -> Void)?
     var onOpenInNewWindow: ((URL, Bool) -> Void)?
-    var onOpenInChromium: ((URL) -> Void)?
     var onOpenInPeek: ((URL, CGPoint) -> Void)?
     var onSummarizeLink: ((URL, CGPoint) -> Void)?
     var onCloseRequested: (() -> Void)?
@@ -488,7 +487,6 @@ final class BrowserTab: Identifiable {
         onNewChromiumPopup = nil
         onOpenInNewTab = nil
         onOpenInNewWindow = nil
-        onOpenInChromium = nil
         onOpenInPeek = nil
         onSummarizeLink = nil
         onCloseRequested = nil

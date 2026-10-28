@@ -26,7 +26,6 @@ extension BrowserTab {
         outgoing.onContentProcessTerminated = nil
         outgoing.onHistoryChanged = nil
         outgoing.onNavigatedWithinDocument = nil
-        outgoing.onOpenInChromium = nil
         outgoing.onLinkHovered = nil
         if let native = outgoing.webKit {
             native.navigationDelegate = nil

@@ -94,7 +94,6 @@ extension WebsiteAuthenticatorCeremonyTests {
             #expect(await ending({ _ in .expired }) == ["timeout"])
             #expect(await ending({ _ in .unavailable }) == ["interaction-refused"])
             #expect(await ending({ _ in .cancelled }) == [])
-            #expect(await ending({ _ in .handOff }) == [], "the adapter records where a hand-off went")
             #expect(await ending(pick, request: assertion(userVerification: .required), verifyFailure: WebsiteAuthenticatorError.notAllowed)
                 == ["verification-failed"])
             #expect(await ending({ _ in .declined }, request: assertion(allow: [Data([0xFF])])) == ["no-match", "user-declined"])
