@@ -590,6 +590,29 @@ struct MCPDialogTests {
         #expect(try await pageValue(rig, "later") == "after")
     }
 
+    /// The connection's tab is behind another one and its page is in no window, yet its dialog is held for the connection
+    /// first, as for a tab in front, and no sheet is shown. The tools refuse such a tab (`isReachable`), so the test answers
+    /// through the queue, as `handleDialog` does.
+    @Test(.timeLimit(.minutes(2)), arguments: BrowserEngine.allCases)
+    func aBackgroundTabsDialogIsHeldForTheConnectionThatControlsIt(engine: BrowserEngine) async throws {
+        let rig = try await makeRig(engine)
+        defer { rig.close() }
+        let developer = MCPBrowserSession(browser: rig.browser, available: { true }, consent: { _, _, _ in .development })
+        _ = try await developer.call(name: "requestAccess", arguments: ["development": true])
+        #expect(try await developer.call(name: "startDiagnostics", arguments: ["tabID": .string(rig.tab.id.uuidString)]).isError == false)
+        _ = rig.browser.newTab(url: try rig.server.url("/next"))
+        rig.window.contentView = nil
+        try #require(!rig.tab.isOnScreen() && rig.tab.page.window == nil, "the person looks at another tab")
+        // Not awaited: Chromium checks the page after the script, which the open confirm blocks.
+        rig.tab.page.evaluateJavaScript("setTimeout(() => { document.body.dataset.answer = String(confirm('Keep going?')) }, 0); true", completionHandler: nil)
+        #expect(await waitUntil { rig.tab.dialogs.hasOpenDialog }, "the connection holds the dialog")
+        let dialog = try #require(rig.tab.dialogs.pending(for: developer.id).first)
+        #expect(dialog.kind == .confirm && !dialog.userMustAnswer)
+        #expect(!rig.tab.dialogs.waitsToBeShown)
+        #expect(rig.tab.dialogs.answer(dialog.id, connection: developer.id, with: .init(accepted: true)))
+        #expect(await waitUntil { (try? await self.pageValue(rig, "answer")) == "true" })
+    }
+
     @Test func closingTheTabEndsAPendingDialogWithoutASheet() async throws {
         let rig = try await makeRig(.webKit)
         defer { rig.close() }

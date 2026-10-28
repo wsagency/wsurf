@@ -10,26 +10,25 @@ enum PageDialogs {
     // MARK: - JavaScript dialogs
 
     /// While an external connection controls the tab, `queue` holds each dialog for that connection first. Without one,
-    /// or once the connection lets it go, the sheet below is the only path.
-    static func alert(_ message: String, from frame: WKFrameInfo, in window: NSWindow?, queue: PageDialogQueue? = nil) async {
-        guard let window else { return }
+    /// or once the connection lets it go, the sheet below is the only path. It waits until the user can see the tab, and a
+    /// page that goes away first gets Cancel.
+    static func alert(_ message: String, from frame: WKFrameInfo, over view: NSView, queue: PageDialogQueue? = nil) async {
         let request = PageDialogQueue.Request(kind: .alert, message: message, origin: origin(of: frame))
         _ = await routed(request, via: queue) {
             let alert = makeAlert(message, from: frame)
             alert.addButton(withTitle: String(localized: "OK"))
-            _ = await present(alert, in: window)
+            _ = await present(alert, over: view, queue: queue)
             return .init(accepted: true)
         }
     }
 
-    static func confirm(_ message: String, from frame: WKFrameInfo, in window: NSWindow?, queue: PageDialogQueue? = nil) async -> Bool {
-        guard let window else { return false }
+    static func confirm(_ message: String, from frame: WKFrameInfo, over view: NSView, queue: PageDialogQueue? = nil) async -> Bool {
         let request = PageDialogQueue.Request(kind: .confirm, message: message, origin: origin(of: frame))
         let answer = await routed(request, via: queue) {
             let alert = makeAlert(message, from: frame)
             alert.addButton(withTitle: String(localized: "OK"))
             alert.addButton(withTitle: String(localized: "Cancel"))
-            return .init(accepted: await present(alert, in: window) == .alertFirstButtonReturn)
+            return .init(accepted: await present(alert, over: view, queue: queue) == .alertFirstButtonReturn)
         }
         return answer?.accepted ?? false
     }
@@ -39,10 +38,9 @@ enum PageDialogs {
         defaultText:
             String?,
         from frame: WKFrameInfo,
-        in window: NSWindow?,
+        over view: NSView,
         queue: PageDialogQueue? = nil
     ) async -> String? {
-        guard let window else { return nil }
         let request = PageDialogQueue.Request(kind: .prompt, message: message, origin: origin(of: frame), defaultText: defaultText)
         let answer = await routed(request, via: queue) {
             let alert = makeAlert(message, from: frame)
@@ -54,7 +52,7 @@ enum PageDialogs {
             alert.accessoryView = field
             alert.window.initialFirstResponder = field
 
-            guard await present(alert, in: window) == .alertFirstButtonReturn else { return .init(accepted: false) }
+            guard await present(alert, over: view, queue: queue) == .alertFirstButtonReturn else { return .init(accepted: false) }
             return .init(accepted: true, text: field.stringValue)
         }
         guard let answer, answer.accepted else { return nil }
@@ -123,6 +121,21 @@ enum PageDialogs {
 
     static func capped(_ text: String, limit: Int = 1500) -> String {
         text.count > limit ? String(text.prefix(limit)) + "…" : text
+    }
+
+    /// Shows `alert` on the window of `view`'s page once the user can see its tab (`PageDialogQueue.untilShown`), so it never
+    /// covers another tab; without a tab's queue, at once. Nil, and nothing shown, when the page went away or was sent
+    /// elsewhere first, or has no window.
+    static func present(_ alert: NSAlert, over view: NSView?, queue: PageDialogQueue?) async -> NSApplication.ModalResponse? {
+        guard let view else { return nil }
+        let window: NSWindow?
+        if let queue {
+            window = await queue.untilShown(view)
+        } else {
+            window = view.window
+        }
+        guard let window else { return nil }
+        return await present(alert, in: window)
     }
 
     static func present(_ alert: NSAlert, in window: NSWindow) async -> NSApplication.ModalResponse {

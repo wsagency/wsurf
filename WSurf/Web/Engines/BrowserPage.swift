@@ -254,9 +254,22 @@ final class BrowserPage: NSView {
         return wrapped
     }
 
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        // A dialog waiting for the tab to come to the front needs the window its page is in.
+        dialogs?.screenChanged()
+    }
+
+    /// A page sent elsewhere has its waiting dialogs answered as cancelled first: a sheet shown later would ask about a
+    /// document that is gone, and the page may be unable to leave while its dialog is unanswered.
+    private func leave() {
+        dialogs?.cancelAll()
+    }
+
     @discardableResult
     func load(_ request: URLRequest) -> PageNavigation? {
         guard !closed else { return nil }
+        leave()
         if let webKit {
             return navigation(for: webKit.load(request))
         }
@@ -267,6 +280,7 @@ final class BrowserPage: NSView {
     @discardableResult
     func loadFileURL(_ url: URL, allowingReadAccessTo directory: URL) -> PageNavigation? {
         guard !closed else { return nil }
+        leave()
         if let webKit {
             return navigation(for: webKit.loadFileURL(url, allowingReadAccessTo: directory))
         }
@@ -276,6 +290,7 @@ final class BrowserPage: NSView {
     @discardableResult
     func loadHTMLString(_ html: String, baseURL: URL?) -> PageNavigation? {
         guard !closed else { return nil }
+        leave()
         if let webKit {
             return navigation(for: webKit.loadHTMLString(html, baseURL: baseURL))
         }
@@ -284,6 +299,7 @@ final class BrowserPage: NSView {
 
     @discardableResult
     func reload() -> PageNavigation? {
+        leave()
         if let webKit {
             return navigation(for: webKit.reload())
         }
@@ -292,6 +308,7 @@ final class BrowserPage: NSView {
 
     @discardableResult
     func reloadFromOrigin() -> PageNavigation? {
+        leave()
         if let webKit {
             return navigation(for: webKit.reloadFromOrigin())
         }
@@ -300,6 +317,7 @@ final class BrowserPage: NSView {
 
     @discardableResult
     func goBack() -> PageNavigation? {
+        leave()
         if let webKit {
             return navigation(for: webKit.goBack())
         }
@@ -308,6 +326,7 @@ final class BrowserPage: NSView {
 
     @discardableResult
     func goForward() -> PageNavigation? {
+        leave()
         if let webKit {
             return navigation(for: webKit.goForward())
         }
@@ -316,6 +335,7 @@ final class BrowserPage: NSView {
 
     @discardableResult
     func go(to item: PageHistoryItem) -> PageNavigation? {
+        leave()
         if let webKit, let native = item.webKit {
             return navigation(for: webKit.go(to: native))
         }

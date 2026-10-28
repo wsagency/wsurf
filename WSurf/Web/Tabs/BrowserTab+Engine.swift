@@ -28,6 +28,7 @@ extension BrowserTab {
         outgoing.onNavigatedWithinDocument = nil
         outgoing.onOpenInChromium = nil
         outgoing.onLinkHovered = nil
+        outgoing.dialogs = nil
         if let native = outgoing.webKit {
             native.navigationDelegate = nil
             native.uiDelegate = nil
