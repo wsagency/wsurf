@@ -180,6 +180,44 @@ nonisolated final class ListPerformanceTests: XCTestCase, @unchecked Sendable {
         }
     }
 
+    // MARK: Chromium
+
+    /// The origin bookkeeping of a Chromium frame navigation (`ChromiumRuntime.recordOrigin`), which runs on the main thread for every
+    /// frame of every page: 20 navigations of a frame whose origin and top-level site are already listed, in a profile whose catalog
+    /// lists 2,000 sites. It read, decoded, encoded and rewrote the whole catalog file each time.
+    func testRecordingChromiumFramesAmongTwoThousandSites() throws {
+        try MainActor.assumeIsolated {
+            let runtime = ChromiumRuntime.shared
+            let profile = Profile(id: UUID(), name: "List origins", symbol: "hammer", color: .teal)
+            let context = BrowserProfileContext(profile: profile)
+            defer { finish { await Profile.erase(profile) } }
+            // The file a run of the app leaves, which the first navigation reads.
+            struct Seed: Encodable {
+                var origins: [String: Date]
+                var frames: [String: Set<String>]
+            }
+            let seed = Seed(
+                origins: Dictionary(uniqueKeysWithValues: (0..<2_000).map { ("https://site\($0).example", Date()) }),
+                frames: ["https://site3.example": ["https://top.example"]]
+            )
+            let directory = runtime.catalogDirectory(profileID: profile.id)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            try JSONEncoder().encode(seed).write(to: directory.appendingPathComponent("origins.json"))
+            let frame = try XCTUnwrap(URL(string: "https://site3.example/page"))
+            let top = try XCTUnwrap(URL(string: "https://top.example/"))
+
+            measure(metrics: [XCTClockMetric(), XCTMemoryMetric()], options: .budgeted) {
+                for _ in 0..<20 {
+                    runtime.recordOrigin(frame, under: top, context: context)
+                }
+            }
+
+            var entries: [WebsiteData.Entry] = []
+            finish { entries = try await runtime.websiteDataEntries(context: context) }
+            XCTAssertEqual(entries.count, 2_000)
+        }
+    }
+
     // MARK: Favicons
 
     /// Every site row asks the favicon cache for its icon each time it is drawn. For 1,000 sites that have none, ten passes over

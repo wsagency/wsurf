@@ -660,6 +660,22 @@ check_average \
   '4096' \
   'Release notes layout memory growth' \
   'kB'
+# 0.1.17, Chromium origin bookkeeping: 20 frame navigations whose origin and top-level site are listed, in a catalog of 2,000 sites. Debug on
+# the Pro under a load average of 150 to 400, seconds. Before (read, decode, encode and rewrite the catalog file per navigation): 0.0771. After
+# (a lookup in the kept catalog): 0.00087 and 0.00095 in two runs. The budget is about ten times the mean after, since a case this short is
+# mostly scheduler noise on a shared runner, and about an eighth of the old cost.
+check_average \
+  'ListPerformanceTests/testRecordingChromiumFramesAmongTwoThousandSites()' \
+  'com.apple.dt.XCTMetric_Clock.time.monotonic' \
+  '0.010' \
+  '20 Chromium frame navigations recorded among 2,000 sites' \
+  's'
+check_average \
+  'ListPerformanceTests/testRecordingChromiumFramesAmongTwoThousandSites()' \
+  'com.apple.dt.XCTMetric_Memory.physical' \
+  '4096' \
+  'Chromium origin recording memory growth' \
+  'kB'
 
 # Five-sample Pro baselines: 0.009744 s for one extraction of a 200 KB article; memory growth between -33 and 246 kB.
 check_average \

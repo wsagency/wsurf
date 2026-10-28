@@ -121,6 +121,16 @@ struct ChromiumProfileDataTests {
         return files.contains { (try? Data(contentsOf: $0))?.range(of: needle) != nil }
     }
 
+    /// The origins in the profile's `origins.json` on disk: what WSurf lists as sites with Chromium data, as a later launch reads it.
+    private func storedOrigins(_ profile: Profile) throws -> Set<String> {
+        struct Stored: Decodable {
+            var origins: [String: Date]
+        }
+        let file = runtime.catalogDirectory(profileID: profile.id).appendingPathComponent("origins.json")
+        guard FileManager.default.fileExists(atPath: file.path) else { return [] }
+        return Set(try JSONDecoder().decode(Stored.self, from: Data(contentsOf: file)).origins.keys)
+    }
+
     @Test(.boundedWebViews)
     func aRegularProfileKeepsItsSiteDataOnDisk() async throws {
         let server = try await HTTPFixtureServer.start(routes: ["/": .html("<!doctype html><title>Persist</title>")])
@@ -186,9 +196,13 @@ struct ChromiumProfileDataTests {
         // Website Data, one site.
         let snapshot = try await WebsiteData.snapshot(context: context)
         let entry = try #require(snapshot.entries.first { $0.engine == .chromium && $0.displayName == origin })
+        // The catalog is written a moment after a navigation, and the removal writes it at once.
+        runtime.flushOriginCatalogs()
+        #expect(try storedOrigins(profile).contains(origin))
         try await WebsiteData.remove([entry], of: snapshot, context: context)
         try await flushCookies(context)
         #expect(try storedCookieNames(profile) == ["unrecorded"])
+        #expect(try !storedOrigins(profile).contains(origin))
 
         // Clear Browsing Data, everything, with no recorded site left.
         try await BrowsingData.clear([.cookies, .cache], range: .everything, history: context.history, context: context)
@@ -278,6 +292,8 @@ struct ChromiumProfileDataTests {
         let catalog = runtime.rootDirectory.appendingPathComponent("Profiles", isDirectory: true)
             .appendingPathComponent(profile.id.uuidString, isDirectory: true)
         let directories = [runtime.cacheDirectory(profileID: profile.id), catalog]
+        // The catalog is written a moment after a navigation.
+        runtime.flushOriginCatalogs()
         try #require(directories.allSatisfy { FileManager.default.fileExists(atPath: $0.path) })
 
         try await runtime.erase(profile: profile)
