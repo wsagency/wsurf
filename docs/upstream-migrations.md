@@ -929,3 +929,22 @@ Checks, run on the tree of the second commit (this record aside) on the Mac Pro,
 - Focused run 2: **22 tests in 2 suites passed** (47.1 s): `MinimalBarScrollTests`, whose real-window cases run once on WebKit and once on Chromium, and `MicroPromptTests`. They cover While scrolling, the default, on both engines.
 - `Tools/check-format.sh`: SwiftLint **0.65.0** (installed; CI pins 0.65.1), whole repository, no violations. `Tools/check-string-catalog.py --strict` on this build: 3291 keys used, 3445 in the catalog, **0 missing**, 93 stale, none of them a key this intake added or changed. `Tools/check-test-partition.py`: 719 suites, 7522 tests; the new suite is serial by default and listed nowhere.
 - Not run, so nothing here is VERIFIED: the full suite, coverage, the performance budgets, a build of each commit on its own, a Stage smoke of the real app in a WebKit and a Chromium tab (the intake rules ask for it for UI items), and the Release configuration (never run). A timed choice is tested on the model with millisecond times; no test puts a real Minimal window under a timed choice, because that rig reads the app-wide setting, which no test writes. Nobody has seen the Hide bar menu or the dimmed Icons only row on screen.
+
+## WSurf 0.1.17 candidate: Chromium origin catalog write and download list
+
+Not upstream provenance. Branches `perf/chromium-site-count-0.1.17` and `perf/download-progress-0.1.17`, both cut from `be071c56`. Not merged to `main`, no PR, not deployed. Nothing changes in the database, the settings or WebKit's data, and no file format changes.
+
+### `Profiles/<profile id>/origins.json` is written later
+
+The file, its place and its format (`origins`, and `frames` from 0.1.16) are the same, so a build before 0.1.17 reads what this one writes. What changes is when. A regular profile's catalog is read once and then kept in memory. `ChromiumRuntime.recordOrigin`, which runs for every frame navigation, now only writes in two cases: the origin or the frame's top-level site is new, or the file is more than a day old. The write does not happen at once but **about 1 s later** (`originWriteDelay`), so a page that loads a dozen frames writes once. A catalog that is newer than its file is also **flushed when the app quits**, from an observer of `NSApplication.willTerminateNotification`. The paths that clear or remove sites (`clearData`, `removeWebsiteData`, `erase`) still write at once.
+
+What that means for stored data:
+
+- A crash, a force quit or a power loss in that second loses the records of origins first seen in it. They are made again by the next visit. Nothing Chromium stored (its cookies, its storage) is affected: those files are Chromium's own, in `<profile id>/`.
+- The directory `Profiles/<profile id>/` is made by the first write, so it appears about 1 s after a profile's first Chromium navigation (or at quit), not at the navigation. `ChromiumRuntime.hasUsedChromium` (the test that decides whether to read the Chromium framework ahead after launch, `perf/chromium-startup-0.1.17`) is the existence of a UUID-named directory there. After a crash in that second the framework is simply not read ahead at the next launch.
+- Website data and the Privacy page's site count read this catalog alone and start no Chromium browser, so a site that is not in the file is not listed until it is written.
+- A private profile keeps its catalog in memory as before and writes nothing.
+
+### The Downloads list is not written for a byte count
+
+`DownloadManager.noteProgress` passes a download's byte count to `items` at most every 100 ms (the first count and every state change at once), and a change of `items` that is only a byte count no longer schedules the write of the list file (the 400 ms write task). The file keeps the byte count of the last state change (start, pause, finish, failure, or any other change of the row) while a download runs. A crash during a download therefore leaves a stale byte count for it in the file.
