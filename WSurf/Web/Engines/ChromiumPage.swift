@@ -172,7 +172,7 @@ final class ChromiumPage: NSView {
             throw ChromiumError.unavailable(String(localized: "Chromium could not open this tab."))
         }
         self.client = client
-        try adopt(created)
+        try adopt(created, popup: false)
     }
 
     /// A browser CEF makes goes in this view, at its size.
@@ -183,8 +183,9 @@ final class ChromiumPage: NSView {
         info.runtime_style = CEF_RUNTIME_STYLE_ALLOY
     }
 
-    /// Takes `browser`, whose reference is now this page's: its DevTools, then the preparation every load waits for.
-    private func adopt(_ browser: UnsafeMutablePointer<cef_browser_t>) throws {
+    /// Takes `browser`, whose reference is now this page's: its DevTools, then the preparation every load waits for. A pop-up's
+    /// first document predates its scripts, so they also run once there (`runScriptsInEarlierDocuments`).
+    private func adopt(_ browser: UnsafeMutablePointer<cef_browser_t>, popup: Bool) throws {
         raw = browser
         browserID = browser.pointee.get_identifier?(browser) ?? -1
         ChromiumRuntime.shared.register(self)
@@ -196,7 +197,10 @@ final class ChromiumPage: NSView {
             _ = attached
             preparation = Task { [weak self] in
                 guard let self else { throw ChromiumError.closed }
-                try await devTools.prepare()
+                try await devTools.prepare(marksNewDocuments: popup)
+                if popup {
+                    await devTools.runScriptsInEarlierDocuments()
+                }
                 pageZoom = zoom
             }
         } catch {
@@ -486,28 +490,6 @@ final class ChromiumPage: NSView {
         let matches = live.filter { $0.isMainFrame == isMainFrame && $0.request.url == requestURL }
         guard matches.count == 1, let match = matches.first else { throw ChromiumError.staleFrame }
         return match
-    }
-
-    /// The view's current frame cropped to `rect` (view points; the whole view when `nil`) and scaled to `width` points. The crop
-    /// is made here, not with a DevTools `clip`: for a clip Chromium emulates an offset viewport and resizes the view for one
-    /// frame, and when the frame it copies predates them it returns that frame's top-left corner instead of `rect`.
-    func capture(rect: CGRect?, width: CGFloat?) async throws -> NSImage {
-        try await ensureReady()
-        let response = try await command("Page.captureScreenshot", params: ["format": "png", "captureBeyondViewport": false])
-        let area = rect ?? bounds
-        let failure = ChromiumError.protocolFailure(String(localized: "Chromium did not return a page image."))
-        guard let encoded = response["data"] as? String, let data = Data(base64Encoded: encoded),
-            let frame = NSBitmapImageRep(data: data)?.cgImage, bounds.width > 0, area.width > 0, area.height > 0
-        else { throw failure }
-        // Image pixels per view point: the display's scale factor, or an emulated device's.
-        let ratio = CGFloat(frame.width) / bounds.width
-        let pixels = CGRect(x: area.minX * ratio, y: area.minY * ratio, width: area.width * ratio, height: area.height * ratio)
-        guard let crop = frame.cropping(to: pixels.integral) else { throw failure }
-        let scale = (width ?? area.width) / area.width
-        let cropped = NSBitmapImageRep(cgImage: crop)
-        let image = NSImage(size: CGSize(width: area.width * scale, height: area.height * scale))
-        image.addRepresentation(scale == 1 ? cropped : PageScreenshotEncoding.scaled(cropped, by: Double(scale)) ?? cropped)
-        return image
     }
 
     func insertText(_ text: String) async throws {
@@ -960,7 +942,7 @@ extension ChromiumPage {
         }
         ChromiumInterop.retain(UnsafeMutableRawPointer(browser))
         do {
-            try adopt(browser)
+            try adopt(browser, popup: true)
             // What WSurf sets over DevTools (the user agent); the browser settings came from the opener.
             Task { [weak self] in
                 guard let self, (try? await applySettings(context.settings)) != nil else { return }

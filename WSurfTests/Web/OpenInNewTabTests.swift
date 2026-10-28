@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import AppKit
+import AuthenticationServices
 import Foundation
 import Testing
 import WebKit
@@ -888,6 +889,78 @@ extension OpenInNewTabTests {
                 #expect(try await !rig.messages().contains("{\"from\":\"popup\"}"), "no opener")
             }
         }
+    }
+
+    /// The first page of a Chromium pop-up starts before WSurf attaches to its browser, so WSurf's scripts run there late, once:
+    /// password autofill is in and can talk to the app, and a passkey request reaches WSurf (the answer here is a refusal) instead
+    /// of CEF's own WebAuthn, which shows nothing and does not end. Running them a second time installs nothing again. Both in a
+    /// pop-up tab that is shown and in one that never is.
+    @Test(arguments: [true, false])
+    func aChromiumPopupsFirstPageGetsWSurfsScripts(shown: Bool) async throws {
+        try await withRig(.chromium) { rig in
+            let profileID = rig.browser.context.profile.id
+            WebAuthnAdapter.interactionForTesting[profileID] = { Declining() }
+            defer { WebAuthnAdapter.interactionForTesting[profileID] = nil }
+            if shown {
+                rig.showOpenedTabs()
+            }
+            // The pop-up of the other site, on `localhost`: a relying party, where 127.0.0.1 (an IP address) is not one.
+            try await rig.click("crossOauth")
+            let landed = try #require(await waitForAnyTab(in: rig), "a tab opened for the pop-up")
+            let popup = landed.page
+            try #require(await waitUntil { popup.url?.path == "/popup" && !popup.isLoading }, "the pop-up's first page loaded")
+            try #require(await waitUntil { try await rig.messages().contains("{\"from\":\"popup\"}") }, "it is the opener's pop-up")
+            let world = PasswordAutofill.world
+            #expect(try await popup.evaluateJavaScript("typeof globalThis.__wsurfPasswords?.pickFill", in: nil, contentWorld: world) as? String
+                == "function", "password autofill is in the first page")
+            var pings = 0
+            popup.addScriptMessageHandler(name: "wsurfTestPing", in: world) { _ in pings += 1 }
+            _ = try await popup.evaluateJavaScript("globalThis.__wsurfSend('wsurfTestPing', 1); true", in: nil, contentWorld: world)
+            #expect(await waitUntil { pings == 1 }, "and reaches the app")
+
+            let started = ContinuousClock.now
+            let outcome = try await popup.callAsyncJavaScript("""
+                return await navigator.credentials.get({ publicKey: { challenge: new Uint8Array(16), timeout: 4000 } })
+                  .then(() => 'resolved', error => error.name);
+                """, in: nil, contentWorld: .page) as? String
+            #expect(outcome == "NotAllowedError" && started.duration(to: .now) < .seconds(3), "WSurf answered the passkey request")
+
+            // A second run installs nothing again: the same objects, one listener.
+            _ = try await popup.evaluateJavaScript("globalThis.__before = globalThis.__wsurfPasswords; true", in: nil, contentWorld: world)
+            _ = try await popup.evaluateJavaScript("window.__before = navigator.credentials.get; true", in: nil, contentWorld: .page)
+            let chromium = try #require(popup.chromium)
+            await chromium.devTools.runScriptsInEarlierDocuments()
+            #expect(try await popup.evaluateJavaScript("globalThis.__before === globalThis.__wsurfPasswords", in: nil, contentWorld: world)
+                as? Bool == true)
+            #expect(try await popup.evaluateJavaScript("window.__before === navigator.credentials.get", in: nil, contentWorld: .page) as? Bool == true)
+            _ = try await popup.evaluateJavaScript("globalThis.__wsurfSend('wsurfTestPing', 2); true", in: nil, contentWorld: world)
+            #expect(await waitUntil { pings == 2 })
+            try await Task.sleep(for: .milliseconds(300))
+            #expect(pings == 2, "one listener")
+        }
+    }
+
+    /// A person who declines every passkey step.
+    @MainActor private struct Declining: WebAuthnCeremonyInteraction {
+        var canVerifyUser: Bool {
+            true
+        }
+
+        func decide(_ prompt: WebAuthnPrompt, in anchor: ASPresentationAnchor, until deadline: ContinuousClock.Instant?) async -> WebAuthnDecision {
+            .declined
+        }
+
+        func offerStart(
+            operation: WebAuthnPrompt.Operation, origin: String, locked: Bool, in anchor: ASPresentationAnchor, until deadline: ContinuousClock.Instant?
+        ) async -> WebAuthnDecision {
+            .declined
+        }
+
+        func verifyUser(reason: String, until deadline: ContinuousClock.Instant?) async throws {
+            throw WebsiteAuthenticatorError.notAllowed
+        }
+
+        func reportUnconfirmedRegistration(rpID: String, userName: String, in anchor: ASPresentationAnchor) {}
     }
 
     /// A private window's pop-up is private too and reads its opener's storage: CEF gives a pop-up its opener's request context.

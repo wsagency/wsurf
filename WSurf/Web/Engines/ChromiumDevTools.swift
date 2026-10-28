@@ -209,7 +209,8 @@ final class ChromiumDevTools {
         self.registration = registration
     }
 
-    func prepare() async throws {
+    /// `marksNewDocuments`: the session of a pop-up, whose first document predates its scripts (`runScriptsInEarlierDocuments`).
+    func prepare(marksNewDocuments: Bool = false) async throws {
         guard !closed else { throw ChromiumError.closed }
         guard !prepared else { return }
         if preparing {
@@ -223,7 +224,7 @@ final class ChromiumDevTools {
             // Before the loop: nothing may suspend between its last check and `prepared`, or a script added meanwhile is lost.
             // A cross-site frame's security state and responses are not the page's: its session enables neither.
             if sessionID == nil {
-                try await preparePageSession()
+                try await preparePageSession(marksNewDocuments: marksNewDocuments)
             } else {
                 try await prepareFrameSession()
             }
@@ -235,6 +236,9 @@ final class ChromiumDevTools {
                     let identifier = try await install(scripts[index])
                     guard !closed, scripts.indices.contains(index) else { throw ChromiumError.closed }
                     scripts[index].identifier = identifier
+                    if marksNewDocuments {
+                        try await markNewDocuments(registered: index + 1)
+                    }
                     continue
                 }
                 let worlds = Set(scripts.map(\.worldName)).union(handlers.keys.map(\.worldName))
@@ -736,7 +740,7 @@ final class ChromiumDevTools {
         })();
         """
 
-    private var pageBridgeSource: String {
+    var pageBridgeSource: String {
         """
         (() => {
           if (Object.prototype.hasOwnProperty.call(globalThis, '__wsurfPageBridge')) return;
@@ -754,7 +758,7 @@ final class ChromiumDevTools {
 
     /// The page world's `__wsurfSend`, present only while page-world handlers exist. It keeps its own references, so a
     /// page that replaces the DOM methods later cannot intercept it.
-    private var pageRelaySource: String {
+    var pageRelaySource: String {
         """
         (() => {
           if (Object.prototype.hasOwnProperty.call(globalThis, '__wsurfSend')) return;

@@ -30,12 +30,18 @@ enum PageStandInRelay {
         )
     }
 
+    /// Once per document and name: a document that gets it a second time (a late run) keeps one listener.
     static func relay(_ name: String) -> String {
         """
-        document.addEventListener('\(name)', event => {
-          if (typeof event.detail !== 'string' || event.detail.length > 65536) return;
-          try { globalThis.__wsurfSend('\(name)', JSON.parse(event.detail)); } catch (_) {}
-        });
+        (() => {
+          const relays = globalThis.__wsurfRelays ??= new Set();
+          if (relays.has('\(name)')) return;
+          relays.add('\(name)');
+          document.addEventListener('\(name)', event => {
+            if (typeof event.detail !== 'string' || event.detail.length > 65536) return;
+            try { globalThis.__wsurfSend('\(name)', JSON.parse(event.detail)); } catch (_) {}
+          });
+        })();
         """
     }
 }

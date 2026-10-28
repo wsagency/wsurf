@@ -101,10 +101,12 @@ extension ChromiumDevTools {
         }
         owner.sessions[session] = child
         let isFrame = info?["type"] as? String == "iframe" && !target.isEmpty
-        Task { await child.startCrossSiteFrameSession(isFrame: isFrame) }
+        // A frame that was already running when the session attached (in a pop-up's first page) has a document its scripts missed.
+        let wasRunning = params["waitingForDebugger"] as? Bool == false
+        Task { await child.startCrossSiteFrameSession(isFrame: isFrame, wasRunning: wasRunning) }
     }
 
-    private func startCrossSiteFrameSession(isFrame: Bool) async {
+    private func startCrossSiteFrameSession(isFrame: Bool, wasRunning: Bool) async {
         let attached = ContinuousClock.now
         var ready = isFrame
         if ready {
@@ -118,6 +120,9 @@ extension ChromiumDevTools {
             root.loadStatistics.framePauses += 1
             root.loadStatistics.framePauseTotal += held
             root.loadStatistics.framePauseMax = max(root.loadStatistics.framePauseMax, held)
+        }
+        if ready, wasRunning {
+            await runScriptsInEarlierDocuments()
         }
         guard !ready || closed else { return }
         if let parent, let sessionID {
