@@ -31,10 +31,9 @@ Everything since 0.1.16 (build 16). None of the screens and prompts below has be
 
 ### Pop-ups, passkeys and dialogs
 
-- **[Phase 2, to be written when merged]** Pop-ups: a Chromium pop-up keeps `window.opener`, and a pop-up to a website WSurf routes to WebKit keeps the plain-tab behaviour it had.
-- **[Phase 2, to be written when merged]** Passkeys: a website that asks for a passkey WSurf cannot give now gets a one-button sheet, “No passkey for this website in WSurf”, instead of a prompt that hung; Chromium’s “Use Another Device or Key…” is gone.
-- **[Phase 2, to be written when merged]** Dialogs from a background tab: a JavaScript alert, confirm or prompt from a tab in the background waits until you show that tab.
-- **[Phase 2]** Check the known issue about `window.open` below once the pop-up branch is in, and drop this whole section if none of the three is merged.
+- Chromium tabs: a pop-up a page opens (`window.open`, a sign-in window, a link that opens a new window) now keeps its connection to the page that opened it, so a sign-in pop-up can hand its result back and close itself. It used to open as an ordinary tab with no link to the page, so a sign-in that reports back to the page could not finish. The pop-up still opens in a tab of its own, and the pop-up blocker and the question about opening another app work as before. A pop-up to a website you set to WebKit (Google sign-in is one) opens as a plain WebKit tab as before, with no link to the page.
+- Passkeys: when a website asks for a passkey and WSurf has none for it, a sheet now says “No passkey for this website in WSurf.” and “Choose another way to sign in on the website.”, with one button, OK. It used to offer ways that could not work: Chromium’s “Use Another Device or Key…” is gone, and so are the “Continue in Chromium” button and its note on the sheets of WebKit tabs. Where a passkey request used to reach Chromium’s own passkey code, which has no prompt and reaches no authenticator, the page waited forever. In Chromium tabs, and in the frames of other websites, that request now ends at once as “not allowed”, which websites answer with their other way to sign in. When WSurf cannot save a new passkey (no vault yet), its sheet says so in the same way, with one button.
+- Dialogs: an alert, confirm or prompt from a tab in the background no longer appears over the page you are looking at. It waits until you open that tab, and the page waits too. In Chromium tabs, “Leave page?” and “Reload page?” from a background tab wait the same way. A tab that closes, or loads another page, before you look at it answers its waiting dialogs with Cancel (Stay for “Leave page?”).
 
 ### Under the hood
 
@@ -50,6 +49,8 @@ Everything since 0.1.16 (build 16). None of the screens and prompts below has be
 - WebKit tabs that both use the camera or microphone still take it from each other: showing another tab that uses them mutes the first for good, and WSurf has no button to resume it.
 - Taking back camera or microphone access from a Chromium tab that is using it stops the devices by closing and reopening the page, and shows “Could not change website device access”.
 - Back after an engine switch goes back one step only: Forward does not return to the other engine, and a Chromium page comes back by its address, not with its history.
+- Passkeys from Apple Passwords, from phones and from security keys do not work in either engine until Apple grants WSurf the browser passkey entitlement; the sheet above is all a website gets.
+- A script that must run before a page’s own code (the passkey script, the notification and location stand-ins, the development diagnostics hook) can run late on the first page of a Chromium pop-up, so that page may have done its first work before it.
 - A page in a background tab runs its timers more slowly after 10 seconds, so a page that counts, polls or refreshes itself from a timer can fall behind until you show it. Set the website to Keep this website loaded to leave it as it was.
 - The known issues of 0.1.14 are unchanged.
 
