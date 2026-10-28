@@ -421,9 +421,6 @@ enum WebAuthnAdapter {
 
     private static func run(_ entry: Entry) async {
         guard let page = entry.page else { return }
-        // The window is fixed when the run starts and rechecked before anything is shown, so a tab moved to another window
-        // meanwhile can never redirect the prompt there.
-        let startWindow = page.window
         var context: WebAuthnContext?
         var claimed: NSWindow?
         var receipt: (manager: CredentialManager, outcome: WebAuthnCeremonyOutcome)?
@@ -441,6 +438,16 @@ enum WebAuthnAdapter {
             }
         }
         do {
+            // A tab nobody sees waits until it is in front, as its page dialogs do, so no sheet covers another tab. Closing it,
+            // replacing or leaving its page ends the wait; so does an abort or the deadline, which cancel this run. The window
+            // is then fixed and rechecked before anything is shown, so a tab moved to another window meanwhile can never
+            // redirect the prompt there.
+            let shown = await shownWindow(of: page)
+            try ensureCurrent(entry)
+            guard let startWindow = shown else {
+                note("no-window", entry)
+                throw WebsiteAuthenticatorError.notAllowed
+            }
             // The asking document must still be the live one and still hold exactly this request, before anything native
             // is built, prompted, unlocked or written. Asked of the frame the message came from; a replaced document,
             // an unreachable frame or any error refuses and never rebinds the request to another document.
@@ -458,10 +465,11 @@ enum WebAuthnAdapter {
             guard native.credentialGeneration == entry.generation, page.credentialGeneration == entry.generation else {
                 throw WebAuthnContextError.staleFrame
             }
-            guard !page.isPrivate, native.profileID == page.profileID, let anchor = startWindow, page.window === anchor else {
+            guard !page.isPrivate, native.profileID == page.profileID, page.window === startWindow else {
                 note("no-window", entry)
                 throw WebsiteAuthenticatorError.notAllowed
             }
+            let anchor = startWindow
             // A page that replaces its conditional request with a modal one cancels the first, whose run may still be closing
             // its sheet. The new run waits for that run to end instead of being refused for its window, then proves itself again.
             if let previous = busyWindows[ObjectIdentifier(anchor)], previous.cancelled, let task = previous.task {
@@ -524,6 +532,13 @@ enum WebAuthnAdapter {
             noteUnconfirmedReceipt()
             await finish(entry, page: page, context: context, error: error)
         }
+    }
+
+    /// The window to show the request's sheets in, once the user can see its tab (`PageDialogQueue.untilShown`). A page that is
+    /// no tab's (one being closed) has only the window it is in.
+    private static func shownWindow(of page: BrowserPage) async -> NSWindow? {
+        guard let dialogs = page.dialogs else { return page.window }
+        return await dialogs.untilShown(page)
     }
 
     /// The vault that answers the request, or `nil` when the choice came to nothing (a cancel). With no usable vault it shows the
