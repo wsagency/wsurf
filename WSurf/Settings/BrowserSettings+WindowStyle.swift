@@ -23,6 +23,11 @@ nonisolated enum BrowserWindowStyle: String, CaseIterable, Identifiable {
         }
     }
 
+    /// Only the Standard sidebar can narrow to icons; the Minimal tab list always shows each tab's title.
+    var offersIconsOnlySidebar: Bool {
+        self == .standard
+    }
+
     var caption: LocalizedStringResource {
         switch self {
         case .standard:

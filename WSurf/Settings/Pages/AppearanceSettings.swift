@@ -53,11 +53,15 @@ private struct AppearanceSidebarSection: View {
             .settingsAnchor("appearance.sidebar")
 
             RowSeparator()
-            DetailRow(title: "Icons only") {
+            DetailRow(
+                title: "Icons only",
+                caption: "Hide tab titles in the sidebar to save space. The Minimal window always shows them."
+            ) {
                 SettingsToggle(Binding(
                     get: { sidebar.style == .icons }, set: { sidebar.setStyle($0 ? .icons : .full) }
                 ))
             }
+            .disabled(!settings.windowStyle.offersIconsOnlySidebar)
             .settingsAnchor("appearance.sidebarStyle")
 
             RowSeparator()

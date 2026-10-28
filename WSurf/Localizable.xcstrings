@@ -3201,6 +3201,9 @@
     "Hide Sidebar" : {
       "comment" : "View menu item that hides the tab sidebar; the same item reads “Show Sidebar” while it is hidden. Title Case."
     },
+    "Hide tab titles in the sidebar to save space. The Minimal window always shows them." : {
+      "comment" : "Caption under the Icons only switch in Appearance settings, and its Settings search description. With the switch on, the Standard window’s sidebar keeps each website icon and drops the tab title, so it takes less room. The Minimal window’s list of tabs is not affected, which the second sentence says; the switch is dimmed while that window style is chosen."
+    },
     "Hide Tabs" : {
       "comment" : "The same command once the Minimal window’s list of tabs is open; it closes the list. Title Case."
     },
@@ -4005,9 +4008,6 @@
     },
     "Name on card" : {
 
-    },
-    "Narrow the sidebar to its icons." : {
-      "comment" : "Description of the Icons only switch, shown only in the Settings search results, meaning the sidebar keeps each row's symbol and drops its text. Imperative with a final full stop."
     },
     "Needs a key" : {
       "comment" : "Settings → Assistant → a provider page. Readiness status when the provider has no API key."

@@ -216,6 +216,19 @@ struct WindowStyleSettingsTests {
             .allSatisfy { $0.category == .appearance })
     }
 
+    /// The Minimal window draws its tab list at full width whatever `SidebarLayout.style` is (`BrowserView`), so the switch has
+    /// no effect there: the Settings row is dimmed for it and says why, and search still reaches it.
+    @Test func theIconsOnlySwitchBelongsToTheStandardWindowAlone() throws {
+        #expect(BrowserWindowStyle.standard.offersIconsOnlySidebar)
+        #expect(!BrowserWindowStyle.minimal.offersIconsOnlySidebar)
+
+        let entry = try #require(SettingsIndex.all.first { $0.id == "appearance.sidebarStyle" })
+        #expect(entry.searchableDetail.contains("Minimal window"))
+        for query in ["icons only", "tab titles", "narrow"] {
+            #expect(SettingsIndex.search(query).contains { $0.id == "appearance.sidebarStyle" }, "\(query)")
+        }
+    }
+
     @Test func searchFindsTheFullAddressRowInGeneral() throws {
         let entries = SettingsIndex.all.filter { $0.id == "general.fullAddress" }
         let entry = try #require(entries.first)
