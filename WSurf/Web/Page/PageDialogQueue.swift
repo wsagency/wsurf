@@ -1,13 +1,16 @@
 // SPDX-FileCopyrightText: 2026 WSurf Agency
 // SPDX-License-Identifier: Apache-2.0
 
-import Foundation
+import AppKit
 
 /// The JavaScript dialogs one tab's page has open, and who answers them.
 ///
 /// A dialog normally gets a native sheet. While an external connection controls the tab, it is held here instead, so the
 /// connection can read it and answer it; the page stays blocked until it does. A dialog the connection leaves unanswered,
 /// or loses interest in, goes to the user. It is never answered on the user's behalf.
+///
+/// The user's sheet waits until the user can see the tab (`untilShown`), so a tab in the background never covers the one in
+/// front; the page stays blocked meanwhile. A page that goes away or is sent elsewhere first has its dialogs cancelled.
 @MainActor
 final class PageDialogQueue {
     nonisolated enum Kind: String, Codable, Sendable {
@@ -129,6 +132,8 @@ final class PageDialogQueue {
     var settleCeiling: Duration = .seconds(5)
     /// The connection holding an authorized development lease on this tab, if any.
     var leaseHolder: (() -> UUID?)?
+    /// Whether the user can see the tab. The tab answers (`BrowserTab.isOnScreen`).
+    var isOnScreen: () -> Bool = { true }
 
     private var entries: [Entry] = []
     private var claims: [Claim] = []
@@ -136,6 +141,7 @@ final class PageDialogQueue {
     private var parked: [UUID: Task<Void, Never>] = [:]
     private var agentStays = 0
     private var lastGesture: ContinuousClock.Instant?
+    private var screenWaiters: [CheckedContinuation<Bool, Never>] = []
 
     init() {
         PageUserGesture.installIfNeeded()
@@ -307,7 +313,7 @@ final class PageDialogQueue {
         }
     }
 
-    /// The page is gone (replaced, crashed or closed): nobody needs to answer.
+    /// The page is gone (replaced, crashed or closed) or is sent elsewhere: nobody needs to answer.
     func cancelAll() {
         for entry in entries {
             resolve(entry, .cancelled)
@@ -315,11 +321,43 @@ final class PageDialogQueue {
         }
         entries.removeAll()
         parked.removeAll()
+        resumeScreenWaiters(false)
     }
 
     /// A new document committed, so the stay limit starts again.
     func documentCommitted() {
         agentStays = 0
+    }
+
+    // MARK: Waiting to be seen
+
+    /// True while a dialog waits for the user to see the tab.
+    var waitsToBeShown: Bool {
+        !screenWaiters.isEmpty
+    }
+
+    /// The window to show a sheet for `view`'s page on, once the user can see the tab and the page is in a window: at once for
+    /// a tab in front, else when the tab comes to the front. Nil when the page went away or was sent elsewhere first.
+    func untilShown(_ view: NSView) async -> NSWindow? {
+        weak let page = view
+        while page != nil {
+            if isOnScreen(), let window = page?.window {
+                return window
+            }
+            guard await withCheckedContinuation({ screenWaiters.append($0) }) else { return nil }
+        }
+        return nil
+    }
+
+    /// The tab came to the front or left it, or its page moved between windows: each waiting dialog looks again.
+    func screenChanged() {
+        resumeScreenWaiters(true)
+    }
+
+    private func resumeScreenWaiters(_ value: Bool) {
+        let waiters = screenWaiters
+        screenWaiters = []
+        waiters.forEach { $0.resume(returning: value) }
     }
 
     // MARK: Work a dialog blocks

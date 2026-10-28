@@ -57,17 +57,10 @@ extension ChromiumClient {
     private func presentJSDialog(_ raw: UnsafeMutableRawPointer, kind: Int, origin: String, message: String, prompt: String) {
         guard !isClosed else { Self.release(raw); return }
         hold(raw)
-        guard let window = page?.window else {
-            guard finish(raw) else { return }
-            let callback = raw.assumingMemoryBound(to: cef_jsdialog_callback_t.self)
-            callback.pointee.cont?(callback, 0, nil)
-            drop(raw)
-            return
-        }
         let request = PageDialogQueue.Request(
             kind: kind == 0 ? .alert : (kind == 1 ? .confirm : .prompt), message: message,
             origin: PageDialogText.origin(ofURL: origin), defaultText: kind == 2 ? prompt : nil)
-        completeDialog(raw, request, in: window) { Self.jsDialogAlert(kind: kind, origin: origin, message: message, prompt: prompt) }
+        completeDialog(raw, request) { Self.jsDialogAlert(kind: kind, origin: origin, message: message, prompt: prompt) }
     }
 
     /// The sheet for an alert (0), confirm (1) or prompt (2). A prompt takes plain text, like WebKit's.
@@ -89,17 +82,10 @@ extension ChromiumClient {
     private func presentBeforeUnload(_ raw: UnsafeMutableRawPointer, message: String, isReload: Bool) {
         guard !isClosed else { Self.release(raw); return }
         hold(raw)
-        guard let window = page?.window else {
-            guard finish(raw) else { return }
-            let callback = raw.assumingMemoryBound(to: cef_jsdialog_callback_t.self)
-            callback.pointee.cont?(callback, 0, nil)
-            drop(raw)
-            return
-        }
         let request = PageDialogQueue.Request(
             kind: .beforeUnload, message: message, origin: PageDialogText.origin(ofURL: page?.owner?.url?.absoluteString ?? ""),
             isReload: isReload)
-        completeDialog(raw, request, in: window) {
+        completeDialog(raw, request) {
             let alert = NSAlert()
             alert.messageText = isReload ? String(localized: "Reload page?") : String(localized: "Leave page?")
             alert.informativeText = message
@@ -109,17 +95,19 @@ extension ChromiumClient {
         }
     }
 
-    /// Hands the dialog to the tab's queue, which shows `makeSheet` to the user unless a connection answers first, then
-    /// completes CEF's callback. Nothing is sent once the browser has closed.
+    /// Hands the dialog to the tab's queue, which shows `makeSheet` to the user, once they can see the tab, unless a connection
+    /// answers first; then completes CEF's callback, with Cancel or Stay when the page went away first. Nothing is sent once
+    /// the browser has closed.
     private func completeDialog(
-        _ raw: UnsafeMutableRawPointer, _ request: PageDialogQueue.Request, in window: NSWindow,
-        makeSheet: @escaping @MainActor () -> NSAlert
+        _ raw: UnsafeMutableRawPointer, _ request: PageDialogQueue.Request, makeSheet: @escaping @MainActor () -> NSAlert
     ) {
         let queue = page?.owner?.dialogs
         Task { @MainActor [weak self] in
             let answer = await PageDialogs.routed(request, via: queue) {
+                // A page its tab has let go of (CEF asks one being closed before it unloads) is shown to nobody.
+                guard let queue else { return .init(accepted: false) }
                 let alert = makeSheet()
-                let response = await PageDialogs.present(alert, in: window)
+                let response = await PageDialogs.present(alert, over: self?.page, queue: queue)
                 return .init(accepted: response == .alertFirstButtonReturn, text: (alert.accessoryView as? NSTextField)?.stringValue)
             }
             guard let self, self.finish(raw), !self.isClosed else { return }

@@ -133,6 +133,7 @@ final class BrowserTab: Identifiable {
             guard isInFront != oldValue else { return }
             hasBeenInFront = hasBeenInFront || isInFront
             reconsiderBackgroundHiding()
+            dialogs.screenChanged()
         }
     }
     @ObservationIgnored var hasBeenInFront = false
@@ -376,6 +377,7 @@ final class BrowserTab: Identifiable {
             adopt(liveView)
         }
         find.driver = .browserPage { [weak self] in self?.shownPage }
+        dialogs.isOnScreen = { [weak self] in self?.isOnScreen() ?? false }
         reader.driver = .page { [weak self] in self?.liveView }
         assistantAccess.onPolicyChanged = { [weak self] in self?.releaseInvalidDevelopment() }
         autofillSave.isAgentControlled = { [weak self] in self?.isAgentControlled ?? true }

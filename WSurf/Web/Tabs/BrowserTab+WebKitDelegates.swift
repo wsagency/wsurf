@@ -319,7 +319,7 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
         runJavaScriptAlertPanelWithMessage message: String,
         initiatedByFrame frame: WKFrameInfo
     ) async {
-        await PageDialogs.alert(message, from: frame, in: webView.window, queue: tab?.dialogs)
+        await PageDialogs.alert(message, from: frame, over: webView, queue: tab?.dialogs)
     }
 
     func webView(
@@ -327,7 +327,7 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
         runJavaScriptConfirmPanelWithMessage message: String,
         initiatedByFrame frame: WKFrameInfo
     ) async -> Bool {
-        await PageDialogs.confirm(message, from: frame, in: webView.window, queue: tab?.dialogs)
+        await PageDialogs.confirm(message, from: frame, over: webView, queue: tab?.dialogs)
     }
 
     func webView(
@@ -337,7 +337,7 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
             String?,
         initiatedByFrame frame: WKFrameInfo
     ) async -> String? {
-        await PageDialogs.prompt(prompt, defaultText: defaultText, from: frame, in: webView.window, queue: tab?.dialogs)
+        await PageDialogs.prompt(prompt, defaultText: defaultText, from: frame, over: webView, queue: tab?.dialogs)
     }
 
     func webView(
@@ -462,7 +462,6 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
               let save = tab.onSaveDocument else { return }
         let source = frame.request.url
         let filename = tab.documentFilename(for: source) ?? fileURL.lastPathComponent
-        let window = webView.window
         Task {
             do {
                 let data = try await Task.detached(priority: .userInitiated) {
@@ -471,7 +470,7 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
                 await save(data, filename, source, true)
             } catch {
                 Pipeline.log.error("PDF: reading WebKit's temporary copy failed")
-                await PageDialogs.alert(error.localizedDescription, from: frame, in: window)
+                await PageDialogs.alert(error.localizedDescription, from: frame, over: webView)
             }
         }
     }
