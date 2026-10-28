@@ -269,12 +269,14 @@ nonisolated final class ListPerformanceTests: XCTestCase, @unchecked Sendable {
 
     #if DEBUG
     /// Forty progress updates of the one download that is running among 300 finished ones, each drawn: the other rows have not changed
-    /// and should not be built again.
+    /// and should not be built again. Every update must reach the list for this to measure the drawing, so the throttle is off here;
+    /// `testAFastDownloadReachesTheListAtMostTenTimesASecond` has it on.
     func testUpdatingOneDownloadInALongList() {
         MainActor.assumeIsolated {
             let browser = BrowserModel(database: .temporary())
             defer { browser.cancelPendingSave() }
             let downloads = DownloadManager(persists: false)
+            downloads.progressInterval = .zero
             downloads.stage((0..<300).map { index in
                 StageSet.StagedDownload(
                     filename: "report-\(index).pdf",
@@ -301,6 +303,58 @@ nonisolated final class ListPerformanceTests: XCTestCase, @unchecked Sendable {
             }
             XCTAssertEqual(downloads.items.filter(\.isRunning).count, 1)
             XCTAssertEqual(downloads.items.first(where: \.isRunning)?.bytesReceived, tick * 50_000)
+        }
+    }
+
+    /// A download that delivers 400 chunks in a second, on the Downloads page with 300 rows, each chunk drawn the way the run loop
+    /// gets to it. The byte count reaches the list at most ten times a second after the first, and the row ends on the last count.
+    /// The line it prints gives the main thread's CPU time for the whole run, which is what the list's redraws cost.
+    func testAFastDownloadReachesTheListAtMostTenTimesASecond() {
+        MainActor.assumeIsolated {
+            let browser = BrowserModel(database: .temporary())
+            defer { browser.cancelPendingSave() }
+            let downloads = DownloadManager(persists: false)
+            downloads.stage((0..<300).map { index in
+                StageSet.StagedDownload(
+                    filename: "report-\(index).pdf",
+                    host: "host-\(index % 40).example",
+                    bytes: 4_000_000 + Int64(index),
+                    finished: index != 0
+                )
+            })
+            browser.downloads = downloads
+            guard let running = downloads.items.first(where: \.isRunning)?.id else { return XCTFail("The staged list has no running download.") }
+            let (host, window) = Self.mount(DownloadsView(browser: browser), height: 1_400)
+            defer { window.close() }
+            Self.settle(host)
+            let received: () -> Int64? = {
+                downloads.items.first { $0.id == running }?.bytesReceived
+            }
+
+            let changes = ChangeCounter { _ = downloads.items }
+            let clock = ContinuousClock()
+            let started = clock.now
+            let cpuStarted = clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID)
+            for chunk in 1...400 {
+                downloads.noteProgress(received: Int64(chunk) * 10_000, expected: 4_000_000, for: running)
+                RunLoop.current.run(until: Date().addingTimeInterval(0.0025))
+                Self.settle(host)
+            }
+            // The newest count waits for its window to close.
+            let deadline = Date().addingTimeInterval(5)
+            while received() != 4_000_000, Date() < deadline {
+                RunLoop.current.run(until: Date().addingTimeInterval(0.01))
+            }
+            Self.settle(host)
+            let elapsed = (clock.now - started) / .seconds(1)
+            let cpu = Double(clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID) - cpuStarted) / 1e9
+
+            print(String(
+                format: "WSURF-PERF case=fast-download chunks=400 elapsed=%.3fs listChanges=%d mainThreadCPU=%.3fs",
+                elapsed, changes.count, cpu
+            ))
+            XCTAssertEqual(received(), 4_000_000)
+            XCTAssertLessThanOrEqual(changes.count, 1 + Int(elapsed * 10), "the list changed more than ten times a second")
         }
     }
     #endif
