@@ -93,18 +93,8 @@ nonisolated final class ThemePerformanceTests: XCTestCase, @unchecked Sendable {
 
     func testRenderingTheThemeGallery() throws {
         try MainActor.assumeIsolated {
-            let suite = AppDatabase.defaultsSuite("ThemePerformanceTests-\(UUID().uuidString)")
-            let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
-            defer { defaults.removePersistentDomain(forName: suite) }
-            let settings = BrowserSettings(defaults: defaults)
-            XCTAssertEqual(ThemeCatalog.builtIn.count, 8)
-            settings.userThemes = (0..<12).map { index in
-                var theme = ThemeCatalog.builtIn[index % ThemeCatalog.builtIn.count]
-                theme.basedOn = theme.id
-                theme.id = "performance-\(index)"
-                theme.name = "Performance fixture \(index)"
-                return theme
-            }
+            let (settings, removeDefaults) = try makeGallerySettings()
+            defer { removeDefaults() }
             let themes = settings.allThemes
             XCTAssertEqual(settings.userThemes.count, 12)
             XCTAssertEqual(themes.count, 20)
@@ -133,6 +123,67 @@ nonisolated final class ThemePerformanceTests: XCTestCase, @unchecked Sendable {
                 host.displayIfNeeded()
             }
         }
+    }
+
+    /// The Appearance pane's theme section on screen, as the brightness slider drives it: every step previews one theme, and
+    /// the other nineteen cards are unchanged.
+    func testPreviewingBrightnessWithTheGalleryOnScreen() throws {
+        try MainActor.assumeIsolated {
+            let (settings, removeDefaults) = try makeGallerySettings()
+            defer { removeDefaults() }
+            XCTAssertEqual(settings.allThemes.count, 20)
+            let host = NSHostingView(
+                rootView: AppearanceThemeSection(settings: settings, scheme: .dark)
+                    .frame(width: 520, alignment: .top)
+                    .environment(\.colorScheme, .dark)
+            )
+            // Tall enough that the lazy grid realizes all five rows of four cards.
+            let window = NSWindow(
+                contentRect: NSRect(x: 0, y: 0, width: 520, height: 1_600),
+                styleMask: [.borderless], backing: .buffered, defer: false
+            )
+            window.isReleasedWhenClosed = false
+            defer { window.close() }
+            window.appearance = NSAppearance(named: .darkAqua)
+            window.contentView = host
+            host.layoutSubtreeIfNeeded()
+            host.displayIfNeeded()
+            // This settings object owns its preview: it is not the application's, so the test host's themes stay as they are.
+            XCTAssertTrue(settings.globalSettings === settings)
+            settings.beginThemePreview()
+            defer { settings.cancelThemePreview() }
+            let options = XCTMeasureOptions.budgeted
+
+            measure(metrics: [XCTClockMetric(), XCTMemoryMetric()], options: options) {
+                for step in 0..<30 {
+                    var adjustment = settings.themeAdjustment
+                    adjustment.darkBrightness = Double(step) / 29 - 0.5
+                    settings.previewThemeAdjustment(adjustment)
+                    host.needsLayout = true
+                    host.layoutSubtreeIfNeeded()
+                    host.needsDisplay = true
+                    host.displayIfNeeded()
+                }
+            }
+            XCTAssertEqual(settings.themePreview?.adjustment.darkBrightness, 0.5)
+        }
+    }
+
+    /// Eight built-in themes and twelve saved copies, on a defaults suite of their own.
+    @MainActor
+    private func makeGallerySettings() throws -> (settings: BrowserSettings, removeDefaults: () -> Void) {
+        let suite = AppDatabase.defaultsSuite("ThemePerformanceTests-\(UUID().uuidString)")
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        let settings = BrowserSettings(defaults: defaults)
+        XCTAssertEqual(ThemeCatalog.builtIn.count, 8)
+        settings.userThemes = (0..<12).map { index in
+            var theme = ThemeCatalog.builtIn[index % ThemeCatalog.builtIn.count]
+            theme.basedOn = theme.id
+            theme.id = "performance-\(index)"
+            theme.name = "Performance fixture \(index)"
+            return theme
+        }
+        return (settings, { defaults.removePersistentDomain(forName: suite) })
     }
 }
 

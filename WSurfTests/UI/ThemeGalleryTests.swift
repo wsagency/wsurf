@@ -76,4 +76,26 @@ struct ThemeGalleryTests {
             #expect(try hex(calmPalette.backdrop) != hex(standardPalette.backdrop), "\(scheme)")
         }
     }
+
+    @Test func aThemeCardIsEqualWhenItDrawsTheSameWhateverItsAction() throws {
+        let nord = try #require(ThemeCatalog.builtIn("nord"))
+        var taps = 0
+        func card(
+            _ theme: ThemeDefinition? = nil, adjustment: ThemeAdjustment = ThemeAdjustment(),
+            mode: AppearanceMode = .system, isSelected: Bool = false, action: @escaping () -> Void = {}
+        ) -> ThemeCard {
+            ThemeCard(theme: theme ?? nord, adjustment: adjustment, mode: mode, isSelected: isSelected, action: action)
+        }
+        var brighter = ThemeAdjustment()
+        brighter.darkBrightness = 0.2
+        var renamed = nord
+        renamed.name = "Renamed"
+
+        #expect(card(action: { taps += 1 }) == card())
+        #expect(taps == 0, "comparing cards never selects a theme")
+        #expect(card() != card(renamed))
+        #expect(card() != card(adjustment: brighter))
+        #expect(card() != card(mode: .dark))
+        #expect(card() != card(isSelected: true))
+    }
 }

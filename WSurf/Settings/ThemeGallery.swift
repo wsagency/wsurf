@@ -29,6 +29,7 @@ struct ThemeGallery: View {
                 ) {
                     onSelect(theme.id)
                 }
+                .equatable()
                 .contextMenu {
                     Button("Duplicate") { onDuplicate(theme) }
                         .disabled(!canDuplicate)
@@ -43,12 +44,20 @@ struct ThemeGallery: View {
     }
 }
 
-private struct ThemeCard: View {
+/// Equatable on what the card draws, not on its action: the action only selects `theme` through the gallery's `onSelect`, which
+/// the card does not draw. A brightness or color preview then redraws the card of the previewed theme, not all of them. A new
+/// stored property that the card draws must join `==`.
+struct ThemeCard: View, Equatable {
     let theme: ThemeDefinition
     let adjustment: ThemeAdjustment
     let mode: AppearanceMode
     let isSelected: Bool
     let action: () -> Void
+
+    static func == (lhs: ThemeCard, rhs: ThemeCard) -> Bool {
+        lhs.theme == rhs.theme && lhs.adjustment == rhs.adjustment && lhs.mode == rhs.mode
+            && lhs.isSelected == rhs.isSelected
+    }
 
     private var schemes: [ColorScheme] {
         switch mode {
