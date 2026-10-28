@@ -23,7 +23,7 @@ extension ChromiumDevTools {
     }
 
     /// What runs in Chromium's cross-site frames. WebKit runs every all-frames script in every frame; Chromium runs only these
-    /// there, and never a page-world script. A feature opts in with one entry.
+    /// there. A feature opts in with one entry; a page-world script only by its source, and with no handler.
     static let crossSiteFrameScripts = [
         // Autofill, Pick Credential…, save offers and Input History. Nothing else is in this world.
         CrossSiteFrameScripts(world: AutofillPage.world),
@@ -31,11 +31,15 @@ extension ChromiumDevTools {
         // handler. Neither reaches the autofill world, and the autofill script and handlers never reach this one.
         CrossSiteFrameScripts(world: BrowserPage.servicesWorld, scripts: [MediaScript.source],
                               handlers: [MediaCenter.frameScriptHandlerName]),
+        // A public-key request ends at once instead of waiting forever on CEF's own WebAuthn. Sends nothing, so no relay.
+        CrossSiteFrameScripts(world: .page, scripts: [WebAuthnScript.engineRefusal], handlers: []),
     ]
 
     static func runsInCrossSiteFrames(_ script: Script) -> Bool {
-        !script.mainFrameOnly && !script.worldName.isEmpty && crossSiteFrameScripts.contains {
-            $0.world.name == script.worldName && $0.scripts?.contains(script.source) != false
+        !script.mainFrameOnly && crossSiteFrameScripts.contains { entry in
+            entry.world === WKContentWorld.page
+                ? script.worldName.isEmpty && entry.scripts?.contains(script.source) == true
+                : !script.worldName.isEmpty && entry.world.name == script.worldName && entry.scripts?.contains(script.source) != false
         }
     }
 

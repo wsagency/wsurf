@@ -814,7 +814,8 @@ extension WebAuthnAdapterTests {
         }
     }
 
-    /// The "which vault?" prompt of a passkey request offers the same way out, and taking it unlocks nothing.
+    /// A Chromium page's "which vault?" prompt of a passkey request offers the same way out, and taking it unlocks nothing. A WebKit
+    /// page's prompt offers none (its engine cannot keep it): the person who would take it can only cancel, which refuses the request.
     @Test(.boundedWebViews, arguments: [BrowserEngine.webKit, .chromium])
     func anotherDeviceOrKeyOnTheVaultChoiceHandsOverWithoutUnlocking(engine: BrowserEngine) async throws {
         try await withRealm(engine) { realm in
@@ -822,14 +823,24 @@ extension WebAuthnAdapterTests {
             let context = try await realm.context(passkeys: passkeys, vaults: [.locked, .locked])
             let profileID = context.profile.id
             VaultChoicePrompt.handOffForTesting.insert(profileID)
-            defer { VaultChoicePrompt.handOffForTesting.remove(profileID) }
+            VaultChoicePrompt.answersForTesting[profileID] = { _ in nil }
+            defer {
+                VaultChoicePrompt.handOffForTesting.remove(profileID)
+                VaultChoicePrompt.answersForTesting[profileID] = nil
+            }
             let page = try await realm.open(context)
             let reopened = Reopened(page)
             let before = passkeys.assertions.count
 
             try await recordResults(in: page)
             try await requestModalGet(in: page)
-            #expect(try await waitUntil { try await tookTheWayOut(page, engine, reopened) })
+            if engine == .chromium {
+                #expect(try await waitUntil { try await tookTheWayOut(page, engine, reopened) })
+            } else {
+                #expect(try await waitUntil { try await !results(of: page).isEmpty })
+                let error = try await results(of: page).first?["error"] as? [String: Any]
+                #expect(error?["name"] as? String == "NotAllowedError" && reopened.paths.isEmpty, "a cancel, not a way out")
+            }
             #expect(passkeys.assertions.count == before && CredentialManager.unlockedManagers(for: context.profile).isEmpty)
         }
     }

@@ -26,7 +26,7 @@ extension VaultRoute {
     /// `resolve`, for a request that can also be answered by the system's authenticator: its prompt then offers that as a
     /// choice, and choosing it is an answer that unlocks nothing.
     func select(
-        profile: Profile, offersHandOff: Bool, continuesInChromium: Bool = false, in anchor: @autoclosure () -> ASPresentationAnchor
+        profile: Profile, offersHandOff: Bool, in anchor: @autoclosure () -> ASPresentationAnchor
     ) async -> VaultSelection {
         let candidates: [VaultListing]
         let reason: VaultChoiceReason
@@ -41,8 +41,7 @@ extension VaultRoute {
             (candidates, reason) = (listings, why)
         }
         switch await VaultChoicePrompt.present(
-            candidates, reason: reason, profileID: profile.id, offersHandOff: offersHandOff,
-            continuesInChromium: continuesInChromium, in: anchor()
+            candidates, reason: reason, profileID: profile.id, offersHandOff: offersHandOff, in: anchor()
         ) {
         case .vault(let vaultID):
             return (try? CredentialManager.forVault(profile, vaultID: vaultID)).map(VaultSelection.vault) ?? .none

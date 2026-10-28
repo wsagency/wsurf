@@ -24,6 +24,30 @@ nonisolated enum WebAuthnScript {
         pageSource
     }
 
+    /// Chromium only, in every frame, frames of other sites included: CEF's own WebAuthn has no prompt and reaches no authenticator
+    /// (no Touch ID without Chromium's keychain group, no phone, no Apple Passwords), and a request that reaches it neither shows
+    /// anything nor ends. So a public-key request that would reach it ends at once as the site's "not allowed", which sites answer
+    /// with their other way to sign in. Any other credential request still reaches the engine. Installed before `page`, which
+    /// keeps these functions as the engine's own, so a hand-off and a private page's request end the same way.
+    static let engineRefusal = #"""
+    (() => {
+      const container = globalThis.navigator && navigator.credentials;
+      if (!container || !globalThis.PublicKeyCredential) return;
+      const proto = Object.getPrototypeOf(container) || container;
+      for (const name of ['create', 'get']) {
+        const original = proto[name];
+        if (typeof original !== 'function') continue;
+        const refusing = {[name](options) {
+          if (options !== null && typeof options === 'object' && options.publicKey !== undefined) {
+            return Promise.reject(new DOMException('The request is not allowed by the user agent or the platform.', 'NotAllowedError'));
+          }
+          return original.apply(this, arguments);
+        }}[name];
+        Object.defineProperty(proto, name, {value: refusing, writable: true, enumerable: true, configurable: true});
+      }
+    })();
+    """#
+
     /// `nativeNonce`: a WebKit document is identified by the nonce the native frame registry issued over its private
     /// handshake (a non-writable global in this isolated world, never in the page world and never in any event or message
     /// to the page), so native can tell the live document from an older same-origin one. The relay waits on the

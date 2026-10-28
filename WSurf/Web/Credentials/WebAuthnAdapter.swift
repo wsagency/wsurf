@@ -118,6 +118,10 @@ enum WebAuthnAdapter {
         // Document-start order is the contract: the frame registry, then the relay, then the route script, then the page
         // script. A page's profile never changes, so neither does its route, and the script is installed once.
         page.installScript(routeScript(for: page), in: world, injectionTime: .atDocumentStart, forMainFrameOnly: mainFrameOnly)
+        if page.chromium != nil {
+            // Before the page script, which keeps these as the engine's own: a hand-off and a private page end at once too.
+            page.installScript(WebAuthnScript.engineRefusal, in: .page, injectionTime: .atDocumentStart, forMainFrameOnly: false)
+        }
         page.installScript(WebAuthnScript.page, in: .page, injectionTime: .atDocumentStart, forMainFrameOnly: mainFrameOnly)
         page.addScriptMessageHandler(name: WebAuthnScript.handlerName, in: world) { message in
             handle(message)
@@ -347,9 +351,9 @@ enum WebAuthnAdapter {
     /// engine's own timeout and abort signal take over.
     private static func handOff(_ entry: Entry, page: BrowserPage, context: WebAuthnContext?) async {
         guard !entry.cancelled, entries[entry.key] === entry else { return }
-        // WebKit's own WebAuthn needs Apple's browser entitlement, so a hand-off there could only fail. The sheet said "Continue in
-        // Chromium": the page is reopened in a Chromium tab of this profile, and this request ends as any refusal does (a
-        // discovery stays pending).
+        // WebKit's own WebAuthn needs Apple's browser entitlement, so a hand-off there could only fail, and no WebKit sheet offers
+        // one (`NativeWebAuthnInteraction.offersHandOff`). One that arrives all the same reopens the page in a Chromium tab of this
+        // profile, and this request ends as any refusal does (a discovery stays pending).
         if page.chromium == nil {
             note("continue-in-chromium", entry)
             if let url = page.url, ["http", "https"].contains(url.scheme?.lowercased() ?? "") {
@@ -500,7 +504,7 @@ enum WebAuthnAdapter {
             busyWindows[ObjectIdentifier(anchor)] = entry
             claimed = anchor
             let interaction: any WebAuthnCeremonyInteraction = interactionForTesting[page.profileID]?()
-                ?? NativeWebAuthnInteraction(continuesInChromium: page.chromium == nil)
+                ?? NativeWebAuthnInteraction(offersHandOff: page.chromium != nil)
             let chosen = try await vault(for: entry, native: native, in: anchor, interaction: interaction)
             // The route and the prompt suspended: the request must still be this live document, in this window, before any
             // manager is bound to it. Nothing suspends between these checks and the binding.
@@ -581,7 +585,7 @@ enum WebAuthnAdapter {
             // nameless sheet is the first thing a page can show.
             chosen = try? CredentialManager.forVault(profile, vaultID: only.vaultID)
         } else {
-            switch await route.select(profile: profile, offersHandOff: true, continuesInChromium: entry.page?.chromium == nil, in: anchor) {
+            switch await route.select(profile: profile, offersHandOff: entry.page?.chromium != nil, in: anchor) {
             case .vault(let manager):
                 chosen = manager
             case .handOff:
