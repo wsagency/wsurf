@@ -22,10 +22,13 @@ Everything since 0.1.17 (build 17). None of the screens and prompts below has be
 - Credential Manager’s merge review now recommends the plain username (user@example.com) over its numbered copies (user@example.com (1)) as the primary credential; nothing changes until you confirm.
 - The Lock control in the Credentials toolbar is now just the padlock icon, with “Lock Credentials” as its tooltip and VoiceOver label.
 
+### Passkeys
+
+- Passkey buttons in sign-in forms that a website embeds from its own address, such as the Apple Developer sign-in, now show WSurf’s passkey sheet instead of doing nothing, in both WebKit and Chromium tabs.
+
 ### Phase 2 (placeholders, to be written when merged)
 
 - **[Phase 2, to be written when merged]** Color panel and autoplay: `fix/color-panel-0.1.18`.
-- **[Phase 2, to be written when merged]** Passkeys in sign-in frames: `fix/passkey-silent-0.1.18`.
 - **[Phase 2]** Re-read the known issues below (the passkey ones and the Chromium `window.open` one) once those branches are in, and drop this whole section if neither is merged.
 
 ### Under the hood
