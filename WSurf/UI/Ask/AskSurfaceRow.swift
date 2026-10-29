@@ -35,7 +35,8 @@ struct AskSurfaceRow: View {
     @State private var controlsWidth: CGFloat = 0
 
     private static let centredAddressInset: CGFloat = 78
-    private static let space = "askSurfaceRow"
+    /// `nonisolated`: the `onGeometryChange` transforms are `@Sendable` and read it off the main actor.
+    private nonisolated static let space = "askSurfaceRow"
 
     var body: some View {
         @Bindable var model = model
