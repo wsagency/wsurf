@@ -126,6 +126,7 @@ struct OpenInNewTabTests {
         "/": .html(opener),
         "/frame": .html(frame),
         "/popup": .html(popup),
+        "/held": .html(held),
         "/auto": .html("<!doctype html><title>Auto</title><script>setTimeout(() => window.open('/target?via=auto'), 300);</script>"),
         "/target": .html("<!doctype html><title>Target</title><p>Target</p>"),
         // A page that opens a pop-up every few milliseconds once it is told to, from a timer: no gesture started any of them.
@@ -148,11 +149,12 @@ struct OpenInNewTabTests {
         "submit": CGPoint(x: 140, y: 145),
         "oauth": CGPoint(x: 140, y: 185),
         "crossOauth": CGPoint(x: 140, y: 225),
+        "held": CGPoint(x: 140, y: 25),
         "fblank": CGPoint(x: 300 + 10 + 100, y: 10 + 10 + 15),
         "fplain": CGPoint(x: 300 + 10 + 100, y: 10 + 60 + 15),
     ].merging(verifyModes.enumerated().map { ("v-" + $1, CGPoint(x: 140, y: 25 + 40 * $0)) }) { first, _ in first }
 
-    private enum Button {
+    enum Button {
         case left, middle
     }
 
@@ -173,7 +175,7 @@ struct OpenInNewTabTests {
     // MARK: - Rig
 
     @MainActor
-    private final class Rig {
+    final class Rig {
         let engine: BrowserEngine
         let server: HTTPFixtureServer
         let permissions: SitePermissions
@@ -402,7 +404,7 @@ struct OpenInNewTabTests {
         }
     }
 
-    private func withRig(
+    func withRig(
         _ engine: BrowserEngine, path: String = "/", opener: Opener = .plain, popups: PopupPolicy? = nil, privately: Bool = false,
         body: (Rig) async throws -> Void
     ) async throws {
@@ -989,7 +991,7 @@ extension OpenInNewTabTests {
         }
     }
 
-    private func waitForAnyTab(in rig: Rig) async -> BrowserTab? {
+    func waitForAnyTab(in rig: Rig) async -> BrowserTab? {
         _ = await waitUntil(timeout: .seconds(15)) { !rig.opened.isEmpty }
         return rig.opened.first
     }

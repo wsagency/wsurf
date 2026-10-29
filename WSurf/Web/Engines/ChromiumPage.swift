@@ -711,8 +711,8 @@ final class ChromiumPage: NSView {
 
     /// Back must never reach the startup page. The reset keeps only the committed entry, so it may run only while the history
     /// is exactly the startup page and that entry: once the page added an entry (`pushState`) or a later page committed, it
-    /// would drop real Back entries. Chromium refuses it ("Not attached to an active page") while the first commit is still
-    /// swapping renderers, so a refusal is retried. A reset that does not land leaves the startup entry hidden from Back.
+    /// would drop real Back entries. Chromium refuses it while the first commit is still swapping renderers, which the DevTools
+    /// session waits out; a refusal of another kind is retried here. A reset that does not land leaves the startup entry hidden from Back.
     private func dropStartupEntry() {
         guard raw != nil, !closing, !isClosed else { return }
         Task { [weak self] in
