@@ -26,10 +26,9 @@ Everything since 0.1.17 (build 17). None of the screens and prompts below has be
 
 - Passkey buttons in sign-in forms that a website embeds from its own address, such as the Apple Developer sign-in, now show WSurf’s passkey sheet instead of doing nothing, in both WebKit and Chromium tabs.
 
-### Phase 2 (placeholders, to be written when merged)
+### Chromium tabs
 
-- **[Phase 2, to be written when merged]** Color panel and autoplay: `fix/color-panel-0.1.18`.
-- **[Phase 2]** Re-read the known issues below (the passkey ones and the Chromium `window.open` one) once those branches are in, and drop this whole section if neither is merged.
+- A web page can no longer open a color picker, a pop-up or a new tab by itself just after it loads in a Chromium tab; only your own click opens them, and websites allowed to play sound still start it by themselves.
 
 ### Under the hood
 
