@@ -59,16 +59,15 @@ final class SiteContentGuard {
         page.addScriptMessageHandler(name: Self.handlerName, in: BrowserPage.servicesWorld) { [permissions, settings] message in
             let origin = SitePermissions.origin(for: message.page.url ?? message.frameInfo.request.url)
             let autoplay = permissions.autoplay(for: origin) ?? settings.autoplay
-            // Allow is the person's own choice for this website, so the release of held media carries a user gesture: media
-            // that was held while the answer was on its way then starts with sound, as the person asked. Only a frame of the
-            // website itself gets it: a frame of another origin (an ad, an embed) is never given the website's activation.
-            // Muted and Block stay gesture-less, as does everything else WSurf runs in a page.
-            let userGesture = autoplay == .allow && !origin.isEmpty && SitePermissions.origin(for: message.frameInfo.request.url) == origin
+            // No answer carries a user gesture, Allow included. Chromium counts a gesture as the person's click on the frame
+            // and on every frame above it, for seconds: any script of the page could then open a pop-up, the colour chooser
+            // or anything else that waits for the person. Nothing Chromium offers allows sound for one website without it, so
+            // under Allow its own rule stands: a website starts sound once the person has clicked or typed in it.
             Task { @MainActor in
                 _ = try? await message.page.callAsyncJavaScript(
                     "globalThis.__wsurfSiteGuard?.applyPolicy(policy);",
                     arguments: ["policy": ["autoplay": autoplay.rawValue]], in: message.frameInfo,
-                    contentWorld: BrowserPage.servicesWorld, userGesture: userGesture
+                    contentWorld: BrowserPage.servicesWorld
                 )
             }
         }
@@ -130,9 +129,10 @@ final class SiteContentGuard {
       };
 
       // Chromium makes one autoplay attempt per element, when it is ready, and refuses it without a user activation (a muted
-      // <audio> has no exemption); it does not try again when the activation comes. The Allow answer carries one, so an
-      // autoplay element that was ready before the answer and never started is started here. Only under Allow: Muted and
-      // Never are unchanged, and an element that has played, was paused or is not ready yet is left alone.
+      // <audio> has no exemption); it does not try again when the activation comes. An autoplay element that was ready
+      // before the Allow answer and never started is tried again here, which plays where the page already has the person's
+      // activation (a click on an earlier page of the website carries over). Only under Allow: Muted and Never are
+      // unchanged, and an element that has played, was paused or is not ready yet is left alone.
       const start = () => {
         for (const media of document.querySelectorAll('audio[autoplay], video[autoplay]')) {
           if (!media.paused || media.readyState < 3 || media.played.length > 0 || stopped.has(media)) continue;
