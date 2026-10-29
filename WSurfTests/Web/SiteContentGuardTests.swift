@@ -222,6 +222,178 @@ final class SiteContentGuardTests {
 
         #expect(await pauses(in: view) == 1)
     }
+
+    // MARK: - User activation
+
+    private static let bare = "<!doctype html><title>Bare</title><p>Nothing to play here.</p>"
+
+    private func hasBeenActive(_ view: BrowserPage) async -> Bool? {
+        (try? await view.evaluateJavaScript("navigator.userActivation.hasBeenActive")) as? Bool
+    }
+
+    /// Hearing WSurf's answer is no click, Allow included: no page is given the activation that would let its script open a
+    /// pop-up or the colour chooser by itself, whether it has nothing to play, has a player, or makes one by script.
+    @Test func anAllowAnswerGivesNoPageActivation() async throws {
+        settings.autoplay = .allow
+        let server = try await HTTPFixtureServer.start(routes: ["/": .html(Self.bare), "/player": .html(Self.markup)])
+
+        for path in ["/", "/player"] {
+            let view = await page(permissions: temporaryPermissions(), at: try server.url(path))
+            try await Task.sleep(for: .milliseconds(500))
+            #expect(await hasBeenActive(view) == false, "\(path)")
+            if path == "/" {
+                _ = try await view.evaluateJavaScript("""
+                    const player = document.createElement('video'); player.src = '/missing.mp4'; document.body.append(player); true
+                    """)
+                try await Task.sleep(for: .milliseconds(500))
+                #expect(await hasBeenActive(view) == false, "a player made by script")
+            }
+        }
+        withExtendedLifetime(server) {}
+    }
+}
+
+/// The colour chooser opens for the person's own click on a colour field, and never because a page asked for it by itself:
+/// a page that has just loaded, under the default Allow, asks a moment later, once WSurf's answers to it are in, and opens a
+/// pop-up too. One page first makes a player by script, the way a website could to be answered as one with media. On each
+/// engine, in the window the app builds.
+@MainActor
+@Suite(.serialized, .boundedWebViews)
+struct PageColorChooserTests {
+    private static let page = """
+        <!doctype html><title>Colour</title><input type="color" id="field">
+        <script>
+        window.__marker = 'loaded';
+        addEventListener('load', () => {
+          if (location.pathname === '/player') {
+            const player = document.createElement('video'); player.src = '/missing.mp4'; document.body.append(player);
+          }
+          setTimeout(() => {
+            let chooser;
+            try { document.getElementById('field').showPicker(); chooser = 'opened'; } catch (error) { chooser = error.name; }
+            document.title = chooser + ' ' + (window.open('/still') ? 'opened' : 'blocked');
+          }, 1000);
+        });
+        </script>
+        """
+
+    private func title(of tab: BrowserTab) async -> String? {
+        (try? await tab.page.evaluateJavaScript("document.title")) as? String
+    }
+
+    @Test(arguments: [BrowserEngine.webKit, .chromium], ["/colour", "/player"])
+    func onlyThePersonsClickOpensTheColourChooser(engine: BrowserEngine, path: String) async throws {
+        try await LiveWindowRig.with(engine: engine, routes: ["/colour": .html(Self.page), "/player": .html(Self.page)]) { rig in
+            let shown = Set(NSApp.windows.filter(\.isVisible).map(ObjectIdentifier.init))
+            let added = { NSApp.windows.filter { $0.isVisible && !shown.contains(ObjectIdentifier($0)) } }
+            defer {
+                added().forEach { $0.orderOut(nil) }
+            }
+            let tabs = rig.browser.tabs.count
+            let tab = try await rig.open(path)
+            #expect(await waitUntil { await title(of: tab) != "Colour" }, "\(engine) \(path): the page asked")
+            #expect(await title(of: tab) == "NotAllowedError blocked", "\(engine) \(path): the page was refused both")
+            #expect(added().isEmpty, "\(engine) \(path): no chooser opened: \(added())")
+            #expect(rig.browser.tabs.count == tabs + 1, "\(engine) \(path): no pop-up tab opened")
+
+            _ = try await tab.page.evaluateJavaScript(
+                "document.getElementById('field').click(); true", in: nil, contentWorld: .page, userGesture: true
+            )
+            #expect(await waitUntil { !added().isEmpty }, "\(engine) \(path): the person's click opens it")
+        }
+    }
+}
+
+/// Under Allow a Chromium website starts sound by itself, as on WebKit, and is not given the person's activation for it;
+/// under Never sound waits for the person. Chromium applies its allowlist when a navigation finishes, so the page starts its
+/// player once it has loaded. The player's source never arrives, so nothing is heard: a refused start fails at once, an
+/// allowed one waits for its data.
+@MainActor
+@Suite(.serialized, .boundedWebViews)
+struct ChromiumAutoplayAllowlistTests {
+    private static let page = """
+        <!doctype html><title>Sound</title>
+        <script>
+        window.__marker = 'loaded';
+        addEventListener('load', () => setTimeout(() => {
+          let settled = false;
+          new Audio('/never').play().then(
+            () => { settled = true; document.title = 'played'; },
+            (error) => { settled = true; document.title = error.name; }
+          );
+          setTimeout(() => { if (!settled) document.title = 'waiting'; }, 1000);
+        }, 300));
+        </script>
+        """
+
+    private func title(of tab: BrowserTab) async -> String? {
+        (try? await tab.page.evaluateJavaScript("document.title")) as? String
+    }
+
+    /// An entry names one exact origin, its port written out, or there is none: a host that would read as a wildcard to
+    /// Chromium, or is not a plain host, is left out.
+    @Test func anEntryIsOneExactOriginOrNone() {
+        let kept = [
+            "https://example.com": "https://example.com:443",
+            "http://127.0.0.1:8080": "http://127.0.0.1:8080",
+            "http://[::1]": "http://[::1]:80",
+            "https://[2001:db8::1]:8443": "https://[2001:db8::1]:8443",
+            "https://xn--bcher-kva.example": "https://xn--bcher-kva.example:443",
+        ]
+        for (origin, entry) in kept {
+            #expect(ChromiumRuntime.autoplayPattern(for: origin) == entry, "\(origin)")
+        }
+        let dropped = [
+            "https://*.example.com", "https://*", "https://[*.]example.com", "http://[example.com]", "http://[::1",
+            "https://ex%2Aample.com", "https://-example.com", "https://Example.com", "file:///tmp/page.html", "chrome://settings",
+        ]
+        for origin in dropped {
+            #expect(ChromiumRuntime.autoplayPattern(for: origin) == nil, "\(origin)")
+        }
+    }
+
+    @Test(arguments: [(AutoplayPolicy.allow, "waiting"), (.block, "NotAllowedError")])
+    func onlyAnAllowedWebsiteStartsSoundByItself(policy: AutoplayPolicy, outcome: String) async throws {
+        try await LiveWindowRig.with(engine: .chromium, routes: ["/sound": .html(Self.page)]) { rig in
+            rig.browser.sitePermissions.setAutoplay(policy, for: SitePermissions.origin(for: try rig.server.url("/sound")))
+            let tab = try await rig.open("/sound")
+            #expect(await waitUntil { await title(of: tab) != "Sound" }, "\(policy): the page started its player")
+            #expect(await title(of: tab) == outcome, "\(policy)")
+            #expect(
+                try await tab.page.evaluateJavaScript("navigator.userActivation.hasBeenActive") as? Bool == false,
+                "\(policy): the page was activated"
+            )
+        }
+    }
+
+    /// The allowlist names the allowed origin and nothing more: a subdomain of its host and the same host on another port,
+    /// both answered Never, are refused while the allowed origin's page is open, and the allowed origin itself plays.
+    @Test func onlyTheAllowedOriginItselfStartsSoundByItself() async throws {
+        let elsewhere = try await HTTPFixtureServer.start(routes: ["/sound": .html(Self.page)])
+        try await LiveWindowRig.with(engine: .chromium, routes: ["/sound": .html(Self.page)]) { rig in
+            let port = try #require(try rig.server.url().port)
+            let another = try #require(try elsewhere.url().port)
+            let allowed = try #require(URL(string: "http://localhost:\(port)/sound"))
+            let subdomain = try #require(URL(string: "http://sub.localhost:\(port)/sound"))
+            let otherPort = try #require(URL(string: "http://localhost:\(another)/sound"))
+            let cases = [(allowed, AutoplayPolicy.allow, "waiting"), (subdomain, .block, "NotAllowedError"), (otherPort, .block, "NotAllowedError")]
+            for (url, policy, _) in cases {
+                rig.browser.sitePermissions.setEngine(.chromium, for: SitePermissions.origin(for: url))
+                rig.browser.sitePermissions.setAutoplay(policy, for: SitePermissions.origin(for: url))
+            }
+            var tabs: [BrowserTab] = []
+            for (url, _, outcome) in cases {
+                let tab = rig.browser.newTab(url: url, engine: .chromium)
+                tab.page.ignoresWindowOcclusion = true
+                tabs.append(tab)
+                #expect(await waitUntil(timeout: .seconds(60)) { tab.page.url == url && !tab.page.isLoading }, "\(url) loads")
+                #expect(await waitUntil { await title(of: tab) != "Sound" }, "\(url): the page started its player")
+                #expect(await title(of: tab) == outcome, "\(url)")
+            }
+            withExtendedLifetime(tabs) {}
+        }
+        withExtendedLifetime(elsewhere) {}
+    }
 }
 
 /// WebKit keeps a website's answers itself: the tab's navigation delegate sets the auto-play policy for each main-frame
