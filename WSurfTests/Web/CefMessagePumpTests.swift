@@ -1,10 +1,12 @@
 // SPDX-FileCopyrightText: 2026 WSurf Agency
 // SPDX-License-Identifier: Apache-2.0
 
+import CCef
 import Foundation
 import Testing
 
 @testable import CefKit
+@testable import WSurf
 
 /// Timers that only fire when a test says so. It records what the pump asked for, so a test can state which timers are alive.
 @MainActor
@@ -66,13 +68,17 @@ private final class PumpRig {
     private(set) var passes = 0
     /// Runs inside the next message loop pass, as a nested loop would.
     var duringPass: (@MainActor () -> Void)?
+    /// How long each pass takes on the rig's clock.
+    var passDuration: TimeInterval = 0
+    private var clock: TimeInterval = 0
 
-    lazy var pump = CefMessagePump(timers: timers.source) { [unowned self] in
+    lazy var pump = CefMessagePump(timers: timers.source, runLoopWork: { [unowned self] in
         passes += 1
+        clock += passDuration
         let nested = duringPass
         duringPass = nil
         nested?()
-    }
+    }, now: { [unowned self] in clock })
 
     /// A pump that has started and settled: no browser, no timer.
     static func settled() -> PumpRig {
@@ -84,7 +90,7 @@ private final class PumpRig {
 }
 
 @MainActor
-@Suite
+@Suite(.serialized)
 struct CefMessagePumpTests {
     private typealias Pump = CefMessagePump
 
@@ -295,6 +301,43 @@ struct CefMessagePumpTests {
         #expect(rig.timers.oneShot(0) != nil)
     }
 
+    // MARK: Passes cut short
+
+    @Test
+    func aPassThatRanLongKeepsTheBusyPollGoingWithNoBrowser() {
+        let rig = PumpRig.settled()
+        rig.passDuration = 0.012
+        rig.pump.requestWork(delayMilliseconds: 0)
+        // CEF asks for nothing more after a pass it cut short; the pump keeps polling while passes do work.
+        for _ in 0 ..< 10 {
+            let end = rig.timers.oneShot(Pump.busyLingerWithoutBrowser)
+            rig.timers.fire(rig.timers.repeating(Pump.busyInterval))
+            #expect(end?.isActive == false, "a pass that ran long moves the end of the busy window")
+            #expect(rig.pump.isPollingBusy)
+        }
+        #expect(rig.passes == 11)
+        rig.passDuration = 0
+        let end = rig.timers.oneShot(Pump.busyLingerWithoutBrowser)
+        rig.timers.fire(rig.timers.repeating(Pump.busyInterval))
+        #expect(end?.isActive == true, "an idle pass leaves the end where it was")
+        rig.timers.fire(end)
+        #expect(!rig.pump.isPollingBusy)
+        #expect(rig.timers.active.isEmpty)
+    }
+
+    @Test
+    func aSafetyNetPassThatRanLongStartsTheBusyPoll() {
+        let rig = PumpRig()
+        rig.pump.start()
+        rig.pump.browserDidOpen()
+        rig.timers.fire(rig.timers.repeating(Pump.fallbackInterval))
+        #expect(!rig.pump.isPollingBusy, "an idle pass starts nothing")
+        rig.passDuration = Pump.workingPassDuration
+        rig.timers.fire(rig.timers.repeating(Pump.fallbackInterval))
+        #expect(rig.pump.isPollingBusy)
+        #expect(rig.timers.oneShot(Pump.busyLingerWithBrowser) != nil)
+    }
+
     // MARK: Stopping
 
     @Test
@@ -311,5 +354,77 @@ struct CefMessagePumpTests {
         rig.pump.performWork()
         #expect(rig.passes == passes)
         #expect(rig.timers.active.isEmpty)
+    }
+
+    // MARK: Real CEF
+
+    /// Posts `count` tasks to CEF's UI thread, each busy for `busy` (more than one pass of CEF's loop can run in all), and
+    /// returns how many have run by `timeout`. Starts once the pump is quiet: no browser, no timer, if it gets there.
+    private func runTasksOnCEFsUIThread(count: Int, busy: useconds_t, timeout: Duration, postedFromAPass: Bool = false) async throws
+        -> (ran: Int, quiet: Bool, liveBrowsers: Int) {
+        try ChromiumRuntime.shared.ensureInitialized()
+        let pump = try #require(CefRuntime.shared.messagePump)
+        let quietBy = ContinuousClock.now + .seconds(15)
+        while pump.liveBrowserCount > 0 || pump.hasFallbackTimer || pump.isPollingBusy, ContinuousClock.now < quietBy {
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        let quiet = pump.liveBrowserCount == 0 && !pump.hasFallbackTimer && !pump.isPollingBusy
+        let probe = UIThreadProbe(busy: busy)
+        if postedFromAPass {
+            // Posted by a task while CEF's loop runs, as Chromium's own work is.
+            UIThreadProbe.post { (0 ..< count).forEach { _ in probe.post() } }
+        } else {
+            (0 ..< count).forEach { _ in probe.post() }
+        }
+        let deadline = ContinuousClock.now + timeout
+        while probe.ran < count, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        return (probe.ran, quiet, pump.liveBrowserCount)
+    }
+
+    @Test
+    func uiThreadWorkLongerThanOnePassFinishesWithNoBrowserAlive() async throws {
+        let result = try await runTasksOnCEFsUIThread(count: 40, busy: 5000, timeout: .seconds(5))
+        #expect(result.ran == 40, "ran \(result.ran) of 40; quiet \(result.quiet), live browsers \(result.liveBrowsers)")
+    }
+
+    @Test
+    func uiThreadWorkPostedInsideAPassFinishesWithNoBrowserAlive() async throws {
+        let result = try await runTasksOnCEFsUIThread(count: 40, busy: 5000, timeout: .seconds(5), postedFromAPass: true)
+        #expect(result.ran == 40, "ran \(result.ran) of 40; quiet \(result.quiet), live browsers \(result.liveBrowsers)")
+    }
+}
+
+/// Counts tasks that ran on CEF's UI thread (the main thread, with CefKit's external pump).
+private final class UIThreadProbe: @unchecked Sendable {
+    let busy: useconds_t
+    private(set) var ran = 0
+
+    init(busy: useconds_t) {
+        self.busy = busy
+    }
+
+    func post() {
+        Self.post { [self] in
+            usleep(busy)
+            ran += 1
+        }
+    }
+
+    private final class Job {
+        let body: () -> Void
+        init(_ body: @escaping () -> Void) {
+            self.body = body
+        }
+    }
+
+    static func post(_ body: @escaping () -> Void) {
+        let task = ChromiumInterop.allocate(cef_task_t.self, owner: Job(body))
+        task.pointee.execute = { taskSelf in
+            ChromiumInterop.owner(Job.self, of: UnsafeMutableRawPointer(taskSelf))?.body()
+        }
+        // cef_post_task takes the reference `allocate` made.
+        _ = cef_post_task(TID_UI, task)
     }
 }

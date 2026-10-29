@@ -9,10 +9,12 @@ import Foundation
 /// dialog) is run again as soon as the outer pass returns, so it is never dropped.
 ///
 /// Requests alone are not enough: measured with exact requests and nothing else, a warm page load took 2 to 3 s
-/// instead of 0.2 to 0.4 s. So each pass that a request caused starts a busy window in which the loop also runs every
-/// 33 ms, and the window ends shortly after the last request. A slow safety-net timer runs the loop once a second
-/// while a browser is alive. With no browser alive, no request pending and the settling time after the last browser
-/// closed (or after start) over, nothing repeats: an idle runtime costs the host no wakeups.
+/// instead of 0.2 to 0.4 s. CEF cuts a pass short after about 10 ms and then asks for no further pass while that work
+/// waits, so the pump has to come back on its own. So each pass that a request caused, and each pass that ran long
+/// enough to have been cut short, starts or extends a busy window in which the loop also runs every 33 ms; the window
+/// ends shortly after the last such pass. A slow safety-net timer runs the loop once a second while a browser is alive.
+/// With no browser alive, no request pending and the settling time after the last browser closed (or after start) over,
+/// nothing repeats: an idle runtime costs the host no wakeups.
 ///
 /// Timers come from an injectable source and the loop from an injectable closure, so a test can drive the pump
 /// without a run loop or a CEF framework. All work happens on the main thread.
@@ -45,6 +47,9 @@ final class CefMessagePump {
     static let settleInterval: TimeInterval = 5
     /// Longest wait for one request. CEF asks for a huge delay when it has nothing scheduled.
     static let longestRequestDelay: TimeInterval = 60
+    /// A pass at least this long did work and may have been cut short (CEF's slice is about 10 ms; an idle pass takes well
+    /// under 1 ms). CEF does not ask for the rest, so such a pass keeps the busy poll going.
+    static let workingPassDuration: TimeInterval = 0.002
 
     /// The default source: timers on the main run loop in `.common` mode, so the pump keeps running during window
     /// drags and menus.
@@ -60,6 +65,7 @@ final class CefMessagePump {
 
     private let startTimer: TimerSource
     private let runLoopWork: @MainActor () -> Void
+    private let now: @MainActor () -> TimeInterval
     private var cancelFallback: CancelTimer?
     private var cancelSettle: CancelTimer?
     private var cancelBusyPoll: CancelTimer?
@@ -76,10 +82,12 @@ final class CefMessagePump {
 
     init(
         timers: @escaping TimerSource = CefMessagePump.runLoopTimers,
-        runLoopWork: @escaping @MainActor () -> Void = { cef_do_message_loop_work() }
+        runLoopWork: @escaping @MainActor () -> Void = { cef_do_message_loop_work() },
+        now: @escaping @MainActor () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
     ) {
         startTimer = timers
         self.runLoopWork = runLoopWork
+        self.now = now
     }
 
     /// Whether the safety-net timer is running.
@@ -150,7 +158,8 @@ final class CefMessagePump {
         }
     }
 
-    /// One pass of CEF's loop. A request that arrives while a pass is running is run again after it.
+    /// One pass of CEF's loop. A request that arrives while a pass is running is run again after it, and a pass that ran
+    /// long keeps the busy poll going: CEF may have left work for the next pass without asking for it.
     func performWork() {
         guard isRunning else { return }
         guard !isPerformingWork else {
@@ -158,8 +167,12 @@ final class CefMessagePump {
             return
         }
         isPerformingWork = true
+        let started = now()
         runLoopWork()
         isPerformingWork = false
+        if now() - started >= Self.workingPassDuration {
+            extendBusyWindow()
+        }
         if workWasRequestedWhilePerforming {
             workWasRequestedWhilePerforming = false
             cancelReplay?()
