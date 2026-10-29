@@ -38,7 +38,8 @@ Everything since 0.1.17 (build 17). None of the screens and prompts below has be
 ### Known issues
 
 - One- and two-letter address-bar queries search only the newest 3,000 pages; three letters and the History page search everything.
-- Chromium tabs do not yet block `window.open` without a click, and open ⌘-click and middle-click tabs in front.
+- Chromium tabs open ⌘-click and middle-click tabs in front.
+- In Chromium tabs, a website set to Allow pop-ups still needs your click to open one; this comes back in the next version.
 - Removing one website in Website data removes the cookies that exact host set; a cookie a website set for its whole domain (from www.example.com for example.com) stays until you clear everything. This was true before, but Chromium’s cookies now stay across a quit.
 - Clear Browsing Data does not reach Chromium’s own small records of the sites you visited (the sites it must open over HTTPS, its site-engagement scores); they go when you delete the profile.
 - WebKit tabs that both use the camera or microphone still take it from each other: showing another tab that uses them mutes the first for good, and WSurf has no button to resume it.
