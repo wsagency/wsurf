@@ -23,8 +23,19 @@ struct AskSurfaceRow: View {
     let placeholder: String
     let accessibilityValue: String
     let security: PageSecurity
+    /// Tests read where the address line and the row's controls were laid out, in the row's own space.
+    var onFrame: ((Part, CGRect) -> Void)?
+
+    enum Part {
+        case address
+        case controls
+    }
+
+    /// The width the row's controls take at its end. The centred address stops before them instead of running under them.
+    @State private var controlsWidth: CGFloat = 0
 
     private static let centredAddressInset: CGFloat = 78
+    private static let space = "askSurfaceRow"
 
     var body: some View {
         @Bindable var model = model
@@ -98,7 +109,7 @@ struct AskSurfaceRow: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
             .onTapGesture { model.focusForEditing() }
-            .help(Text(model.addressEngine?.label ?? ""))
+            .help(Text(verbatim: restingContent?.tooltip(engine: model.addressEngine) ?? ""))
 
             HStack(spacing: placement.controlSpacing) {
                 if placement.showsSiteControls {
@@ -127,6 +138,12 @@ struct AskSurfaceRow: View {
             }
             .frame(height: placement.rowHeight)
             .environment(\.chromeIconExtent, placement.iconSlot)
+            .onGeometryChange(for: CGRect.self) { $0.frame(in: .named(Self.space)) } action: {
+                if controlsWidth != $0.width {
+                    controlsWidth = $0.width
+                }
+                onFrame?(.controls, $0)
+            }
         }
         .padding(.horizontal, placement.rowInset)
         .overlay {
@@ -137,11 +154,16 @@ struct AskSurfaceRow: View {
                     security: security,
                     engine: model.addressEngine
                 )
-                .padding(.horizontal, Self.centredAddressInset)
+                .onGeometryChange(for: CGRect.self) { $0.frame(in: .named(Self.space)) } action: {
+                    onFrame?(.address, $0)
+                }
+                .padding(.leading, Self.centredAddressInset)
+                .padding(.trailing, max(Self.centredAddressInset, controlsWidth + placement.rowInset + placement.controlSpacing))
                 .allowsHitTesting(false)
                 .accessibilityHidden(true)
             }
         }
+        .coordinateSpace(.named(Self.space))
         .frame(minHeight: placement.rowHeight)
         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: {
             model.interaction.rowHeight = $0
