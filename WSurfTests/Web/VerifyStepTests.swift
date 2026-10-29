@@ -75,12 +75,42 @@ struct VerifyStepTests {
             try { await document.requestStorageAccess(); report({ op: 'requestStorageAccess', outcome: 'granted', ms: elapsed(started) }); }
             catch (error) { report({ op: 'requestStorageAccess', outcome: error.name, message: String(error.message).slice(0, 160), ms: elapsed(started) }); }
           }
-          const plans = { get: () => passkey('get'), create: () => passkey('create'), requestStorage };
+          // Apple's sign-in widget: it asks what the browser offers, then starts a conditional request; its "Sign in with Passkey"
+          // button ends that request and asks again, with a signal of its own.
+          let conditional = null;
+          async function conditionalRequest() {
+            const P = window.PublicKeyCredential;
+            if (P && P.getClientCapabilities) await P.getClientCapabilities();
+            const value = P && P.isConditionalMediationAvailable ? await P.isConditionalMediationAvailable() : false;
+            report({ op: 'conditional-available', value });
+            if (!value) return;
+            conditional = new AbortController();
+            const started = performance.now();
+            navigator.credentials.get({ mediation: 'conditional', signal: conditional.signal,
+              publicKey: { challenge: crypto.getRandomValues(new Uint8Array(32)), rpId: location.hostname, timeout: 120000 } })
+              .then(() => report({ op: 'conditional', outcome: 'resolved', ms: elapsed(started) }),
+                    error => report({ op: 'conditional', outcome: error.name, ms: elapsed(started) }));
+          }
+          async function passkeySignIn() {
+            conditional?.abort();
+            const started = performance.now();
+            try {
+              await navigator.credentials.get({ mediation: 'optional', signal: new AbortController().signal, publicKey: {
+                challenge: crypto.getRandomValues(new Uint8Array(32)), rpId: location.hostname, timeout: 120000,
+                allowCredentials: [{ type: 'public-key', id: crypto.getRandomValues(new Uint8Array(16)), transports: ['internal', 'hybrid'] }],
+                extensions: { largeBlob: { read: true } } } });
+              report({ op: 'get', outcome: 'resolved', ms: elapsed(started) });
+            } catch (error) {
+              report({ op: 'get', outcome: error.name, message: String(error.message).slice(0, 160), ms: elapsed(started) });
+            }
+          }
+          const plans = { get: () => passkey('get'), create: () => passkey('create'), requestStorage, passkeySignIn };
           document.getElementById('go').addEventListener('click', () => plans[window.__plan]?.());
           window.addEventListener('message', event => {
             if (event.data?.plan) window.__plan = event.data.plan;
             if (event.data?.ask === 'capabilities') capabilities();
             if (event.data?.ask === 'storage') storage();
+            if (event.data?.ask === 'conditional') conditionalRequest();
           });
           if (parent !== window) parent.postMessage('probe-ready', '*'); else window.__ready = true;
         </script>
@@ -105,11 +135,35 @@ struct VerifyStepTests {
         </script>
         """
 
+    /// A page of `localhost` that makes the probe its sign-in frame by script, allowed to ask for passkeys in Apple's words, and
+    /// keeps the frame's window at once: Apple's sign-in (idmsa.apple.com, `authService.js`) makes its widget so, a frame of its own
+    /// origin. Touching the window makes Chromium set up the frame's first, empty document, which then hands that window on.
+    private static let signIn = """
+        <!doctype html><title>Sign In</title><style>body { margin: 0 }</style>
+        <body>
+        <script>
+          window.__out = [];
+          window.addEventListener('message', event => {
+            if (event.data?.probe) __out.push(event.data.probe);
+            if (event.data === 'probe-ready') window.__ready = true;
+          });
+          const frame = document.createElement('iframe');
+          frame.allow = 'publickey-credentials-get ' + location.origin + ';bluetooth ' + location.origin;
+          frame.src = location.origin + '/probe';
+          frame.name = 'aid-auth-widget';
+          frame.style = 'position: absolute; left: 0; top: 0; width: 320px; height: 100px; border: 0';
+          document.body.append(frame);
+          window.__widget = window.frames[frame.name];
+        </script>
+        """
+
     enum Placement: String, Sendable, CustomStringConvertible {
         /// The probe is the top page, on `localhost`.
         case top
         /// The probe is a frame of `localhost` in a page of 127.0.0.1.
         case frame
+        /// The probe is the sign-in frame a page of its own origin (`localhost`) made.
+        case signInFrame
 
         var description: String {
             rawValue
@@ -227,9 +281,17 @@ struct VerifyStepTests {
     private func withRig(
         _ engine: BrowserEngine, _ placement: Placement, privately: Bool = false, body: (Rig) async throws -> Void
     ) async throws {
-        let server = try await HTTPFixtureServer.start(routes: ["/probe": .html(Self.probe), "/host": .html(Self.host)])
+        let server = try await HTTPFixtureServer.start(routes: ["/probe": .html(Self.probe), "/host": .html(Self.host), "/signin": .html(Self.signIn)])
         let port = try #require(server.url("/").port)
-        let topURL = try #require(URL(string: placement == .top ? "http://localhost:\(port)/probe" : "http://127.0.0.1:\(port)/host"))
+        let top = switch placement {
+        case .top:
+            "http://localhost:\(port)/probe"
+        case .frame:
+            "http://127.0.0.1:\(port)/host"
+        case .signInFrame:
+            "http://localhost:\(port)/signin"
+        }
+        let topURL = try #require(URL(string: top))
         let profile = try await privately ? Profile.privateBrowsing() : VaultManagerFixture.newProfile("Verify")
         let context = BrowserProfileContext(profile: profile)
         for origin in ["http://localhost:\(port)", "http://127.0.0.1:\(port)"] {
@@ -321,6 +383,40 @@ struct VerifyStepTests {
                     #expect(!sheet.contains("Chromium"), "no promise of another engine: \(sheet)")
                 }
             }
+        }
+    }
+
+    /// Apple's sign-in, as the Apple Developer account page shows it: a frame of the page's own origin asks what the browser offers,
+    /// starts a conditional request, and its "Sign in with Passkey" button ends that request and asks again. WSurf answers the frame as
+    /// it answers a top page: conditional sign-in is offered, the conditional request shows nothing by itself and ends when the page
+    /// ends it, and the button's request gets WSurf's sheet, then the site's "not allowed". It used to reach no one. WebKit kept its
+    /// own WebAuthn in every frame, which without Apple's browser entitlement refuses at once (and Apple's widget then shows nothing).
+    /// In Chromium the frame's first, empty document handed its window to the widget's, so WSurf's relay stayed with the empty one:
+    /// the widget's questions went unanswered and its request never ended.
+    @Test(.boundedWebViews, arguments: BrowserEngine.allCases)
+    func aSignInFrameOfThePagesOwnOriginGetsWSurfsSheet(engine: BrowserEngine) async throws {
+        try await withRig(engine, .signInFrame) { rig in
+            try await rig.tell("{ ask: 'conditional' }")
+            let available = try #require(await rig.nextResult(after: 0), "the frame learned whether conditional sign-in is offered")
+            #expect(available["value"] as? Bool == true, "WSurf offers conditional sign-in in the frame: \(Self.line(available))")
+            try await Task.sleep(for: .seconds(1))
+            let quiet = try await rig.results().count == 1
+            #expect(rig.window.attachedSheet == nil && quiet, "the conditional request shows nothing by itself")
+            try await rig.tell("{ plan: 'passkeySignIn' }")
+            try await Task.sleep(for: .milliseconds(100))
+            let clicked = ContinuousClock.now
+            try await rig.click()
+            var outcomes: [String: String] = [:]
+            while outcomes["get"] == nil, let result = try await rig.nextResult(after: 1 + outcomes.count) {
+                outcomes[result["op"] as? String ?? "?"] = result["outcome"] as? String ?? "?"
+            }
+            print("VERIFY sign-in frame engine=\(engine) \(outcomes) wall=\(clicked.duration(to: .now)) sheets=\(rig.sheets)")
+            #expect(outcomes["get"] == "NotAllowedError", "the button's request ended as the site's \"not allowed\"")
+            #expect(outcomes["conditional"] == "AbortError", "the page ended its conditional request")
+            #expect(rig.sheets.count == 1, "one sheet")
+            let sheet = rig.sheets.first ?? ""
+            #expect(sheet.contains("localhost") && sheet.contains(String(localized: "Choose another way to sign in on the website.")), "\(sheet)")
+            #expect(sheet.hasSuffix("buttons: " + String(localized: "OK")), "one button: \(sheet)")
         }
     }
 
