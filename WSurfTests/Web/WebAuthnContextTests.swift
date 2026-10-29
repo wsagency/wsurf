@@ -80,6 +80,19 @@ struct WebAuthnContextTests {
         }
     }
 
+    /// What an iframe's `allow` attribute says about a frame of its embedder's origin (WebKit reads it; Chromium's policy is its own).
+    @Test func anAllowAttributeWithholdsAFeatureOnlyByNamingIt() {
+        let origin = "https://idmsa.apple.com"
+        let allows = { (attribute: String?) in BrowserPage.allowAttribute(attribute, permits: "publickey-credentials-get", to: origin) }
+        #expect(allows(nil) && allows("") && allows("bluetooth 'none'"), "not named: the default allowlist, 'self'")
+        #expect(allows("publickey-credentials-get https://idmsa.apple.com;bluetooth https://idmsa.apple.com"), "Apple's")
+        #expect(allows("publickey-credentials-get") && allows("publickey-credentials-get *") && allows("publickey-credentials-get 'self'"))
+        #expect(allows("payment *; publickey-credentials-get 'src' https://other.example"))
+        #expect(!allows("publickey-credentials-get 'none'") && !allows("publickey-credentials-get https://other.example"))
+        #expect(!allows("publickey-credentials-get 'none'; publickey-credentials-get *"), "the first mention counts")
+        #expect(allows("publickey-credentials-create 'none'"), "another feature")
+    }
+
     @Test func trailingDotDomainIsNotSilentlyStripped() throws {
         #expect(try validate("example.com.", at: "https://login.example.com.") == "example.com.")
         #expect(throws: (any Error).self) {

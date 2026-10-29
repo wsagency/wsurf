@@ -657,6 +657,21 @@ final class PageFrameRegistry: NSObject, WKScriptMessageHandlerWithReply {
         return current
     }
 
+    /// The registered document `documentNonce` names, while it is the current document of `messageFrame`'s origin: the main
+    /// frame's (`currentMainFrame`) or a frame's under it, registered by the same handshake. A nonce lives only in its own
+    /// document's isolated world, so no other document can name it.
+    func currentFrame(matching messageFrame: BrowserFrame, documentNonce: String, in view: BrowserPage) -> BrowserFrame? {
+        guard !messageFrame.isMainFrame else {
+            return currentMainFrame(matching: messageFrame, documentNonce: documentNonce, in: view)
+        }
+        guard view.webKit != nil, messageFrame.webKit != nil, messageFrame.hasTrustedSecurityOrigin, !documentNonce.isEmpty,
+              let store = stores.object(forKey: view), !store.root.isEmpty,
+              let target = store.frames[documentNonce], target.root == store.root,
+              target.frame.securityOrigin == messageFrame.securityOrigin,
+              isCurrent(target.frame, in: view) else { return nil }
+        return target.frame
+    }
+
     func mainFramePolicyAllows(_ frame: BrowserFrame, feature: String, in view: BrowserPage) -> Bool? {
         guard frame.isMainFrame, let store = stores.object(forKey: view),
               store.activeNavigation == nil,
