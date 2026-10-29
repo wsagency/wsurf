@@ -5,6 +5,49 @@ This file preserves release notes inherited from the upstream
 describe upstream Linen releases, not releases published by WSurf. New WSurf
 release notes will be added above this provenance record.
 
+## 0.1.18 (build 18) — 2026-10-29
+
+Everything since 0.1.17 (build 17). None of the screens and prompts below has been checked by hand.
+
+### Address bar
+
+- A long website address in the address bar now ends with “…” before the icons at its end instead of running under them, and hovering the address shows the whole address. This holds in the toolbar, the Minimal bar and the Micro window’s bar. The icons keep their size and stay clickable.
+
+### Window
+
+- Settings › Appearance › Window has new Shadow and Border options. Turning the shadow off also removes the thin outline macOS draws around the window. Border adds a 1 pt line (None, Subtle, Accent or a custom color) that follows the window’s corners. Both apply at once to every open window, in the Standard, Minimal and Micro window styles, and a build before 0.1.18 ignores them.
+
+### Credentials
+
+- **[Pending the merge of `fix/credentials-small-0.1.18`; delete this line when it is in, or delete both sentences if it is not]**
+- Credential Manager’s merge review now recommends the plain username (user@example.com) over its numbered copies (user@example.com (1)) as the primary credential; nothing changes until you confirm.
+- The Lock control in the Credentials toolbar is now just the padlock icon; hover it for “Lock Credentials”.
+
+### Phase 2 (placeholders, to be written when merged)
+
+- **[Phase 2, to be written when merged]** Color panel and autoplay: `fix/color-panel-0.1.18`.
+- **[Phase 2, to be written when merged]** Passkeys in sign-in frames: `fix/passkey-silent-0.1.18`.
+- **[Phase 2]** Re-read the known issues below (the passkey ones and the Chromium `window.open` one) once those branches are in, and drop this whole section if neither is merged.
+
+### Under the hood
+
+- The test plan turns the allocator’s large-block cache off for the test host, so a performance memory budget reads what a test does and not when macOS takes freed memory back. A test fails if the cache is on. No budget changed.
+- A new test pins the Folder indent as you set it in Settings, with the rows on screen, in the docked, floating and Minimal tab lists. The indent itself is unchanged.
+
+### Known issues
+
+- One- and two-letter address-bar queries search only the newest 3,000 pages; three letters and the History page search everything.
+- Chromium tabs do not yet block `window.open` without a click, and open ⌘-click and middle-click tabs in front.
+- Removing one website in Website data removes the cookies that exact host set; a cookie a website set for its whole domain (from www.example.com for example.com) stays until you clear everything. This was true before, but Chromium’s cookies now stay across a quit.
+- Clear Browsing Data does not reach Chromium’s own small records of the sites you visited (the sites it must open over HTTPS, its site-engagement scores); they go when you delete the profile.
+- WebKit tabs that both use the camera or microphone still take it from each other: showing another tab that uses them mutes the first for good, and WSurf has no button to resume it.
+- Taking back camera or microphone access from a Chromium tab that is using it stops the devices by closing and reopening the page, and shows “Could not change website device access”.
+- Back after an engine switch goes back one step only: Forward does not return to the other engine, and a Chromium page comes back by its address, not with its history.
+- Passkeys from Apple Passwords, from phones and from security keys do not work in either engine until Apple grants WSurf the browser passkey entitlement; the sheet above is all a website gets.
+- A script that must run before a page’s own code (the passkey script, the notification and location stand-ins, the development diagnostics hook) can run late on the first page of a Chromium pop-up, so that page may have done its first work before it.
+- A page in a background tab runs its timers more slowly after 10 seconds, so a page that counts, polls or refreshes itself from a timer can fall behind until you show it. Set the website to Keep this website loaded to leave it as it was.
+- The known issues of 0.1.14 are unchanged.
+
 ## 0.1.17 (build 17) — 2026-10-28
 
 Everything since 0.1.16 (build 16). None of the screens and prompts below has been checked by hand. The speeds are from tests on a debug build under load, so they show how much less work is done, not what you will see.
