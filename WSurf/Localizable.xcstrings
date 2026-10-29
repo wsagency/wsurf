@@ -9370,7 +9370,7 @@
       "comment" : "VoiceOver value of a favorite tile in the sidebar: its page is loaded in memory. Counterpart “Unloaded”. Spoken after the tab’s title; not shown on screen."
     },
     "Lock" : {
-      "comment" : "Small toolbar button with a lock icon on the Vault tab, in the Trash header, and in the Input History section: locks the vault (or Input History) so it must be unlocked again. One word, a verb."
+      "comment" : "Locks the vault (or Input History) so it must be unlocked again. On the Vault tab and in the Trash header it is the tooltip and the VoiceOver label of an icon-only padlock button, so it is never shown as text there; in the Input History section it is the text of a button with a lock icon. One word, a verb."
     },
     "Lock credentials" : {
       "comment" : "Row title in the Vaults section; its pop-up menu sets how long the selected vault stays unlocked (After 1 minute … When WSurf quits). Sentence case; Lock is a verb."
