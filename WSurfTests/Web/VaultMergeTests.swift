@@ -228,4 +228,41 @@ struct VaultMergeTests {
             #expect(try await f.accounts().count == 2)
         }
     }
+
+    @Test func theSheetStartsFromThePlainUsernameAndTheProposalChangesNothingStored() async throws {
+        try await withFixture { f in
+            let copies = [account("ada@example.test (2)", "two"), account("ada@example.test (1)", "one")]
+            let plain = account("ada@example.test", "zero")
+            try await f.save(copies + [plain])
+            await f.model.load()
+            let before = try await f.revision()
+            let usernames = try await f.accounts().map(\.username).sorted()
+
+            let proposal = try await f.model.mergeProposal(ids: copies.map(\.id) + [plain.id])
+
+            #expect(proposal.picks.survivor == plain.id)
+            // Only the recommendation: reading it wrote nothing, and the user still confirms.
+            #expect(try await f.revision() == before)
+            #expect(try await f.accounts().map(\.username).sorted() == usernames)
+
+            try await f.model.confirmMerge(proposal)
+            let remaining = try await f.accounts()
+            #expect(remaining.map(\.id) == [plain.id])
+            #expect(remaining.first?.username == "ada@example.test")
+        }
+    }
+
+    @Test func mergeAllIdenticalKeepsThePlainUsernameOfNumberedCopies() async throws {
+        try await withFixture { f in
+            let copies = [account("ada@example.test (1)", "pw"), account("ada@example.test (2)", "pw")]
+            let plain = account("ada@example.test", "pw")
+            try await f.save(copies + [plain])
+            await f.model.load()
+
+            let result = try await f.model.mergeAllIdentical(revision: try await f.revision())
+
+            #expect(result == CredentialMergeAllResult(merged: 1, absorbed: 2, skipped: 0))
+            #expect(try await f.accounts().map(\.id) == [plain.id])
+        }
+    }
 }
