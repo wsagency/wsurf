@@ -276,9 +276,8 @@ final class ChromiumDevTools {
         return try await command(method, params: baseParams, session: nil, dispatchCheck: dispatchCheck, prepareParameters: prepareParameters)
     }
 
-    /// The page's session sends `method` to `session` (nil: itself). Only the cross-site frame sessions and the resume of a paused
-    /// frame use it directly.
-    func command(
+    /// One attempt of `command(_:params:session:dispatchCheck:prepareParameters:)`.
+    private func send(
         _ method: String,
         params baseParams: [String: Any],
         session: String?,
@@ -922,6 +921,39 @@ final class ChromiumDevTools {
         guard let data = try? JSONSerialization.data(withJSONObject: string, options: [.fragmentsAllowed]),
               let literal = String(data: data, encoding: .utf8) else { return "\"\"" }
         return literal
+    }
+}
+
+// MARK: A page still committing
+
+extension ChromiumDevTools {
+    /// Chromium's answer, for the top frame, while a cross-process navigation of it is between ready-to-commit and its commit:
+    /// the session already points at the new document, which is not active yet. The commands Chromium answers itself
+    /// (`Security.enable`, `Page.getNavigationHistory`, `Page.resetNavigationHistory`, `Page.navigateToHistoryEntry`, the
+    /// captures) are refused then, having done nothing. A pop-up's start-up runs into it: its first page commits meanwhile.
+    static let inactivePageRefusal = "Not attached to an active page"
+    static let commitWait: Duration = .milliseconds(50)
+
+    /// The page's session sends `method` to `session` (nil: itself). Only the cross-site frame sessions and the resume of a paused
+    /// frame use it directly. A refusal for a page still committing (`inactivePageRefusal`) is sent again every `commitWait` until it
+    /// is answered or `commandTimeout` has passed; each attempt prepares and checks its parameters again in the turn that sends it.
+    func command(
+        _ method: String,
+        params baseParams: [String: Any],
+        session: String?,
+        dispatchCheck: (@MainActor @Sendable () throws -> Void)?,
+        prepareParameters: (@MainActor @Sendable () throws -> [String: Any])?
+    ) async throws -> [String: Any] {
+        // ponytail: polls; a wake on the main frame's commit would save up to one `commitWait`, at the cost of following navigations.
+        let deadline = ContinuousClock.now + commandTimeout
+        while true {
+            do {
+                return try await send(method, params: baseParams, session: session, dispatchCheck: dispatchCheck,
+                                      prepareParameters: prepareParameters)
+            } catch let ChromiumError.protocolFailure(message) where message == Self.inactivePageRefusal && ContinuousClock.now < deadline {
+                try await Task.sleep(for: Self.commitWait)
+            }
+        }
     }
 }
 
