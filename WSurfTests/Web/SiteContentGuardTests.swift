@@ -222,6 +222,86 @@ final class SiteContentGuardTests {
 
         #expect(await pauses(in: view) == 1)
     }
+
+    // MARK: - User activation
+
+    private static let bare = "<!doctype html><title>Bare</title><p>Nothing to play here.</p>"
+
+    private func hasBeenActive(_ view: BrowserPage) async -> Bool? {
+        (try? await view.evaluateJavaScript("navigator.userActivation.hasBeenActive")) as? Bool
+    }
+
+    /// Hearing WSurf's answer is no click, Allow included: no page is given the activation that would let its script open a
+    /// pop-up or the colour chooser by itself, whether it has nothing to play, has a player, or makes one by script.
+    @Test func anAllowAnswerGivesNoPageActivation() async throws {
+        settings.autoplay = .allow
+        let server = try await HTTPFixtureServer.start(routes: ["/": .html(Self.bare), "/player": .html(Self.markup)])
+
+        for path in ["/", "/player"] {
+            let view = await page(permissions: temporaryPermissions(), at: try server.url(path))
+            try await Task.sleep(for: .milliseconds(500))
+            #expect(await hasBeenActive(view) == false, "\(path)")
+            if path == "/" {
+                _ = try await view.evaluateJavaScript("""
+                    const player = document.createElement('video'); player.src = '/missing.mp4'; document.body.append(player); true
+                    """)
+                try await Task.sleep(for: .milliseconds(500))
+                #expect(await hasBeenActive(view) == false, "a player made by script")
+            }
+        }
+        withExtendedLifetime(server) {}
+    }
+}
+
+/// The colour chooser opens for the person's own click on a colour field, and never because a page asked for it by itself:
+/// a page that has just loaded, under the default Allow, asks a moment later, once WSurf's answers to it are in, and opens a
+/// pop-up too. One page first makes a player by script, the way a website could to be answered as one with media. On each
+/// engine, in the window the app builds.
+@MainActor
+@Suite(.serialized, .boundedWebViews)
+struct PageColorChooserTests {
+    private static let page = """
+        <!doctype html><title>Colour</title><input type="color" id="field">
+        <script>
+        window.__marker = 'loaded';
+        addEventListener('load', () => {
+          if (location.pathname === '/player') {
+            const player = document.createElement('video'); player.src = '/missing.mp4'; document.body.append(player);
+          }
+          setTimeout(() => {
+            let chooser;
+            try { document.getElementById('field').showPicker(); chooser = 'opened'; } catch (error) { chooser = error.name; }
+            document.title = chooser + ' ' + (window.open('/still') ? 'opened' : 'blocked');
+          }, 1000);
+        });
+        </script>
+        """
+
+    private func title(of tab: BrowserTab) async -> String? {
+        (try? await tab.page.evaluateJavaScript("document.title")) as? String
+    }
+
+    @Test(arguments: [BrowserEngine.webKit, .chromium], ["/colour", "/player"])
+    func onlyThePersonsClickOpensTheColourChooser(engine: BrowserEngine, path: String) async throws {
+        try await LiveWindowRig.with(engine: engine, routes: ["/colour": .html(Self.page), "/player": .html(Self.page)]) { rig in
+            let shown = Set(NSApp.windows.filter(\.isVisible).map(ObjectIdentifier.init))
+            let added = { NSApp.windows.filter { $0.isVisible && !shown.contains(ObjectIdentifier($0)) } }
+            defer {
+                added().forEach { $0.orderOut(nil) }
+            }
+            let tabs = rig.browser.tabs.count
+            let tab = try await rig.open(path)
+            #expect(await waitUntil { await title(of: tab) != "Colour" }, "\(engine) \(path): the page asked")
+            #expect(await title(of: tab) == "NotAllowedError blocked", "\(engine) \(path): the page was refused both")
+            #expect(added().isEmpty, "\(engine) \(path): no chooser opened: \(added())")
+            #expect(rig.browser.tabs.count == tabs + 1, "\(engine) \(path): no pop-up tab opened")
+
+            _ = try await tab.page.evaluateJavaScript(
+                "document.getElementById('field').click(); true", in: nil, contentWorld: .page, userGesture: true
+            )
+            #expect(await waitUntil { !added().isEmpty }, "\(engine) \(path): the person's click opens it")
+        }
+    }
 }
 
 /// WebKit keeps a website's answers itself: the tab's navigation delegate sets the auto-play policy for each main-frame

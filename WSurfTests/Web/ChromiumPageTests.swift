@@ -101,7 +101,7 @@ struct ChromiumPageTests {
     }
 
     /// Chromium reaches a subframe's world through an object of it, so a reply finds the frame that asked: the site guard
-    /// (in the services world) holds an iframe's autoplay until its policy arrives, and under Allow the media then plays.
+    /// (in the services world) of an iframe with an autoplay player hears its own Allow, which gives it no user activation.
     @Test(.boundedWebViews)
     func subframePageWorldRepliesReachTheFrameThatAsked() async throws {
         let server = try await HTTPFixtureServer.start(routes: [
@@ -148,9 +148,12 @@ struct ChromiumPageTests {
             ) as? String == "/child:object")
             #expect(await waitUntil {
                 (try? await page.evaluateJavaScript(
-                    "document.getElementById('media')?.paused === false", in: frame, contentWorld: .defaultClient
-                )) as? Bool == true
-            }, "the iframe's media stayed paused")
+                    "globalThis.__wsurfSiteGuard?.autoplay", in: frame, contentWorld: BrowserPage.servicesWorld
+                )) as? String == "allow"
+            }, "the iframe never heard its answer")
+            #expect(try await page.evaluateJavaScript(
+                "navigator.userActivation.hasBeenActive", in: frame, contentWorld: .defaultClient
+            ) as? Bool == false, "the answer activated the iframe")
         } catch {
             await page.close()
             await ChromiumRuntime.shared.releaseContext(contextID: context.contextID)

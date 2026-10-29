@@ -64,13 +64,18 @@ struct LiveWindowRig {
     private static let dataStore = WKWebsiteDataStore(forIdentifier: UUID())
 
     /// Runs `body` in a window of a profile of its own, whose pages open on `engine` and may start sound, and closes it after.
-    static func with(engine: BrowserEngine, _ body: @MainActor (LiveWindowRig) async throws -> Void) async throws {
+    /// `routes` adds pages of the case's own to the server.
+    static func with(
+        engine: BrowserEngine,
+        routes: [String: HTTPFixtureServer.Response] = [:],
+        _ body: @MainActor (LiveWindowRig) async throws -> Void
+    ) async throws {
         let never = ResponseGate()
-        let server = try await HTTPFixtureServer.start(routes: [
+        let server = try await HTTPFixtureServer.start(routes: routes.merging([
             "/page": .html(page),
             "/never": .html("", gate: never),
             "/still": .html("<!doctype html><title>Still</title><p>Nothing moves here.</p>"),
-        ])
+        ]) { _, fixed in fixed })
         let catalog = ProfileStore.shared
         let previous = catalog.current
         let profile = catalog.add(name: "Live window")
