@@ -150,6 +150,19 @@ enum AskRestingContent: Equatable {
         }
     }
 
+    /// What hovering the address says. The full address is on the line cut at its end when it is long, so hovering shows all of it,
+    /// as the line draws it (rebuilt by `AddressText`, so the page cannot word the tooltip either). The engine follows on its own line.
+    func tooltip(engine: BrowserEngine?) -> String {
+        var lines: [String] = []
+        if case .address(let host, let scheme, let rest) = self, !scheme.isEmpty {
+            lines.append(scheme + host + rest)
+        }
+        if let engine {
+            lines.append(String(localized: engine.label))
+        }
+        return lines.joined(separator: "\n")
+    }
+
     // swiftlint:disable:next function_parameter_count
     static func resolve(
         isListening: Bool,
