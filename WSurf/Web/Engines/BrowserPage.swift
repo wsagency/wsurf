@@ -630,14 +630,11 @@ final class BrowserPage: NSView {
             )
             guard currentContextID == executionContextID else { throw WebAuthnContextError.staleFrame }
         } else {
-            guard context.frame.isMainFrame, context.executionContextID == nil,
-                  !context.crossOrigin, context.topOrigin == nil,
-                  PageFrameRegistry.shared.isCurrent(context.frame, in: self),
-                  await PageFrameRegistry.shared.isLive(context.frame, in: self) else {
+            guard let top = webKitPolicyFrame(for: context), await PageFrameRegistry.shared.isLive(context.frame, in: self) else {
                 throw WebAuthnContextError.staleFrame
             }
             guard PageFrameRegistry.shared.mainFramePolicyAllows(
-                context.frame, feature: context.policyFeature, in: self
+                top, feature: context.policyFeature, in: self
             ) == true else { throw WebAuthnContextError.policyDenied }
         }
         guard !isClosed, credentialGeneration == context.credentialGeneration else {
@@ -663,13 +660,9 @@ final class BrowserPage: NSView {
                     frame: context.frame, executionContextID: executionContextID
                   ) else { throw WebAuthnContextError.staleFrame }
         } else {
-            guard context.frame.isMainFrame, context.executionContextID == nil,
-                  !context.crossOrigin, context.topOrigin == nil,
-                  PageFrameRegistry.shared.isCurrent(context.frame, in: self) else {
-                throw WebAuthnContextError.staleFrame
-            }
+            guard let top = webKitPolicyFrame(for: context) else { throw WebAuthnContextError.staleFrame }
             guard PageFrameRegistry.shared.mainFramePolicyAllows(
-                context.frame, feature: context.policyFeature, in: self
+                top, feature: context.policyFeature, in: self
             ) == true else { throw WebAuthnContextError.policyDenied }
         }
     }

@@ -23,6 +23,13 @@ nonisolated enum WebAuthnScript {
         pageSource
     }
 
+    /// WebKit's page script: only in a document of the same origin as every frame above it (read before any page script runs).
+    /// WebKit names neither a frame's ancestors nor what its embedder allowed it, so its vault serves no frame under an embedder
+    /// of another origin (`BrowserPage.credentialContext`), and such a frame keeps the engine's own `navigator.credentials`.
+    static var webKitPage: String {
+        "if (window === top || Array.from(location.ancestorOrigins).every(origin => origin === location.origin))\n" + pageSource
+    }
+
     /// Chromium only, in every frame, frames of other sites included: CEF's own WebAuthn has no prompt and reaches no authenticator
     /// (no Touch ID without Chromium's keychain group, no phone, no Apple Passwords), and a request that reaches it neither shows
     /// anything nor ends. So a public-key request that would reach it ends at once as the site's "not allowed", which sites answer
@@ -59,9 +66,17 @@ nonisolated enum WebAuthnScript {
     private static let relaySource = #"""
     (() => {
       if (globalThis.__wsurfWebAuthnFence) return;
-      const random = new Uint8Array(16);
-      crypto.getRandomValues(random);
-      let documentID = NATIVE ? null : Array.from(random, byte => byte.toString(16).padStart(2, '0')).join('');
+      // The document this relay serves. A window can outlive its document: a frame's first, empty document hands its window to
+      // the same-origin document that replaces it (HTML's window reuse; Apple's sign-in widget is such a frame), and Chromium
+      // then runs no document-start script for the new one. So the relay listens on the window and follows it to its newer
+      // document (`follow`), and the requests of the one it leaves end there.
+      let ownDocument = document;
+      const randomID = () => {
+        const random = new Uint8Array(16);
+        crypto.getRandomValues(random);
+        return Array.from(random, byte => byte.toString(16).padStart(2, '0')).join('');
+      };
+      let documentID = NATIVE ? null : randomID();
       let unidentified = false;
       const requests = new Map();
       let active = true;
@@ -86,9 +101,26 @@ nonisolated enum WebAuthnScript {
         else unidentified = true;
       })();
 
-      const emit = (id, value) => document.dispatchEvent(new CustomEvent('wsurf-webauthn-result',
+      const emit = (id, value) => ownDocument.dispatchEvent(new CustomEvent('wsurf-webauthn-result',
         {detail: JSON.stringify({id, ...value})}));
-      document.addEventListener('wsurf-webauthn-request', event => {
+      // Only what the window's current document dispatched on itself is heard. A newer document than the one served re-arms the
+      // relay for it, with an identity of its own: a new fence, or on WebKit the registry's proof asked for again.
+      const follow = target => {
+        if (target !== document) return false;
+        if (target === ownDocument) return true;
+        for (const id of requests.keys()) { try { send({action: 'cancel', id}); } catch {} }
+        requests.clear();
+        ownDocument = target;
+        documentID = NATIVE ? null : randomID();
+        unidentified = false;
+        identification = null;
+        epoch += 1;
+        resuming = null;
+        active = true;
+        return true;
+      };
+      addEventListener('wsurf-webauthn-request', event => {
+        if (!follow(event.target)) return;
         if (typeof event.detail !== 'string' || event.detail.length > 262144) return;
         let body; try { body = JSON.parse(event.detail); } catch { return; }
         if (!body || typeof body.id !== 'string' || body.id.length === 0 || body.id.length > 80) return;
@@ -108,7 +140,7 @@ nonisolated enum WebAuthnScript {
             emit(body.id, {error: {name: 'NotAllowedError', message: 'The native authenticator is unavailable.'}});
           }
         });
-      });
+      }, true);
       addEventListener('pagehide', () => {
         epoch += 1;
         resuming = null;
@@ -129,7 +161,7 @@ nonisolated enum WebAuthnScript {
         // A cached document runs none of the document-start scripts again, so its route may predate a provider change. The
         // page script treats `pending` asymmetrically (a previously-manager document keeps preparing manager requests that
         // native validates; a legacy or unrouted one is refused before any read) until native's single re-announcement.
-        document.dispatchEvent(new CustomEvent('wsurf-webauthn-route', {detail: 'pending'}));
+        ownDocument.dispatchEvent(new CustomEvent('wsurf-webauthn-route', {detail: 'pending'}));
         try { post({action: 'route', id: 'route'}); } catch {}
         if (!NATIVE) { active = true; return; }
         const mine = epoch;
@@ -157,15 +189,15 @@ nonisolated enum WebAuthnScript {
       // never overrides a newer one.
       let route = null;
       let routeSequence = -1;
-      const announceRoute = () => { if (route) document.dispatchEvent(new CustomEvent('wsurf-webauthn-route', {detail: route})); };
-      document.addEventListener('wsurf-webauthn-route-request', announceRoute);
+      const announceRoute = () => { if (route) ownDocument.dispatchEvent(new CustomEvent('wsurf-webauthn-route', {detail: route})); };
+      addEventListener('wsurf-webauthn-route-request', event => { if (follow(event.target)) announceRoute(); }, true);
       const fence = Object.freeze({
         deliver: (doc, id, value) => {
           const identity = documentID ?? (unidentified ? '' : null);
           if (!active || identity === null || doc !== identity || !requests.has(id)) return false;
           // A ceremony result is never delivered to an unidentified or hidden document. A capability answer carries no
           // secret and no authority; unidentified documents need it to learn which provider owns them.
-          if (value.result && !requests.get(id).capabilities && (unidentified || document.visibilityState !== 'visible')) return false;
+          if (value.result && !requests.get(id).capabilities && (unidentified || ownDocument.visibilityState !== 'visible')) return false;
           requests.delete(id);
           emit(id, value);
           return true;
@@ -368,15 +400,17 @@ nonisolated enum WebAuthnScript {
         } else { try { pending.resolve(credential(result)); } catch (failure) { pending.reject(failure); } }
       }
 
+      // On the window, for its current document: a window can outlive the document this script started in, and the relay
+      // answers the window's current one (see the relay).
       const queryHandlers = new Map();
-      document.addEventListener('wsurf-webauthn-result', event => {
-        if (typeof event.detail !== 'string' || event.detail.length > MAX_TEXT) return;
+      addEventListener('wsurf-webauthn-result', event => {
+        if (event.target !== document || typeof event.detail !== 'string' || event.detail.length > MAX_TEXT) return;
         let value; try { value = JSON.parse(event.detail); } catch { return; }
         if (!value || typeof value.id !== 'string') return;
         const query = queryHandlers.get(value.id);
         if (query) { queryHandlers.delete(value.id); query(value.result ?? null); return; }
         settle(value.id, value.error, value.result);
-      });
+      }, true);
 
       // The provider routing for this document is native's: delivered as an event by the isolated relay, which holds the
       // announcement of the document-start script native installed (and of every later change). It is a hint, not an
@@ -386,10 +420,11 @@ nonisolated enum WebAuthnScript {
       // manager requests, which native validates; anything else is refused briefly (cached legacy calls are not supported
       // before revalidation, and are never queued or read).
       let route = null, known = null;
-      document.addEventListener('wsurf-webauthn-route', event => {
+      addEventListener('wsurf-webauthn-route', event => {
+        if (event.target !== document) return;
         if (event.detail === 'legacy' || event.detail === 'manager') route = known = event.detail;
         else if (event.detail === 'pending') route = 'pending';
-      });
+      }, true);
       document.dispatchEvent(new CustomEvent('wsurf-webauthn-route-request'));
 
       // The provider is decided by native before any manager-only processing. Legacy hands the engine the caller's own

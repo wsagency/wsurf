@@ -107,22 +107,26 @@ enum WebAuthnAdapter {
     static func install(in page: BrowserPage) {
         guard !installedPages.contains(page) else { return }
         installedPages.add(page)
-        // WebKit's vault serves only the main frame (`validateCredentialContextForDispatch`), so its frames get none of these
-        // scripts and keep the engine's own `navigator.credentials`. Chromium serves a frame it has verified, so every
-        // frame gets them there.
-        let mainFrameOnly = page.chromium == nil
+        // Every frame, on both engines: a sign-in widget is often a frame (Apple's is one of its own origin), and a frame left to
+        // the engine's own WebAuthn reaches nothing (WebKit's refuses at once without Apple's browser entitlement; CEF's never
+        // ends). Native decides which frames it serves (`credentialContext`). WebKit's page script stays out of a frame under an
+        // embedder of another origin, which its vault cannot serve (`WebAuthnScript.webKitPage`); Chromium's frames of another
+        // site get only the engine refusal (`ChromiumDevTools.crossSiteFrameScripts`).
         page.installScript(
             WebAuthnScript.relay(nativeNonce: page.chromium == nil), in: world,
-            injectionTime: .atDocumentStart, forMainFrameOnly: mainFrameOnly
+            injectionTime: .atDocumentStart, forMainFrameOnly: false
         )
         // Document-start order is the contract: the frame registry, then the relay, then the route script, then the page
         // script. A page's profile never changes, so neither does its route, and the script is installed once.
-        page.installScript(routeScript(for: page), in: world, injectionTime: .atDocumentStart, forMainFrameOnly: mainFrameOnly)
+        page.installScript(routeScript(for: page), in: world, injectionTime: .atDocumentStart, forMainFrameOnly: false)
         if page.chromium != nil {
             // Before the page script, which keeps these as the engine's own: a private page's request ends at once too.
             page.installScript(WebAuthnScript.engineRefusal, in: .page, injectionTime: .atDocumentStart, forMainFrameOnly: false)
         }
-        page.installScript(WebAuthnScript.page, in: .page, injectionTime: .atDocumentStart, forMainFrameOnly: mainFrameOnly)
+        page.installScript(
+            page.chromium == nil ? WebAuthnScript.webKitPage : WebAuthnScript.page, in: .page,
+            injectionTime: .atDocumentStart, forMainFrameOnly: false
+        )
         page.addScriptMessageHandler(name: WebAuthnScript.handlerName, in: world) { message in
             handle(message)
         }
@@ -238,10 +242,10 @@ enum WebAuthnAdapter {
             // (`legacy` or `manager`) goes back, to the frame that asked; it is a hint, never an authority.
             Task { _ = try? await page.callAsyncJavaScript(routeScript(for: page), in: message.frameInfo, contentWorld: world) }
         case "request":
-            // Only the vault needs a verified document. WebKit: the request is served for the main frame whose
-            // native-issued nonce it carries; a message from an older or replaced document, a subframe or an unknown frame
-            // never reaches a prompt and gets one error aimed only at the document that asked. Chromium's frame comes from
-            // its CDP-attributed message and is verified by the context. A private page passes every call through.
+            // Only the vault needs a verified document. WebKit: the request is served for the frame (main or not) whose
+            // native-issued nonce it carries; a message from an older or replaced document or an unknown frame never reaches a
+            // prompt and gets one error aimed only at the document that asked. Chromium's frame comes from its CDP-attributed
+            // message. Either is then verified by the context. A private page passes every call through.
             var frame = message.frameInfo
             if document.isEmpty {
                 guard !isHandled(by: page) else {
@@ -258,10 +262,10 @@ enum WebAuthnAdapter {
                     return
                 }
             } else if isHandled(by: page), page.chromium == nil {
-                guard let native = PageFrameRegistry.shared.currentMainFrame(
+                guard let native = PageFrameRegistry.shared.currentFrame(
                     matching: message.frameInfo, documentNonce: document, in: page
                 ) else {
-                    Pipeline.log.notice("webauthn: refused, not the current main frame")
+                    Pipeline.log.notice("webauthn: refused, not a current frame")
                     reject(key, page, message.frameInfo, WebAuthnWire.PageError(
                         name: "NotAllowedError", message: "The request is not allowed by the user agent or the platform."
                     ))
@@ -385,8 +389,9 @@ enum WebAuthnAdapter {
     }
 
     /// Whether the autofill script's `frame` is the document the request was registered for. Chromium names both by the same
-    /// CDP frame and document. WebKit serves only the current main frame (`handle`), and the generation check ties it to the
-    /// document that sent the request.
+    /// CDP frame and document. WebKit's autofill message names no document, so only the current main frame is matched (the
+    /// generation check ties it to the document that sent the request); a WebKit frame's conditional request is not offered in
+    /// the dropdown, and the page's own button still asks.
     private static func isSameDocument(_ served: BrowserFrame, _ frame: BrowserFrame, in page: BrowserPage) -> Bool {
         if page.chromium != nil {
             return served.chromiumID != nil && served.chromiumID == frame.chromiumID && served.documentID == frame.documentID

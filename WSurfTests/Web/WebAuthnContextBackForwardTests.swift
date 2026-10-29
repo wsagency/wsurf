@@ -729,6 +729,8 @@ extension WebAuthnContextTests {
         }
     }
 
+    /// A frame of the page's own origin gets a context on both engines: Chromium from its native frame tree and policy, WebKit from
+    /// the frame's registered document (its ancestors' origins and frame elements, read in WSurf's world) and the page's policy.
     @Test(arguments: BrowserEngine.allCases)
     func iframeContextNeedsNativeEffectivePolicyEvidence(_ engine: BrowserEngine) async throws {
         let fixture = try await loadPage(
@@ -740,17 +742,34 @@ extension WebAuthnContextTests {
                   let target = await PageFrameRegistry.shared.targets(in: fixture.page).first else {
                 throw FixtureError.frameUnavailable
             }
-            if engine == .webKit {
-                await #expect(throws: (any Error).self) {
-                    try await fixture.page.credentialContext(for: target.frame, operation: .get)
-                }
-            } else {
-                let context = try await fixture.page.credentialContext(for: target.frame, operation: .get)
-                #expect(context.origin == fixture.origin)
-                #expect(context.topOrigin == nil)
-                #expect(context.crossOrigin == false)
-                try await context.validate()
+            let context = try await fixture.page.credentialContext(for: target.frame, operation: .get)
+            #expect(context.origin == fixture.origin)
+            #expect(context.topOrigin == nil)
+            #expect(context.crossOrigin == false)
+            try await context.validate()
+            try context.validateForDispatch()
+        }
+    }
+
+    /// The same frame, when the page's frame element withholds passkeys from it, gets no context on either engine.
+    @Test(arguments: BrowserEngine.allCases)
+    func aFrameWhoseElementWithholdsPasskeysGetsNoContext(_ engine: BrowserEngine) async throws {
+        let fixture = try await loadPage(
+            engine: engine,
+            body: "<!doctype html><title>Parent</title><iframe allow=\"publickey-credentials-get 'none'\" src='/child-one'></iframe>"
+        )
+        try await withFixture(fixture) {
+            guard await waitUntil({ !(await PageFrameRegistry.shared.targets(in: fixture.page)).isEmpty }),
+                  let target = await PageFrameRegistry.shared.targets(in: fixture.page).first else {
+                throw FixtureError.frameUnavailable
             }
+            var denied = false
+            do {
+                _ = try await fixture.page.credentialContext(for: target.frame, operation: .get)
+            } catch WebAuthnContextError.policyDenied {
+                denied = true
+            }
+            #expect(denied)
         }
     }
 

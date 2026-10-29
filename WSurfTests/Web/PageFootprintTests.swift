@@ -52,8 +52,8 @@ final class PageFootprintTests {
         })()
         """
 
-    /// Vault passkeys (until the owner's entitlement decision): the main frame on both engines, and on Chromium, whose vault
-    /// serves a verified frame, every frame.
+    /// Vault passkeys (until the owner's entitlement decision): the main frame on both engines, on WebKit also a frame of the
+    /// page's own origin, and on Chromium, whose vault serves a verified frame, every frame.
     private static let passkeyExceptions: Set<String> = [
         "navigator.credentials.get", "navigator.credentials.create",
         "PublicKeyCredential.isConditionalMediationAvailable",
