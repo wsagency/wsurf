@@ -13,7 +13,7 @@ import Testing
 @MainActor
 struct ToolbarChipTests {
     private func lock(showsLabel: Bool) -> ToolbarChip {
-        ToolbarChip(symbol: "lock", label: "Lock", showsLabel: showsLabel) {}
+        ToolbarChip(symbol: "lock", label: "Lock Credentials", showsLabel: showsLabel) {}
     }
 
     @Test func anIconOnlyChipIsAsTallAsTheLabelledOnesAndAsWideAsAToolbarButton() {
