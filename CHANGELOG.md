@@ -19,9 +19,8 @@ Everything since 0.1.17 (build 17). None of the screens and prompts below has be
 
 ### Credentials
 
-- **[Pending the merge of `fix/credentials-small-0.1.18`; delete this line when it is in, or delete both sentences if it is not]**
 - Credential Manager’s merge review now recommends the plain username (user@example.com) over its numbered copies (user@example.com (1)) as the primary credential; nothing changes until you confirm.
-- The Lock control in the Credentials toolbar is now just the padlock icon; hover it for “Lock Credentials”.
+- The Lock control in the Credentials toolbar is now just the padlock icon, with “Lock Credentials” as its tooltip and VoiceOver label.
 
 ### Phase 2 (placeholders, to be written when merged)
 
