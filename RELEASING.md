@@ -373,11 +373,16 @@ Release requirements:
   lifts every sample and still fails. No budget is raised for noise: a case
   whose samples are mostly high, such as the 0.1.6 autofilled password among
   20,000 credentials (median 18580 kB against 4096), is a measurement problem
-  to fix in the test, not a budget to raise. That one was the allocator keeping
-  or returning the pages the step freed, so the large-vault write cases
-  (`VaultScalePerformanceTests.measureWrite`) drop what a pass prepared and
-  return the free pages just before the measurement starts and stops: a sample
-  is what the step retained. If you change the iteration count, change the rule
+  to fix in the test, not a budget to raise. That one (and 0.1.17 gate 4's
+  18924 kB) was the allocator's large-block cache: freed large blocks stay in
+  the footprint, `malloc_zone_pressure_relief` does not empty the cache, and
+  the kernel takes them back only when the Mac is under memory pressure, at
+  moments of its own. So `WSurf.xctestplan` sets `MallocLargeCache=0` for the
+  test host, the large-vault write cases (`VaultScalePerformanceTests.measureWrite`)
+  drop what a pass prepared and return the free pages just before the
+  measurement starts and stops, and
+  `VaultScalePerformanceTests.testFreedLargeBlocksLeaveTheFootprint` fails if
+  the cache is on: a sample is what the step retained. If you change the iteration count, change the rule
   in the script with it. `Tools/check-performance.sh
   --self-test` checks the statistics on those sample sets and needs no metrics
   file.

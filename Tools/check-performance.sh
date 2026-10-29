@@ -14,10 +14,14 @@
 # sample swings by tens of MB either way (a spike, or the release of an earlier pass's garbage) while time and behavior are fine,
 # so the mean of five flips sign on one outlier. 0.1.5, layout option sidebar: 3424/4129/4112/6275/21496 kB, mean 7887 against a
 # budget of 7019, median 4129. A fresh host does not show it. The median ignores a lone spike or dip; it cannot rescue a case that
-# is mostly high (0.1.6, autofilled password among 20,000: -1311/23478/-18743/20349/18580 kB, median 18580 against 4096). That was
-# the measurement, not the budget: the step allocates and drops tens of MB of containers and the allocator kept or gave back the
-# free pages at whim. VaultScalePerformanceTests.measureWrite now drops what a pass prepared and returns the free pages before the
-# measurement starts and stops, so a sample is what the step retained. No budget is raised for it.
+# is mostly high (0.1.6, autofilled password among 20,000: -1311/23478/-18743/20349/18580 kB, median 18580 against 4096; 0.1.17
+# gate 4: -164/33718/-17744/18924/30097/-18711). That was the measurement, not the budget: the step allocates and drops about
+# 100 MB, and by default the allocator keeps freed large blocks in a cache that stays in the footprint, which
+# malloc_zone_pressure_relief does not empty and the kernel takes back only under memory pressure, whenever it likes. On a Mac
+# under pressure a sample then moves by tens of MB either way; on a quiet one it does not, so 0.1.16's code is as noisy as 0.1.17's
+# on the same Mac. WSurf.xctestplan turns the cache off for the test host (MallocLargeCache=0), VaultScalePerformanceTests.measureWrite
+# returns the free pages before the measurement starts and stops, and testFreedLargeBlocksLeaveTheFootprint fails if the cache is
+# back: a sample is what the step retained. No budget is raised for it.
 #
 # Why the first sample is dropped: every budgeted case measures one pass more than it is judged on (XCTMeasureOptions.budgeted in
 # WSurfTests/Helpers/BudgetedMeasureOptions.swift, six iterations), and the first pass is the warm-up that pays for lazy setup and
