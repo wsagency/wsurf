@@ -66,6 +66,8 @@ final class CredentialPicker {
         /// Saved for this website or a sibling of it (`CredentialAccountSelection.isSibling`).
         let matchesSite: Bool
         let searchKey: String
+        /// When it was last used on this website (`AutofillLastUsed`); only a credential saved for this website has one.
+        var lastUsed: Date?
     }
 
     enum Answer: Equatable {
@@ -234,6 +236,7 @@ final class CredentialPicker {
         guard !profile.isPrivate else { return nil }
         let listing = (try? await CredentialManager.store(for: profile).listing()) ?? []
         let unlocked = CredentialManager.unlockedManagers(for: profile)
+        let lastUsed = target.context.autofillLastUsed
         var reading = Reading()
         for vault in listing.sorted(by: { $0.ordinal < $1.ordinal }) {
             guard let manager = unlocked.first(where: { $0.vaultID == vault.vaultID }), let epoch = manager.authorizationEpoch,
@@ -242,8 +245,12 @@ final class CredentialPicker {
                 continue
             }
             reading.grants[vault.vaultID] = (epoch, snapshot.revision)
+            var used: [UUID: Date] = [:]
+            for account in snapshot.accounts where account.origins.contains(target.origin) {
+                used[account.id] = lastUsed.date(vault: vault.vaultID, account: account.id, origin: target.origin)
+            }
             reading.rows += Self.rows(
-                snapshot.accounts, vaultID: vault.vaultID, origin: target.origin, vault: listing.count > 1 ? vault.label : nil
+                snapshot.accounts, vaultID: vault.vaultID, origin: target.origin, vault: listing.count > 1 ? vault.label : nil, used: used
             )
         }
         reading.rows = Self.ordered(reading.rows, for: target.field)
@@ -308,6 +315,7 @@ final class CredentialPicker {
         guard isCurrent() else { return .filled(count) }
         let session = AutofillSaveCoordinator.shared.session(for: page)
         if account.origins.contains(target.origin) {
+            target.context.autofillLastUsed.record(vault: vaultID, account: account.id, origin: target.origin)
             if fill == .login, !account.username.isEmpty {
                 AutofillSaveCoordinator.shared.rememberFilledUsername(
                     account.username, origin: target.origin, documentID: target.documentID, in: page, accountID: account.id, epoch: epoch
@@ -345,8 +353,10 @@ final class CredentialPicker {
     // MARK: - The list (pure)
 
     /// A login row for every credential with a username or a password, a code row for every one with a verification code. Cards,
-    /// addresses and identities are not offered here.
-    nonisolated static func rows(_ accounts: [CredentialAccount], vaultID: UUID, origin: String, vault: String?) -> [Row] {
+    /// addresses and identities are not offered here. `used` dates only a credential saved for `origin`.
+    nonisolated static func rows(
+        _ accounts: [CredentialAccount], vaultID: UUID, origin: String, vault: String?, used: [UUID: Date] = [:]
+    ) -> [Row] {
         accounts.flatMap { account -> [Row] in
             let summary = CredentialSummary(account)
             let matches = account.origins.contains(origin) || CredentialAccountSelection.isSibling(account, of: origin)
@@ -355,7 +365,8 @@ final class CredentialPicker {
                 let parts = [first, website, vault].compactMap { $0 }.filter { !$0.isEmpty && $0 != summary.title }
                 return Row(
                     id: UUID(), vaultID: vaultID, accountID: account.id, fill: fill, title: summary.title,
-                    detail: parts.joined(separator: " · "), matchesSite: matches, searchKey: summary.searchKey
+                    detail: parts.joined(separator: " · "), matchesSite: matches, searchKey: summary.searchKey,
+                    lastUsed: account.origins.contains(origin) ? used[account.id] : nil
                 )
             }
             var rows: [Row] = []
@@ -370,13 +381,13 @@ final class CredentialPicker {
     }
 
     /// This website's credentials first, then the others; within each, codes first for a code field and logins first otherwise; then
-    /// by title.
+    /// by title. Above all of them, the code or login (as the field prefers) of the credential used last on this website.
     nonisolated static func ordered(_ rows: [Row], for field: Field) -> [Row] {
         let preferred: Row.Fill = field == .code ? .code : .login
         func rank(_ row: Row) -> Int {
             (row.matchesSite ? 0 : 2) + (row.fill == preferred ? 0 : 1)
         }
-        return rows.enumerated().sorted { left, right in
+        let sorted = rows.enumerated().sorted { left, right in
             let (leftRank, rightRank) = (rank(left.element), rank(right.element))
             if leftRank != rightRank {
                 return leftRank < rightRank
@@ -385,6 +396,7 @@ final class CredentialPicker {
             return order == .orderedSame ? left.offset < right.offset : order == .orderedAscending
         }
         .map(\.element)
+        return CredentialAccountSelection.lastUsedFirst(sorted) { $0.fill == preferred ? $0.lastUsed : nil }
     }
 
     /// The rows whose title, username (unless concealed) or website holds `query`, ignoring case and accents.

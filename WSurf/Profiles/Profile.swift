@@ -86,6 +86,10 @@ extension Profile {
         supportDirectory.appendingPathComponent("SitePermissions.json")
     }
 
+    var autofillLastUsedFile: URL {
+        supportDirectory.appendingPathComponent("AutofillLastUsed.json")
+    }
+
     var spacesFile: URL {
         supportDirectory.appendingPathComponent("Spaces.json")
     }

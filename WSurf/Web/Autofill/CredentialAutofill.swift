@@ -183,6 +183,21 @@ nonisolated enum CredentialAccountSelection {
         }
     }
 
+    /// `rows` with the one whose credential was used last on this website first, and the others in their order. `usedAt` answers only
+    /// for a credential saved for the website (`AutofillLastUsed`); of two equal dates the earlier row wins. Nothing is added or removed.
+    static func lastUsedFirst<Row>(_ rows: [Row], usedAt: (Row) -> Date?) -> [Row] {
+        var latest: (index: Int, date: Date)?
+        for (index, row) in rows.enumerated() {
+            if let date = usedAt(row), date > (latest?.date ?? .distantPast) {
+                latest = (index, date)
+            }
+        }
+        guard let index = latest?.index, index > 0 else { return rows }
+        var rows = rows
+        rows.insert(rows.remove(at: index), at: 0)
+        return rows
+    }
+
     /// What saving `login` would do. An explicitly selected account only applies to the same username; otherwise
     /// the exact username on this origin decides, and more than one match is never guessed between.
     static func savePlan(

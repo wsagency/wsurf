@@ -316,6 +316,9 @@ final class AutofillSuggestions {
         let pinned = session?.selectedAccount(
             in: request.page, origin: origin, enteredUsername: request.enteredUsername, epoch: owner.epoch)
         var result: [AutofillSuggestion] = []
+        // Across the vaults, the credential used last on this website leads; the others keep their order.
+        var used: [UUID: Date] = [:]
+        let lastUsed = context.autofillLastUsed
         for read in pinned == nil ? reads : [owner] {
             for row in CredentialAccountSelection.suggestions(
                 read.snapshot.accounts, origin: origin, pageURL: request.topURL, entered: request.enteredUsername,
@@ -323,12 +326,13 @@ final class AutofillSuggestions {
             ) {
                 let rowID = UUID()
                 request.rows[rowID] = (read.manager.vaultID, row.id)
+                used[rowID] = lastUsed.date(vault: read.manager.vaultID, account: row.id, origin: origin)
                 // With several vaults open, a row says which one it is in.
                 let detail = reads.count > 1 ? [row.detail, read.label].filter { !$0.isEmpty }.joined(separator: " · ") : row.detail
                 result.append(AutofillSuggestion(id: rowID, title: row.title, detail: detail, origin: origin))
             }
         }
-        guard result.isEmpty else { return result }
+        guard result.isEmpty else { return CredentialAccountSelection.lastUsedFirst(result) { used[$0.id] } }
         let anotherIsLocked = reads.count < listing.count
         var siblings: [AutofillSuggestion] = []
         for read in reads {
@@ -833,6 +837,11 @@ final class AutofillSuggestions {
                 // longer pass: a fill the page took is never reported as failed. The pick is recorded only under the request's
                 // native authority.
                 guard (try? self.requireAuthority(request, in: page)) != nil else { return }
+                // A credential of this website just used here leads its list next time; a sibling website's is not recorded here.
+                if request.kind == .password, !request.siblingRows.contains(id), let picked = request.rows[id],
+                   let origin = SavedPassword.origin(for: request.frameURL) {
+                    request.context.autofillLastUsed.record(vault: picked.vaultID, account: picked.accountID, origin: origin)
+                }
                 if request.kind == .password, request.field == .password, let username = filledUsername,
                    let origin = SavedPassword.origin(for: request.frameURL) {
                     let picked = request.rows[id]

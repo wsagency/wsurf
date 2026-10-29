@@ -72,6 +72,22 @@ struct CredentialPickerTests {
         ])
     }
 
+    @Test func theCredentialUsedLastOnThisWebsiteComesFirstInTheFormTheFieldPrefers() {
+        let ada = account("ada", displayName: "Ada"), bob = account("bob", totp: Self.generator, displayName: "Bob")
+        let away = account("away", origins: [Self.other], displayName: "Away")
+        let at = Date(timeIntervalSinceReferenceDate: 800_000_000)
+        let used = [bob.id: at, away.id: at.addingTimeInterval(60)]
+        let rows = CredentialPicker.rows([away, bob, ada], vaultID: UUID(), origin: Self.site, vault: nil, used: used)
+
+        #expect(rows.first { $0.accountID == away.id }?.lastUsed == nil, "a date for another website is never this website's")
+        #expect(CredentialPicker.ordered(rows, for: .text).map { "\($0.title)/\($0.fill)" } == [
+            "Bob/login", "Ada/login", "Bob/code", "Away/login",
+        ])
+        #expect(CredentialPicker.ordered(rows, for: .code).map { "\($0.title)/\($0.fill)" } == [
+            "Bob/code", "Ada/login", "Bob/login", "Away/login",
+        ])
+    }
+
     @Test func searchingMatchesTitleUsernameAndWebsiteNeverTheSecret() {
         let rows = CredentialPicker.rows(
             [account("Ada", password: "hunter2"), account("grace", origins: [Self.other])], vaultID: UUID(), origin: Self.site, vault: nil
@@ -363,6 +379,32 @@ struct CredentialPickerTests {
             #expect(try await flow.values(["bu", "bp"]) == ["ada", "dummy-secret-1"])
             #expect(try await flow.values(["au", "ap", "xu", "xp"]) == ["", "", "", ""])
             #expect(flow.session.websiteOffer == nil, "saved for this website: nothing to remember")
+        }
+    }
+
+    /// A pick is a use: the credential picked on this website is listed first the next time. One picked here that is saved for another
+    /// website is not recorded and does not move.
+    @Test(.boundedWebViews) func theCredentialLastPickedHereIsListedFirstNextTime() async throws {
+        try await withFlow { flow, vaults in
+            let ada = account("ada", displayName: "Ada"), bob = account("bob", displayName: "Bob")
+            let grace = account("grace", origins: [Self.other], displayName: "Grace")
+            try await VaultManagerFixture.save([grace, bob, ada], in: vaults[0])
+            try await flow.load(Self.login)
+
+            let first = try await flow.rightClick("bu")
+            #expect(await flow.pick(first) { rows in rows.first { $0.accountID == bob.id }.map { .row($0.id) } } == .filled(2))
+            #expect(flow.offered.last?.map(\.accountID) == [ada.id, bob.id, grace.id], "before any use, the order it always had")
+
+            let second = try await flow.rightClick("au")
+            #expect(await flow.pick(second) { rows in rows.first { $0.accountID == grace.id }.map { .row($0.id) } } == .filled(2))
+            #expect(flow.offered.last?.map(\.accountID) == [bob.id, ada.id, grace.id], "bob was used here last")
+
+            let third = try await flow.rightClick("bu")
+            #expect(await flow.pick(third) { _ in nil } == .nothing)
+            #expect(flow.offered.last?.map(\.accountID) == [bob.id, ada.id, grace.id], "grace is not saved for this website")
+            let lastUsed = flow.page.context.autofillLastUsed
+            #expect(lastUsed.date(vault: vaults[0].vaultID, account: bob.id, origin: Self.site) != nil)
+            #expect(lastUsed.date(vault: vaults[0].vaultID, account: grace.id, origin: Self.site) == nil)
         }
     }
 
