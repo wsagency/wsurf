@@ -203,6 +203,83 @@ struct WindowStyleSettingsTests {
         }
     }
 
+    // MARK: - Shadow and border
+
+    @Test func aWindowKeepsItsShadowAndHasNoBorderUntilThePersonChanges() throws {
+        try withSettings { settings, defaults in
+            #expect(settings.windowShadow)
+            #expect(settings.windowBorder == .none)
+            #expect(settings.windowBorderColor == 0x6D55FF)
+            for key in [BrowserSettings.Key.windowShadow, BrowserSettings.Key.windowBorder, BrowserSettings.Key.windowBorderColor] {
+                #expect(defaults.object(forKey: key) == nil, "reading the default of \(key) writes nothing")
+            }
+        }
+    }
+
+    @Test func theShadowAndBorderAreOneAppWideChoiceThatSurvivesARestartAndResets() throws {
+        try withSettings { settings, defaults in
+            let profile = BrowserSettings(defaults: defaults, appliesAppearanceGlobally: false, application: settings)
+            profile.windowShadow = false
+            profile.windowBorder = .custom
+            profile.windowBorderColor = 0x12AB34
+            #expect(!settings.windowShadow && settings.windowBorder == .custom && settings.windowBorderColor == 0x12AB34,
+                    "a profile writes the app-wide values")
+            #expect(defaults.object(forKey: BrowserSettings.Key.windowShadow) as? Bool == false)
+            #expect(defaults.string(forKey: BrowserSettings.Key.windowBorder) == "custom")
+            #expect(defaults.object(forKey: BrowserSettings.Key.windowBorderColor) as? Int == 0x12AB34)
+
+            let reopened = BrowserSettings(defaults: defaults, appliesAppearanceGlobally: false)
+            #expect(!reopened.windowShadow && reopened.windowBorder == .custom && reopened.windowBorderColor == 0x12AB34)
+
+            for border in WindowBorder.allCases {
+                profile.windowBorder = border
+                #expect(BrowserSettings(defaults: defaults, appliesAppearanceGlobally: false).windowBorder == border)
+            }
+
+            settings.resetToDefaults()
+            #expect(settings.windowShadow && settings.windowBorder == .none && settings.windowBorderColor == 0x6D55FF)
+            #expect(profile.windowShadow && profile.windowBorder == .none)
+            #expect(defaults.object(forKey: BrowserSettings.Key.windowShadow) as? Bool == true)
+            #expect(defaults.string(forKey: BrowserSettings.Key.windowBorder) == "none")
+        }
+    }
+
+    @Test func aStoredShadowOrBorderThisBuildCannotReadFallsBackToTheDefault() throws {
+        let unreadable: [(border: Any, color: Any, shadow: Any)] = [("dashed", "red", "no"), (7, 0x1000000, 3), (true, -1, "off")]
+        for (border, color, shadow) in unreadable {
+            try withSettings { _, defaults in
+                defaults.set(border, forKey: BrowserSettings.Key.windowBorder)
+                defaults.set(color, forKey: BrowserSettings.Key.windowBorderColor)
+                defaults.set(shadow, forKey: BrowserSettings.Key.windowShadow)
+                let settings = BrowserSettings(defaults: defaults, appliesAppearanceGlobally: false)
+                #expect(settings.windowBorder == .none, "\(border)")
+                #expect(settings.windowBorderColor == 0x6D55FF, "\(color)")
+                #expect(settings.windowShadow, "\(shadow)")
+            }
+        }
+    }
+
+    @Test func theBorderColorKeepsOnlyRedGreenAndBlue() throws {
+        try withSettings { settings, defaults in
+            settings.windowBorderColor = 0xFF12_3456
+            #expect(settings.windowBorderColor == 0x123456)
+            #expect(defaults.object(forKey: BrowserSettings.Key.windowBorderColor) as? Int == 0x123456)
+        }
+    }
+
+    @Test func searchFindsTheShadowAndBorderRows() {
+        for (query, id) in [
+            ("shadow", "appearance.windowShadow"), ("outline", "appearance.windowShadow"), ("flat", "appearance.windowShadow"),
+            ("drop shadow", "appearance.windowShadow"), ("border", "appearance.windowBorder"),
+            ("frame", "appearance.windowBorder"), ("edge", "appearance.windowBorder"), ("line", "appearance.windowBorder"),
+            ("colour", "appearance.windowBorder"), ("color", "appearance.windowBorder"), ("accent", "appearance.windowBorder"),
+        ] {
+            #expect(SettingsIndex.search(query).contains { $0.id == id }, "\(query)")
+        }
+        #expect(SettingsIndex.all.filter { $0.id == "appearance.windowShadow" || $0.id == "appearance.windowBorder" }
+            .allSatisfy { $0.category == .appearance })
+    }
+
     @Test func searchFindsTheWindowCard() {
         for (query, id) in [
             ("minimal", "appearance.window"), ("window style", "appearance.window"),

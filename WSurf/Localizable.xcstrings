@@ -1921,6 +1921,12 @@
     "Bookmarks" : {
       "comment" : "Title of the row that imports bookmarks, in the Import section of the General settings page and on the last onboarding screen. A noun."
     },
+    "Border" : {
+      "comment" : "Title of a setting in Settings › Appearance › Window, and its Settings search title. A pop-up menu that chooses the line WSurf draws around the edge of every browser window: None, Subtle, Accent or Custom. One short word."
+    },
+    "Border color" : {
+      "comment" : "Accessibility label of the color well beside the Border setting in Settings › Appearance › Window, shown when Border is Custom. It picks the color of the line around the window. Sentence case, short."
+    },
     "Bottom" : {
       "comment" : "Segment of Bar position in Settings › Appearance › Window: the Minimal window’s floating bar sits at the bottom of the window."
     },
@@ -5544,6 +5550,54 @@
         }
       }
     },
+    "settings.windowBorder.accent" : {
+      "comment" : "Option in the Border pop-up menu in Settings › Appearance › Window: a line around the window in the theme’s accent color. One short word.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Accent"
+          }
+        }
+      }
+    },
+    "settings.windowBorder.custom" : {
+      "comment" : "Option in the Border pop-up menu in Settings › Appearance › Window: a line around the window in a color the person picks with a color well that then appears beside the menu. An adjective, one short word.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Custom"
+          }
+        }
+      }
+    },
+    "settings.windowBorder.none" : {
+      "comment" : "Option in the Border pop-up menu in Settings › Appearance › Window: WSurf draws no line around the window. One short word.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "None"
+          }
+        }
+      }
+    },
+    "settings.windowBorder.subtle" : {
+      "comment" : "Option in the Border pop-up menu in Settings › Appearance › Window: a faint line around the window in the theme’s text color. An adjective, one short word.",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Subtle"
+          }
+        }
+      }
+    },
     "Settings…" : {
       "comment" : "Menu bar command in the application menu that opens the Settings window, shortcut ⌘,. Title Case with a real ellipsis. Use Apple’s own wording for the system Settings command."
     },
@@ -5552,6 +5606,9 @@
     },
     "SHA-256: %@" : {
 
+    },
+    "Shadow" : {
+      "comment" : "Title of a setting in Settings › Appearance › Window, and its Settings search title. A switch for the drop shadow that macOS draws around every browser window. One short word."
     },
     "Share tabs through iCloud" : {
       "comment" : "Row title on a profile’s settings page: the switch that shares the tabs open in this profile with the person’s other devices through iCloud. iCloud is Apple’s product name — leave as is. Sentence case."
@@ -6538,6 +6595,9 @@
     },
     "Turn this off to keep this website’s video in its tab." : {
 
+    },
+    "Turning it off also removes the thin outline macOS draws around the window." : {
+      "comment" : "Caption under the Shadow setting in Settings › Appearance › Window, and its Settings search description. “It” is the window shadow. The thin outline is the dark line that macOS draws just outside every window together with its shadow. One sentence with a final full stop."
     },
     "Turning this off affects new replies. It does not delete earlier copies or change OpenAI’s other data-retention policies." : {
 
@@ -7958,6 +8018,9 @@
     },
     "A kind of item WSurf doesn’t know" : {
       "comment" : "Name of a kind of item in a credential transfer. It begins the sentence “%@ isn’t supported yet, so it wasn’t imported.” in the import review sheet, so it keeps its article (A/An) and Sentence case. Used for a kind of item that this version of WSurf doesn’t recognize; WSurf does not store it."
+    },
+    "A line around the edge of the window. It follows the corners." : {
+      "comment" : "Caption under the Border setting in Settings › Appearance › Window, and its Settings search description. The line runs along the window’s rounded corners. Two short sentences with final full stops."
     },
     "A link to another item" : {
       "comment" : "Name of a kind of item in a credential transfer. It begins the sentence “%@ isn’t supported yet, so it wasn’t imported.” in the import review sheet, so it keeps its article (A/An) and Sentence case. An entry that only points to another item; WSurf does not store this kind."

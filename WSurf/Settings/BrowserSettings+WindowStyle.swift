@@ -112,6 +112,50 @@ nonisolated enum MinimalBarHiding: String, CaseIterable, Identifiable {
     }
 }
 
+/// The 1 pt line WSurf draws along the edge of the window, over the outline macOS draws with the shadow. Subtle and Accent
+/// follow the theme in light and dark mode; Custom is one colour for both.
+nonisolated enum WindowBorder: String, CaseIterable, Identifiable {
+    case none
+    case subtle
+    case accent
+    case custom
+
+    var id: String {
+        rawValue
+    }
+
+    var label: LocalizedStringResource {
+        switch self {
+        case .none:
+            LocalizedStringResource("settings.windowBorder.none", defaultValue: "None")
+        case .subtle:
+            LocalizedStringResource("settings.windowBorder.subtle", defaultValue: "Subtle")
+        case .accent:
+            LocalizedStringResource("settings.windowBorder.accent", defaultValue: "Accent")
+        case .custom:
+            LocalizedStringResource("settings.windowBorder.custom", defaultValue: "Custom")
+        }
+    }
+
+    /// Where Custom starts: the lead violet of the WSurf mark.
+    static let defaultColor: UInt32 = 0x6D55FF
+
+    /// The stored Custom colour as `0xRRGGBB`. A value that is not a colour, or none, is `defaultColor`.
+    static func storedColor(_ stored: Any?) -> UInt32 {
+        guard let value = stored as? Int, (0...0xFFFFFF).contains(value) else { return defaultColor }
+        return UInt32(value)
+    }
+
+    /// The line the window draws. A full-screen window has no edge. With Increase Contrast on, a window whose shadow is off
+    /// and whose border is None would have none either, so it gets Subtle, as the page does (`ThemeShape.pageFrame`).
+    func drawn(shadow: Bool, increaseContrast: Bool, isFullScreen: Bool) -> WindowBorder {
+        if isFullScreen {
+            return .none
+        }
+        return increaseContrast && !shadow && self == .none ? .subtle : self
+    }
+}
+
 extension BrowserSettings {
     /// The whole page address in the address bar instead of the website name. App-wide, off by default.
     var showsFullAddress: Bool {
@@ -170,11 +214,42 @@ extension BrowserSettings {
         }
     }
 
+    /// The drop shadow of every window, and the thin outline macOS draws with it: off gives a flat window with no outline.
+    /// App-wide, on by default.
+    var windowShadow: Bool {
+        get { globalValue(\.windowShadow, storage: storedWindowShadow) }
+        set {
+            setGlobal(\BrowserSettings.windowShadow, storage: \BrowserSettings.storedWindowShadow,
+                      value: newValue, key: Key.windowShadow)
+        }
+    }
+
+    /// The line WSurf draws around every window. App-wide, None by default.
+    var windowBorder: WindowBorder {
+        get { globalValue(\.windowBorder, storage: storedWindowBorder) }
+        set {
+            setGlobal(\BrowserSettings.windowBorder, storage: \BrowserSettings.storedWindowBorder,
+                      value: newValue, key: Key.windowBorder, encode: { $0.rawValue })
+        }
+    }
+
+    /// The colour of the Custom border as `0xRRGGBB`, one for light and dark.
+    var windowBorderColor: UInt32 {
+        get { globalValue(\.windowBorderColor, storage: storedWindowBorderColor) }
+        set {
+            setGlobal(\BrowserSettings.windowBorderColor, storage: \BrowserSettings.storedWindowBorderColor,
+                      value: newValue & 0xFFFFFF, key: Key.windowBorderColor, encode: { Int($0) })
+        }
+    }
+
     func resetWindowStyle() {
         showsFullAddress = false
         windowStyle = .standard
         minimalBarEdge = .bottom
         minimalBarHiding = .whileScrolling
         keepsMinimalSidebarOpen = false
+        windowShadow = true
+        windowBorder = .none
+        windowBorderColor = WindowBorder.defaultColor
     }
 }
