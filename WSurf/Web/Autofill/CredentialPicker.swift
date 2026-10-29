@@ -245,9 +245,10 @@ final class CredentialPicker {
                 continue
             }
             reading.grants[vault.vaultID] = (epoch, snapshot.revision)
+            let uses = try? await manager.importMemoryKey()
             var used: [UUID: Date] = [:]
             for account in snapshot.accounts where account.origins.contains(target.origin) {
-                used[account.id] = lastUsed.date(vault: vault.vaultID, account: account.id, origin: target.origin)
+                used[account.id] = lastUsed.date(uses, account: account.id, origin: target.origin)
             }
             reading.rows += Self.rows(
                 snapshot.accounts, vaultID: vault.vaultID, origin: target.origin, vault: listing.count > 1 ? vault.label : nil, used: used
@@ -315,7 +316,7 @@ final class CredentialPicker {
         guard isCurrent() else { return .filled(count) }
         let session = AutofillSaveCoordinator.shared.session(for: page)
         if account.origins.contains(target.origin) {
-            target.context.autofillLastUsed.record(vault: vaultID, account: account.id, origin: target.origin)
+            target.context.autofillLastUsed.record(account: account.id, origin: target.origin, in: manager)
             if fill == .login, !account.username.isEmpty {
                 AutofillSaveCoordinator.shared.rememberFilledUsername(
                     account.username, origin: target.origin, documentID: target.documentID, in: page, accountID: account.id, epoch: epoch

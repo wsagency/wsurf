@@ -391,9 +391,11 @@ struct CredentialPickerTests {
             try await VaultManagerFixture.save([grace, bob, ada], in: vaults[0])
             try await flow.load(Self.login)
 
+            let lastUsed = flow.page.context.autofillLastUsed, key = try await vaults[0].manager.importMemoryKey()
             let first = try await flow.rightClick("bu")
             #expect(await flow.pick(first) { rows in rows.first { $0.accountID == bob.id }.map { .row($0.id) } } == .filled(2))
             #expect(flow.offered.last?.map(\.accountID) == [ada.id, bob.id, grace.id], "before any use, the order it always had")
+            #expect(await waitUntil { lastUsed.date(key, account: bob.id, origin: Self.site) != nil }, "recorded with the vault's key")
 
             let second = try await flow.rightClick("au")
             #expect(await flow.pick(second) { rows in rows.first { $0.accountID == grace.id }.map { .row($0.id) } } == .filled(2))
@@ -402,9 +404,7 @@ struct CredentialPickerTests {
             let third = try await flow.rightClick("bu")
             #expect(await flow.pick(third) { _ in nil } == .nothing)
             #expect(flow.offered.last?.map(\.accountID) == [bob.id, ada.id, grace.id], "grace is not saved for this website")
-            let lastUsed = flow.page.context.autofillLastUsed
-            #expect(lastUsed.date(vault: vaults[0].vaultID, account: bob.id, origin: Self.site) != nil)
-            #expect(lastUsed.date(vault: vaults[0].vaultID, account: grace.id, origin: Self.site) == nil)
+            #expect(lastUsed.date(key, account: grace.id, origin: Self.site) == nil)
         }
     }
 

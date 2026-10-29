@@ -255,7 +255,7 @@ final class AutofillSaveSession: NSObject {
         // A sign-in with a saved login, the account `savePlan` compared: it leads this website's list next time (`AutofillLastUsed`).
         if plan == .unchanged, let used = snapshot.accounts.first(where: { $0.id == selected && $0.origins.contains(origin) && $0.username == login.username })
             ?? snapshot.accounts.first(where: { $0.origins.contains(origin) && $0.username == login.username }) {
-            context.autofillLastUsed.record(vault: manager.vaultID, account: used.id, origin: origin)
+            context.autofillLastUsed.record(account: used.id, origin: origin, in: manager)
         }
         guard plan != .unchanged, plan != .ambiguous else {
             AutofillDiagnostics.note(plan == .ambiguous ? .offerDroppedAmbiguous : .offerDroppedUnchanged, kind: .password)

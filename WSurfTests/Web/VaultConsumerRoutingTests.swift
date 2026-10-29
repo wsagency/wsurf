@@ -131,18 +131,21 @@ struct VaultConsumerRoutingTests {
         try await withSession(vaults: [.unlocked]) { session, vaults in
             let ada = account("ada"), bob = account("bob")
             try await VaultManagerFixture.save([ada, bob], in: vaults[0])
-            let lastUsed = try #require(session.context).autofillLastUsed
+            let lastUsed = try #require(session.context).autofillLastUsed, key = try await vaults[0].manager.importMemoryKey()
             @MainActor func used(_ id: UUID) -> Date? {
-                lastUsed.date(vault: vaults[0].vaultID, account: id, origin: Self.origin)
+                lastUsed.date(key, account: id, origin: Self.origin)
             }
 
             await session.offer(try login("ada"), origin: Self.origin)
-            #expect(session.current?.plan == .update(ada.id) && used(ada.id) == nil)
+            #expect(session.current?.plan == .update(ada.id))
 
             await session.offer(.password(try SavedPassword(website: Self.origin, username: "bob", password: "old")), origin: Self.origin)
-            #expect(used(bob.id) != nil && used(ada.id) == nil)
-            let rows = CredentialAccountSelection.suggestions([ada, bob], origin: Self.origin, pageURL: nil, entered: nil, field: .password)
-            #expect(CredentialAccountSelection.lastUsedFirst(rows) { used($0.id) }.map(\.id) == [bob.id, ada.id])
+            #expect(await waitUntil { used(bob.id) != nil })
+            #expect(used(ada.id) == nil, "a changed password is no sign-in with the saved one")
+            let rows = CredentialAccountSelection.listed(
+                in: [(id: vaults[0].vaultID, label: nil, accounts: [ada, bob])], origin: Self.origin, pageURL: nil, entered: nil, field: .password
+            ) { _, account in used(account) }
+            #expect(rows.map(\.account) == [bob.id, ada.id])
         }
     }
 
