@@ -4,8 +4,8 @@
 
 import SwiftUI
 
-/// Chooses the window style, and where the Minimal bar floats. Those are app-wide, not part of a theme; the Layout
-/// disclosure at the end holds the theme's knobs for the page.
+/// Chooses the window style, where the Minimal bar floats, and the shadow and border of every window. Those are app-wide, not
+/// part of a theme; the Layout disclosure at the end holds the theme's knobs for the page.
 struct AppearanceWindowSection: View {
     @Bindable var settings: BrowserSettings
 
@@ -15,6 +15,20 @@ struct AppearanceWindowSection: View {
 
     private static let hidingChoices: [SettingsMenu<MinimalBarHiding>.Option] = MinimalBarHiding.allCases.map {
         .init(value: $0, label: String(localized: $0.label))
+    }
+
+    private static let borderChoices: [SettingsMenu<WindowBorder>.Option] = WindowBorder.allCases.map {
+        .init(value: $0, label: String(localized: $0.label))
+    }
+
+    private var borderColor: Binding<Color> {
+        Binding(
+            get: { Color(hex: settings.windowBorderColor) },
+            set: { color in
+                guard let rgb = SidebarTextStyle.rgb(of: color) else { return }
+                settings.windowBorderColor = rgb
+            }
+        )
     }
 
     var body: some View {
@@ -57,6 +71,28 @@ struct AppearanceWindowSection: View {
                 .settingsAnchor("appearance.minimalBarAutoHide")
             }
             .disabled(settings.windowStyle != .minimal)
+
+            RowSeparator()
+            DetailRow(
+                title: "Shadow",
+                caption: "Turning it off also removes the thin outline macOS draws around the window."
+            ) {
+                SettingsToggle($settings.windowShadow)
+            }
+            .settingsAnchor("appearance.windowShadow")
+
+            RowSeparator()
+            DetailRow(title: "Border", caption: "A line around the edge of the window. It follows the corners.") {
+                HStack(spacing: 8) {
+                    if settings.windowBorder == .custom {
+                        ColorPicker(String(localized: "Border color"), selection: borderColor, supportsOpacity: false)
+                            .labelsHidden()
+                            .accessibilityLabel(Text("Border color"))
+                    }
+                    SettingsMenu(options: Self.borderChoices, selection: $settings.windowBorder)
+                }
+            }
+            .settingsAnchor("appearance.windowBorder")
 
             RowSeparator()
             AppearanceLayoutSection(settings: settings, part: .window)

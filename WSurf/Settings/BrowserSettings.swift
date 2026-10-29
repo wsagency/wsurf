@@ -98,6 +98,11 @@ final class BrowserSettings {
         MinimalBarHiding(stored: appDefaults.object(forKey: Key.minimalBarAutoHide))
     @ObservationIgnored lazy var storedKeepsMinimalSidebarOpen: Bool? =
         appDefaults.object(forKey: Key.minimalSidebarPinned) as? Bool ?? false
+    @ObservationIgnored lazy var storedWindowShadow: Bool? = appDefaults.object(forKey: Key.windowShadow) as? Bool ?? true
+    /// `WindowBorder.none` spelled out: a bare `.none` here would be `Optional.none`, and the getter would find no value.
+    @ObservationIgnored lazy var storedWindowBorder: WindowBorder? =
+        appDefaults.string(forKey: Key.windowBorder).flatMap(WindowBorder.init(rawValue:)) ?? WindowBorder.none
+    @ObservationIgnored lazy var storedWindowBorderColor: UInt32? = WindowBorder.storedColor(appDefaults.object(forKey: Key.windowBorderColor))
 
     @ObservationIgnored var onWebPreferencesChanged: (() -> Void)?
     @ObservationIgnored var onContentBlockingChanged: (() -> Void)?

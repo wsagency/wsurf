@@ -23,6 +23,7 @@ final class BrowserHost: NSObject, NSWindowDelegate {
     private weak var coordinator: AppCoordinator?
     private let content: NSHostingView<BrowserRootView>
     private var window: BrowserWindow?
+    private var outline: WindowOutlineView?
 
     private let frameToolbar: NSToolbar = {
         let toolbar = NSToolbar(identifier: "wsurf.browser.frame")
@@ -171,13 +172,18 @@ final class BrowserHost: NSObject, NSWindowDelegate {
         content.autoresizingMask = [.width, .height]
         root.addSubview(content)
         root.addSubview(WebViewParkingShelf(frame: .zero))
+        // Last, so that nothing in the window covers the border.
+        let outline = WindowOutlineView(frame: root.bounds)
+        root.addSubview(outline)
+        self.outline = outline
         created.contentView = root
         SystemWindowShape.adopt(created)
         roundContentCorners(of: created)
+        applyWindowEdge(to: created)
         Self.hideTitlebarDecoration(of: created)
 
         window = created
-        observeTheme()
+        observeAppearance()
         NSWorkspace.shared.notificationCenter.addObserver(
             self,
             selector: #selector(accessibilityDisplayOptionsDidChange),
@@ -196,14 +202,21 @@ final class BrowserHost: NSObject, NSWindowDelegate {
         window.backgroundColor = isOpaque ? NSColor(Theme.windowBackground) : .clear
     }
 
-    private func observeTheme() {
+    /// Re-applies the window's look when the theme or the shadow and border settings change. The settings are read
+    /// inside the tracking closure; a value read outside it would never re-run this.
+    private func observeAppearance() {
         withObservationTracking {
-            _ = BrowserSettings.application.resolvedTheme
+            let settings = BrowserSettings.application
+            _ = settings.resolvedTheme
+            _ = settings.windowShadow
+            _ = settings.windowBorder
+            _ = settings.windowBorderColor
         } onChange: { [weak self] in
             Task { @MainActor [weak self] in
                 guard let self, let window = self.window else { return }
-                self.observeTheme()
+                self.observeAppearance()
                 self.applyTransparencyPreference(to: window)
+                self.applyWindowEdge(to: window)
             }
         }
     }
@@ -211,6 +224,32 @@ final class BrowserHost: NSObject, NSWindowDelegate {
     @objc private func accessibilityDisplayOptionsDidChange(_ notification: Notification) {
         guard let window else { return }
         applyTransparencyPreference(to: window)
+        applyWindowEdge(to: window)
+    }
+
+    /// The window's shadow and border line from the app-wide settings. The line takes the corner radius that
+    /// `roundContentCorners` gave the content, so call this after it. A full-screen window has neither corners nor a border.
+    func applyWindowEdge(
+        to window: NSWindow,
+        increaseContrast: Bool = NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast,
+        isFullScreen: Bool? = nil
+    ) {
+        let settings = BrowserSettings.application
+        let shadow = settings.windowShadow
+        if window.hasShadow != shadow {
+            window.hasShadow = shadow
+            window.invalidateShadow()
+        }
+        outline?.apply(
+            border: settings.windowBorder.drawn(
+                shadow: shadow,
+                increaseContrast: increaseContrast,
+                isFullScreen: isFullScreen ?? window.styleMask.contains(.fullScreen)
+            ),
+            customRGB: settings.windowBorderColor,
+            increasesContrast: increaseContrast,
+            cornerRadius: window.contentView?.layer?.cornerRadius ?? 0
+        )
     }
 
     /// Answers false when it hid nothing: the decoration is matched by private
@@ -311,6 +350,7 @@ final class BrowserHost: NSObject, NSWindowDelegate {
     func windowDidEnterFullScreen(_ notification: Notification) {
         if let window {
             roundContentCorners(of: window)
+            applyWindowEdge(to: window)
         }
         watchTitleStrip()
         publish()
@@ -320,6 +360,7 @@ final class BrowserHost: NSObject, NSWindowDelegate {
         window?.alignWindowControls()
         if let window {
             roundContentCorners(of: window)
+            applyWindowEdge(to: window)
         }
         publish()
     }
