@@ -304,6 +304,98 @@ struct PageColorChooserTests {
     }
 }
 
+/// Under Allow a Chromium website starts sound by itself, as on WebKit, and is not given the person's activation for it;
+/// under Never sound waits for the person. Chromium applies its allowlist when a navigation finishes, so the page starts its
+/// player once it has loaded. The player's source never arrives, so nothing is heard: a refused start fails at once, an
+/// allowed one waits for its data.
+@MainActor
+@Suite(.serialized, .boundedWebViews)
+struct ChromiumAutoplayAllowlistTests {
+    private static let page = """
+        <!doctype html><title>Sound</title>
+        <script>
+        window.__marker = 'loaded';
+        addEventListener('load', () => setTimeout(() => {
+          let settled = false;
+          new Audio('/never').play().then(
+            () => { settled = true; document.title = 'played'; },
+            (error) => { settled = true; document.title = error.name; }
+          );
+          setTimeout(() => { if (!settled) document.title = 'waiting'; }, 1000);
+        }, 300));
+        </script>
+        """
+
+    private func title(of tab: BrowserTab) async -> String? {
+        (try? await tab.page.evaluateJavaScript("document.title")) as? String
+    }
+
+    /// An entry names one exact origin, its port written out, or there is none: a host that would read as a wildcard to
+    /// Chromium, or is not a plain host, is left out.
+    @Test func anEntryIsOneExactOriginOrNone() {
+        let kept = [
+            "https://example.com": "https://example.com:443",
+            "http://127.0.0.1:8080": "http://127.0.0.1:8080",
+            "http://[::1]": "http://[::1]:80",
+            "https://[2001:db8::1]:8443": "https://[2001:db8::1]:8443",
+            "https://xn--bcher-kva.example": "https://xn--bcher-kva.example:443",
+        ]
+        for (origin, entry) in kept {
+            #expect(ChromiumRuntime.autoplayPattern(for: origin) == entry, "\(origin)")
+        }
+        let dropped = [
+            "https://*.example.com", "https://*", "https://[*.]example.com", "http://[example.com]", "http://[::1",
+            "https://ex%2Aample.com", "https://-example.com", "https://Example.com", "file:///tmp/page.html", "chrome://settings",
+        ]
+        for origin in dropped {
+            #expect(ChromiumRuntime.autoplayPattern(for: origin) == nil, "\(origin)")
+        }
+    }
+
+    @Test(arguments: [(AutoplayPolicy.allow, "waiting"), (.block, "NotAllowedError")])
+    func onlyAnAllowedWebsiteStartsSoundByItself(policy: AutoplayPolicy, outcome: String) async throws {
+        try await LiveWindowRig.with(engine: .chromium, routes: ["/sound": .html(Self.page)]) { rig in
+            rig.browser.sitePermissions.setAutoplay(policy, for: SitePermissions.origin(for: try rig.server.url("/sound")))
+            let tab = try await rig.open("/sound")
+            #expect(await waitUntil { await title(of: tab) != "Sound" }, "\(policy): the page started its player")
+            #expect(await title(of: tab) == outcome, "\(policy)")
+            #expect(
+                try await tab.page.evaluateJavaScript("navigator.userActivation.hasBeenActive") as? Bool == false,
+                "\(policy): the page was activated"
+            )
+        }
+    }
+
+    /// The allowlist names the allowed origin and nothing more: a subdomain of its host and the same host on another port,
+    /// both answered Never, are refused while the allowed origin's page is open, and the allowed origin itself plays.
+    @Test func onlyTheAllowedOriginItselfStartsSoundByItself() async throws {
+        let elsewhere = try await HTTPFixtureServer.start(routes: ["/sound": .html(Self.page)])
+        try await LiveWindowRig.with(engine: .chromium, routes: ["/sound": .html(Self.page)]) { rig in
+            let port = try #require(try rig.server.url().port)
+            let another = try #require(try elsewhere.url().port)
+            let allowed = try #require(URL(string: "http://localhost:\(port)/sound"))
+            let subdomain = try #require(URL(string: "http://sub.localhost:\(port)/sound"))
+            let otherPort = try #require(URL(string: "http://localhost:\(another)/sound"))
+            let cases = [(allowed, AutoplayPolicy.allow, "waiting"), (subdomain, .block, "NotAllowedError"), (otherPort, .block, "NotAllowedError")]
+            for (url, policy, _) in cases {
+                rig.browser.sitePermissions.setEngine(.chromium, for: SitePermissions.origin(for: url))
+                rig.browser.sitePermissions.setAutoplay(policy, for: SitePermissions.origin(for: url))
+            }
+            var tabs: [BrowserTab] = []
+            for (url, _, outcome) in cases {
+                let tab = rig.browser.newTab(url: url, engine: .chromium)
+                tab.page.ignoresWindowOcclusion = true
+                tabs.append(tab)
+                #expect(await waitUntil(timeout: .seconds(60)) { tab.page.url == url && !tab.page.isLoading }, "\(url) loads")
+                #expect(await waitUntil { await title(of: tab) != "Sound" }, "\(url): the page started its player")
+                #expect(await title(of: tab) == outcome, "\(url)")
+            }
+            withExtendedLifetime(tabs) {}
+        }
+        withExtendedLifetime(elsewhere) {}
+    }
+}
+
 /// WebKit keeps a website's answers itself: the tab's navigation delegate sets the auto-play policy for each main-frame
 /// document and decides each pop-up as WebKit asks for its window. Nothing is installed in the page, so these cases also
 /// check that `window.open` and `play` are still WebKit's own.

@@ -546,6 +546,7 @@ final class ChromiumPage: NSView {
         initialDocument = false
         // Before the request is sent, so the new document reads the store's camera and microphone choice.
         ChromiumRuntime.shared.mirrorCapture([url.absoluteString], in: context)
+        ChromiumRuntime.shared.mirrorAutoplay(navigatingTo: url, in: context)
         if !awaitingNativeNavigation && !isRedirect {
             navigation = PageNavigation()
             navigationStarted = false

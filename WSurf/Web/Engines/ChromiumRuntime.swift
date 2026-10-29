@@ -12,12 +12,15 @@ import os
 @MainActor
 final class ChromiumRuntime {
     static let shared = ChromiumRuntime()
+    private nonisolated static let log = Logger(subsystem: "io.wsagency.wsurf", category: "chromium")
 
     private final class Context {
         nonisolated(unsafe) let raw: UnsafeMutablePointer<cef_request_context_t>
         let profileID: UUID
         /// Chromium's camera and microphone values were cleared and written from the store (`mirrorCapture`).
         var mirrorsCapture = false
+        /// The origins last written to Chromium's autoplay allowlist (`mirrorAutoplay`); nil until the first write.
+        var autoplayAllowlist: [String]?
         /// CEF finished loading the profile and its history saving is off (`startContext`).
         var isStarted = false
 
@@ -259,6 +262,67 @@ final class ChromiumRuntime {
                 }
             }
         }
+    }
+
+    /// Lets the websites whose auto-play answer is Allow start media with sound in Chromium without a user activation, as
+    /// WebKit does: an activation WSurf gave a page would also let its script open a pop-up or the colour chooser by itself.
+    /// Chromium reads its AutoplayAllowlist preference for a tab when a main-frame navigation finishes, against the tab's
+    /// own address. The list holds the Allow origins of the pages open on Chromium in this profile and of `url`, the
+    /// navigation about to start, so Chromium's profile files keep no more of the history than the open tabs. Every other
+    /// website is under Chromium's own rule, sound waits for the person, and under the site guard. ponytail: a changed
+    /// answer reaches a page at its next navigation, and until a navigation finishes its document runs under the rule of the
+    /// tab's page before it (a script that plays while the page is still being parsed is refused); a per-navigation answer
+    /// would need CEF support.
+    func mirrorAutoplay(navigatingTo url: URL, in owner: BrowserProfileContext) {
+        guard let entry = contexts[owner.contextID], entry.isStarted else { return }
+        let origins = (owner.chromiumPageAddresses + [url]).map { SitePermissions.webOrigin(for: $0) }.filter {
+            !$0.isEmpty && (owner.sitePermissions.autoplay(for: $0) ?? owner.settings.autoplay) == .allow
+        }
+        let patterns = origins.compactMap(Self.autoplayPattern(for:))
+        if patterns.count < origins.count {
+            Self.log.notice("autoplay allowlist: dropped \(origins.count - patterns.count) origins that are not one exact host")
+        }
+        let list = Set(patterns).sorted()
+        guard list != entry.autoplayAllowlist, let value = cef_value_create(), let items = cef_list_value_create() else { return }
+        defer { ChromiumInterop.release(UnsafeMutableRawPointer(value)) }
+        for (index, origin) in list.enumerated() {
+            ChromiumInterop.withString(origin) { _ = items.pointee.set_string?(items, index, $0) }
+        }
+        _ = value.pointee.set_list?(value, items)
+        let preferences = UnsafeMutableRawPointer(entry.raw).assumingMemoryBound(to: cef_preference_manager_t.self)
+        var error = cef_string_t()
+        defer { ccef_string_clear(&error) }
+        ChromiumInterop.retain(UnsafeMutableRawPointer(value))
+        if ChromiumInterop.withString("media.autoplay_whitelist", { preferences.pointee.set_preference?(preferences, $0, value, &error) }) == 1 {
+            entry.autoplayAllowlist = list
+        }
+    }
+
+    /// The allowlist entry that matches `origin` and no other, or nil when it cannot be one. Chromium reads each entry as a
+    /// content-settings pattern (`policy::IsOriginInAllowlist`, `ContentSettingsPattern::FromString`): a host without
+    /// `[*.]` is that host alone, `*` and `[*.]` are wildcards, and a pattern without a port matches every port. So the
+    /// entry is rebuilt from the scheme (http or https), a host that is plain lowercase DNS labels (punycode for a name
+    /// in another script; an IPv4 address is such a name too) or an IPv6 address in brackets, and the port, written out.
+    nonisolated static func autoplayPattern(for origin: String) -> String? {
+        guard let url = URL(string: origin), let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https",
+              var host = url.host(percentEncoded: true), !host.isEmpty
+        else { return nil }
+        if host.hasPrefix("["), host.hasSuffix("]") {
+            host = String(host.dropFirst().dropLast())
+        }
+        guard origin.contains("[") == host.contains(":") else { return nil }
+        if host.contains(":") {
+            var address = in6_addr()
+            guard inet_pton(AF_INET6, host, &address) == 1 else { return nil }
+        } else {
+            let labels = host.split(separator: ".", omittingEmptySubsequences: false)
+            guard host.utf8.count <= 253, labels.allSatisfy({ label in
+                (1...63).contains(label.utf8.count) && label.first != "-" && label.last != "-"
+                    && label.utf8.allSatisfy { (0x61...0x7A).contains($0) || (0x30...0x39).contains($0) || $0 == 0x2D }
+            }) else { return nil }
+        }
+        let port = url.port ?? (scheme == "https" ? 443 : 80)
+        return "\(scheme)://\(host.contains(":") ? "[\(host)]" : host):\(port)"
     }
 
     /// Restores Chromium's exception lists to empty for the permissions WSurf decides; false while the context is not

@@ -61,8 +61,8 @@ final class SiteContentGuard {
             let autoplay = permissions.autoplay(for: origin) ?? settings.autoplay
             // No answer carries a user gesture, Allow included. Chromium counts a gesture as the person's click on the frame
             // and on every frame above it, for seconds: any script of the page could then open a pop-up, the colour chooser
-            // or anything else that waits for the person. Nothing Chromium offers allows sound for one website without it, so
-            // under Allow its own rule stands: a website starts sound once the person has clicked or typed in it.
+            // or anything else that waits for the person. Under Allow, Chromium starts the website's sound by itself through
+            // its autoplay allowlist (`ChromiumRuntime.mirrorAutoplay`), which activates nothing.
             Task { @MainActor in
                 _ = try? await message.page.callAsyncJavaScript(
                     "globalThis.__wsurfSiteGuard?.applyPolicy(policy);",
@@ -128,11 +128,11 @@ final class SiteContentGuard {
         state.held.clear();
       };
 
-      // Chromium makes one autoplay attempt per element, when it is ready, and refuses it without a user activation (a muted
-      // <audio> has no exemption); it does not try again when the activation comes. An autoplay element that was ready
-      // before the Allow answer and never started is tried again here, which plays where the page already has the person's
-      // activation (a click on an earlier page of the website carries over). Only under Allow: Muted and Never are
-      // unchanged, and an element that has played, was paused or is not ready yet is left alone.
+      // Chromium makes one autoplay attempt per element, when it is ready, and refuses it unless the website is on its
+      // autoplay allowlist or the page has a user activation (a muted <audio> has no exemption); it does not try again
+      // later. The allowlist reaches a document only when its navigation finishes, so an autoplay element that was ready
+      // before the Allow answer and never started is tried again here. Only under Allow: Muted and Never are unchanged,
+      // and an element that has played, was paused or is not ready yet is left alone.
       const start = () => {
         for (const media of document.querySelectorAll('audio[autoplay], video[autoplay]')) {
           if (!media.paused || media.readyState < 3 || media.played.length > 0 || stopped.has(media)) continue;
