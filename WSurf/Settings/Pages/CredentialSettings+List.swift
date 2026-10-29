@@ -377,7 +377,7 @@ struct CredentialListView<Switcher: View>: View {
             .help("Add a login, or choose what to add from the menu")
             .accessibilityLabel("Add Credential")
             .disabled(model.isBusy)
-            ToolbarChip(symbol: "lock", label: "Lock") { model.lock() }
+            ToolbarChip(symbol: "lock", label: "Lock Credentials", showsLabel: false) { model.lock() }
         }
     }
 

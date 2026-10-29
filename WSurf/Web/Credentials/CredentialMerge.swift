@@ -83,11 +83,20 @@ nonisolated struct MergePreview: Equatable, Sendable {
 /// (`CommitTransaction.carriedRevisions`), and the others go to the Trash with their own history. It never adds a website on
 /// another site unless the user ticks it, and never merges different people.
 nonisolated enum CredentialMerge {
-    /// The picks a merge starts from. The survivor is `chosen`, else the one with an exchange link, else one with a website, else the
-    /// one with the most kinds of credential, else the first by title. The name and code are the survivor's, or the first other
-    /// credential's that has one; the login is the first that has a password, so a default never leaves a password behind.
+    /// The picks a merge starts from. The survivor is `chosen`, else the best by these rules in turn: a plain username over a numbered
+    /// copy of it ("ada" over "ada (1)", when the group holds both), one with an exchange link, one with a website, the most kinds of
+    /// credential, the first by title. The name and code are the survivor's, or the first other credential's that has one; the login
+    /// is the first that has a password, so a default never leaves a password behind. This only ranks: a numbered copy's link, code
+    /// and everything else it holds still go into the merged credential, and nothing is written here.
     static func defaultPicks(for accounts: [CredentialAccount], survivor chosen: UUID? = nil) -> MergePicks? {
-        guard let survivor = accounts.first(where: { $0.id == chosen }) ?? accounts.enumerated().min(by: precedes)?.element else { return nil }
+        // Usernames are compared as exact bytes, as the suggestions group them; `baseUsername` drops only a trailing " (n)".
+        let plain = Set(accounts.map(\.username).filter { CredentialMergeSuggestions.baseUsername($0) == $0 })
+        func isCopy(_ account: CredentialAccount) -> Bool {
+            let base = CredentialMergeSuggestions.baseUsername(account.username)
+            return base != account.username && plain.contains(base)
+        }
+        guard let survivor = accounts.first(where: { $0.id == chosen })
+            ?? accounts.enumerated().filter({ !isCopy($0.element) }).min(by: precedes)?.element else { return nil }
         func owner(_ has: (CredentialAccount) -> Bool) -> UUID? {
             has(survivor) ? survivor.id : accounts.first(where: has)?.id
         }

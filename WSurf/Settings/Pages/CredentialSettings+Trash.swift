@@ -93,7 +93,7 @@ extension CredentialSettings {
                         model.requestPurge(entryIDs: [], emptyAll: true)
                     }
                     .disabled(model.isBusy || (model.trashTotal ?? 0) == 0)
-                    ToolbarChip(symbol: "lock", label: "Lock") { model.lock() }
+                    ToolbarChip(symbol: "lock", label: "Lock Credentials", showsLabel: false) { model.lock() }
                 }
             },
             content: {

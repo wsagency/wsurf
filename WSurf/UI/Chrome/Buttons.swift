@@ -89,6 +89,9 @@ struct ToolbarChip: View {
     let symbol: String
     let label: LocalizedStringResource
     var isDestructive = false
+    /// `false` draws the symbol alone. The label is then its tooltip and its VoiceOver label, and the chip is as tall as the others
+    /// and at least as wide as a toolbar button.
+    var showsLabel = true
     let action: () -> Void
 
     @Environment(\.isEnabled) private var isEnabled
@@ -98,21 +101,27 @@ struct ToolbarChip: View {
         Button(action: action) {
             HStack(spacing: 5) {
                 Image(systemName: symbol)
-                    .font(Theme.Font.caption)
-                Text(label)
-                    .font(Theme.Font.control)
+                    .font(showsLabel ? Theme.Font.caption : Theme.Font.control)
+                if showsLabel {
+                    Text(label)
+                        .font(Theme.Font.control)
+                }
             }
             .foregroundStyle(isDestructive && hovering ? .red : .primary)
-            .padding(.horizontal, 10)
+            .padding(.horizontal, showsLabel ? 10 : 6)
+            .frame(minWidth: showsLabel ? nil : 30)
             .frame(height: 28)
             .controlGlassSurface(
                 isActive: hovering,
                 tint: isDestructive && hovering ? .red : nil,
                 in: RoundedRectangle(cornerRadius: Theme.Radius.control, style: .continuous)
             )
+            .contentShape(RoundedRectangle(cornerRadius: Theme.Radius.control, style: .continuous))
             .opacity(isEnabled ? 1 : 0.4)
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(Text(label))
+        .help(showsLabel ? "" : String(localized: label))
         .onHover { hovering = isEnabled && $0 }
         .animation(Theme.Motion.quick, value: hovering)
     }
