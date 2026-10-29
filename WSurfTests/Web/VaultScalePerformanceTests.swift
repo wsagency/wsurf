@@ -122,11 +122,11 @@ nonisolated final class VaultScalePerformanceTests: XCTestCase, @unchecked Senda
     /// pass.
     ///
     /// A step reads the vault into new containers of 20,000 accounts, builds two more maps for its transaction and swaps the store's
-    /// cache for the new one, so it allocates and drops tens of MB. The allocator keeps some of what was freed in the footprint and
-    /// hands an earlier pass's back whenever it likes, which in a long-running host moved single samples by 20 MB either way while
-    /// the step kept nothing. So every pass starts from a released state and ends in one: what an earlier pass prepared is dropped
-    /// (`dropPrepared`), and the free pages are returned just before the measurement starts and just before it stops. What stays in
-    /// the footprint is what the step retained, and a leak still shows, because only free pages go back.
+    /// cache for the new one, so it allocates and drops about 100 MB, much of it in large blocks. So every pass starts from a released
+    /// state and ends in one: what an earlier pass prepared is dropped (`dropPrepared`), and the free pages are returned just before
+    /// the measurement starts and just before it stops. What stays in the footprint is what the step retained, and a leak still
+    /// shows, because only free pages go back. That holds only with the allocator's large-block cache off, as the test plan has it
+    /// (`testFreedLargeBlocksLeaveTheFootprint`).
     @MainActor
     func measureWrite(
         prepare: @escaping @MainActor (Fixture, CredentialManager, Int) async throws -> Void,
@@ -156,6 +156,33 @@ nonisolated final class VaultScalePerformanceTests: XCTestCase, @unchecked Senda
             try check(snapshot, last)
         }
         finish { await fixture.cleanup() }
+    }
+
+    /// The host's physical footprint, the figure whose change `XCTMemoryMetric` reports.
+    private static func footprint() -> Int64 {
+        var info = task_vm_info_data_t()
+        var count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<natural_t>.size)
+        let result = withUnsafeMutablePointer(to: &info) {
+            $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+                task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), $0, &count)
+            }
+        }
+        return result == KERN_SUCCESS ? Int64(info.phys_footprint) : 0
+    }
+
+    /// What every memory budget relies on: a freed large block leaves the footprint once the free pages are returned. By default the
+    /// allocator keeps freed blocks of up to tens of MB in a cache that stays in the footprint, which `malloc_zone_pressure_relief`
+    /// does not empty and the kernel takes back only under memory pressure, at moments of its own. On a Mac under pressure that moved
+    /// single samples by 10 to 50 MB either way while the step kept nothing (0.1.17 gate 4, autofilled password among 20,000:
+    /// 33718, -17744, 18924, 30097, -18711 kB). The test plan turns the cache off (`MallocLargeCache=0` in WSurf.xctestplan).
+    func testFreedLargeBlocksLeaveTheFootprint() {
+        let size = 4 << 20
+        var blocks = (0..<8).map { _ in [UInt8](repeating: 1, count: size) }
+        let held = Self.footprint()
+        blocks.removeAll()
+        Self.returnFreePages()
+        let given = held - Self.footprint()
+        XCTAssertGreaterThan(given, Int64(7 * size), "freed 32 MB, the footprint gave back \(given / 1024) kB")
     }
 
     // MARK: Edits

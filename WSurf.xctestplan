@@ -29,6 +29,12 @@
       ]
     },
     "defaultTestExecutionTimeAllowance" : 120,
+    "environmentVariableEntries" : [
+      {
+        "key" : "MallocLargeCache",
+        "value" : "0"
+      }
+    ],
     "maximumTestExecutionTimeAllowance" : 300,
     "testTimeoutsEnabled" : true
   },
