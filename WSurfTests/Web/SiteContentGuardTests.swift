@@ -415,7 +415,7 @@ final class WebKitSiteContentTests {
     }
 
     /// A tenth of a second of silence: a real track, so WebKit applies its audio rules to it.
-    private static let wave: Data = {
+    static let wave: Data = {
         let samples = 800
         var data = Data("RIFF".utf8)
         func append<T: FixedWidthInteger>(_ value: T) {

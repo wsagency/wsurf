@@ -463,6 +463,16 @@ struct CrossSiteFrameAutofillTests {
             #expect(try await harness.value("fu", in: frame) == "ada")
             #expect(try await harness.value("fp", in: frame) == "dummy-secret")
             #expect(try await harness.value("tu", in: main) == "", "the page's own field took nothing")
+            try await harness.settle(frame)
+            #expect(harness.posted("context").filter { $0.frame.documentID == frame.documentID }.count == 1, "one right-click, one answer")
+
+            // One instance listens to the window: a pageshow in the frame is answered once, not by the empty document's too.
+            let ready = harness.posted("ready").filter { $0.frame.documentID == frame.documentID }.count
+            _ = try await harness.page.callAsyncJavaScript(
+                "dispatchEvent(new PageTransitionEvent('pageshow')); return true;", in: frame, contentWorld: .page
+            )
+            try await harness.settle(frame)
+            #expect(harness.posted("ready").filter { $0.frame.documentID == frame.documentID }.count == ready + 1)
         }
     }
 
@@ -482,6 +492,8 @@ struct CrossSiteFrameAutofillTests {
             #expect(staged.frame.documentID == frame.documentID && !staged.frame.isMainFrame)
             #expect(staged.body["url"] as? String == "http://127.0.0.1:\(harness.port)/frame")
             #expect(staged.body["password"] as? [String: String] == ["username": "ada@example.test", "password": "dummy-secret-123"])
+            try await harness.settle(frame)
+            #expect(harness.posted("stage", by: "wsurfAutofillSave").count == 1, "one login, one offer")
         }
     }
 
