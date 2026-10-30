@@ -428,6 +428,89 @@ struct CredentialPickerTests {
         }
     }
 
+    // MARK: - A code from Messages or Mail (the sheet's native field; the sheet itself is answered by the test)
+
+    private static let boxes = #"""
+        <div><input id="d1" maxlength="1"><input id="d2" maxlength="1"><input id="d3" maxlength="1">
+        <input id="d4" maxlength="1"><input id="d5" maxlength="1"><input id="d6" maxlength="1"><button>Verify</button></div>
+        """#
+
+    @Test func theSheetOffersTheNativeCodeFieldOnlyForACodeField() {
+        #expect(CredentialPicker.offersMessagesCode(for: .code))
+        #expect(!CredentialPicker.offersMessagesCode(for: .password) && !CredentialPicker.offersMessagesCode(for: .text))
+    }
+
+    @Test(.boundedWebViews) func aCodeFromMessagesFillsTheRightClickedCodeFieldAndNothingIsKept() async throws {
+        try await withFlow { flow, vaults in
+            try await flow.load(Self.login)
+            let target = try await flow.rightClick("pin")
+            #expect(target.field == .code)
+            let changes = NSPasteboard.general.changeCount
+            let revision = try await vaults[0].manager.snapshot().revision
+
+            let outcome = await flow.pick(target) { _ in .code("482913") }
+
+            #expect(outcome == .filled(1))
+            #expect(try await flow.values(["pin", "au", "ap", "bu", "bp", "xu", "xp"]) == ["482913", "", "", "", "", "", ""])
+            #expect(flow.session.websiteOffer == nil, "no credential was used: nothing is offered for saving")
+            #expect(try await vaults[0].manager.snapshot().revision == revision, "nothing was written to the vault")
+            #expect(NSPasteboard.general.changeCount == changes, "nothing was put on the pasteboard")
+            #expect(await flow.pick(target) { _ in .code("111111") } == .nothing, "a right-click fills once")
+            #expect(try await flow.value("pin") == "482913")
+        }
+    }
+
+    @Test(.boundedWebViews) func aCodeFromMessagesFillsASplitCodeBoxByBoxFromTheFirstWhicheverWasRightClicked() async throws {
+        try await withFlow { flow, _ in
+            try await flow.load(Self.login + Self.boxes)
+            let target = try await flow.rightClick("d3")
+            #expect(target.field == .code)
+
+            let short = await flow.pick(target) { _ in .code("1234") }
+            #expect(short == .failed(.noField), "six boxes are not a four-digit code's")
+            #expect(try await flow.values(["d1", "d2", "d3", "d4", "d5", "d6"]) == ["", "", "", "", "", ""])
+
+            let again = try await flow.rightClick("d5")
+            let outcome = await flow.pick(again) { _ in .code("246813") }
+            #expect(outcome == .filled(6), "\(outcome)")
+            #expect(try await flow.values(["d1", "d2", "d3", "d4", "d5", "d6", "pin"]) == ["2", "4", "6", "8", "1", "3", ""])
+        }
+    }
+
+    @Test(.boundedWebViews) func aCodeFromMessagesIsNeverFilledIntoAFormThatSendsItElsewhere() async throws {
+        try await withFlow { flow, _ in
+            try await flow.load(Self.login)
+            let target = try await flow.rightClick("xu")
+
+            #expect(await flow.pick(target) { _ in .code("482913") } == .failed(.unsafeForm))
+
+            #expect(try await flow.values(["xu", "xp", "pin"]) == ["", "", ""])
+        }
+    }
+
+    @Test(.boundedWebViews) func aCodeFromMessagesForAPageThatChangedWhileTheSheetWasOpenFillsNothing() async throws {
+        try await withFlow { flow, _ in
+            try await flow.load(Self.login)
+            let target = try await flow.rightClick("pin")
+            @MainActor func documentID() async -> String? {
+                try? await flow.page.callAsyncJavaScript(
+                    "return globalThis.__wsurfAutofillForms?.documentID ?? null;", arguments: [:], in: nil, contentWorld: PasswordAutofill.world
+                ) as? String
+            }
+            let old = await documentID()
+
+            let outcome = await flow.pick(target) { _ in
+                // The page moves on to a new document while the sheet is open.
+                flow.page.loadHTMLString("<!doctype html>" + Self.login, baseURL: URL(string: Self.site + "/next"))
+                _ = await waitUntil { await documentID().map { $0 != old } == true }
+                return .code("482913")
+            }
+
+            #expect(outcome == .failed(.noField))
+            #expect(try await flow.values(["pin"]) == [""])
+        }
+    }
+
     @Test(.boundedWebViews) func usedElsewhereItIsOfferedThisWebsiteAndAcceptingAddsExactlyThatOneChange() async throws {
         try await withFlow { flow, vaults in
             let grace = account("grace", password: "dummy-secret-2", origins: [Self.other]), bob = account("bob")

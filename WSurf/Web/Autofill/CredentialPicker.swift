@@ -72,6 +72,9 @@ final class CredentialPicker {
 
     enum Answer: Equatable {
         case row(UUID), unlock
+        /// A code the person picked from macOS's own list in the sheet's native field (Messages or Mail), or typed there. It fills the
+        /// right-clicked field, or its split boxes, the way a vault code does, and is kept nowhere.
+        case code(String)
     }
 
     enum Failure: Equatable {
@@ -210,6 +213,9 @@ final class CredentialPicker {
                 return await fill(id, reading: reading, target: target, in: page, isCurrent: isCurrent)
             case .unlock?:
                 unlocking = true
+            case .code(let code)?:
+                guard isCurrent() else { return .nothing }
+                return await fill(code: code, target: target, in: page, isCurrent: isCurrent)
             case nil:
                 return .nothing
             }
@@ -264,7 +270,8 @@ final class CredentialPicker {
         }
         guard let host = WebsiteLookalike.displayHost(of: target.origin) else { return nil }
         return await CredentialPickerSheet.present(
-            rows: reading.rows, host: host, canUnlock: reading.hasLockedVault, profileID: target.context.profile.id, in: window
+            rows: reading.rows, host: host, canUnlock: reading.hasLockedVault, offersCode: Self.offersMessagesCode(for: target.field),
+            profileID: target.context.profile.id, in: window
         )
     }
 
@@ -302,17 +309,8 @@ final class CredentialPicker {
             }
             return ["token": token, "url": url, "documentID": documentID, "fields": fields]
         }
-        let answer: Any
-        do {
-            answer = try await page.callAsyncJavaScript(
-                "if (globalThis.__wsurfAutofillForms?.documentID !== documentID) return 0; return globalThis.__wsurfPasswords?.pickFill(token, url, fields) ?? 0;",
-                in: target.frame, contentWorld: PasswordAutofill.world, prepareArguments: prepare
-            )
-        } catch {
-            return isCurrent() ? .failed(.noField) : .nothing
-        }
-        let count = (answer as? NSNumber)?.intValue ?? 0
-        guard count > 0 else { return count < 0 ? .failed(.unsafeForm) : .failed(.noField) }
+        let outcome = await deliver(prepare, target: target, in: page, isCurrent: isCurrent)
+        guard case .filled(let count) = outcome else { return outcome }
         guard isCurrent() else { return .filled(count) }
         let session = AutofillSaveCoordinator.shared.session(for: page)
         if account.origins.contains(target.origin) {
@@ -334,6 +332,40 @@ final class CredentialPicker {
         return .filled(count)
     }
 
+    /// The picked code, into the right-clicked field (and its split boxes) only: it is checked as a vault code is, and nothing of it is
+    /// recorded, offered for saving or kept.
+    private func fill(
+        code: String, target: Target, in page: BrowserPage, isCurrent: @escaping @MainActor @Sendable () -> Bool
+    ) async -> Outcome {
+        guard await field(of: target, in: page) != nil else { return isCurrent() ? .failed(.noField) : .nothing }
+        guard isCurrent() else { return .nothing }
+        nonisolated(unsafe) let fields: [String: Any] = ["code": code]
+        let token = target.token, url = target.frameURL.absoluteString, documentID = target.documentID
+        return await deliver({
+            guard isCurrent() else { throw ContactAutofillError.changedPage }
+            return ["token": token, "url": url, "documentID": documentID, "fields": fields]
+        }, target: target, in: page, isCurrent: isCurrent)
+    }
+
+    /// `pickFill` in the right-clicked frame, with the arguments `prepare` makes at the engine's dispatch boundary.
+    private func deliver(
+        _ prepare: @escaping @MainActor @Sendable () throws -> [String: Any], target: Target, in page: BrowserPage,
+        isCurrent: @escaping @MainActor @Sendable () -> Bool
+    ) async -> Outcome {
+        let answer: Any
+        do {
+            answer = try await page.callAsyncJavaScript(
+                "if (globalThis.__wsurfAutofillForms?.documentID !== documentID) return 0; return globalThis.__wsurfPasswords?.pickFill(token, url, fields) ?? 0;",
+                in: target.frame, contentWorld: PasswordAutofill.world, prepareArguments: prepare
+            )
+        } catch {
+            return isCurrent() ? .failed(.noField) : .nothing
+        }
+        let count = (answer as? NSNumber)?.intValue ?? 0
+        guard count > 0 else { return count < 0 ? .failed(.unsafeForm) : .failed(.noField) }
+        return .filled(count)
+    }
+
     private static func manager(of context: BrowserProfileContext, vaultID: UUID, epoch: UInt64) -> CredentialManager? {
         guard !context.profile.isPrivate else { return nil }
         return CredentialManager.unlockedManagers(for: context.profile).first { $0.vaultID == vaultID && $0.authorizationEpoch == epoch }
@@ -352,6 +384,11 @@ final class CredentialPicker {
     }
 
     // MARK: - The list (pure)
+
+    /// The sheet holds the native field for a code from Messages or Mail only for a field that looks like a code.
+    nonisolated static func offersMessagesCode(for field: Field) -> Bool {
+        field == .code
+    }
 
     /// A login row for every credential with a username or a password, a code row for every one with a verification code. Cards,
     /// addresses and identities are not offered here. `used` dates only a credential saved for `origin`.

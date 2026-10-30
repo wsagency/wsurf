@@ -14,7 +14,7 @@ final class AutofillSuggestions {
     static let shared = AutofillSuggestions()
     var openSettings: (() -> Void)?
 
-    private final class Request {
+    final class Request {
         let page: BrowserPage
         let context: BrowserProfileContext
         let frame: BrowserFrame
@@ -57,7 +57,7 @@ final class AutofillSuggestions {
         var siblings: [AutofillSuggestion] = []
         /// A row that is not an account, and what choosing it does.
         enum Action {
-            case siblings, unlock, passkey
+            case siblings, unlock, passkey, messagesCode
         }
         var actions: [UUID: Action] = [:]
         /// Every vault of the profile was locked when the lookup ran: the request offers only the unlock row, holds no grant, and
@@ -66,6 +66,8 @@ final class AutofillSuggestions {
         /// The interaction is over: its panel was dismissed, or its lookup showed nothing. Another `select` for the same field then
         /// starts a new request instead of being taken for this one (`continues`).
         var isSettled = false
+        /// "Code from Messages or Mail…" was chosen: the request only delivers that code, whatever the vault's state.
+        var isMessagesCode = false
 
         init(page: BrowserPage, context: BrowserProfileContext, frame: BrowserFrame, token: String, kind: AutofillSaveKind,
              frameURL: URL, topURL: URL, world: WKContentWorld, bridge: String,
@@ -80,7 +82,7 @@ final class AutofillSuggestions {
         }
     }
 
-    private var requests: [ObjectIdentifier: Request] = [:]
+    var requests: [ObjectIdentifier: Request] = [:]
     private weak var page: BrowserPage?
     private var presentationID = UUID()
     private var panel: AutofillSuggestionPanel?
@@ -95,6 +97,9 @@ final class AutofillSuggestions {
     private var navigation: NSKeyValueObservation?
     private var loading: NSKeyValueObservation?
     private var isFilling = false
+    /// The native field of "Code from Messages or Mail…" on screen, and the field the page just got its focus back in (`quiet`).
+    var messagesCode: MessagesCodeBridge?
+    var quiet: Quiet?
     private var geometryWatch: Task<Void, Never>?
     /// Per profile, changes whenever its vault access ends (lock, profile switch, retire): an unlock the dropdown asked for before
     /// that never goes ahead.
@@ -127,7 +132,7 @@ final class AutofillSuggestions {
     }
 
     func reset() {
-        dismiss()
+        dismiss(); messagesCode?.end(.replaced)
         requests.removeAll()
     }
 
@@ -173,7 +178,7 @@ final class AutofillSuggestions {
         guard action == "select", !isFilling,
               let documentID = body["documentID"] as? String, UUID(uuidString: documentID) != nil,
               let formID = body["formID"] as? String, Int(formID) ?? 0 > 0,
-              let fieldID = body["fieldID"] as? String, Int(fieldID) ?? 0 > 0,
+              let fieldID = body["fieldID"] as? String, Int(fieldID) ?? 0 > 0, !isQuiet(page, documentID: documentID, fieldID: fieldID),
               let origin = Self.offerOrigin(for: message, kind: kind),
               let rawURL = body["url"] as? String, let frameURL = URL(string: rawURL), let topURL = page.url,
               body["rect"] is [String: Double],
@@ -183,7 +188,7 @@ final class AutofillSuggestions {
            Self.continues(token: token, documentID: documentID, open: (token: old.token, documentID: old.documentID), isSettled: old.isSettled) {
             return
         }
-        dismiss()
+        dismiss(); messagesCode?.end(.replaced)
         let manager = kind == .password
         let enteredUsername = manager ? (body["username"] as? String).flatMap { $0.isEmpty || $0.count > 500 ? nil : $0 } : nil
         let request = Request(page: page, context: context, frame: message.frameInfo, token: token, kind: kind,
@@ -218,7 +223,7 @@ final class AutofillSuggestions {
     }
 
     /// Reads the rows for `request` and shows them under `presentation`; `false` when nothing was shown.
-    private func lookUp(_ request: Request, origin: String, presentation id: UUID, in page: BrowserPage) async -> Bool {
+    func lookUp(_ request: Request, origin: String, presentation id: UUID, in page: BrowserPage) async -> Bool {
         let context = request.context, kind = request.kind, profileID = context.profile.id
         let records: [AutofillSuggestion]?
         if kind == .password {
@@ -239,6 +244,9 @@ final class AutofillSuggestions {
            let passkey = Self.passkeyRow(origin: origin, in: page, frame: request.frame) {
             request.actions[passkey.id] = .passkey
             rows.append(passkey)
+        }
+        if let row = Self.messagesCodeRow(kind: kind, field: request.field, origin: origin, in: page) {
+            request.actions[row.id] = .messagesCode; rows.append(row)
         }
         guard page.context === context, id == presentationID, !rows.isEmpty,
               (try? await validate(request, in: page, requiresFocus: true)) != nil,
@@ -651,17 +659,17 @@ final class AutofillSuggestions {
     /// same unlock, the feature still on, and the page still what it was shown for. Nothing here suspends, so a caller that
     /// runs it right before delivering anything is not racing a lock. Page, field and frame identity are the job of the
     /// asynchronous checks in `validate`. A request that found every vault locked, or no vault, holds no grant; it can only
-    /// offer the unlock row or "Use a Passkey…", since a fill needs a grant of its own (`managerAccount`).
-    private func requireAuthority(_ request: Request, in page: BrowserPage) throws {
+    /// offer the unlock row, "Use a Passkey…" or "Code from Messages or Mail…", since a fill needs a grant of its own (`managerAccount`).
+    func requireAuthority(_ request: Request, in page: BrowserPage) throws {
         guard requests[ObjectIdentifier(page)] === request, request.context === page.context,
-              request.kind != .password || request.isLocked || managersAreCurrent(for: request)
-                || (request.grants.isEmpty && request.actions.values.contains(.passkey)),
+              request.kind != .password || request.isLocked || request.isMessagesCode || managersAreCurrent(for: request)
+                || (request.grants.isEmpty && request.actions.values.contains { $0 == .passkey || $0 == .messagesCode }),
               AutofillSaveCoordinator.shared.isEnabled(request.kind, context: request.context), page.url == request.topURL,
               page.hasOnlySecureContent, page.window != nil, !page.isHiddenOrHasHiddenAncestor,
               !Self.isAgentControlled(page) else { throw ContactAutofillError.changedPage }
     }
 
-    private func validate(_ request: Request, in page: BrowserPage, requiresFocus: Bool = false) async throws {
+    func validate(_ request: Request, in page: BrowserPage, requiresFocus: Bool = false) async throws {
         try requireAuthority(request, in: page)
         if let chromium = page.chromium {
             guard try await chromium.isLive(frame: request.frame), request.context === page.context else { throw ContactAutofillError.changedPage }
@@ -785,6 +793,9 @@ final class AutofillSuggestions {
             return
         case .passkey:
             usePasskey(request, in: page)
+            return
+        case .messagesCode:
+            openMessagesCode(request, in: page)
             return
         case nil:
             break
@@ -928,18 +939,6 @@ final class AutofillSuggestions {
         return (prepare, field == .password ? account.username : nil)
     }
 
-    /// A prompt the user dismissed or failed is not an error worth a second alert.
-    private static func isUserCancellation(_ error: any Error) -> Bool {
-        switch error {
-        case AutofillVaultError.keychain(let status), PaymentCardError.keychain(let status):
-            status == errSecUserCanceled || status == errSecAuthFailed
-        case CredentialVaultError.unauthorized, CredentialVaultError.expired, WebsiteAuthenticatorError.notAllowed:
-            true
-        default:
-            false
-        }
-    }
-
     private static func fillArguments(_ request: Request, fields: [String: Any]) -> [String: Any] {
         [
             "bridge": request.bridge,
@@ -952,6 +951,18 @@ final class AutofillSuggestions {
 }
 
 extension AutofillSuggestions {
+    /// A prompt the user dismissed or failed is not an error worth a second alert.
+    private static func isUserCancellation(_ error: any Error) -> Bool {
+        switch error {
+        case AutofillVaultError.keychain(let status), PaymentCardError.keychain(let status):
+            status == errSecUserCanceled || status == errSecAuthFailed
+        case CredentialVaultError.unauthorized, CredentialVaultError.expired, WebsiteAuthenticatorError.notAllowed:
+            true
+        default:
+            false
+        }
+    }
+
     /// Whether the profile has vaults and every one of them is locked. The dropdown then offers to unlock and reads nothing.
     static func allVaultsLocked(of profile: Profile) async -> Bool {
         guard !profile.isPrivate, let store = try? CredentialManager.store(for: profile), await store.openState().isProvisional,

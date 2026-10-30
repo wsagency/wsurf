@@ -5,7 +5,8 @@ import AppKit
 import SwiftUI
 
 /// The Pick Credential… sheet on the page's window: a search field over the unlocked vaults' logins and verification codes, this
-/// website's first. It shows titles, usernames and websites only; nothing secret ever reaches it.
+/// website's first. It shows titles, usernames and websites only; nothing secret ever reaches it. For a code field it also holds the
+/// native field macOS lists the codes of Messages and Mail under (`MessagesCodeField`), in a sheet of the key window.
 @MainActor
 enum CredentialPickerSheet {
     /// The sheets on screen: their profile, the sheet and its window.
@@ -21,7 +22,7 @@ enum CredentialPickerSheet {
 
     /// The person's answer; nil for Cancel, Escape, a window that went away or `dismiss`.
     static func present(
-        rows: [CredentialPicker.Row], host: String, canUnlock: Bool, profileID: UUID, in window: NSWindow
+        rows: [CredentialPicker.Row], host: String, canUnlock: Bool, offersCode: Bool = false, profileID: UUID, in window: NSWindow
     ) async -> CredentialPicker.Answer? {
         await withCheckedContinuation { continuation in
             final class Once {
@@ -45,7 +46,7 @@ enum CredentialPickerSheet {
                 resume.resume(returning: answer)
             }
             sheet.contentViewController = NSHostingController(
-                rootView: CredentialPickerList(rows: rows, host: host, canUnlock: canUnlock, finish: finish)
+                rootView: CredentialPickerList(rows: rows, host: host, canUnlock: canUnlock, offersCode: offersCode, finish: finish)
             )
             // A window that closes with the sheet on it is a cancel too.
             once.closing = NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: window, queue: .main) { _ in
@@ -61,6 +62,7 @@ struct CredentialPickerList: View {
     let rows: [CredentialPicker.Row]
     let host: String
     let canUnlock: Bool
+    var offersCode = false
     let finish: @MainActor (CredentialPicker.Answer?) -> Void
     @State private var query = ""
     @State private var selection: UUID?
@@ -79,6 +81,10 @@ struct CredentialPickerList: View {
                 .onKeyPress(.downArrow) { move(1, in: shown) }
                 .onKeyPress(.upArrow) { move(-1, in: shown) }
                 .onSubmit { choose(in: shown) }
+            if offersCode {
+                MessagesCodeEntry(host: host) { finish(.code($0)) }
+                    .frame(height: MessagesCodeBridge.fieldHeight)
+            }
             if shown.isEmpty {
                 Text(rows.isEmpty ? "No Saved Credentials" : "No Matching Credentials")
                     .foregroundStyle(.secondary)
@@ -139,6 +145,28 @@ struct CredentialPickerList: View {
         if let selection, shown.contains(where: { $0.id == selection }) {
             finish(.row(selection))
         }
+    }
+}
+
+/// The native code field in the sheet. Escape is the sheet's Cancel; a code leaves the field empty.
+private struct MessagesCodeEntry: NSViewRepresentable {
+    let host: String
+    let submit: @MainActor (String) -> Void
+
+    func makeNSView(context: Context) -> MessagesCodeField {
+        let field = MessagesCodeField(site: host)
+        field.onCode = submit
+        return field
+    }
+
+    func updateNSView(_ field: MessagesCodeField, context: Context) {
+        field.onCode = submit
+    }
+
+    /// Whatever was typed and not confirmed does not outlive the sheet.
+    static func dismantleNSView(_ field: MessagesCodeField, coordinator: ()) {
+        field.onCode = nil
+        field.clear()
     }
 }
 
