@@ -128,7 +128,13 @@ struct CrossSiteFrameAutofillTests {
         func takenOver() async throws -> BrowserFrame {
             func isIt(_ frame: BrowserFrame) -> Bool { !frame.isMainFrame && frame.request.url?.path == "/frame" }
             try #require(await waitUntil { self.posted("ready").contains { isIt($0.frame) } }, "the frame's own document runs the password script")
-            return try #require(posted("ready").last { isIt($0.frame) }?.frame)
+            let frame = try #require(posted("ready").last { isIt($0.frame) }?.frame)
+            // Chromium: until the scripts ran again for this document, the empty document's instances still answer.
+            try #require(await waitUntil {
+                try await self.run("return [...(globalThis.__wsurfStartRuns?.values() ?? [])].every(run => run.document === document);", in: frame)
+                    as? Bool == true
+            }, "the frame's own document has its own instances")
+            return frame
         }
 
         /// A person typing `text` into field `id` of `frame`: the field has focus, and the engine inserts the text as typed input.

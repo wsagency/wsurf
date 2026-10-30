@@ -15,35 +15,71 @@ extension ChromiumDevTools {
 
     // MARK: A frame's document that took over its first document's window
 
-    /// What Chromium runs for `script` in each new document: its injection time and frame scope are made here, and a frame's first,
-    /// empty document holds it for the document that takes over its window (`waitingForTakeover`). The passkey scripts are the
-    /// exception: they follow their window (`WebAuthnScript.followsItsWindow`), and the page's first calls need their answers.
+    /// What Chromium runs for `script` in each new document: its injection time and frame scope are made here. A script that runs in
+    /// frames, in one of WSurf's isolated worlds, runs as one instance per document (`instanceSource`); the passkey scripts follow
+    /// their window themselves (`WebAuthnScript.followsItsWindow`), and a page-world script runs as written.
     func registrationSource(_ script: Script) -> String {
-        let body = script.mainFrameOnly ? "if (window === window.top) {\n\(script.source)\n}" : script.source
-        let timed = script.injectionTime == .atDocumentStart ? body
-            : "(() => { const run = () => {\n\(body)\n}; " +
-              "if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', run, {once: true}); " +
-              "else queueMicrotask(run); })();"
-        guard !script.mainFrameOnly, !WebAuthnScript.followsItsWindow(script.source) else { return timed }
-        return Self.waitingForTakeover(timed, inPageWorld: script.worldName.isEmpty)
+        let perDocument = !script.mainFrameOnly && !script.worldName.isEmpty && !WebAuthnScript.followsItsWindow(script.source)
+        let body = script.mainFrameOnly ? "if (window === window.top) {\n\(script.source)\n}"
+            : perDocument ? Self.instanceSource(script.source) : script.source
+        guard script.injectionTime != .atDocumentStart else { return body }
+        return "(() => { const run = () => {\n\(body)\n}; " +
+            "if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', run, {once: true}); " +
+            "else queueMicrotask(run); })();"
     }
 
-    /// True in a frame's first, empty document whose frame element names a document to load. A page that reads a new frame's
-    /// window at once (Apple's sign-in does) makes Chromium set this document up and run the start scripts in it. A document of
-    /// the same origin then takes over its window (HTML's window reuse), and Chromium starts none of its scripts again: what ran
-    /// here would stay listening to the empty document. A document of another origin gets a window of its own.
-    static let takeoverPending = #"window !== top && location.href === 'about:blank' && (e => !!e && /^i?frame$/.test(e.localName) && "#
-        + #"(e.hasAttribute('srcdoc') || !/^\s*(about:blank)?\s*$/i.test(e.getAttribute('src') || '')))(frameElement)"#
-
-    /// `source`, held in such an empty document for the document that takes over its window, where `runStartScriptsAfterTakeover`
-    /// runs it. An isolated world notes that it held one, for its binding to report (`isolatedContext`); the page world, which the
-    /// page sees, notes nothing.
-    static func waitingForTakeover(_ source: String, inPageWorld: Bool) -> String {
-        "if (\(takeoverPending)) {\(inPageWorld ? "" : " globalThis.__wsurfStartDeferred = true; ")} else {\n\(source)\n}"
+    /// `source` as one instance per document of its window. A page that reads a new frame's window at once (Apple's sign-in does)
+    /// makes Chromium set up the frame's first, empty document and run the start scripts in it, as in any document the page can use.
+    /// A document of the same origin can then take over that window (HTML's window reuse), and Chromium starts none of its scripts
+    /// again, so WSurf runs them there (`runStartScriptsAfterTakeover`). A run for the window's newer document retires the instance
+    /// of the earlier one first: the globals it defined go, and the listeners it put on the window fall silent (a listener added to
+    /// the window while it ran answers only while it is the live instance; none of these scripts removes one). A second run for the
+    /// same document does nothing. The record (`__wsurfStartRuns`) is in WSurf's isolated world, which the page cannot reach.
+    static func instanceSource(_ source: String) -> String {
+        var hash: UInt64 = 0xcbf2_9ce4_8422_2325
+        for byte in source.utf8 {
+            hash = (hash ^ UInt64(byte)) &* 0x0100_0000_01b3
+        }
+        return instanceTemplate
+            .replacingOccurrences(of: "WSURF_KEY", with: String(hash, radix: 16))
+            .replacingOccurrences(of: "/*WSURF_SOURCE*/", with: source)
     }
 
-    /// Documents whose bindings reported held start scripts, until `bindDocument` runs them. ponytail: the oldest are forgotten past
-    /// 64; a document is reported while its frame binds, so only that many frames binding at once could lose one.
+    private static let instanceTemplate = #"""
+        (() => {
+          const runs = globalThis.__wsurfStartRuns ??= new Map();
+          const earlier = runs.get('WSURF_KEY');
+          if (earlier && earlier.document === document) return;
+          if (earlier) {
+            earlier.alive = false;
+            for (const name of earlier.globals) delete globalThis[name];
+          }
+          const run = {document, alive: true, globals: []};
+          const before = new Set(Object.getOwnPropertyNames(globalThis));
+          const events = EventTarget.prototype, listen = events.addEventListener;
+          events.addEventListener = function (type, listener, options) {
+            const target = this ?? globalThis;
+            if (target === globalThis && listener) {
+              const inner = listener;
+              listener = function (event) {
+                if (run.alive) return typeof inner === 'function' ? inner.call(this, event) : inner.handleEvent(event);
+              };
+            }
+            return listen.call(target, type, listener, options);
+          };
+          try {
+        /*WSURF_SOURCE*/
+          } finally {
+            events.addEventListener = listen;
+            run.globals = Object.getOwnPropertyNames(globalThis).filter(name => !before.has(name));
+            runs.set('WSURF_KEY', run);
+          }
+        })();
+        """#
+
+    /// Documents whose bindings reported start scripts that ran for an earlier document of their window, until `bindDocument` runs
+    /// them again. ponytail: the oldest are forgotten past 64; a document is reported while its frame binds, so only that many frames
+    /// binding at once could lose one.
     private static var takenOver: [String] = []
 
     static func noteTakeover(of documentID: String) {
@@ -54,15 +90,16 @@ extension ChromiumDevTools {
         }
     }
 
-    /// The frame's document took over the window of the frame's first, empty document, which held its start scripts: they run now,
-    /// once, in registration order and each in its own world, as in a new document (late, so whatever the page did first, they
-    /// missed). Only the scripts this session runs in a frame; the passkey scripts already followed the window.
+    /// The frame's document took over the window of the frame's first, empty document, whose start scripts ran for that document:
+    /// each per-document script runs again now, once, for this one, in registration order and each in its own world, as in a new
+    /// document (late, so whatever the page did first, it missed), and retires the empty document's instance. The passkey scripts
+    /// follow the window, and the binding shims, the page bridge and the page relay serve the window's current document.
     func runStartScriptsAfterTakeover(frameID: String, documentID: String) async {
         guard let index = Self.takenOver.firstIndex(of: documentID) else { return }
         Self.takenOver.remove(at: index)
         guard !closed, let state = framesByID[frameID], state.documentID == documentID, !state.isMainFrame else { return }
-        let held = scripts.filter { !$0.mainFrameOnly && !WebAuthnScript.followsItsWindow($0.source) }
-        await runLate(held, in: state.browserFrame, source: registrationSource)
+        let perDocument = scripts.filter { !$0.mainFrameOnly && !$0.worldName.isEmpty && !WebAuthnScript.followsItsWindow($0.source) }
+        await runLate(perDocument, in: state.browserFrame, source: registrationSource)
     }
 
     // MARK: Documents that started before their scripts

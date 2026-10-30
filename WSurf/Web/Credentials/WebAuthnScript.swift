@@ -24,9 +24,9 @@ nonisolated enum WebAuthnScript {
     }
 
     /// Whether `source` is one of the Chromium passkey scripts that follow their window to the document that takes it over (the
-    /// relay, the route, the engine refusal and the page script). Chromium runs these in a frame's first, empty document too,
-    /// because the page's first calls need their answers, and holds every other start script for the document that takes over
-    /// (`ChromiumDevTools.registrationSource`).
+    /// relay, the route, the engine refusal and the page script). They cannot run twice in one window: the fence global is fixed and
+    /// the page script would wrap itself. Every other start script that runs in frames is one instance per document instead
+    /// (`ChromiumDevTools.instanceSource`).
     static func followsItsWindow(_ source: String) -> Bool {
         source == engineRefusal || source == pageSource || source.hasSuffix(relaySource)
             || source.hasPrefix("globalThis.__wsurfWebAuthnFence?.route(")

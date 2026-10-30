@@ -683,9 +683,9 @@ final class ChromiumDevTools {
             if worldName.isEmpty {
                 try await installBinding(worldName: Self.pageBridgeWorld)
                 _ = try await command("Page.addScriptToEvaluateOnNewDocument", params: [
-                    "source": Self.waitingForTakeover(pageBridgeSource, inPageWorld: false), "worldName": Self.pageBridgeWorld,
+                    "source": pageBridgeSource, "worldName": Self.pageBridgeWorld,
                 ])
-                _ = try await command("Page.addScriptToEvaluateOnNewDocument", params: ["source": Self.waitingForTakeover(pageRelaySource, inPageWorld: true)])
+                _ = try await command("Page.addScriptToEvaluateOnNewDocument", params: ["source": pageRelaySource])
             } else {
                 _ = try await command("Page.addScriptToEvaluateOnNewDocument", params: [
                     "source": Self.bindingSource, "worldName": worldName,
@@ -745,8 +745,9 @@ final class ChromiumDevTools {
           if (Object.prototype.hasOwnProperty.call(globalThis, '__wsurfPageBridge')) return;
           Object.defineProperty(globalThis, '__wsurfPageBridge', {value: true});
           const send = globalThis.__wsurfSend;
-          document.addEventListener(\(jsonLiteral(pageMessageEvent)), event => {
-            if (typeof event.detail !== 'string' || event.detail.length > \(maxBindingPayload)) return;
+          // On the window, for its current document: a frame's document can take over the window of its first, empty one.
+          addEventListener(\(jsonLiteral(pageMessageEvent)), event => {
+            if (event.target !== document || typeof event.detail !== 'string' || event.detail.length > \(maxBindingPayload)) return;
             let pair;
             try { pair = JSON.parse(event.detail); } catch { return; }
             if (Array.isArray(pair) && pair.length === 2) send(pair[0], pair[1]);
@@ -761,12 +762,13 @@ final class ChromiumDevTools {
         """
         (() => {
           if (Object.prototype.hasOwnProperty.call(globalThis, '__wsurfSend')) return;
-          const dispatch = EventTarget.prototype.dispatchEvent, target = document, Message = CustomEvent;
+          // The window's current document (a page cannot replace `document`), which a frame's document can take over.
+          const dispatch = EventTarget.prototype.dispatchEvent, Message = CustomEvent;
           const stringify = JSON.stringify, type = \(jsonLiteral(pageMessageEvent));
           Object.defineProperty(globalThis, '__wsurfSend', {
             value: (name, body) => {
               if (typeof name !== 'string' || name.length === 0 || name.length > 256) return;
-              dispatch.call(target, new Message(type, {detail: stringify([name, body])}));
+              dispatch.call(document, new Message(type, {detail: stringify([name, body])}));
             }, writable: false, configurable: false, enumerable: false
           });
         })();

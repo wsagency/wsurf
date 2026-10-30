@@ -381,9 +381,10 @@ extension ChromiumDevTools {
         })
         // A context without the shim (its document predates the world's registration) answers false and stays silent. The
         // guard keeps a context of another origin that reuses the ID from ever attaching.
-        // It also says whether a frame's first, empty document held this world's start scripts for this one (`waitingForTakeover`).
+        // It also says whether this world's start scripts ran for an earlier document of this window (`instanceSource`).
         let answer = try runtimeValue(try await command("Runtime.evaluate", params: address(context).merging([
-            "expression": documentGuard(context, marker: false) + "[globalThis.__wsurfAttach?.() === true, globalThis.__wsurfStartDeferred === true]",
+            "expression": documentGuard(context, marker: false) + "[globalThis.__wsurfAttach?.() === true, "
+                + "[...(globalThis.__wsurfStartRuns?.values() ?? [])].some(run => run.document !== document)]",
             "returnByValue": true,
         ]) { $1 }))
         guard contextIsLive(context) else { throw ChromiumError.staleFrame }
