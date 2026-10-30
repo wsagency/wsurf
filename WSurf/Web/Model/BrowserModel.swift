@@ -280,7 +280,8 @@ final class BrowserModel {
                     sourceTabID: tab.id,
                     isPrivate: page.isPrivate,
                     window: page.window,
-                    controls: controls
+                    controls: controls,
+                    opensWhenFinished: tab.takesPDFOpening(forDownloadNamed: name)
                 ),
                 completion: completion
             )

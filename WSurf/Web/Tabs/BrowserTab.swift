@@ -27,6 +27,8 @@ final class BrowserTab: Identifiable {
     }
     var customTitle = ""
     var documentTitles: [URL: String] = [:]
+    /// Open in Preview on a Chromium PDF waits for the download it started (`savePDF`, `takesPDFOpening`).
+    @ObservationIgnored var opensNextPDFDownload = false
 
     var title: String {
         get { customTitle.isEmpty ? pageTitle : customTitle }

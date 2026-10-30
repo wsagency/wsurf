@@ -91,6 +91,10 @@ final class ChromiumPage: NSView {
     /// the item to an editable field's menu.
     var canPickCredential: (() -> Bool)?
     var onPickCredential: ((CredentialPicker.Menu) -> Void)?
+    /// The PDF items of the context menu: whether the tab shows a PDF it can save now (`BrowserTab.shownPDF`), and what choosing
+    /// Download PDF (false) or Open in Preview (true) does (`BrowserTab.savePDF`). `ChromiumClient` adds the items.
+    var showsPDF: (() -> Bool)?
+    var onSavePDF: ((Bool) -> Void)?
     var permissionDecision: ((BrowserFrame, [WebPermission]) async -> Bool)?
     var downloadDecision: ((CefDownload, String, @escaping (CefDownloadDecision) -> Void) -> Void)?
     var downloadProgress: ((CefDownload) -> Void)?
@@ -895,6 +899,12 @@ final class ChromiumPage: NSView {
             waiter.resume()
         }
         closeWaiters.removeAll()
+    }
+    /// Downloads `url` through the download handler, in this page's own session: its cookies, credentials and profile.
+    func startDownload(of url: URL) {
+        withHost { host in
+            ChromiumInterop.withString(url.absoluteString) { host.pointee.start_download?(host, $0) }
+        }
     }
     func cancelDownload(id: UInt32) {
         client?.cancelDownload(id: id)

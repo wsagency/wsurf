@@ -2760,6 +2760,9 @@
     "Double-click page" : {
 
     },
+    "Download PDF" : {
+      "comment" : "Command that saves the PDF the tab shows as a download in the Downloads folder, in both engines. In the right-click menu on a PDF, as a button in the address bar (its tooltip and VoiceOver label) while a PDF is shown. PDF is the file type’s name. Title Case."
+    },
     "Downloaded %@" : {
       "comment" : "Brief notice shown when a download finishes. %@ is the file's name. A past participle describing what happened, not a command."
     },
@@ -4366,6 +4369,9 @@
     "Open in New Tab" : {
       "comment" : "Context-menu command on a history row, on the history page and the start page; it opens that entry in a new tab and leaves the list on screen. Title Case."
     },
+    "Open in Preview" : {
+      "comment" : "Item in the right-click menu on a PDF shown by the Chromium engine. It saves the PDF to the Downloads folder and opens the copy in the Mac’s app for PDF files (Preview unless the person chose another). Preview is the macOS app’s name — leave as is. Title Case."
+    },
     "Open in WSurf" : {
       "comment" : "Item in a download’s right-click menu on the Downloads page, and a VoiceOver action on its row. It is offered for a PDF, an image or a plain text file, and opens the file in a new WSurf tab instead of another app. WSurf is the app’s name — leave as is."
     },
@@ -5278,7 +5284,7 @@
       "comment" : "Title of the macOS save panel that the Save Page As… command opens. It carries no ellipsis, because the panel is already open."
     },
     "Save Page As…" : {
-      "comment" : "Command in the page’s right-click menu. It opens the macOS save panel, where the page is saved as a web archive file. The ellipsis says that a panel opens; keep it. Title Case."
+      "comment" : "Command in the page’s right-click menu and in the File menu (shortcut ⌘S). It opens the macOS save panel, where the page is saved as a web archive file. On a PDF it saves the PDF itself, as Download PDF does. The ellipsis says that a panel opens; keep it. Title Case."
     },
     "Save password?" : {
 

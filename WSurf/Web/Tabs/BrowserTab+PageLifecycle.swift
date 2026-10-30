@@ -294,6 +294,14 @@ extension BrowserTab {
                     return CredentialPicker.isOffered(in: view, allowedByTab: allowsCredentialPicker)
                 }
                 tabView.onPickCredential = { [weak self, weak view] menu in self?.pickCredential(in: view, menu: menu) }
+                tabView.showsPDF = { [weak self, weak view] in
+                    guard let self, let view else { return false }
+                    return liveView === view && shownPDF != nil
+                }
+                tabView.onSavePDF = { [weak self, weak view] in
+                    guard let self, let view, liveView === view else { return }
+                    savePDF()
+                }
             }
         } else if let chromium = view.chromium {
             installChromiumCallbacks(on: chromium, in: view)
@@ -302,6 +310,14 @@ extension BrowserTab {
                 return CredentialPicker.isOffered(in: view, allowedByTab: allowsCredentialPicker)
             }
             chromium.onPickCredential = { [weak self, weak view] menu in self?.pickCredential(in: view, menu: menu) }
+            chromium.showsPDF = { [weak self, weak view] in
+                guard let self, let view else { return false }
+                return liveView === view && shownPDF != nil
+            }
+            chromium.onSavePDF = { [weak self, weak view] opening in
+                guard let self, let view, liveView === view else { return }
+                savePDF(opening: opening)
+            }
         }
 
         context.webViewPool.configurePage?(view)

@@ -61,6 +61,11 @@ final class TabWebView: WKWebView {
     var onOpenLinkInNewWindow: ((URL, Bool) -> Void)?
     var onPeekLink: ((URL) -> Void)?
     var onSummarizeLink: ((URL, CGPoint?) -> Void)?
+    /// Download PDF: whether the tab shows a PDF it can save (`BrowserTab.shownPDF`), and what choosing the item does
+    /// (`BrowserTab.savePDF`).
+    var showsPDF: (() -> Bool)?
+    var onSavePDF: (() -> Void)?
+    private var pdfMenuObserver: NSObjectProtocol?
     /// Pick Credential…: whether the tab offers it now (`CredentialPicker.isOffered`), and what choosing it does.
     var canPickCredential: (() -> Bool)?
     var onPickCredential: ((CredentialPicker.Menu) -> Void)?
@@ -200,7 +205,53 @@ final class TabWebView: WKWebView {
                 .map { CGPoint(x: local.x, y: $0 * zoom) }
         }
 
+        awaitPDFMenu()
         super.rightMouseDown(with: event)
+    }
+
+    /// WebKit's PDF viewer pops its own menu up without asking the view (`willOpenMenu` never runs for it), so the menu is
+    /// met as it begins to track: the first one to do so in the moment after a right-click on a PDF, and only when it is the
+    /// viewer's (its items act through `contextMenuAction:`). Items added there are on screen when the menu is.
+    private func awaitPDFMenu() {
+        stopAwaitingPDFMenu()
+        guard showsPDF?() == true, isDisplayingPDF else { return }
+        pdfMenuObserver = NotificationCenter.default.addObserver(
+            forName: NSMenu.didBeginTrackingNotification, object: nil, queue: .main
+        ) { [weak self] note in
+            nonisolated(unsafe) let menu = note.object as? NSMenu
+            MainActor.assumeIsolated {
+                guard let self, let menu, Self.isPDFViewerMenu(menu) else { return }
+                self.stopAwaitingPDFMenu()
+                self.addPDFItems(to: menu)
+            }
+        }
+        // The viewer's menu comes back from the web process within milliseconds; after this the click was not on the PDF.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in self?.stopAwaitingPDFMenu() }
+    }
+
+    private func stopAwaitingPDFMenu() {
+        if let pdfMenuObserver {
+            NotificationCenter.default.removeObserver(pdfMenuObserver)
+        }
+        pdfMenuObserver = nil
+    }
+
+    private static let viewerAction = NSSelectorFromString("contextMenuAction:")
+
+    static func isPDFViewerMenu(_ menu: NSMenu) -> Bool {
+        menu.items.contains { $0.action == viewerAction }
+    }
+
+    /// Download PDF goes in the viewer's first group of items, which holds Open with Preview.
+    func addPDFItems(to menu: NSMenu) {
+        let item = NSMenuItem(title: String(localized: "Download PDF"), action: #selector(downloadPDF), keyEquivalent: "")
+        item.target = self
+        item.image = NSImage(systemSymbolName: "arrow.down.doc", accessibilityDescription: nil)
+        menu.insertItem(item, at: menu.items.firstIndex(where: \.isSeparatorItem) ?? menu.items.count)
+    }
+
+    @objc private func downloadPDF() {
+        onSavePDF?()
     }
 
     override func willOpenMenu(_ menu: NSMenu, with event: NSEvent) {
