@@ -683,9 +683,9 @@ final class ChromiumDevTools {
             if worldName.isEmpty {
                 try await installBinding(worldName: Self.pageBridgeWorld)
                 _ = try await command("Page.addScriptToEvaluateOnNewDocument", params: [
-                    "source": pageBridgeSource, "worldName": Self.pageBridgeWorld,
+                    "source": Self.waitingForTakeover(pageBridgeSource, inPageWorld: false), "worldName": Self.pageBridgeWorld,
                 ])
-                _ = try await command("Page.addScriptToEvaluateOnNewDocument", params: ["source": pageRelaySource])
+                _ = try await command("Page.addScriptToEvaluateOnNewDocument", params: ["source": Self.waitingForTakeover(pageRelaySource, inPageWorld: true)])
             } else {
                 _ = try await command("Page.addScriptToEvaluateOnNewDocument", params: [
                     "source": Self.bindingSource, "worldName": worldName,
@@ -775,19 +775,6 @@ final class ChromiumDevTools {
 
     func install(_ script: Script) async throws -> String {
         try await register(registrationSource(script), worldName: script.worldName)
-    }
-
-    /// What Chromium runs for `script` in each new document: its injection time and frame scope are made here.
-    func registrationSource(_ script: Script) -> String {
-        if script.injectionTime == .atDocumentStart {
-            return script.mainFrameOnly
-                ? "if (window === window.top) {\n\(script.source)\n}"
-                : script.source
-        }
-        let body = script.mainFrameOnly ? "if (window === window.top) {\n\(script.source)\n}" : script.source
-        return "(() => { const run = () => {\n\(body)\n}; " +
-            "if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', run, {once: true}); " +
-            "else queueMicrotask(run); })();"
     }
 
     /// Registers `source` to run in each new document, in `worldName` (the page's world when empty).

@@ -23,6 +23,15 @@ nonisolated enum WebAuthnScript {
         pageSource
     }
 
+    /// Whether `source` is one of the Chromium passkey scripts that follow their window to the document that takes it over (the
+    /// relay, the route, the engine refusal and the page script). Chromium runs these in a frame's first, empty document too,
+    /// because the page's first calls need their answers, and holds every other start script for the document that takes over
+    /// (`ChromiumDevTools.registrationSource`).
+    static func followsItsWindow(_ source: String) -> Bool {
+        source == engineRefusal || source == pageSource || source.hasSuffix(relaySource)
+            || source.hasPrefix("globalThis.__wsurfWebAuthnFence?.route(")
+    }
+
     /// WebKit's page script: only in a document of the same origin as every frame above it (read before any page script runs).
     /// WebKit names neither a frame's ancestors nor what its embedder allowed it, so its vault serves no frame under an embedder
     /// of another origin (`BrowserPage.credentialContext`), and such a frame keeps the engine's own `navigator.credentials`.
