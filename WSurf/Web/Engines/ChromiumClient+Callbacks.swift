@@ -144,7 +144,8 @@ extension ChromiumClient {
             totalBytes: item.pointee.get_total_bytes?(item) ?? 0,
             isComplete: item.pointee.is_complete?(item) != 0,
             isCanceled: item.pointee.is_canceled?(item) != 0 || item.pointee.is_interrupted?(item) != 0,
-            fullPath: path.isEmpty ? nil : URL(fileURLWithPath: path)
+            fullPath: path.isEmpty ? nil : URL(fileURLWithPath: path),
+            originalURL: URL(string: ChromiumInterop.takeString(item.pointee.get_original_url?(item)))
         )
     }
 

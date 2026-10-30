@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import AppKit
+import CefKit
 import Foundation
 import PDFKit
 import Testing
@@ -35,6 +36,16 @@ struct PDFSavingTests {
     nonisolated final class RequestLog: @unchecked Sendable {
         private let lock = NSLock()
         private var all: [HTTPFixtureServer.Request] = []
+        private var refused: Set<String> = []
+
+        /// From now on the server refuses `path`, which it served before.
+        func refuse(_ path: String) {
+            lock.withLock { _ = refused.insert(path) }
+        }
+
+        func refuses(_ path: String) -> Bool {
+            lock.withLock { refused.contains(path) }
+        }
 
         func record(_ request: HTTPFixtureServer.Request) {
             lock.withLock { all.append(request) }
@@ -177,10 +188,10 @@ struct PDFSavingTests {
             return chosen
         }
 
-        /// The one file in the download folder, once the download list says it finished.
+        /// The file of the download that finished, once the download list says one did.
         func savedFile() async throws -> URL {
-            try #require(await waitUntil(timeout: .seconds(30)) { downloads.items.first?.state == .finished }, "a download finished")
-            let item = try #require(downloads.items.first)
+            try #require(await waitUntil(timeout: .seconds(30)) { downloads.items.contains { $0.state == .finished } }, "a download finished")
+            let item = try #require(downloads.items.first { $0.state == .finished })
             return try #require(item.destination)
         }
 
@@ -200,9 +211,18 @@ struct PDFSavingTests {
                 "/": .html("<!doctype html><title>Plain page</title><p>Not a PDF.</p>"),
                 "/login": .html("<!doctype html><title>Login</title><p>Signed in.</p>", headers: ["Set-Cookie": "pdfsession=\(token); Path=/"]),
                 "/report": Self.pdfResponse(pdf, name: "Quarterly Report.pdf"),
+                "/flaky": Self.pdfResponse(pdf, name: "Flaky.pdf"),
+                "/attachment": HTTPFixtureServer.Response(
+                    status: "200 OK",
+                    headers: ["Content-Type": "application/pdf", "Content-Disposition": "attachment; filename=\"Page Chose This.pdf\""],
+                    body: pdf
+                ),
             ],
             respond: { request in
                 log.record(request)
+                if log.refuses(request.path) {
+                    return HTTPFixtureServer.Response(status: "404 Not Found", headers: ["Content-Type": "text/plain"], body: Data("gone".utf8))
+                }
                 guard request.path == "/secret" else { return nil }
                 guard request.headers["cookie"]?.contains("pdfsession=\(token)") == true else {
                     return HTTPFixtureServer.Response(
@@ -285,7 +305,7 @@ struct PDFSavingTests {
             let saved = try await rig.savedFile()
             #expect(try Data(contentsOf: saved) == Self.pdf)
             #expect(await waitUntil { rig.opened == [saved] }, "the saved copy was opened, once")
-            #expect(!rig.tab.opensNextPDFDownload)
+            #expect(rig.tab.pendingPDFOpening == nil, "the request was used by its download")
         }
     }
 
@@ -366,16 +386,196 @@ struct PDFSavingTests {
         }
     }
 
-    // MARK: - Pieces
+    // MARK: - Open in Preview opens only what it started
 
-    @Test func aChromiumPDFOpensOnlyForTheNextPDFDownloadAfterTheRequest() throws {
+    private func download(_ address: String, asked original: String? = nil) -> CefDownload {
+        CefDownload(
+            id: 1, url: URL(string: address), receivedBytes: 0, totalBytes: 0, isComplete: false, isCanceled: false, fullPath: nil,
+            originalURL: URL(string: original ?? address)
+        )
+    }
+
+    /// Two tabs of a model, for what depends on which page a request belongs to.
+    private struct Pair {
         let model = BrowserModel(database: .temporary())
-        let tab = model.newTab()
-        defer { model.close(tab) }
-        #expect(!tab.takesPDFOpening(forDownloadNamed: "report.pdf"), "nothing was asked")
-        tab.opensNextPDFDownload = true
-        #expect(!tab.takesPDFOpening(forDownloadNamed: "archive.zip"), "another file leaves the request for the PDF")
-        #expect(tab.takesPDFOpening(forDownloadNamed: "Report.PDF"))
-        #expect(!tab.takesPDFOpening(forDownloadNamed: "report.pdf"), "the request is used once")
+        let tab: BrowserTab
+        let other: BrowserTab
+
+        init() {
+            tab = model.newTab()
+            other = model.newTab()
+        }
+
+        var page: BrowserPage {
+            tab.page
+        }
+
+        func close() {
+            model.close(tab)
+            model.close(other)
+        }
+    }
+
+    @Test func openInPreviewIsBoundToTheDownloadItAskedFor() {
+        let pair = Pair()
+        defer { pair.close() }
+        let (tab, page, otherPage) = (pair.tab, pair.page, pair.other.page)
+        tab.awaitPDFOpening(of: URL(string: "https://example.com/report.pdf#page=2")!, in: page)
+
+        #expect(!tab.takesPDFOpening(for: download("https://example.com/other.pdf"), in: page), "another address")
+        #expect(!tab.takesPDFOpening(for: download("https://example.com/report.pdf"), in: otherPage), "another page")
+        #expect(tab.pendingPDFOpening != nil, "those leave the request for the download it waits for")
+        #expect(
+            tab.takesPDFOpening(for: download("https://cdn.example.com/x", asked: "https://example.com/report.pdf"), in: page),
+            "the address as it was asked for, whatever redirect followed"
+        )
+        #expect(!tab.takesPDFOpening(for: download("https://example.com/report.pdf"), in: page), "it opens once")
+        #expect(tab.pendingPDFOpening == nil)
+    }
+
+    @Test func aNavigationEndsAPendingOpenInPreview() {
+        let pair = Pair()
+        defer { pair.close() }
+        let (tab, page) = (pair.tab, pair.page)
+        let report = URL(string: "https://example.com/report.pdf")!
+
+        tab.awaitPDFOpening(of: report, in: page)
+        tab.navigationStarted(nil, url: URL(string: "https://example.com/next"))
+        #expect(tab.pendingPDFOpening == nil, "the next navigation started")
+        #expect(!tab.takesPDFOpening(for: download(report.absoluteString), in: page))
+
+        tab.awaitPDFOpening(of: report, in: page)
+        tab.navigationCommitted(nil)
+        #expect(tab.pendingPDFOpening == nil, "the next document committed")
+    }
+
+    @Test func aPendingOpenInPreviewExpires() async {
+        let pair = Pair()
+        defer { pair.close() }
+        let (tab, page) = (pair.tab, pair.page)
+        let report = URL(string: "https://example.com/report.pdf")!
+        tab.pdfOpeningLifetime = .milliseconds(50)
+
+        tab.awaitPDFOpening(of: report, in: page)
+
+        #expect(await waitUntil { tab.pendingPDFOpening == nil }, "the request went when its time was up")
+        #expect(!tab.takesPDFOpening(for: download(report.absoluteString), in: page))
+    }
+
+    @Test func aLaterRequestReplacesAnEarlierOne() async {
+        let pair = Pair()
+        defer { pair.close() }
+        let (tab, page) = (pair.tab, pair.page)
+        tab.pdfOpeningLifetime = .milliseconds(200)
+        tab.awaitPDFOpening(of: URL(string: "https://example.com/first.pdf")!, in: page)
+        tab.awaitPDFOpening(of: URL(string: "https://example.com/second.pdf")!, in: page)
+
+        #expect(!tab.takesPDFOpening(for: download("https://example.com/first.pdf"), in: page))
+        #expect(tab.takesPDFOpening(for: download("https://example.com/second.pdf"), in: page))
+    }
+
+    /// What a page downloads on its own after an Open in Preview that never got its file is saved like any download and never opened.
+    @Test func aPageDownloadAfterAFailedOpenInPreviewIsNotOpened() async throws {
+        try await withRig(.chromium) { rig, _ in
+            try await rig.load("/flaky", isPDF: true)
+            rig.log.refuse("/flaky")
+            rig.tab.savePDF(opening: true)
+            try #require(rig.tab.pendingPDFOpening != nil, "the tab waits for the download it started")
+
+            let attachment = try rig.server.url("/attachment")
+            try #require(rig.page.chromium).startDownload(of: attachment)
+
+            let saved = try await rig.savedFile()
+            #expect(saved.lastPathComponent == "Page Chose This.pdf")
+            #expect(try Data(contentsOf: saved) == Self.pdf)
+            try await Task.sleep(for: .milliseconds(500))
+            #expect(rig.opened.isEmpty, "the page's own download was not opened; it opened \(rig.opened)")
+        }
+    }
+
+    // MARK: - What the download list opens
+
+    private func request(
+        _ id: UInt32, in folder: URL, live: Bool = true, opens: Bool
+    ) -> (ChromiumDownloadRequest, ChromiumDownloadControls) {
+        let token = NSObject()
+        let controls = ChromiumDownloadControls(
+            pageID: ObjectIdentifier(token), isLive: { live }, cancel: { _ in }, pause: { _ in }, resume: { _ in }
+        )
+        let item = CefDownload(
+            id: id, url: URL(string: "https://example.com/report.pdf"), receivedBytes: 0, totalBytes: 10, isComplete: false,
+            isCanceled: false, fullPath: nil
+        )
+        return (
+            ChromiumDownloadRequest(
+                download: item, suggestedName: "Report.pdf", sourceTabID: nil, isPrivate: false, window: nil, controls: controls,
+                opensWhenFinished: opens
+            ),
+            controls
+        )
+    }
+
+    private func finished(_ id: UInt32, at file: URL, canceled: Bool = false) -> CefDownload {
+        CefDownload(
+            id: id, url: nil, receivedBytes: 10, totalBytes: 10, isComplete: !canceled, isCanceled: canceled, fullPath: file
+        )
+    }
+
+    private func decide(
+        _ downloads: DownloadManager, _ request: ChromiumDownloadRequest
+    ) async throws -> CefDownloadDecision {
+        var decision: CefDownloadDecision?
+        downloads.decideChromiumDownload(request) { decision = $0 }
+        try #require(await waitUntil { decision != nil })
+        return try #require(decision)
+    }
+
+    @Test func aFinishedDownloadOpensOnlyWhereItWasAskedTo() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let downloads = DownloadManager(destinationFolder: folder, asksWhereToSave: false)
+        var opened: [URL] = []
+        downloads.openFile = { opened.append($0) }
+
+        for (id, opens) in [(UInt32(1), false), (UInt32(2), true)] {
+            guard case .allow(let destination?) = try await decide(downloads, request(id, in: folder, opens: opens).0) else {
+                Issue.record("the download was allowed")
+                return
+            }
+            try Data("PDF".utf8).write(to: destination)
+            downloads.noteChromiumDownload(finished(id, at: destination))
+            #expect(opened == (opens ? [destination] : []), "opens: \(opens)")
+            opened = []
+        }
+    }
+
+    @Test func aDeniedOrStoppedDownloadNeverOpensItsFile() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let downloads = DownloadManager(destinationFolder: folder, asksWhereToSave: false)
+        var opened: [URL] = []
+        downloads.openFile = { opened.append($0) }
+
+        // Denied: the page was gone when the engine asked.
+        let gone = request(1, in: folder, live: false, opens: true).0
+        guard case .deny = try await decide(downloads, gone) else {
+            Issue.record("a download of a closed page is denied")
+            return
+        }
+        downloads.noteChromiumDownload(finished(1, at: folder.appendingPathComponent("Report.pdf")))
+
+        // Cancelled after it began, and then reported complete by a late update.
+        let cancelled = request(2, in: folder, opens: true).0
+        guard case .allow(let destination?) = try await decide(downloads, cancelled) else {
+            Issue.record("the download was allowed")
+            return
+        }
+        try Data("PDF".utf8).write(to: destination)
+        downloads.noteChromiumDownload(finished(2, at: destination, canceled: true))
+        downloads.noteChromiumDownload(finished(2, at: destination))
+
+        #expect(opened.isEmpty, "nothing was opened; it opened \(opened)")
     }
 }

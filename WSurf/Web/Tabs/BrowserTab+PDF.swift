@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import AppKit
+import CefKit
 import Foundation
 import WebKit
 
@@ -35,7 +36,11 @@ extension BrowserTab {
                 await onSaveDocument?(data, filename, url, opening)
             }
         } else if let chromium = view.chromium {
-            opensNextPDFDownload = opening
+            if opening {
+                awaitPDFOpening(of: url, in: view)
+            } else {
+                pendingPDFOpening = nil
+            }
             chromium.startDownload(of: url)
         }
     }
@@ -49,12 +54,45 @@ extension BrowserTab {
         PageSaving.begin(for: shownPage)
     }
 
-    /// Whether the Chromium download that has just been decided is the one Open in Preview asked for: the next PDF this tab's page
-    /// downloads after the request. A download of anything else leaves the request for the PDF that follows.
-    func takesPDFOpening(forDownloadNamed name: String) -> Bool {
-        guard opensNextPDFDownload, name.lowercased().hasSuffix(".pdf") else { return false }
-        opensNextPDFDownload = false
+    /// Open in Preview on a Chromium PDF opens the copy of the one download that `savePDF` started, and of nothing else: the request
+    /// belongs to `page`, names the address that was asked for, and ends at its first use, at the tab's next navigation and after
+    /// `pdfOpeningLifetime`. A download that was denied, fails or never starts leaves nothing behind that could open a file a page
+    /// chose to download.
+    func awaitPDFOpening(of url: URL, in page: BrowserPage) {
+        let request = PendingPDFOpening(url: url, page: ObjectIdentifier(page))
+        pendingPDFOpening = request
+        Task {
+            try? await Task.sleep(for: pdfOpeningLifetime)
+            if pendingPDFOpening?.id == request.id {
+                pendingPDFOpening = nil
+            }
+        }
+    }
+
+    /// Whether `download`, which `page` has just made, is the one Open in Preview waits for. True once.
+    func takesPDFOpening(for download: CefDownload, in page: BrowserPage) -> Bool {
+        guard let pending = pendingPDFOpening, pending.matches(download, in: ObjectIdentifier(page)) else { return false }
+        pendingPDFOpening = nil
         return true
+    }
+}
+
+/// An Open in Preview on a Chromium PDF, waiting for the download it started (`BrowserTab.awaitPDFOpening`).
+struct PendingPDFOpening {
+    let id = UUID()
+    let url: URL
+    let page: ObjectIdentifier
+
+    /// A download of the address that was asked for, as it was asked for or as a redirect ended, made by the same page.
+    func matches(_ download: CefDownload, in page: ObjectIdentifier) -> Bool {
+        guard page == self.page else { return false }
+        return [download.originalURL, download.url].contains { $0.map(Self.address) == Self.address(url) }
+    }
+
+    private static func address(_ url: URL) -> String {
+        var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        components?.fragment = nil
+        return components?.string ?? url.absoluteString
     }
 }
 

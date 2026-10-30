@@ -32,6 +32,7 @@ extension BrowserTab {
     }
 
     func navigationStarted(_ navigation: PageNavigation?, url: URL?) {
+        pendingPDFOpening = nil
         if !isLoadingErrorPage {
             isShowingError = false
         }
@@ -47,6 +48,7 @@ extension BrowserTab {
     }
 
     func navigationCommitted(_ navigation: PageNavigation?) {
+        pendingPDFOpening = nil
         committedNavigation = navigation
         autofillSave.resetDismissalsForNavigation()
         if provisionalNavigation === navigation {
