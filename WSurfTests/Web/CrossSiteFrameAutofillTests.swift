@@ -123,6 +123,43 @@ struct CrossSiteFrameAutofillTests {
             return (answer as? NSNumber)?.intValue ?? 0
         }
 
+        /// The frame of the page's own origin that took over its first, empty document's window (`takeover`): the one whose password
+        /// script reported ready from the frame's own document.
+        func takenOver() async throws -> BrowserFrame {
+            func isIt(_ frame: BrowserFrame) -> Bool { !frame.isMainFrame && frame.request.url?.path == "/frame" }
+            try #require(await waitUntil { self.posted("ready").contains { isIt($0.frame) } }, "the frame's own document runs the password script")
+            return try #require(posted("ready").last { isIt($0.frame) }?.frame)
+        }
+
+        /// A person typing `text` into field `id` of `frame`: the field has focus, and the engine inserts the text as typed input.
+        func type(_ text: String, into id: String, in frame: BrowserFrame) async throws {
+            try await run("document.getElementById(id).focus();", ["id": id], in: frame)
+            if let webView = page.webKit {
+                #expect(window.makeFirstResponder(webView))
+            }
+            try await page.insertText(text)
+        }
+
+        /// A real left click on `id`, inside the frames of `path` (see `center`).
+        func click(_ id: String, path: [BrowserFrame]) async throws {
+            let point = try await center(of: id, path: path)
+            if let chromium = page.chromium {
+                for (type, buttons) in [("mousePressed", 1), ("mouseReleased", 0)] {
+                    _ = try await chromium.command("Input.dispatchMouseEvent", params: [
+                        "type": type, "x": Double(point.x), "y": Double(point.y), "button": "left", "buttons": buttons, "clickCount": 1,
+                    ])
+                }
+                return
+            }
+            let location = try #require(page.webKit).convert(point, to: nil)
+            for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+                window.sendEvent(try #require(NSEvent.mouseEvent(
+                    with: type, location: location, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                    windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: type == .leftMouseDown ? 1 : 0
+                )))
+            }
+        }
+
         /// Waits until everything posted so far from `frame` has arrived, so that an absence can be asserted.
         func settle(_ frame: BrowserFrame?) async throws {
             let marker = UUID().uuidString
@@ -147,6 +184,20 @@ struct CrossSiteFrameAutofillTests {
             """
     }
 
+    /// A frame of the page's own origin that the page reads at once after inserting it, as Apple's sign-in does with its widget
+    /// (`authService.js` keeps `window.frames[name]`). Chromium then sets up the frame's first, empty document, and the frame's own
+    /// document takes over that window (HTML's window reuse), with no new start of its scripts.
+    private static let takeover = """
+        <script>
+        const frame = document.createElement('iframe');
+        frame.src = location.origin + '/frame';
+        frame.name = 'widget';
+        frame.width = 440; frame.height = 240;
+        document.body.append(frame);
+        window.widget = window.frames[frame.name];
+        </script>
+        """
+
     private static func login(_ prefix: String) -> String {
         #"<form id="\#(prefix)form" onsubmit="return false"><input id="\#(prefix)u" autocomplete="username">"#
             + #"<input id="\#(prefix)p" type="password" autocomplete="current-password"><button id="\#(prefix)go" type="button">Sign in</button></form>"#
@@ -167,6 +218,7 @@ struct CrossSiteFrameAutofillTests {
     private static let routes: [String: HTTPFixtureServer.Response] = [
         "/": .html(page(cancel + login("t") + iframe("localhost", "/frame"))),
         "/frame": .html(page(cancel + login("f"))),
+        "/takeover": .html(page(cancel + login("t") + takeover)),
         "/nested": .html(page(cancel + login("t") + iframe("localhost", "/middle"))),
         "/middle": .html(page(cancel + login("f") + iframe("app.localhost", "/inner"))),
         "/inner": .html(page(cancel + login("i"))),
@@ -390,6 +442,46 @@ struct CrossSiteFrameAutofillTests {
             for (id, frame) in [("fu", middle), ("fp", middle), ("tu", main), ("tp", main)] {
                 #expect(try await harness.value(id, in: frame) == "", "\(id) took nothing")
             }
+        }
+    }
+
+    // MARK: A frame that took over its first document's window
+
+    /// A frame of the page's own origin that took over its first, empty document's window (Apple's sign-in widget): a right-click in
+    /// it reaches Pick Credential…, and the fill reaches that frame's fields. In Chromium the frame got WSurf's start scripts only in
+    /// the empty document, so nothing in the frame's own document answered.
+    @Test(arguments: BrowserEngine.allCases)
+    func aFrameThatTookOverItsFirstWindowGetsPickCredential(engine: BrowserEngine) async throws {
+        try await withPage(engine, "/takeover") { harness in
+            let main = try #require(harness.main)
+            let frame = try await harness.takenOver()
+            #expect(frame.securityOrigin == main.securityOrigin && frame.hasTrustedSecurityOrigin)
+            try await harness.run("globalThis.__wsurfPasswords.setEnabled(true);", in: frame)
+            let click = try await harness.rightClick("fu", path: [frame])
+            #expect(click.frame.documentID == frame.documentID, "the frame's own document answered the right-click")
+            #expect(try await harness.pickFill(click, in: frame, ["username": "ada", "password": "dummy-secret"]) == 2)
+            #expect(try await harness.value("fu", in: frame) == "ada")
+            #expect(try await harness.value("fp", in: frame) == "dummy-secret")
+            #expect(try await harness.value("tu", in: main) == "", "the page's own field took nothing")
+        }
+    }
+
+    /// The same frame: a login typed into it and sent with its button is staged for the frame, so WSurf offers to save it.
+    @Test(arguments: BrowserEngine.allCases)
+    func aLoginTypedInAFrameThatTookOverItsFirstWindowIsStaged(engine: BrowserEngine) async throws {
+        try await withPage(engine, "/takeover") { harness in
+            let frame = try await harness.takenOver()
+            try #require(await waitUntil { harness.posted("ready", by: "wsurfAutofillSave").contains { $0.frame.documentID == frame.documentID } },
+                         "the frame's own document runs the save script")
+            try await harness.run("globalThis.__wsurfAutofillSave.setPolicy({password: true, card: false, contact: false});", in: frame)
+            try await harness.type("ada@example.test", into: "fu", in: frame)
+            try await harness.type("dummy-secret-123", into: "fp", in: frame)
+            try await harness.click("fgo", path: [frame])
+            try #require(await waitUntil { !harness.posted("stage", by: "wsurfAutofillSave").isEmpty }, "the login was staged")
+            let staged = try #require(harness.posted("stage", by: "wsurfAutofillSave").last)
+            #expect(staged.frame.documentID == frame.documentID && !staged.frame.isMainFrame)
+            #expect(staged.body["url"] as? String == "http://127.0.0.1:\(harness.port)/frame")
+            #expect(staged.body["password"] as? [String: String] == ["username": "ada@example.test", "password": "dummy-secret-123"])
         }
     }
 
