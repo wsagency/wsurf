@@ -19,8 +19,10 @@ final class ChromiumRuntime {
         let profileID: UUID
         /// Chromium's camera and microphone values were cleared and written from the store (`mirrorCapture`).
         var mirrorsCapture = false
-        /// The origins last written to Chromium's autoplay allowlist (`mirrorAutoplay`); nil until the first write.
+        /// The entries last written to Chromium's autoplay allowlist and pop-up exceptions (`mirrorSiteAnswers`); nil until
+        /// the first write.
         var autoplayAllowlist: [String]?
+        var popupAllowlist: [String]?
         /// CEF finished loading the profile and its history saving is off (`startContext`).
         var isStarted = false
 
@@ -264,46 +266,84 @@ final class ChromiumRuntime {
         }
     }
 
-    /// Lets the websites whose auto-play answer is Allow start media with sound in Chromium without a user activation, as
-    /// WebKit does: an activation WSurf gave a page would also let its script open a pop-up or the colour chooser by itself.
-    /// Chromium reads its AutoplayAllowlist preference for a tab when a main-frame navigation finishes, against the tab's
-    /// own address. The list holds the Allow origins of the pages open on Chromium in this profile and of `url`, the
-    /// navigation about to start, so Chromium's profile files keep no more of the history than the open tabs. Every other
-    /// website is under Chromium's own rule, sound waits for the person, and under the site guard. ponytail: a changed
-    /// answer reaches a page at its next navigation, and until a navigation finishes its document runs under the rule of the
-    /// tab's page before it (a script that plays while the page is still being parsed is refused); a per-navigation answer
-    /// would need CEF support.
-    func mirrorAutoplay(navigatingTo url: URL, in owner: BrowserProfileContext) {
+    /// Lets the websites the person allowed do in Chromium, without a click, what they may do in WebKit: start media with
+    /// sound (auto-play Allow) and open a pop-up (pop-ups Allow). A user activation WSurf handed out would let any script of
+    /// the page do both and more (the colour chooser among them), so Chromium is told per website instead:
+    /// - its AutoplayAllowlist preference (`media.autoplay_whitelist`), read for a tab when a main-frame navigation
+    ///   finishes, against the tab's own address;
+    /// - the Allow exceptions of its pop-ups content setting (`profile.content_settings.exceptions.popups`), which its
+    ///   pop-up blocker reads against the opener's address when a page opens a window, before WSurf is asked
+    ///   (`blocked_content::ShouldBlockPopup`, then `on_before_popup`). WSurf's own answer still decides after it.
+    /// Each list holds the Allow origins of the pages open on Chromium in this profile, `url` (where `page` is about to go)
+    /// in place of `page`'s own, each by its tab's answers, so Chromium's profile files keep no more of the history than
+    /// the open tabs. Every other website is under Chromium's own rules and the site guard. ponytail: a changed answer
+    /// reaches Chromium at the next navigation in the profile, and an auto-play answer reaches a page at its own next
+    /// navigation (until a navigation finishes its document runs under the rule of the tab's page before it, so a script
+    /// that plays while the page is still being parsed is refused); a per-navigation answer would need CEF support.
+    func mirrorSiteAnswers(of page: ChromiumPage, navigatingTo url: URL, in owner: BrowserProfileContext) {
         guard let entry = contexts[owner.contextID], entry.isStarted else { return }
-        let origins = (owner.chromiumPageAddresses + [url]).map { SitePermissions.webOrigin(for: $0) }.filter {
-            !$0.isEmpty && (owner.sitePermissions.autoplay(for: $0) ?? owner.settings.autoplay) == .allow
+        let tabs = owner.chromiumTabs
+        var sites = tabs.map { tab in
+            (origin: SitePermissions.webOrigin(for: tab.liveView?.chromium === page ? url : tab.liveView?.url), store: tab.sitePermissions)
         }
-        let patterns = origins.compactMap(Self.autoplayPattern(for:))
-        if patterns.count < origins.count {
-            Self.log.notice("autoplay allowlist: dropped \(origins.count - patterns.count) origins that are not one exact host")
+        if !tabs.contains(where: { $0.liveView?.chromium === page }) {
+            sites.append((origin: SitePermissions.webOrigin(for: url), store: owner.sitePermissions))
         }
-        let list = Set(patterns).sorted()
-        guard list != entry.autoplayAllowlist, let value = cef_value_create(), let items = cef_list_value_create() else { return }
-        defer { ChromiumInterop.release(UnsafeMutableRawPointer(value)) }
-        for (index, origin) in list.enumerated() {
-            ChromiumInterop.withString(origin) { _ = items.pointee.set_string?(items, index, $0) }
+        sites.removeAll { $0.origin.isEmpty }
+        let autoplay = Self.sitePatterns(sites.filter { ($0.store.autoplay(for: $0.origin) ?? owner.settings.autoplay) == .allow }.map(\.origin))
+        if autoplay != entry.autoplayAllowlist, let items = cef_list_value_create() {
+            for (index, pattern) in autoplay.enumerated() {
+                ChromiumInterop.withString(pattern) { _ = items.pointee.set_string?(items, index, $0) }
+            }
+            if Self.setPreference("media.autoplay_whitelist", in: entry.raw, { _ = $0.pointee.set_list?($0, items) }) {
+                entry.autoplayAllowlist = autoplay
+            }
         }
-        _ = value.pointee.set_list?(value, items)
-        let preferences = UnsafeMutableRawPointer(entry.raw).assumingMemoryBound(to: cef_preference_manager_t.self)
-        var error = cef_string_t()
-        defer { ccef_string_clear(&error) }
-        ChromiumInterop.retain(UnsafeMutableRawPointer(value))
-        if ChromiumInterop.withString("media.autoplay_whitelist", { preferences.pointee.set_preference?(preferences, $0, value, &error) }) == 1 {
-            entry.autoplayAllowlist = list
+        let popups = Self.sitePatterns(sites.filter {
+            TabPopupPolicy.policy(for: $0.origin, store: $0.store, settings: owner.settings) == .allow
+        }.map(\.origin))
+        if popups != entry.popupAllowlist, let exceptions = cef_dictionary_value_create() {
+            for pattern in popups {
+                // Primary pattern, secondary pattern (any embedder): the pop-ups setting is keyed by the opener's address alone.
+                guard let exception = cef_dictionary_value_create() else { continue }
+                _ = ChromiumInterop.withString("setting") { exception.pointee.set_int?(exception, $0, Int32(CEF_CONTENT_SETTING_VALUE_ALLOW.rawValue)) }
+                _ = ChromiumInterop.withString(pattern + ",*") { exceptions.pointee.set_dictionary?(exceptions, $0, exception) }
+            }
+            if Self.setPreference("profile.content_settings.exceptions.popups", in: entry.raw, { _ = $0.pointee.set_dictionary?($0, exceptions) }) {
+                entry.popupAllowlist = popups
+            }
         }
     }
 
-    /// The allowlist entry that matches `origin` and no other, or nil when it cannot be one. Chromium reads each entry as a
-    /// content-settings pattern (`policy::IsOriginInAllowlist`, `ContentSettingsPattern::FromString`): a host without
+    /// One exact pattern per origin, sorted; an origin that cannot be one is left out, and only the count is logged.
+    private nonisolated static func sitePatterns(_ origins: [String]) -> [String] {
+        let patterns = origins.compactMap(sitePattern(for:))
+        if patterns.count < origins.count {
+            log.notice("site allowlists: dropped \(origins.count - patterns.count) origins that are not one exact host")
+        }
+        return Set(patterns).sorted()
+    }
+
+    /// Sets the preference `name` of `context` to the value `fill` gives a new value; true once Chromium took it.
+    private static func setPreference(
+        _ name: String, in context: UnsafeMutablePointer<cef_request_context_t>, _ fill: (UnsafeMutablePointer<cef_value_t>) -> Void
+    ) -> Bool {
+        guard let value = cef_value_create() else { return false }
+        defer { ChromiumInterop.release(UnsafeMutableRawPointer(value)) }
+        fill(value)
+        let preferences = UnsafeMutableRawPointer(context).assumingMemoryBound(to: cef_preference_manager_t.self)
+        var error = cef_string_t()
+        defer { ccef_string_clear(&error) }
+        ChromiumInterop.retain(UnsafeMutableRawPointer(value))
+        return ChromiumInterop.withString(name) { preferences.pointee.set_preference?(preferences, $0, value, &error) } == 1
+    }
+
+    /// The entry that matches `origin` and no other, or nil when it cannot be one. Chromium reads each entry of both lists
+    /// as a content-settings pattern (`policy::IsOriginInAllowlist`, `ContentSettingsPattern::FromString`): a host without
     /// `[*.]` is that host alone, `*` and `[*.]` are wildcards, and a pattern without a port matches every port. So the
     /// entry is rebuilt from the scheme (http or https), a host that is plain lowercase DNS labels (punycode for a name
     /// in another script; an IPv4 address is such a name too) or an IPv6 address in brackets, and the port, written out.
-    nonisolated static func autoplayPattern(for origin: String) -> String? {
+    nonisolated static func sitePattern(for origin: String) -> String? {
         guard let url = URL(string: origin), let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https",
               var host = url.host(percentEncoded: true), !host.isEmpty
         else { return nil }

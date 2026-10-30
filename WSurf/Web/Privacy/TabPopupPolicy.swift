@@ -22,6 +22,11 @@ final class TabPopupPolicy {
     private(set) var blocked: URL?
 
     var effective: PopupPolicy {
+        Self.policy(for: origin, store: store, settings: settings)
+    }
+
+    /// The pop-up answer for pages of `origin`: the website's own, or the setting every other website is under.
+    static func policy(for origin: String, store: SitePermissions, settings: BrowserSettings) -> PopupPolicy {
         if !origin.isEmpty, let recorded = store.popups(for: origin) {
             return recorded
         }

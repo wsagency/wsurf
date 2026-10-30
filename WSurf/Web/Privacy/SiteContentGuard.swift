@@ -62,7 +62,7 @@ final class SiteContentGuard {
             // No answer carries a user gesture, Allow included. Chromium counts a gesture as the person's click on the frame
             // and on every frame above it, for seconds: any script of the page could then open a pop-up, the colour chooser
             // or anything else that waits for the person. Under Allow, Chromium starts the website's sound by itself through
-            // its autoplay allowlist (`ChromiumRuntime.mirrorAutoplay`), which activates nothing.
+            // its autoplay allowlist (`ChromiumRuntime.mirrorSiteAnswers`), which activates nothing.
             Task { @MainActor in
                 _ = try? await message.page.callAsyncJavaScript(
                     "globalThis.__wsurfSiteGuard?.applyPolicy(policy);",

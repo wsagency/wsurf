@@ -413,14 +413,14 @@ struct ChromiumAutoplayAllowlistTests {
             "https://xn--bcher-kva.example": "https://xn--bcher-kva.example:443",
         ]
         for (origin, entry) in kept {
-            #expect(ChromiumRuntime.autoplayPattern(for: origin) == entry, "\(origin)")
+            #expect(ChromiumRuntime.sitePattern(for: origin) == entry, "\(origin)")
         }
         let dropped = [
             "https://*.example.com", "https://*", "https://[*.]example.com", "http://[example.com]", "http://[::1",
             "https://ex%2Aample.com", "https://-example.com", "https://Example.com", "file:///tmp/page.html", "chrome://settings",
         ]
         for origin in dropped {
-            #expect(ChromiumRuntime.autoplayPattern(for: origin) == nil, "\(origin)")
+            #expect(ChromiumRuntime.sitePattern(for: origin) == nil, "\(origin)")
         }
     }
 
