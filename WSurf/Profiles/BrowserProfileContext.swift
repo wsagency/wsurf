@@ -65,9 +65,9 @@ final class BrowserProfileContext {
     lazy var extensions = ExtensionManager(profile: profile, dataStore: dataStore)
 
     private var browsers = NSHashTable<BrowserModel>.weakObjects()
-    /// The addresses of the pages open on Chromium in this profile's windows (`ChromiumRuntime.mirrorAutoplay`).
-    var chromiumPageAddresses: [URL] {
-        browsers.allObjects.flatMap(\.tabs).compactMap { $0.liveView?.chromium == nil ? nil : $0.liveView?.url }
+    /// The tabs of this profile's windows whose page is open on Chromium (`ChromiumRuntime.mirrorSiteAnswers`).
+    var chromiumTabs: [BrowserTab] {
+        browsers.allObjects.flatMap(\.tabs).filter { $0.liveView?.chromium != nil }
     }
     private(set) var privateSessionEnded = false
 

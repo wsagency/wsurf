@@ -647,9 +647,10 @@ struct OpenInNewTabTests {
         }
     }
 
-    @Test(arguments: BrowserEngine.allCases)
-    func windowOpenWithoutAGestureIsBlockedWhereBlockingIsOn(engine: BrowserEngine) async throws {
-        try await withRig(engine, popups: .blockAndNotify) { rig in
+    /// A site set to Block and Notify or Block, and one with no answer of its own under the default setting (Block and Notify).
+    @Test(arguments: BrowserEngine.allCases, [PopupPolicy?.some(.blockAndNotify), .some(.block), nil])
+    func windowOpenWithoutAGestureIsBlockedWhereBlockingIsOn(engine: BrowserEngine, popups: PopupPolicy?) async throws {
+        try await withRig(engine, popups: popups) { rig in
             _ = try await rig.evaluate("setTimeout(() => window.open('/target?via=script'), 0); 0")
             try await rig.settle()
             Self.expectNothingOpened(in: rig)
@@ -671,19 +672,12 @@ struct OpenInNewTabTests {
         }
     }
 
-    /// WebKit opens the tab of a site allowed pop-ups, click or no click. 0.1.19 FOLLOW-UP, Chromium arm: since 0.1.18 Chromium refuses a
-    /// pop-up opened without a click, "Allow pop-ups" sites included (that Allow only worked through the forged activation). The per-site
-    /// exception comes back in 0.1.19; the known issue fails this test the day it works: then drop it and let both arms expect the tab.
+    /// A site allowed pop-ups opens its tab, click or no click, on both engines. Chromium's own blocker refuses a pop-up no click
+    /// started before WSurf is asked, so the site's Allow is also its pop-ups exception there (`ChromiumRuntime.mirrorSiteAnswers`).
     @Test(arguments: BrowserEngine.allCases)
     func windowOpenWithoutAGestureOpensATabWhereTheSiteMayOpenPopups(engine: BrowserEngine) async throws {
         try await withRig(engine, popups: .allow) { rig in
             _ = try await rig.evaluate("setTimeout(() => window.open('/target?via=script'), 0); 0")
-            if engine == .chromium {
-                await withKnownIssue("0.1.19: Chromium blocks a pop-up opened without a click, even where the site is set to Allow pop-ups") {
-                    _ = try expectOpened(await rig.tab(via: "script", timeout: .seconds(5)), by: rig, "window.open without a gesture where it is allowed")
-                }
-                return
-            }
             _ = try expectOpened(await rig.tab(via: "script"), by: rig, "window.open without a gesture where it is allowed")
             try await rig.settle()
             #expect(rig.opened.count == 1, "one tab, not two")

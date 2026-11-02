@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Modified for WSurf by wsagency in 2026; based on Linen by Kavoye.
 
+import CCef
 import Foundation
 import Testing
 import WebKit
@@ -304,6 +305,77 @@ struct PageColorChooserTests {
     }
 }
 
+/// Pop-ups Allow reaches Chromium's own pop-up blocker as an exception for the allowed origin and nothing more: its page opens a
+/// pop-up without a click, and a subdomain of its host and the same host on another port, both left at the default (Block and
+/// Notify), open none while the allowed origin's page is open. The exceptions Chromium keeps name that one origin, port and all.
+@MainActor
+@Suite(.serialized, .boundedWebViews)
+struct ChromiumPopupAllowlistTests {
+    private static let page = """
+        <!doctype html><title>Opener</title>
+        <script>
+        window.__marker = 'loaded';
+        addEventListener('load', () => setTimeout(() => {
+          document.title = window.open('/still?via=script') ? 'opened' : 'blocked';
+        }, 300));
+        </script>
+        """
+
+    private func title(of tab: BrowserTab) async -> String? {
+        (try? await tab.page.evaluateJavaScript("document.title")) as? String
+    }
+
+    /// The primary patterns of the pop-ups exceptions Chromium keeps for `context`.
+    private func exceptions(in context: BrowserProfileContext) throws -> [String] {
+        try ChromiumRuntime.shared.withContext(for: context) { raw in
+            let preferences = UnsafeMutableRawPointer(raw).assumingMemoryBound(to: cef_preference_manager_t.self)
+            let fetched: UnsafeMutablePointer<cef_value_t>? = ChromiumInterop.withString("profile.content_settings.exceptions.popups") {
+                preferences.pointee.get_preference?(preferences, $0)
+            }
+            guard let value = fetched, let dictionary = value.pointee.get_dictionary?(value), let keys = cef_string_list_alloc() else { return [] }
+            defer { cef_string_list_free(keys) }
+            _ = dictionary.pointee.get_keys?(dictionary, keys)
+            return (0..<cef_string_list_size(keys)).compactMap { index in
+                var key = cef_string_t()
+                defer { ccef_string_clear(&key) }
+                return cef_string_list_value(keys, index, &key) == 0 ? nil : withUnsafePointer(to: &key) { ChromiumInterop.string($0) }
+            }.sorted()
+        }
+    }
+
+    @Test func onlyTheAllowedOriginItselfOpensAPopUpByItself() async throws {
+        let elsewhere = try await HTTPFixtureServer.start(routes: ["/opener": .html(Self.page)])
+        try await LiveWindowRig.with(engine: .chromium, routes: ["/opener": .html(Self.page)]) { rig in
+            let port = try #require(try rig.server.url().port)
+            let another = try #require(try elsewhere.url().port)
+            let allowed = try #require(URL(string: "http://localhost:\(port)/opener"))
+            let subdomain = try #require(URL(string: "http://sub.localhost:\(port)/opener"))
+            let otherPort = try #require(URL(string: "http://localhost:\(another)/opener"))
+            let permissions = rig.browser.sitePermissions
+            for url in [allowed, subdomain, otherPort] {
+                permissions.setEngine(.chromium, for: SitePermissions.origin(for: url))
+            }
+            permissions.setPopups(.allow, for: SitePermissions.origin(for: allowed))
+            var tabs: [BrowserTab] = []
+            for (url, outcome) in [(allowed, "opened"), (subdomain, "blocked"), (otherPort, "blocked")] {
+                let before = rig.browser.tabs.count
+                let tab = rig.browser.newTab(url: url, engine: .chromium)
+                tab.page.ignoresWindowOcclusion = true
+                tabs.append(tab)
+                #expect(await waitUntil(timeout: .seconds(60)) { tab.page.url == url && !tab.page.isLoading }, "\(url) loads")
+                #expect(await waitUntil { await title(of: tab) != "Opener" }, "\(url): the page asked for a pop-up")
+                #expect(await title(of: tab) == outcome, "\(url)")
+                let popups = rig.browser.tabs.filter { $0.urlString.contains("via=script") }
+                #expect(popups.count == (outcome == "opened" ? 1 : 0), "\(url): \(rig.browser.tabs.count - before - 1) tabs besides its own")
+                popups.forEach { rig.browser.close($0) }
+            }
+            #expect(try exceptions(in: rig.browser.context) == ["http://localhost:\(port),*"])
+            withExtendedLifetime(tabs) {}
+        }
+        withExtendedLifetime(elsewhere) {}
+    }
+}
+
 /// Under Allow a Chromium website starts sound by itself, as on WebKit, and is not given the person's activation for it;
 /// under Never sound waits for the person. Chromium applies its allowlist when a navigation finishes, so the page starts its
 /// player once it has loaded. The player's source never arrives, so nothing is heard: a refused start fails at once, an
@@ -341,14 +413,14 @@ struct ChromiumAutoplayAllowlistTests {
             "https://xn--bcher-kva.example": "https://xn--bcher-kva.example:443",
         ]
         for (origin, entry) in kept {
-            #expect(ChromiumRuntime.autoplayPattern(for: origin) == entry, "\(origin)")
+            #expect(ChromiumRuntime.sitePattern(for: origin) == entry, "\(origin)")
         }
         let dropped = [
             "https://*.example.com", "https://*", "https://[*.]example.com", "http://[example.com]", "http://[::1",
             "https://ex%2Aample.com", "https://-example.com", "https://Example.com", "file:///tmp/page.html", "chrome://settings",
         ]
         for origin in dropped {
-            #expect(ChromiumRuntime.autoplayPattern(for: origin) == nil, "\(origin)")
+            #expect(ChromiumRuntime.sitePattern(for: origin) == nil, "\(origin)")
         }
     }
 
