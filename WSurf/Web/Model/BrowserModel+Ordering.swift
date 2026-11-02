@@ -344,7 +344,9 @@ extension BrowserModel {
         let survivor = splits.others(of: tab.id).first.flatMap { tabsByID[$0] }
         splits = splits.removing(tab.id)
         if activeTabID == tab.id {
-            activeTabID = (survivor ?? neighbor(of: tab))?.id
+            // A page a page opened (an SSO pop-up) hands the front back to its opener, not the next tab in the list.
+            let opener = openerByTab[tab.id].flatMap { tabsByID[$0] }.flatMap { isShown($0) && $0.microTabID == nil ? $0 : nil }
+            activeTabID = (survivor ?? opener ?? neighbor(of: tab))?.id
         }
         tabs.removeAll { $0 === tab }
         storedTree = reconciledTree().removing([.tab(tab.id)])

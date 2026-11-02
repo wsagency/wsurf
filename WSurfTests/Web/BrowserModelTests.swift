@@ -370,4 +370,24 @@ struct BrowserModelTests {
             #expect(opened.page.url == nil || opened.page.url == SystemPages.start)
         }
     }
+
+    /// An SSO pop-up closes itself: the tab that opened it comes back to the front, not the tab below the pop-up. Both
+    /// engines close through `BrowserModel.close`, so this covers WebKit and Chromium pop-ups alike.
+    @Test func closingTheFrontPopupReturnsToItsOpener() {
+        let browser = BrowserModel(database: .temporary())
+        let opener = browser.addPage("https://app.example/")
+        let popup = browser.addPage("https://sso.example/")
+        let bystander = browser.addPage("https://other.example/")
+        browser.openerByTab[popup.id] = opener.id
+        browser.tabs = [opener, bystander, popup]
+        browser.activate(popup)
+        browser.closeFromPage(popup)
+        #expect(browser.activeTabID == opener.id)
+
+        // An ordinary tab keeps the old behaviour: the one that was above it.
+        let plain = browser.addPage("https://plain.example/")
+        browser.activate(plain)
+        browser.close(plain)
+        #expect(browser.activeTabID == bystander.id)
+    }
 }
