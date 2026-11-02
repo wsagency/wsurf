@@ -26,6 +26,9 @@
     "assistant asks first" : {
       "comment" : "Fragment in the one-line summary under a website, meaning its Assistant Access is set to Ask even if the default would allow more. Lower case: joined with other fragments by a separator, never shown alone."
     },
+    "Can’t sign in here: a passkey works only for the website it was made for." : {
+      "comment" : "Last line of the Find results on the sheet “Sign in to %@ with a passkey?”, under stored passkeys of other websites. Sentence case."
+    },
     "Default (%@)" : {
       "comment" : "Menu item in a website’s Assistant Access choices that removes the website’s own setting so it follows the Website access default. %@ names that default, for example Allow Control, written as the menu spells it."
     },
@@ -38,11 +41,17 @@
     "A website’s own Assistant Access setting wins over this default. Private windows always ask." : {
       "comment" : "Note under the Acting on websites section in Settings. Assistant Access is the name of the per-website setting in the site menu and on a website’s settings page; this default is the Website access row above."
     },
+    "Find a passkey…" : {
+      "comment" : "Placeholder of the search field on the sheet “Sign in to %@ with a passkey?”. It searches the other passkeys stored in the vault."
+    },
     "Follow Website access" : {
       "comment" : "Row on the Connected apps page. Its switch lets paired apps open and use new websites under the Website access default, as the assistant does. Sentence case. Website access is the name of the row in Acting on websites."
     },
     "%@ — Private Browsing" : {
 
+    },
+    "No other passkey matches." : {
+      "comment" : "Result of the search field on the sheet “Sign in to %@ with a passkey?” when nothing was found. Sentence case."
     },
     "The assistant wants to click “%@” %@. This %@." : {
       "localizations" : {
@@ -498,6 +507,9 @@
     },
     "Load Tab" : {
       "comment" : "Sidebar Play-button action that reloads an unloaded tab without changing its saved link, pin, or folder."
+    },
+    "Touch the sensor to sign in, or click Use Passkey to verify another way." : {
+      "comment" : "Last line of the sheet “Sign in to %@ with a passkey?” on a Mac with Touch ID. “Use Passkey” is the title of the sheet’s default button; keep it the same."
     },
     "Unload Tab" : {
       "comment" : "Releases a tab's web content without removing its sidebar link or pin. Menu command and tooltip for sidebar minus/X controls, and the File menu item (⌘W) while the tab is pinned."

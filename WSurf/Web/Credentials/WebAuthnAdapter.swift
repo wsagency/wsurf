@@ -341,8 +341,8 @@ enum WebAuthnAdapter {
             }
         }
         // A conditional request is only a registered discovery: nothing is unlocked, asked or signed until the user picks
-        // "Use a Passkey…" in the fill dropdown of a webauthn field (`startConditionalRequest`) and then explicitly accepts
-        // the native offer that precedes any unlock. A click or a key in the field never starts it. It is pending in exactly
+        // "Use a Passkey…" in the fill dropdown of a webauthn field (`startConditionalRequest`).
+        // A click or a key in the field never starts it. It is pending in exactly
         // the same way whether or not the profile has a vault or a passkey for the site, so a page can learn neither.
         if parsed.mediation != .conditional {
             start(entry)

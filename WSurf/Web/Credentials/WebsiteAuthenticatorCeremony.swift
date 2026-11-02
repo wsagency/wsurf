@@ -54,7 +54,7 @@ extension WebsiteAuthenticator {
     /// `interaction` is the only seam: production always passes `NativeWebAuthnInteraction`; tests pass a scripted
     /// user so cancellation, expiry and verification outcomes are reachable without a window or biometrics. A scripted
     /// user is not evidence of native presence or verification. `conditional` marks a request started from the fill
-    /// dropdown's "Use a Passkey…" row: an explicit native offer precedes any unlock, verification or signing.
+    /// dropdown's "Use a Passkey…" row: only that native row starts one, so it is the user's own request and needs no offer.
     @MainActor
     static func perform(
         _ request: WebAuthnRequest,
@@ -304,7 +304,8 @@ extension WebsiteAuthenticator {
                 choices: candidates.map(\.choice),
                 offersNewAccount: false,
                 userVerification: options.userVerification,
-                willVerifyUser: willVerify
+                willVerifyUser: willVerify,
+                otherPasskeys: otherPasskeys(listed.accounts, excluding: candidates)
             ),
             in: anchor,
             until: request.deadline
@@ -318,10 +319,17 @@ extension WebsiteAuthenticator {
             throw WebsiteAuthenticatorError.notAllowed
         }
         try await revalidate(request, context: context, manager: manager, bound: bound)
-        let verified = try await verify(
-            willVerify, interaction: interaction, request: request, context: context, manager: manager, bound: bound,
-            reason: String(localized: "Sign in to \(bound.rpID) with a passkey")
-        )
+        // The sensor on the sheet is this ceremony's one verification, fresh as `verify`'s and read as the same UV flag.
+        var verified = false
+        if case .verified = decision {
+            verified = willVerify
+        }
+        if !verified {
+            verified = try await verify(
+                willVerify, interaction: interaction, request: request, context: context, manager: manager, bound: bound,
+                reason: String(localized: "Sign in to \(bound.rpID) with a passkey")
+            )
+        }
 
         let current = try await snapshot(manager, bound: bound)
         guard let account = current.accounts.first(where: { $0.id == pick.accountID }),
@@ -407,8 +415,8 @@ extension WebsiteAuthenticator {
 
     /// Verifies the request/context/manager triple and returns the access epoch every later step is held to.
     /// A locked vault is unlocked here only after the user accepted an origin-bearing native offer for this very
-    /// request, so the system unlock sheet is never the first thing a page can show. A conditional request always gets
-    /// that offer (a page click is not an account choice).
+    /// request, so the system unlock sheet is never the first thing a page can show. A conditional request needs no offer:
+    /// the user started it in a native row no page can reach. An unlocked vault asks nothing here: the lease in force is enough.
     @MainActor
     private static func open(
         _ request: WebAuthnRequest,
@@ -434,20 +442,15 @@ extension WebsiteAuthenticator {
         try await context.validate()
         try validateDeadline(request)
 
-        let lockedAtOffer = manager.authorizationEpoch == nil
-        if conditional || lockedAtOffer {
+        if !conditional, manager.authorizationEpoch == nil {
             let offer = await interaction.offerStart(
                 operation: context.operation == .create ? .create : .get,
-                origin: context.origin, locked: lockedAtOffer, in: anchor, until: request.deadline
+                origin: context.origin, locked: true, in: anchor, until: request.deadline
             )
             _ = try approval(offer, rpID: resolved, context: context)
             try Task.checkCancellation()
             try await context.validate()
             try validateDeadline(request)
-            // An offer made for an unlocked vault is not consent to unlock one that locked meanwhile.
-            if !lockedAtOffer, manager.authorizationEpoch == nil {
-                throw WebsiteAuthenticatorError.notAllowed
-            }
         }
 
         if manager.authorizationEpoch == nil {
@@ -564,7 +567,7 @@ extension WebsiteAuthenticator {
     @MainActor
     private static func approval(_ decision: WebAuthnDecision, rpID: String, context: WebAuthnContext) throws -> UUID? {
         switch decision {
-        case let .approved(choice):
+        case let .approved(choice), let .verified(choice):
             return choice
         case .declined:
             WebAuthnRefusal.note("user-declined", rpID: rpID, profileID: context.profileID)
@@ -638,6 +641,17 @@ extension WebsiteAuthenticator {
             return (passkey.id, label(account), detail)
         })
         return zip(found, choices).map { AssertionCandidate(accountID: $0.0.id, passkey: $0.1, choice: $1) }
+    }
+
+    /// Every other passkey in the vault, for Find to name. Nothing here can be picked: `getCredential` signs only with an
+    /// `assertionCandidates` entry, and a website refuses a signature made for another relying party anyway.
+    static func otherPasskeys(_ accounts: [CredentialAccount], excluding candidates: [AssertionCandidate]) -> [WebAuthnPromptOther] {
+        let usable = Set(candidates.map(\.passkey.id))
+        return accounts.flatMap { account in
+            account.passkeys.filter { !usable.contains($0.id) }.map {
+                WebAuthnPromptOther(title: label(account), userName: $0.userName.displaySafe, rpID: $0.rpID.displaySafe)
+            }
+        }
     }
 
     private static func label(_ account: CredentialAccount) -> String {
