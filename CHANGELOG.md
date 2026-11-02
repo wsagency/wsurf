@@ -5,14 +5,19 @@ This file preserves release notes inherited from the upstream
 describe upstream Linen releases, not releases published by WSurf. New WSurf
 release notes will be added above this provenance record.
 
-## 0.1.19 (build 19) — 2026-11-02
+## 0.1.20 (build 20) — 2026-11-02
 
 Everything since 0.1.18 (build 18). None of the screens and prompts below has been checked by hand.
 
 ### Credentials
 
+- Signing in with a passkey now asks once: one sheet names the passkey, Touch ID on the sheet confirms it, Change picks another passkey and Find shows why another stored passkey can’t be used on this website. Credential Manager is unlocked first only if it is locked.
 - Password suggestions now list the login you last used on a website first, followed by every other login saved for that website.
 - On a verification code field, WSurf can now fill a code that arrived in Messages or Mail: choose Code from Messages or Mail… and pick the code macOS suggests.
+
+### Tabs
+
+- After signing in through a pop-up, such as a single sign-on window, WSurf returns to the tab that opened it, also when the pop-up was in its own window. Closing a tab opened from a link now returns to its parent tab.
 
 ### Chromium tabs
 
