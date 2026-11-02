@@ -145,6 +145,8 @@ final class MainMenu: NSObject, NSMenuItemValidation {
             key: "w",
             modifiers: [.command, .shift]
         ))
+        menu.addItem(.separator())
+        menu.addItem(command("Save Page As…", #selector(savePage), key: "s"))
         menu.addItem(command("Print…", #selector(printPage), key: "p"))
         return menu
     }
@@ -536,6 +538,10 @@ final class MainMenu: NSObject, NSMenuItemValidation {
         coordinator.printActivePage()
     }
 
+    @objc private func savePage() {
+        coordinator.pageCommandTab?.savePage()
+    }
+
     @objc private func actualSize() {
         coordinator.pageCommandTab?.resetZoom()
     }
@@ -606,7 +612,7 @@ final class MainMenu: NSObject, NSMenuItemValidation {
         case #selector(reload), #selector(hardReload):
             return coordinator.pageCommandTab?.canReload ?? false
         case #selector(zoomIn), #selector(zoomOut), #selector(openFind), #selector(findNext),
-             #selector(findPrevious), #selector(printPage):
+             #selector(findPrevious), #selector(printPage), #selector(savePage):
             return coordinator.pageCommandTab != nil
         case #selector(showWebInspector), #selector(toggleDevMode(_:)):
             return validateDeveloperItem(menuItem)

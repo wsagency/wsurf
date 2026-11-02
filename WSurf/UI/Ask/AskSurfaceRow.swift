@@ -130,6 +130,7 @@ struct AskSurfaceRow: View {
                     }
                     ReaderBadge(coordinator: model.coordinator)
                     TranslationBadge(browser: model.browser, coordinator: model.coordinator)
+                    PDFDownloadBadge(browser: model.browser)
                     PinBadge(browser: model.browser)
                         .frame(width: placement.iconSlot)
                     MicroWindowBadge(browser: model.browser, coordinator: model.coordinator)

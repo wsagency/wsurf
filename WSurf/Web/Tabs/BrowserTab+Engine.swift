@@ -40,10 +40,14 @@ extension BrowserTab {
                 tabView.onSummarizeLink = nil
                 tabView.canPickCredential = nil
                 tabView.onPickCredential = nil
+                tabView.showsPDF = nil
+                tabView.onSavePDF = nil
             }
         }
         outgoing.chromium?.canPickCredential = nil
         outgoing.chromium?.onPickCredential = nil
+        outgoing.chromium?.showsPDF = nil
+        outgoing.chromium?.onSavePDF = nil
         outgoing.removeFromSuperview()
         progressObservation = nil
         loadingObservation = nil

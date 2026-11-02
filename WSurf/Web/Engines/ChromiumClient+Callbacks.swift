@@ -144,7 +144,9 @@ extension ChromiumClient {
             totalBytes: item.pointee.get_total_bytes?(item) ?? 0,
             isComplete: item.pointee.is_complete?(item) != 0,
             isCanceled: item.pointee.is_canceled?(item) != 0 || item.pointee.is_interrupted?(item) != 0,
-            fullPath: path.isEmpty ? nil : URL(fileURLWithPath: path)
+            fullPath: path.isEmpty ? nil : URL(fileURLWithPath: path),
+            originalURL: URL(string: ChromiumInterop.takeString(item.pointee.get_original_url?(item))),
+            mimeType: Optional(ChromiumInterop.takeString(item.pointee.get_mime_type?(item))).flatMap { $0.isEmpty ? nil : $0 }
         )
     }
 
@@ -626,6 +628,7 @@ extension ChromiumClient {
                 }
                 let link = URL(string: ChromiumInterop.takeString(params.pointee.get_link_url?(params)))
                 MainActor.assumeIsolated {
+                    client.offerPDFItems(in: model)
                     client.offerLinkItems(in: model, link: link, frameURL: clicked?.url)
                     client.offerCredentialPicker(in: model, editable: editable, frame: clicked)
                 }
@@ -649,7 +652,9 @@ extension ChromiumClient {
             ChromiumClient.release(params.map(UnsafeMutableRawPointer.init))
             guard let client = ChromiumClient.owner(handlerSelf.map(UnsafeMutableRawPointer.init)) else { return 0 }
             return MainActor.assumeIsolated {
-                command == ChromiumClient.pickCredentialCommand ? client.runCredentialPicker() : client.openContextLink(command)
+                command == ChromiumClient.pickCredentialCommand
+                    ? client.runCredentialPicker()
+                    : client.openContextLink(command) || client.runPDFCommand(command)
             } ? 1 : 0
         }
         handler.pointee.on_context_menu_dismissed = { _, browser, frame in
@@ -671,6 +676,36 @@ extension ChromiumClient {
             (pickCredentialCommand + 3, .privateWindow, "Open Link in New Private Window"),
         ]
         return all.filter { $0.opening != .window || !isPrivate }
+    }
+
+    /// The PDF commands, the ids after the Open Link ones.
+    nonisolated static let downloadPDFCommand = pickCredentialCommand + 4
+    nonisolated static let openPDFCommand = pickCredentialCommand + 5
+
+    /// The engine's own menu has no Save for a PDF viewer's page, so a tab that shows a PDF gets Download PDF, which saves the PDF
+    /// as a download, and Open in Preview, which saves it and opens the copy (`BrowserTab.savePDF`).
+    func offerPDFItems(in model: UnsafeMutablePointer<cef_menu_model_t>) {
+        guard let page, page.showsPDF?() == true else { return }
+        let items = [
+            (Self.downloadPDFCommand, String(localized: "Download PDF")),
+            (Self.openPDFCommand, String(localized: "Open in Preview")),
+        ]
+        var index = 0
+        for (command, title) in items {
+            let added = ChromiumInterop.withString(title) { model.pointee.insert_item_at?(model, index, command, $0) }
+            if added == 1 {
+                index += 1
+            }
+        }
+        guard index > 0 else { return }
+        _ = model.pointee.insert_separator_at?(model, index)
+    }
+
+    /// Runs a PDF command of the menu that is open, if `command` is one.
+    func runPDFCommand(_ command: Int32) -> Bool {
+        guard command == Self.downloadPDFCommand || command == Self.openPDFCommand, let save = page?.onSavePDF else { return false }
+        save(command == Self.openPDFCommand)
+        return true
     }
 
     /// The engine's own menu has no item for a link (Back, Forward, Print, View Page Source), so a right-click on one gets what a

@@ -14,6 +14,8 @@ struct DownloadWorkspace {
     var open: (_ file: URL, _ application: URL) -> Void
     /// WSurf's own bundle. "Open in WSurf" is the way into WSurf, so it is left out of Open With.
     var ownApplication = Bundle.main.bundleURL
+    /// Preview, found by its bundle identifier, never the app registered for the file.
+    var urlForPreview: () -> URL? = { NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.Preview") }
 
     static let system = DownloadWorkspace(
         urlsForApplications: { NSWorkspace.shared.urlsForApplications(toOpen: $0) },
@@ -99,5 +101,24 @@ extension BrowserModel {
     func openDownloadInTab(_ item: DownloadManager.Item) -> BrowserTab? {
         guard let file = item.browserFile else { return nil }
         return newTab(url: file, transition: .link)
+    }
+}
+
+extension DownloadManager {
+    /// Opens a saved PDF in Preview itself, and opens nothing else: a file whose name does not end in `.pdf`, whose type is
+    /// known and is not `application/pdf`, or whose first bytes are not a PDF header stays in Downloads, unopened, as does any file
+    /// when Preview cannot be found. The file keeps the quarantine flag it was saved with.
+    func openInPreview(_ file: URL, mimeType: String?) {
+        guard Self.isPDF(file, mimeType: mimeType), let preview = workspace.urlForPreview() else { return }
+        workspace.open(file, preview)
+    }
+
+    static func isPDF(_ file: URL, mimeType: String?) -> Bool {
+        guard file.pathExtension.lowercased() == "pdf" else { return false }
+        if let mimeType, !mimeType.isEmpty, mimeType.lowercased() != "application/pdf" { return false }
+        guard let handle = try? FileHandle(forReadingFrom: file) else { return false }
+        defer { try? handle.close() }
+        let head = (try? handle.read(upToCount: 1024)) ?? Data()
+        return head.range(of: Data("%PDF-".utf8)) != nil
     }
 }

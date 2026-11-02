@@ -23,6 +23,8 @@ struct ChromiumDownloadRequest {
     let isPrivate: Bool
     let window: NSWindow?
     let controls: ChromiumDownloadControls
+    /// Open the file in its app once it is saved (Open in Preview on a PDF).
+    var opensWhenFinished = false
 }
 
 @Observable
@@ -96,6 +98,9 @@ final class DownloadManager: NSObject {
     @ObservationIgnored private var resumeData: [UUID: Data] = [:]
     @ObservationIgnored private var resuming: Set<UUID> = []
     @ObservationIgnored private var explicitSaves: Set<UUID> = []
+    @ObservationIgnored private var opensWhenFinished: Set<UUID> = []
+    /// What opening a saved file asks of the system. A test stands in for `NSWorkspace`.
+    @ObservationIgnored var workspace = DownloadWorkspace.system
     @ObservationIgnored private var writingDestinations: Set<URL> = []
 
     @ObservationIgnored var webViewProvider: (() -> WKWebView?)?
@@ -290,6 +295,9 @@ final class DownloadManager: NSObject {
             privately: request.isPrivate
         )
         chromiumIDs[request.download.id] = id
+        if request.opensWhenFinished {
+            opensWhenFinished.insert(id)
+        }
         chromiumControls[request.download.id] = request.controls
         if request.controls.isLive() {
             retiredChromiumPages.remove(request.controls.pageID)
@@ -350,6 +358,9 @@ final class DownloadManager: NSObject {
             }
             if let destination {
                 Self.quarantine(destination, from: origins[id])
+                if opensWhenFinished.contains(id) {
+                    openInPreview(destination, mimeType: download.mimeType)
+                }
             }
             finish(id)
             onFinished?(filename)
@@ -640,6 +651,7 @@ final class DownloadManager: NSObject {
         nativeIDs.forEach { chromiumControls.removeValue(forKey: $0) }
         chromiumIDs = chromiumIDs.filter { $0.value != id }
         chromiumPaused.remove(id)
+        opensWhenFinished.remove(id)
         observations.removeValue(forKey: id)?.invalidate()
         progressWindows.removeValue(forKey: id)?.timer.cancel()
         guard !keepingResumeState else { return }
