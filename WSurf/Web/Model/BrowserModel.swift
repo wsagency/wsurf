@@ -120,6 +120,8 @@ final class BrowserModel {
     var onTabOpened: ((BrowserTab) -> Void)?
     var onNavigationStarted: ((BrowserTab, URL) -> Void)?
     var onTabClosed: ((BrowserTab) -> Void)?
+    /// A front pop-up closed whose opener lives in another window: that model's window must come forward.
+    var onShowWindow: ((BrowserModel) -> Void)?
     var onTabWillTransferOut: ((BrowserTab) -> Void)?
     var onTabTransferredOut: ((BrowserTab, Int) -> Void)?
     var onTabTransferredIn: ((BrowserTab, BrowserModel, Int) -> Void)?
@@ -323,6 +325,8 @@ final class BrowserModel {
     /// page returns. A tab a person, an extension or an agent opened is absent, so an agent is told only about tabs its own
     /// page opened.
     var openerByTab: [UUID: UUID] = [:]
+    /// The same, for a tab that moved to another window (a pop-up shown in a micro window): the opener's model and tab.
+    var openerElsewhere: [UUID: (model: WeakBrowserModel, tab: UUID)] = [:]
 
     /// A peek is not one of the window's tabs: it is on screen while its panel is.
     private func bindOnScreen(to tab: BrowserTab) {
@@ -670,4 +674,8 @@ final class BrowserModel {
 
     /// Set once by `BrowserApplication.newWindow` before the window's coordinator exists, and never changed afterwards.
     @ObservationIgnored var windowKind: WindowKind = .standard
+}
+
+struct WeakBrowserModel {
+    weak var model: BrowserModel?
 }
