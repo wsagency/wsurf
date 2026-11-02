@@ -5,6 +5,39 @@ This file preserves release notes inherited from the upstream
 describe upstream Linen releases, not releases published by WSurf. New WSurf
 release notes will be added above this provenance record.
 
+## 0.1.19 (build 19) — 2026-11-02
+
+Everything since 0.1.18 (build 18). None of the screens and prompts below has been checked by hand.
+
+### Credentials
+
+- Password suggestions now list the login you last used on a website first, followed by every other login saved for that website.
+- On a verification code field, WSurf can now fill a code that arrived in Messages or Mail: choose Code from Messages or Mail… and pick the code macOS suggests.
+
+### Chromium tabs
+
+- In Chromium tabs, a site you allowed to open pop-ups can open them again without a click, as in WebKit tabs.
+- In Chromium tabs, sign-in forms that a website builds in a frame of its own, such as the Apple Developer sign-in, now get WSurf’s password autofill, Pick Credential…, save offers, Input History and autoplay settings.
+
+### PDFs
+
+- Right-clicking a PDF now offers Download PDF in both engines (and Open in Preview in Chromium), File › Save Page As… (⌘S) saves the PDF itself, and a Download PDF button appears in the address bar while a PDF is open.
+- Fixed a crash that showed a sad face instead of any PDF opened in a Chromium tab, present since 0.1.14.
+
+### Known issues
+
+- One- and two-letter address-bar queries search only the newest 3,000 pages; three letters and the History page search everything.
+- Chromium tabs open ⌘-click and middle-click tabs in front.
+- Removing one website in Website data removes the cookies that exact host set; a cookie a website set for its whole domain (from www.example.com for example.com) stays until you clear everything. This was true before, but Chromium’s cookies now stay across a quit.
+- Clear Browsing Data does not reach Chromium’s own small records of the sites you visited (the sites it must open over HTTPS, its site-engagement scores); they go when you delete the profile.
+- WebKit tabs that both use the camera or microphone still take it from each other: showing another tab that uses them mutes the first for good, and WSurf has no button to resume it.
+- Taking back camera or microphone access from a Chromium tab that is using it stops the devices by closing and reopening the page, and shows “Could not change website device access”.
+- Back after an engine switch goes back one step only: Forward does not return to the other engine, and a Chromium page comes back by its address, not with its history.
+- Passkeys from Apple Passwords, from phones and from security keys do not work in either engine until Apple grants WSurf the browser passkey entitlement; the sheet above is all a website gets.
+- A script that must run before a page’s own code (the passkey script, the notification and location stand-ins, the development diagnostics hook) can run late on the first page of a Chromium pop-up, so that page may have done its first work before it.
+- A page in a background tab runs its timers more slowly after 10 seconds, so a page that counts, polls or refreshes itself from a timer can fall behind until you show it. Set the website to Keep this website loaded to leave it as it was.
+- The known issues of 0.1.14 are unchanged.
+
 ## 0.1.18 (build 18) — 2026-10-29
 
 Everything since 0.1.17 (build 17). None of the screens and prompts below has been checked by hand.
