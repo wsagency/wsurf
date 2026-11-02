@@ -115,7 +115,7 @@ nonisolated extension WebAuthnWire {
         }
         return Parsed(
             id: id, operation: operation, mediation: mediation,
-            request: WebAuthnRequest(requestID: UUID(), options: parsed, deadline: deadline)
+            request: WebAuthnRequest(requestID: UUID(), options: parsed, deadline: deadline, userActivated: body["userActivated"] as? Bool == true)
         )
     }
 

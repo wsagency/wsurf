@@ -15,6 +15,8 @@ import WSurfVault
 enum WebAuthnRefusal {
     /// Tests read the case names noted for their own profile (keyed like `WebAuthnAdapter.interactionForTesting`).
     static var recordedForTesting: [UUID: [String]] = [:]
+    /// Tests read what each `get` of their own profile reported as its transient user activation.
+    static var activationsForTesting: [UUID: [Bool]] = [:]
 
     /// A refusal: `name` is the case. `counts` describe the vault or request (private in release); `info` is a non-personal
     /// reason or request flag (public).
@@ -327,8 +329,10 @@ enum WebAuthnAdapter {
                 "request get", rpID: WebAuthnRefusal.validatedRPID(parsed.request.options, frame: frame),
                 counts: "allowCredentials=\(options.allowCredentials.count)",
                 info: "appid=\(options.appID != nil) discoverable=\(options.allowCredentials.isEmpty) "
-                    + "userVerification=\(options.userVerification.rawValue) mediation=\(parsed.mediation.rawValue)"
+                    + "userVerification=\(options.userVerification.rawValue) mediation=\(parsed.mediation.rawValue) "
+                    + "activated=\(parsed.request.userActivated)"
             )
+            WebAuthnRefusal.activationsForTesting[page.profileID]?.append(parsed.request.userActivated)
         }
         let entry = Entry(key: key, page: page, frame: frame, parsed: parsed)
         entries[key] = entry
@@ -575,8 +579,9 @@ enum WebAuthnAdapter {
         }
         let chosen: CredentialManager?
         if case .needsUnlock(let only) = route {
-            // One vault, locked: nothing to choose. The ceremony's own origin-bearing offer comes before its unlock, so no
-            // nameless sheet is the first thing a page can show.
+            // One vault, locked: nothing to choose. For a modal request the ceremony's own origin-bearing offer comes before its
+            // unlock. A conditional one has no offer: the first sheet is the system's, which names no site, after the user's
+            // pick of the "Use a Passkey…" row, which ignores input until it has been up long enough to be read.
             chosen = try? CredentialManager.forVault(profile, vaultID: only.vaultID)
         } else {
             chosen = await route.resolve(profile: profile, in: anchor)

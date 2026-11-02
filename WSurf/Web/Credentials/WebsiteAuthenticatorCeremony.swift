@@ -305,7 +305,8 @@ extension WebsiteAuthenticator {
                 offersNewAccount: false,
                 userVerification: options.userVerification,
                 willVerifyUser: willVerify,
-                otherPasskeys: otherPasskeys(listed.accounts, excluding: candidates)
+                otherPasskeys: otherPasskeys(listed.accounts, excluding: candidates),
+                sensor: !conditional && !request.userActivated ? .off : bound.unlockedJustNow ? .afterUnlock : .now
             ),
             in: anchor,
             until: request.deadline
@@ -404,6 +405,7 @@ extension WebsiteAuthenticator {
         let client: WebAuthnClientData
         let rpID: String
         let epoch: UInt64
+        let unlockedJustNow: Bool
     }
 
     /// A vault read together with the content generation it was read under.
@@ -416,7 +418,8 @@ extension WebsiteAuthenticator {
     /// Verifies the request/context/manager triple and returns the access epoch every later step is held to.
     /// A locked vault is unlocked here only after the user accepted an origin-bearing native offer for this very
     /// request, so the system unlock sheet is never the first thing a page can show. A conditional request needs no offer:
-    /// the user started it in a native row no page can reach. An unlocked vault asks nothing here: the lease in force is enough.
+    /// the user started it in a native row (a page can put that row under the pointer, which is why it arms late, but not press
+    /// it). An unlocked vault asks nothing here: the lease in force is enough.
     @MainActor
     private static func open(
         _ request: WebAuthnRequest,
@@ -453,7 +456,8 @@ extension WebsiteAuthenticator {
             try validateDeadline(request)
         }
 
-        if manager.authorizationEpoch == nil {
+        let unlockedJustNow = manager.authorizationEpoch == nil
+        if unlockedJustNow {
             // Our offer sheet and the system's unlock sheet never share the window: each is still closing for a moment after
             // its answer arrives (the next step would be refused, or the system sheet put behind ours).
             try await requireFreeWindow(anchor, rpID: resolved, context: context, "before unlock")
@@ -472,7 +476,7 @@ extension WebsiteAuthenticator {
             try validateDeadline(request)
         }
         guard let epoch = manager.authorizationEpoch else { throw WebsiteAuthenticatorError.notAllowed }
-        return Bound(client: client, rpID: resolved, epoch: epoch)
+        return Bound(client: client, rpID: resolved, epoch: epoch, unlockedJustNow: unlockedJustNow)
     }
 
     /// Waits (bounded) for a sheet still closing on `anchor`; one that stays up is a logged refusal, never a queue behind it.

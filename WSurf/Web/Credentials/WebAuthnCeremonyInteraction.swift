@@ -23,6 +23,9 @@ nonisolated struct WebAuthnPromptOther: Sendable, Equatable {
 
 nonisolated struct WebAuthnPrompt: Sendable, Equatable {
     enum Operation: Sendable { case create, get }
+    /// Whether a touch alone may answer the sheet: only for a request the user visibly started (a click in the page, the native
+    /// row). Otherwise the sheet takes a click, then the system's verification. After an unlock it arms late (a finger still resting).
+    enum Sensor: Sendable { case off, now, afterUnlock }
 
     let operation: Operation
     /// The native, verified origin of the document (never page-supplied text).
@@ -38,6 +41,7 @@ nonisolated struct WebAuthnPrompt: Sendable, Equatable {
     let willVerifyUser: Bool
     /// Assertion only: the vault's other passkeys, for Find. Never sent to the page.
     var otherPasskeys: [WebAuthnPromptOther] = []
+    var sensor = Sensor.off
 }
 
 nonisolated enum WebAuthnDecision: Sendable, Equatable {
@@ -86,7 +90,7 @@ struct NativeWebAuthnInteraction: WebAuthnCeremonyInteraction {
         alert.messageText = Self.title(for: prompt)
         // One verification, on this screen, when the Mac has a sensor; otherwise (or after a failed try) the button and `verifyUser`.
         let popup = Self.makeChooser(for: prompt)
-        let touch = prompt.operation == .get && !nothing && prompt.willVerifyUser ? PasskeySheetTouch(
+        let touch = prompt.sensor != .off && !nothing && prompt.willVerifyUser ? PasskeySheetTouch(
             chooser: popup, reason: String(localized: "Sign in to \(prompt.rpID) with a passkey")
         ) : nil
         let find = PasskeyFindField(prompt.otherPasskeys)
@@ -104,7 +108,7 @@ struct NativeWebAuthnInteraction: WebAuthnCeremonyInteraction {
         alert.accessoryView = Self.accessory([popup, touch?.view, find?.view].compactMap(\.self))
 
         // Runs once `present` has put the sheet up: the sensor view must be on screen before the context is evaluated.
-        Task { touch?.begin(sheet: alert.window, on: anchor) }
+        Task { await touch?.begin(sheet: alert.window, on: anchor, after: prompt.sensor == .afterUnlock ? PasskeySheetTouch.afterUnlockDelay : .zero) }
         let shown = await NativeSheet.present(alert, in: anchor, until: deadline)
         touch?.end()
         withExtendedLifetime(find) {}

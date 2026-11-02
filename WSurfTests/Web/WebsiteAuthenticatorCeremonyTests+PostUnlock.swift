@@ -3,6 +3,7 @@
 
 import AppKit
 import Foundation
+import LocalAuthentication
 import Testing
 import WSurfVault
 
@@ -121,8 +122,11 @@ extension WebsiteAuthenticatorCeremonyTests {
             let epoch = fixture.manager.authorizationEpoch
             let user = User()
             user.respond = { prompt in .approved(choice: prompt.choices.first?.id) }
-            let outcome = try await get(fixture, user, request: assertion(userVerification: .required), conditional: conditional)
+            var request = assertion(userVerification: .required)
+            request.userActivated = !conditional
+            let outcome = try await get(fixture, user, request: request, conditional: conditional)
             #expect(try flags(outcome) & 0x04 != 0)
+            #expect(user.prompts.first?.sensor == (locked ? .afterUnlock : .now), "a touch on the sheet answers it, late after an unlock")
             #expect(user.offers == (locked && !conditional ? [true] : []))
             #expect(fixture.passkeys.assertions.count == (locked ? 1 : 0))
             #expect(user.prompts.count == 1 && user.verifications == 1)
@@ -148,6 +152,119 @@ extension WebsiteAuthenticatorCeremonyTests {
             let unverified = try await get(fixture, plain, request: assertion(challenge: "d", userVerification: .discouraged))
             #expect(try flags(unverified) & 0x04 == 0)
         }
+    }
+
+    /// A page acting by itself never gets a touch-only answer, whatever it writes in its message: click, then the system.
+    @Test(.boundedWebViews) func aRequestNoPersonStartedKeepsTheSensorOff() async throws {
+        try await withFixture { fixture in
+            try await seed(fixture, 1)
+            let user = User()
+            user.respond = { prompt in .approved(choice: prompt.choices.first?.id) }
+            _ = try await get(fixture, user, request: assertion(userVerification: .required))
+            #expect(user.prompts.first?.sensor == .off && user.verifications == 1)
+            let body: [String: Any] = ["id": "1", "operation": "get", "options": ["challenge": "AAAA"], "userActivated": "true"]
+            #expect(try WebAuthnWire.parse(body).request.userActivated == false, "only the relay's own true counts")
+            #expect(WebAuthnScript.relay(nativeNonce: true).contains("body.userActivated = navigator.userActivation?.isActive === true"))
+        }
+    }
+
+    nonisolated final class FakeSensor: LAContext, @unchecked Sendable {
+        var evaluations = 0
+        var invalidations = 0
+        private var pending: (@Sendable (Bool, (any Error)?) -> Void)?
+
+        override func canEvaluatePolicy(_ policy: LAPolicy, error: NSErrorPointer) -> Bool {
+            true
+        }
+
+        override func evaluatePolicy(_ policy: LAPolicy, localizedReason: String, reply: @escaping @Sendable (Bool, (any Error)?) -> Void) {
+            evaluations += 1
+            pending = reply
+        }
+
+        override func invalidate() {
+            invalidations += 1
+            pending?(false, LAError(.appCancel))
+            pending = nil
+        }
+    }
+
+    final class KeyWindow: NSWindow {
+        var isKey = true
+        override var isKeyWindow: Bool {
+            isKey
+        }
+    }
+
+    /// The sensor listens only while the user is at this sheet, and at one sheet at most.
+    @Test func theSensorListensOnlyAtTheSheetTheUserIsAt() async throws {
+        func touch(_ sensor: FakeSensor, active: Bool = true) throws -> PasskeySheetTouch {
+            try #require(PasskeySheetTouch(chooser: nil, reason: "r", context: sensor, appIsActive: { active }))
+        }
+        let (sheet, anchor) = (KeyWindow(), KeyWindow())
+
+        let inactive = FakeSensor()
+        try await touch(inactive, active: false).begin(sheet: sheet, on: anchor, after: .zero)
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(inactive.evaluations == 0, "not in a background app")
+
+        let (notKey, background) = (FakeSensor(), KeyWindow())
+        background.isKey = false
+        let unfocused = KeyWindow()
+        unfocused.isKey = false
+        try await touch(notKey).begin(sheet: unfocused, on: background, after: .zero)
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(notKey.evaluations == 0, "not on a window that is not key")
+
+        let (first, second) = (FakeSensor(), FakeSensor())
+        let listening = try touch(first), waiting = try touch(second)
+        await listening.begin(sheet: sheet, on: anchor, after: .zero)
+        await waiting.begin(sheet: KeyWindow(), on: KeyWindow(), after: .zero)
+        #expect(await waitUntil { first.evaluations == 1 })
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(second.evaluations == 0, "one sheet at a time")
+        waiting.end()
+
+        NotificationCenter.default.post(name: NSWindow.didBecomeKeyNotification, object: sheet)
+        #expect(first.invalidations == 0, "the sheet taking the key is the sheet working")
+        NotificationCenter.default.post(name: NSWindow.didBecomeKeyNotification, object: KeyWindow())
+        #expect(first.invalidations == 1, "another window took the key")
+
+        for name in [NSApplication.didResignActiveNotification, NSWindow.didResignKeyNotification] {
+            let sensor = FakeSensor()
+            let armed = try touch(sensor)
+            await armed.begin(sheet: sheet, on: anchor, after: .zero)
+            #expect(await waitUntil { sensor.evaluations == 1 })
+            NotificationCenter.default.post(name: name, object: name == NSWindow.didResignKeyNotification ? sheet : nil)
+            #expect(sensor.invalidations == 1, "\(name)")
+        }
+    }
+
+    /// A finger still resting after the unlock answers nothing; a sheet that ends first never listens.
+    @Test func afterAnUnlockTheSensorWaits() async throws {
+        let (sensor, ended) = (FakeSensor(), FakeSensor())
+        let (sheet, anchor) = (KeyWindow(), KeyWindow())
+        let late = try #require(PasskeySheetTouch(chooser: nil, reason: "r", context: sensor, appIsActive: { true }))
+        let waiting = Task { await late.begin(sheet: sheet, on: anchor, after: .milliseconds(300)) }
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(sensor.evaluations == 0)
+        await waiting.value
+        #expect(await waitUntil { sensor.evaluations == 1 })
+        late.end()
+
+        let gone = try #require(PasskeySheetTouch(chooser: nil, reason: "r", context: ended, appIsActive: { true }))
+        let cut = Task { await gone.begin(sheet: sheet, on: anchor, after: .milliseconds(100)) }
+        gone.end()
+        await cut.value
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(ended.evaluations == 0)
+        #expect(PasskeySheetTouch.afterUnlockDelay >= .milliseconds(500))
+    }
+
+    @Test func thePasskeyRowIgnoresInputUntilItCanBeRead() {
+        let shown = ContinuousClock.now
+        #expect(!AutofillSuggestions.passkeyRowIsArmed(since: shown, now: shown.advanced(by: .milliseconds(100))))
+        #expect(AutofillSuggestions.passkeyRowIsArmed(since: shown, now: shown.advanced(by: .milliseconds(500))))
     }
 
     /// Find names the keys that cannot answer and offers no way to use them: even an answer naming one is refused.

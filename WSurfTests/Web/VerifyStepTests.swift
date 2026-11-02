@@ -111,6 +111,8 @@ struct VerifyStepTests {
             if (event.data?.ask === 'capabilities') capabilities();
             if (event.data?.ask === 'storage') storage();
             if (event.data?.ask === 'conditional') conditionalRequest();
+            if (event.data?.ask === 'get') passkey('get');
+            if (event.data?.ask === 'getLater') setTimeout(() => passkey('get'), 6000);
           });
           if (parent !== window) parent.postMessage('probe-ready', '*'); else window.__ready = true;
         </script>
@@ -417,6 +419,31 @@ struct VerifyStepTests {
             let sheet = rig.sheets.first ?? ""
             #expect(sheet.contains("localhost") && sheet.contains(String(localized: "Choose another way to sign in on the website.")), "\(sheet)")
             #expect(sheet.hasSuffix("buttons: " + String(localized: "OK")), "one button: \(sheet)")
+        }
+    }
+
+    /// Whether a touch alone may answer rests on this reading: a person's click counts, a page acting by itself does not.
+    @Test(.boundedWebViews, arguments: BrowserEngine.allCases)
+    func aRequestKnowsWhetherAPersonJustActed(engine: BrowserEngine) async throws {
+        try await withRig(engine, .top) { rig in
+            WebAuthnRefusal.activationsForTesting[rig.profile.id] = []
+            defer { WebAuthnRefusal.activationsForTesting[rig.profile.id] = nil }
+            let read = { WebAuthnRefusal.activationsForTesting[rig.profile.id] ?? [] }
+
+            try await rig.tell("{ ask: 'getLater' }")
+            _ = try #require(await rig.nextResult(after: 0), "the page's own request ended")
+            #expect(read() == [false], "\(read())")
+
+            try await rig.tell("{ plan: 'get' }")
+            try await Task.sleep(for: .milliseconds(100))
+            try await rig.click()
+            _ = try #require(await rig.nextResult(after: 1), "the clicked request ended")
+            #expect(read().last == true, "\(read())")
+
+            try await Task.sleep(for: .seconds(6))
+            try await rig.tell("{ ask: 'get' }")
+            _ = try #require(await rig.nextResult(after: 2), "the script-started request ended")
+            print("VERIFY activation engine=\(engine) after evaluateJavaScript: \(read())")
         }
     }
 

@@ -139,6 +139,8 @@ nonisolated enum WebAuthnScript {
         }
         if (body.action !== 'request' || requests.size >= 8 || requests.has(body.id)) return;
         if (!active && !resuming) return;
+        // Read now, in this world: the page can set neither this field nor this navigator's activation.
+        body.userActivated = navigator.userActivation?.isActive === true;
         requests.set(body.id, {capabilities: body.operation === 'capabilities'});
         (resuming ? resuming.then(identify) : identify()).then(() => {
           if (!requests.has(body.id)) return;
