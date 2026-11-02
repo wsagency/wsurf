@@ -23,6 +23,15 @@ nonisolated enum WebAuthnScript {
         pageSource
     }
 
+    /// Whether `source` is one of the Chromium passkey scripts that follow their window to the document that takes it over (the
+    /// relay, the route, the engine refusal and the page script). They cannot run twice in one window: the fence global is fixed and
+    /// the page script would wrap itself. Every other start script that runs in frames is one instance per document instead
+    /// (`ChromiumDevTools.instanceSource`).
+    static func followsItsWindow(_ source: String) -> Bool {
+        source == engineRefusal || source == pageSource || source.hasSuffix(relaySource)
+            || source.hasPrefix("globalThis.__wsurfWebAuthnFence?.route(")
+    }
+
     /// WebKit's page script: only in a document of the same origin as every frame above it (read before any page script runs).
     /// WebKit names neither a frame's ancestors nor what its embedder allowed it, so its vault serves no frame under an embedder
     /// of another origin (`BrowserPage.credentialContext`), and such a frame keeps the engine's own `navigator.credentials`.

@@ -243,6 +243,7 @@ extension ChromiumDevTools {
                 guard let self, !self.closed, self.framesByID[frameID]?.documentID == documentID else { return }
                 _ = try? await self.isolatedContext(frameID: frameID, documentID: documentID, worldName: world)
             }
+            await self?.runStartScriptsAfterTakeover(frameID: frameID, documentID: documentID)
         }
     }
 
@@ -380,12 +381,18 @@ extension ChromiumDevTools {
         })
         // A context without the shim (its document predates the world's registration) answers false and stays silent. The
         // guard keeps a context of another origin that reuses the ID from ever attaching.
-        _ = try runtimeValue(try await command("Runtime.evaluate", params: address(context).merging([
-            "expression": documentGuard(context, marker: false) + "globalThis.__wsurfAttach?.() === true", "returnByValue": true,
+        // It also says whether this world's start scripts ran for an earlier document of this window (`instanceSource`).
+        let answer = try runtimeValue(try await command("Runtime.evaluate", params: address(context).merging([
+            "expression": documentGuard(context, marker: false) + "[globalThis.__wsurfAttach?.() === true, "
+                + "[...(globalThis.__wsurfStartRuns?.values() ?? [])].some(run => run.document !== document)]",
+            "returnByValue": true,
         ]) { $1 }))
         guard contextIsLive(context) else { throw ChromiumError.staleFrame }
         context.bound = true
         contextsByUniqueID[context.uniqueID]?.bound = true
+        if (answer as? [Any])?.last as? Bool == true {
+            Self.noteTakeover(of: documentID)
+        }
         return context
     }
 

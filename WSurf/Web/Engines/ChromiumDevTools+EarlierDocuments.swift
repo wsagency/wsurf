@@ -13,6 +13,97 @@ import WebKit
 extension ChromiumDevTools {
     private static let markWorld = WKContentWorld.world(name: "WSurfRegistered")
 
+    // MARK: A frame's document that took over its first document's window
+
+    /// What Chromium runs for `script` in each new document: its injection time and frame scope are made here. A script that runs in
+    /// frames, in one of WSurf's isolated worlds, runs as one instance per document (`instanceSource`); the passkey scripts follow
+    /// their window themselves (`WebAuthnScript.followsItsWindow`), and a page-world script runs as written.
+    func registrationSource(_ script: Script) -> String {
+        let perDocument = !script.mainFrameOnly && !script.worldName.isEmpty && !WebAuthnScript.followsItsWindow(script.source)
+        let body = script.mainFrameOnly ? "if (window === window.top) {\n\(script.source)\n}"
+            : perDocument ? Self.instanceSource(script.source) : script.source
+        guard script.injectionTime != .atDocumentStart else { return body }
+        return "(() => { const run = () => {\n\(body)\n}; " +
+            "if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', run, {once: true}); " +
+            "else queueMicrotask(run); })();"
+    }
+
+    /// `source` as one instance per document of its window. A page that reads a new frame's window at once (Apple's sign-in does)
+    /// makes Chromium set up the frame's first, empty document and run the start scripts in it, as in any document the page can use.
+    /// A document of the same origin can then take over that window (HTML's window reuse), and Chromium starts none of its scripts
+    /// again, so WSurf runs them there (`runStartScriptsAfterTakeover`). A run for the window's newer document retires the instance
+    /// of the earlier one first: the globals it defined go, and the listeners it put on the window fall silent (a listener added to
+    /// the window while it ran answers only while it is the live instance; none of these scripts removes one). A second run for the
+    /// same document does nothing. The record (`__wsurfStartRuns`) is in WSurf's isolated world, which the page cannot reach.
+    static func instanceSource(_ source: String) -> String {
+        var hash: UInt64 = 0xcbf2_9ce4_8422_2325
+        for byte in source.utf8 {
+            hash = (hash ^ UInt64(byte)) &* 0x0100_0000_01b3
+        }
+        return instanceTemplate
+            .replacingOccurrences(of: "WSURF_KEY", with: String(hash, radix: 16))
+            .replacingOccurrences(of: "/*WSURF_SOURCE*/", with: source)
+    }
+
+    private static let instanceTemplate = #"""
+        (() => {
+          const runs = globalThis.__wsurfStartRuns ??= new Map();
+          const earlier = runs.get('WSURF_KEY');
+          if (earlier && earlier.document === document) return;
+          if (earlier) {
+            earlier.alive = false;
+            for (const name of earlier.globals) delete globalThis[name];
+          }
+          const run = {document, alive: true, globals: []};
+          const before = new Set(Object.getOwnPropertyNames(globalThis));
+          const events = EventTarget.prototype, listen = events.addEventListener;
+          events.addEventListener = function (type, listener, options) {
+            const target = this ?? globalThis;
+            if (target === globalThis && listener) {
+              const inner = listener;
+              listener = function (event) {
+                if (run.alive) return typeof inner === 'function' ? inner.call(this, event) : inner.handleEvent(event);
+              };
+            }
+            return listen.call(target, type, listener, options);
+          };
+          try {
+        /*WSURF_SOURCE*/
+          } finally {
+            events.addEventListener = listen;
+            run.globals = Object.getOwnPropertyNames(globalThis).filter(name => !before.has(name));
+            runs.set('WSURF_KEY', run);
+          }
+        })();
+        """#
+
+    /// Documents whose bindings reported start scripts that ran for an earlier document of their window, until `bindDocument` runs
+    /// them again. ponytail: the oldest are forgotten past 64; a document is reported while its frame binds, so only that many frames
+    /// binding at once could lose one.
+    private static var takenOver: [String] = []
+
+    static func noteTakeover(of documentID: String) {
+        guard !takenOver.contains(documentID) else { return }
+        takenOver.append(documentID)
+        if takenOver.count > 64 {
+            takenOver.removeFirst()
+        }
+    }
+
+    /// The frame's document took over the window of the frame's first, empty document, whose start scripts ran for that document:
+    /// each per-document script runs again now, once, for this one, in registration order and each in its own world, as in a new
+    /// document (late, so whatever the page did first, it missed), and retires the empty document's instance. The passkey scripts
+    /// follow the window, and the binding shims, the page bridge and the page relay serve the window's current document.
+    func runStartScriptsAfterTakeover(frameID: String, documentID: String) async {
+        guard let index = Self.takenOver.firstIndex(of: documentID) else { return }
+        Self.takenOver.remove(at: index)
+        guard !closed, let state = framesByID[frameID], state.documentID == documentID, !state.isMainFrame else { return }
+        let perDocument = scripts.filter { !$0.mainFrameOnly && !$0.worldName.isEmpty && !WebAuthnScript.followsItsWindow($0.source) }
+        await runLate(perDocument, in: state.browserFrame, source: registrationSource)
+    }
+
+    // MARK: Documents that started before their scripts
+
     /// Every document made from now on records that the first `registered` scripts ran in it.
     func markNewDocuments(registered: Int) async throws {
         _ = try await register("globalThis.__wsurfRegistered = \(registered);", worldName: worldName(Self.markWorld))
@@ -33,22 +124,28 @@ extension ChromiumDevTools {
                   ran < scripts.count,
                   (try? await evaluate("globalThis.__wsurfRegistered = \(scripts.count)", in: frame, world: Self.markWorld)) != nil
             else { continue }
-            var prepared: Set<String> = []
-            var bound: [String] = []
-            for script in scripts[ran...] where frame.isMainFrame || !script.mainFrameOnly {
-                if prepared.insert(script.worldName).inserted {
-                    for (name, source) in setup(for: script.worldName) {
-                        await run(source, in: frame, worldName: name)
-                        if source == Self.bindingSource {
-                            bound.append(name)
-                        }
+            await runLate(scripts[ran...].filter { frame.isMainFrame || !$0.mainFrameOnly }, in: frame, source: \.source)
+        }
+    }
+
+    /// Runs `pending` in `frame`'s current document, in order: each world's `__wsurfSend` shim, relay and bridge before its first
+    /// script, and every bound world attached after the last, so what the scripts sent meanwhile goes out then.
+    private func runLate(_ pending: [Script], in frame: BrowserFrame, source: (Script) -> String) async {
+        var prepared: Set<String> = []
+        var bound: [String] = []
+        for script in pending {
+            if prepared.insert(script.worldName).inserted {
+                for (name, setupSource) in setup(for: script.worldName) {
+                    await run(setupSource, in: frame, worldName: name)
+                    if setupSource == Self.bindingSource {
+                        bound.append(name)
                     }
                 }
-                await run(script.source, in: frame, worldName: script.worldName)
             }
-            for name in bound {
-                await run("globalThis.__wsurfAttach?.();", in: frame, worldName: name)
-            }
+            await run(source(script), in: frame, worldName: script.worldName)
+        }
+        for name in bound {
+            await run("globalThis.__wsurfAttach?.();", in: frame, worldName: name)
         }
     }
 
