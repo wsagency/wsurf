@@ -69,6 +69,9 @@ nonisolated struct WebAuthnRequest: Sendable {
     var requestID: UUID
     var options: WebAuthnRequestOptions
     var deadline: ContinuousClock.Instant?
+    /// The document had transient user activation when it asked, read by the relay in its isolated world. It only decides
+    /// whether a touch alone may answer; it authorizes nothing.
+    var userActivated = false
 }
 
 nonisolated struct WebAuthnClientData: Sendable {

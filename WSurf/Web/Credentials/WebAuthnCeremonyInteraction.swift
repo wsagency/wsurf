@@ -14,8 +14,18 @@ nonisolated struct WebAuthnPromptChoice: Sendable, Equatable {
     let detail: String
 }
 
+/// A stored passkey that cannot answer this request, named by Find so the user learns why. It has no identity to hand back.
+nonisolated struct WebAuthnPromptOther: Sendable, Equatable {
+    let title: String
+    let userName: String
+    let rpID: String
+}
+
 nonisolated struct WebAuthnPrompt: Sendable, Equatable {
     enum Operation: Sendable { case create, get }
+    /// Whether a touch alone may answer the sheet: only for a request the user visibly started (a click in the page, the native
+    /// row). Otherwise the sheet takes a click, then the system's verification. After an unlock it arms late (a finger still resting).
+    enum Sensor: Sendable { case off, now, afterUnlock }
 
     let operation: Operation
     /// The native, verified origin of the document (never page-supplied text).
@@ -29,11 +39,16 @@ nonisolated struct WebAuthnPrompt: Sendable, Equatable {
     let offersNewAccount: Bool
     let userVerification: WebAuthnUserVerification
     let willVerifyUser: Bool
+    /// Assertion only: the vault's other passkeys, for Find. Never sent to the page.
+    var otherPasskeys: [WebAuthnPromptOther] = []
+    var sensor = Sensor.off
 }
 
 nonisolated enum WebAuthnDecision: Sendable, Equatable {
     /// `nil` selects "new account" (registration only).
     case approved(choice: UUID?)
+    /// Assertion only: approved with a fresh biometric on the sheet itself, so the ceremony asks for no second verification.
+    case verified(choice: UUID?)
     case declined
     case expired
     case cancelled
@@ -48,9 +63,8 @@ nonisolated enum WebAuthnDecision: Sendable, Equatable {
 protocol WebAuthnCeremonyInteraction {
     var canVerifyUser: Bool { get }
     func decide(_ prompt: WebAuthnPrompt, in anchor: ASPresentationAnchor, until deadline: ContinuousClock.Instant?) async -> WebAuthnDecision
-    /// Explicit origin-bearing native step before any unlock, verification or signing: always for a conditional
-    /// (dropdown-started) request, and for a modal request whenever the vault is locked, so the system unlock sheet is never
-    /// the first thing a page can put in front of the user.
+    /// Explicit origin-bearing native step before the unlock of a modal request, so the system unlock sheet is never the first
+    /// thing a page can put in front of the user. A conditional request was started by the user in a native row and has none.
     func offerStart(operation: WebAuthnPrompt.Operation, origin: String, locked: Bool, in anchor: ASPresentationAnchor, until deadline: ContinuousClock.Instant?) async -> WebAuthnDecision
     /// Fresh system user verification. Returns only on success; every other outcome throws.
     func verifyUser(reason: String, until deadline: ContinuousClock.Instant?) async throws
@@ -74,7 +88,13 @@ struct NativeWebAuthnInteraction: WebAuthnCeremonyInteraction {
         let nothing = Self.hasNothingToApprove(prompt)
         let alert = NSAlert()
         alert.messageText = Self.title(for: prompt)
-        alert.informativeText = Self.body(for: prompt)
+        // One verification, on this screen, when the Mac has a sensor; otherwise (or after a failed try) the button and `verifyUser`.
+        let popup = Self.makeChooser(for: prompt)
+        let touch = prompt.sensor != .off && !nothing && prompt.willVerifyUser ? PasskeySheetTouch(
+            chooser: popup, reason: String(localized: "Sign in to \(prompt.rpID) with a passkey")
+        ) : nil
+        let find = PasskeyFindField(prompt.otherPasskeys)
+        alert.informativeText = Self.body(for: prompt, sensorOnSheet: touch != nil)
         if nothing {
             // Nothing of ours to approve, and no other authenticator either engine can reach (no Apple Passwords, phone or security
             // key): the step names the site, sends the person to its other way to sign in, and ends as Cancel does.
@@ -85,19 +105,43 @@ struct NativeWebAuthnInteraction: WebAuthnCeremonyInteraction {
             alert.addButton(withTitle: String(localized: "Cancel"))
         }
 
-        let popup = Self.makeChooser(for: prompt)
-        popup.map { alert.accessoryView = $0 }
+        alert.accessoryView = Self.accessory([popup, touch?.view, find?.view].compactMap(\.self))
 
-        switch await NativeSheet.present(alert, in: anchor, until: deadline) {
+        // Runs once `present` has put the sheet up: the sensor view must be on screen before the context is evaluated.
+        Task { await touch?.begin(sheet: alert.window, on: anchor, after: prompt.sensor == .afterUnlock ? PasskeySheetTouch.afterUnlockDelay : .zero) }
+        let shown = await NativeSheet.present(alert, in: anchor, until: deadline)
+        touch?.end()
+        withExtendedLifetime(find) {}
+        switch shown {
         case .expired:
             return .expired
         case .cancelled:
             return .cancelled
         case let .response(response):
             guard !nothing, response == .alertFirstButtonReturn else { return .declined }
-            guard let popup else { return .approved(choice: prompt.offersNewAccount ? nil : prompt.choices.first?.id) }
-            return Self.decision(from: popup)
+            let answer = popup.map(Self.decision(from:)) ?? .approved(choice: prompt.offersNewAccount ? nil : prompt.choices.first?.id)
+            if touch?.verified == true, case let .approved(choice) = answer {
+                return .verified(choice: choice)
+            }
+            return answer
         }
+    }
+
+    /// The controls under the sheet's text, stacked; an alert needs its accessory sized before it is shown.
+    private static func accessory(_ views: [NSView]) -> NSView? {
+        guard !views.isEmpty else { return nil }
+        if views.count == 1, views[0] is NSPopUpButton {
+            return views[0]
+        }
+        let stack = NSStackView(views: views)
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        for view in views where view is NSPopUpButton {
+            view.widthAnchor.constraint(equalToConstant: 360).isActive = true
+        }
+        stack.layoutSubtreeIfNeeded()
+        stack.setFrameSize(NSSize(width: 360, height: stack.fittingSize.height))
+        return stack
     }
 
     /// The window is free for a step: a sheet still closing (the system's unlock sheet) is waited for, briefly.
@@ -240,7 +284,7 @@ struct NativeWebAuthnInteraction: WebAuthnCeremonyInteraction {
         }
     }
 
-    private static func body(for prompt: WebAuthnPrompt) -> String {
+    private static func body(for prompt: WebAuthnPrompt, sensorOnSheet: Bool) -> String {
         var lines = [String(localized: "Website: \(prompt.origin)")]
         if let top = prompt.topOrigin { lines.append(String(localized: "Embedded in: \(top)")) }
         lines.append(String(localized: "Relying party: \(prompt.rpID)"))
@@ -264,7 +308,9 @@ struct NativeWebAuthnInteraction: WebAuthnCeremonyInteraction {
         if prompt.operation == .create {
             lines.append(String(localized: "The passkey is saved in Credential Manager."))
         }
-        lines.append(prompt.willVerifyUser
+        lines.append(sensorOnSheet
+            ? String(localized: "Touch the sensor to sign in, or click Use Passkey to verify another way.")
+            : prompt.willVerifyUser
             ? String(localized: "You will be asked to verify with your Mac next.")
             : String(localized: "Your Mac will not ask for further verification."))
         return lines.joined(separator: "\n")

@@ -773,9 +773,9 @@ final class AutofillSuggestions {
         }
     }
 
-    /// The "Use a Passkey…" row: the panel closes and the page's pending conditional request runs the passkey ceremony, which
-    /// shows its own sheets. Only this choice starts it; a click, Enter or an arrow key in the field never does.
+    /// The "Use a Passkey…" row: only this choice runs the page's conditional request; a click or a key in the field never does.
     private func usePasskey(_ request: Request, in page: BrowserPage) {
+        guard let panel, Self.passkeyRowIsArmed(since: panel.shownAt) else { return }
         dismiss()
         Task { [weak self, weak page] in
             guard let self, let page, (try? await self.validate(request, in: page)) != nil else { return }
@@ -987,14 +987,5 @@ extension AutofillSuggestions {
     /// ("Add Website"), so the next time it is an exact match. Nothing else offers it here.
     nonisolated static func offersWebsiteAfterFill(kind: AutofillSaveKind, fromSiblingRow: Bool) -> Bool {
         kind == .password && fromSiblingRow
-    }
-}
-
-private final class AutofillSuggestionPanel: NSPanel {
-    override var canBecomeKey: Bool {
-        false
-    }
-    override var canBecomeMain: Bool {
-        false
     }
 }

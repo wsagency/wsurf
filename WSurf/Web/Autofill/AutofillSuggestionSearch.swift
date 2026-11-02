@@ -159,3 +159,15 @@ nonisolated extension AutofillSuggestionSearch.KeyInput {
         }
     }
 }
+
+final class AutofillSuggestionPanel: NSPanel {
+    /// When the panel appeared (`passkeyRowIsArmed`).
+    let shownAt = ContinuousClock.now
+
+    override var canBecomeKey: Bool {
+        false
+    }
+    override var canBecomeMain: Bool {
+        false
+    }
+}

@@ -667,45 +667,25 @@ struct WebsiteAuthenticatorCeremonyTests {
 
     // MARK: Conditional (page-gesture) requests
 
-    @Test(.boundedWebViews) func conditionalRequestOffersBeforeAnythingElseAndDecliningDoesNothing() async throws {
+    /// The user started it in a native row, so the account prompt is the first step, and it still decides.
+    @Test(.boundedWebViews) func aConditionalRequestStartsAtTheAccountPromptAndDecliningItDoesNothing() async throws {
         try await withFixture { fixture in
             try await create(fixture, User())
             let before = try fixture.bytes()
 
             let user = User()
-            user.offer = { _ in .declined }
+            user.respond = { _ in .declined }
             await #expect(throws: WebsiteAuthenticatorError.self) {
                 try await get(fixture, user, request: assertion(userVerification: .required), conditional: true)
             }
-            #expect(user.offers == [false], "an unlocked vault is offered as such")
-            #expect(user.prompts.isEmpty && user.verifications == 0, "no account prompt, verification or signature before the offer is accepted")
+            #expect(user.offers.isEmpty && user.prompts.count == 1 && user.verifications == 0)
             #expect(try fixture.bytes() == before)
-
-            // Accepting the offer only starts the normal ceremony: the account prompt still decides.
-            let accepting = User()
-            accepting.respond = { prompt in .approved(choice: prompt.choices[0].id) }
-            let outcome = try await get(fixture, accepting, conditional: true)
-            #expect(accepting.offers == [false] && accepting.prompts.count == 1)
-            #expect(outcome.result.signature != nil)
-        }
-    }
-
-    @Test(.boundedWebViews) func lockedVaultIsOfferedAsLockedAndNeverUnlockedByADeclinedOffer() async throws {
-        try await withFixture { fixture in
-            try await create(fixture, User())
-            fixture.manager.lock(reason: .manual)
-
-            let user = User()
-            user.offer = { _ in .declined }
-            await #expect(throws: WebsiteAuthenticatorError.self) { try await get(fixture, user, conditional: true) }
-            #expect(user.offers == [true])
-            #expect(!fixture.manager.isUnlocked && user.prompts.isEmpty)
         }
     }
 
     // MARK: Lifetime
 
-    /// WebAuthn L3: a conditional get has no lifetime timer. Every native step it reaches (offer, prompt, verification) is
+    /// WebAuthn L3: a conditional get has no lifetime timer. Every native step it reaches (prompt, verification) is
     /// given no deadline at all, while the same request as a modal one is bounded at each of them.
     @Test(.boundedWebViews) func aConditionalGetHasNoDeadlineAtAnyNativeStepWhileAModalOneIsBoundedAtEach() async throws {
         try await withFixture { fixture in
@@ -719,8 +699,8 @@ struct WebsiteAuthenticatorCeremonyTests {
             let conditional = approving()
             let outcome = try await get(fixture, conditional, request: assertion(userVerification: .required, deadline: nil), conditional: true)
             #expect(outcome.result.signature != nil)
-            #expect(conditional.offers.count == 1 && conditional.prompts.count == 1 && conditional.verifications == 1)
-            #expect(conditional.deadlines.count == 3 && conditional.deadlines.allSatisfy { $0 == nil }, "no native step may carry a timer")
+            #expect(conditional.offers.isEmpty && conditional.prompts.count == 1 && conditional.verifications == 1)
+            #expect(conditional.deadlines.count == 2 && conditional.deadlines.allSatisfy { $0 == nil }, "no native step may carry a timer")
 
             let modal = approving()
             try await get(fixture, modal, request: assertion(userVerification: .required))
