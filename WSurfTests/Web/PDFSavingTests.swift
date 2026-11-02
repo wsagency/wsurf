@@ -343,6 +343,44 @@ struct PDFSavingTests {
         }
     }
 
+    // MARK: - The viewer stays up
+
+    /// How much of the Chromium tab's picture is the PDF's white paper. A renderer ended under the viewer leaves its grey and a sad face.
+    private func paperShare(of page: ChromiumPage) async throws -> Double {
+        let shot = try await page.command("Page.captureScreenshot", params: ["format": "png"])
+        let picture = try #require((shot["data"] as? String).flatMap { Data(base64Encoded: $0) }.flatMap(NSBitmapImageRep.init(data:)))
+        var paper = 0, seen = 0
+        for x in stride(from: 0, to: picture.pixelsWide, by: 8) {
+            for y in stride(from: 0, to: picture.pixelsHigh, by: 8) {
+                seen += 1
+                if let color = picture.colorAt(x: x, y: y), color.redComponent > 0.97, color.greenComponent > 0.97, color.blueComponent > 0.97 {
+                    paper += 1
+                }
+            }
+        }
+        return Double(paper) / Double(seen)
+    }
+
+    /// The whole app, not `Rig`: only a window's pages run the media script, which runs in every frame and asks its parent for the
+    /// tab's mute. Chromium's viewer takes whoever messages it for the page embedding it and answers, and the browser ends a renderer
+    /// that messages the frame a PDF is drawn in, so the viewer's own content frame must not ask.
+    @Test func aPDFStaysDrawnInAChromiumWindow() async throws {
+        try await LiveWindowRig.with(engine: .chromium, routes: ["/doc.pdf": Self.pdfResponse(Self.pdf, name: "doc.pdf")]) { rig in
+            let url = try rig.server.url("/doc.pdf")
+            let tab = rig.browser.newTab(url: url, activate: true, engine: .chromium)
+            try #require(await waitUntil(timeout: .seconds(60)) { tab.shownPDF == url && !tab.page.isLoading })
+            let page = try #require(tab.page.chromium)
+            // The viewer answers once the document has loaded, so what counts is the picture after that.
+            try await Task.sleep(for: .seconds(4))
+            #expect(try await paperShare(of: page) > 0.1, "the PDF is drawn")
+
+            // A mute goes down through the frames, and the viewer hears that too.
+            MediaCenter.setMuted(true, on: tab.page)
+            try await Task.sleep(for: .seconds(2))
+            #expect(try await paperShare(of: page) > 0.1, "the PDF is still drawn after a mute")
+        }
+    }
+
     // MARK: - ⌘S
 
     @Test(arguments: BrowserEngine.allCases)
