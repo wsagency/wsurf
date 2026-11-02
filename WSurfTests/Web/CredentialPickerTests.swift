@@ -72,6 +72,22 @@ struct CredentialPickerTests {
         ])
     }
 
+    @Test func theCredentialUsedLastOnThisWebsiteComesFirstInTheFormTheFieldPrefers() {
+        let ada = account("ada", displayName: "Ada"), bob = account("bob", totp: Self.generator, displayName: "Bob")
+        let away = account("away", origins: [Self.other], displayName: "Away")
+        let at = Date(timeIntervalSinceReferenceDate: 800_000_000)
+        let used = [bob.id: at, away.id: at.addingTimeInterval(60)]
+        let rows = CredentialPicker.rows([away, bob, ada], vaultID: UUID(), origin: Self.site, vault: nil, used: used)
+
+        #expect(rows.first { $0.accountID == away.id }?.lastUsed == nil, "a date for another website is never this website's")
+        #expect(CredentialPicker.ordered(rows, for: .text).map { "\($0.title)/\($0.fill)" } == [
+            "Bob/login", "Ada/login", "Bob/code", "Away/login",
+        ])
+        #expect(CredentialPicker.ordered(rows, for: .code).map { "\($0.title)/\($0.fill)" } == [
+            "Bob/code", "Ada/login", "Bob/login", "Away/login",
+        ])
+    }
+
     @Test func searchingMatchesTitleUsernameAndWebsiteNeverTheSecret() {
         let rows = CredentialPicker.rows(
             [account("Ada", password: "hunter2"), account("grace", origins: [Self.other])], vaultID: UUID(), origin: Self.site, vault: nil
@@ -366,6 +382,32 @@ struct CredentialPickerTests {
         }
     }
 
+    /// A pick is a use: the credential picked on this website is listed first the next time. One picked here that is saved for another
+    /// website is not recorded and does not move.
+    @Test(.boundedWebViews) func theCredentialLastPickedHereIsListedFirstNextTime() async throws {
+        try await withFlow { flow, vaults in
+            let ada = account("ada", displayName: "Ada"), bob = account("bob", displayName: "Bob")
+            let grace = account("grace", origins: [Self.other], displayName: "Grace")
+            try await VaultManagerFixture.save([grace, bob, ada], in: vaults[0])
+            try await flow.load(Self.login)
+
+            let lastUsed = flow.page.context.autofillLastUsed, key = try await vaults[0].manager.importMemoryKey()
+            let first = try await flow.rightClick("bu")
+            #expect(await flow.pick(first) { rows in rows.first { $0.accountID == bob.id }.map { .row($0.id) } } == .filled(2))
+            #expect(flow.offered.last?.map(\.accountID) == [ada.id, bob.id, grace.id], "before any use, the order it always had")
+            #expect(await waitUntil { lastUsed.date(key, account: bob.id, origin: Self.site) != nil }, "recorded with the vault's key")
+
+            let second = try await flow.rightClick("au")
+            #expect(await flow.pick(second) { rows in rows.first { $0.accountID == grace.id }.map { .row($0.id) } } == .filled(2))
+            #expect(flow.offered.last?.map(\.accountID) == [bob.id, ada.id, grace.id], "bob was used here last")
+
+            let third = try await flow.rightClick("bu")
+            #expect(await flow.pick(third) { _ in nil } == .nothing)
+            #expect(flow.offered.last?.map(\.accountID) == [bob.id, ada.id, grace.id], "grace is not saved for this website")
+            #expect(lastUsed.date(key, account: grace.id, origin: Self.site) == nil)
+        }
+    }
+
     @Test(.boundedWebViews) func aVerificationCodeFillsAFieldNothingCallsACode() async throws {
         try await withFlow { flow, vaults in
             let codes = account("ada", password: nil, origins: [Self.other], totp: Self.generator)
@@ -383,6 +425,89 @@ struct CredentialPickerTests {
             #expect(filled == earlier || filled == later)
             #expect(flow.offered.first?.first?.fill == .code, "a code field lists codes first")
             #expect(flow.session.websiteOffer?.isManual == true, "a code used on another website is offered that website too")
+        }
+    }
+
+    // MARK: - A code from Messages or Mail (the sheet's native field; the sheet itself is answered by the test)
+
+    private static let boxes = #"""
+        <div><input id="d1" maxlength="1"><input id="d2" maxlength="1"><input id="d3" maxlength="1">
+        <input id="d4" maxlength="1"><input id="d5" maxlength="1"><input id="d6" maxlength="1"><button>Verify</button></div>
+        """#
+
+    @Test func theSheetOffersTheNativeCodeFieldOnlyForACodeField() {
+        #expect(CredentialPicker.offersMessagesCode(for: .code))
+        #expect(!CredentialPicker.offersMessagesCode(for: .password) && !CredentialPicker.offersMessagesCode(for: .text))
+    }
+
+    @Test(.boundedWebViews) func aCodeFromMessagesFillsTheRightClickedCodeFieldAndNothingIsKept() async throws {
+        try await withFlow { flow, vaults in
+            try await flow.load(Self.login)
+            let target = try await flow.rightClick("pin")
+            #expect(target.field == .code)
+            let changes = NSPasteboard.general.changeCount
+            let revision = try await vaults[0].manager.snapshot().revision
+
+            let outcome = await flow.pick(target) { _ in .code("482913") }
+
+            #expect(outcome == .filled(1))
+            #expect(try await flow.values(["pin", "au", "ap", "bu", "bp", "xu", "xp"]) == ["482913", "", "", "", "", "", ""])
+            #expect(flow.session.websiteOffer == nil, "no credential was used: nothing is offered for saving")
+            #expect(try await vaults[0].manager.snapshot().revision == revision, "nothing was written to the vault")
+            #expect(NSPasteboard.general.changeCount == changes, "nothing was put on the pasteboard")
+            #expect(await flow.pick(target) { _ in .code("111111") } == .nothing, "a right-click fills once")
+            #expect(try await flow.value("pin") == "482913")
+        }
+    }
+
+    @Test(.boundedWebViews) func aCodeFromMessagesFillsASplitCodeBoxByBoxFromTheFirstWhicheverWasRightClicked() async throws {
+        try await withFlow { flow, _ in
+            try await flow.load(Self.login + Self.boxes)
+            let target = try await flow.rightClick("d3")
+            #expect(target.field == .code)
+
+            let short = await flow.pick(target) { _ in .code("1234") }
+            #expect(short == .failed(.noField), "six boxes are not a four-digit code's")
+            #expect(try await flow.values(["d1", "d2", "d3", "d4", "d5", "d6"]) == ["", "", "", "", "", ""])
+
+            let again = try await flow.rightClick("d5")
+            let outcome = await flow.pick(again) { _ in .code("246813") }
+            #expect(outcome == .filled(6), "\(outcome)")
+            #expect(try await flow.values(["d1", "d2", "d3", "d4", "d5", "d6", "pin"]) == ["2", "4", "6", "8", "1", "3", ""])
+        }
+    }
+
+    @Test(.boundedWebViews) func aCodeFromMessagesIsNeverFilledIntoAFormThatSendsItElsewhere() async throws {
+        try await withFlow { flow, _ in
+            try await flow.load(Self.login)
+            let target = try await flow.rightClick("xu")
+
+            #expect(await flow.pick(target) { _ in .code("482913") } == .failed(.unsafeForm))
+
+            #expect(try await flow.values(["xu", "xp", "pin"]) == ["", "", ""])
+        }
+    }
+
+    @Test(.boundedWebViews) func aCodeFromMessagesForAPageThatChangedWhileTheSheetWasOpenFillsNothing() async throws {
+        try await withFlow { flow, _ in
+            try await flow.load(Self.login)
+            let target = try await flow.rightClick("pin")
+            @MainActor func documentID() async -> String? {
+                try? await flow.page.callAsyncJavaScript(
+                    "return globalThis.__wsurfAutofillForms?.documentID ?? null;", arguments: [:], in: nil, contentWorld: PasswordAutofill.world
+                ) as? String
+            }
+            let old = await documentID()
+
+            let outcome = await flow.pick(target) { _ in
+                // The page moves on to a new document while the sheet is open.
+                flow.page.loadHTMLString("<!doctype html>" + Self.login, baseURL: URL(string: Self.site + "/next"))
+                _ = await waitUntil { await documentID().map { $0 != old } == true }
+                return .code("482913")
+            }
+
+            #expect(outcome == .failed(.noField))
+            #expect(try await flow.values(["pin"]) == [""])
         }
     }
 

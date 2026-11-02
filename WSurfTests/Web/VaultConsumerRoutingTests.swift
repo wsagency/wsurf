@@ -125,6 +125,30 @@ struct VaultConsumerRoutingTests {
         }
     }
 
+    /// Signing in with a saved login, which leaves nothing to offer, is a use of that account: it leads this website's list next time.
+    /// A changed password is no sign-in with the saved one.
+    @Test func aSignInWithASavedLoginIsItsLastUse() async throws {
+        try await withSession(vaults: [.unlocked]) { session, vaults in
+            let ada = account("ada"), bob = account("bob")
+            try await VaultManagerFixture.save([ada, bob], in: vaults[0])
+            let lastUsed = try #require(session.context).autofillLastUsed, key = try await vaults[0].manager.importMemoryKey()
+            @MainActor func used(_ id: UUID) -> Date? {
+                lastUsed.date(key, account: id, origin: Self.origin)
+            }
+
+            await session.offer(try login("ada"), origin: Self.origin)
+            #expect(session.current?.plan == .update(ada.id))
+
+            await session.offer(.password(try SavedPassword(website: Self.origin, username: "bob", password: "old")), origin: Self.origin)
+            #expect(await waitUntil { used(bob.id) != nil })
+            #expect(used(ada.id) == nil, "a changed password is no sign-in with the saved one")
+            let rows = CredentialAccountSelection.listed(
+                in: [(id: vaults[0].vaultID, label: nil, accounts: [ada, bob])], origin: Self.origin, pageURL: nil, entered: nil, field: .password
+            ) { _, account in used(account) }
+            #expect(rows.map(\.account) == [bob.id, ada.id])
+        }
+    }
+
     @Test func aLockedVaultIsNeverTheOneAnOfferGuesses() async throws {
         try await withSession(vaults: [.unlocked, .locked]) { session, vaults in
             let ada = account("ada")

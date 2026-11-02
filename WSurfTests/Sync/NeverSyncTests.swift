@@ -36,7 +36,7 @@ struct NeverSyncTests {
         let excluded = [
             "InputHistory", ".wih", "input-history", "sessionState", "deferRestore", "AutofillVaults", "WKWebsiteDataStore",
             "HTTPCookie", "SitePermissions", "PageZoom", "HistoryStore", "NSUbiquitousKeyValueStore", "inputHistoryKey", "VaultBlob",
-            "Credentials.blobs", "readAttachment", "AutofillSaveIndex", "PaymentCardVault", "blockedPasswordOrigins",
+            "Credentials.blobs", "readAttachment", "AutofillSaveIndex", "PaymentCardVault", "blockedPasswordOrigins", "AutofillLastUsed",
         ]
         // The tab files never reach the credential manager; the vault host is the one sync file that must.
         let managerNeedle = "CredentialManager"

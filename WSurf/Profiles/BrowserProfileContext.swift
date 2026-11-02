@@ -52,6 +52,7 @@ final class BrowserProfileContext {
     // its first reader, not here, so its interval, history.reload, is in `HistoryStore.loadIfNeeded`.
     lazy var history = HistoryStore(database: database)
     lazy var tabArchive = TabArchive(database: database)
+    lazy var autofillLastUsed = AutofillLastUsed(file: profile.autofillLastUsedFile, persists: !profile.isPrivate)
     /// Nil in a private window: notes about the person are never kept there.
     lazy var assistantFacts: AssistantFacts? = profile.isPrivate ? nil : AssistantFacts(database: database, settings: modelSettings)
     lazy var conversationLog = Pipeline.signposter.withIntervalSignpost("convlog.load") { ConversationLog(database: database) }

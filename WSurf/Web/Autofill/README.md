@@ -102,6 +102,18 @@ holds, whether it is locked, or whether there is one. Only choosing that row
 starts the passkey sheets. A click, Enter or an arrow key in the field never
 does, and Enter reaches the page.
 
+A verification-code field also gets "Code from Messages or Mail…" at the end of its dropdown, whatever the vault holds or
+whether it is locked (`AutofillSuggestions+MessagesCode.swift`, `MessagesCodeBridge.swift`). macOS stops offering its own
+one-time-code list to web views once CEF is loaded, but a native text field with `contentType = .oneTimeCode` still gets it, so
+choosing the row puts a small native field, named for the frame's site, over the page's field, inside the browser window (a
+subview of its content view, never a popover or panel: the list needs the key window), and focuses it. The code the person picks
+in the system's list is inserted into that field whole, or typed and confirmed with Return (3 to 12 letters and digits), and fills
+that one field through the transport a vault code uses, only while the request, its frame, document and field are unchanged
+(`validate`, then the page script's own checks at dispatch). WSurf never reads Messages or Mail. Escape, a click elsewhere, losing
+focus, a navigation or load, another tab, the window resigning key, moving, resizing or closing, an agent taking the tab, or three
+minutes end it with nothing filled; the field is emptied and its editor's undo is off, so the code is in no log, Input History,
+pasteboard, undo store or vault. The row is never in a private window, in a tab an agent controls, or for a password field.
+
 Any other unlock (Settings, a save offer, a passkey sheet) asks the page script
 of a login field that is still selected, on a page that can show a panel, to
 select it again, and that field's logins are offered without another click.
@@ -228,6 +240,9 @@ connected app controls; every step asks again.
   the username and, only into a password field, the password; a code goes into
   the field, or into exactly the boxes of a split code, from the first. The
   sheet closes when the vault locks or the autofill policy changes.
+- For a field that looks like a code, the sheet also holds the same native field as "Code from Messages or Mail…" (`MessagesCodeField`).
+  A code picked in it fills the right-clicked field, or its split boxes, like a vault code; nothing is recorded or offered for
+  saving, and it needs no vault entry. A locked vault is still unlocked first.
 - Used on a website it is not saved for, the entry is offered that website
   (the website popover, "Use … on …?"). Accepting is one vault commit with the
   `add-website` cause, one History version; declining stores nothing. A page
@@ -327,5 +342,9 @@ Use synthetic credentials and card details on a test page.
   iframe, and a split six-box code; check that only that field (and its
   partner) is filled, and that "Use … on …?" appears only for an entry saved
   for another website.
+- Code from Messages or Mail…: on a real code (SMS or Mail) in a WebKit and a Chromium tab, choose the row under a code field, pick
+  the suggestion macOS lists under the native field, and check that only that field fills and the native field is gone; Escape and
+  a click elsewhere leave it empty; in Pick Credential… on a code field and on a split six-box code the same field in the sheet fills
+  every box.
 - Not performed: Settings keyboard and VoiceOver, real passkey unlock (PRF),
   user presence and verification, Apple Passwords transfers, and Stage UI runs.

@@ -2352,6 +2352,12 @@
     "Code" : {
       "comment" : "Name of the part of an entry that holds the verification code, in a list of what changed on two devices."
     },
+    "Code from Messages or Mail" : {
+      "comment" : "Placeholder of the small native field that macOS lists one-time codes under (the codes that arrived in Messages or Mail): over a page’s verification-code field after the dropdown’s “Code from Messages or Mail…” row is chosen, and in the Pick Credential sheet for a code field. Sentence case, a noun phrase, no ellipsis."
+    },
+    "Code from Messages or Mail…" : {
+      "comment" : "Row at the bottom of the autofill dropdown under a verification-code field. Choosing it puts a small native field over the page’s field, where macOS lists the codes that arrived in Messages or Mail; the code the user picks there fills the page’s field. Title Case, ends with an ellipsis."
+    },
     "Codex could not update the configuration. Check it in Codex or use Copy Configuration." : {
       "comment" : "External MCP client setup in Advanced settings."
     },
@@ -11186,6 +11192,9 @@
     },
     "Verification Code Copied" : {
       "comment" : "Brief notice above the Credentials list in Settings, shown after the user copies the current verification code (one-time code) of a credential to the clipboard. Title Case, short."
+    },
+    "Verification code for %@" : {
+      "comment" : "VoiceOver label, not visible, of the small native field for a code from Messages or Mail. %@ is the website the code is for, as the address bar draws it. Sentence case."
     },
     "verification code name" : {
       "comment" : "Lowercase noun phrase, never shown alone: inserted into “Copy this version’s %@” and “Copy the current %@” for the copy button of a verification code’s name (its issuer and account), not its secret setup key."

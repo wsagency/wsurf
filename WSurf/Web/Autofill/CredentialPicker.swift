@@ -66,10 +66,15 @@ final class CredentialPicker {
         /// Saved for this website or a sibling of it (`CredentialAccountSelection.isSibling`).
         let matchesSite: Bool
         let searchKey: String
+        /// When it was last used on this website (`AutofillLastUsed`); only a credential saved for this website has one.
+        var lastUsed: Date?
     }
 
     enum Answer: Equatable {
         case row(UUID), unlock
+        /// A code the person picked from macOS's own list in the sheet's native field (Messages or Mail), or typed there. It fills the
+        /// right-clicked field, or its split boxes, the way a vault code does, and is kept nowhere.
+        case code(String)
     }
 
     enum Failure: Equatable {
@@ -208,6 +213,9 @@ final class CredentialPicker {
                 return await fill(id, reading: reading, target: target, in: page, isCurrent: isCurrent)
             case .unlock?:
                 unlocking = true
+            case .code(let code)?:
+                guard isCurrent() else { return .nothing }
+                return await fill(code: code, target: target, in: page, isCurrent: isCurrent)
             case nil:
                 return .nothing
             }
@@ -234,6 +242,7 @@ final class CredentialPicker {
         guard !profile.isPrivate else { return nil }
         let listing = (try? await CredentialManager.store(for: profile).listing()) ?? []
         let unlocked = CredentialManager.unlockedManagers(for: profile)
+        let lastUsed = target.context.autofillLastUsed
         var reading = Reading()
         for vault in listing.sorted(by: { $0.ordinal < $1.ordinal }) {
             guard let manager = unlocked.first(where: { $0.vaultID == vault.vaultID }), let epoch = manager.authorizationEpoch,
@@ -242,8 +251,13 @@ final class CredentialPicker {
                 continue
             }
             reading.grants[vault.vaultID] = (epoch, snapshot.revision)
+            let uses = try? await manager.importMemoryKey()
+            var used: [UUID: Date] = [:]
+            for account in snapshot.accounts where account.origins.contains(target.origin) {
+                used[account.id] = lastUsed.date(uses, account: account.id, origin: target.origin)
+            }
             reading.rows += Self.rows(
-                snapshot.accounts, vaultID: vault.vaultID, origin: target.origin, vault: listing.count > 1 ? vault.label : nil
+                snapshot.accounts, vaultID: vault.vaultID, origin: target.origin, vault: listing.count > 1 ? vault.label : nil, used: used
             )
         }
         reading.rows = Self.ordered(reading.rows, for: target.field)
@@ -256,7 +270,8 @@ final class CredentialPicker {
         }
         guard let host = WebsiteLookalike.displayHost(of: target.origin) else { return nil }
         return await CredentialPickerSheet.present(
-            rows: reading.rows, host: host, canUnlock: reading.hasLockedVault, profileID: target.context.profile.id, in: window
+            rows: reading.rows, host: host, canUnlock: reading.hasLockedVault, offersCode: Self.offersMessagesCode(for: target.field),
+            profileID: target.context.profile.id, in: window
         )
     }
 
@@ -294,20 +309,12 @@ final class CredentialPicker {
             }
             return ["token": token, "url": url, "documentID": documentID, "fields": fields]
         }
-        let answer: Any
-        do {
-            answer = try await page.callAsyncJavaScript(
-                "if (globalThis.__wsurfAutofillForms?.documentID !== documentID) return 0; return globalThis.__wsurfPasswords?.pickFill(token, url, fields) ?? 0;",
-                in: target.frame, contentWorld: PasswordAutofill.world, prepareArguments: prepare
-            )
-        } catch {
-            return isCurrent() ? .failed(.noField) : .nothing
-        }
-        let count = (answer as? NSNumber)?.intValue ?? 0
-        guard count > 0 else { return count < 0 ? .failed(.unsafeForm) : .failed(.noField) }
+        let outcome = await deliver(prepare, target: target, in: page, isCurrent: isCurrent)
+        guard case .filled(let count) = outcome else { return outcome }
         guard isCurrent() else { return .filled(count) }
         let session = AutofillSaveCoordinator.shared.session(for: page)
         if account.origins.contains(target.origin) {
+            target.context.autofillLastUsed.record(account: account.id, origin: target.origin, in: manager)
             if fill == .login, !account.username.isEmpty {
                 AutofillSaveCoordinator.shared.rememberFilledUsername(
                     account.username, origin: target.origin, documentID: target.documentID, in: page, accountID: account.id, epoch: epoch
@@ -322,6 +329,40 @@ final class CredentialPicker {
                 accountID: account.id, epoch: epoch, origin: target.origin, documentID: target.documentID, manual: true
             )
         }
+        return .filled(count)
+    }
+
+    /// The picked code, into the right-clicked field (and its split boxes) only: it is checked as a vault code is, and nothing of it is
+    /// recorded, offered for saving or kept.
+    private func fill(
+        code: String, target: Target, in page: BrowserPage, isCurrent: @escaping @MainActor @Sendable () -> Bool
+    ) async -> Outcome {
+        guard await field(of: target, in: page) != nil else { return isCurrent() ? .failed(.noField) : .nothing }
+        guard isCurrent() else { return .nothing }
+        nonisolated(unsafe) let fields: [String: Any] = ["code": code]
+        let token = target.token, url = target.frameURL.absoluteString, documentID = target.documentID
+        return await deliver({
+            guard isCurrent() else { throw ContactAutofillError.changedPage }
+            return ["token": token, "url": url, "documentID": documentID, "fields": fields]
+        }, target: target, in: page, isCurrent: isCurrent)
+    }
+
+    /// `pickFill` in the right-clicked frame, with the arguments `prepare` makes at the engine's dispatch boundary.
+    private func deliver(
+        _ prepare: @escaping @MainActor @Sendable () throws -> [String: Any], target: Target, in page: BrowserPage,
+        isCurrent: @escaping @MainActor @Sendable () -> Bool
+    ) async -> Outcome {
+        let answer: Any
+        do {
+            answer = try await page.callAsyncJavaScript(
+                "if (globalThis.__wsurfAutofillForms?.documentID !== documentID) return 0; return globalThis.__wsurfPasswords?.pickFill(token, url, fields) ?? 0;",
+                in: target.frame, contentWorld: PasswordAutofill.world, prepareArguments: prepare
+            )
+        } catch {
+            return isCurrent() ? .failed(.noField) : .nothing
+        }
+        let count = (answer as? NSNumber)?.intValue ?? 0
+        guard count > 0 else { return count < 0 ? .failed(.unsafeForm) : .failed(.noField) }
         return .filled(count)
     }
 
@@ -344,9 +385,16 @@ final class CredentialPicker {
 
     // MARK: - The list (pure)
 
+    /// The sheet holds the native field for a code from Messages or Mail only for a field that looks like a code.
+    nonisolated static func offersMessagesCode(for field: Field) -> Bool {
+        field == .code
+    }
+
     /// A login row for every credential with a username or a password, a code row for every one with a verification code. Cards,
-    /// addresses and identities are not offered here.
-    nonisolated static func rows(_ accounts: [CredentialAccount], vaultID: UUID, origin: String, vault: String?) -> [Row] {
+    /// addresses and identities are not offered here. `used` dates only a credential saved for `origin`.
+    nonisolated static func rows(
+        _ accounts: [CredentialAccount], vaultID: UUID, origin: String, vault: String?, used: [UUID: Date] = [:]
+    ) -> [Row] {
         accounts.flatMap { account -> [Row] in
             let summary = CredentialSummary(account)
             let matches = account.origins.contains(origin) || CredentialAccountSelection.isSibling(account, of: origin)
@@ -355,7 +403,8 @@ final class CredentialPicker {
                 let parts = [first, website, vault].compactMap { $0 }.filter { !$0.isEmpty && $0 != summary.title }
                 return Row(
                     id: UUID(), vaultID: vaultID, accountID: account.id, fill: fill, title: summary.title,
-                    detail: parts.joined(separator: " · "), matchesSite: matches, searchKey: summary.searchKey
+                    detail: parts.joined(separator: " · "), matchesSite: matches, searchKey: summary.searchKey,
+                    lastUsed: account.origins.contains(origin) ? used[account.id] : nil
                 )
             }
             var rows: [Row] = []
@@ -370,13 +419,13 @@ final class CredentialPicker {
     }
 
     /// This website's credentials first, then the others; within each, codes first for a code field and logins first otherwise; then
-    /// by title.
+    /// by title. Above all of them, the code or login (as the field prefers) of the credential used last on this website.
     nonisolated static func ordered(_ rows: [Row], for field: Field) -> [Row] {
         let preferred: Row.Fill = field == .code ? .code : .login
         func rank(_ row: Row) -> Int {
             (row.matchesSite ? 0 : 2) + (row.fill == preferred ? 0 : 1)
         }
-        return rows.enumerated().sorted { left, right in
+        let sorted = rows.enumerated().sorted { left, right in
             let (leftRank, rightRank) = (rank(left.element), rank(right.element))
             if leftRank != rightRank {
                 return leftRank < rightRank
@@ -385,6 +434,7 @@ final class CredentialPicker {
             return order == .orderedSame ? left.offset < right.offset : order == .orderedAscending
         }
         .map(\.element)
+        return CredentialAccountSelection.lastUsedFirst(sorted) { $0.fill == preferred ? $0.lastUsed : nil }
     }
 
     /// The rows whose title, username (unless concealed) or website holds `query`, ignoring case and accents.

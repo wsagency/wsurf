@@ -117,6 +117,12 @@ public nonisolated struct ImportMemoryKey: Sendable {
         digest("note") { $0.text(text) }
     }
 
+    /// One credential's use on one of its websites, as the browser keeps it outside the vault (`AutofillLastUsed`): it can be matched
+    /// and not read, and only the unlocked vault makes it again.
+    public func use(of account: UUID, on origin: String) -> Data {
+        digest("use") { $0.uuid(account); $0.text(origin) }
+    }
+
     /// What `account` stands for now: each of its websites with its username and every login an import recorded for it, and the
     /// password and note an import last saw (else its own password, and its note when it has exactly one).
     public func trace(of account: CredentialAccount) -> ImportTrace {

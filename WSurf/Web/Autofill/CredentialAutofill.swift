@@ -183,6 +183,52 @@ nonisolated enum CredentialAccountSelection {
         }
     }
 
+    /// `rows` with those whose username the person typed exactly first (`typed`: what they typed is what they meant), then the one whose
+    /// credential was used last on this website, then the others in their order; among the typed ones too, the one used last leads.
+    /// `usedAt` answers only for a credential saved for the website (`AutofillLastUsed`); of two equal dates the earlier row wins. Nothing
+    /// is added or removed.
+    static func lastUsedFirst<Row>(_ rows: [Row], typed: (Row) -> Bool = { _ in false }, usedAt: (Row) -> Date?) -> [Row] {
+        func promoted(_ rows: [Row]) -> [Row] {
+            var latest: (index: Int, date: Date)?
+            for (index, row) in rows.enumerated() {
+                if let date = usedAt(row), date > (latest?.date ?? .distantPast) {
+                    latest = (index, date)
+                }
+            }
+            guard let index = latest?.index, index > 0 else { return rows }
+            var rows = rows
+            rows.insert(rows.remove(at: index), at: 0)
+            return rows
+        }
+        return promoted(rows.filter(typed)) + promoted(rows.filter { !typed($0) })
+    }
+
+    /// One row of the dropdown's default list: the vault and account it fills, and what it shows.
+    struct Listed: Equatable {
+        let vault: UUID
+        let account: UUID
+        let title: String
+        let detail: String
+    }
+
+    /// The dropdown's default list over the unlocked vaults, in vault order (`label` names the vault when several are open): what
+    /// `suggestions` offers in each, then `lastUsedFirst` over all of them, with `entered` as what the person typed.
+    static func listed(
+        in vaults: [(id: UUID, label: String?, accounts: [CredentialAccount])], origin: String, pageURL: URL?, entered: String?,
+        field: CredentialAutofillField, pinned: UUID? = nil, usedAt: (_ vault: UUID, _ account: UUID) -> Date?
+    ) -> [Listed] {
+        let typed = entered.flatMap { $0.isEmpty ? nil : $0 }
+        var rows: [(listed: Listed, typed: Bool)] = []
+        for vault in vaults {
+            let exact = typed.map { name in Set(vault.accounts.lazy.filter { $0.username == name }.map(\.id)) } ?? []
+            for row in suggestions(vault.accounts, origin: origin, pageURL: pageURL, entered: entered, field: field, pinned: pinned) {
+                let detail = vault.label.map { [row.detail, $0].filter { !$0.isEmpty }.joined(separator: " · ") } ?? row.detail
+                rows.append((Listed(vault: vault.id, account: row.id, title: row.title, detail: detail), exact.contains(row.id)))
+            }
+        }
+        return lastUsedFirst(rows, typed: { $0.typed }) { usedAt($0.listed.vault, $0.listed.account) }.map { $0.listed }
+    }
+
     /// What saving `login` would do. An explicitly selected account only applies to the same username; otherwise
     /// the exact username on this origin decides, and more than one match is never guessed between.
     static func savePlan(
