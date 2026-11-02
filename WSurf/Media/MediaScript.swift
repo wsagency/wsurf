@@ -10,6 +10,11 @@ enum MediaScript {
     nonisolated static let source = """
     (function () {
       if (window.__wsurfMedia) { return; }
+      // Chromium's PDF viewer plays nothing and must not be spoken to: it takes whoever messages its window for the page embedding
+      // it and answers them, and the browser ends a renderer that messages the frame a PDF is drawn in. So neither the viewer nor
+      // that frame, its child, runs this script (`wsurf-mute?`).
+      const pdfViewer = 'chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai';
+      if (location.origin === pdfViewer || location.ancestorOrigins?.[0] === pdfViewer) { return; }
       window.__wsurfMedia = true;
       const post = function (message) {
         try { globalThis.__wsurfSend?.('wsurfpip', message); } catch (e) {}
