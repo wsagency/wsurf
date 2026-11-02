@@ -72,6 +72,9 @@ extension AppCoordinator {
             self?.releaseMicroPlaceholders(for: [tab.id])
             self?.closeMicroWindowIfEmpty()
         }
+        browser.onShowWindow = { [weak self] model in
+            self?.application?.windows.first { $0.browser === model }?.showBrowser()
+        }
         let extensionTabChanged = browser.onActiveTabChanged
         browser.onActiveTabChanged = { [weak self] newTab, previousTab in
             extensionTabChanged?(newTab, previousTab)

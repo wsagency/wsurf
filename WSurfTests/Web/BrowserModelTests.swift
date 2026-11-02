@@ -390,4 +390,25 @@ struct BrowserModelTests {
         browser.close(plain)
         #expect(browser.activeTabID == bystander.id)
     }
+
+    /// An SSO pop-up shown in a window of its own: closing it selects the opener and brings the opener's window forward.
+    @Test func closingAPopupInAnotherWindowFocusesTheOpenersWindow() {
+        let profile = Profile(id: UUID(), name: "Popup fixture", symbol: "person", color: .gray)
+        let context = BrowserProfileContext.shared(for: profile)
+        let database = AppDatabase.temporary()
+        let main = BrowserModel(context: context, windowID: UUID(), database: database)
+        let micro = BrowserModel(context: context, windowID: UUID(), database: database)
+        defer { BrowserProfileContext.forget(profile.id) }
+        let opener = main.addPage("https://app.example/")
+        let other = main.addPage("https://other.example/")
+        main.activate(other)
+        let popup = main.addPage("https://sso.example/")
+        main.openerByTab[popup.id] = opener.id
+        #expect(micro.adoptTab(popup, from: main))
+        var shown: BrowserModel?
+        micro.onShowWindow = { shown = $0 }
+        micro.closeFromPage(popup)
+        #expect(shown === main)
+        #expect(main.activeTabID == opener.id)
+    }
 }

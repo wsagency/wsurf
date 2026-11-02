@@ -347,7 +347,14 @@ extension BrowserModel {
             // A page a page opened (an SSO pop-up) hands the front back to its opener, not the next tab in the list.
             let opener = openerByTab[tab.id].flatMap { tabsByID[$0] }.flatMap { isShown($0) && $0.microTabID == nil ? $0 : nil }
             activeTabID = (survivor ?? opener ?? neighbor(of: tab))?.id
+            // The opener is in another window (this pop-up was shown in its own): select it there and bring that window up.
+            if survivor == nil, opener == nil, let there = openerElsewhere[tab.id],
+               let model = there.model.model, let page = model.tabsByID[there.tab], model.isShown(page), page.microTabID == nil {
+                model.activate(page)
+                onShowWindow?(model)
+            }
         }
+        openerElsewhere[tab.id] = nil
         tabs.removeAll { $0 === tab }
         storedTree = reconciledTree().removing([.tab(tab.id)])
         sidebarDidChange()

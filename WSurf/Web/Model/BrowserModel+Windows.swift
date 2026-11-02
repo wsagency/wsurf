@@ -58,6 +58,12 @@ extension BrowserModel {
         source.splits = source.splits.removing(tab.id)
         source.storedTree = source.reconciledTree().removing([.tab(tab.id)])
         source.tabs.remove(at: oldIndex)
+        // The opener stays reachable across the move: here if it lives here, else in the window it stayed in.
+        if let id = source.openerByTab.removeValue(forKey: tab.id) {
+            if tabsByID[id] != nil { openerByTab[tab.id] = id } else { openerElsewhere[tab.id] = (WeakBrowserModel(model: source), id) }
+        } else if let there = source.openerElsewhere.removeValue(forKey: tab.id) {
+            if there.model.model === self, tabsByID[there.tab] != nil { openerByTab[tab.id] = there.tab } else { openerElsewhere[tab.id] = there }
+        }
         source.recentlyActive.removeAll { $0 == tab.id }
         source.switcherRecency = nil
         if source.paneInAir == tab.id {
