@@ -99,8 +99,8 @@ final class DownloadManager: NSObject {
     @ObservationIgnored private var resuming: Set<UUID> = []
     @ObservationIgnored private var explicitSaves: Set<UUID> = []
     @ObservationIgnored private var opensWhenFinished: Set<UUID> = []
-    /// Opens a saved file in the app for it. A test stands in for `NSWorkspace`.
-    @ObservationIgnored var openFile: (URL) -> Void = { NSWorkspace.shared.open($0) }
+    /// What opening a saved file asks of the system. A test stands in for `NSWorkspace`.
+    @ObservationIgnored var workspace = DownloadWorkspace.system
     @ObservationIgnored private var writingDestinations: Set<URL> = []
 
     @ObservationIgnored var webViewProvider: (() -> WKWebView?)?
@@ -359,7 +359,7 @@ final class DownloadManager: NSObject {
             if let destination {
                 Self.quarantine(destination, from: origins[id])
                 if opensWhenFinished.contains(id) {
-                    openFile(destination)
+                    openInPreview(destination, mimeType: download.mimeType)
                 }
             }
             finish(id)
@@ -623,7 +623,7 @@ final class DownloadManager: NSObject {
 
     func open(_ item: Item) {
         guard let destination = item.destination, item.state == .finished else { return }
-        openFile(destination)
+        NSWorkspace.shared.open(destination)
     }
 
     // MARK: - Bookkeeping

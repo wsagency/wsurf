@@ -11,6 +11,8 @@ public struct CefDownload: Sendable, Equatable {
     public var url: URL?
     /// The address the download was asked for, before any redirect.
     public var originalURL: URL?
+    /// The media type the server gave the response, when the engine knows it.
+    public var mimeType: String?
     /// Bytes received so far.
     public var receivedBytes: Int64
     /// Total bytes, or 0 when the server didn't say.
@@ -30,9 +32,11 @@ public struct CefDownload: Sendable, Equatable {
         isComplete: Bool,
         isCanceled: Bool,
         fullPath: URL?,
-        originalURL: URL? = nil
+        originalURL: URL? = nil,
+        mimeType: String? = nil
     ) {
         self.originalURL = originalURL
+        self.mimeType = mimeType
         self.id = id
         self.url = url
         self.receivedBytes = receivedBytes

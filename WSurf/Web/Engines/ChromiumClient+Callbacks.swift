@@ -145,7 +145,8 @@ extension ChromiumClient {
             isComplete: item.pointee.is_complete?(item) != 0,
             isCanceled: item.pointee.is_canceled?(item) != 0 || item.pointee.is_interrupted?(item) != 0,
             fullPath: path.isEmpty ? nil : URL(fileURLWithPath: path),
-            originalURL: URL(string: ChromiumInterop.takeString(item.pointee.get_original_url?(item)))
+            originalURL: URL(string: ChromiumInterop.takeString(item.pointee.get_original_url?(item))),
+            mimeType: Optional(ChromiumInterop.takeString(item.pointee.get_mime_type?(item))).flatMap { $0.isEmpty ? nil : $0 }
         )
     }
 

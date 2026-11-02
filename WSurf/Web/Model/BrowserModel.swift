@@ -255,7 +255,7 @@ final class BrowserModel {
                 sourceTabID: tab.id, privately: tab.isPrivate, on: tab.page.window
             )
             if opensAfterSaving, let destination {
-                NSWorkspace.shared.open(destination)
+                downloads.openInPreview(destination, mimeType: "application/pdf")
             }
         }
         tab.onChromiumDownload = { [weak self, weak tab] page, download, name, completion in

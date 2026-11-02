@@ -37,10 +37,20 @@ struct PDFSavingTests {
         private let lock = NSLock()
         private var all: [HTTPFixtureServer.Request] = []
         private var refused: Set<String> = []
+        private var disguised: [String: HTTPFixtureServer.Response] = [:]
 
         /// From now on the server refuses `path`, which it served before.
         func refuse(_ path: String) {
             lock.withLock { _ = refused.insert(path) }
+        }
+
+        /// From now on the server answers `path` with `response`.
+        func disguise(_ path: String, as response: HTTPFixtureServer.Response) {
+            lock.withLock { disguised[path] = response }
+        }
+
+        func disguise(for path: String) -> HTTPFixtureServer.Response? {
+            lock.withLock { disguised[path] }
         }
 
         func refuses(_ path: String) -> Bool {
@@ -75,7 +85,8 @@ struct PDFSavingTests {
         let browser: BrowserModel
         let window: NSWindow
         let tab: BrowserTab
-        private(set) var opened: [URL] = []
+        private(set) var opened: [(file: URL, app: URL)] = []
+        static let previewURL = URL(fileURLWithPath: "/Applications/Preview.app")
         private var menuObserver: NSObjectProtocol?
         lazy var coordinator = AppCoordinator(browser: browser)
         /// The titles of the last context menu, a separator as "—".
@@ -96,7 +107,8 @@ struct PDFSavingTests {
             self.browser = browser
             self.tab = tab
             self.window = window
-            downloads.openFile = { [weak self] file in self?.opened.append(file) }
+            downloads.workspace.urlForPreview = { Self.previewURL }
+            downloads.workspace.open = { [weak self] file, app in self?.opened.append((file, app)) }
         }
 
         var page: BrowserPage {
@@ -211,6 +223,7 @@ struct PDFSavingTests {
                 "/": .html("<!doctype html><title>Plain page</title><p>Not a PDF.</p>"),
                 "/login": .html("<!doctype html><title>Login</title><p>Signed in.</p>", headers: ["Set-Cookie": "pdfsession=\(token); Path=/"]),
                 "/report": Self.pdfResponse(pdf, name: "Quarterly Report.pdf"),
+                "/trap": Self.pdfResponse(pdf, name: "Trap.pdf"),
                 "/flaky": Self.pdfResponse(pdf, name: "Flaky.pdf"),
                 "/attachment": HTTPFixtureServer.Response(
                     status: "200 OK",
@@ -220,6 +233,9 @@ struct PDFSavingTests {
             ],
             respond: { request in
                 log.record(request)
+                if let disguise = log.disguise(for: request.path) {
+                    return disguise
+                }
                 if log.refuses(request.path) {
                     return HTTPFixtureServer.Response(status: "404 Not Found", headers: ["Content-Type": "text/plain"], body: Data("gone".utf8))
                 }
@@ -304,7 +320,10 @@ struct PDFSavingTests {
 
             let saved = try await rig.savedFile()
             #expect(try Data(contentsOf: saved) == Self.pdf)
-            #expect(await waitUntil { rig.opened == [saved] }, "the saved copy was opened, once")
+            #expect(await waitUntil { rig.opened.count == 1 }, "the saved copy was opened, once")
+            #expect(rig.opened.first?.file == saved && rig.opened.first?.app == Rig.previewURL, "in Preview itself")
+            let quarantine = try saved.resourceValues(forKeys: [.quarantinePropertiesKey]).quarantineProperties
+            #expect(quarantine != nil, "the quarantine flag stays")
             #expect(rig.tab.pendingPDFOpening == nil, "the request was used by its download")
         }
     }
@@ -493,6 +512,25 @@ struct PDFSavingTests {
         }
     }
 
+    /// A server can answer the second request with anything: a download that is not a PDF by name and type is saved and not opened.
+    @Test(arguments: [("text/html", "Trap.pdf"), ("application/pdf", "Trap.command"), ("application/octet-stream", "Trap.app")])
+    func aDisguisedPDFIsDownloadedButNotOpened(type: String, name: String) async throws {
+        try await withRig(.chromium) { rig, _ in
+            try await rig.load("/trap", isPDF: true)
+            rig.log.disguise("/trap", as: HTTPFixtureServer.Response(
+                status: "200 OK",
+                headers: ["Content-Type": type, "Content-Disposition": "attachment; filename=\"\(name)\""],
+                body: type == "text/html" ? Data("<html>not a PDF</html>".utf8) : Self.pdf
+            ))
+            rig.tab.savePDF(opening: true)
+
+            let saved = try await rig.savedFile()
+            #expect(saved.lastPathComponent == name)
+            try await Task.sleep(for: .milliseconds(500))
+            #expect(rig.opened.isEmpty, "it was downloaded and not opened; it opened \(rig.opened)")
+        }
+    }
+
     // MARK: - What the download list opens
 
     private func request(
@@ -530,24 +568,64 @@ struct PDFSavingTests {
         return try #require(decision)
     }
 
-    @Test func aFinishedDownloadOpensOnlyWhereItWasAskedTo() async throws {
+    struct Kind: CustomTestStringConvertible {
+        let name: String
+        let type: String?
+        let hasHeader: Bool
+        let opens: Bool
+        var testDescription: String { "\(name) as \(type ?? "?"), header \(hasHeader)" }
+    }
+
+    @Test(arguments: [
+        Kind(name: "Report.pdf", type: "application/pdf", hasHeader: true, opens: true),
+        Kind(name: "Report.PDF", type: nil, hasHeader: true, opens: true),
+        Kind(name: "Report.pdf", type: "text/html", hasHeader: true, opens: false),
+        Kind(name: "Report.command", type: "application/pdf", hasHeader: true, opens: false),
+        Kind(name: "Report.app", type: "application/pdf", hasHeader: true, opens: false),
+        Kind(name: "Report.pdf", type: "application/pdf", hasHeader: false, opens: false),
+    ])
+    func aFinishedDownloadOpensInPreviewOnlyWhenItIsAPDF(kind: Kind) async throws {
+        let (name, type, hasHeader, opens) = (kind.name, kind.type, kind.hasHeader, kind.opens)
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: folder) }
         let downloads = DownloadManager(destinationFolder: folder, asksWhereToSave: false)
-        var opened: [URL] = []
-        downloads.openFile = { opened.append($0) }
-
-        for (id, opens) in [(UInt32(1), false), (UInt32(2), true)] {
-            guard case .allow(let destination?) = try await decide(downloads, request(id, in: folder, opens: opens).0) else {
-                Issue.record("the download was allowed")
-                return
-            }
-            try Data("PDF".utf8).write(to: destination)
-            downloads.noteChromiumDownload(finished(id, at: destination))
-            #expect(opened == (opens ? [destination] : []), "opens: \(opens)")
-            opened = []
+        var opened: [(URL, URL)] = []
+        downloads.workspace.urlForPreview = { Rig.previewURL }
+        downloads.workspace.open = { opened.append(($0, $1)) }
+        var item = request(1, in: folder, opens: true).0
+        item = ChromiumDownloadRequest(
+            download: item.download, suggestedName: name, sourceTabID: nil, isPrivate: false, window: nil,
+            controls: item.controls, opensWhenFinished: true
+        )
+        guard case .allow(let destination?) = try await decide(downloads, item) else {
+            Issue.record("the download was allowed")
+            return
         }
+        try Data((hasHeader ? "%PDF-1.4 body" : "<html></html>").utf8).write(to: destination)
+        var done = finished(1, at: destination)
+        done.mimeType = type
+        downloads.noteChromiumDownload(done)
+
+        #expect(opened.count == (opens ? 1 : 0), "\(name) as \(type ?? "?"): opened \(opened)")
+        if opens {
+            #expect(opened.first?.0 == destination && opened.first?.1 == Rig.previewURL)
+        }
+    }
+
+    @Test func aPDFIsNotOpenedWhenPreviewCannotBeFound() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let file = folder.appendingPathComponent("Report.pdf")
+        try Data("%PDF-1.4".utf8).write(to: file)
+        let downloads = DownloadManager(destinationFolder: folder, asksWhereToSave: false)
+        var opened = 0
+        downloads.workspace.urlForPreview = { nil }
+        downloads.workspace.open = { _, _ in opened += 1 }
+        downloads.openInPreview(file, mimeType: "application/pdf")
+        #expect(opened == 0)
+        #expect(DownloadWorkspace.system.urlForPreview()?.lastPathComponent == "Preview.app", "the system names Preview by its bundle identifier")
     }
 
     @Test func aDeniedOrStoppedDownloadNeverOpensItsFile() async throws {
@@ -556,7 +634,8 @@ struct PDFSavingTests {
         defer { try? FileManager.default.removeItem(at: folder) }
         let downloads = DownloadManager(destinationFolder: folder, asksWhereToSave: false)
         var opened: [URL] = []
-        downloads.openFile = { opened.append($0) }
+        downloads.workspace.urlForPreview = { Rig.previewURL }
+        downloads.workspace.open = { file, _ in opened.append(file) }
 
         // Denied: the page was gone when the engine asked.
         let gone = request(1, in: folder, live: false, opens: true).0
