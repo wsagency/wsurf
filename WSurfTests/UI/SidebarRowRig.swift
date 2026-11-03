@@ -77,7 +77,10 @@ struct SidebarRowRig {
     /// `view` drawn by AppKit at 2 pixels to the point, which is how a Retina display draws it. Points, not pixels, are
     /// what `Picture` takes.
     func picture(of view: some View) throws -> Picture {
-        let host = NSHostingView(rootView: view)
+        let host = NSHostingView(rootView: view
+            // The live Reduce Transparency / Increase Contrast settings swap glass for solid fills; pin them like ThemeLayoutRenderTests.
+            .environment(\._accessibilityReduceTransparency, false)
+            .environment(\._colorSchemeContrast, .standard))
         host.frame = CGRect(origin: .zero, size: host.fittingSize)
         let window = RetinaWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false

@@ -124,7 +124,7 @@ struct ThemeLayoutRenderTests {
                 .padding(10)
                 .background(gray)
             let color = try pixel(of: row, scheme: .light, x: 50, y: 25)
-            #expect(abs(color.redComponent - 0.5) < 0.05 && isNeutral(color), "\(frame)")
+            #expect(abs(color.redComponent - 0.5) < 0.05 && isNeutral(color), "\(frame): \(color)")
         }
     }
 }
