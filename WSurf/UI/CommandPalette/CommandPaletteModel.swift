@@ -266,7 +266,8 @@ enum CommandPaletteProjection {
         let order = CommandPaletteSection.typingOrder(
             settings.commandPaletteOrder,
             isAddress: Omnibox.location(for: needle) != nil,
-            hasStrongCommand: promoted
+            hasStrongCommand: promoted,
+            hasMatchingTabs: slots[.tabs]?.section.items.isEmpty == false
         )
         return headingSearch(
             CommandPaletteBudget.fit(order.compactMap { slots[$0] }, total: CommandPaletteBudget.typing)

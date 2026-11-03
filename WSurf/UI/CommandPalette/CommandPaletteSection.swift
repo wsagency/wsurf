@@ -56,16 +56,21 @@ enum CommandPaletteSection: String, CaseIterable, Identifiable {
         }
     }
 
-    /// The order to show while the person types. Return runs the first result, so two cases keep their place
-    /// whatever the person chose: an address keeps Search or ask first, which makes Return open it, and a
-    /// command that matches strongly sits right under the first section so it is never buried. The default
-    /// order already satisfies both, so for it this changes nothing.
+    /// The order to show while the person types. Return runs the first result, so three cases keep their place
+    /// whatever the person chose: open tabs that match come first (switching to a tab you already have beats
+    /// anything else, and typing must not push them down), an address then keeps Search or ask first, which
+    /// makes Return open it, and a command that matches strongly sits right under the first section so it is
+    /// never buried.
     static func typingOrder(
         _ order: [CommandPaletteSection],
         isAddress: Bool,
-        hasStrongCommand: Bool
+        hasStrongCommand: Bool,
+        hasMatchingTabs: Bool = false
     ) -> [CommandPaletteSection] {
         var order = order
+        if hasMatchingTabs, let index = order.firstIndex(of: .tabs), index > 0 {
+            order.insert(order.remove(at: index), at: 0)
+        }
         if isAddress, let index = order.firstIndex(of: .search), index > 0 {
             order.insert(order.remove(at: index), at: 0)
         }

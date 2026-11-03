@@ -5,6 +5,12 @@ This file preserves release notes inherited from the upstream
 describe upstream Linen releases, not releases published by WSurf. New WSurf
 release notes will be added above this provenance record.
 
+## Unreleased
+
+### Command palette
+
+- Open tabs that match what you type now stay at the top of the Command palette while you type, instead of dropping below Search or ask and the suggestions.
+
 ## 0.1.21 (build 21) — 2026-11-03
 
 Everything since 0.1.20 (build 20). None of the screens and prompts below has been checked by hand.
