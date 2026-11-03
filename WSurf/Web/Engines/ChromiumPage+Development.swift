@@ -33,16 +33,36 @@ extension ChromiumPage {
     }
 
     /// Media features for an MCP development lease. `command` replaces the whole set, so the call carries every feature the
-    /// lease still wants and an empty set removes them all.
+    /// lease still wants and an empty set removes them all. Developer mode's page appearance (`baseColorScheme`) fills the color
+    /// scheme the lease leaves open, so ending a lease puts that back instead of the page's own.
     func setEmulatedMedia(_ media: DevelopmentMedia) async throws {
+        leaseMedia = media
         var features: [[String: String]] = []
-        if let scheme = media.colorScheme {
+        if let scheme = media.colorScheme ?? baseColorScheme {
             features.append(["name": "prefers-color-scheme", "value": scheme.rawValue])
         }
         if let reduced = media.reducedMotion {
             features.append(["name": "prefers-reduced-motion", "value": reduced ? "reduce" : "no-preference"])
         }
         _ = try await command("Emulation.setEmulatedMedia", params: ["features": features])
+    }
+
+    /// Developer mode's Page Appearance, behind any development lease turn on the page (which also writes the emulated media). A
+    /// turn skips a scheme the page already has, so a quick change back is never lost to a stale check made before it ran.
+    func setBaseColorScheme(_ scheme: DevelopmentMedia.ColorScheme?) {
+        owner?.emulationQueue.enqueue { [self] in await applyBaseColorScheme(scheme) }
+    }
+
+    /// `scheme` is `prefers-color-scheme` until it changes. Kept only once Chromium took it.
+    func applyBaseColorScheme(_ scheme: DevelopmentMedia.ColorScheme?) async {
+        guard scheme != baseColorScheme else { return }
+        let previous = baseColorScheme
+        baseColorScheme = scheme
+        do {
+            try await setEmulatedMedia(leaseMedia)
+        } catch {
+            baseColorScheme = previous
+        }
     }
 
     /// Offline only: no latency or throughput limit is ever applied.

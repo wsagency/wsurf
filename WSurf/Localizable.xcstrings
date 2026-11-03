@@ -9298,7 +9298,7 @@
       "comment" : "Caption of the Level 2 slider under Folder indent in the Layout card in Settings › Appearance."
     },
     "Inspect Element" : {
-      "comment" : "Activity title when a connected app inspects one page element: its attributes, geometry, box model and styles. Shown in Agent Activity and as the Latest action of an external connection. Title Case; a verb phrase, singular."
+      "comment" : "Activity title when a connected app inspects one page element: its attributes, geometry, box model and styles. Shown in Agent Activity and as the Latest action of an external connection. Also the last item of a Chromium page’s context menu when the Web Inspector is on, which opens Chromium’s DevTools on the clicked element (WebKit supplies its own). Title Case; a verb phrase, singular."
     },
     "Issued" : {
       "comment" : "Row label, shown beside the value, of a field of an item in the credential editor of Settings › Credentials. Sentence case. The date a document was issued, on Driver’s license, Passport and ID document items. Short."

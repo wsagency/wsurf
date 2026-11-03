@@ -23,6 +23,12 @@ release notes will be added above this provenance record.
 - Shift-click on a link opens it in a Peek, as in WebKit tabs. ⌘-click and middle-click open a tab in the background, and ⇧⌘-click in front.
 - A pop-up that a page opens without a click and WSurf blocks shows the “pop-up blocked” notice, as in WebKit tabs.
 
+### Chromium tabs
+
+- Chromium tabs now have developer tools. View › Developer › Show Web Inspector (⌥⌘I), the ⌘K palette and the Developer Tools menu open Chromium’s DevTools in a window of their own, and a right-click offers Inspect Element, under the same conditions as in WebKit tabs (the Web Inspector setting, or a website in Developer mode).
+- Find on page in a Chromium tab uses Chromium’s own find: every match is highlighted, and “n of m” is Chromium’s own count and position.
+- Developer mode’s Page Appearance (Match System, Light, Dark) now works in Chromium tabs, as the page’s preferred color scheme; WebKit tabs set the view’s appearance instead.
+
 ## 0.1.21 (build 21) — 2026-11-03
 
 Everything since 0.1.20 (build 20). None of the screens and prompts below has been checked by hand.

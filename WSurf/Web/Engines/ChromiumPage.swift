@@ -98,6 +98,11 @@ final class ChromiumPage: NSView {
     /// Download PDF (false) or Open in Preview (true) does (`BrowserTab.savePDF`). `ChromiumClient` adds the items.
     var showsPDF: (() -> Bool)?
     var onSavePDF: ((Bool) -> Void)?
+    /// Inspect Element: whether the tab offers it now (`BrowserTab.canShowWebInspector`). `ChromiumClient` adds the item to the menu.
+    var canInspect: (() -> Bool)?
+    let find = ChromiumFind()
+    var baseColorScheme: DevelopmentMedia.ColorScheme?
+    var leaseMedia = DevelopmentMedia()
     var permissionDecision: ((BrowserFrame, [WebPermission]) async -> Bool)?
     var downloadDecision: ((CefDownload, String, @escaping (CefDownloadDecision) -> Void) -> Void)?
     var downloadProgress: ((CefDownload) -> Void)?

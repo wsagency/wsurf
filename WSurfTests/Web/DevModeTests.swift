@@ -313,10 +313,10 @@ struct DevModeTests {
         for word in ["screenshot", "capture page"] {
             #expect(CommandPaletteCatalog.matching(word, in: ready).first?.id == "action-copyScreenshot", "\(word)")
         }
-        // One without a WebKit page to inspect still takes a screenshot.
-        let chromium = ids(CommandPaletteContext(tabCount: 1, hasActiveTab: true, canInspect: false, canScreenshot: true))
-        #expect(!chromium.contains("action-showWebInspector"))
-        #expect(chromium.contains("action-copyScreenshot"))
+        // One with nothing to inspect (the inspector is off for its website) still takes a screenshot.
+        let uninspectable = ids(CommandPaletteContext(tabCount: 1, hasActiveTab: true, canInspect: false, canScreenshot: true))
+        #expect(!uninspectable.contains("action-showWebInspector"))
+        #expect(uninspectable.contains("action-copyScreenshot"))
     }
 
     @Test func theCopyScreenshotCommandNeedsAPageThatIsLoaded() async throws {

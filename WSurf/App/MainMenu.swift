@@ -743,8 +743,6 @@ final class MainMenu: NSObject, NSMenuItemValidation {
     private func validateDeveloperItem(_ menuItem: NSMenuItem) -> Bool {
         let tab = coordinator.pageCommandTab
         if menuItem.action == #selector(showWebInspector) {
-            // Chromium has no inspector in WSurf: the item is hidden for such a tab instead of left there doing nothing.
-            menuItem.isHidden = tab.map { !$0.inspectsWithWebKit } ?? false
             return tab?.canShowWebInspector ?? false
         }
         guard let tab, let host = DevMode.host(of: URL(string: tab.urlString)) else {

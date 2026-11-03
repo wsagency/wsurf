@@ -10,6 +10,8 @@ struct FindDriver {
     var find: (_ query: String, _ backwards: Bool, _ completion: @escaping @MainActor (Bool) -> Void) -> Void
     var countMatches: (_ query: String, _ completion: @escaping @MainActor (Int) -> Void) -> Void
     var clearHighlight: () -> Void
+    /// The position of the highlighted match when the engine says so (Chromium's native find); nil leaves the session to count steps.
+    var activeMatch: @MainActor () -> Int? = { nil }
 
     static func webKit(_ webView: @escaping @MainActor () -> WKWebView?) -> FindDriver {
         FindDriver(
@@ -48,7 +50,9 @@ struct FindDriver {
                     completion(false)
                     return
                 }
-                if let webKit = current.webKit {
+                if let chromium = current.chromium {
+                    chromium.find(query, backwards: backwards, completion: completion)
+                } else if let webKit = current.webKit {
                     let configuration = WKFindConfiguration()
                     configuration.backwards = backwards
                     configuration.caseSensitive = false
@@ -69,15 +73,28 @@ struct FindDriver {
                     completion(0)
                     return
                 }
+                // Chromium counts as it finds; the count comes with the find that follows this call.
+                if let chromium = current.chromium {
+                    chromium.find.wait { completion($0.total) }
+                    return
+                }
                 Task { @MainActor in
                     completion(await Self.read(FindSession.countScript(for: query), in: current) as? Int ?? 0)
                 }
             },
             clearHighlight: {
                 guard let current = page() else { return }
+                if let chromium = current.chromium {
+                    chromium.stopFinding()
+                    return
+                }
                 Task { @MainActor in
                     _ = await Self.read("window.getSelection().removeAllRanges()", in: current)
                 }
+            },
+            activeMatch: {
+                guard let active = page()?.chromium?.find.latest.active, active > 0 else { return nil }
+                return active
             }
         )
     }
@@ -135,6 +152,8 @@ final class FindSession {
             noMatches = false
             totalMatches = 0
             currentMatch = 0
+            // Clearing the field leaves no highlights behind.
+            driver?.clearHighlight()
             return
         }
         driver.countMatches(query) { [weak self] total in
@@ -144,7 +163,7 @@ final class FindSession {
         driver.find(query, false) { [weak self] found in
             guard let self, generation == expected else { return }
             noMatches = !found
-            currentMatch = found ? 1 : 0
+            currentMatch = found ? (driver.activeMatch() ?? 1) : 0
         }
     }
 
@@ -162,7 +181,7 @@ final class FindSession {
                 currentMatch = 0
                 return
             }
-            currentMatch = Self.step(from: currentMatch, of: totalMatches, backwards: backwards)
+            currentMatch = driver.activeMatch() ?? Self.step(from: currentMatch, of: totalMatches, backwards: backwards)
         }
     }
 
