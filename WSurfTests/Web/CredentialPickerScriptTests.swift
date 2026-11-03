@@ -12,21 +12,24 @@ import WebKit
 /// fixture here does, so no menu opens. WebKit gets the mouse events through its window, Chromium through DevTools input.
 @MainActor
 enum PageRightClick {
-    static func send(at point: CGPoint, in page: BrowserPage, window: NSWindow) async throws {
+    /// `left`: an ordinary click instead, which focuses a field the way a person does.
+    static func send(at point: CGPoint, in page: BrowserPage, window: NSWindow, left: Bool = false) async throws {
         if let chromium = page.chromium {
-            for (type, buttons) in [("mousePressed", 2), ("mouseReleased", 0)] {
+            for (type, buttons) in [("mousePressed", left ? 1 : 2), ("mouseReleased", 0)] {
                 _ = try await chromium.command("Input.dispatchMouseEvent", params: [
-                    "type": type, "x": Double(point.x), "y": Double(point.y), "button": "right", "buttons": buttons, "clickCount": 1,
+                    "type": type, "x": Double(point.x), "y": Double(point.y), "button": left ? "left" : "right", "buttons": buttons,
+                    "clickCount": 1,
                 ])
             }
             return
         }
         let native = try #require(page.webKit)
         let location = native.convert(point, to: nil)
-        for type in [NSEvent.EventType.rightMouseDown, .rightMouseUp] {
+        for type in left ? [NSEvent.EventType.leftMouseDown, .leftMouseUp] : [.rightMouseDown, .rightMouseUp] {
             window.sendEvent(try #require(NSEvent.mouseEvent(
                 with: type, location: location, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
-                windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: type == .rightMouseDown ? 1 : 0
+                windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1,
+                pressure: [.rightMouseDown, .leftMouseDown].contains(type) ? 1 : 0
             )))
         }
     }
@@ -61,6 +64,7 @@ struct CredentialPickerScriptTests {
         let window: NSWindow
         private(set) var contexts: [(body: [String: Any], frame: BrowserFrame)] = []
         private(set) var readyFrames: [BrowserFrame] = []
+        private(set) var selections: [[String: Any]] = []
 
         init(page: BrowserPage, window: NSWindow) {
             self.page = page
@@ -74,6 +78,8 @@ struct CredentialPickerScriptTests {
                 contexts.append((body, message.frameInfo))
             case "ready":
                 readyFrames.append(message.frameInfo)
+            case "select":
+                selections.append(body)
             default:
                 break
             }
@@ -147,6 +153,30 @@ struct CredentialPickerScriptTests {
         <div><input id="d1" maxlength="1"><input id="d2" maxlength="1"><input id="d3" maxlength="1">
         <input id="d4" maxlength="1"><input id="d5" maxlength="1"><input id="d6" maxlength="1"><button>Verify</button></div>
         <form action="https://elsewhere.example/collect"><input id="xu"><input id="xp" type="password"></form>
+        <form id="aw"><input id="vu" name="vu"><input id="vp" type="password" name="vp">
+        <input type="hidden" id="hu" name="UserName"><input type="hidden" id="hp" name="Password"><button>Login</button></form>
+        <output id="log"></output>
+        <form id="mv"><input id="mu" autocomplete="username"><input id="mp" type="password"></form>
+        <form id="ma"><input id="mau" autocomplete="username"><input id="mpw" type="password"></form>
+        <form id="evil" action="https://elsewhere.example/steal"></form>
+        <script>
+        // Pages that, while the username fills, move the password into a form that sends it to another site.
+        mu.addEventListener('blur', () => evil.append(mp));
+        mau.addEventListener('input', () => mpw.setAttribute('form', 'evil'));
+        </script>
+        <script>
+        // AribaWeb-style: the form that is sent carries hidden copies, made by the page's own key and blur listeners.
+        vu.addEventListener('keyup', () => { hu.value = vu.value; });
+        vp.addEventListener('blur', () => { hp.value = vp.value; });
+        for (const type of ['focus','keydown','beforeinput','input','keyup','change','blur']) {
+          vp.addEventListener(type, event => { log.value += `${type}${event.isTrusted ? '!' : ''}=${vp.value.length} `; });
+        }
+        aw.addEventListener('submit', event => {
+          event.preventDefault();
+          const sent = new FormData(aw);
+          aw.dataset.sent = `${sent.get('UserName')}|${sent.get('Password')}`;
+        });
+        </script>
         <script>
         const frame = document.createElement('iframe');
         frame.src = location.protocol + '//' + \#(host) + '/frame';
@@ -342,6 +372,121 @@ struct CredentialPickerScriptTests {
             }
             #expect(try await harness.classification("sec") == nil, "a security code may be a card's")
             #expect(try await harness.classification("mfaon") != "one-time-code", "a setting about a second factor is no code")
+        }
+    }
+
+    /// What the AribaWeb-style form sends, and what the password field's own listeners saw: `type`, `!` when trusted, `=` and the
+    /// field's length at that moment.
+    private func ariba(_ harness: Harness) async throws -> (sent: String?, log: [String]) {
+        let sent = try await harness.page.callAsyncJavaScript(
+            "aw.requestSubmit(); return aw.dataset.sent ?? null;", arguments: [:], in: nil, contentWorld: PasswordAutofill.world
+        ) as? String
+        let log = try await harness.page.callAsyncJavaScript(
+            "return document.getElementById('log').value;", arguments: [:], in: nil, contentWorld: PasswordAutofill.world
+        ) as? String
+        return (sent, (log ?? "").split(separator: " ").map(String.init))
+    }
+
+    private func clearLog(_ harness: Harness) async throws {
+        _ = try await harness.page.callAsyncJavaScript(
+            "document.getElementById('log').value = '';", arguments: [:], in: nil, contentWorld: PasswordAutofill.world
+        )
+    }
+
+    /// From its keydown on, the password field heard the whole sequence once, with the value in place from `input` on, and every
+    /// event the fill made itself untrusted. A focus or blur may be the engine's own (trusted) or, on a page without focus, the
+    /// script's.
+    private func expectTyped(_ log: [String], length: Int) {
+        let typing = log.drop { !$0.hasPrefix("keydown") }.filter { !$0.hasPrefix("focus") }
+        #expect(typing.map { String($0.prefix { $0 != "!" && $0 != "=" }) } == ["keydown", "beforeinput", "input", "keyup", "change", "blur"],
+                "\(log)")
+        #expect(typing.prefix(5) == ["keydown=0", "beforeinput=0", "input=\(length)", "keyup=\(length)", "change=\(length)"],
+                "the fill's own events are untrusted: \(log)")
+        #expect(typing.last?.hasSuffix("=\(length)") == true, "blur comes after the value: \(log)")
+    }
+
+    /// AribaWeb copies the visible fields into the hidden ones it sends, on keyup and on blur. A pick fills so that those copies
+    /// happen, in both engines.
+    @Test(.boundedWebViews, arguments: BrowserEngine.allCases)
+    func aPickReachesAFormThatCopiesItsFieldsOnKeyAndBlur(engine: BrowserEngine) async throws {
+        try await withHarness(engine) { harness in
+            let click = try await harness.rightClick("vp")
+            try await clearLog(harness)
+            #expect(try await harness.fill(click, ["username": "ada", "password": "dummy-secret"]) == 2)
+
+            let (sent, log) = try await ariba(harness)
+            #expect(sent == "ada|dummy-secret")
+            expectTyped(log, length: 12)
+            #expect(try await harness.values(["vu", "vp", "au", "ap", "bu", "bp"]) == ["ada", "dummy-secret", "", "", "", ""])
+        }
+    }
+
+    /// The page's own listeners run while the username fills. A password field they move into a form that sends to another site,
+    /// by moving it or by its `form` attribute, takes nothing.
+    @Test(.boundedWebViews, arguments: BrowserEngine.allCases)
+    func aPasswordMovedToAnotherSitesFormDuringTheFillTakesNothing(engine: BrowserEngine) async throws {
+        try await withHarness(engine) { harness in
+            for (username, password) in [("mu", "mp"), ("mau", "mpw")] {
+                let click = try await harness.rightClick(username)
+                #expect(try await harness.fill(click, ["username": "ada", "password": "dummy-secret"]) == 1, "\(username)")
+                #expect(try await harness.values([username, password]) == ["ada", ""], "\(password) took nothing")
+            }
+        }
+    }
+
+    /// The same while the page has no focus, as a Chromium page has none while the picker's sheet holds the window: Blink then
+    /// sends no focus or blur of its own, so the fill sends them.
+    @Test(.boundedWebViews, arguments: BrowserEngine.allCases)
+    func aPickReachesTheFormWhileThePageHasNoFocus(engine: BrowserEngine) async throws {
+        try await withHarness(engine) { harness in
+            let click = try await harness.rightClick("vp")
+            harness.window.makeFirstResponder(nil)
+            let unfocused = await waitUntil(timeout: .seconds(3)) {
+                (try? await harness.page.callAsyncJavaScript(
+                    "return document.hasFocus();", arguments: [:], in: nil, contentWorld: PasswordAutofill.world
+                )) as? Bool == false
+            }
+            try await clearLog(harness)
+            #expect(try await harness.fill(click, ["username": "ada", "password": "dummy-secret"]) == 2)
+
+            let (sent, log) = try await ariba(harness)
+            #expect(sent == "ada|dummy-secret")
+            expectTyped(log, length: 12)
+            if engine == .chromium {
+                #expect(unfocused, "Chromium's page lost focus with its view")
+                #expect(log.contains("blur=12"), "Blink sent no blur, so the fill did: \(log)")
+            }
+        }
+    }
+
+    /// The same for a suggestion picked under a focused field; moving focus through the fields does not offer suggestions again,
+    /// and focus ends in the field the person was in.
+    @Test(.boundedWebViews, arguments: BrowserEngine.allCases)
+    func aSuggestionReachesAFormThatCopiesItsFieldsOnKeyAndBlur(engine: BrowserEngine) async throws {
+        try await withHarness(engine) { harness in
+            try await PageRightClick.send(
+                at: try await PageRightClick.center(of: "vp", in: harness.page), in: harness.page, window: harness.window, left: true
+            )
+            try #require(await waitUntil { harness.selections.last?["token"] is String }, "the click selects the password field")
+            let selection = try #require(harness.selections.last)
+            let token = try #require(selection["token"] as? String), url = try #require(selection["url"] as? String)
+            try await clearLog(harness)
+            let count = try await harness.page.callAsyncJavaScript(
+                "return globalThis.__wsurfPasswords.fill(token, url, login);",
+                arguments: ["token": token, "url": url, "login": ["username": "ada", "password": "dummy-secret"]],
+                in: nil, contentWorld: PasswordAutofill.world
+            )
+            #expect((count as? NSNumber)?.intValue == 2)
+            let selections = harness.selections.count
+
+            let (sent, log) = try await ariba(harness)
+            #expect(sent == "ada|dummy-secret")
+            expectTyped(log, length: 12)
+            #expect(try await harness.page.callAsyncJavaScript(
+                "return document.activeElement?.id ?? null;", arguments: [:], in: nil, contentWorld: PasswordAutofill.world
+            ) as? String == "vp")
+            try await Task.sleep(for: .milliseconds(400))
+            #expect(harness.selections.count == selections, "the fill's own focus moves offer nothing")
         }
     }
 }

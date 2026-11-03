@@ -526,6 +526,7 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
         guard let page = BrowserPage.from(webView) else { return }
         let nativeNavigation = page.navigation(for: navigation)
+        page.certificateStanding.navigationStarted()
         PageFrameRegistry.shared.navigationStarted(navigation, in: page)
         page.onNavigationStarted?(nativeNavigation, webView.url)
     }
@@ -554,6 +555,8 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
             case .useDefaultHandling:
                 return (.performDefaultHandling, nil)
             case .proceed(let credential):
+                // Past a certificate warning: whatever this loads, the page is no longer secure for credentials.
+                BrowserPage.from(webView)?.certificateStanding.exceptionAccepted()
                 return (.useCredential, credential)
             case .cancel:
                 return (.cancelAuthenticationChallenge, nil)
@@ -576,6 +579,7 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
         pendingMainFrameURL = nil
         guard let page = BrowserPage.from(webView) else { return }
+        page.certificateStanding.navigationCommitted()
         PageFrameRegistry.shared.navigationCommitted(navigation, in: page)
         // The committed document decides the inspector and the page appearance: leaving a website in Developer mode switches both off.
         tab?.context.settings.applyInspector(to: webView)

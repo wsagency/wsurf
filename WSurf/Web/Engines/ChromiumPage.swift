@@ -598,6 +598,8 @@ final class ChromiumPage: NSView {
         if restoredFromCache && !navigationStarted {
             willNavigate(frame.request, isRedirect: false)
         }
+        // Observers never see the new address with the old page's security; it is read again below.
+        owner?.hasOnlySecureContent = false
         owner?.url = frame.request.url
         if let frameID = frame.chromiumID,
            let response = client?.documentResponses.commit(frameID: frameID, loaderID: frame.documentID) {
@@ -692,21 +694,12 @@ final class ChromiumPage: NSView {
     func didChangeProgress(_ progress: Double) {
         owner?.estimatedProgress = progress
     }
-    func didChangeSecurity(_ secure: Bool) {
-        owner?.hasOnlySecureContent = secure
+    /// DevTools says the page's security changed: read the entry again under `hasOnlySecureContent(url:...)`, not its rating.
+    func didChangeSecurity() {
+        guard !closing, !isClosed else { return }
+        updateNativeSecurity()
     }
 
-    private func updateNativeSecurity() {
-        let secure = withHost { host -> Bool in
-            guard let entry = host.pointee.get_visible_navigation_entry?(host) else { return false }
-            defer { ChromiumInterop.release(UnsafeMutableRawPointer(entry)) }
-            guard let ssl = entry.pointee.get_sslstatus?(entry) else { return false }
-            defer { ChromiumInterop.release(UnsafeMutableRawPointer(ssl)) }
-            return ssl.pointee.is_secure_connection?(ssl) == 1
-                && ssl.pointee.get_content_status?(ssl).rawValue == 0
-        } ?? false
-        owner?.hasOnlySecureContent = secure
-    }
     func didHoverLink(_ url: URL?) {
         owner?.onLinkHovered?(url)
     }

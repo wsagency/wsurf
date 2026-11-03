@@ -61,8 +61,9 @@ extension ChromiumDevTools {
         "Page.navigatedWithinDocument": { $0.navigatedWithinDocument($1) },
         "Page.frameDetached": { $0.frameDetached($1) },
         "Network.responseReceived": { $0.documentResponseReceived($1) },
-        "Security.securityStateChanged": { $0.securityStateChanged($1) },
-        "Security.visibleSecurityStateChanged": { $0.visibleSecurityStateChanged($1) },
+        // Only a cue: the page reads its own entry again under WebKit's rule (`ChromiumPage.hasOnlySecureContent`).
+        "Security.securityStateChanged": { devTools, _ in devTools.page?.didChangeSecurity() },
+        "Security.visibleSecurityStateChanged": { devTools, _ in devTools.page?.didChangeSecurity() },
     ]
 
     func receiveEvent(name: String, params: [String: Any]) {
@@ -85,19 +86,6 @@ extension ChromiumDevTools {
         uniqueIDByExecutionID.removeAll()
         if hadContexts {
             invalidateCredentialContexts(documents: [], pageWide: true)
-        }
-    }
-
-    private func securityStateChanged(_ params: [String: Any]) {
-        if let state = params["securityState"] as? String {
-            page?.didChangeSecurity(state == "secure")
-        }
-    }
-
-    private func visibleSecurityStateChanged(_ params: [String: Any]) {
-        if let visible = params["visibleSecurityState"] as? [String: Any],
-           let state = visible["securityState"] as? String {
-            page?.didChangeSecurity(state == "secure")
         }
     }
 

@@ -11,6 +11,12 @@ release notes will be added above this provenance record.
 
 - Open tabs that match what you type now stay at the top of the Command palette while you type, instead of dropping below Search or ask and the suggestions.
 
+### Passwords, passkeys and autofill
+
+- A filled login now reaches the page as typing does, with focus, key, input, change and blur events, in WebKit and Chromium tabs, so sign-in pages that copy what you type on a key or on leaving the field (such as SAP Ariba) receive it; before, Login could treat the filled fields as empty. Focus goes back to the field you chose.
+- In Chromium tabs, a page counts as secure for saved logins by WebKit’s rule (an HTTPS page with a valid certificate and nothing insecure on it), so Pick Credential…, suggestions and save offers no longer disappear on secure pages Chromium rated otherwise. A page reached past a certificate warning gets no saved logins.
+- In WebKit tabs too, a page reached past a certificate warning, or one that loaded something past one, no longer counts as secure: no saved logins are offered, filled or saved there, and the address bar shows no lock.
+
 ## 0.1.21 (build 21) — 2026-11-03
 
 Everything since 0.1.20 (build 20). None of the screens and prompts below has been checked by hand.
