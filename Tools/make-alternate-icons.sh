@@ -1,7 +1,7 @@
 #!/bin/sh
 
 # SPDX-FileCopyrightText: 2026 WSurf Agency
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: BUSL-1.1
 
 # Render the alternate app icons for a future icon picker from
 # WSurf/AppIcon.icon with Icon Composer's own renderer, so each one looks like

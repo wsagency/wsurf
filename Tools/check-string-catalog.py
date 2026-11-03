@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2026 wsagency
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: BUSL-1.1
 """Compares the strings the Swift compiler extracts with the keys of the app's string catalogs.
 
 Ground truth is the build's own extraction: with SWIFT_EMIT_LOC_STRINGS = YES (the app target) every Swift file

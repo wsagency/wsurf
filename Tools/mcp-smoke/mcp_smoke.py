@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2026 WSurf Agency
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: BUSL-1.1
 """Attended smoke test for WSurf's MCP server, driven by a plain stdio MCP client.
 
 Not part of any automated gate: it needs a running WSurf (a Stage Debug app) and a person who answers the access sheet once.

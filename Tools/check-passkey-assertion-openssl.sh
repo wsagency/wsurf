@@ -1,6 +1,6 @@
 #!/bin/bash
 # SPDX-FileCopyrightText: 2026 WSurf Agency
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: BUSL-1.1
 #
 # Cross-implementation check of a passkey assertion: WSurf's own PKCS#8 import (PasskeyKeyEncoding) and assertion encoding
 # (WebAuthnEncoding) sign authenticatorData || SHA256(clientDataJSON) for github.com, and OpenSSL verifies the DER signature with

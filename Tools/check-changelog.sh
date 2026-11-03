@@ -1,6 +1,6 @@
 #!/bin/bash
 # SPDX-FileCopyrightText: 2026 WSurf Agency
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: BUSL-1.1
 #
 # Fails unless CHANGELOG.md has a "## <version> (build <n>)" section for the MARKETING_VERSION and CURRENT_PROJECT_VERSION
 # the project sets, and, for a 0.x version, fails unless the patch number equals the build number (0.1.4 is build 4). Every

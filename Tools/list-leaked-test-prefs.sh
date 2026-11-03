@@ -1,6 +1,6 @@
 #!/bin/bash
 # SPDX-FileCopyrightText: 2026 WSurf Agency
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: BUSL-1.1
 #
 # Dry run: lists the preference files WSurf test runs left in ~/Library/Preferences. It never moves, edits or deletes
 # anything. Three kinds, each with a count, total size and the newest few:

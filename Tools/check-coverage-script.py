@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2026 wsagency
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: BUSL-1.1
 """Check Tools/check-coverage.sh against a fake `xcrun` that prints a canned `xccov view --report --only-targets` listing.
 
 WSurf.app missing or under the floor fails; a package target (WSurfVault, WSurfCore) missing from the report only warns, naming

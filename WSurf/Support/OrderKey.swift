@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: 2026 WSurf Agency
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: BUSL-1.1
 
 /// Sortable string keys: a key between any two neighbors, so one move rewrites one row.
 ///

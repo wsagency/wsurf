@@ -1,6 +1,6 @@
 // swift-tools-version: 6.2
 // SPDX-FileCopyrightText: 2026 WSurf Agency
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: BUSL-1.1
 
 import PackageDescription
 

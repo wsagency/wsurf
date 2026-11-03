@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2026 wsagency
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: BUSL-1.1
 """Proves that the WSurf test plans partition WSurfTests, and turns a plan into xcodebuild arguments.
 
 Every top-level test suite in WSurfTests (a Swift Testing type with @Test functions or @Suite, an XCTestCase
