@@ -59,7 +59,6 @@
         "AutomaticAttachmentTests",
         "BenchAdapterTests",
         "CRXVerifierTests",
-        "CertificateEvaluationTests",
         "ChatMarkdownJoinTests",
         "ChatMarkdownTableTests",
         "ChromeWashTests",
