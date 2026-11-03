@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: 2026 WSurf Agency
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: BUSL-1.1
 // Renders TandemLoaderMark frames to PNG with ImageRenderer.
 //   harness frames <outdir> <size> <count> <light|dark> <clear|ground>   -> f000.png ... (progress i/count)
 //   harness at <out.png> <size> <progress> <light|dark> <clear|ground> [reduce-opacity]

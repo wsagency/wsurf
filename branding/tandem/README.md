@@ -1,5 +1,5 @@
 <!-- SPDX-FileCopyrightText: 2026 WSurf Agency -->
-<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!-- SPDX-License-Identifier: BUSL-1.1 -->
 # Tandem: the WSurf mark
 
 Chosen by the owner on 2026-10-16. It replaces the shipped wave mark and supersedes the Flux draft in [`../DESIGN.md`](../DESIGN.md). **Nothing here is wired into the app, website, README or DMG yet**; those cutovers are separate changes.

@@ -7,6 +7,24 @@ Copyright 2026 Kavoye. Original source is licensed under Apache License 2.0.
 The original copyright, SPDX, license, and third-party attribution notices
 are retained. WSurf is not endorsed by Kavoye or Apple.
 
+Licensing
+- Portions derived from Linen, Copyright 2026 Kavoye, remain licensed under
+  the Apache License, Version 2.0; the full text is in LICENSES/Apache-2.0.txt.
+  Linen did not ship a NOTICE file; its notices are the copyright and SPDX
+  headers retained in each file and the license text above.
+- WSurf's own contributions, Copyright 2026 WSurf Agency, including the
+  modifications made to Linen-derived files, are licensed under the Business
+  Source License 1.1 in LICENSE, which converts to the Apache License,
+  Version 2.0 on its Change Date.
+- Files derived from Linen carry
+  `SPDX-License-Identifier: Apache-2.0 AND BUSL-1.1`; files created for WSurf
+  carry `SPDX-License-Identifier: BUSL-1.1`. Files whose format cannot carry
+  a header follow the same split: Linen-derived content is Apache-2.0, WSurf
+  additions are BUSL-1.1, as recorded in the Git history.
+- Third-party components keep their own licenses and are not relicensed:
+  Tools/vendored/thinking-orbs (see its LICENSE), the Public Suffix List
+  below, and the Swift packages listed in WSurf/Support/Acknowledgements.json.
+
 Modified for WSurf by wsagency in 2026:
 - Product, module, project, repository, application identifiers, storage,
   localizations, build/release tooling, and documentation use WSurf branding.
@@ -34,4 +52,4 @@ Apple's iCloud Passwords extension is a separately licensed product. Its
 resources, the Apple credential vault, private signing keys, and provisioning
 profiles are not redistributed in this repository. Dependency/provider logos
 and trademarks remain subject to their own notices and licenses; see
-WSurf/Support/Acknowledgements.json and LICENSE.
+WSurf/Support/Acknowledgements.json and LICENSES/.

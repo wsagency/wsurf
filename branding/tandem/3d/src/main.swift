@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: 2026 WSurf Agency
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: BUSL-1.1
 // main.swift - driver. `mark3d sheet` renders a quick review sheet; other commands are added below.
 import Foundation
 import SceneKit

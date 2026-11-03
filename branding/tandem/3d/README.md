@@ -1,5 +1,5 @@
 <!-- SPDX-FileCopyrightText: 2026 WSurf Agency -->
-<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!-- SPDX-License-Identifier: BUSL-1.1 -->
 # Tandem in 3D
 
 The exact 2D Tandem outline as a solid object: the lead (disc minus bite, with the r10 bite fillets) and the follower extruded with a soft superellipse edge. From the front the silhouette matches the flat mark (IoU 0.9993 at 2048 px). **Not wired into the app or website yet.**

@@ -1,6 +1,6 @@
 #!/bin/zsh
 # SPDX-FileCopyrightText: 2026 WSurf Agency
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: BUSL-1.1
 # Renders the loop with the SwiftUI view (ImageRenderer) and encodes video/gif/alpha-mov. Re-runnable.
 set -e
 cd "$(dirname $0)/.."

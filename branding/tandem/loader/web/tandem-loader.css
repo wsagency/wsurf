@@ -1,5 +1,5 @@
 /* SPDX-FileCopyrightText: 2026 WSurf Agency
-   SPDX-License-Identifier: Apache-2.0 */
+   SPDX-License-Identifier: BUSL-1.1 */
 /* WSurf Tandem loader. Pure CSS, no script, no inline style needed (CSP-safe).
    Colours: --wsurf-lead, --wsurf-follower, --wsurf-ground (the surface behind the loader: it fills the gap ring).
    Size: .tandem-loader--16|24|32|48|64, or set --tandem-loader-size. <=24px uses the small cut automatically

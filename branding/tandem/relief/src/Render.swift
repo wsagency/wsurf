@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: 2026 WSurf Agency
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: BUSL-1.1
 // Render.swift - offscreen driver: stills, loops, MP4/GIF, filmstrips for TandemPlanets.
 //   build/render preview <variant> <clear|dark|light> <W>x<H> <layout> <out.png> [t]
 //   build/render stills            build/render loops [variant]            build/render film

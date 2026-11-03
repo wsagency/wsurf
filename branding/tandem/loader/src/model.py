@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: 2026 WSurf Agency
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: BUSL-1.1
 """Tandem loader orbit model: the single reference for the web CSS (gen_web.py) and the Swift port.
 
 Coordinates: lead centre = origin, SVG y-down, master units (the 1024 master / small cut of the kit).
