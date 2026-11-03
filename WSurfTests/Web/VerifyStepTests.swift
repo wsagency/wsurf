@@ -336,8 +336,8 @@ struct VerifyStepTests {
     // MARK: - Passkeys
 
     /// What a page asks before it offers a passkey. In the top page WSurf's own script answers on both engines and says a passkey
-    /// can be offered; in a frame of another site the engine answers, and without Apple's browser entitlement (WebKit) or the
-    /// Chromium Touch ID keychain group (Chromium) it has no platform authenticator.
+    /// can be offered, and in Chromium a frame of another site gets the same answer. In WebKit such a frame keeps the engine's own
+    /// answer, and without Apple's browser entitlement it has no platform authenticator.
     @Test(.boundedWebViews, arguments: BrowserEngine.allCases, [Placement.top, .frame])
     func whatAPageLearnsAboutPasskeys(engine: BrowserEngine, placement: Placement) async throws {
         try await withRig(engine, placement) { rig in
@@ -345,7 +345,7 @@ struct VerifyStepTests {
             let result = try #require(await rig.nextResult(after: 0), "the probe answered")
             let value = try #require(result["value"] as? [String: Any])
             print("VERIFY capabilities engine=\(engine) placement=\(placement) \(Self.line(value))")
-            if placement == .top {
+            if placement == .top || engine == .chromium {
                 #expect(value["conditional"] as? Bool == true, "WSurf's script offers conditional sign-in")
                 #expect((value["client"] as? [String: Any])?["hybridTransport"] as? Bool == false, "WSurf offers no phone")
             } else {
@@ -357,9 +357,9 @@ struct VerifyStepTests {
     /// A passkey request after a click, on a site WSurf holds no passkey for, in a profile without a vault. The top page gets WSurf's
     /// sheet, which names the site, says WSurf has nothing for it, and sends the person to the site's other way to sign in, with
     /// one button that ends the request as the site's "cancelled". It offers no way out that cannot work: neither engine reaches Apple
-    /// Passwords, a phone or a security key. A frame of another site gets the engine's WebAuthn: WebKit's refuses at once in a document
-    /// without focus (a test window never has it), and Chromium's ends at once too (`WebAuthnScript.engineRefusal`) where it used to
-    /// show nothing and not end (still pending after 100 s, for a request that asked for 4).
+    /// Passwords, a phone or a security key. In WebKit a frame of another site gets the engine's WebAuthn, which refuses at once in a
+    /// document without focus (a test window never has it). In Chromium the frame reaches WSurf, which refuses it at once as the
+    /// fixture's top page is on an address, not a domain; `CrossSiteFramePasskeyTests` has such frames under a domain.
     @Test(.boundedWebViews, arguments: BrowserEngine.allCases, [Placement.top, .frame])
     func aPasskeyRequestAfterAClick(engine: BrowserEngine, placement: Placement) async throws {
         for operation in ["get", "create"] {
@@ -371,9 +371,9 @@ struct VerifyStepTests {
                 let result = try #require(await rig.nextResult(after: 0), "the request ended")
                 let seconds = clicked.duration(to: .now)
                 print("VERIFY passkey engine=\(engine) placement=\(placement) op=\(operation) \(Self.line(result)) wall=\(seconds) sheets=\(rig.sheets)")
-                #expect(result["outcome"] as? String == "NotAllowedError")
+                #expect(result["outcome"] as? String == (placement == .frame && engine == .chromium ? "SecurityError" : "NotAllowedError"))
                 if placement == .frame {
-                    #expect(rig.sheets.isEmpty && seconds < .seconds(2), "the engine refused at once, showing nothing")
+                    #expect(rig.sheets.isEmpty && seconds < .seconds(2), "refused at once, showing nothing")
                 } else {
                     let advice = operation == "get"
                         ? String(localized: "Choose another way to sign in on the website.")
@@ -447,11 +447,29 @@ struct VerifyStepTests {
         }
     }
 
-    /// A private Chromium page has no vault: WSurf's passkey script hands its request to CEF's own WebAuthn, which used to show
-    /// nothing and not end. It now ends at once as not allowed.
+    /// A frame of another site reads its own activation, in WSurf's world there: a click in it counts, a request the page starts does not.
     @Test(.boundedWebViews)
-    func aPrivateChromiumPagesPasskeyRequestEndsAtOnce() async throws {
-        try await withRig(.chromium, .top, privately: true) { rig in
+    func aFrameOfAnotherSiteKnowsWhetherAPersonJustActed() async throws {
+        try await withRig(.chromium, .frame) { rig in
+            WebAuthnRefusal.activationsForTesting[rig.profile.id] = []
+            defer { WebAuthnRefusal.activationsForTesting[rig.profile.id] = nil }
+            let read = { WebAuthnRefusal.activationsForTesting[rig.profile.id] ?? [] }
+            try await rig.tell("{ ask: 'get' }")
+            _ = try #require(await rig.nextResult(after: 0), "the page's own request ended")
+            #expect(read() == [false], "\(read())")
+            try await rig.tell("{ plan: 'get' }")
+            try await Task.sleep(for: .milliseconds(100))
+            try await rig.click()
+            _ = try #require(await rig.nextResult(after: 1), "the clicked request ended")
+            #expect(read() == [false, true], "\(read())")
+        }
+    }
+
+    /// A private Chromium page has no vault: WSurf's passkey script hands its request to CEF's own WebAuthn, which used to show
+    /// nothing and not end. It now ends at once as not allowed, in a frame of another site too.
+    @Test(.boundedWebViews, arguments: [Placement.top, .frame])
+    func aPrivateChromiumPagesPasskeyRequestEndsAtOnce(placement: Placement) async throws {
+        try await withRig(.chromium, placement, privately: true) { rig in
             try await rig.tell("{ plan: 'get' }")
             try await Task.sleep(for: .milliseconds(100))
             let clicked = ContinuousClock.now

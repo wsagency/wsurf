@@ -18,6 +18,8 @@ nonisolated enum WebAuthnScript {
     static let handlerName = "wsurfWebAuthn"
     static let requestEvent = "wsurf-webauthn-request"
     static let resultEvent = "wsurf-webauthn-result"
+    /// A page is private or it is not for its whole life, so its route announcement never changes and this never grows.
+    static let routeSequence = 0
 
     static var page: String {
         pageSource
@@ -39,7 +41,7 @@ nonisolated enum WebAuthnScript {
         "if (window === top || Array.from(location.ancestorOrigins).every(origin => origin === location.origin))\n" + pageSource
     }
 
-    /// Chromium only, in every frame, frames of other sites included: CEF's own WebAuthn has no prompt and reaches no authenticator
+    /// Chromium only, in every frame, frames of other sites included (`ChromiumDevTools.crossSiteFrameScripts`): CEF's own WebAuthn has no prompt and reaches no authenticator
     /// (no Touch ID without Chromium's keychain group, no phone, no Apple Passwords), and a request that reaches it neither shows
     /// anything nor ends. So a public-key request that would reach it ends at once as the site's "not allowed", which sites answer
     /// with their other way to sign in. Any other credential request still reaches the engine. Installed before `page`, which

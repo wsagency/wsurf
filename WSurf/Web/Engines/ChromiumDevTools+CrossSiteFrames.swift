@@ -31,21 +31,33 @@ extension ChromiumDevTools {
         // handler. Neither reaches the autofill world, and the autofill script and handlers never reach this one.
         CrossSiteFrameScripts(world: BrowserPage.servicesWorld, scripts: [MediaScript.source],
                               handlers: [MediaCenter.frameScriptHandlerName]),
-        // A public-key request ends at once instead of waiting forever on CEF's own WebAuthn. Sends nothing, so no relay.
-        CrossSiteFrameScripts(world: .page, scripts: [WebAuthnScript.engineRefusal], handlers: []),
+        // Passkeys in a frame a page permits (YouTube's Verify step). The world is shared, so only the relay, its route and its
+        // handler. A request is judged natively, in this frame's session, against the origins and the permissions policy the engine
+        // reports (`BrowserPage.credentialContext`), so a frame with no permission is refused there.
+        CrossSiteFrameScripts(
+            world: PageAutomationGuard.world,
+            scripts: [
+                WebAuthnScript.relay(nativeNonce: false),
+                WebAuthnScript.route("legacy", sequence: WebAuthnScript.routeSequence),
+                WebAuthnScript.route("manager", sequence: WebAuthnScript.routeSequence),
+            ],
+            handlers: [WebAuthnScript.handlerName]
+        ),
+        // The page script only marshals; a private page's request still ends at the engine refusal, not in CEF's own WebAuthn.
+        CrossSiteFrameScripts(world: .page, scripts: [WebAuthnScript.engineRefusal, WebAuthnScript.page], handlers: []),
     ]
 
     static func runsInCrossSiteFrames(_ script: Script) -> Bool {
         !script.mainFrameOnly && crossSiteFrameScripts.contains { entry in
             entry.world === WKContentWorld.page
                 ? script.worldName.isEmpty && entry.scripts?.contains(script.source) == true
-                : !script.worldName.isEmpty && entry.world.name == script.worldName && entry.scripts?.contains(script.source) != false
+                : !script.worldName.isEmpty && worldName(entry.world) == script.worldName && entry.scripts?.contains(script.source) != false
         }
     }
 
     static func hearsCrossSiteFrames(_ key: HandlerKey) -> Bool {
         !key.worldName.isEmpty && crossSiteFrameScripts.contains {
-            $0.world.name == key.worldName && $0.handlers?.contains(key.name) != false
+            worldName($0.world) == key.worldName && $0.handlers?.contains(key.name) != false
         }
     }
 

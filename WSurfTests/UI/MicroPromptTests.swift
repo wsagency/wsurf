@@ -160,7 +160,7 @@ struct MicroPromptTests {
         try await withHiddenBar { rig in
             let step = Task {
                 await NativeWebAuthnInteraction().offerStart(
-                    operation: .create, origin: "https://example.com", locked: false, in: rig.window, until: nil
+                    operation: .create, origin: "https://example.com", topOrigin: nil, locked: false, in: rig.window, until: nil
                 )
             }
 

@@ -4,30 +4,45 @@
 import Foundation
 import WebKit
 
-/// Credential (WebAuthn) frame checks of the page's session. Moved verbatim out of `ChromiumDevTools.swift` for the type's length.
+/// Credential (WebAuthn) frame checks. Each asks the session that reported the frame (`session(for:)`): another session knows neither
+/// the frame nor its policy, and Chromium answers for a frame only in its own process's session.
 extension ChromiumDevTools {
-    /// Ordered requesting frame → top frame, from the live native tree. Fails closed on a stale requester,
-    /// missing ancestor, cycle, or a root that is not the single main frame.
+    /// Ordered requesting frame → top frame, from the live native trees, across the sessions of cross-site frames: a session's
+    /// top frame has its parent in the session that attached it. Fails closed on a stale requester, missing ancestor, cycle, or a
+    /// root that is not the single main frame of the page's session.
     func frameChain(for frame: BrowserFrame) async throws -> [BrowserFrame] {
         guard let id = frame.chromiumID, !frame.documentID.isEmpty else { throw WebAuthnContextError.staleFrame }
-        try await refreshFrames()
-        guard let requesting = framesByID[id], requesting.documentID == frame.documentID,
+        var session = session(for: frame)
+        try await session.refreshFrames()
+        guard let requesting = session.framesByID[id], requesting.documentID == frame.documentID,
               requesting.securityOrigin == frame.securityOrigin,
               requesting.parentID == frame.chromiumParentID else { throw WebAuthnContextError.staleFrame }
         var chain = [requesting]
         var visited: Set<String> = [id]
         while let parentID = chain[chain.count - 1].parentID {
-            guard visited.insert(parentID).inserted, let parent = framesByID[parentID],
-                  !parent.documentID.isEmpty else { throw WebAuthnContextError.untrustedOrigin }
+            guard visited.insert(parentID).inserted else { throw WebAuthnContextError.untrustedOrigin }
+            if session.framesByID[parentID] == nil {
+                guard chain[chain.count - 1].id == session.targetID, let attacher = session.parent else {
+                    throw WebAuthnContextError.untrustedOrigin
+                }
+                session = attacher
+                try await session.refreshFrames()
+            }
+            guard let parent = session.framesByID[parentID], !parent.documentID.isEmpty else {
+                throw WebAuthnContextError.untrustedOrigin
+            }
             chain.append(parent)
         }
-        guard chain[chain.count - 1].isMainFrame, framesByID.values.filter({ $0.parentID == nil }).count == 1 else {
+        guard session.sessionID == nil, chain[chain.count - 1].isMainFrame,
+              session.framesByID.values.filter({ $0.parentID == nil }).count == 1 else {
             throw WebAuthnContextError.untrustedOrigin
         }
         return chain.map(\.browserFrame)
     }
 
     func permissionsPolicyAllows(frame: BrowserFrame, feature: String) async throws -> Bool {
+        let session = session(for: frame)
+        guard session === self else { return try await session.permissionsPolicyAllows(frame: frame, feature: feature) }
         guard let frameID = frame.chromiumID else { throw WebAuthnContextError.staleFrame }
         guard try await isLiveCredentialFrame(frame) else { throw WebAuthnContextError.staleFrame }
         let response = try await command("Page.getPermissionsPolicyState", params: ["frameId": frameID])
@@ -42,6 +57,8 @@ extension ChromiumDevTools {
 
     /// Reports the document's current activation state; never grants or consumes one.
     func transientUserActivationIsActive(in frame: BrowserFrame, world: WKContentWorld) async throws -> Bool {
+        let session = session(for: frame)
+        guard session === self else { return try await session.transientUserActivationIsActive(in: frame, world: world) }
         let (target, snapshot) = try await credentialContext(for: frame, world: world)
         let response = try await command("Runtime.evaluate", params: address(snapshot).merging([
             "expression": documentGuard(snapshot) + "navigator.userActivation?.isActive === true",
@@ -59,10 +76,14 @@ extension ChromiumDevTools {
     }
 
     func executionContextIdentity(for frame: BrowserFrame, world: WKContentWorld) async throws -> String {
-        try await credentialContext(for: frame, world: world).context.uniqueID
+        let session = session(for: frame)
+        guard session === self else { return try await session.executionContextIdentity(for: frame, world: world) }
+        return try await credentialContext(for: frame, world: world).context.uniqueID
     }
 
     func isCurrentCredentialContext(frame: BrowserFrame, executionContextID: String) -> Bool {
+        let session = session(for: frame)
+        guard session === self else { return session.isCurrentCredentialContext(frame: frame, executionContextID: executionContextID) }
         guard credentialFrameIsCurrent(frame),
               let context = contextsByUniqueID[executionContextID],
               context.frameID == frame.chromiumID,
