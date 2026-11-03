@@ -47,9 +47,13 @@ struct ThemeToolbarInkTests {
             .frame(width: 40, height: 40)
             .background(Color(nsColor: ground))
             .environment(\.colorScheme, windowScheme)
-        let host = NSHostingView(rootView: root)
+        let host = NSHostingView(rootView: root
+            // The live Reduce Transparency / Increase Contrast settings swap glass for solid fills; pin them like ThemeLayoutRenderTests.
+            .environment(\._accessibilityReduceTransparency, false)
+            .environment(\._colorSchemeContrast, .standard))
         host.frame = CGRect(x: 0, y: 0, width: 40, height: 40)
         let window = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+        window.colorSpace = .pixelTests
         window.isReleasedWhenClosed = false
         window.appearance = NSAppearance(named: windowScheme == .dark ? .darkAqua : .aqua)
         window.contentView = host

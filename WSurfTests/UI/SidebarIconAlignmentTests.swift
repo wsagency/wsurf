@@ -215,6 +215,7 @@ struct SidebarIconAlignmentTests {
         let size = host.fittingSize
         host.frame = CGRect(origin: .zero, size: size)
         let window = ScaledWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+        window.colorSpace = .pixelTests
         window.scale = scale
         window.isReleasedWhenClosed = false
         window.appearance = NSAppearance(named: .darkAqua)

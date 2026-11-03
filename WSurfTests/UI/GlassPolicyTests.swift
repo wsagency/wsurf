@@ -80,8 +80,13 @@ struct GlassPolicyTests {
         #expect(!window.isOpaque)
         #expect(window.backgroundColor.alphaComponent == 0)
 
-        // The notification re-reads the system settings, which are off in the test host.
-        host.applyTransparencyPreference(to: window, isOpaque: true)
+        // The notification re-reads the system settings. Under a translucent theme only they decide; the default WSurf
+        // theme is solid and plain, which keeps the window opaque whatever the settings say.
+        let settings = BrowserSettings.application
+        let savedTheme = settings.themeID
+        defer { settings.themeID = savedTheme }
+        settings.themeID = ThemeCatalog.standardID
+        host.applyTransparencyPreference(to: window, isOpaque: !WindowOpacity.isOpaqueNow)
         NSWorkspace.shared.notificationCenter.post(
             name: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification,
             object: NSWorkspace.shared
@@ -101,6 +106,7 @@ struct GlassPolicyTests {
         let host = NSHostingView(rootView: view.environment(\.colorScheme, scheme))
         host.frame = CGRect(x: 0, y: 0, width: width, height: height)
         let window = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+        window.colorSpace = .pixelTests
         window.isReleasedWhenClosed = false
         window.appearance = NSAppearance(named: scheme == .dark ? .darkAqua : .aqua)
         window.contentView = host

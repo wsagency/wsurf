@@ -18,6 +18,7 @@ struct GlassHierarchyTests {
             .environment(\._colorSchemeContrast, .standard))
         host.frame = CGRect(x: 0, y: 0, width: 80, height: 60)
         let window = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+        window.colorSpace = .pixelTests
         window.isReleasedWhenClosed = false
         window.appearance = NSAppearance(named: scheme == .dark ? .darkAqua : .aqua)
         window.contentView = host

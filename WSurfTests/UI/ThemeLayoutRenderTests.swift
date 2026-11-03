@@ -21,6 +21,7 @@ struct ThemeLayoutRenderTests {
             .environment(\._colorSchemeContrast, .standard))
         host.frame = CGRect(origin: .zero, size: host.fittingSize)
         let window = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+        window.colorSpace = .pixelTests
         window.isReleasedWhenClosed = false
         window.appearance = NSAppearance(named: scheme == .dark ? .darkAqua : .aqua)
         window.contentView = host
@@ -124,7 +125,7 @@ struct ThemeLayoutRenderTests {
                 .padding(10)
                 .background(gray)
             let color = try pixel(of: row, scheme: .light, x: 50, y: 25)
-            #expect(abs(color.redComponent - 0.5) < 0.05 && isNeutral(color), "\(frame)")
+            #expect(abs(color.redComponent - 0.5) < 0.05 && isNeutral(color), "\(frame): \(color)")
         }
     }
 }

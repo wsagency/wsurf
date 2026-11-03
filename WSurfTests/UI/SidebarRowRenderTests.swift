@@ -73,10 +73,14 @@ struct SidebarRowRenderTests {
 
     /// `view` drawn by AppKit in an unshown window: the rows hold AppKit views that `ImageRenderer` cannot draw.
     private func rendered(_ view: some View) throws -> (bitmap: NSBitmapImageRep, scale: CGFloat) {
-        let host = NSHostingView(rootView: view)
+        let host = NSHostingView(rootView: view
+            // The live Reduce Transparency / Increase Contrast settings swap glass for solid fills; pin them like ThemeLayoutRenderTests.
+            .environment(\._accessibilityReduceTransparency, false)
+            .environment(\._colorSchemeContrast, .standard))
         let size = host.fittingSize
         host.frame = CGRect(origin: .zero, size: size)
         let window = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+        window.colorSpace = .pixelTests
         window.isReleasedWhenClosed = false
         window.appearance = NSAppearance(named: .darkAqua)
         window.contentView = host

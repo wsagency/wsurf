@@ -309,6 +309,7 @@ struct ChangelogTests {
         let host = NSHostingView(rootView: ReleaseNotesView(browser: browser, notes: model).frame(width: size.width, height: size.height))
         host.frame = CGRect(origin: .zero, size: size)
         let window = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+        window.colorSpace = .pixelTests
         window.isReleasedWhenClosed = false
         window.appearance = NSAppearance(named: .aqua)
         window.contentView = host
