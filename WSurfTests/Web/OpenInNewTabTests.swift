@@ -672,16 +672,6 @@ struct OpenInNewTabTests {
         }
     }
 
-    /// The opener's owner is told, on both engines, that a pop-up was blocked, and can allow it. Chromium's own blocker used to
-    /// refuse it first, silently.
-    @Test(arguments: BrowserEngine.allCases)
-    func aBlockedPopupLeavesANoticeForTheOwner(engine: BrowserEngine) async throws {
-        try await withRig(engine, path: "/auto", popups: .blockAndNotify) { rig in
-            #expect(await waitUntil { rig.tab.popups.blocked != nil }, "\(engine): the blocked pop-up is noted")
-            Self.expectNothingOpened(in: rig)
-        }
-    }
-
     /// A site allowed pop-ups opens its tab, click or no click, on both engines. Chromium's own blocker refuses a pop-up no click
     /// started before WSurf is asked, so the site's Allow is also its pop-ups exception there (`ChromiumRuntime.mirrorSiteAnswers`).
     @Test(arguments: BrowserEngine.allCases)

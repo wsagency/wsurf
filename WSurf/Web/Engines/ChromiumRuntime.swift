@@ -208,13 +208,6 @@ final class ChromiumRuntime {
                 return false
             }
         }
-        // Chromium's own pop-up blocker refuses a pop-up no click started before WSurf is asked, with no notice and no way to
-        // allow it. Its default is Allow, so every pop-up reaches `on_before_popup` with its gesture flag and the tab's own
-        // policy (`TabPopupPolicy`) decides, with the notice WebKit tabs show. The per-site Allow exceptions
-        // (`mirrorSiteAnswers`) stay for a Chromium that decides first.
-        guard Self.setPreference("profile.default_content_setting_values.popups", in: raw, {
-            _ = $0.pointee.set_int?($0, Int32(CEF_CONTENT_SETTING_VALUE_ALLOW.rawValue))
-        }) else { return false }
         entry.isStarted = true
         return true
     }
