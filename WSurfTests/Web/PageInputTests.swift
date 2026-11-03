@@ -187,7 +187,10 @@ struct PageInputTests {
         probe.install()
         defer { probe.restore() }
         try await withPage(engine: engine, html: "<input aria-label='Query' value='abc'><button>Plain</button>" + Self.recorder) { view, window in
-            let windowsBefore = NSApp.windows.count
+            // Visible windows only: the first key event a process routes to a text field makes AppKit create an invisible
+            // `TUINSWindow` (system text input) in `NSApp.windows`, so a count passed only when an earlier test had already
+            // caused it, and failed in a fresh host or a short selection.
+            let windowsBefore = Set(NSApp.windows.filter(\.isVisible).map(ObjectIdentifier.init))
             let input = try await ref(labelled: "Query", in: view)
             let button = try await ref(labelled: "Plain", in: view)
             let refused: [(String, String)] =
@@ -211,7 +214,7 @@ struct PageInputTests {
             }
             #expect(probe.fired.isEmpty, "a key reached the app's menu on \(engine): \(probe.fired)")
             #expect(window.isVisible)
-            #expect(NSApp.windows.count == windowsBefore, "a window opened or closed on \(engine)")
+            #expect(Set(NSApp.windows.filter(\.isVisible).map(ObjectIdentifier.init)) == windowsBefore, "a window opened or closed on \(engine)")
         }
     }
 

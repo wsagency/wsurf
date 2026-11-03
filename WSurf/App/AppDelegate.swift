@@ -18,6 +18,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         guard !isRunningTests else {
+            // No Dock tile or app switcher entry: a click on a "WSurf" tile (or Quit in its menu) while someone uses the machine
+            // sent the test host an `aevt quit`, which ended the run with exit code 0. Tests that need a regular app switch to
+            // `.regular` themselves and restore the previous policy.
+            NSApp.setActivationPolicy(.accessory)
             AppleSpeechVoiceCatalog.shared.prepare()
             return
         }
