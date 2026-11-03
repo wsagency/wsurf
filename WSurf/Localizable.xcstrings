@@ -2778,6 +2778,12 @@
     "Double-click page" : {
 
     },
+    "Download Image" : {
+      "comment" : "Command in the right-click menu on an image in a Chromium tab; a WebKit tab's menu has it from WebKit. It saves the image as a download in the Downloads folder. Title Case."
+    },
+    "Download Linked File" : {
+      "comment" : "Command in the right-click menu on a link in a Chromium tab; a WebKit tab's menu has it from WebKit. It saves what the link points to as a download in the Downloads folder. Title Case."
+    },
     "Download PDF" : {
       "comment" : "Command that saves the PDF the tab shows as a download in the Downloads folder, in both engines. In the right-click menu on a PDF, as a button in the address bar (its tooltip and VoiceOver label) while a PDF is shown. PDF is the file type’s name. Title Case."
     },

@@ -811,7 +811,7 @@ final class ChromiumClient {
                 return 0
             }
         }
-        handler.pointee.on_open_urlfrom_tab = { handlerSelf, browser, frame, targetURL, _, userGesture in
+        handler.pointee.on_open_urlfrom_tab = { handlerSelf, browser, frame, targetURL, disposition, userGesture in
             ChromiumClient.releaseBrowser(browser)
             let sourceURL = frame?.pointee.is_valid?(frame) == 1
                 ? URL(string: ChromiumInterop.takeString(frame?.pointee.get_url?(frame))) : nil
@@ -821,7 +821,7 @@ final class ChromiumClient {
             return MainActor.assumeIsolated {
                 guard let page = client.page, !client.isClosed, let url else { return 1 }
                 let sourceFrame = page.sourceFrame(for: sourceURL)
-                page.openWindow?(url, userGesture != 0, sourceURL, sourceFrame)
+                page.openWindow?(url, userGesture != 0, sourceURL, sourceFrame, ChromiumPage.ClickDisposition(disposition))
                 return 1
             }
         }

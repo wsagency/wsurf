@@ -66,10 +66,11 @@ final class ChromiumPage: NSView {
     private var zoom: CGFloat = 1
     var navigationDecision: ((URLRequest, Bool, Bool, Bool, WKNavigationType, URL?, BrowserFrame?) -> Bool)?
     /// A link the person opened in a new tab (middle-click, Command-click): a plain tab, with no opener.
-    var openWindow: ((URL, Bool, URL?, BrowserFrame?) -> Void)?
-    /// A pop-up the page opened (`window.open`, `target=_blank`): address, gesture, source, and whether it opens in the background.
-    /// Returns the page to host the browser CEF makes for it, which keeps `window.opener`; nil cancels it.
-    var openPopup: ((URL, Bool, URL?, BrowserFrame?, Bool) -> ChromiumPage?)?
+    var openWindow: ((URL, Bool, URL?, BrowserFrame?, ClickDisposition) -> Void)?
+    /// A pop-up the page opened (`window.open`, `target=_blank`). Returns the page to host the browser CEF makes for it, which keeps `window.opener`; nil cancels it.
+    var openPopup: ((URL, Bool, URL?, BrowserFrame?, ClickDisposition) -> ChromiumPage?)?
+    /// `window.open` was called, before the engine's pop-up blocker decided: address and whether a click was behind it.
+    var windowOpenAttempt: ((URL, Bool) -> Void)?
     /// This page's pop-ups CEF has not made yet, by pop-up ID: held, so a view CEF may still make a browser in stays alive.
     var pendingPopups: [Int32: ChromiumPage] = [:]
     /// While CEF makes this pop-up page's browser: its address, and the end of its opener's hold on it.
@@ -79,10 +80,12 @@ final class ChromiumPage: NSView {
     nonisolated enum LinkOpening {
         case tab, window, privateWindow
     }
-    /// An Open Link item of the context menu was chosen: the link, the address of the frame it is in, and how to open it.
+    /// An Open item of the context menu was chosen: the address, the address of the frame it is in, and how to open it.
     var openLinkFromMenu: ((URL, URL?, LinkOpening) -> Void)?
-    /// The link the open context menu was opened on, and the address of the frame it is in, for its Open Link items.
-    var contextLink: (url: URL, frameURL: URL?)?
+    /// Another WSurf item of the context menu was chosen.
+    var onContextAction: ((ChromiumClient.ContextAction) -> Void)?
+    /// What the open context menu was opened on, for WSurf's items of it (`ChromiumClient.offerContextItems`).
+    var contextTarget: ChromiumClient.ContextTarget?
     var captureChanged: ((Bool, Bool) -> Void)?
     /// A screen share this page was granted. `captureChanged` reports device capture only.
     var displayCaptureStarted: (() -> Void)?

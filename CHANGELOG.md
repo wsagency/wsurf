@@ -5,6 +5,14 @@ This file preserves release notes inherited from the upstream
 describe upstream Linen releases, not releases published by WSurf. New WSurf
 release notes will be added above this provenance record.
 
+## Unreleased
+
+### Chromium tabs
+
+- The right-click menu in Chromium tabs has the items WebKit tabs have: Open Link in Peek, Summarize Link, Download Linked File, Open Image in New Tab, Download Image, and Save Page As… and Print Page… on the page itself (they replace Chromium’s own Print, so they save and print as in WebKit tabs).
+- Shift-click on a link opens it in a Peek, as in WebKit tabs. ⌘-click and middle-click open a tab in the background, and ⇧⌘-click in front.
+- A pop-up that a page opens without a click and WSurf blocks shows the “pop-up blocked” notice, as in WebKit tabs.
+
 ## 0.1.21 (build 21) — 2026-11-03
 
 Everything since 0.1.20 (build 20). None of the screens and prompts below has been checked by hand.
