@@ -383,7 +383,7 @@ struct CommandPaletteModelTests {
                 actions: noOpActions()
             )
 
-            #expect(sections.map(\.id) == ["top", "suggestions", "tabs", "history"])
+            #expect(sections.map(\.id) == ["tabs", "top", "suggestions", "history"])
             #expect(sections.first { $0.id == "top" }?.items.map(\.id) == ["omnibox-search", "ask-agent"])
             #expect(sections.first { $0.id == "top" }?.items.last?.detail == "Ask Assistant")
             #expect(sections.first { $0.id == "tabs" }?.items.count == 4)

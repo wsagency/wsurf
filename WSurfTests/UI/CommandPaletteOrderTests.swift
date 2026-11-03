@@ -23,9 +23,9 @@ struct CommandPaletteOrderTests {
         withSettings { settings, _ in
             let fixture = Fixture()
 
-            #expect(fixture.typed("organize", settings).map(\.id) == ["top", "actions", "suggestions", "tabs", "history"])
+            #expect(fixture.typed("organize", settings).map(\.id) == ["tabs", "actions", "top", "suggestions", "history"])
             #expect(fixture.typed("ogt", settings).map(\.id) == ["top", "suggestions", "actions"])
-            #expect(fixture.typed("organize", settings).first?.items.map(\.id) == ["omnibox-search", "ask-agent"])
+            #expect(fixture.typed("zzqq", settings).first?.items.map(\.id) == ["omnibox-search", "ask-agent"])
         }
     }
 
@@ -49,9 +49,6 @@ struct CommandPaletteOrderTests {
     @Test func searchOrAskHasNoHeadingOnlyWhileItLeads() {
         withSettings { settings, _ in
             let fixture = Fixture()
-            #expect(fixture.searchHeading("organize", settings) == "")
-
-            settings.commandPaletteOrder = [.tabs, .search, .suggestions, .history, .actions, .recent]
             #expect(fixture.searchHeading("organize", settings) == String(localized: "Search or Ask"))
             #expect(fixture.searchHeading("zzqq", settings) == "")
         }
@@ -66,8 +63,27 @@ struct CommandPaletteOrderTests {
             #expect(best?.kind == .tab)
             #expect(best?.id.hasPrefix("omnibox-tab-") == true)
 
+            // Matching open tabs lead whatever order was chosen; with none, the chosen order applies.
             settings.commandPaletteOrder = [.history, .tabs, .actions, .suggestions, .search, .recent]
-            #expect(fixture.typed("organize", settings).flattened.first?.kind == .history)
+            #expect(fixture.typed("organize", settings).flattened.first?.kind == .tab)
+            #expect(fixture.typed("zzqq", settings).flattened.first?.kind != .tab)
+        }
+    }
+
+    @Test func matchingTabsStayFirstWhileTypingAndWhenSuggestionsArriveLate() {
+        withSettings { settings, _ in
+            let fixture = Fixture()
+            for query in ["p", "pr", "proj", "project"] {
+                for phrases in [[], ["project ideas", "project plan"]] {
+                    let sections = fixture.typed(query, settings, phrases: phrases)
+                    #expect(sections.first?.id == "tabs", "\(query) \(phrases)")
+                    #expect(sections.flattened.first?.kind == .tab)
+                }
+            }
+            let early = fixture.typed("project", settings, phrases: []).first?.items.map(\.id)
+            let late = fixture.typed("project", settings, phrases: ["project ideas"]).first?.items.map(\.id)
+            #expect(early == late)
+            #expect(early == fixture.rankedTabs.map { "omnibox-tab-\($0.id)" })
         }
     }
 
@@ -188,7 +204,7 @@ struct CommandPaletteOrderTests {
             #expect(BrowserSettings(defaults: defaults).commandPaletteOrder == builtIn)
             #expect(
                 Fixture().typed("organize", settings).map(\.id)
-                    == ["top", "actions", "suggestions", "tabs", "history"]
+                    == ["tabs", "actions", "top", "suggestions", "history"]
             )
         }
     }
@@ -286,14 +302,18 @@ struct CommandPaletteOrderTests {
             }
         }
 
-        func typed(_ query: String, _ settings: BrowserSettings) -> [OmniboxSection] {
+        func typed(
+            _ query: String,
+            _ settings: BrowserSettings,
+            phrases: [String] = ["organize my life", "project ideas"]
+        ) -> [OmniboxSection] {
             CommandPaletteProjection.sections(
                 query: query,
                 agentName: "Assistant",
                 context: CommandPaletteContext(historyCount: 12, tabCount: 6, hasActiveTab: true),
                 history: history,
                 tabs: tabs,
-                phrases: ["organize my life", "project ideas"],
+                phrases: phrases,
                 actions: CommandPaletteActions(),
                 settings: settings
             )
