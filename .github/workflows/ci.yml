@@ -118,13 +118,12 @@ jobs:
       # without rebuilding. A CLI build setting alone is not trusted: the guard refuses
       # to launch unless the app, extension and helpers carry the suffixed identity and
       # the test bundle (which keeps io.wsagency.wsurf.tests) belongs to that verified host.
-      # One total watchdog budget (default 1200s, inherited and unchanged) covers both
-      # xcodebuild phases. Risk: manual cold build (832s) plus full test (838s) exceeded
-      # 1200s under different base and probe conditions; revisit only after a real CI run.
+      # Each xcodebuild phase gets its own watchdog budget (default 1200s); the job's
+      # timeout-minutes stays the outer bound. One shared 1200s budget was too tight in real
+      # CI: green run 39611925580 used 1174s (476s build + 668s tests), and runs 39721600801
+      # and 41613391670 spent 854s / 699s building, so the tests were cut off mid-run.
       - name: Test
         run: |
-          total="${WSURF_CI_TEST_LIMIT_SECONDS:-1200}"
-          start=$SECONDS
           python3 Tools/run-xcodebuild-with-watchdog.py -- xcodebuild build-for-testing \
             -project "$PROJECT" -scheme "$SCHEME" \
             -destination 'platform=macOS,arch=arm64' \
@@ -141,12 +140,7 @@ jobs:
           [ "$#" -eq 1 ] && [ -f "$1" ] || { echo "::error::expected exactly one generated .xctestrun in $DD/Build/Products"; exit 1; }
           xctestrun="$1"
           python3 Tools/check-built-identity.py "$DD" "$xctestrun"
-          remaining=$((total - (SECONDS - start)))
-          if [ "$remaining" -le 0 ]; then
-            echo "::error::test budget of ${total}s spent before the tests started"
-            exit 124
-          fi
-          WSURF_CI_TEST_LIMIT_SECONDS="$remaining" python3 Tools/run-xcodebuild-with-watchdog.py -- xcodebuild test-without-building \
+          python3 Tools/run-xcodebuild-with-watchdog.py -- xcodebuild test-without-building \
             -xctestrun "$xctestrun" \
             -destination 'platform=macOS,arch=arm64' \
             -resultBundlePath build/TestResults.xcresult \
