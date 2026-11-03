@@ -5,11 +5,18 @@ This file preserves release notes inherited from the upstream
 describe upstream Linen releases, not releases published by WSurf. New WSurf
 release notes will be added above this provenance record.
 
-## Unreleased
+## 0.1.22 (build 22) — 2026-11-03
 
-### Command palette
+Everything since 0.1.21 (build 21). None of the screens and prompts below has been checked by hand.
 
-- Open tabs that match what you type now stay at the top of the Command palette while you type, instead of dropping below Search or ask and the suggestions.
+### Chromium tabs
+
+- The right-click menu in Chromium tabs has the items WebKit tabs have: Open Link in Peek, Summarize Link, Download Linked File, Open Image in New Tab, Download Image, and Save Page As… and Print Page… on the page itself (they replace Chromium’s own Print, so they save and print as in WebKit tabs).
+- Shift-click on a link opens it in a Peek, as in WebKit tabs. ⌘-click and middle-click open a tab in the background, and ⇧⌘-click in front.
+- A pop-up that a page opens without a click and WSurf blocks shows the “pop-up blocked” notice, as in WebKit tabs.
+- Chromium tabs now have developer tools. View › Developer › Show Web Inspector (⌥⌘I), the ⌘K palette and the Developer Tools menu open Chromium’s DevTools in a window of their own, and a right-click offers Inspect Element, under the same conditions as in WebKit tabs (the Web Inspector setting, or a website in Developer mode).
+- Find on page in a Chromium tab uses Chromium’s own find: every match is highlighted, and “n of m” is Chromium’s own count and position.
+- Developer mode’s Page Appearance (Match System, Light, Dark) now works in Chromium tabs, as the page’s preferred color scheme; WebKit tabs set the view’s appearance instead.
 
 ### Passwords, passkeys and autofill
 
@@ -17,17 +24,17 @@ release notes will be added above this provenance record.
 - In Chromium tabs, a page counts as secure for saved logins by WebKit’s rule (an HTTPS page with a valid certificate and nothing insecure on it), so Pick Credential…, suggestions and save offers no longer disappear on secure pages Chromium rated otherwise. A page reached past a certificate warning gets no saved logins.
 - In WebKit tabs too, a page reached past a certificate warning, or one that loaded something past one, no longer counts as secure: no saved logins are offered, filled or saved there, and the address bar shows no lock.
 
-### Chromium tabs
+### Tabs
 
-- The right-click menu in Chromium tabs has the items WebKit tabs have: Open Link in Peek, Summarize Link, Download Linked File, Open Image in New Tab, Download Image, and Save Page As… and Print Page… on the page itself (they replace Chromium’s own Print, so they save and print as in WebKit tabs).
-- Shift-click on a link opens it in a Peek, as in WebKit tabs. ⌘-click and middle-click open a tab in the background, and ⇧⌘-click in front.
-- A pop-up that a page opens without a click and WSurf blocks shows the “pop-up blocked” notice, as in WebKit tabs.
+- Changing a website's engine from its site controls now switches only that tab. Other open tabs of the website keep their engine, also when they move within the site, and tabs you open afterwards use the new one. Changing the engine in Settings still moves every open tab of the website.
 
-### Chromium tabs
+### Command palette
 
-- Chromium tabs now have developer tools. View › Developer › Show Web Inspector (⌥⌘I), the ⌘K palette and the Developer Tools menu open Chromium’s DevTools in a window of their own, and a right-click offers Inspect Element, under the same conditions as in WebKit tabs (the Web Inspector setting, or a website in Developer mode).
-- Find on page in a Chromium tab uses Chromium’s own find: every match is highlighted, and “n of m” is Chromium’s own count and position.
-- Developer mode’s Page Appearance (Match System, Light, Dark) now works in Chromium tabs, as the page’s preferred color scheme; WebKit tabs set the view’s appearance instead.
+- Open tabs that match what you type now stay at the top of the Command palette while you type, instead of dropping below Search or ask and the suggestions.
+
+### Updates
+
+- The sidebar update banner can be closed: a close button on the card, and Close in the menu of the icons-only badge, so “Couldn’t check for updates” and “Update Available” no longer stay in the sidebar for good. It is not offered while an update downloads, is prepared or installs; the next Check for Updates shows the banner again.
 
 ### External assistants (MCP)
 
@@ -35,9 +42,23 @@ release notes will be added above this provenance record.
 - In Chromium tabs, a page restored by Back after `resetDevelopment` ended a diagnostics capture answers again; before, it needed a reload.
 - The connection instructions now say to make one call at a time (a parallel call is refused with “Another operation is running”) and to call `switchTab` when `setViewport` answers `unsupported` for a tab in the background.
 
-### Updates
+### License
 
-- The sidebar update banner can be closed: a close button on the card, and Close in the menu of the icons-only badge, so “Couldn’t check for updates” and “Update Available” no longer stay in the sidebar for good. It is not offered while an update downloads, is prepared or installs; the next Check for Updates shows the banner again.
+- WSurf’s own code is now under the Business Source License 1.1; the code that comes from Linen keeps its Apache 2.0 license. The About panel and Get Info say so, and Settings › About › Acknowledgements now starts with WSurf’s license and Linen’s.
+
+### Known issues
+
+- One- and two-letter address-bar queries search only the newest 3,000 pages; three letters and the History page search everything.
+- Removing one website in Website data removes the cookies that exact host set; a cookie a website set for its whole domain (from www.example.com for example.com) stays until you clear everything. This was true before, but Chromium’s cookies now stay across a quit.
+- Clear Browsing Data does not reach Chromium’s own small records of the sites you visited (the sites it must open over HTTPS, its site-engagement scores); they go when you delete the profile.
+- WebKit tabs that both use the camera or microphone still take it from each other: showing another tab that uses them mutes the first for good, and WSurf has no button to resume it.
+- Taking back camera or microphone access from a Chromium tab that is using it stops the devices by closing and reopening the page, and shows “Could not change website device access”.
+- Back after an engine switch goes back one step only: Forward does not return to the other engine, and a Chromium page comes back by its address, not with its history.
+- Passkeys from Apple Passwords, from phones and from security keys do not work in either engine until Apple grants WSurf the browser passkey entitlement; WSurf’s own passkey sheet is all a website gets.
+- A script that must run before a page’s own code (the passkey script, the notification and location stand-ins, the development diagnostics hook) can run late on the first page of a Chromium pop-up, so that page may have done its first work before it.
+- A page in a background tab runs its timers more slowly after 10 seconds, so a page that counts, polls or refreshes itself from a timer can fall behind until you show it. Set the website to Keep this website loaded to leave it as it was.
+- A tab you switched to another engine from its site controls, and the other tabs of that website that keep their engine, go back to the website's setting after WSurf is quit and opened again.
+- The known issues of 0.1.14 are unchanged.
 
 ## 0.1.21 (build 21) — 2026-11-03
 
@@ -51,7 +72,6 @@ Everything since 0.1.20 (build 20). None of the screens and prompts below has be
 ### Tabs
 
 - The color chooser a page opened closes when you switch away from its tab.
-- Changing a website's engine from its site controls now switches only that tab. Other open tabs of the website keep their engine, also when they move within the site, and tabs you open afterwards use the new one. Changing the engine in Settings still moves every open tab of the website.
 
 ### Known issues
 
