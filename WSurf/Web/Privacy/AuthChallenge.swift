@@ -41,11 +41,18 @@ enum AuthChallenge {
         }
     }
 
+    /// Tests answer the sheet. WebKit drives the delegate itself, outside any task a test could mark, so this is a plain static.
+    static var credentialForTesting: ((URLProtectionSpace, Int) -> URLCredential?)?
+
+    /// The sign-in sheet of both engines: the website's WebKit challenge and Chromium's `get_auth_credentials`.
     static func requestCredential(
         for space: URLProtectionSpace,
         previousFailures: Int,
         in window: NSWindow?
     ) async -> URLCredential? {
+        if let stub = credentialForTesting {
+            return stub(space, previousFailures)
+        }
         let alert = NSAlert()
         alert.messageText = String(localized: "Sign in to \(space.host)")
         alert.informativeText = previousFailures > 0

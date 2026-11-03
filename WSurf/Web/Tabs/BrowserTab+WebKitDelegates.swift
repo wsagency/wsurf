@@ -536,9 +536,12 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
 
     // MARK: - Authentication
 
+    /// The Swift name of `webView:didReceiveAuthenticationChallenge:completionHandler:`. The SDK renames the async form
+    /// (`WK_SWIFT_ASYNC_NAME`), so a `didReceive challenge:` method is no requirement at all: WebKit never calls it and
+    /// answers every challenge with "reject". `HTTPAuthenticationTests` pins the selector this method answers to.
     func webView(
         _ webView: WKWebView,
-        didReceive challenge: URLAuthenticationChallenge
+        respondTo challenge: URLAuthenticationChallenge
     ) async -> (URLSession.AuthChallengeDisposition, URLCredential?) {
         let space = challenge.protectionSpace
         switch AuthChallenge.decision(

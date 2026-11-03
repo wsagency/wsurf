@@ -5,6 +5,14 @@ This file preserves release notes inherited from the upstream
 describe upstream Linen releases, not releases published by WSurf. New WSurf
 release notes will be added above this provenance record.
 
+## Unreleased
+
+### Websites and sign-in
+
+- WebKit tabs now ask for a username and password when a website or proxy wants HTTP authentication (Basic, Digest, NTLM). Until now the prompt never appeared and you got the server’s “Unauthorized” page. A refused password asks again, and the third refusal ends the sign-in, as it was meant to.
+- Chromium tabs show the same sign-in sheet as WebKit tabs, with a Username and a Password field, the cursor in Username, and “Try again” after a refused password, for websites and proxies. Chromium’s own prompt is switched off: inside WSurf it vanished and left “ERR_INVALID_AUTH_CREDENTIALS”. A tab in the background that is asked for a password is refused.
+- Because WebKit tabs now answer such challenges, the certificate warning with its “proceed anyway” choice (when certificate exceptions are on) now appears in WebKit tabs too; before, WebKit tabs never showed it. It has not been checked by hand.
+
 ## 0.1.21 (build 21) — 2026-11-03
 
 Everything since 0.1.20 (build 20). None of the screens and prompts below has been checked by hand.

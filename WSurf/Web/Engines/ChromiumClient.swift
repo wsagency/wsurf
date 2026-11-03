@@ -138,6 +138,8 @@ final class ChromiumClient {
     let documentResponses = ChromiumDocumentResponses()
     private var pendingCallbacks: [UInt: UInt] = [:]
     private var certificateCallbacks: Set<UInt> = []
+    /// How often each server and realm asked for a password since a page last loaded past it (`presentAuth`).
+    var authAttempts: [String: Int] = [:]
     var downloadCallbacks: [UInt32: UInt] = [:]
     private(set) var isClosed = false
     private var nativeDocuments: [String: UInt64] = [:]
@@ -751,6 +753,10 @@ final class ChromiumClient {
             Task { @MainActor [weak client] in
                 guard let client, !client.isClosed,
                       let response = client.documentResponses.receive(copied) else { return }
+                // A page that came back (anything but 401 or 407) is a password that was accepted.
+                if let status = (response as? HTTPURLResponse)?.statusCode, status != 401, status != 407 {
+                    client.authAttempts.removeAll()
+                }
                 client.page?.didReceiveMainFrameResponse(response)
             }
             return 0
@@ -942,39 +948,6 @@ final class ChromiumClient {
     private func finishCertificate(_ raw: UnsafeMutableRawPointer) -> Bool {
         certificateCallbacks.remove(UInt(bitPattern: raw))
         return finish(raw)
-    }
-
-    private func presentAuth(_ raw: UnsafeMutableRawPointer, challenge: CefAuthChallenge) {
-        guard !isClosed else { Self.release(raw); return }
-        hold(raw)
-        guard let window = page?.window else {
-            guard finish(raw) else { return }
-            let callback = raw.assumingMemoryBound(to: cef_auth_callback_t.self)
-            callback.pointee.cancel?(callback)
-            drop(raw)
-            return
-        }
-        let alert = NSAlert()
-        alert.messageText = challenge.host
-        alert.informativeText = challenge.realm.isEmpty ? String(localized: "Authentication required") : challenge.realm
-        let username = NSTextField(string: "")
-        let password = NSSecureTextField(string: "")
-        let stack = NSStackView(views: [username, password])
-        stack.orientation = .vertical
-        stack.spacing = 8
-        alert.accessoryView = stack
-        alert.addButton(withTitle: String(localized: "Sign In"))
-        alert.addButton(withTitle: String(localized: "Cancel"))
-        alert.beginSheetModal(for: window) { [weak self] response in
-            guard let self, self.finish(raw), !self.isClosed else { return }
-            let callback = raw.assumingMemoryBound(to: cef_auth_callback_t.self)
-            if response == .alertFirstButtonReturn {
-                ChromiumInterop.withString(username.stringValue) { user in
-                    ChromiumInterop.withString(password.stringValue) { pass in callback.pointee.cont?(callback, user, pass) }
-                }
-            } else { callback.pointee.cancel?(callback) }
-            self.drop(raw)
-        }
     }
 
 }

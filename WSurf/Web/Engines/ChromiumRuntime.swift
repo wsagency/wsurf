@@ -39,7 +39,12 @@ final class ChromiumRuntime {
     /// Every switch WSurf adds to Chromium. None may loosen what a `file:` page can read: left alone, Chromium stops a
     /// local page from fetching other local files, which is what keeps a file opened from Downloads to itself.
     /// `ChromiumFileAccessTests` guards this list and the sources against any such switch or setting.
-    nonisolated static let extraCommandLineSwitches: [String: String?] = ["disable-backgrounding-occluded-windows": nil]
+    nonisolated static let extraCommandLineSwitches: [String: String?] = [
+        "disable-backgrounding-occluded-windows": nil,
+        // Without it Chrome's own sign-in prompt takes HTTP authentication, and inside WSurf it ends in
+        // ERR_INVALID_AUTH_CREDENTIALS; with it CEF asks `get_auth_credentials`, which shows WSurf's sheet.
+        "disable-chrome-login-prompt": nil,
+    ]
 
     private(set) var rootDirectory: URL
     private var contexts: [UUID: Context] = [:]

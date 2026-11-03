@@ -198,6 +198,7 @@
    "GlassHierarchyTests",
    "GlassPolicyTests",
    "GlobalSpaceTests",
+   "HTTPAuthenticationTests",
    "HarnessAdapterTests",
    "HistoryTrailTests",
    "HistoryWriteTests",
