@@ -165,6 +165,19 @@ struct UpdateSurfaceTests {
         #expect(!source.contains("showReleaseNotes()"))
     }
 
+    /// The close button hides the banner; the next check brings it back.
+    @Test func closingTheBannerHidesItUntilTheNextCheck() {
+        let updates = UpdateController()
+        updates.model.phase = .failed("offline")
+        #expect(updates.model.isBannerVisible)
+
+        updates.dismiss()
+        #expect(!updates.model.isBannerVisible)
+
+        updates.checkNow()
+        #expect(!updates.model.isDismissed)
+    }
+
     /// The caption sits on one line beside the pop-up menu. Two lines push the
     /// row taller than the ones around it.
     @Test func aChannelCaptionFitsBesideTheMenu() {

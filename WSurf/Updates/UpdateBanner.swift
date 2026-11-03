@@ -79,6 +79,10 @@ struct UpdateBanner: View {
             Spacer(minLength: 4)
 
             cardAccessory
+
+            if isDismissable {
+                closeButton
+            }
         }
     }
 
@@ -130,6 +134,19 @@ struct UpdateBanner: View {
         }
     }
 
+    private var closeButton: some View {
+        Button(action: updates.dismiss) {
+            Image(systemName: "xmark")
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(.secondary)
+                .frame(width: SettingsMetrics.controlHeight, height: SettingsMetrics.controlHeight)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(Text("Close"))
+        .help(Text("Close"))
+    }
+
     private var badge: some View {
         Button(action: act) {
             Image(systemName: glyph)
@@ -143,6 +160,11 @@ struct UpdateBanner: View {
         .buttonStyle(.plain)
         .disabled(!isActionable)
         .help(Text(bannerTitle))
+        .contextMenu {
+            if isDismissable {
+                Button("Close", action: updates.dismiss)
+            }
+        }
         .transition(.opacity)
     }
 
@@ -201,6 +223,11 @@ struct UpdateBanner: View {
         default:
             true
         }
+    }
+
+    /// Closing mid-install makes no sense, so it follows the same phases.
+    private var isDismissable: Bool {
+        isActionable
     }
 
     private var glyph: String {

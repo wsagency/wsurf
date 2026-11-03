@@ -35,6 +35,10 @@ release notes will be added above this provenance record.
 - In Chromium tabs, a page restored by Back after `resetDevelopment` ended a diagnostics capture answers again; before, it needed a reload.
 - The connection instructions now say to make one call at a time (a parallel call is refused with “Another operation is running”) and to call `switchTab` when `setViewport` answers `unsupported` for a tab in the background.
 
+### Updates
+
+- The sidebar update banner can be closed: a close button on the card, and Close in the menu of the icons-only badge, so “Couldn’t check for updates” and “Update Available” no longer stay in the sidebar for good. It is not offered while an update downloads, is prepared or installs; the next Check for Updates shows the banner again.
+
 ## 0.1.21 (build 21) — 2026-11-03
 
 Everything since 0.1.20 (build 20). None of the screens and prompts below has been checked by hand.
