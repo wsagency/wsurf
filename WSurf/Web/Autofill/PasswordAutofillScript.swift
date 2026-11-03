@@ -130,15 +130,27 @@ nonisolated enum PasswordAutofillScript {
       const pickFill = (token,url,login) => {
         if (!picked(token,url)) return 0;
         const target = pick.target;
+        // The page's own listeners run while each field is filled, and may move, hide or swap the next one: a later field takes its
+        // value only while it is still a field of the form it was chosen in, on this address, and that form still submits to this
+        // site. The caches are dropped first, since the page's changes are not yet observed.
+        const still = (el,root) => {
+          forms.invalidate();
+          return location.href === url && el.isConnected && pickable(el) && forms.scope(el) === root &&
+            forms.safe(forms.group(el)?.root);
+        };
         if (typeof login?.code === 'string') {
           if (!forms.safe(forms.group(target)?.root)) return -1;
           const list = boxes(target, login.code.length);
           if (!list) return 0;
           pick.token = null;
-          const size = list.length > 1 ? target.maxLength : login.code.length;
+          const size = list.length > 1 ? target.maxLength : login.code.length, root = forms.scope(target);
           return fillAll(target, () => {
-            list.forEach((el,index) => put(el, login.code.slice(index * size, (index + 1) * size)));
-            return list.length;
+            let count = 0;
+            for (const [index, el] of list.entries()) {
+              if (!still(el, root)) break;
+              count += put(el, login.code.slice(index * size, (index + 1) * size));
+            }
+            return count;
           });
         }
         const group = forms.group(target);
@@ -159,10 +171,7 @@ nonisolated enum PasswordAutofillScript {
         return fillAll(target, () => {
           let count = 0;
           if (username && typeof login?.username === 'string' && login.username) count += put(username, login.username);
-          // The username's own listeners ran in between: the password goes only where it still may.
-          if (password && hasPassword && location.href === url && password.isConnected && forms.safe(forms.group(target)?.root)) {
-            count += put(password, login.password);
-          }
+          if (password && hasPassword && still(password, group?.root)) count += put(password, login.password);
           return count;
         });
       };

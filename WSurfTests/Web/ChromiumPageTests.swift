@@ -21,7 +21,9 @@ struct ChromiumPageTests {
     /// Address, TLS connection, certificate status, content status, secure.
     private static let secureCases: [SecureCase] = [
         .init("https://login.example/", true, 0, 0, true),
-        .init("https://login.example/", true, 1 << 16 | 1 << 17, 0, true), // EV and revocation checking are no errors
+        .init("https://login.example/", true, 1 << 16, 0, true), // EV is no error
+        .init("https://login.example/", true, 1 << 17, 0, true), // revocation checking enabled is no error
+        .init("https://login.example/", true, 1 << 19 | 1 << 20, 0, true), // SHA-1 present, CT compliance failed: bits 16-23 are no errors
         .init("http://login.example/", true, 0, 0, false), // an insecure main frame
         .init("HTTPS://login.example/", true, 0, 0, true),
         .init("file:///tmp/login.html", true, 0, 0, false),
@@ -29,7 +31,10 @@ struct ChromiumPageTests {
         .init("https://login.example/", false, 0, 0, false), // no certificate: no TLS connection
         .init("https://login.example/", true, 1 << 2, 0, false), // an untrusted authority, accepted past a warning
         .init("https://login.example/", true, 1 << 1, 0, false), // an expired certificate
-        .init("https://login.example/", true, 1 << 15, 0, false), // the highest error bit
+        .init("https://login.example/", true, 1 << 15, 0, false), // the highest error bit of the low 16
+        .init("https://login.example/", true, 1 << 24, 0, false), // certificate transparency required
+        .init("https://login.example/", true, 1 << 26, 0, false), // known interception blocked
+        .init("https://login.example/", true, 1 << 31, 0, false), // the top of net::CERT_STATUS_ALL_ERRORS
         .init("https://login.example/", true, 0, 1 << 0, false), // insecure content shown (mixed passive)
         .init("https://login.example/", true, 0, 1 << 1, false), // insecure content run (mixed active)
         .init("https://login.example/", true, 0, 1 << 2, false), // content with a certificate error
