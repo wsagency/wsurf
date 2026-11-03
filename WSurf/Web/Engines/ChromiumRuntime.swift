@@ -403,6 +403,24 @@ final class ChromiumRuntime {
 
     func unregister(_ page: ChromiumPage) {
         pages.remove(page)
+        // Chromium writes its cookie store to disk on a timer, so what a page set in its last seconds can be lost once the
+        // profile's last page is gone (a crash, a force quit). Quit flushes every context in `shutdown`.
+        let id = page.context.contextID
+        if !hasShutdown, !pages.allObjects.contains(where: { $0.context.contextID == id }) {
+            flushCookieStore(contextID: id)
+        }
+    }
+
+    /// Number of cookie-store flushes asked of Chromium (a test reads it).
+    private(set) var cookieFlushCount = 0
+
+    /// Asks Chromium to write the cookie store of a context that exists to disk; it finishes in the background.
+    private func flushCookieStore(contextID: UUID) {
+        guard let entry = contexts[contextID], entry.isStarted,
+              let manager = entry.raw.pointee.get_cookie_manager?(entry.raw, nil) else { return }
+        defer { ChromiumInterop.release(UnsafeMutableRawPointer(manager)) }
+        cookieFlushCount += 1
+        _ = manager.pointee.flush_store?(manager, nil)
     }
 
     func releaseContext(contextID: UUID) async {
@@ -452,6 +470,8 @@ final class ChromiumRuntime {
             await page.close()
         }
         privateOrigins.removeAll()
+        // Written before CEF shuts down, in case its own shutdown does not.
+        contexts.keys.forEach { flushCookieStore(contextID: $0) }
         contexts.removeAll()
         CefRuntime.shared.shutdown()
         hasShutdown = true

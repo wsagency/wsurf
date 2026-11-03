@@ -54,6 +54,7 @@ final class BrowserModel {
         downloads: DownloadManager? = nil,
         webViewFactory: (@MainActor () -> WKWebView)? = nil
     ) {
+        _ = PageColourChooser.shared  // starts watching the colour panel before a page can open it
         let selectedContext = context ?? .shared(for: .original())
         let selectedDatabase = database ?? selectedContext.database
         self.windowID = windowID
@@ -103,6 +104,7 @@ final class BrowserModel {
             stampForeground(at: now)
             noteFrontTabs()
             if previous.map({ !isVisibleInSplit($0) }) ?? false {
+                PageColourChooser.shared.close(openedBy: previous?.liveView?.window)
                 previous?.refreshPreview()
                 previous?.noteHoveredLink(nil)
             }

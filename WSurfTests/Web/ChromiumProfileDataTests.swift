@@ -175,6 +175,25 @@ struct ChromiumProfileDataTests {
         try await runtime.erase(profile: profile)
     }
 
+    /// Closing a profile's last Chromium page asks Chromium to write its cookie store, so nothing waits for the periodic commit.
+    @Test(.boundedWebViews)
+    func closingTheLastChromiumPageFlushesTheCookieStore() async throws {
+        let server = try await HTTPFixtureServer.start(routes: ["/": .html("<!doctype html><title>Persist</title>")])
+        defer { withExtendedLifetime(server) {} }
+        let profile = regularProfile()
+        let context = BrowserProfileContext(profile: profile)
+        try runtime.ensureInitialized()
+        let before = runtime.cookieFlushCount
+
+        #expect(try await run(Self.write, at: try server.url("/"), in: context) == "written")
+
+        #expect(runtime.cookieFlushCount == before + 1, "the last page of the profile closed: one flush")
+        #expect(await waitUntil { (try? storedCookieNames(profile).contains("persistToken")) == true }, "the cookie reached the disk")
+
+        await runtime.releaseContext(contextID: context.contextID)
+        try await runtime.erase(profile: profile)
+    }
+
     @Test(.boundedWebViews)
     func clearingOneSiteThenEverythingRemovesTheDataFromDisk() async throws {
         let server = try await HTTPFixtureServer.start(routes: ["/": .html("<!doctype html><title>Persist</title>")])

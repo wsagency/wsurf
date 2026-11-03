@@ -29,7 +29,15 @@ final class FolderColorEdit: NSObject {
     }
 
     /// The edit the color panel is working for, kept for as long as the panel points at it.
-    private static var current: FolderColorEdit?
+    /// Nil once the panel closes, so a page's colour chooser is never taken for it.
+    private(set) static var current: FolderColorEdit?
+
+    /// Forgets the edit when the panel closes, from the first `present` on.
+    private static let closeWatcher = NotificationCenter.default.addObserver(
+        forName: NSWindow.willCloseNotification, object: NSColorPanel.shared, queue: .main
+    ) { _ in
+        MainActor.assumeIsolated { current = nil }
+    }
 
     /// Opens the shared color panel on the folder's color. The panel has no transparency: a folder color is solid.
     static func present(for folder: TabFolder, browser: BrowserModel) {
@@ -38,6 +46,7 @@ final class FolderColorEdit: NSObject {
         let panel = NSColorPanel.shared
         panel.showsAlpha = false
         panel.isContinuous = true
+        _ = closeWatcher
         panel.setTarget(edit)
         panel.setAction(#selector(FolderColorEdit.panelChanged(_:)))
         panel.color = (folder.customColor?.nsColor ?? folder.color.nsTint).usingColorSpace(.sRGB) ?? .gray
