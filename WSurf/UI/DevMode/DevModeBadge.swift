@@ -120,7 +120,6 @@ enum DevModeScreenshot {
 enum DevModeMenu {
     static func make(for tab: BrowserTab, coordinator: AppCoordinator) -> NSMenu {
         let menu = NSMenu()
-        // Chromium has no inspector in WSurf, so a Chromium tab gets no Show Web Inspector item rather than one that does nothing.
         if tab.canShowWebInspector {
             menu.addItem(
                 title: String(localized: "Show Web Inspector"),
@@ -143,8 +142,7 @@ enum DevModeMenu {
         menu.addItem(title: String(localized: "Outline Elements"), image: symbol("square.dashed")) { [weak tab] in
             tab?.updateDevModeTools { $0.outlinesElements.toggle() }
         }.state = tab.devModeTools.outlinesElements ? .on : .off
-        // The page appearance is WebKit's view appearance; there is nothing to set on a Chromium page.
-        if tab.liveView?.webKit != nil {
+        if tab.liveView != nil {
             menu.addItem(submenu(appearanceMenu(for: tab), title: String(localized: "Page Appearance"), image: symbol("circle.lefthalf.filled")))
         }
 

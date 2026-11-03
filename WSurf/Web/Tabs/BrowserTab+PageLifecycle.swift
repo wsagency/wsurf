@@ -55,6 +55,11 @@ extension BrowserTab {
             provisionalNavigation = nil
         }
         noteDocumentChanged()
+        // WebKit applies Developer mode's page appearance in its own didCommit; the committed document decides it here too, so
+        // leaving a website in Developer mode puts the page's own color scheme back.
+        if page.chromium != nil {
+            applyDevModeAppearance()
+        }
         translation.documentChanged()
         reader.pageChanged()
         probeReader()
@@ -312,6 +317,10 @@ extension BrowserTab {
                 return CredentialPicker.isOffered(in: view, allowedByTab: allowsCredentialPicker)
             }
             chromium.onPickCredential = { [weak self, weak view] menu in self?.pickCredential(in: view, menu: menu) }
+            chromium.canInspect = { [weak self, weak view] in
+                guard let self, let view else { return false }
+                return liveView === view && canShowWebInspector
+            }
             chromium.showsPDF = { [weak self, weak view] in
                 guard let self, let view else { return false }
                 return liveView === view && shownPDF != nil

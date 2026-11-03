@@ -90,6 +90,18 @@ nonisolated struct DevModeTools: Equatable {
             }
         }
 
+        /// The `prefers-color-scheme` a Chromium page is given, where WebKit's is the view's appearance.
+        var colorScheme: DevelopmentMedia.ColorScheme? {
+            switch self {
+            case .system:
+                nil
+            case .light:
+                .light
+            case .dark:
+                .dark
+            }
+        }
+
         var appearance: NSAppearance? {
             switch self {
             case .system:
@@ -153,20 +165,20 @@ extension BrowserTab {
         context.settings.usesDevMode(for: liveView?.url)
     }
 
-    /// The Web Inspector is WebKit's. A Chromium tab has no equivalent in WSurf, so every surface hides the command for it.
-    var inspectsWithWebKit: Bool {
-        liveView?.engine != .chromium
-    }
-
-    /// True when the tab shows a WebKit page that has an inspector to open.
+    /// True when the tab shows a page that has an inspector to open: WebKit's Web Inspector or Chromium's DevTools.
     var canShowWebInspector: Bool {
-        liveView?.webKit != nil && (context.settings.webInspectorEnabled || usesDevMode)
+        liveView != nil && (context.settings.webInspectorEnabled || usesDevMode)
     }
 
-    /// Opens the inspector of a WebKit page through WebKit's private `_inspector`. Does nothing when the page has none, when
-    /// the inspector is off for it, or for a Chromium page.
+    /// Opens the inspector of a WebKit page through WebKit's private `_inspector`, or Chromium's DevTools in a window of their
+    /// own. Does nothing when the page has none or the inspector is off for it.
     func showWebInspector() {
-        guard canShowWebInspector, let webView = liveView?.webKit else { return }
+        guard canShowWebInspector, let page = liveView else { return }
+        if let chromium = page.chromium {
+            chromium.showDevTools()
+            return
+        }
+        guard let webView = page.webKit else { return }
         let accessor = NSSelectorFromString("_inspector")
         let show = NSSelectorFromString("show")
         guard webView.responds(to: accessor),
@@ -192,6 +204,9 @@ extension BrowserTab {
     func syncDevMode() {
         if let webKit = liveView?.webKit {
             context.settings.applyInspector(to: webKit)
+        } else if !canShowWebInspector {
+            // WebKit closes its inspector when it stops being inspectable; Chromium's DevTools window is closed the same way.
+            liveView?.chromium?.closeDevTools()
         }
         guard hasDevModeState || usesDevMode else { return }
         if !usesDevMode {
@@ -201,10 +216,15 @@ extension BrowserTab {
         renderDevModeOverlays()
     }
 
-    /// WebKit only: Chromium has no page appearance of its own to set. Puts the chosen appearance on the view, and takes it
-    /// off again only while the view still shows what this feature put there, so another setting is never undone.
+    /// Puts the chosen appearance on the view (WebKit) or sets Chromium's `prefers-color-scheme`. WebKit's is taken off again
+    /// only while the view still shows what this feature put there, so another setting is never undone.
     func applyDevModeAppearance() {
-        guard let webKit = liveView?.webKit, hasDevModeState || documentUsesDevMode else { return }
+        guard hasDevModeState || documentUsesDevMode else { return }
+        if let chromium = liveView?.chromium {
+            chromium.setBaseColorScheme(documentUsesDevMode ? devModeState.tools.appearance.colorScheme : nil)
+            return
+        }
+        guard let webKit = liveView?.webKit else { return }
         let state = devModeState
         let wanted = documentUsesDevMode ? state.tools.appearance.appearance : nil
         if let wanted {

@@ -126,6 +126,7 @@ final class ChromiumClient {
     nonisolated(unsafe) var downloadPointer: UnsafeMutablePointer<cef_download_handler_t>?
     nonisolated(unsafe) var dialogPointer: UnsafeMutablePointer<cef_dialog_handler_t>?
     nonisolated(unsafe) var contextMenuPointer: UnsafeMutablePointer<cef_context_menu_handler_t>?
+    nonisolated(unsafe) var findPointer: UnsafeMutablePointer<cef_find_handler_t>?
     nonisolated(unsafe) var jsDialogPointer: UnsafeMutablePointer<cef_jsdialog_handler_t>?
     nonisolated(unsafe) var permissionPointer: UnsafeMutablePointer<cef_permission_handler_t>?
     nonisolated(unsafe) var requestPointer: UnsafeMutablePointer<cef_request_handler_t>?
@@ -144,6 +145,8 @@ final class ChromiumClient {
     private var documentEpoch: UInt64 = 0
     /// The open context menu offers Pick Credential…: when it opened and which frame was right-clicked.
     var pickCredentialMenu: CredentialPicker.Menu?
+    /// Where the open context menu offers Inspect Element: the point it was opened at, in the browser's own coordinates.
+    var inspectPoint: CGPoint?
 
     init(page: ChromiumPage) {
         self.page = page
@@ -225,10 +228,6 @@ final class ChromiumClient {
         ChromiumInterop.release(raw)
     }
 
-    private static func browser(_ raw: UnsafeMutableRawPointer?) -> UnsafeMutablePointer<cef_browser_t>? {
-        raw?.assumingMemoryBound(to: cef_browser_t.self)
-    }
-
     nonisolated static func releaseBrowser(_ browser: UnsafeMutablePointer<cef_browser_t>?) {
         release(browser.map(UnsafeMutableRawPointer.init))
     }
@@ -259,11 +258,6 @@ final class ChromiumClient {
         default:
             return .other
         }
-    }
-
-    private func withBrowser(_ raw: UnsafeMutableRawPointer?, _ body: (ChromiumClient, ChromiumPage) -> Void) {
-        guard !isClosed, let page, let client = Self.owner(raw) else { return }
-        body(client, page)
     }
 
     func hold(_ pointer: UnsafeMutableRawPointer) {
@@ -346,6 +340,7 @@ final class ChromiumClient {
             downloadPointer.map(UnsafeMutableRawPointer.init),
             dialogPointer.map(UnsafeMutableRawPointer.init),
             contextMenuPointer.map(UnsafeMutableRawPointer.init),
+            findPointer.map(UnsafeMutableRawPointer.init),
             jsDialogPointer.map(UnsafeMutableRawPointer.init),
             permissionPointer.map(UnsafeMutableRawPointer.init),
             clientPointer.map(UnsafeMutableRawPointer.init),
@@ -363,6 +358,7 @@ final class ChromiumClient {
         downloadPointer = nil
         dialogPointer = nil
         contextMenuPointer = nil
+        findPointer = nil
         jsDialogPointer = nil
         permissionPointer = nil
         clientPointer = nil
@@ -399,6 +395,7 @@ final class ChromiumClient {
                 downloadPointer.map(UnsafeMutableRawPointer.init),
                 dialogPointer.map(UnsafeMutableRawPointer.init),
                 contextMenuPointer.map(UnsafeMutableRawPointer.init),
+                findPointer.map(UnsafeMutableRawPointer.init),
                 jsDialogPointer.map(UnsafeMutableRawPointer.init),
                 permissionPointer.map(UnsafeMutableRawPointer.init),
                 clientPointer.map(UnsafeMutableRawPointer.init),

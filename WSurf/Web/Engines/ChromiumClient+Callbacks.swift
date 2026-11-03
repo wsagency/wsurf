@@ -128,6 +128,7 @@ extension ChromiumClient {
         makeJSDialogHandler()
         makeDialogHandler()
         makeContextMenuHandler()
+        makeFindHandler()
         makePermissionHandler()
         makeResourceHandler()
         makeRequestHandler()
@@ -609,6 +610,12 @@ extension ChromiumClient {
             ChromiumInterop.retain(UnsafeMutableRawPointer(handler))
             return handler
         }
+        client.pointee.get_find_handler = { clientSelf in
+            guard let me = ChromiumClient.owner(clientSelf.map(UnsafeMutableRawPointer.init)),
+                  let handler = me.findPointer else { return nil }
+            ChromiumInterop.retain(UnsafeMutableRawPointer(handler))
+            return handler
+        }
         // The context handler leaves the native CEF menu and editing commands untouched.
         clientPointer = client
         return client
@@ -627,10 +634,12 @@ extension ChromiumClient {
                     )
                 }
                 let link = URL(string: ChromiumInterop.takeString(params.pointee.get_link_url?(params)))
+                let clickPoint = CGPoint(x: Int(params.pointee.get_xcoord?(params) ?? 0), y: Int(params.pointee.get_ycoord?(params) ?? 0))
                 MainActor.assumeIsolated {
                     client.offerPDFItems(in: model)
                     client.offerLinkItems(in: model, link: link, frameURL: clicked?.url)
                     client.offerCredentialPicker(in: model, editable: editable, frame: clicked)
+                    client.offerInspectItem(in: model, at: clickPoint)
                 }
             }
             ChromiumClient.releaseBrowser(browser)
@@ -654,7 +663,7 @@ extension ChromiumClient {
             return MainActor.assumeIsolated {
                 command == ChromiumClient.pickCredentialCommand
                     ? client.runCredentialPicker()
-                    : client.openContextLink(command) || client.runPDFCommand(command)
+                    : client.openContextLink(command) || client.runPDFCommand(command) || client.runInspectCommand(command)
             } ? 1 : 0
         }
         handler.pointee.on_context_menu_dismissed = { _, browser, frame in
@@ -757,6 +766,47 @@ extension ChromiumClient {
         pickCredentialMenu = nil
         page.onPickCredential?(menu)
         return true
+    }
+
+    /// The Inspect Element command. Far from the ids above so another item added there cannot reach it.
+    nonisolated static let inspectElementCommand = pickCredentialCommand + 100
+
+    /// Inspect Element at the end of the menu, after a separator, where a WebKit tab's menu puts it, and only when the tab offers the
+    /// inspector (`BrowserTab.canShowWebInspector`: the Web Inspector setting, or a website in Developer mode).
+    func offerInspectItem(in model: UnsafeMutablePointer<cef_menu_model_t>, at point: CGPoint) {
+        inspectPoint = nil
+        guard page?.canInspect?() == true else { return }
+        if (model.pointee.get_count?(model) ?? 0) > 0 {
+            _ = model.pointee.add_separator?(model)
+        }
+        let added = ChromiumInterop.withString(String(localized: "Inspect Element")) {
+            model.pointee.add_item?(model, Self.inspectElementCommand, $0)
+        }
+        if added == 1 {
+            inspectPoint = point
+        }
+    }
+
+    /// Opens DevTools on the element the open menu was opened over, if `command` is Inspect Element.
+    func runInspectCommand(_ command: Int32) -> Bool {
+        guard command == Self.inspectElementCommand, let page, let point = inspectPoint else { return false }
+        inspectPoint = nil
+        page.showDevTools(inspectAt: point)
+        return true
+    }
+
+    /// Reports the native find's results (`ChromiumFind`).
+    func makeFindHandler() {
+        let handler = ChromiumInterop.allocate(cef_find_handler_t.self, owner: self)
+        handler.pointee.on_find_result = { handlerSelf, browser, identifier, count, _, active, final in
+            ChromiumClient.releaseBrowser(browser)
+            guard let client = ChromiumClient.owner(handlerSelf.map(UnsafeMutableRawPointer.init)) else { return }
+            MainActor.assumeIsolated {
+                client.page?.find.receive(
+                    identifier: Int(identifier), count: Int(count), active: Int(active), isFinal: final != 0)
+            }
+        }
+        findPointer = handler
     }
 
     func makeDialogHandler() {

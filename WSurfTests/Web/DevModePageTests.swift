@@ -110,7 +110,6 @@ struct DevModePageTests {
         let view = try #require(tab.page.webKit)
         #expect(await waitUntil { inspectorOn(view) }, "a website in Developer mode has the inspector")
         #expect(tab.canShowWebInspector)
-        #expect(tab.inspectsWithWebKit)
 
         tab.loadHTML("<!doctype html><title>Shop</title><p>Shop</p>", baseURL: remote)
         #expect(await waitUntil { tab.page.url == remote && inspectorOff(view) }, "leaving the website switches it off again")
@@ -194,28 +193,69 @@ struct DevModePageTests {
         #expect(view.responds(to: NSSelectorFromString("_inspector")), "WebKit still has the private inspector the command uses")
     }
 
-    @Test func aChromiumTabHasNoInspectorAndEverySurfaceHidesTheCommand() async throws {
+    @Test func aChromiumTabOffersDevToolsAndThePageAppearance() async throws {
         let rig = makeRig()
         defer { finish(rig) }
+        let application = BrowserSettings.application
+        let before = application.webInspectorEnabled
+        application.webInspectorEnabled = false
+        defer { application.webInspectorEnabled = before }
         let server = try await server()
         let (tab, window) = try await open(rig, server, engine: .chromium)
         defer { hide(window) }
-        #expect(tab.usesDevMode, "the website still uses Developer mode")
-        #expect(!tab.inspectsWithWebKit)
-        #expect(!tab.canShowWebInspector)
-        tab.showWebInspector()  // nothing to open: it must not throw or crash
+        let chromium = try #require(tab.page.chromium)
+        #expect(tab.usesDevMode, "the website uses Developer mode")
+        #expect(tab.canShowWebInspector)
 
         let coordinator = AppCoordinator(browser: rig.browser)
         defer { coordinator.closeWindow() }
         let menu = DevModeMenu.make(for: tab, coordinator: coordinator)
         let titles = menu.items.map(\.title)
-        #expect(!titles.contains(String(localized: "Show Web Inspector")))
-        #expect(!titles.contains(String(localized: "Page Appearance")), "the page appearance is WebKit's view appearance")
+        #expect(titles.contains(String(localized: "Show Web Inspector")))
+        #expect(titles.contains(String(localized: "Page Appearance")))
         #expect(titles.contains(String(localized: "Copy Screenshot")))
         #expect(titles.contains(String(localized: "Show Frame Rate")))
-        #expect(titles.contains(String(localized: "Clear Website Data…")))
-        let host = try #require(DevMode.host(of: tab.page.url))
-        #expect(titles.contains(String(localized: "Turn Off Developer Mode for “\(host)”")))
+
+        // DevTools open in a window of their own, and close again when the website stops using Developer mode.
+        #expect(!chromium.hasDevTools)
+        tab.showWebInspector()
+        #expect(await waitUntil { chromium.hasDevTools })
+        coordinator.setDevMode(false, for: tab)
+        #expect(!tab.canShowWebInspector)
+        #expect(await waitUntil { !chromium.hasDevTools })
+        coordinator.setDevMode(true, for: tab)
+        tab.showWebInspector()
+        chromium.closeDevTools()
+    }
+
+    @Test func aChromiumPagesAppearanceFollowsTheDeveloperToolsChoice() async throws {
+        let rig = makeRig()
+        defer { finish(rig) }
+        let server = try await server()
+        let (tab, window) = try await open(rig, server, engine: .chromium)
+        defer { hide(window) }
+        let dark = "matchMedia('(prefers-color-scheme: dark)').matches"
+
+        tab.updateDevModeTools { $0.appearance = .dark }
+        #expect(await waitUntil { await script(tab, dark) as? Bool == true })
+        tab.updateDevModeTools { $0.appearance = .light }
+        #expect(await waitUntil { await script(tab, dark) as? Bool == false })
+        // Quick changes end on the last one.
+        tab.updateDevModeTools { $0.appearance = .dark }
+        tab.updateDevModeTools { $0.appearance = .system }
+        tab.updateDevModeTools { $0.appearance = .dark }
+        #expect(await waitUntil { await script(tab, dark) as? Bool == true })
+
+        // An MCP lease that ends puts back the appearance Developer mode asked for, not the page's own.
+        let chromium = try #require(tab.page.chromium)
+        try await chromium.setEmulatedMedia(DevelopmentMedia(colorScheme: .light))
+        #expect(await waitUntil { await script(tab, dark) as? Bool == false })
+        await chromium.forceMediaEmulation(DevelopmentMedia())
+        #expect(await waitUntil { await script(tab, dark) as? Bool == true })
+
+        tab.updateDevModeTools { $0.appearance = .system }
+        let system = NSApplication.shared.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        #expect(await waitUntil { await script(tab, dark) as? Bool == system })
     }
 
     @Test func aWebKitTabsMenuHasTheInspectorAndThePageAppearance() async throws {
@@ -229,7 +269,7 @@ struct DevModePageTests {
         #expect(titles.contains(String(localized: "Page Appearance")))
     }
 
-    @Test func theDeveloperMenuNamesTheWebsiteAndHidesTheInspectorForChromium() async throws {
+    @Test func theDeveloperMenuNamesTheWebsiteAndOffersTheInspectorForChromium() async throws {
         let rig = makeRig()
         defer { finish(rig) }
         let coordinator = AppCoordinator(browser: rig.browser)
@@ -261,13 +301,13 @@ struct DevModePageTests {
         coordinator.setDevMode(true, for: webKit)
         #expect(toggle.title == String(localized: "Developer Mode for “app.localhost”"))
 
-        // A Chromium page: no inspector in WSurf, so the item is hidden, not left to do nothing.
+        // A Chromium page: DevTools open for it, so the item is there as it is for WebKit.
         let server = try await server()
         let (chromium, window) = try await open(rig, server, engine: .chromium)
         defer { hide(window) }
         #expect(rig.browser.activeTab === chromium)
-        #expect(!mainMenu.validateMenuItem(inspector))
-        #expect(inspector.isHidden)
+        #expect(mainMenu.validateMenuItem(inspector))
+        #expect(!inspector.isHidden)
         #expect(mainMenu.validateMenuItem(toggle))
         #expect(toggle.state == .on)
         #expect(toggle.title == String(localized: "Developer Mode for “127.0.0.1”"))
