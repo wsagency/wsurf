@@ -1,5 +1,5 @@
 <!-- SPDX-FileCopyrightText: 2026 WSurf Agency -->
-<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!-- SPDX-License-Identifier: BUSL-1.1 -->
 # Real-look texture credits
 
 - `earth_color.jpg` — NASA Earth Observatory, *Blue Marble: Topography and Bathymetry* (`world.topo.bathy.200412.3x5400x2700.jpg`, eoimages id 73909). NASA imagery is not copyrighted; credit requested. Resized to 2048×1024.

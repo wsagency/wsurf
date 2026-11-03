@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: 2026 WSurf Agency
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: BUSL-1.1
 // Video.swift - turntable encoders: AVAssetWriter (H.264 / HEVC with alpha) and ImageIO GIF.
 import AVFoundation
 import CoreVideo

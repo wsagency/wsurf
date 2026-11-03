@@ -1,5 +1,5 @@
 <!-- SPDX-FileCopyrightText: 2026 WSurf Agency
-     SPDX-License-Identifier: Apache-2.0
+     SPDX-License-Identifier: BUSL-1.1
      WSurf brand artwork. Provenance: branding/DESIGN.md, section Provenance and legal. -->
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1400 1190" width="1400" height="1190"><rect width="1400" height="1190" fill="#fff"/>
 <text x="40" y="50" font-family="-apple-system, system-ui, sans-serif" font-size="18" font-weight="700" fill="#1d1d1f" text-anchor="start">WSurf palettes: [track deep, track bright, knob start, knob end]; contrast vs #F5F5F7 (light) / #1C1C1E (dark), WCAG 2.x ratio</text>

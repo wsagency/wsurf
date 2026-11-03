@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: 2026 WSurf Agency
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: BUSL-1.1
 """Generates web/tandem-loader.{css,svg,html} from model.py (pure CSS animation, no script, no inline style)."""
 import math, os
 from model import *

@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: 2026 WSurf Agency
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: BUSL-1.1
 // TandemPlanets.swift - SceneKit builder for the WSurf Tandem mark as celestial bodies.
 // Lead disc = planet (R = 1), follower disc = moon (r = 0.48 R), moon in front / lower-left in the hero pose.
 //

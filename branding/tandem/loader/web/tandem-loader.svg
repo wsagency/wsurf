@@ -1,5 +1,5 @@
 <!-- SPDX-FileCopyrightText: 2026 WSurf Agency
-     SPDX-License-Identifier: Apache-2.0 -->
+     SPDX-License-Identifier: BUSL-1.1 -->
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="-672 -672 1344 1344" role="img" aria-label="Loading"><title>Loading</title><style>svg{--_dur:1.6s;--_delay:0s;--_play:running}
 .tl-lead{fill:#3B1FD1}.tl-follower{fill:#14C79A}.tl-ring{fill:#F5F5F7}
 @media (prefers-color-scheme:dark){.tl-lead{fill:#6D55FF}.tl-follower{fill:#2FE0B2}.tl-ring{fill:#1C1C1E}}

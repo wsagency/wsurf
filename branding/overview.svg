@@ -1,5 +1,5 @@
 <!-- SPDX-FileCopyrightText: 2026 WSurf Agency
-     SPDX-License-Identifier: Apache-2.0
+     SPDX-License-Identifier: BUSL-1.1
      WSurf brand artwork. Provenance: branding/DESIGN.md, section Provenance and legal.
      Wordmark outlines: Figtree Bold, Copyright 2022 The Figtree Project Authors, SIL OFL 1.1. -->
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 600" width="900" height="600"><defs><filter id="grain" x="0" y="0" width="1024" height="1024" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB"><feTurbulence type="fractalNoise" baseFrequency="0.85" numOctaves="2" seed="7" result="n"/><feColorMatrix in="n" type="matrix" values="0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  3.2 0 0 0 -1.85" result="lt"/><feColorMatrix in="n" type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  -3.2 0 0 0 1.35" result="dk"/><feComposite in="lt" in2="SourceAlpha" operator="in" result="lt2"/><feComposite in="dk" in2="SourceAlpha" operator="in" result="dk2"/><feComponentTransfer in="lt2" result="lt3"><feFuncA type="linear" slope="0.22"/></feComponentTransfer><feComponentTransfer in="dk2" result="dk3"><feFuncA type="linear" slope="0.22"/></feComponentTransfer><feMerge><feMergeNode in="SourceGraphic"/><feMergeNode in="lt3"/><feMergeNode in="dk3"/></feMerge></filter></defs>

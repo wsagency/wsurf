@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: 2026 WSurf Agency
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: BUSL-1.1
 // Tandem3D.swift - the WSurf "Tandem" mark as a SceneKit solid.
 //
 // 2D source of truth: 1024 master, SVG y-down. Lead disc (548.2, 506.75) r 348.3 with a bite

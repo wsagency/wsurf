@@ -1,5 +1,5 @@
 <!-- SPDX-FileCopyrightText: 2026 WSurf Agency -->
-<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!-- SPDX-License-Identifier: BUSL-1.1 -->
 # Tandem relief
 
 The Tandem pair as a planet (the lead, violet) and its moon (the follower, mint, 0.48 of the planet's radius). In the hero pose the moon sits lower left, in front, with a gap ring, like the mark. Everything is procedural; the only exception is the Real look, which uses NASA imagery (see `real/textures/CREDITS.md`). **Not wired into the app or website yet.**

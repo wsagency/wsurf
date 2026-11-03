@@ -1,5 +1,5 @@
 <!-- SPDX-FileCopyrightText: 2026 WSurf Agency -->
-<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!-- SPDX-License-Identifier: BUSL-1.1 -->
 # Tandem loader
 
 The follower orbits the lead once every 1.6 s on a tilted path: behind the lead in the upper half, in front in the lower half, where it carries the mark's gap as a ring of the ground colour cutting the lead. Frame 0 is the static mark. **Not wired into the app or website yet.**

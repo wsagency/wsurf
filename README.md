@@ -15,10 +15,11 @@ It can click, type, and scroll. Click the page to stop the assistant and
 continue browsing yourself.
 
 WSurf is an independent fork of
-[kavoye/linen-browser](https://github.com/kavoye/linen-browser). It preserves
-the upstream Apache 2.0 license, copyright notices, and third-party
-attributions; see [LICENSE](LICENSE) and [NOTICE](NOTICE) for terms,
-provenance, and the WSurf modification record.
+[kavoye/linen-browser](https://github.com/kavoye/linen-browser). WSurf's own
+code is under the [Business Source License 1.1](LICENSE); the Linen portions
+keep their [Apache 2.0](LICENSES/Apache-2.0.txt) license, copyright notices,
+and third-party attributions. See [NOTICE](NOTICE) for terms, provenance, and
+the WSurf modification record.
 
 <a href="#install">Install</a> ·
 <a href="#what-it-does">Features</a> ·
@@ -28,7 +29,7 @@ provenance, and the WSurf modification record.
 <a href="https://github.com/wsagency/wsurf/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/wsagency/wsurf/ci.yml?branch=main&style=flat-square&label=CI" alt="CI status"></a>
 <img src="https://img.shields.io/badge/macOS-26%2B-1c1c1e?style=flat-square" alt="macOS 26 or later">
 <img src="https://img.shields.io/badge/Apple%20silicon-1c1c1e?style=flat-square" alt="Apple silicon">
-<img src="https://img.shields.io/badge/license-Apache%202.0-1c1c1e?style=flat-square" alt="Apache 2.0 license">
+<img src="https://img.shields.io/badge/license-BSL%201.1-1c1c1e?style=flat-square" alt="Business Source License 1.1">
 
 </div>
 
@@ -300,9 +301,21 @@ successful main CI gate for recurring deployments.
 
 ## License and acknowledgements
 
-WSurf is licensed under [Apache 2.0](LICENSE), with attribution to the upstream
-Kavoye Linen project. Provider logos and Apple client identifiers belong to
-their owners.
+WSurf is source available under the [Business Source License 1.1](LICENSE)
+(BUSL-1.1). You may use, modify, and redistribute it for any purpose,
+including personal and internal business use, but you may not sell it,
+license it for a fee, offer it as a hosted service, or ship it, or a
+derivative, as a commercial, bundled, or rebranded product. The exact terms
+are the Additional Use Grant in [LICENSE](LICENSE). Each version converts to
+the Apache License 2.0 four years after its first public release. For
+commercial licensing, contact WSurf Agency.
+
+WSurf is derived from Kavoye's Linen. The Linen portions remain under the
+[Apache License 2.0](LICENSES/Apache-2.0.txt); files derived from Linen carry
+`SPDX-License-Identifier: Apache-2.0 AND BUSL-1.1`, and files created for
+WSurf carry `SPDX-License-Identifier: BUSL-1.1`. [NOTICE](NOTICE) describes
+the split. Provider logos and Apple client identifiers belong to their
+owners.
 
 WSurf uses [Sparkle](https://github.com/sparkle-project/Sparkle),
 [AnyLanguageModel](https://github.com/huggingface/AnyLanguageModel), and other

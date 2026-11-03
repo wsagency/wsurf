@@ -1,5 +1,5 @@
 <!-- SPDX-FileCopyrightText: 2026 WSurf Agency -->
-<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!-- SPDX-License-Identifier: BUSL-1.1 -->
 # branding/
 
 WSurf brand files. **The mark is Tandem: start with [tandem/README.md](tandem/README.md).** Nothing here is wired into the app, website, README or release tooling yet.
