@@ -134,6 +134,21 @@ struct PageDriverTests {
         #expect(links.first?.label == "The story")
     }
 
+    /// Field report (0.1.20): readPage showed `?q=test&amp;source=web`, and navigate refused that address as a link the connection
+    /// had not seen. The client reads the address as the DOM's `href` gives it, which is the one the allowlist records.
+    @Test func aClientReadsALinkAddressExactlyAsTheAllowlistRecordsIt() async {
+        let webView = await loadedWebView("""
+        <a href="https://search.example/search?q=test&amp;source=web">Result</a>
+        """)
+        let observation = await PageDriver.readRenderedPage(webView)
+        let recorded = PageDriver.listedLinks(in: observation).map(\.url.absoluteString)
+        #expect(recorded == ["https://search.example/search?q=test&source=web"])
+
+        let delivered = AgentToolkit.untrusted(observation)
+        #expect(!delivered.contains("&amp;"))
+        #expect(PageDriver.listedLinks(in: delivered).map(\.url.absoluteString) == recorded)
+    }
+
     @Test func aLinkListingSurvivesItsOwnPunctuation() {
         let controls: [[String: Any]] = [
             ["r": 1, "k": "link", "l": "Home \u{2192} Shop", "h": "https://example.com/shop", "d": 1],

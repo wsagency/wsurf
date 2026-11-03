@@ -266,7 +266,7 @@ nonisolated final class MCPSecretScrubber: Sendable, CustomStringConvertible, Cu
             bases.append(String(decoding: Array(base.utf16.prefix(truncatedLength)), as: UTF16.self))
         }
         let encoders: [(String) -> String] = [
-            { $0 }, htmlMarkup, htmlEntities, percentEscaped, percentComponent, percentForm, jsonEscaped, jsonUnescapedSlashes,
+            { $0 }, AgentToolkit.fenceEscaped, htmlMarkup, htmlEntities, percentEscaped, percentComponent, percentForm, jsonEscaped, jsonUnescapedSlashes,
         ]
         let layers: [(String) -> String] = [{ $0 }, jsonEscaped, jsonUnescapedSlashes]
         var seen = Set<[UInt8]>()
@@ -284,7 +284,7 @@ nonisolated final class MCPSecretScrubber: Sendable, CustomStringConvertible, Cu
         return result
     }
 
-    /// The escaping `AgentToolkit.untrusted` applies to page text.
+    /// Markup as a page serialises it (`&`, `<` and `>` escaped).
     private static func htmlMarkup(_ text: String) -> String {
         text.replacingOccurrences(of: "&", with: "&amp;").replacingOccurrences(of: "<", with: "&lt;").replacingOccurrences(of: ">", with: "&gt;")
     }

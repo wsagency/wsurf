@@ -816,15 +816,12 @@ final class AgentToolkit {
     }
 
     nonisolated static func untrusted(_ pageText: String) -> String {
-        let escaped = pageText
-            .replacingOccurrences(of: "&", with: "&amp;")
-            .replacingOccurrences(of: "<", with: "&lt;")
-            .replacingOccurrences(of: ">", with: "&gt;")
-        return """
-        <page-content untrusted="true">
-        \(escaped)
-        </page-content>
-        """
+        "<page-content untrusted=\"true\">\n\(fenceEscaped(pageText))\n</page-content>"
+    }
+
+    /// `<` and `>` escaped, so no tag can open or close; `&` stays, so a link reads as its `href` and `navigate` accepts it.
+    nonisolated static func fenceEscaped(_ pageText: String) -> String {
+        pageText.replacingOccurrences(of: "<", with: "&lt;").replacingOccurrences(of: ">", with: "&gt;")
     }
 
     func fencedPageOutput(_ pageText: String) -> String {

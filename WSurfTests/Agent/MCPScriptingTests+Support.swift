@@ -102,7 +102,6 @@ final class ScriptingRig {
         let wrapped = try #require(result.fields["content"]?.stringValue)
         let unwrapped = wrapped
             .replacingOccurrences(of: "&lt;", with: "<").replacingOccurrences(of: "&gt;", with: ">")
-            .replacingOccurrences(of: "&amp;", with: "&")
         let start = try #require(unwrapped.range(of: prefix + "\n"))
         let end = try #require(unwrapped.range(of: "\nobservationID: ", options: .backwards))
         let json = Data(unwrapped[start.upperBound..<end.lowerBound].utf8)

@@ -239,7 +239,9 @@ Use screenshots only when text and control state do not answer the task.
 (controls, text, focus, scroll position); only the difference is sent: 0.3 to 1 KB for a click, a
 field change or a selection on a typical page, where the same action returned 3.3 KB of text before. The reply keeps the earlier keys (`tabID`, `content`,
 `observationID`, `url` after a navigation) and adds `status` (`ok` or `failed`), `action`, `navigation` and `cost`.
-`content` is the report inside the untrusted-content wrapper; every string in it comes from the page.
+`content` is the report inside the untrusted-content wrapper; every string in it comes from the page. The wrapper escapes
+`<` and `>` only, so a link address reads as the page's `href` gives it (`?q=test&source=web`, never `&amp;`) and can be passed
+to `navigate` as it is.
 
 ```
 Clicked “Add to cart”.
@@ -947,8 +949,12 @@ It does not cover signed-build features (Keychain, passkeys, Apple Passwords), w
   before returning page data.
 - After reading untrusted content, outbound navigation must use an observed
   link, including its query string. The client cannot construct an arbitrary
-  address from page content and navigate to it through these tools.
-- External calls are serialized. Starting an in-browser assistant task cancels
+  address from page content and navigate to it through these tools. The
+  address must equal a listed one after only the fragment is dropped; listed
+  addresses are the decoded `href`, exactly as `readPage` shows them.
+- External calls are serialized. A client must make one call at a time and wait
+  for its result: a call sent while another runs is refused with "Another
+  operation is running" and does nothing, so parallel tool calls fail. Starting an in-browser assistant task cancels
   an active external call. External calls do not enter the assistant's
   conversation history. Settings shows connected clients, grant counts, and
   tool-call counts; page bodies and arguments are not persisted as MCP logs.
@@ -976,7 +982,7 @@ without showing it. `switchTab` is needed only to show a tab to the user.
   user: `pressKey`, the WebKit `pointer: true` drag and `hoverOnPage`. A click on a suggestion uses the page's ordinary
   click there.
 - A responsive `setViewport` or `emulateDevice` size reaches only a tab on screen; in the background the result reports
-  that the page kept its size.
+  that the page kept its size, and Chromium answers `unsupported`. Call `switchTab` to show the tab, then call it again.
 - A tab a connection holds a grant for is not unloaded to save memory, so its refs stay valid between calls.
 - A window with no place to keep the tab refuses control calls with a message that names `switchTab`.
 
@@ -1052,7 +1058,11 @@ WebKit and Chromium use the same page driver and privacy checks. Chromium
 Back/Forward-cache restores retain isolated-world contexts and rebind them to
 the restored document, while completing navigation and updating history controls.
 Credential contexts minted before a restore are still invalidated. Actions on
-restored pages still require a fresh MCP observation.
+restored pages still require a fresh MCP observation. Contexts are kept across a
+restore only while a diagnostics capture has the Runtime domain on, because only
+then does Chromium report the restored page's contexts again; otherwise every
+context of the departed document is dropped and the restored page's are found
+afresh, including after `resetDevelopment` ended a capture.
 
 The SDK dependency is pinned in the Xcode project and package lockfile. Focused
 tests live in `MCPPrivacyTests` and `MCPTransportTests` and use local fixtures.

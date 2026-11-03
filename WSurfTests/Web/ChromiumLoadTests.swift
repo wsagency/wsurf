@@ -188,6 +188,42 @@ struct ChromiumLoadTests {
         #expect(table.context(frameID: "F", documentID: "L1", worldName: "W") == nil)
     }
 
+    /// Field report (0.1.20): startDiagnostics, a search, resetDevelopment, then Back, and the restored page no longer answered. The
+    /// search page's contexts came from Runtime events while the capture ran; once it ended nothing was replayed for the restored
+    /// page, and the restore relabelled the search page's contexts as its own. They go with the document they belong to.
+    @Test func aPageRestoredAfterACaptureEndedKeepsNoneOfTheDepartedDocumentsContexts() async throws {
+        try await withDevTools { devTools in
+            @MainActor func navigated(_ loader: String, _ type: String) {
+                deliver("Page.frameNavigated", #"{"type":"\#(type)","frame":{"id":"M","loaderId":"\#(loader)","url":"https://a.example/\#(loader)","securityOrigin":"https://a.example"}}"#, to: devTools)
+            }
+            @MainActor func created(_ id: Int, world: String) {
+                deliver("Runtime.executionContextCreated", #"{"context":{"id":\#(id),"uniqueId":"u\#(id)","name":"\#(world)","auxData":{"frameId":"M","isDefault":\#(world.isEmpty)}}}"#, to: devTools)
+            }
+            @MainActor func context(_ document: String, _ world: String) -> ChromiumDevTools.ContextState? {
+                devTools.contextsByUniqueID.context(frameID: "M", documentID: document, worldName: world)
+            }
+            navigated("A", "Navigation")
+            // The capture runs: the search page's contexts are reported by the Runtime domain.
+            devTools.diagnosticsSink = { _, _ in }
+            navigated("B", "Navigation")
+            created(7, world: "")
+            created(8, world: "WSurfServices")
+            #expect(context("B", "")?.executionID == 7)
+            // resetDevelopment ends it, then Back restores A from the cache.
+            devTools.diagnosticsSink = nil
+            navigated("A", "BackForwardCacheRestore")
+            #expect(context("A", "") == nil && context("A", "WSurfServices") == nil, "B's contexts are not A's")
+            #expect(devTools.uniqueIDByExecutionID.isEmpty)
+
+            // While a capture runs, the contexts Chromium replays for the restored page are kept.
+            navigated("C", "Navigation")
+            devTools.diagnosticsSink = { _, _ in }
+            created(9, world: "")
+            navigated("A", "BackForwardCacheRestore")
+            #expect(context("A", "")?.executionID == 9)
+        }
+    }
+
     // MARK: Which worlds are bound
 
     @Test func aWorldIsBoundOnlyWhenSomethingCanUseIt() async throws {

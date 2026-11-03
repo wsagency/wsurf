@@ -128,6 +128,6 @@ struct MCPFeedbackRig {
     /// The `content` string a client receives: the tool's text inside the untrusted-content wrapper, unescaped.
     static func content(_ result: CallTool.Result) -> String {
         (object(result)["content"]?.stringValue ?? "")
-            .replacingOccurrences(of: "&lt;", with: "<").replacingOccurrences(of: "&gt;", with: ">").replacingOccurrences(of: "&amp;", with: "&")
+            .replacingOccurrences(of: "&lt;", with: "<").replacingOccurrences(of: "&gt;", with: ">")
     }
 }

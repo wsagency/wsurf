@@ -426,8 +426,8 @@ nonisolated enum PageRuntime {
       const clip = (s, n) => { s = norm(s); return s.length > n ? Array.from(s).slice(0, n).join('') : s; };
       const round = n => Math.round(n * 100) / 100;
       // Size of a result as delivered: Swift re-serialises the JSON (escaping "/"), and the text is then wrapped by
-      // AgentToolkit.untrusted, which escapes & < >. Measured here, on those exact bytes, so a budget cannot be missed by
-      // escaping. WIRE_LIMIT sits 8 KiB under the 32 KiB cap for the "ELEMENT:"/"observationID:" lines and Foundation's
+      // AgentToolkit.untrusted, which escapes < and >. Measured here, on those bytes (& counted as &amp;, which only ever
+      // over-counts), so a budget cannot be missed by escaping. WIRE_LIMIT sits 8 KiB under the 32 KiB cap for the "ELEMENT:"/"observationID:" lines and Foundation's
       // own formatting of numbers, which this measure cannot see.
       const WIRE_LIMIT = 24576;
       const WIRE_ESCAPES = { '/': '\\/', '&': '&amp;', '<': '&lt;', '>': '&gt;' };

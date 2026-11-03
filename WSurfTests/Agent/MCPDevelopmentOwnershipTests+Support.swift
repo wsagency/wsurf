@@ -66,7 +66,6 @@ extension MCPDevelopmentOwnershipTests {
     func payload(_ result: CallTool.Result, prefix: String) throws -> [String: Any] {
         let unwrapped = try content(result)
             .replacingOccurrences(of: "&lt;", with: "<").replacingOccurrences(of: "&gt;", with: ">")
-            .replacingOccurrences(of: "&amp;", with: "&")
         let start = try #require(unwrapped.range(of: prefix + "\n"))
         let end = try #require(unwrapped.range(of: "\nobservationID: ", options: .backwards))
         let json = Data(unwrapped[start.upperBound..<end.lowerBound].utf8)

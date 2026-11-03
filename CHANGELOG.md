@@ -29,6 +29,12 @@ release notes will be added above this provenance record.
 - Find on page in a Chromium tab uses Chromium’s own find: every match is highlighted, and “n of m” is Chromium’s own count and position.
 - Developer mode’s Page Appearance (Match System, Light, Dark) now works in Chromium tabs, as the page’s preferred color scheme; WebKit tabs set the view’s appearance instead.
 
+### External assistants (MCP)
+
+- `readPage` and action results show link addresses as the page’s link gives them (`&`, not `&amp;`), so an address passed back to `navigate` is accepted.
+- In Chromium tabs, a page restored by Back after `resetDevelopment` ended a diagnostics capture answers again; before, it needed a reload.
+- The connection instructions now say to make one call at a time (a parallel call is refused with “Another operation is running”) and to call `switchTab` when `setViewport` answers `unsupported` for a tab in the background.
+
 ## 0.1.21 (build 21) — 2026-11-03
 
 Everything since 0.1.20 (build 20). None of the screens and prompts below has been checked by hand.

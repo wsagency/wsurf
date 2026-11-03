@@ -198,11 +198,14 @@ extension ChromiumDevTools {
                 // What the frame's last document said about its sound is over; the new one reports for itself.
                 page?.owner?.onFramesRetired?([parsed.id])
             }
-            if !restoredFromCache {
-                removeContexts(frameID: parsed.id)
-            } else {
+            if restoredFromCache, diagnosticsSink != nil {
                 // Contexts `isolatedContext` found belong to the document that left; the restored one's are found again.
                 removeContexts(frameID: parsed.id) { !$0.fromRuntimeEvent }
+            } else {
+                // Without the Runtime domain nothing is replayed, so every context the frame has belongs to the document that
+                // left, including those a capture that ended since recorded from Runtime events. Kept, the restore would relabel
+                // them as the restored document's and every evaluation would go to the departed one.
+                removeContexts(frameID: parsed.id)
             }
             invalidateCredentialContexts(documents: retired, pageWide: parsed.isMainFrame && !old.documentID.isEmpty)
         }
