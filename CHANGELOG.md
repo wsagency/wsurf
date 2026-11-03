@@ -23,6 +23,7 @@ Everything since 0.1.20 (build 20). None of the screens and prompts below has be
 ### Tabs
 
 - The color chooser a page opened closes when you switch away from its tab.
+- Changing a website's engine from its site controls now switches only that tab. Other open tabs of the website keep their engine, also when they move within the site, and tabs you open afterwards use the new one. Changing the engine in Settings still moves every open tab of the website.
 
 ### Known issues
 
