@@ -39,7 +39,7 @@
 	<!-- The line under the version in the standard About panel, and in the
 	     Finder's Get Info. Absent, AppKit shows nothing at all there. -->
 	<key>NSHumanReadableCopyright</key>
-	<string>Copyright © 2026 WSurf contributors. Based on Linen by Kavoye. Apache 2.0 licensed.</string>
+	<string>Copyright © 2026 WSurf Agency. Business Source License 1.1. Based on Linen by Kavoye (Apache 2.0).</string>
 
 	<key>CFBundleDocumentTypes</key>
 	<array>
