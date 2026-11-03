@@ -390,6 +390,9 @@ extension ChromiumClient {
         load.pointee.on_loading_state_change = { handlerSelf, browser, loading, back, forward in
             ChromiumClient.releaseBrowser(browser)
             guard let client = ChromiumClient.owner(handlerSelf.map(UnsafeMutableRawPointer.init)) else { return }
+            if loading == 0 {
+                client.endMainFrameRequest()
+            }
             MainActor.assumeIsolated {
                 client.page?.didChangeLoading(loading != 0, canGoBack: back != 0, canGoForward: forward != 0)
             }
@@ -402,6 +405,7 @@ extension ChromiumClient {
             MainActor.assumeIsolated {
                 client.advanceDocument(frame)
                 if frame.pointee.is_main?(frame) == 1 {
+                    client.endMainFrameRequest()
                     client.page?.didStartLoad()
                 }
             }
@@ -411,6 +415,7 @@ extension ChromiumClient {
             defer { ChromiumClient.releaseFrame(frame) }
             guard let frame, frame.pointee.is_main?(frame) != 0,
                   let client = ChromiumClient.owner(handlerSelf.map(UnsafeMutableRawPointer.init)) else { return }
+            client.endMainFrameRequest()
             MainActor.assumeIsolated { client.page?.didFinishLoad(status: Int(status)) }
         }
         load.pointee.on_load_error = { handlerSelf, browser, frame, code, text, failedURL in
@@ -423,6 +428,7 @@ extension ChromiumClient {
                     client.advanceDocument(frame)
                 }
                 if frame.pointee.is_main?(frame) == 1 {
+                    client.endMainFrameRequest()
                     client.page?.didFailLoad(code: Int(code.rawValue),
                                             text: ChromiumClient.string(text), url: ChromiumClient.string(failedURL))
                 }

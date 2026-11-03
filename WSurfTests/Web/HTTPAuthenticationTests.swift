@@ -70,7 +70,8 @@ struct HTTPAuthenticationTests {
     /// Opens `start` in `engine` (then `next`, as a navigation of the same tab) with `answers` giving the credential for each ask
     /// (nil cancels), and returns what the sheet was asked once the page's title is `title`.
     private func visit(
-        engine: BrowserEngine, start: URL, next: URL? = nil, alsoOn others: [URL] = [], expecting title: String, answers: @escaping (Int) -> URLCredential?
+        engine: BrowserEngine, start: URL, next: URL? = nil, alsoOn others: [URL] = [], expecting title: String,
+        act: ((BrowserTab) async throws -> Void)? = nil, answers: @escaping (Int) -> URLCredential?
     ) async throws -> Asked {
         let rig = makeRig()
         defer { ProfileSettingsStore.forget(rig.profile.id) }
@@ -97,6 +98,10 @@ struct HTTPAuthenticationTests {
         if let next {
             try #require(await waitUntil { tab.page.url == start && !tab.page.isLoading && tab.page.mainDocumentID != nil })
             tab.page.load(URLRequest(url: next))
+        }
+        if let act {
+            try #require(await waitUntil { tab.page.url == start && !tab.page.isLoading && tab.page.mainDocumentID != nil })
+            try await act(tab)
         }
         #expect(await waitUntil { await self.title(of: tab) == title && !tab.page.isLoading }, "the page titled \(title) loaded")
         #expect(tab.page.engine == engine)
@@ -207,5 +212,59 @@ struct HTTPAuthenticationTests {
             URLCredential(user: user, password: password, persistence: .forSession)
         }
         #expect(asked.failures == [0])
+    }
+
+    // MARK: A navigation that ended without a page
+
+    private static let loadOtherWebsitesImage = "var i = new Image(); i.onload = i.onerror = function () { document.title = 'settled' }; i.src = '%@'"
+
+    /// The page's own address is the only one that counts once a navigation to another website ended without becoming the page:
+    /// stopped, answered with no content, or failed. An old request must not lend that website a sheet over this page.
+    private func afterAnEndedNavigation(
+        engine: BrowserEngine, end: @escaping (BrowserTab, HTTPFixtureServer, ResponseGate) async throws -> Void
+    ) async throws {
+        let gate = ResponseGate()
+        let other = try await server(
+            user: "x", password: UUID().uuidString, realm: "example.com – session expired",
+            pages: [
+                "/slow": .html("<!doctype html><title>Slow</title>", gate: gate),
+                "/empty": HTTPFixtureServer.Response(status: "204 No Content", headers: [:], body: Data()),
+            ],
+            protected: ["/pixel.png"]
+        )
+        let page = try await HTTPFixtureServer.start(routes: ["/": .html("<!doctype html><title>Start</title>")])
+        let image = try other.url("/pixel.png").absoluteString
+        let asked = try await visit(
+            engine: engine, start: try page.url(), alsoOn: [try other.url()], expecting: "settled",
+            act: { tab in
+                try await end(tab, other, gate)
+                _ = try await tab.page.evaluateJavaScript(String(format: Self.loadOtherWebsitesImage, image))
+            },
+            answers: { _ in
+                Issue.record("a sheet was raised for a navigation that never became the page")
+                return nil
+            }
+        )
+        #expect(asked.failures.isEmpty)
+        #expect(other.lastRequestHead(for: "/pixel.png") != nil, "the other website was asked, so the refusal is the browser's")
+    }
+
+    @Test(arguments: [BrowserEngine.webKit, .chromium])
+    func aStoppedNavigationLendsItsWebsiteNoSheet(engine: BrowserEngine) async throws {
+        try await afterAnEndedNavigation(engine: engine) { tab, other, gate in
+            tab.page.load(URLRequest(url: try other.url("/slow")))
+            try #require(await gate.waitForRequest(), "the other website was asked for the page")
+            tab.page.stopLoading()
+            try #require(await waitUntil { !tab.page.isLoading })
+            gate.open()
+        }
+    }
+
+    @Test(arguments: [BrowserEngine.webKit, .chromium])
+    func aNavigationAnsweredWithNoContentLendsItsWebsiteNoSheet(engine: BrowserEngine) async throws {
+        try await afterAnEndedNavigation(engine: engine) { tab, other, _ in
+            tab.page.load(URLRequest(url: try other.url("/empty")))
+            try #require(await waitUntil { other.lastRequestHead(for: "/empty") != nil && !tab.page.isLoading })
+        }
     }
 }

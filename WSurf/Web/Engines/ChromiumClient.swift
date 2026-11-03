@@ -754,6 +754,16 @@ final class ChromiumClient {
             else { return }
             client.noteMainFrameRequest(ChromiumClient.string(UnsafePointer(newURL)))
         }
+        handler.pointee.on_resource_load_complete = { handlerSelf, browser, frame, request, response, _, _ in
+            defer {
+                ChromiumClient.releaseBrowser(browser)
+                ChromiumClient.releaseFrame(frame)
+                ChromiumClient.release(request.map(UnsafeMutableRawPointer.init))
+                ChromiumClient.release(response.map(UnsafeMutableRawPointer.init))
+            }
+            guard let request, request.pointee.get_resource_type?(request) == RT_MAIN_FRAME else { return }
+            ChromiumClient.owner(handlerSelf.map(UnsafeMutableRawPointer.init))?.endMainFrameRequest()
+        }
         handler.pointee.on_resource_response = { handlerSelf, browser, frame, request, response in
             defer {
                 ChromiumClient.releaseBrowser(browser)

@@ -57,6 +57,7 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
         }
         if navigationAction.shouldPerformDownload {
             downloadSource = navigationAction.request.url
+            pendingMainFrameURL = nil
             decisionHandler(.download)
             return
         }
@@ -92,7 +93,6 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
             return
         }
         if let tab, navigationAction.targetFrame?.isMainFrame != false {
-            pendingMainFrameURL = navigationAction.request.url
             tab.rememberScrollOffset()
             if let mapped = Self.transition(for: navigationAction.navigationType) {
                 tab.noteTransition(mapped)
@@ -111,6 +111,10 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
               url.scheme != base.scheme || url.host != base.host
         else {
             tab?.autofillSave.submissions.navigationRequested(navigationAction)
+            // The pending address is set only for a main-frame navigation that is allowed, after every refusal above.
+            if navigationAction.targetFrame?.isMainFrame == true {
+                pendingMainFrameURL = navigationAction.request.url
+            }
             decisionHandler(.allow)
             return
         }
@@ -495,6 +499,9 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
             return
         }
         downloadSource = navigationResponse.response.url
+        if navigationResponse.isForMainFrame {
+            pendingMainFrameURL = nil
+        }
         if navigationResponse.isForMainFrame, let page = BrowserPage.from(webView) {
             PageFrameRegistry.shared.mainFrameNavigationBecameDownload(in: page)
         }
@@ -520,6 +527,7 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
     private func hand(_ download: WKDownload, source: URL?) {
         let origin = source ?? downloadSource
         downloadSource = nil
+        pendingMainFrameURL = nil
         tab?.onDownload?(download, origin)
     }
 
@@ -566,10 +574,11 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
         case .rejectProtectionSpace:
             return (.rejectProtectionSpace, nil)
         case .promptForCredential:
-            // WebKit does not say which frame is asking. Only the page's own website (the committed page or the main-frame
-            // navigation in flight) or a proxy may raise the sheet; another website's image or frame is turned away, as the
-            // other browsers do.
-            guard AuthChallenge.mayPrompt(for: space, topLevel: [webView.url, pendingMainFrameURL]) else {
+            // WebKit does not say which frame is asking. Only the page's own website or a proxy may raise the sheet; another
+            // website's image or frame is turned away, as the other browsers do. `webView.url` is WebKit's own answer: the
+            // committed page, or the address of the navigation in flight, and the committed page again once one is cancelled, fails
+            // or turns into a download. No state of this delegate stands in for it, because that could outlive the navigation.
+            guard AuthChallenge.mayPrompt(for: space, topLevel: [webView.url]) else {
                 Pipeline.log.notice("HTTP sign-in cancelled: the request is not for the page's own website")
                 return (.cancelAuthenticationChallenge, nil)
             }
@@ -594,12 +603,14 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        pendingMainFrameURL = nil
         guard let page = BrowserPage.from(webView) else { return }
         tab?.applyDevModeOverlays()
         page.onNavigationFinished?(page.navigation(for: navigation))
     }
 
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        pendingMainFrameURL = nil
         guard let page = BrowserPage.from(webView) else { return }
         PageFrameRegistry.shared.navigationFailed(navigation, in: page)
         page.onNavigationFailed?(page.navigation(for: navigation), error)

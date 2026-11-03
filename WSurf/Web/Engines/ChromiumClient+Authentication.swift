@@ -61,6 +61,14 @@ extension ChromiumClient {
         resourceStateLock.unlock()
     }
 
+    /// The main-frame request is over, whichever way: committed, failed, cancelled, a download, a 204. From then on the page's
+    /// own address is the only one that counts, so an old request cannot lend its website a sheet.
+    nonisolated func endMainFrameRequest() {
+        resourceStateLock.lock()
+        mainFrameRequestURL = nil
+        resourceStateLock.unlock()
+    }
+
     nonisolated func latestMainFrameRequestURL() -> String? {
         resourceStateLock.lock()
         defer { resourceStateLock.unlock() }
