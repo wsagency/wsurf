@@ -115,6 +115,7 @@ struct AudioFrameEngineTests {
         let catalog = ProfileStore.shared
         let previous = catalog.current
         let profile = catalog.add(name: "Audio frames")
+        LiveWindowRig.useSharedDataStore(for: profile)
         let context = BrowserProfileContext.shared(for: profile)
         context.sitePermissions.setEngine(engine, for: SitePermissions.origin(for: url))
         let app = BrowserApplication(defaults: InMemoryUserDefaults(inheriting: .standard), notifications: NotificationCenter())
@@ -137,6 +138,7 @@ struct AudioFrameEngineTests {
         await opened?.waitForRetirement()
         await ChromiumRuntime.shared.releaseContext(contextID: context.contextID)
         await catalog.remove(profile)
+        await LiveWindowRig.releaseSharedDataStore(for: profile)
         catalog.markCurrent(previous)
         withExtendedLifetime((server, neighbour)) {}
         if let failure {

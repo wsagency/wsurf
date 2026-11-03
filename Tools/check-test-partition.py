@@ -21,7 +21,22 @@ usage:
   check-test-partition.py                    check the partition (exit 1 on any problem)
   check-test-partition.py --list             print each suite with its plan, kind and test count
   check-test-partition.py --args PLAN        print the xcodebuild selection arguments for PLAN, one per line
+  check-test-partition.py --verify-results F...   compare the cases of the CI runs (xcresulttool get test-results tests, one
+                                             JSON file per run) with the cases the sources declare
+
+CI does not run the Serial plan in one host. One WebKit Networking process serves about 183 persistent stores and then
+opens no store's databases, so the Serial suites run in three parts (Tools/serial-parts.json, the split the local gate
+uses), each in a host of its own, and a fourth run covers the Parallel and Performance suites (serially, as CI always did):
+
+  WSurf-Serial-1 .. WSurf-Serial-3   -only-testing of the suites of that part (ChromiumLoadBenchmarkTests is skipped: its
+                                     XCTest measure block crashes the host)
+  WSurf-Rest                         -only-testing of every Parallel and Performance suite
+
+The check proves the parts are disjoint and together equal the Serial suites, and, test by test, that the cases they
+select equal the Serial cases named as Xcode names them (Swift Testing cases carry their argument labels:
+`name(engine:popups:)`). --verify-results is the same comparison on what actually ran.
 """
+import collections
 import json
 from pathlib import Path
 import re
@@ -34,6 +49,9 @@ PLANS = ('WSurf-Parallel', 'WSurf-Serial', 'WSurf-Performance')
 # Test-host clones for WSurf-Parallel. Each clone also runs Swift Testing cases concurrently in process, so this stays
 # below the core count (6 of the Pro's 10). Calibration knob: lower it if the parallel run is flaky, raise it if idle.
 PARALLEL_WORKERS = 6
+SERIAL_PARTS = ROOT / 'Tools/serial-parts.json'
+SERIAL_PART_PLANS = ('WSurf-Serial-1', 'WSurf-Serial-2', 'WSurf-Serial-3')
+REST_PLAN = 'WSurf-Rest'
 # Vision OCR cases skipped in every automated run (see .github/workflows/ci.yml).
 OCR_SKIPS = (
     'AttachmentTests/normalizesImagesAndRecognizesText()',
@@ -218,6 +236,43 @@ def scan(source):
     return suites, tests, supers
 
 
+def parameter_labels(code, name):
+    """The argument labels of test function `name` as Xcode prints them in a case's name: `()`, `(engine:)`, `(shown:other:)`, `(_:)`.
+    Read from comment- and string-stripped source: the parameter list after `func name`, split at its top-level commas (commas inside
+    (), [] and <> do not), the label being the first word of each parameter. Every `func name(` in the file must agree."""
+    found = set()
+    for match in re.finditer(r'func\s+' + re.escape(name) + r'\s*(?:<[^>(]*>)?\s*\(', code):
+        depth, current, params, k = 1, '', [], match.end()
+        while k < len(code) and depth:
+            ch = code[k]
+            if code.startswith('->', k):
+                current += '->'
+                k += 2
+                continue
+            if ch in '([<':
+                depth += 1
+            elif ch in ')]>':
+                depth -= 1
+                if depth == 0:
+                    break
+            if ch == ',' and depth == 1:
+                params.append(current)
+                current = ''
+            else:
+                current += ch
+            k += 1
+        if current.strip():
+            params.append(current)
+        labels = []
+        for param in params:
+            word = re.match(r'\s*([A-Za-z_][A-Za-z0-9_]*)', param)
+            assert word and ':' in param, 'unreadable parameter of test %s: %s' % (name, param.strip()[:60])
+            labels.append(word.group(1))
+        found.add(tuple(labels))
+    assert len(found) == 1, 'test %s: %s declaration(s) in one file disagree on their labels' % (name, len(found))
+    return '(' + ''.join(label + ':' for label in next(iter(found))) + ')'
+
+
 def inventory():
     """Maps each top-level suite name to its kind, test count and contributing files."""
     facts = []
@@ -225,7 +280,7 @@ def inventory():
     for path in sorted(TESTS.rglob('*.swift')):
         suites, tests, classes = scan(path.read_text())
         supers.update(classes)
-        facts.append((path, suites, tests))
+        facts.append((path, suites, tests, strip(path.read_text())))
     xctest = set()
     changed = True
     while changed:
@@ -235,7 +290,7 @@ def inventory():
                 xctest.add(name)
                 changed = True
     found = {}
-    for path, suites, tests in facts:
+    for path, suites, tests, code in facts:
         rel = str(path.relative_to(ROOT))
         for full in suites:
             entry = found.setdefault(full[0], {'kind': 'swift-testing', 'tests': 0, 'files': set()})
@@ -250,6 +305,9 @@ def inventory():
             entry['kind'] = kind if entry['tests'] == 0 else entry['kind']
             entry['tests'] += 1
             entry['files'].add(rel)
+            # Xcode's name of the case: the innermost suite, the function and, for Swift Testing, its argument labels.
+            labels = parameter_labels(code, name) if kind == 'swift-testing' else '()'
+            entry.setdefault('cases', []).append('%s/%s%s' % (owner[-1] if owner else key, name, labels))
     # A file that only extends a suite still contributes its source to that suite's marker scan.
     for path in sorted(TESTS.rglob('*.swift')):
         rel = str(path.relative_to(ROOT))
@@ -272,6 +330,93 @@ def load():
         assert target['target']['name'] == TARGET, name
         targets.append(target)
     return targets
+
+
+def serial_parts():
+    """(skipped suites, the three parts' suite lists) from Tools/serial-parts.json."""
+    data = json.loads(SERIAL_PARTS.read_text())
+    assert set(data) == {'skippedSuites', 'parts'} and len(data['parts']) == len(SERIAL_PART_PLANS), SERIAL_PARTS
+    return data['skippedSuites'], data['parts']
+
+
+def serial_parts_problems(suites, par, perf):
+    """Problems with the split: the parts must be disjoint, sorted, and together equal the Serial suites; the skipped suites sit in part 1;
+    and, compared as case names with their argument labels, the cases the parts select (less the skipped suites) equal the Serial cases."""
+    skipped, parts = serial_parts()
+    problems = []
+    serial = set(suites) - set(par) - set(perf)
+    flat = [name for part in parts for name in part]
+    for number, part in enumerate(parts, 1):
+        if part != sorted(part):
+            problems.append('serial-parts.json part %d is not sorted' % number)
+    for name in sorted(n for n, c in collections.Counter(flat).items() if c > 1):
+        problems.append('serial-parts.json lists a suite twice: ' + name)
+    for name in sorted(serial - set(flat)):
+        problems.append('Serial suite in no part (add it to Tools/serial-parts.json, part 2 is the lightest): ' + name)
+    for name in sorted(set(flat) - serial):
+        problems.append('serial-parts.json names a suite that is not a Serial suite: ' + name)
+    for name in skipped:
+        if name not in parts[0]:
+            problems.append('skipped suite is not in part 1: ' + name)
+    parts_cases = collections.Counter(c for part in parts for n in part if n in suites and n not in skipped for c in suites[n].get('cases', []))
+    serial_cases = collections.Counter(c for n in serial if n not in skipped for c in suites[n].get('cases', []))
+    for case in sorted(serial_cases - parts_cases):
+        problems.append('case of a Serial suite in no part: ' + case)
+    for case in sorted(parts_cases - serial_cases):
+        problems.append('case in a part that is not a Serial case: ' + case)
+    return problems
+
+
+def expected_cases(suites, par, perf):
+    """Every case a CI run executes: all suites, less the skipped suites and the per-test OCR skips."""
+    skipped, _ = serial_parts()
+    cases = collections.Counter(c for n, info in suites.items() if n not in skipped for c in info.get('cases', []))
+    for test in OCR_SKIPS:
+        cases[test] -= 1
+    return +cases
+
+
+def executed_cases(path):
+    """The Test Case nodes of one `xcresulttool get test-results tests` export, named innermost suite / case."""
+    found = []
+
+    def walk(node, suite):
+        if node.get('nodeType') == 'Test Suite':
+            suite = node.get('name')
+        if node.get('nodeType') == 'Test Case':
+            found.append('%s/%s' % (suite, node.get('name')))
+            return
+        for child in node.get('children', []):
+            walk(child, suite)
+    for root in json.loads(Path(path).read_text()).get('testNodes', []):
+        walk(root, None)
+    return found
+
+
+def display_names():
+    """{display name: type name} of the suites declared `@Suite("Display name") struct Type`: an export names such a suite by its display name."""
+    found = {}
+    pattern = re.compile(r'@Suite\(\s*"([^"]+)"[^)]*\)\s*(?:@\w+(?:\([^)]*\))?\s*|(?:final|private|fileprivate|public|internal)\s+)*(?:struct|class|enum|actor)\s+(\w+)')
+    for path in TESTS.rglob('*.swift'):
+        for display, type_name in pattern.findall(path.read_text()):
+            assert found.setdefault(display, type_name) == type_name, 'two suites share the display name ' + display
+    return found
+
+
+def verify_results(paths):
+    names = display_names()
+    suites = inventory()
+    parallel, _, performance = load()
+    expected = expected_cases(suites, parallel.get('selectedTests', []), performance.get('selectedTests', []))
+    ran = collections.Counter(c for path in paths for c in (names.get(x.split('/')[0], x.split('/')[0]) + '/' + x.split('/', 1)[1]
+                                                            for x in executed_cases(path)))
+    problems = ['ran twice or more: ' + c for c in sorted(c for c, n in ran.items() if n > 1)]
+    problems += ['declared but did not run: ' + c for c in sorted(expected - ran)[:50]]
+    problems += ['ran but not declared: ' + c for c in sorted(ran - expected)[:50]]
+    for problem in problems:
+        print('error: ' + problem, file=sys.stderr)
+    print(json.dumps({'ran': sum(ran.values()), 'expected': sum(expected.values()), 'runs': len(paths)}, sort_keys=True))
+    return 1 if problems else 0
 
 
 def suite_of(identifier):
@@ -342,6 +487,7 @@ def check():
     for test in OCR_SKIPS:
         if suite_of(test) in par or suite_of(test) in perf:
             problems.append('OCR exclusion is outside the serial plan: ' + test)
+    problems += serial_parts_problems(suites, par, perf)
     serial_count = len(set(suites) - set(par) - set(perf))
     counts = {'suites': len(suites), 'parallel': len(par), 'serial': serial_count, 'performance': len(perf),
               'tests': sum(s['tests'] for s in suites.values()),
@@ -365,6 +511,15 @@ def arguments(name):
     elif name == 'WSurf-Serial':
         selection = ['-skip-testing:%s/%s' % (TARGET, s) for s in serial['skippedTests']]
         flags = ['-parallel-testing-enabled', 'NO']
+    elif name in SERIAL_PART_PLANS:
+        skipped, parts = serial_parts()
+        part = parts[SERIAL_PART_PLANS.index(name)]
+        selection = ['-skip-testing:%s/%s' % (TARGET, s) for s in part if s in skipped]
+        selection += ['-only-testing:%s/%s' % (TARGET, s) for s in part if s not in skipped]
+        flags = ['-parallel-testing-enabled', 'NO']
+    elif name == REST_PLAN:
+        selection = ['-only-testing:%s/%s' % (TARGET, s) for s in sorted(parallel['selectedTests'] + performance['selectedTests'])]
+        flags = ['-parallel-testing-enabled', 'NO']
     else:
         raise SystemExit('unknown plan: ' + name)
     return flags + selection + ['-skip-testing:%s/%s' % (TARGET, t) for t in OCR_SKIPS]
@@ -382,6 +537,8 @@ def main(argv):
     if argv[:1] == ['--args'] and len(argv) == 2:
         print('\n'.join(arguments(argv[1])))
         return 0
+    if argv[:1] == ['--verify-results'] and len(argv) > 1:
+        return verify_results(argv[1:])
     if argv:
         print(__doc__, file=sys.stderr)
         return 2

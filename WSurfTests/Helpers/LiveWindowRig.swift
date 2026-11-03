@@ -63,6 +63,18 @@ struct LiveWindowRig {
     /// after the last one cannot open a database.
     private static let dataStore = WKWebsiteDataStore(forIdentifier: UUID())
 
+    /// Gives `profile` the one shared store instead of a persistent store of its own, for the helpers that open a page in a profile per
+    /// case. Call it before the profile's `BrowserProfileContext` exists, and `releaseSharedDataStore` once the case is over.
+    static func useSharedDataStore(for profile: Profile) {
+        Profile.dataStoreForTesting[profile.id] = dataStore
+    }
+
+    /// Takes `profile` off the shared store and empties it for the next case.
+    static func releaseSharedDataStore(for profile: Profile) async {
+        Profile.dataStoreForTesting[profile.id] = nil
+        await dataStore.removeData(ofTypes: WKWebsiteDataStore.allWebsiteDataTypes(), modifiedSince: .distantPast)
+    }
+
     /// Runs `body` in a window of a profile of its own, whose pages open on `engine` and may start sound, and closes it after.
     /// `routes` adds pages of the case's own to the server.
     static func with(
@@ -79,7 +91,7 @@ struct LiveWindowRig {
         let catalog = ProfileStore.shared
         let previous = catalog.current
         let profile = catalog.add(name: "Live window")
-        Profile.dataStoreForTesting[profile.id] = dataStore
+        useSharedDataStore(for: profile)
         let context = BrowserProfileContext.shared(for: profile)
         let origin = SitePermissions.origin(for: try server.url("/page"))
         context.sitePermissions.setEngine(engine, for: origin)
@@ -104,8 +116,7 @@ struct LiveWindowRig {
         }
         await ChromiumRuntime.shared.releaseContext(contextID: context.contextID)
         await catalog.remove(profile)
-        Profile.dataStoreForTesting[profile.id] = nil
-        await dataStore.removeData(ofTypes: WKWebsiteDataStore.allWebsiteDataTypes(), modifiedSince: .distantPast)
+        await releaseSharedDataStore(for: profile)
         catalog.markCurrent(previous)
         withExtendedLifetime((server, never)) {}
         if let failure {
