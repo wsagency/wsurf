@@ -197,7 +197,8 @@ nonisolated final class BrowserPerformanceTests: XCTestCase, @unchecked Sendable
                     )
                 }
 
-                XCTAssertEqual(projected.map(\.id), ["top", "suggestions", "tabs", "history"])
+                // Open tabs that match come first while typing (`CommandPaletteSection.typingOrder`).
+                XCTAssertEqual(projected.map(\.id), ["tabs", "top", "suggestions", "history"])
                 XCTAssertEqual(projected.flattened.count, CommandPaletteBudget.typing)
                 XCTAssertTrue(tabs.allSatisfy { !$0.isMaterialised })
             }
