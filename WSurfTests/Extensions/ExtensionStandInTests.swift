@@ -688,7 +688,9 @@ struct ExtensionStandInWebKitTests {
             completionHandler: @escaping ((any Error)?) -> Void
         ) {
             events.append("connect:" + (port.applicationIdentifier ?? ""))
-            completionHandler(NSError(domain: "ExtensionStandInTests", code: 1))
+            // Accepted: a refusal is reported back as a runtime error in context.errors (WebKit on the CI runner does), which
+            // the cases that expect no errors would then blame on the stand-ins.
+            completionHandler(nil)
         }
 
         func webExtensionController(

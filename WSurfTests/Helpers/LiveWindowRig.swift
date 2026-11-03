@@ -22,7 +22,9 @@ struct LiveWindowRig {
         <script>
         window.__marker = 'loaded';
         window.__frames = 0;
-        const context = document.getElementById('c').getContext('2d');
+        // willReadFrequently keeps the canvas in plain memory: a GPU-less CI VM cannot allocate the IOSurface an accelerated
+        // canvas draws into, and its snapshots come out blank.
+        const context = document.getElementById('c').getContext('2d', { willReadFrequently: true });
         function frame(time) {
           window.__frames++;
           context.fillStyle = 'hsl(' + (time / 10 % 360) + ',60%,50%)';

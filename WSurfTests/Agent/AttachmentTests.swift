@@ -148,7 +148,13 @@ struct AttachmentTests {
     }
 
     @Test func eachModelIsChargedItsOwnImageEstimateAgainstHalfTheWindow() throws {
-        let page = try AttachmentImporter.prepare(data: try image(), name: "page.png")
+        // The page the importer makes of image(), built directly: the budget is the subject, and importing runs Vision OCR,
+        // which hosted CI VMs cannot load (see OCR_SKIPS in Tools/check-test-partition.py).
+        let png = try image()
+        let page = AssistantAttachment(
+            id: UUID(), name: "page.png", contentType: UTType.png.identifier,
+            data: png, text: "INVOICE 42", images: [.init(data: png, mimeType: "image/png")]
+        )
         func allowed(_ provider: Provider, images: Int, window: Int) -> Bool {
             (try? AttachmentRequest.validate(
                 Array(repeating: page, count: images), message: "Read", textOnly: false, windowTokens: window,

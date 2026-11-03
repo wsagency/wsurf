@@ -48,7 +48,8 @@ struct SameDocumentBackTests {
         _ = server
 
         _ = try? await tab.page.evaluateJavaScript("history.pushState({}, '', '#discussion_r1')")
-        #expect(await waitUntil { tab.canGoBack })
+        // The address too, not only canGoBack: a back sent before WebKit reports the push is lost (seen on a slow CI runner).
+        #expect(await waitUntil { tab.canGoBack && tab.urlString.hasSuffix("#discussion_r1") })
         tab.goBack()
         #expect(await waitUntil { tab.canGoForward && tab.urlString == page.absoluteString })
 

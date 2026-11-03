@@ -393,7 +393,8 @@ struct PageInteractionTests {
             """
             <canvas id='c' width='500' height='400'></canvas>
             <script>
-              const context = document.getElementById('c').getContext('2d'), noise = context.createImageData(500, 400);
+              // willReadFrequently: an unaccelerated canvas, which a GPU-less CI VM still paints into snapshots.
+              const context = document.getElementById('c').getContext('2d', { willReadFrequently: true }), noise = context.createImageData(500, 400);
               for (let i = 0; i < noise.data.length; i++) noise.data[i] = i % 4 === 3 ? 255 : Math.random() * 256;
               context.putImageData(noise, 0, 0);
             </script>

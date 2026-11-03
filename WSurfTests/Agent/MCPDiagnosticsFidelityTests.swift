@@ -155,7 +155,10 @@ struct MCPDiagnosticsFidelityTests {
         let rotated = tags(records(try await call(rig, "readNetwork")))
         #expect(rotated.count == 3 && rotated[2] != rotated[0], "the key changed: \(rotated)")
         // The next document: the same secret, supplied again, has yet another tag.
+        // Idle alone can be the first document before the load starts (seen on a slow CI runner): wait for the new document.
+        let firstDocument = rig.tab.page.mainDocumentID
         rig.tab.page.load(URLRequest(url: try rig.server.url("/second")))
+        try #require(await waitUntil { rig.tab.page.mainDocumentID.map { $0 != firstDocument } == true })
         try #require(await PageSettle.untilIdle(rig.tab.page))
         _ = try await waitUntil { !tags(records(try await call(rig, "readNetwork"))).isEmpty }
         let next = tags(records(try await call(rig, "readNetwork")))
