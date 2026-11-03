@@ -32,23 +32,34 @@ final class FolderColorEdit: NSObject {
     /// Nil once the panel closes, so a page's colour chooser is never taken for it.
     private(set) static var current: FolderColorEdit?
 
-    /// Forgets the edit when the panel closes, from the first `present` on.
+    /// Forgets the edit when the panel closes, from the first `present` on. The panel does not retain its target, so it is
+    /// let go of first: otherwise the panel keeps pointing at the freed edit and its next action (a text field updating
+    /// the font panel sends one) crashes the app.
     private static let closeWatcher = NotificationCenter.default.addObserver(
         forName: NSWindow.willCloseNotification, object: NSColorPanel.shared, queue: .main
     ) { _ in
-        MainActor.assumeIsolated { current = nil }
+        MainActor.assumeIsolated { release() }
+    }
+
+    /// Points the panel away from the current edit and forgets it.
+    static func release(_ panel: NSColorPanel = .shared) {
+        guard current != nil else { return }
+        panel.setTarget(nil)
+        panel.setAction(nil)
+        current = nil
     }
 
     /// Opens the shared color panel on the folder's color. The panel has no transparency: a folder color is solid.
     static func present(for folder: TabFolder, browser: BrowserModel) {
         let edit = FolderColorEdit(folder: folder, browser: browser)
-        current = edit
         let panel = NSColorPanel.shared
-        panel.showsAlpha = false
-        panel.isContinuous = true
         _ = closeWatcher
+        // Target first, then let go of the previous edit, so the panel never points at a freed one.
         panel.setTarget(edit)
         panel.setAction(#selector(FolderColorEdit.panelChanged(_:)))
+        current = edit
+        panel.showsAlpha = false
+        panel.isContinuous = true
         panel.color = (folder.customColor?.nsColor ?? folder.color.nsTint).usingColorSpace(.sRGB) ?? .gray
         panel.makeKeyAndOrderFront(nil)
     }
