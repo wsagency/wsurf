@@ -144,6 +144,11 @@ final class BrowserPage: NSView {
         }
     }
 
+    /// A WebKit page's `hasOnlySecureContent` is WebKit's own and its certificates' (`CertificateStanding`). Chromium sets the
+    /// property itself and never touches this.
+    var certificateStanding = CertificateStanding() {
+        didSet { hasOnlySecureContent = certificateStanding.isSecure }
+    }
     private var observations: [NSKeyValueObservation] = []
     private let navigations = NSMapTable<WKNavigation, PageNavigation>(keyOptions: .weakMemory, valueOptions: .weakMemory)
     private static let owners = NSMapTable<WKWebView, BrowserPage>(keyOptions: .weakMemory, valueOptions: .weakMemory)
@@ -229,7 +234,10 @@ final class BrowserPage: NSView {
                 MainActor.assumeIsolated { self?.canGoForward = view.canGoForward }
             },
             view.observe(\.hasOnlySecureContent, options: [.initial, .new]) { [weak self] view, _ in
-                MainActor.assumeIsolated { self?.hasOnlySecureContent = view.hasOnlySecureContent }
+                MainActor.assumeIsolated { self?.certificateStanding.webKitSecure = view.hasOnlySecureContent }
+            },
+            view.observe(\.serverTrust, options: [.initial, .new]) { [weak self] view, _ in
+                MainActor.assumeIsolated { self?.serverTrustChanged(view.serverTrust) }
             },
             view.observe(\.underPageBackgroundColor, options: [.initial, .new]) { [weak self] view, _ in
                 MainActor.assumeIsolated { self?.underPageBackgroundColor = view.underPageBackgroundColor }
