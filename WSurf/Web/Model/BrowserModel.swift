@@ -54,6 +54,7 @@ final class BrowserModel {
         downloads: DownloadManager? = nil,
         webViewFactory: (@MainActor () -> WKWebView)? = nil
     ) {
+        _ = PageColourChooser.shared  // starts watching the colour panel before a page can open it
         let selectedContext = context ?? .shared(for: .original())
         let selectedDatabase = database ?? selectedContext.database
         self.windowID = windowID
@@ -103,7 +104,7 @@ final class BrowserModel {
             stampForeground(at: now)
             noteFrontTabs()
             if previous.map({ !isVisibleInSplit($0) }) ?? false {
-                Self.closeColourChooser()
+                PageColourChooser.shared.close(openedBy: previous?.liveView?.window)
                 previous?.refreshPreview()
                 previous?.noteHoveredLink(nil)
             }
@@ -117,14 +118,6 @@ final class BrowserModel {
             onActiveTabChanged?(activeTab, previous)
         }
     }
-    /// A page's colour chooser (an `input type=color`, on either engine) is the shared colour panel, which belongs to the tab
-    /// that opened it and would stay over the next one. The folder colour editor owns the panel while its edit is open.
-    /// ponytail: a chooser of another window's tab closes too; the panel does not say who opened it.
-    static func closeColourChooser(_ panel: NSColorPanel = .shared) {
-        guard panel.isVisible, FolderColorEdit.current == nil else { return }
-        panel.close()
-    }
-
     var extensionPageHost: ((URL) -> ExtensionPageHost?)?
     var onTabOpened: ((BrowserTab) -> Void)?
     var onNavigationStarted: ((BrowserTab, URL) -> Void)?
