@@ -1,7 +1,8 @@
 #!/usr/bin/env swift
 
 // SPDX-FileCopyrightText: 2026 Kavoye
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: Apache-2.0 AND BUSL-1.1
+// Linen portions: Apache-2.0; WSurf modifications: BUSL-1.1. See NOTICE.
 // SPDX-FileCopyrightText: 2026 WSurf Agency
 // Modified for WSurf by wsagency in 2026; based on Linen by Kavoye.
 
@@ -142,6 +143,10 @@ func text(of url: URL) -> String {
 }
 
 func licenseName(of text: String) -> String {
+    // Before Apache: the BSL text names the Apache License 2.0 as its Change License.
+    if text.contains("Business Source License 1.1") {
+        return "Business Source License 1.1"
+    }
     if text.contains("Apache License") && text.contains("Version 2.0") {
         return "Apache License 2.0"
     }
@@ -231,7 +236,19 @@ let packages: [Package] = resolved.pins.compactMap { pin in
     )
 }
 
-let allPackages = (packages + vendoredPackages)
+// WSurf's own terms first: LICENSE (BSL 1.1) with NOTICE, then Linen's Apache 2.0, which covers the Linen portions.
+func ownPackage(name: String, version: String, url: String, files: [String]) -> Package {
+    let body = files.map { text(of: root.appending(path: $0)) }.joined(separator: "\n\n")
+    guard !body.isEmpty else { fail("\(files.joined(separator: ", ")) missing.") }
+    return Package(name: name, version: version, url: url, license: licenseName(of: body), text: body)
+}
+
+let ownPackages = [
+    ownPackage(name: "WSurf", version: "WSurf Agency", url: "https://github.com/wsagency/wsurf", files: ["LICENSE", "NOTICE"]),
+    ownPackage(name: "Linen", version: "3c532ff", url: "https://github.com/kavoye/linen-browser", files: ["LICENSES/Apache-2.0.txt"]),
+]
+
+let allPackages = ownPackages + (packages + vendoredPackages)
     .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
 
 let encoder = JSONEncoder()
