@@ -83,6 +83,7 @@ struct SidebarRowRig {
             .environment(\._colorSchemeContrast, .standard))
         host.frame = CGRect(origin: .zero, size: host.fittingSize)
         let window = RetinaWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+        window.colorSpace = .pixelTests
         window.isReleasedWhenClosed = false
         window.appearance = NSAppearance(named: .darkAqua)
         window.contentView = host

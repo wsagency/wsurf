@@ -101,6 +101,7 @@ struct GlassPolicyTests {
         let host = NSHostingView(rootView: view.environment(\.colorScheme, scheme))
         host.frame = CGRect(x: 0, y: 0, width: width, height: height)
         let window = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+        window.colorSpace = .pixelTests
         window.isReleasedWhenClosed = false
         window.appearance = NSAppearance(named: scheme == .dark ? .darkAqua : .aqua)
         window.contentView = host
