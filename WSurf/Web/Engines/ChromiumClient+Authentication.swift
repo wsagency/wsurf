@@ -13,10 +13,18 @@ extension ChromiumClient {
     /// HTTP and proxy sign-in: the sheet WebKit tabs show (`AuthChallenge.requestCredential`), answered into CEF's callback.
     /// CEF asks again after a refused password, so the asks per server and realm are counted here for the "try again" line and
     /// the three-attempt limit WebKit tabs have.
-    func presentAuth(_ raw: UnsafeMutableRawPointer, challenge: CefAuthChallenge) {
+    func presentAuth(_ raw: UnsafeMutableRawPointer, challenge: CefAuthChallenge, mainFrameURL: String?) {
         guard !isClosed else { Self.release(raw); return }
         hold(raw)
         let space = challenge.protectionSpace
+        // CEF names the origin that asks, not the frame. Only the page's own origin (or a proxy) may take a password: an image or
+        // frame of another site could otherwise put its sheet over this page, with a realm worded to look like the page's.
+        let topLevel = [page?.owner?.url, mainFrameURL.flatMap { URL(string: $0) }]
+        guard AuthChallenge.mayPrompt(for: space, topLevel: topLevel) else {
+            Self.authLog.notice("HTTP sign-in cancelled: the request is not for the page's own website")
+            cancelAuth(raw)
+            return
+        }
         let key = "\(challenge.isProxy)|\(challenge.host)|\(challenge.port)|\(challenge.realm)"
         let failures = authAttempts[key, default: 0]
         let window = page?.window
@@ -45,6 +53,18 @@ extension ChromiumClient {
             }
             self.drop(raw)
         }
+    }
+
+    nonisolated func noteMainFrameRequest(_ address: String) {
+        resourceStateLock.lock()
+        mainFrameRequestURL = address
+        resourceStateLock.unlock()
+    }
+
+    nonisolated func latestMainFrameRequestURL() -> String? {
+        resourceStateLock.lock()
+        defer { resourceStateLock.unlock() }
+        return mainFrameRequestURL
     }
 
     private func cancelAuth(_ raw: UnsafeMutableRawPointer) {

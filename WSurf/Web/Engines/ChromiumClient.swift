@@ -130,7 +130,7 @@ final class ChromiumClient {
     nonisolated(unsafe) var permissionPointer: UnsafeMutablePointer<cef_permission_handler_t>?
     nonisolated(unsafe) var requestPointer: UnsafeMutablePointer<cef_request_handler_t>?
     nonisolated(unsafe) var resourcePointer: UnsafeMutablePointer<cef_resource_request_handler_t>?
-    nonisolated private let resourceStateLock = NSLock()
+    nonisolated let resourceStateLock = NSLock()
     nonisolated(unsafe) private var resourceHandlerClosed = false
 
     nonisolated let trackerPolicy: ChromiumTrackerPolicy
@@ -140,6 +140,8 @@ final class ChromiumClient {
     private var certificateCallbacks: Set<UInt> = []
     /// How often each server and realm asked for a password since a page last loaded past it (`presentAuth`).
     var authAttempts: [String: Int] = [:]
+    /// The address of the main frame's latest request, as the IO thread saw it (`resourceStateLock`).
+    nonisolated(unsafe) var mainFrameRequestURL: String?
     var downloadCallbacks: [UInt32: UInt] = [:]
     private(set) var isClosed = false
     private var nativeDocuments: [String: UInt64] = [:]
@@ -731,11 +733,26 @@ final class ChromiumClient {
                   let rawURL = request.pointee.get_url?(request)
             else { return RV_CONTINUE }
             defer { cef_string_userfree_utf16_free(rawURL) }
-            guard request.pointee.get_resource_type?(request) != RT_MAIN_FRAME else { return RV_CONTINUE }
             let text = ChromiumClient.string(UnsafePointer(rawURL))
+            guard request.pointee.get_resource_type?(request) != RT_MAIN_FRAME else {
+                client.noteMainFrameRequest(text)
+                return RV_CONTINUE
+            }
             // An address Foundation cannot read is still refused when it is a file.
             guard let url = URL(string: text) else { return text.lowercased().hasPrefix("file:") ? RV_CANCEL : RV_CONTINUE }
             return client.trackerPolicy.shouldBlock(url) || client.refusesFile(url, requestedBy: frame) ? RV_CANCEL : RV_CONTINUE
+        }
+        handler.pointee.on_resource_redirect = { handlerSelf, browser, frame, request, response, newURL in
+            defer {
+                ChromiumClient.releaseBrowser(browser)
+                ChromiumClient.releaseFrame(frame)
+                ChromiumClient.release(request.map(UnsafeMutableRawPointer.init))
+                ChromiumClient.release(response.map(UnsafeMutableRawPointer.init))
+            }
+            guard let request, request.pointee.get_resource_type?(request) == RT_MAIN_FRAME, let newURL,
+                  let client = ChromiumClient.owner(handlerSelf.map(UnsafeMutableRawPointer.init))
+            else { return }
+            client.noteMainFrameRequest(ChromiumClient.string(UnsafePointer(newURL)))
         }
         handler.pointee.on_resource_response = { handlerSelf, browser, frame, request, response in
             defer {
@@ -863,6 +880,7 @@ final class ChromiumClient {
                 return 0
             }
             let raw = UnsafeMutableRawPointer(callback)
+            let mainFrameURL = client.latestMainFrameRequestURL()
             let challenge = CefAuthChallenge(
                 origin: ChromiumClient.string(origin),
                 isProxy: proxy != 0,
@@ -872,7 +890,7 @@ final class ChromiumClient {
                 scheme: ChromiumClient.string(scheme)
             )
             DispatchQueue.main.async {
-                MainActor.assumeIsolated { client.presentAuth(raw, challenge: challenge) }
+                MainActor.assumeIsolated { client.presentAuth(raw, challenge: challenge, mainFrameURL: mainFrameURL) }
             }
             return 1
         }

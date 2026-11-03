@@ -11,6 +11,7 @@ release notes will be added above this provenance record.
 
 - WebKit tabs now ask for a username and password when a website or proxy wants HTTP authentication (Basic, Digest, NTLM). Until now the prompt never appeared and you got the server’s “Unauthorized” page. A refused password asks again, and the third refusal ends the sign-in, as it was meant to.
 - Chromium tabs show the same sign-in sheet as WebKit tabs, with a Username and a Password field, the cursor in Username, and “Try again” after a refused password, for websites and proxies. Chromium’s own prompt is switched off: inside WSurf it vanished and left “ERR_INVALID_AUTH_CREDENTIALS”. A tab in the background that is asked for a password is refused.
+- The sign-in sheet names the address that asks (such as https://example.com), and shows the website’s own wording for it separately, as “The website’s message”. Only the page’s own website, or a proxy, can raise the sheet in either engine: an image or frame from another website that asks for a password is refused without one, so it cannot pose as the page and collect its password.
 - Because WebKit tabs now answer such challenges, the certificate warning with its “proceed anyway” choice (when certificate exceptions are on) now appears in WebKit tabs too; before, WebKit tabs never showed it. It has not been checked by hand.
 
 ## 0.1.21 (build 21) — 2026-11-03

@@ -566,6 +566,13 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
         case .rejectProtectionSpace:
             return (.rejectProtectionSpace, nil)
         case .promptForCredential:
+            // WebKit does not say which frame is asking. Only the page's own website (the committed page or the main-frame
+            // navigation in flight) or a proxy may raise the sheet; another website's image or frame is turned away, as the
+            // other browsers do.
+            guard AuthChallenge.mayPrompt(for: space, topLevel: [webView.url, pendingMainFrameURL]) else {
+                Pipeline.log.notice("HTTP sign-in cancelled: the request is not for the page's own website")
+                return (.cancelAuthenticationChallenge, nil)
+            }
             let credential = await AuthChallenge.requestCredential(
                 for: space,
                 previousFailures: challenge.previousFailureCount,

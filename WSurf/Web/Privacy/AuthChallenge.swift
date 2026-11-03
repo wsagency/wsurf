@@ -30,6 +30,41 @@ enum AuthChallenge {
         return .promptForCredential
     }
 
+    /// `scheme://host[:port]`, lowercased and without the scheme's default port, or nil for an address without a host.
+    static func origin(scheme: String?, host: String?, port: Int?) -> String? {
+        guard let scheme = scheme?.lowercased(), !scheme.isEmpty, let host = host?.lowercased(), !host.isEmpty else {
+            return nil
+        }
+        let isDefault = port == nil || port == 0 || (scheme == "http" && port == 80) || (scheme == "https" && port == 443)
+        return isDefault ? "\(scheme)://\(host)" : "\(scheme)://\(host):\(port ?? 0)"
+    }
+
+    static func origin(of url: URL?) -> String? {
+        origin(scheme: url?.scheme, host: url?.host(percentEncoded: false), port: url?.port)
+    }
+
+    /// What the sheet calls the one that asks: the website's address, or a proxy's host and port.
+    static func askingOrigin(of space: URLProtectionSpace) -> String {
+        if space.isProxy() {
+            return space.port == 0 ? space.host : "\(space.host):\(space.port)"
+        }
+        return origin(scheme: space.protocol, host: space.host, port: space.port) ?? space.host
+    }
+
+    /// Whether a challenge may put a password sheet over the page. Neither engine says which frame a challenge belongs to, so the
+    /// rule is the one the address bar can stand behind: the challenge is for the page's own website (its address, or the main-frame
+    /// request in flight), or for a proxy. An image or frame from another website that answers 401 raises no sheet: its realm,
+    /// which the server words as it likes, could pass for the page's own and take the page's password.
+    static func mayPrompt(for space: URLProtectionSpace, topLevel: [URL?]) -> Bool {
+        if space.isProxy() {
+            return true
+        }
+        guard let asking = origin(scheme: space.protocol, host: space.host, port: space.port) else {
+            return false
+        }
+        return topLevel.contains { origin(of: $0) == asking }
+    }
+
     static func isPasswordBased(_ method: String) -> Bool {
         switch method {
         case NSURLAuthenticationMethodHTTPBasic,
@@ -54,10 +89,10 @@ enum AuthChallenge {
             return stub(space, previousFailures)
         }
         let alert = NSAlert()
-        alert.messageText = String(localized: "Sign in to \(space.host)")
-        alert.informativeText = previousFailures > 0
+        alert.messageText = String(localized: "Sign in to \(askingOrigin(of: space))")
+        alert.informativeText = (previousFailures > 0
             ? String(localized: "That username or password wasn’t accepted. Try again.")
-            : realmDescription(for: space)
+            : String(localized: "This website is asking for a username and password.")) + realmLine(for: space)
         alert.addButton(withTitle: String(localized: "Sign In"))
         alert.addButton(withTitle: String(localized: "Cancel"))
 
@@ -88,12 +123,11 @@ enum AuthChallenge {
         )
     }
 
-    private static func realmDescription(for space: URLProtectionSpace) -> String {
-        guard let realm = space.realm, !realm.isEmpty else {
-            return String(localized: "This website is asking for a username and password.")
-        }
+    /// The realm is the server's own wording: it is set apart as the website's message, in quotes, and cut at 80 characters.
+    private static func realmLine(for space: URLProtectionSpace) -> String {
+        guard let realm = space.realm, !realm.isEmpty else { return "" }
         let trimmed = realm.count > 80 ? String(realm.prefix(80)) + "…" : realm
-        return String(localized: "This website is asking for a username and password for “\(trimmed)”.")
+        return "\n" + String(localized: "The website’s message: “\(trimmed)”")
     }
 
     private static func present(_ alert: NSAlert, in window: NSWindow?) async -> NSApplication.ModalResponse {
