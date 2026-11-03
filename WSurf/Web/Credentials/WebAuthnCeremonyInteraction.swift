@@ -65,7 +65,10 @@ protocol WebAuthnCeremonyInteraction {
     func decide(_ prompt: WebAuthnPrompt, in anchor: ASPresentationAnchor, until deadline: ContinuousClock.Instant?) async -> WebAuthnDecision
     /// Explicit origin-bearing native step before the unlock of a modal request, so the system unlock sheet is never the first
     /// thing a page can put in front of the user. A conditional request was started by the user in a native row and has none.
-    func offerStart(operation: WebAuthnPrompt.Operation, origin: String, locked: Bool, in anchor: ASPresentationAnchor, until deadline: ContinuousClock.Instant?) async -> WebAuthnDecision
+    func offerStart(
+        operation: WebAuthnPrompt.Operation, origin: String, topOrigin: String?, locked: Bool, in anchor: ASPresentationAnchor,
+        until deadline: ContinuousClock.Instant?
+    ) async -> WebAuthnDecision
     /// Fresh system user verification. Returns only on success; every other outcome throws.
     func verifyUser(reason: String, until deadline: ContinuousClock.Instant?) async throws
     /// Best effort: tells the user a registration was saved although delivery to the website could not be confirmed.
@@ -150,17 +153,25 @@ struct NativeWebAuthnInteraction: WebAuthnCeremonyInteraction {
         return closed && !Task.isCancelled && anchor.isVisible && !anchor.isMiniaturized
     }
 
+    static func offerText(origin: String, topOrigin: String?, locked: Bool) -> String {
+        String(localized: "Website: \(origin)")
+            + (topOrigin.map { "\n" + String(localized: "Embedded in: \($0)") } ?? "")
+            + "\n" + (locked
+                ? String(localized: "Credential Manager is locked. You will unlock it, then choose an account.")
+                : String(localized: "You will choose an account next."))
+    }
+
     /// Declining leaves a conditional page request pending and fails a modal one; nothing is unlocked either way.
-    func offerStart(operation: WebAuthnPrompt.Operation, origin: String, locked: Bool, in anchor: ASPresentationAnchor, until deadline: ContinuousClock.Instant?) async -> WebAuthnDecision {
+    func offerStart(
+        operation: WebAuthnPrompt.Operation, origin: String, topOrigin: String?, locked: Bool, in anchor: ASPresentationAnchor,
+        until deadline: ContinuousClock.Instant?
+    ) async -> WebAuthnDecision {
         guard !Task.isCancelled else { return .cancelled }
         guard await Self.windowIsFree(anchor) else { return Task.isCancelled ? .cancelled : .unavailable }
         let alert = NSAlert()
         alert.messageText = operation == .create
             ? String(localized: "Create a passkey?") : String(localized: "Sign in with a saved passkey?")
-        alert.informativeText = String(localized: "Website: \(origin)")
-            + "\n" + (locked
-                ? String(localized: "Credential Manager is locked. You will unlock it, then choose an account.")
-                : String(localized: "You will choose an account next."))
+        alert.informativeText = Self.offerText(origin: origin, topOrigin: topOrigin, locked: locked)
         alert.addButton(withTitle: locked ? String(localized: "Unlock and Choose…") : String(localized: "Choose…"))
         alert.addButton(withTitle: String(localized: "Cancel"))
         switch await NativeSheet.present(alert, in: anchor, until: deadline) {

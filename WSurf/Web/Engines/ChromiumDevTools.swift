@@ -791,6 +791,10 @@ final class ChromiumDevTools {
     }
 
     func worldName(_ world: WKContentWorld) -> String {
+        Self.worldName(world)
+    }
+
+    static func worldName(_ world: WKContentWorld) -> String {
         world === WKContentWorld.page ? "" : world.name ?? "defaultClient"
     }
 

@@ -41,7 +41,7 @@ struct BackgroundPasskeyTests {
         }
 
         func offerStart(
-            operation: WebAuthnPrompt.Operation, origin: String, locked: Bool, in anchor: ASPresentationAnchor,
+            operation: WebAuthnPrompt.Operation, origin: String, topOrigin: String?, locked: Bool, in anchor: ASPresentationAnchor,
             until deadline: ContinuousClock.Instant?
         ) async -> WebAuthnDecision {
             await ask(in: anchor)

@@ -448,7 +448,7 @@ extension WebsiteAuthenticator {
         if !conditional, manager.authorizationEpoch == nil {
             let offer = await interaction.offerStart(
                 operation: context.operation == .create ? .create : .get,
-                origin: context.origin, locked: true, in: anchor, until: request.deadline
+                origin: context.origin, topOrigin: context.topOrigin, locked: true, in: anchor, until: request.deadline
             )
             _ = try approval(offer, rpID: resolved, context: context)
             try Task.checkCancellation()

@@ -113,7 +113,7 @@ enum WebAuthnAdapter {
         // the engine's own WebAuthn reaches nothing (WebKit's refuses at once without Apple's browser entitlement; CEF's never
         // ends). Native decides which frames it serves (`credentialContext`). WebKit's page script stays out of a frame under an
         // embedder of another origin, which its vault cannot serve (`WebAuthnScript.webKitPage`); Chromium's frames of another
-        // site get only the engine refusal (`ChromiumDevTools.crossSiteFrameScripts`).
+        // site get all of these in their own session (`ChromiumDevTools.crossSiteFrameScripts`).
         page.installScript(
             WebAuthnScript.relay(nativeNonce: page.chromium == nil), in: world,
             injectionTime: .atDocumentStart, forMainFrameOnly: false
@@ -167,14 +167,11 @@ enum WebAuthnAdapter {
     }
 
     /// The route announcement the page script obeys synchronously. Native decides it; the page can forge the hint, but native
-    /// refuses any request it does not itself serve and never passes one that it serves to the engine. A page is private or
-    /// it is not for its whole life, so the announcement never changes and its sequence is constant.
-    private static let routeSequence = 0
-
+    /// refuses any request it does not itself serve and never passes one that it serves to the engine.
     private static func routeMode(for page: BrowserPage) -> String { isHandled(by: page) ? "manager" : "legacy" }
 
     private static func routeScript(for page: BrowserPage) -> String {
-        WebAuthnScript.route(routeMode(for: page), sequence: routeSequence)
+        WebAuthnScript.route(routeMode(for: page), sequence: WebAuthnScript.routeSequence)
     }
 
     private static func refuse(_ entry: Entry, reason: String) {

@@ -960,7 +960,8 @@ extension OpenInNewTabTests {
         }
 
         func offerStart(
-            operation: WebAuthnPrompt.Operation, origin: String, locked: Bool, in anchor: ASPresentationAnchor, until deadline: ContinuousClock.Instant?
+            operation: WebAuthnPrompt.Operation, origin: String, topOrigin: String?, locked: Bool, in anchor: ASPresentationAnchor,
+            until deadline: ContinuousClock.Instant?
         ) async -> WebAuthnDecision {
             .declined
         }
