@@ -342,11 +342,12 @@ extension ChromiumClient {
                 guard let page = client.page, !client.isClosed, let url else { return 1 }
                 let sourceFrame = page.sourceFrame(for: sourceURL)
                 let gesture = userGesture != 0
+                let click = ChromiumPage.ClickDisposition(disposition)
                 guard let openPopup = page.openPopup else {
-                    page.openWindow?(url, gesture, sourceURL, sourceFrame)
+                    page.openWindow?(url, gesture, sourceURL, sourceFrame, click)
                     return 1
                 }
-                guard let host = openPopup(url, gesture, sourceURL, sourceFrame, disposition == CEF_WOD_NEW_BACKGROUND_TAB) else { return 1 }
+                guard let host = openPopup(url, gesture, sourceURL, sourceFrame, click) else { return 1 }
                 guard let windowInfo, let popupClient, let hosted = host.hostPopup(id: popupID, opener: page, in: &windowInfo.pointee) else {
                     host.popupAborted()
                     return 1
@@ -626,10 +627,10 @@ extension ChromiumClient {
                         isMain: frame.pointee.is_main?(frame) == 1
                     )
                 }
-                let link = URL(string: ChromiumInterop.takeString(params.pointee.get_link_url?(params)))
+                let target = ChromiumClient.contextTarget(of: params, frameURL: clicked?.url)
                 MainActor.assumeIsolated {
                     client.offerPDFItems(in: model)
-                    client.offerLinkItems(in: model, link: link, frameURL: clicked?.url)
+                    client.offerContextItems(in: model, target: target)
                     client.offerCredentialPicker(in: model, editable: editable, frame: clicked)
                 }
             }
@@ -654,7 +655,7 @@ extension ChromiumClient {
             return MainActor.assumeIsolated {
                 command == ChromiumClient.pickCredentialCommand
                     ? client.runCredentialPicker()
-                    : client.openContextLink(command) || client.runPDFCommand(command)
+                    : client.runContextItem(command) || client.runPDFCommand(command)
             } ? 1 : 0
         }
         handler.pointee.on_context_menu_dismissed = { _, browser, frame in
@@ -705,35 +706,6 @@ extension ChromiumClient {
     func runPDFCommand(_ command: Int32) -> Bool {
         guard command == Self.downloadPDFCommand || command == Self.openPDFCommand, let save = page?.onSavePDF else { return false }
         save(command == Self.openPDFCommand)
-        return true
-    }
-
-    /// The engine's own menu has no item for a link (Back, Forward, Print, View Page Source), so a right-click on one gets what a
-    /// WebKit tab's menu has first: the link in a new tab, in a new window and in a new private window (a private tab offers the
-    /// last alone), as `TabContextMenu.linkWindowItems` does.
-    func offerLinkItems(in model: UnsafeMutablePointer<cef_menu_model_t>, link: URL?, frameURL: URL?) {
-        page?.contextLink = nil
-        guard let link, let page else { return }
-        var index = 0
-        for command in Self.linkCommands(isPrivate: page.context.profile.isPrivate) {
-            let added = ChromiumInterop.withString(String(localized: command.title)) {
-                model.pointee.insert_item_at?(model, index, command.id, $0)
-            }
-            if added == 1 {
-                index += 1
-            }
-        }
-        guard index > 0 else { return }
-        _ = model.pointee.insert_separator_at?(model, index)
-        page.contextLink = (link, frameURL)
-    }
-
-    /// Runs an Open Link command of the menu that is open, if `command` is one.
-    func openContextLink(_ command: Int32) -> Bool {
-        guard let page, let link = page.contextLink,
-              let opening = Self.linkCommands(isPrivate: false).first(where: { $0.id == command })?.opening else { return false }
-        page.contextLink = nil
-        page.openLinkFromMenu?(link.url, link.frameURL, opening)
         return true
     }
 

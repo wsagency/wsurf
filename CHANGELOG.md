@@ -17,6 +17,12 @@ release notes will be added above this provenance record.
 - In Chromium tabs, a page counts as secure for saved logins by WebKit’s rule (an HTTPS page with a valid certificate and nothing insecure on it), so Pick Credential…, suggestions and save offers no longer disappear on secure pages Chromium rated otherwise. A page reached past a certificate warning gets no saved logins.
 - In WebKit tabs too, a page reached past a certificate warning, or one that loaded something past one, no longer counts as secure: no saved logins are offered, filled or saved there, and the address bar shows no lock.
 
+### Chromium tabs
+
+- The right-click menu in Chromium tabs has the items WebKit tabs have: Open Link in Peek, Summarize Link, Download Linked File, Open Image in New Tab, Download Image, and Save Page As… and Print Page… on the page itself (they replace Chromium’s own Print, so they save and print as in WebKit tabs).
+- Shift-click on a link opens it in a Peek, as in WebKit tabs. ⌘-click and middle-click open a tab in the background, and ⇧⌘-click in front.
+- A pop-up that a page opens without a click and WSurf blocks shows the “pop-up blocked” notice, as in WebKit tabs.
+
 ## 0.1.21 (build 21) — 2026-11-03
 
 Everything since 0.1.20 (build 20). None of the screens and prompts below has been checked by hand.

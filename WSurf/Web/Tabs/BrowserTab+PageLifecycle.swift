@@ -434,41 +434,90 @@ extension BrowserTab {
 
     /// A page's pop-up opens in a tab of its own, unless an app takes it or the pop-up blocker refuses it. The tab's page hosts the
     /// browser CEF makes for it, so the pop-up keeps `window.opener` and can close itself; nil cancels it.
-    private func openChromiumPopup(
-        _ url: URL, userGesture: Bool, sourceURL: URL?, sourceFrame: BrowserFrame?, background: Bool
+    func openChromiumPopup(
+        _ url: URL, userGesture: Bool, sourceURL: URL?, sourceFrame: BrowserFrame?, click: ChromiumPage.ClickDisposition
     ) -> ChromiumPage? {
         if !ExternalApp.staysInWebView(url) {
             offerChromiumExternalApp(url, sourceURL: sourceURL, sourceFrame: sourceFrame)
             return nil
         }
+        if peekAtChromiumClick(url, userGesture: userGesture, click: click) {
+            return nil
+        }
         if popups.effective.blocks && !userGesture {
-            popups.note(url)
+            noteBlockedPopup(url)
             return nil
         }
         // The site's engine setting wins: a pop-up of a site set to WebKit (Google sign-in among them) opens as a plain WebKit tab,
         // as before, and the page gets no window. One with no site of its own (about:blank) stays with its opener.
         let origin = SitePermissions.origin(for: url)
         guard let onNewChromiumPopup, origin.isEmpty || sitePermissions.engine(for: origin) == .chromium else {
-            onOpenInNewTab?(url, userGesture)
+            onOpenInNewTab?(url, userGesture && click != .backgroundTab)
             return nil
         }
         // Reserved for CEF's browser before its tab can show it: a page shown first would make a browser of its own.
         let popup = ChromiumPage(context: context, popup: url)
-        onNewChromiumPopup(BrowserPage(chromium: popup), !background)
+        onNewChromiumPopup(BrowserPage(chromium: popup), click != .backgroundTab)
         return popup
     }
 
     /// A page, or the person, asked for another window: it opens as a tab of its own, unless the pop-up blocker refuses a page's.
-    private func openChromiumWindow(_ url: URL, userGesture: Bool, sourceURL: URL?, sourceFrame: BrowserFrame?) {
+    /// A click the person made opens as it does in a WebKit tab: Command or the middle button in the background (Shift too, in
+    /// front), Shift alone in a Peek.
+    func openChromiumWindow(
+        _ url: URL, userGesture: Bool, sourceURL: URL?, sourceFrame: BrowserFrame?, click: ChromiumPage.ClickDisposition = .other
+    ) {
         if !ExternalApp.staysInWebView(url) {
             offerChromiumExternalApp(url, sourceURL: sourceURL, sourceFrame: sourceFrame)
             return
         }
-        if popups.effective.blocks && !userGesture {
-            popups.note(url)
+        if peekAtChromiumClick(url, userGesture: userGesture, click: click) {
             return
         }
-        onOpenInNewTab?(url, userGesture)
+        if popups.effective.blocks && !userGesture {
+            noteBlockedPopup(url)
+            return
+        }
+        onOpenInNewTab?(url, userGesture && click != .backgroundTab)
+    }
+
+    /// Shift-click on a link, which the engine reports as a window: a Peek, as in WebKit (`TabNavigationDelegate`). Only the person's
+    /// own click counts, and only where the tab can peek.
+    private func peekAtChromiumClick(_ url: URL, userGesture: Bool, click: ChromiumPage.ClickDisposition) -> Bool {
+        guard click == .window, userGesture, let onOpenInPeek, let view = liveView else { return false }
+        onOpenInPeek(url, TabNavigationDelegate.pointer(in: view))
+        return true
+    }
+
+    /// The pop-up notice, for a window the blocker refused. A pop-up with no address of its own is refused without one.
+    private func noteBlockedPopup(_ url: URL) {
+        if url.scheme != "about" {
+            popups.note(url)
+        }
+    }
+
+    /// A page called `window.open`: when no click was behind it and the site's answer blocks pop-ups, the notice is shown here, as
+    /// Chromium's own blocker may refuse the window before `openChromiumPopup` is asked.
+    func noteChromiumWindowOpen(_ url: URL, userGesture: Bool) {
+        if popups.effective.blocks && !userGesture {
+            noteBlockedPopup(url)
+        }
+    }
+
+    /// A WSurf item of a Chromium page's context menu that is not an Open item: what its WebKit twin does (`TabWebView`).
+    func runChromiumContextAction(_ action: ChromiumClient.ContextAction, in view: BrowserPage) {
+        switch action {
+        case .peek(let url):
+            onOpenInPeek?(url, TabNavigationDelegate.pointer(in: view))
+        case .summarize(let url):
+            onSummarizeLink?(url, TabNavigationDelegate.pointer(in: view))
+        case .download(let url):
+            view.chromium?.startDownload(of: url)
+        case .savePage:
+            PageSaving.begin(for: view)
+        case .printPage:
+            PagePrinting.begin(for: view)
+        }
     }
 
     /// An Open Link item of a Chromium page's context menu. A tab is the person's own choice, as a click is.
@@ -480,6 +529,30 @@ extension BrowserTab {
             onOpenInNewWindow?(url, isPrivate)
         case .privateWindow:
             onOpenInNewWindow?(url, true)
+        }
+    }
+
+    /// What a Chromium page's windows, clicks and context-menu items ask of the tab.
+    private func installChromiumWindowCallbacks(on chromium: ChromiumPage, in view: BrowserPage) {
+        chromium.openWindow = { [weak self, weak view] url, userGesture, sourceURL, sourceFrame, click in
+            guard let self, let view, self.liveView === view else { return }
+            openChromiumWindow(url, userGesture: userGesture, sourceURL: sourceURL, sourceFrame: sourceFrame, click: click)
+        }
+        chromium.openPopup = { [weak self, weak view] url, userGesture, sourceURL, sourceFrame, click in
+            guard let self, let view, self.liveView === view else { return nil }
+            return openChromiumPopup(url, userGesture: userGesture, sourceURL: sourceURL, sourceFrame: sourceFrame, click: click)
+        }
+        chromium.windowOpenAttempt = { [weak self, weak view] url, userGesture in
+            guard let self, let view, self.liveView === view else { return }
+            noteChromiumWindowOpen(url, userGesture: userGesture)
+        }
+        chromium.onContextAction = { [weak self, weak view] action in
+            guard let self, let view, self.liveView === view else { return }
+            runChromiumContextAction(action, in: view)
+        }
+        chromium.openLinkFromMenu = { [weak self, weak view, weak chromium] url, sourceURL, opening in
+            guard let self, let view, self.liveView === view else { return }
+            openChromiumLink(url, from: sourceURL, opening: opening, sourceFrame: chromium?.sourceFrame(for: sourceURL))
         }
     }
 
@@ -513,18 +586,7 @@ extension BrowserTab {
             autofillSave.submissions.navigationRequested(isMainFrame: main, kind: kind, sourceURL: sourceURL)
             return true
         }
-        chromium.openWindow = { [weak self, weak view] url, userGesture, sourceURL, sourceFrame in
-            guard let self, let view, self.liveView === view else { return }
-            openChromiumWindow(url, userGesture: userGesture, sourceURL: sourceURL, sourceFrame: sourceFrame)
-        }
-        chromium.openPopup = { [weak self, weak view] url, userGesture, sourceURL, sourceFrame, background in
-            guard let self, let view, self.liveView === view else { return nil }
-            return openChromiumPopup(url, userGesture: userGesture, sourceURL: sourceURL, sourceFrame: sourceFrame, background: background)
-        }
-        chromium.openLinkFromMenu = { [weak self, weak view, weak chromium] url, sourceURL, opening in
-            guard let self, let view, self.liveView === view else { return }
-            openChromiumLink(url, from: sourceURL, opening: opening, sourceFrame: chromium?.sourceFrame(for: sourceURL))
-        }
+        installChromiumWindowCallbacks(on: chromium, in: view)
         chromium.onCloseRequested = { [weak self, weak view] in
             guard let self, let view, self.liveView === view else { return }
             onCloseRequested?()

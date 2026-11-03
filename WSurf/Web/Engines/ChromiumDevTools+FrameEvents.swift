@@ -60,6 +60,7 @@ extension ChromiumDevTools {
         "Page.frameNavigated": { $0.frameNavigated($1) },
         "Page.navigatedWithinDocument": { $0.navigatedWithinDocument($1) },
         "Page.frameDetached": { $0.frameDetached($1) },
+        "Page.windowOpen": { $0.windowOpened($1) },
         "Network.responseReceived": { $0.documentResponseReceived($1) },
         // Only a cue: the page reads its own entry again under WebKit's rule (`ChromiumPage.hasOnlySecureContent`).
         "Security.securityStateChanged": { devTools, _ in devTools.page?.didChangeSecurity() },
@@ -87,6 +88,14 @@ extension ChromiumDevTools {
         if hadContexts {
             invalidateCredentialContexts(documents: [], pageWide: true)
         }
+    }
+
+    /// The page called `window.open`. Chromium's pop-up blocker refuses a window nobody's click started before WSurf is asked for it
+    /// (`on_before_popup`), so this event, sent when the call is made, is where the blocked-pop-up notice is raised. An answer
+    /// without the gesture flag counts as a click.
+    private func windowOpened(_ params: [String: Any]) {
+        guard let address = params["url"] as? String, let url = URL(string: address) else { return }
+        page?.windowOpenAttempt?(url, params["userGesture"] as? Bool ?? true)
     }
 
     private static let diagnosticEvents: Set<String> = [
