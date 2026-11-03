@@ -692,18 +692,23 @@ final class ChromiumPage: NSView {
     func didChangeProgress(_ progress: Double) {
         owner?.estimatedProgress = progress
     }
-    func didChangeSecurity(_ secure: Bool) {
-        owner?.hasOnlySecureContent = secure
+    /// DevTools says the page's security changed: read the entry again under `hasOnlySecureContent(url:...)`, not its rating.
+    func didChangeSecurity() {
+        guard !closing, !isClosed else { return }
+        updateNativeSecurity()
     }
 
     private func updateNativeSecurity() {
         let secure = withHost { host -> Bool in
             guard let entry = host.pointee.get_visible_navigation_entry?(host) else { return false }
             defer { ChromiumInterop.release(UnsafeMutableRawPointer(entry)) }
+            let url = URL(string: ChromiumInterop.takeString(entry.pointee.get_url?(entry)))
             guard let ssl = entry.pointee.get_sslstatus?(entry) else { return false }
             defer { ChromiumInterop.release(UnsafeMutableRawPointer(ssl)) }
-            return ssl.pointee.is_secure_connection?(ssl) == 1
-                && ssl.pointee.get_content_status?(ssl).rawValue == 0
+            return Self.hasOnlySecureContent(
+                url: url, isSecureConnection: ssl.pointee.is_secure_connection?(ssl) == 1,
+                certStatus: ssl.pointee.get_cert_status?(ssl).rawValue ?? ~0, contentStatus: ssl.pointee.get_content_status?(ssl).rawValue ?? ~0
+            )
         } ?? false
         owner?.hasOnlySecureContent = secure
     }

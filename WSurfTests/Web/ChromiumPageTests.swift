@@ -11,6 +11,71 @@ import WebKit
 @MainActor
 @Suite(.serialized)
 struct ChromiumPageTests {
+    private struct SecureCase {
+        let url: String, connection: Bool, cert: UInt32, content: UInt32, secure: Bool
+        init(_ url: String, _ connection: Bool, _ cert: UInt32, _ content: UInt32, _ secure: Bool) {
+            (self.url, self.connection, self.cert, self.content, self.secure) = (url, connection, cert, content, secure)
+        }
+    }
+
+    /// Address, TLS connection, certificate status, content status, secure.
+    private static let secureCases: [SecureCase] = [
+        .init("https://login.example/", true, 0, 0, true),
+        .init("https://login.example/", true, 1 << 16 | 1 << 17, 0, true), // EV and revocation checking are no errors
+        .init("http://login.example/", true, 0, 0, false), // an insecure main frame
+        .init("HTTPS://login.example/", true, 0, 0, true),
+        .init("file:///tmp/login.html", true, 0, 0, false),
+        .init("chrome://settings/", true, 0, 0, false),
+        .init("https://login.example/", false, 0, 0, false), // no certificate: no TLS connection
+        .init("https://login.example/", true, 1 << 2, 0, false), // an untrusted authority, accepted past a warning
+        .init("https://login.example/", true, 1 << 1, 0, false), // an expired certificate
+        .init("https://login.example/", true, 1 << 15, 0, false), // the highest error bit
+        .init("https://login.example/", true, 0, 1 << 0, false), // insecure content shown (mixed passive)
+        .init("https://login.example/", true, 0, 1 << 1, false), // insecure content run (mixed active)
+        .init("https://login.example/", true, 0, 1 << 2, false), // content with a certificate error
+        .init("https://login.example/", true, 0, 1 << 4, false), // any further content flag
+    ]
+
+    /// Chromium's secure-page rule is WebKit's `hasOnlySecureContent`, never looser: saved logins are offered only while it holds.
+    @Test func securePageRuleIsWebKits() {
+        for test in Self.secureCases {
+            #expect(ChromiumPage.hasOnlySecureContent(
+                url: URL(string: test.url), isSecureConnection: test.connection, certStatus: test.cert, contentStatus: test.content
+            ) == test.secure, "\(test.url) \(test.connection) \(test.cert) \(test.content)")
+        }
+        #expect(!ChromiumPage.hasOnlySecureContent(url: nil, isSecureConnection: true, certStatus: 0, contentStatus: 0))
+    }
+
+    /// A DevTools security cue reads the page again under that rule; it never makes an HTTP page secure.
+    @Test(.boundedWebViews)
+    func aSecurityCueNeverMakesAnInsecurePageSecure() async throws {
+        let server = try await HTTPFixtureServer.start(routes: ["/": .html("<!doctype html><form><input type=password></form>")])
+        let url = try server.url("/")
+        try ChromiumRuntime.shared.ensureInitialized()
+        let context = BrowserProfileContext(profile: .privateBrowsing())
+        let native = ChromiumPage(context: context)
+        let page = BrowserPage(chromium: native)
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: .borderless, backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = page
+        window.orderBack(nil)
+        defer { window.contentView = nil; window.close() }
+        do {
+            page.load(URLRequest(url: url))
+            try #require(await waitUntil { page.url == url && !page.isLoading })
+            #expect(!page.hasOnlySecureContent)
+            page.hasOnlySecureContent = true
+            native.didChangeSecurity()
+            #expect(!page.hasOnlySecureContent, "the cue's own rating is not used")
+        } catch {
+            await page.close()
+            await context.endPrivateSession()
+            throw error
+        }
+        await page.close()
+        await context.endPrivateSession()
+    }
+
     @Test(.boundedWebViews)
     func cachedHistoryRestoresIsolatedWorldAndMessages() async throws {
         let server = try await HTTPFixtureServer.start(routes: [

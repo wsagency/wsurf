@@ -85,13 +85,46 @@ nonisolated enum PasswordAutofillScript {
         }
         return null;
       };
+      // One field takes its value the way typing it reaches the page's own listeners, React's and Angular's and AribaWeb-style
+      // handlers that copy a field on a key or on blur included: focus, keydown, beforeinput, the value through the native setter,
+      // input, keyup, change, blur. Every event made here is the script's own, so untrusted, and none carries the value: only the
+      // field holds it. Blink sends no focus or blur while its page is unfocused, as Chromium's is while, and for a moment after,
+      // a native sheet such as the picker has the window; a focus or blur the engine did not send is then sent here, so the page
+      // sees the same sequence in both engines.
       const put = (el,value) => {
         el.setAttribute('data-wsurf-password','');
-        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(el,value);
-        el.dispatchEvent(new Event('input',{bubbles:true,composed:true}));
-        el.dispatchEvent(new Event('change',{bubbles:true}));
+        const seen = new Set(), note = event => { if (event.target === el) seen.add(event.type); };
+        const focus = (type,bubbles) => el.dispatchEvent(new FocusEvent(type,{bubbles,composed:true}));
+        const key = type => el.dispatchEvent(new KeyboardEvent(type,{bubbles:true,cancelable:true,composed:true,key:'Unidentified'}));
+        const edit = type => el.dispatchEvent(new InputEvent(type,{bubbles:true,composed:true,inputType:'insertReplacementText'}));
+        el.addEventListener('focus',note,true);
+        el.addEventListener('blur',note,true);
+        try {
+          const before = suggestions.active() === el;
+          el.focus({preventScroll:true});
+          const focused = suggestions.active() === el;
+          if (focused && !before && !seen.has('focus')) { focus('focus',false); focus('focusin',true); }
+          key('keydown');
+          edit('beforeinput');
+          Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(el,value);
+          edit('input');
+          key('keyup');
+          el.dispatchEvent(new Event('change',{bubbles:true}));
+          if (suggestions.active() === el) el.blur();
+          if (focused && !seen.has('blur')) { focus('blur',false); focus('focusout',true); }
+        } finally {
+          el.removeEventListener('focus',note,true);
+          el.removeEventListener('blur',note,true);
+        }
         return 1;
       };
+      // The fields of one fill, in order, with nothing selected for suggestions on the way; focus then goes back to the field the
+      // person chose, so Return still submits. `fill` returns how many fields took a value.
+      const fillAll = (home,fill) => suggestions.quietly(() => {
+        const count = fill();
+        if (count && home?.isConnected) home.focus({preventScroll:true});
+        return count;
+      });
       // How many fields took a value; -1 when a password or a code would go to a form that sends it to another site, so nothing was
       // filled.
       const pickFill = (token,url,login) => {
@@ -103,8 +136,10 @@ nonisolated enum PasswordAutofillScript {
           if (!list) return 0;
           pick.token = null;
           const size = list.length > 1 ? target.maxLength : login.code.length;
-          list.forEach((el,index) => put(el, login.code.slice(index * size, (index + 1) * size)));
-          return list.length;
+          return fillAll(target, () => {
+            list.forEach((el,index) => put(el, login.code.slice(index * size, (index + 1) * size)));
+            return list.length;
+          });
         }
         const group = forms.group(target);
         const fields = (group?.fields || []).map(field => field.element).filter(pickable);
@@ -121,10 +156,15 @@ nonisolated enum PasswordAutofillScript {
         const hasPassword = typeof login?.password === 'string';
         if (hasPassword && password && !forms.safe(group?.root)) return -1;
         pick.token = null;
-        let count = 0;
-        if (username && typeof login?.username === 'string' && login.username) count += put(username, login.username);
-        if (password && hasPassword) count += put(password, login.password);
-        return count;
+        return fillAll(target, () => {
+          let count = 0;
+          if (username && typeof login?.username === 'string' && login.username) count += put(username, login.username);
+          // The username's own listeners ran in between: the password goes only where it still may.
+          if (password && hasPassword && location.href === url && password.isConnected && forms.safe(forms.group(target)?.root)) {
+            count += put(password, login.password);
+          }
+          return count;
+        });
       };
       globalThis.__wsurfPasswords = {
         setEnabled(value) {
@@ -146,11 +186,7 @@ nonisolated enum PasswordAutofillScript {
             const code = otp(target);
             if (!code || !forms.rendered(target) || location.href !== url || !target.isConnected) return 0;
             state.token = null;
-            target.setAttribute('data-wsurf-password','');
-            Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(target,login.code);
-            target.dispatchEvent(new Event('input',{bubbles:true,composed:true}));
-            target.dispatchEvent(new Event('change',{bubbles:true}));
-            return 1;
+            return fillAll(target, () => put(target,login.code));
           }
           const found = fields(target);
           if (!found) return 0;
@@ -159,18 +195,16 @@ nonisolated enum PasswordAutofillScript {
           state.token = null;
           const set = (el,value) => {
             if (!el || !forms.rendered(el) || location.href !== url || !target.isConnected) return 0;
-            el.setAttribute('data-wsurf-password','');
-            Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(el,value);
-            el.dispatchEvent(new Event('input',{bubbles:true,composed:true}));
-            el.dispatchEvent(new Event('change',{bubbles:true}));
-            return 1;
+            return put(el,value);
           };
-          let count = 0;
-          if (found.username) count += set(found.username,login.username);
-          if (!found.passwords.length || !forms.safe(found.form) || forms.scope(found.passwords[0]) !== found.form) return count;
-          if (typeof login.password !== 'string') return count;
-          count += set(found.passwords[0],login.password);
-          return count;
+          return fillAll(target, () => {
+            let count = 0;
+            if (found.username) count += set(found.username,login.username);
+            if (!found.passwords.length || !forms.safe(found.form) || forms.scope(found.passwords[0]) !== found.form) return count;
+            if (typeof login.password !== 'string') return count;
+            count += set(found.passwords[0],login.password);
+            return count;
+          });
         }
       };
       const ready = () => channel?.postMessage({action:'ready',documentID:forms.documentID});
