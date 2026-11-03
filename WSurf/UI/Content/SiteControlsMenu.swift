@@ -258,7 +258,7 @@ private struct SiteHandlingSection: View {
                         },
                         selection: browser.engine(for: tab)
                     ) { engine in
-                        Task { _ = await browser.setEngine(engine, for: siteOrigin) }
+                        Task { _ = await browser.setEngine(engine, for: tab) }
                     }
                     .disabled(SitePermissions.webKitOnlyOrigins.contains(siteOrigin))
                 }

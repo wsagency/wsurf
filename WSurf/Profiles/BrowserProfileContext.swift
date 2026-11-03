@@ -65,6 +65,10 @@ final class BrowserProfileContext {
     lazy var extensions = ExtensionManager(profile: profile, dataStore: dataStore)
 
     private var browsers = NSHashTable<BrowserModel>.weakObjects()
+    /// Every open tab of `origin` in this profile's windows.
+    func tabs(of origin: String) -> [BrowserTab] {
+        browsers.allObjects.flatMap { browser in browser.tabs.filter { browser.siteOrigin(for: $0) == origin } }
+    }
     /// The tabs of this profile's windows whose page is open on Chromium (`ChromiumRuntime.mirrorSiteAnswers`).
     var chromiumTabs: [BrowserTab] {
         browsers.allObjects.flatMap(\.tabs).filter { $0.liveView?.chromium != nil }

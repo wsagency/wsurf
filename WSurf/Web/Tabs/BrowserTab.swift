@@ -240,6 +240,10 @@ final class BrowserTab: Identifiable {
     }
 
     var engineOverride: BrowserEngine?  // A tab opened to compare engines: wins over the site's setting, never written to it.
+    /// The engine a tab keeps on one website after another tab of it changed the website's engine, until the tab closes
+    /// (`BrowserModel.setEngine(_:for:)`). Unlike `engineOverride` it is only for `origin`, and a change of the website's
+    /// default in Settings drops it (`BrowserModel.setEngine(_:for:origin)`).
+    var pinnedEngine: (origin: String, engine: BrowserEngine)?
     var signInEngine: BrowserEngine?  // Holds a Google sign-in's redirect chain in WebKit (`noteNavigation`).
     /// The page a load left when it moved the tab to the other engine, whose history starts empty: Back from its first page
     /// returns there (`goBackAcrossEngines`), with WebKit's whole history; a Chromium page comes back by its address.
@@ -253,7 +257,13 @@ final class BrowserTab: Identifiable {
         guard engineOverride == nil, let url else { return engineOverride ?? .webKit }
         let origin = SitePermissions.origin(for: url)
         guard !origin.isEmpty else { return .webKit }
-        return signInEngine ?? sitePermissions.engine(for: origin)
+        if let signInEngine {
+            return signInEngine
+        }
+        if let pinnedEngine, pinnedEngine.origin == origin {
+            return pinnedEngine.engine
+        }
+        return sitePermissions.engine(for: origin)
     }
 
     func makePage(engine: BrowserEngine) -> BrowserPage {
