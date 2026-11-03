@@ -5,6 +5,34 @@ This file preserves release notes inherited from the upstream
 describe upstream Linen releases, not releases published by WSurf. New WSurf
 release notes will be added above this provenance record.
 
+## 0.1.21 (build 21) — 2026-11-03
+
+Everything since 0.1.20 (build 20). None of the screens and prompts below has been checked by hand.
+
+### Chromium tabs
+
+- In Chromium tabs, passkeys now work in a sign-in frame from another website when the page permits it, such as YouTube’s Verify step. The sheet names both the frame’s website and the page around it; a frame without permission is refused.
+- Cookies from Chromium tabs are saved as soon as the last Chromium tab closes.
+
+### Tabs
+
+- The color chooser a page opened closes when you switch away from its tab.
+
+### Known issues
+
+- One- and two-letter address-bar queries search only the newest 3,000 pages; three letters and the History page search everything.
+- Chromium tabs open ⌘-click and middle-click tabs in front.
+- In Chromium tabs, a pop-up that WSurf blocks is refused without the notice WebKit tabs show.
+- Removing one website in Website data removes the cookies that exact host set; a cookie a website set for its whole domain (from www.example.com for example.com) stays until you clear everything. This was true before, but Chromium’s cookies now stay across a quit.
+- Clear Browsing Data does not reach Chromium’s own small records of the sites you visited (the sites it must open over HTTPS, its site-engagement scores); they go when you delete the profile.
+- WebKit tabs that both use the camera or microphone still take it from each other: showing another tab that uses them mutes the first for good, and WSurf has no button to resume it.
+- Taking back camera or microphone access from a Chromium tab that is using it stops the devices by closing and reopening the page, and shows “Could not change website device access”.
+- Back after an engine switch goes back one step only: Forward does not return to the other engine, and a Chromium page comes back by its address, not with its history.
+- Passkeys from Apple Passwords, from phones and from security keys do not work in either engine until Apple grants WSurf the browser passkey entitlement; the sheet above is all a website gets.
+- A script that must run before a page’s own code (the passkey script, the notification and location stand-ins, the development diagnostics hook) can run late on the first page of a Chromium pop-up, so that page may have done its first work before it.
+- A page in a background tab runs its timers more slowly after 10 seconds, so a page that counts, polls or refreshes itself from a timer can fall behind until you show it. Set the website to Keep this website loaded to leave it as it was.
+- The known issues of 0.1.14 are unchanged.
+
 ## 0.1.20 (build 20) — 2026-11-02
 
 Everything since 0.1.18 (build 18). None of the screens and prompts below has been checked by hand.
