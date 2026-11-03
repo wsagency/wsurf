@@ -142,16 +142,18 @@ jobs:
       # then opens no store's databases, and a host serves a Networking process until it exits; one host for all the
       # Serial suites reached that limit. ChromiumLoadBenchmarkTests is skipped (its XCTest measure block crashes the host).
       # Every run goes on after a failed one, so one red part does not hide the rest; the step fails at the end.
-      # One total watchdog budget (default 5400s) covers both xcodebuild phases and all four runs. Calibration, not a measurement:
-      # the Pro took about 3500s for the same four runs and 840s for the single run this replaces; revisit after a real CI run.
+      # Each xcodebuild phase gets its own watchdog budget; the job's timeout-minutes stays the outer bound. The build has
+      # the watchdog's default (1200s). One shared budget was too tight in real CI: green run 39611925580 used 1174s (476s
+      # build + 668s tests), and runs 39721600801 and 41613391670 spent 854s / 699s building, so the tests were cut off
+      # mid-run. The four test runs share one budget (default 5400s) that starts after the build. Calibration, not a
+      # measurement: the Pro took about 3500s for the same four runs; revisit after a real CI run.
       - name: Test
         run: |
-          total="${WSURF_CI_TEST_LIMIT_SECONDS:-5400}"
-          start=$SECONDS
           python3 Tools/run-xcodebuild-with-watchdog.py -- xcodebuild build-for-testing \
             -project "$PROJECT" -scheme "$SCHEME" \
             -destination 'platform=macOS,arch=arm64' \
             -derivedDataPath "$DD" \
+            -skipMacroValidation \
             -enableCodeCoverage YES \
             -disableAutomaticPackageResolution \
             CODE_SIGN_STYLE=Manual \
@@ -163,6 +165,8 @@ jobs:
           [ "$#" -eq 1 ] && [ -f "$1" ] || { echo "::error::expected exactly one generated .xctestrun in $DD/Build/Products"; exit 1; }
           xctestrun="$1"
           python3 Tools/check-built-identity.py "$DD" "$xctestrun"
+          total="${WSURF_CI_TEST_LIMIT_SECONDS:-5400}"
+          start=$SECONDS
           mkdir -p build/results
           failed=""
           for plan in WSurf-Serial-1 WSurf-Serial-2 WSurf-Serial-3 WSurf-Rest; do

@@ -1,0 +1,36 @@
+{
+  "coordinates": "wordmark font units (1/2048 em), y-down, lockup ink box at 0,0",
+  "viewBox": [
+    0,
+    0,
+    8273.71,
+    1817.81
+  ],
+  "aspect": 4.5515,
+  "capHeight": 1490,
+  "baselineY": 1788.72,
+  "capTopY": 298.72,
+  "markHeight": 1817.8,
+  "markHeightOverCap": 1.22,
+  "markScaleFromTightMark": 2.609532,
+  "overshoot": 29.08,
+  "overshootOverMarkHeight": 0.016,
+  "waterlineY": 1817.8,
+  "gap": 372.5,
+  "gapOverCap": 0.25,
+  "markBox": [
+    0.0,
+    0.0,
+    2045.88,
+    1817.8
+  ],
+  "wordmarkOffset": [
+    2409.38,
+    1788.72
+  ],
+  "rf_adjust": 104,
+  "clearSpace": 872.52,
+  "clearSpaceRule": "follower disc diameter at the rendered size, on every side",
+  "clearSpaceOverHeight": 0.48,
+  "clearSpaceOverCap": 0.5856
+}

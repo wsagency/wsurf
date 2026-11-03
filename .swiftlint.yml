@@ -29,7 +29,7 @@ opt_in_rules:
   - closure_spacing
 
 file_header:
-  required_pattern: '// SPDX-FileCopyrightText: \d{4} (?:Kavoye|WSurf Agency)\n// SPDX-License-Identifier: Apache-2\.0'
+  required_pattern: '// SPDX-FileCopyrightText: \d{4} (?:Kavoye|WSurf Agency)\n// SPDX-License-Identifier: (?:Apache-2\.0 AND )?BUSL-1\.1'
 
 identifier_name:
   min_length: 1

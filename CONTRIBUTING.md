@@ -406,10 +406,17 @@ the release job ran the same suite a second time.
 
 ## License of your contribution
 
-WSurf is Apache 2.0. Section 5 of the license puts each contribution under the
-same terms, unless you say otherwise in the pull request. There is no separate
-agreement to sign.
+WSurf's own code is under the Business Source License 1.1 in
+[LICENSE](LICENSE); portions derived from Linen stay under the Apache License
+2.0 in [LICENSES/Apache-2.0.txt](LICENSES/Apache-2.0.txt), as described in
+[NOTICE](NOTICE). By opening a pull request you agree that your contribution
+is licensed under the Business Source License 1.1, on the same terms and with
+the same Change Date and Change License as the version it lands in, and that
+WSurf Agency, as Licensor, may distribute it under those terms. Where your
+change touches a Linen-derived file, the Linen portions keep their Apache 2.0
+license. There is currently no separate agreement to sign.
 
-Your contribution also carries a patent license to everybody who uses WSurf.
-That license covers only patents you own that your own contribution needs. Do
-not submit code that you cannot license this way.
+Keep the existing SPDX header of a file you change. A new file starts with
+`SPDX-FileCopyrightText: 2026 WSurf Agency` and
+`SPDX-License-Identifier: BUSL-1.1`. Do not submit code that you cannot
+license this way.

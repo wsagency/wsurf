@@ -1,0 +1,122 @@
+{
+  "advanceWidth" : 5904.32,
+  "advanceWidthUntracked" : 6128,
+  "ascender" : 1984,
+  "baselineFromViewBoxTop" : 1534,
+  "baselineY" : 0,
+  "capHeight" : 1490,
+  "capTopY" : -1490,
+  "coordinates" : "font units (1\/2048 em); SVG y-down; baseline at y = 0; pen origin at x = 0; caps at negative y",
+  "cssInlineWidth" : 5822.4,
+  "descender" : 494,
+  "exactOutlineBounds" : {
+    "height" : 1538,
+    "maxX" : 5760.32,
+    "maxY" : 24,
+    "minX" : 9,
+    "minY" : -1514,
+    "width" : 5751.32
+  },
+  "exactViewBox" : [
+    -11,
+    -1534,
+    5791.32,
+    1578
+  ],
+  "font" : "InterDisplay-Bold",
+  "fontVersion" : "Version 4.001;git-9221beed3",
+  "glyphs" : [
+    {
+      "advance" : 2029,
+      "char" : "W",
+      "glyphID" : 459,
+      "glyphName" : "W",
+      "x" : 0,
+      "xExact" : 0,
+      "xUntracked" : 0
+    },
+    {
+      "advance" : 1336,
+      "char" : "S",
+      "glyphID" : 397,
+      "glyphName" : "S",
+      "x" : 1947.08,
+      "xExact" : 1947.08,
+      "xUntracked" : 2029
+    },
+    {
+      "advance" : 1199,
+      "char" : "u",
+      "glyphID" : 915,
+      "glyphName" : "u",
+      "x" : 3201.16,
+      "xExact" : 3201.16,
+      "xUntracked" : 3365
+    },
+    {
+      "advance" : 805,
+      "char" : "r",
+      "glyphID" : 852,
+      "glyphName" : "r",
+      "x" : 4318.24,
+      "xExact" : 4318.24,
+      "xUntracked" : 4564
+    },
+    {
+      "advance" : 759,
+      "char" : "f",
+      "glyphID" : 647,
+      "glyphName" : "f",
+      "x" : 5145.32,
+      "xExact" : 5041.32,
+      "xUntracked" : 5369
+    }
+  ],
+  "outlineBounds" : {
+    "height" : 1538,
+    "maxX" : 5864.32,
+    "maxY" : 24,
+    "minX" : 9,
+    "minY" : -1514,
+    "width" : 5855.32
+  },
+  "padding" : 20,
+  "pairInkDistances" : {
+    "adjusted" : [
+      108.97,
+      92.08,
+      127.08,
+      109.08
+    ],
+    "exact" : [
+      108.97,
+      92.08,
+      127.08,
+      5.08
+    ],
+    "method" : "closest outline-to-outline distance, quads flattened at 64 steps",
+    "pairs" : [
+      "W-S",
+      "S-u",
+      "u-r",
+      "r-f"
+    ],
+    "target" : 108.97
+  },
+  "rf_adjust" : 104,
+  "rf_adjust_note" : "units added before f only (f moved right); wordmark-exact.svg is the unadjusted CoreText layout",
+  "text" : "WSurf",
+  "trackedGaps" : 4,
+  "trackingEm" : -0.04,
+  "trackingUnits" : -81.92,
+  "unitsPerEm" : 2048,
+  "viewBox" : [
+    -11,
+    -1534,
+    5895.32,
+    1578
+  ],
+  "viewBoxString" : "-11 -1534 5895.32 1578",
+  "xHeight" : 1056,
+  "xHeightTopY" : -1056
+}

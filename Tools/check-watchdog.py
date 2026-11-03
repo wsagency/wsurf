@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2026 wsagency
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: BUSL-1.1
 """Check the CI watchdog's timeout and privacy contract with its own throwaway child.
 
 On a timeout the watchdog must terminate its child with exit 124 and may inspect only that child. Fake `ps` and

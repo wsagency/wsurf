@@ -1,0 +1,291 @@
+<!doctype html>
+<!--
+  How to add a changelog entry
+  1. Add new changes at the top, under a new <article class="day"> for the merge date. Keep dates newest first.
+  2. Write one plain sentence or two per change, for people who use WSurf. No hype, no claims the code does not prove.
+  3. Link the pull request (or the commit, if there was none). Say so if a change is in the source only and not yet verified in a running app.
+  4. Keep CHANGELOG.md in the repository as the detailed record. This page is the short version.
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="What changed in WSurf, newest first. WSurf has no public signed release yet.">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; img-src 'self'; media-src 'self'; base-uri 'none'; form-action 'none'">
+  <meta name="color-scheme" content="light">
+  <meta name="theme-color" content="#F5F5F7">
+  <link rel="canonical" href="https://wsurf.app/changelog/">
+  <link rel="icon" href="/favicon.ico" sizes="16x16 32x32 48x48">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  <link rel="stylesheet" href="/style.css">
+  <title>Changelog — WSurf</title>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="site-header wrap">
+    <a class="brand" href="/" aria-label="WSurf home"><img src="/brand/lockup-light.svg" width="146" height="32" alt=""></a>
+    <nav class="site-nav" aria-label="Main navigation">
+      <a href="/#features">Features</a>
+      <a href="/changelog/" aria-current="page">Changelog</a>
+      <a href="/#build">Build</a>
+      <a href="https://github.com/wsagency/wsurf">GitHub <span aria-hidden="true">↗</span></a>
+    </nav>
+  </header>
+
+  <main id="main">
+    <section class="page-head wrap" aria-labelledby="changelog-title">
+      <p class="eyebrow">Merged into main</p>
+      <h1 id="changelog-title">Changelog</h1>
+      <p class="lede">What changed in WSurf, newest first.</p>
+      <p class="note"><strong>No public signed release yet.</strong> These entries describe changes merged into the source. Some are in the source only and not yet verified in a running app.</p>
+    </section>
+
+    <section class="section section-timeline wrap" aria-label="Changes by date">
+      <article class="day" aria-labelledby="d-2026-10-17">
+        <h2 id="d-2026-10-17"><time datetime="2026-10-17">17 October 2026</time></h2>
+        <ul class="day-items">
+          <li>
+            <div>
+              <p><strong>A new look for wsurf.app.</strong> The website now uses the Tandem identity, and the footer credits its maker.</p>
+            </div>
+            <p class="item-links"><a class="text-link" href="https://github.com/wsagency/wsurf/pull/28">Pull request #28 <span aria-hidden="true">↗</span></a> <a class="text-link" href="https://github.com/wsagency/wsurf/pull/29">Pull request #29 <span aria-hidden="true">↗</span></a></p>
+          </li>
+          <li>
+            <div>
+              <p><strong>Tandem brand kit.</strong> The Tandem mark replaces the earlier Flux draft, with a 3D mark, an animated loader, and a relief set. These are brand files in the repository.</p>
+            </div>
+            <p class="item-links"><a class="text-link" href="https://github.com/wsagency/wsurf/pull/26">Pull request #26 <span aria-hidden="true">↗</span></a> <a class="text-link" href="https://github.com/wsagency/wsurf/pull/27">Pull request #27 <span aria-hidden="true">↗</span></a></p>
+          </li>
+        </ul>
+      </article>
+
+      <article class="day" aria-labelledby="d-2026-10-16">
+        <h2 id="d-2026-10-16"><time datetime="2026-10-16">16 October 2026</time></h2>
+        <ul class="day-items">
+          <li>
+            <div>
+              <p><strong>Flux brand kit.</strong> A first brand design draft, with candidate art. Tandem replaced it the next day.</p>
+            </div>
+            <p class="item-links"><a class="text-link" href="https://github.com/wsagency/wsurf/pull/24">Pull request #24 <span aria-hidden="true">↗</span></a></p>
+          </li>
+        </ul>
+      </article>
+
+      <article class="day" aria-labelledby="d-2026-10-14">
+        <h2 id="d-2026-10-14"><time datetime="2026-10-14">14 October 2026</time></h2>
+        <ul class="day-items">
+          <li>
+            <div>
+              <p><strong>Several vaults per profile.</strong> The opt-in Credential Manager can keep up to 16 vaults for each profile. Each has its own passkey unlock and its own Trash, and you can restore earlier versions of a password.</p>
+              <p class="item-note">A vault saved by an older WSurf upgrades once, with a backup, and older builds cannot open it afterward. Automated tests pass. Not yet verified by hand on a Mac.</p>
+            </div>
+            <p class="item-links"><a class="text-link" href="https://github.com/wsagency/wsurf/pull/19">Pull request #19 <span aria-hidden="true">↗</span></a></p>
+          </li>
+          <li>
+            <div>
+              <p><strong>Import and export.</strong> Credential Settings has one Import &amp; Export section. Import a password CSV, or export logins to one.</p>
+              <p class="item-note">The exported file is not encrypted, and a CSV carries no passkeys or one-time codes. Only a component check of the CSV code has run, with no full build or test.</p>
+            </div>
+            <p class="item-links"><a class="text-link" href="https://github.com/wsagency/wsurf/pull/20">Pull request #20 <span aria-hidden="true">↗</span></a></p>
+          </li>
+          <li>
+            <div>
+              <p><strong>Profile settings and palette focus.</strong> A named profile no longer falls back to the original profile's settings. The command palette no longer takes keyboard focus back after you move it.</p>
+            </div>
+            <p class="item-links"><a class="text-link" href="https://github.com/wsagency/wsurf/pull/19">Pull request #19 <span aria-hidden="true">↗</span></a></p>
+          </li>
+        </ul>
+      </article>
+
+      <article class="day" aria-labelledby="d-2026-10-11">
+        <h2 id="d-2026-10-11"><time datetime="2026-10-11">11 October 2026</time></h2>
+        <ul class="day-items">
+          <li>
+            <div>
+              <p><strong>Opt-in Credential Manager.</strong> Passwords, passkeys, and one-time codes can live in an encrypted store for each profile, unlocked by a passkey. Passwords stays the default provider.</p>
+              <p class="item-note">In the source and not released. Native passkey unlock and Apple Passwords transfers are not yet verified.</p>
+            </div>
+            <p class="item-links"><a class="text-link" href="https://github.com/wsagency/wsurf/pull/14">Pull request #14 <span aria-hidden="true">↗</span></a></p>
+          </li>
+          <li>
+            <div>
+              <p><strong>Passkey entitlement removed.</strong> WSurf no longer requests Apple's managed browser passkey entitlement. Native passkeys are not guaranteed in legacy or private tabs.</p>
+            </div>
+            <p class="item-links"><a class="text-link" href="https://github.com/wsagency/wsurf/pull/17">Pull request #17 <span aria-hidden="true">↗</span></a></p>
+          </li>
+        </ul>
+      </article>
+
+      <article class="day" aria-labelledby="d-2026-10-10">
+        <h2 id="d-2026-10-10"><time datetime="2026-10-10">10 October 2026</time></h2>
+        <ul class="day-items">
+          <li>
+            <div>
+              <p><strong>Extension windows.</strong> A retired extension window is replaced with a fresh one instead of being reused.</p>
+            </div>
+            <p class="item-links"><a class="text-link" href="https://github.com/wsagency/wsurf/pull/15">Pull request #15 <span aria-hidden="true">↗</span></a></p>
+          </li>
+        </ul>
+      </article>
+
+      <article class="day" aria-labelledby="d-2026-10-09">
+        <h2 id="d-2026-10-09"><time datetime="2026-10-09">9 October 2026</time></h2>
+        <ul class="day-items">
+          <li>
+            <div>
+              <p><strong>Engine in the address bar.</strong> The address bar shows WK or Cr beside the lock for the engine that loaded the page: WebKit or Chromium.</p>
+            </div>
+            <p class="item-links"><a class="text-link" href="https://github.com/wsagency/wsurf/pull/11">Pull request #11 <span aria-hidden="true">↗</span></a></p>
+          </li>
+          <li>
+            <div>
+              <p><strong>Provider keys in Keychain.</strong> Provider, MCP, and OAuth credentials now use the classic macOS Keychain. Deleted credentials stay deleted.</p>
+            </div>
+            <p class="item-links"><a class="text-link" href="https://github.com/wsagency/wsurf/pull/10">Pull request #10 <span aria-hidden="true">↗</span></a></p>
+          </li>
+        </ul>
+      </article>
+
+      <article class="day" aria-labelledby="d-2026-10-08">
+        <h2 id="d-2026-10-08"><time datetime="2026-10-08">8 October 2026</time></h2>
+        <ul class="day-items">
+          <li>
+            <div>
+              <p><strong>Windows and profiles.</strong> Windows know their profile. Move a live tab between windows of the same profile on WebKit and Chromium. Each private window keeps its own session.</p>
+              <p class="item-note">3,016 native tests passed. Some manual checks remain.</p>
+            </div>
+            <p class="item-links"><a class="text-link" href="https://github.com/wsagency/wsurf/pull/8">Pull request #8 <span aria-hidden="true">↗</span></a></p>
+          </li>
+          <li>
+            <div>
+              <p><strong>Assistant limits and recovery.</strong> The assistant fills up to 32 fields in one step without submitting. After a provider rate limit it pauses, and you choose Continue without repeating finished actions.</p>
+            </div>
+            <p class="item-links"><a class="text-link" href="https://github.com/wsagency/wsurf/pull/8">Pull request #8 <span aria-hidden="true">↗</span></a></p>
+          </li>
+          <li>
+            <div>
+              <p><strong>Command palette and opening apps.</strong> Press Tab after a site name to search that site. WSurf remembers your approval to open an app from a website, for that website and app. Revoke it in Website Settings&nbsp;› Opening apps.</p>
+            </div>
+            <p class="item-links"><a class="text-link" href="https://github.com/wsagency/wsurf/pull/8">Pull request #8 <span aria-hidden="true">↗</span></a></p>
+          </li>
+          <li>
+            <div>
+              <p><strong>Smaller improvements.</strong> WebKit PDFs save through Downloads, saved scroll positions come back after late page resets, idle players stop polling, and Window and Dock titles stop at 40 characters. The full list of 31 changes from Linen is in CHANGELOG.md.</p>
+            </div>
+            <p class="item-links"><a class="text-link" href="https://github.com/wsagency/wsurf/pull/8">Pull request #8 <span aria-hidden="true">↗</span></a> <a class="text-link" href="https://github.com/wsagency/wsurf/pull/9">Pull request #9 <span aria-hidden="true">↗</span></a></p>
+          </li>
+        </ul>
+      </article>
+
+      <article class="day" aria-labelledby="d-2026-10-06">
+        <h2 id="d-2026-10-06"><time datetime="2026-10-06">6 October 2026</time></h2>
+        <ul class="day-items">
+          <li>
+            <div>
+              <p><strong>Embedded Chromium.</strong> Choose WebKit or embedded Chromium for each website in Website Settings&nbsp;› Browser Engine. Chromium starts only when needed. Extensions and native Picture in Picture stay WebKit-only.</p>
+            </div>
+            <p class="item-links"><a class="text-link" href="https://github.com/wsagency/wsurf/pull/4">Pull request #4 <span aria-hidden="true">↗</span></a></p>
+          </li>
+          <li>
+            <div>
+              <p><strong>Sidebar controls.</strong> X removes an unpinned tab and its link, and ⌘-click unloads it instead. A folder's arrow unloads everything inside it. Folders can be pinned on their own.</p>
+            </div>
+            <p class="item-links"><a class="text-link" href="https://github.com/wsagency/wsurf/pull/3">Pull request #3 <span aria-hidden="true">↗</span></a> <a class="text-link" href="https://github.com/wsagency/wsurf/pull/4">Pull request #4 <span aria-hidden="true">↗</span></a> <a class="text-link" href="https://github.com/wsagency/wsurf/pull/5">Pull request #5 <span aria-hidden="true">↗</span></a></p>
+          </li>
+          <li>
+            <div>
+              <p><strong>Favorites, Undo, and new folders.</strong> Favorites are an icon-only strip for each profile. Undo restores deleted folders and removed links. A new folder opens ready for its name.</p>
+            </div>
+            <p class="item-links"><a class="text-link" href="https://github.com/wsagency/wsurf/pull/5">Pull request #5 <span aria-hidden="true">↗</span></a></p>
+          </li>
+          <li>
+            <div>
+              <p><strong>Themes and sidebar look.</strong> Light Calm and Dark Calm join the themes. Customize a theme live, and set the sidebar font, size, weight, row spacing, and folder tint.</p>
+            </div>
+            <p class="item-links"><a class="text-link" href="https://github.com/wsagency/wsurf/pull/3">Pull request #3 <span aria-hidden="true">↗</span></a> <a class="text-link" href="https://github.com/wsagency/wsurf/pull/4">Pull request #4 <span aria-hidden="true">↗</span></a> <a class="text-link" href="https://github.com/wsagency/wsurf/pull/5">Pull request #5 <span aria-hidden="true">↗</span></a></p>
+          </li>
+          <li>
+            <div>
+              <p><strong>omp.sh.</strong> WSurf can set up omp.sh as an external assistant over MCP, with automatic CLI detection.</p>
+            </div>
+            <p class="item-links"><a class="text-link" href="https://github.com/wsagency/wsurf/pull/3">Pull request #3 <span aria-hidden="true">↗</span></a></p>
+          </li>
+          <li>
+            <div>
+              <p><strong>Housekeeping.</strong> The website deploys after CI passes on main, CI formatting is fixed, and session worktrees are configured.</p>
+            </div>
+            <p class="item-links"><a class="text-link" href="https://github.com/wsagency/wsurf/pull/2">Pull request #2 <span aria-hidden="true">↗</span></a> <a class="text-link" href="https://github.com/wsagency/wsurf/pull/6">Pull request #6 <span aria-hidden="true">↗</span></a> <a class="text-link" href="https://github.com/wsagency/wsurf/pull/7">Pull request #7 <span aria-hidden="true">↗</span></a></p>
+          </li>
+        </ul>
+      </article>
+
+      <article class="day" aria-labelledby="d-2026-10-05">
+        <h2 id="d-2026-10-05"><time datetime="2026-10-05">5 October 2026</time></h2>
+        <ul class="day-items">
+          <li>
+            <div>
+              <p><strong>Move to Folder follows the sidebar.</strong> The menu nests like your folders instead of listing every folder at the first level.</p>
+            </div>
+            <p class="item-links"><a class="text-link" href="https://github.com/wsagency/wsurf/commit/fd0edca">Commit fd0edca <span aria-hidden="true">↗</span></a></p>
+          </li>
+          <li>
+            <div>
+              <p><strong>Downloads.</strong> A repeated or late handoff of the same download no longer creates a duplicate transfer.</p>
+            </div>
+            <p class="item-links"><a class="text-link" href="https://github.com/wsagency/wsurf/commit/e6362ec">Commit e6362ec <span aria-hidden="true">↗</span></a></p>
+          </li>
+          <li>
+            <div>
+              <p><strong>First website.</strong> The first version of the wsurf.app website, with a domain association file for the app.</p>
+            </div>
+            <p class="item-links"><a class="text-link" href="https://github.com/wsagency/wsurf/commit/7591eb4">Commit 7591eb4 <span aria-hidden="true">↗</span></a></p>
+          </li>
+          <li>
+            <div>
+              <p><strong>Working rules.</strong> Changes to main now go through feature worktrees and pull requests.</p>
+            </div>
+            <p class="item-links"><a class="text-link" href="https://github.com/wsagency/wsurf/pull/1">Pull request #1 <span aria-hidden="true">↗</span></a></p>
+          </li>
+        </ul>
+      </article>
+
+      <article class="day" aria-labelledby="d-2026-10-04">
+        <h2 id="d-2026-10-04"><time datetime="2026-10-04">4 October 2026</time></h2>
+        <ul class="day-items">
+          <li>
+            <div>
+              <p><strong>WSurf starts as a fork of Linen.</strong> It has its own name, app identity, data folder, and artwork, and keeps the Apache 2.0 license and credits.</p>
+            </div>
+            <p class="item-links"><a class="text-link" href="https://github.com/wsagency/wsurf/commit/c4c4055">Commit c4c4055 <span aria-hidden="true">↗</span></a></p>
+          </li>
+        </ul>
+      </article>
+
+      <div class="day day-plain">
+        <h2>Before WSurf</h2>
+        <div>
+          <p>WSurf began as a fork of <a href="https://github.com/kavoye/linen-browser">Linen by Kavoye</a>. Linen's inherited release notes are in <a href="https://github.com/wsagency/wsurf/blob/main/CHANGELOG.md">CHANGELOG.md</a> on GitHub. They describe Linen releases, not WSurf releases.</p>
+          <p>CHANGELOG.md also keeps the detailed WSurf notes.</p>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer wrap">
+    <div class="footer-brand">
+      <a class="brand" href="/" aria-label="WSurf home"><img src="/brand/lockup-light.svg" width="109" height="24" alt=""></a>
+      <p>We love open source. Made by <a href="https://lukacin.com">Kristijan Lukacin</a> @ <a href="https://ws.agency">ws.agency</a></p>
+    </div>
+    <div class="footer-legal">
+      <nav aria-label="Project links">
+        <a href="https://github.com/wsagency/wsurf/blob/main/LICENSE">License</a>
+        <a href="https://github.com/wsagency/wsurf/blob/main/NOTICE">Attributions</a>
+        <a href="/changelog/" aria-current="page">Changelog</a>
+        <a href="https://github.com/wsagency/wsurf/blob/main/CONTRIBUTING.md">Contribute</a>
+      </nav>
+      <p>An independent fork of <a href="https://github.com/kavoye/linen-browser">Linen by Kavoye</a>.</p>
+    </div>
+  </footer>
+</body>
+</html>

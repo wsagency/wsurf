@@ -12,7 +12,7 @@ Use GitHub’s private vulnerability reporting on this repository
 Do not open a public issue for an exploitable vulnerability.
 
 You get an acknowledgment in one week or less. There is no bounty program,
-because this is a small open-source project. The release notes give credit to
+because this is a small source-available project. The release notes give credit to
 each person who reports a defect. If you do not want this credit, say so in
 your report.
 

@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Kavoye
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: Apache-2.0 AND BUSL-1.1
 // Modified for WSurf by wsagency in 2026; based on Linen by Kavoye.
+// Linen portions: Apache-2.0; WSurf modifications: BUSL-1.1. See NOTICE.
 
 import Foundation
 import Testing
@@ -97,16 +98,14 @@ struct NativeMessagingTests {
         defer { try? FileManager.default.removeItem(at: directory) }
 
         let host = directory.appendingPathComponent("echo-host")
-        let script = """
-        #!/usr/bin/env python3
-        import sys, struct
-        header = sys.stdin.buffer.read(4)
-        length = struct.unpack('<I', header)[0]
-        body = sys.stdin.buffer.read(length)
-        out = b'{"echo":true}'
-        sys.stdout.buffer.write(struct.pack('<I', len(out)) + out)
-        sys.stdout.buffer.flush()
-        """
+        // Base-system tools only: /usr/bin/python3 is an xcrun shim that a host
+        // launched from the test app cannot rely on (exit 72 on CI images).
+        let script = #"""
+        #!/bin/sh
+        length=$(( $(dd bs=1 count=4 2>/dev/null | od -An -tu4) ))
+        dd bs=1 count=$length of=/dev/null 2>/dev/null
+        printf '\015\000\000\000{"echo":true}'
+        """#
         try script.write(to: host, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: host.path)
 
@@ -301,32 +300,26 @@ struct NativeMessagingTests {
         defer { try? FileManager.default.removeItem(at: directory) }
 
         let log = directory.appendingPathComponent("messages.log")
-        let pythonPath = log.path
-            .replacingOccurrences(of: "\\", with: "\\\\")
-            .replacingOccurrences(of: "'", with: "\\'")
-        let host = directory.appendingPathComponent("host.py")
-        try """
-        #!/usr/bin/python3
-        import json
-        import struct
-        import sys
-
-        log = '\(pythonPath)'
-        while True:
-            header = sys.stdin.buffer.read(4)
-            if len(header) != 4:
-                break
-            length = struct.unpack('<I', header)[0]
-            payload = sys.stdin.buffer.read(length)
-            if len(payload) != length:
-                break
-            message = json.loads(payload)
-            with open(log, 'a', encoding='utf-8') as output:
-                output.write(sys.argv[1] + ':' + message['marker'] + ':' + message['phase'] + '\\n')
-            response = json.dumps(message).encode()
-            sys.stdout.buffer.write(struct.pack('<I', len(response)) + response)
-            sys.stdout.buffer.flush()
-        """.write(to: host, atomically: true, encoding: .utf8)
+        let shellPath = log.path.replacingOccurrences(of: "'", with: #"'\''"#)
+        let host = directory.appendingPathComponent("host.sh")
+        // Base-system tools only (see aHostRepliesToWhatTheBridgeSends). Logs
+        // origin:marker:phase per message and echoes the frame back unchanged.
+        try #"""
+        #!/bin/sh
+        log='\#(shellPath)'
+        frame="$log.$$"
+        while :; do
+            dd bs=1 count=4 of="$frame.header" 2>/dev/null
+            [ $(wc -c < "$frame.header") -eq 4 ] || break
+            length=$(( $(od -An -tu4 "$frame.header") ))
+            dd bs=1 count=$length of="$frame.body" 2>/dev/null
+            [ $(wc -c < "$frame.body") -eq $length ] || break
+            marker=$(sed -n 's/.*"marker":"\([^"]*\)".*/\1/p' "$frame.body")
+            phase=$(sed -n 's/.*"phase":"\([^"]*\)".*/\1/p' "$frame.body")
+            printf '%s:%s:%s\n' "$1" "$marker" "$phase" >> "$log"
+            cat "$frame.header" "$frame.body"
+        done
+        """#.write(to: host, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: host.path)
 
         let contextID = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
