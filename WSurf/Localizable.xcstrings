@@ -5806,7 +5806,7 @@
 
     },
     "Sign in to %@" : {
-      "comment" : "Title of the dialog a website shows when it asks for a username and password. %@ is the website’s hostname, for example example.com."
+      "comment" : "Title of the dialog a website shows when it asks for a username and password. %@ is the address that asks, such as https://example.com or https://example.com:8443, or a proxy’s host and port."
     },
     "Sign in to this MCP connection in OpenAI settings." : {
 
@@ -6515,8 +6515,8 @@
     "This server did not provide valid OAuth discovery information. Enter the connection details manually." : {
 
     },
-    "This website is asking for a username and password for “%@”." : {
-      "comment" : "Message inside the dialog a website shows when it asks for HTTP authentication. %@ is the realm name the server itself supplied, which is not translated and may be cut off after 80 characters with an ellipsis. Curly quotation marks."
+    "The website’s message: “%@”" : {
+      "comment" : "Second line of the dialog a website shows when it asks for HTTP authentication, under the sentence saying the website wants a username and password. %@ is the realm name the server itself supplied, which is not translated and may be cut off after 80 characters with an ellipsis. It must read as the website’s own words, not WSurf’s. Curly apostrophe and quotation marks."
     },
     "This website is asking for a username and password." : {
       "comment" : "Message inside the dialog a website shows when it asks for HTTP authentication, used when the server supplied no realm name."
