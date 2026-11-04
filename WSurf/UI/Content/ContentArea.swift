@@ -163,7 +163,9 @@ private struct KeptAliveTabs: View {
 
     var body: some View {
         let kept = browser.tabs.filter { tab in
-            tab.isMaterialised
+            // `isMaterialised` is not observed (`liveView` is `@ObservationIgnored`); `isDeferred` is, and turns true when the
+            // tab is unloaded, so the shelf drops the closed page instead of holding it until something else redraws.
+            tab.isMaterialised && !tab.isDeferred
                 && tab.id != browser.activeTab?.id
                 && !browser.isVisibleInSplit(tab)
                 && tab.internalPage == nil

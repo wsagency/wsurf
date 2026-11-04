@@ -153,7 +153,8 @@ final class AppCoordinator {
     let attention = AgentAttention()
     #endif
     let memoryPressure = MemoryPressureMonitor()
-    let sleepTimer = TabSleepTimer()
+    /// Settable so a test can drive the idle sweep with its own clock.
+    @ObservationIgnored var sleepTimer = TabSleepTimer()
     private var host: BrowserHost?
     var mainMenu: MainMenu?
 
