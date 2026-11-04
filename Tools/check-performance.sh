@@ -507,10 +507,12 @@ check_average \
   '4096' \
   'Theme color lookup memory growth' \
   'kB'
+# Six-sample Pro baseline (0.1.22 gate): 0.009934 s for 80 switches. 0.015 was set for 70 switches and kept when the eighth
+# theme came; the hosted runner then measured 0.016211 (run 41751273289). Twice the Pro baseline, as for the budgets here.
 check_average \
   'BrowserPerformanceTests/testSwitchingThemes()' \
   'com.apple.dt.XCTMetric_Clock.time.monotonic' \
-  '0.015' \
+  '0.020' \
   'Eighty theme switches' \
   's'
 check_average \
