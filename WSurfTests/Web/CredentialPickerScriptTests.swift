@@ -395,9 +395,12 @@ struct CredentialPickerScriptTests {
 
     /// From its keydown on, the password field heard the whole sequence once, with the value in place from `input` on, and every
     /// event the fill made itself untrusted. A focus or blur may be the engine's own (trusted) or, on a page without focus, the
-    /// script's.
+    /// script's. The fill ends by focusing the chosen field again; a trusted blur and focus after that are the view's focus state
+    /// catching up (as on a hosted runner, run 41792997943), not the fill, so the check ends at that focus.
     private func expectTyped(_ log: [String], length: Int) {
-        let typing = log.drop { !$0.hasPrefix("keydown") }.filter { !$0.hasPrefix("focus") }
+        let heard = Array(log.drop { !$0.hasPrefix("keydown") })
+        let refocus = heard.firstIndex { $0.hasPrefix("blur") }.flatMap { blur in heard[blur...].firstIndex { $0.hasPrefix("focus") } }
+        let typing = heard[..<(refocus ?? heard.endIndex)].filter { !$0.hasPrefix("focus") }
         #expect(typing.map { String($0.prefix { $0 != "!" && $0 != "=" }) } == ["keydown", "beforeinput", "input", "keyup", "change", "blur"],
                 "\(log)")
         #expect(typing.prefix(5) == ["keydown=0", "beforeinput=0", "input=\(length)", "keyup=\(length)", "change=\(length)"],
