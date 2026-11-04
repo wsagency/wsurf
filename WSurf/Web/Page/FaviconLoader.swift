@@ -106,6 +106,47 @@ final class FaviconLoader {
         return nil
     }
 
+    /// `cached(for:)` with the disk read and decode off the main actor, for launch, which asks for one icon per restored tab.
+    func cachedOffMain(for host: String) async -> NSImage? {
+        let key = key(host)
+        if let image = sessionOnly[key] ?? cache[key] {
+            return image
+        }
+        guard !isMissing(key), !notOnDisk.contains(key) else { return nil }
+
+        let files = [false, true].map { cacheFile(for: key, isGuess: $0) }
+        let generation = cacheGeneration
+        let found = await Task.detached(priority: .utility) { Self.readIcon(at: files) }.value
+        // A clear, or a store of the same icon, may have happened while the file was read.
+        if let image = sessionOnly[key] ?? cache[key] {
+            return image
+        }
+        guard generation == cacheGeneration else { return nil }
+        guard let found else {
+            notOnDisk.insert(key)
+            return nil
+        }
+        cache[key] = found.image
+        if found.isGuess {
+            guessed.insert(key)
+        }
+        return found.image
+    }
+
+    private struct DiskIcon: @unchecked Sendable {
+        let image: NSImage
+        let isGuess: Bool
+    }
+
+    /// The first of `files` (the declared icon, then the guessed one) that holds a valid image.
+    nonisolated private static func readIcon(at files: [URL]) -> DiskIcon? {
+        for (index, file) in files.enumerated() {
+            guard let data = try? Data(contentsOf: file), let image = NSImage(data: data), image.isValid else { continue }
+            return DiskIcon(image: image, isGuess: index == 1)
+        }
+        return nil
+    }
+
     func isGuessedIcon(for host: String) -> Bool {
         guessed.contains(key(host))
     }
@@ -139,7 +180,7 @@ final class FaviconLoader {
 
     func load(forPageURL pageURL: URL) async -> NSImage? {
         guard let url = Self.fallbackURL(for: pageURL), let host = url.host()?.lowercased() else { return nil }
-        if let hit = cached(for: host) {
+        if let hit = await cachedOffMain(for: host) {
             return hit
         }
         let key = key(host)

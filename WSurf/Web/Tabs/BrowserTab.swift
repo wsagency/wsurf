@@ -601,12 +601,27 @@ final class BrowserTab: Identifiable {
         processState.reclaimState
     }
 
-    private var deferredState: Data?
+    private var loadedDeferredState: Data?
+    /// Reads the saved state the first time it is needed, so a restored background tab does not carry it from launch.
+    private var deferredStateLoader: (@MainActor () -> Data?)?
+    private var deferredState: Data? {
+        if let load = deferredStateLoader {
+            deferredStateLoader = nil
+            loadedDeferredState = load()
+        }
+        return loadedDeferredState
+    }
     private var deferredURL: URL?
+
+    func deferRestore(url: URL, loadState: @escaping @MainActor () -> Data?) {
+        deferredStateLoader = loadState
+        deferredURL = url
+        isDeferred = true
+    }
 
     func deferRestore(state: Data?, url: URL?) {
         guard state != nil || url != nil else { return }
-        deferredState = state
+        loadedDeferredState = state
         deferredURL = url
         isDeferred = true
     }
@@ -679,7 +694,8 @@ final class BrowserTab: Identifiable {
 
     private func clearDeferredSession() {
         isDeferred = false
-        deferredState = nil
+        loadedDeferredState = nil
+        deferredStateLoader = nil
         deferredURL = nil
     }
 
