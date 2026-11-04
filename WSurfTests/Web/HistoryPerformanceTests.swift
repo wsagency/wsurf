@@ -153,6 +153,40 @@ nonisolated final class HistoryPerformanceTests: XCTestCase, @unchecked Sendable
         }
     }
 
+    /// The same typing as above with the app's store, which reads the full-text index off the main thread. What a keystroke costs the
+    /// main thread is the lookup in the cache and the start of a read, not the read: it was 2 ms a query. The rows of a query arrive
+    /// after the keystroke, so this case counts the main thread's time and the reads started, one for each query however often the
+    /// rows are read.
+    func testTypingAWordWithTheSearchInTheBackgroundOverFiftyThousandPages() throws {
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        MainActor.assumeIsolated {
+            let (sync, database) = makeSearchedStore(in: directory)
+            _ = sync
+            let store = HistoryStore(database: database, searchesInBackground: true)
+            _ = store.entries
+            let coordinator = AppCoordinator(browser: BrowserModel(database: .temporary(), history: store))
+            defer { coordinator.browser.cancelPendingSave() }
+            let model = AskSurfaceModel(placement: .startPage, browser: coordinator.browser, coordinator: coordinator)
+            model.fieldFocusDidChange(true)
+            let word = Array("githubwiki")
+            Omnibox.$agentOnlyForTesting.withValue(true) {
+                measure(metrics: [XCTClockMetric(), XCTMemoryMetric()], options: .budgeted) {
+                    for length in 3...word.count {
+                        model.interaction.text = String(word.prefix(length))
+                        for _ in 0..<3 {
+                            _ = model.sections.flattened.count
+                        }
+                    }
+                }
+            }
+
+            XCTAssertLessThanOrEqual(store.backgroundSearchCount, word.count - 2, "one read for each query")
+            try? database.writer.close()
+        }
+    }
+
     /// Opening a profile's database that already holds 50,000 pages, once for each profile at launch. Every open used to
     /// define the schema again, and defining the full-text index rebuilds it from the pages.
     func testOpeningAProfileDatabaseOfFiftyThousandPages() throws {

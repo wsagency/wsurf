@@ -949,3 +949,21 @@ check_average \
   '4096' \
   'Address field query memory growth' \
   'kB'
+
+# The same typing with the app's store, which reads the full-text index off the main thread (2026-11-04, Pro, Debug), seconds: the
+# main thread's share of the eight queries of three to ten letters, each read three times. The read, 2.0 ms a query, is no longer on it.
+# case                                           before (above)   after          budget
+# eight 3-10 letter queries, main thread only    0.017            0.0037-0.0042  0.008
+# Memory growth is zero at this size, so the memory budget is the usual 4096 kB.
+check_average \
+  'HistoryPerformanceTests/testTypingAWordWithTheSearchInTheBackgroundOverFiftyThousandPages()' \
+  'com.apple.dt.XCTMetric_Clock.time.monotonic' \
+  '0.008' \
+  'Eight address field queries over 50,000 pages, search in the background' \
+  's'
+check_average \
+  'HistoryPerformanceTests/testTypingAWordWithTheSearchInTheBackgroundOverFiftyThousandPages()' \
+  'com.apple.dt.XCTMetric_Memory.physical' \
+  '4096' \
+  'Background address field query memory growth' \
+  'kB'
