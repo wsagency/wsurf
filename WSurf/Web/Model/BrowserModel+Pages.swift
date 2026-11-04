@@ -63,6 +63,12 @@ extension BrowserModel {
     @discardableResult
     func sleepIdleTabs(after limit: Duration, now: ContinuousClock.Instant = .now) -> Int {
         stampForeground(at: now)
+        // A tab kept loaded (playing, downloading, held by the assistant, a favorite...) is not idle: its idle time starts when
+        // that ends, so it gets the whole limit after it, not just the time to the next tick.
+        // ponytail: seen per tick, so idle time starts up to one tick interval (at most 60 s) early.
+        for tab in tabs where tab.isFavorite || protectionReason(for: tab) != nil {
+            tab.lastForegroundAt = now
+        }
         let discarded = discardBackgroundTabs(idleSince: now - limit)
         guard discarded > 0 else { return 0 }
         Pipeline.log.notice("idle sweep: unloaded \(discarded, privacy: .public) background tabs")

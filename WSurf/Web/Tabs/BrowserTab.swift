@@ -415,7 +415,7 @@ final class BrowserTab: Identifiable {
             isPrivate: isPrivate,
             isExtensionPage: extensionBaseURL != nil,
             hasDeviceAccess: !permissions.live.isEmpty,
-            hasMediaPlayback: isControlledByMediaDock || isPlayingAudio
+            hasMediaPlayback: isControlledByMediaDock || isPlayingAudio || isPictureOut
         )
     }
 
