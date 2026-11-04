@@ -89,6 +89,23 @@ struct EngineRoutingTests {
         #expect(browser.engine(for: a) == .webKit)
     }
 
+    @Test func backAcrossEnginesDoesNotAskToSwitch() async throws {
+        let site = "https://back-\(UUID().uuidString.prefix(8).lowercased()).example"
+        let (browser, a, _) = try browserWithTwoTabs(site: site)
+        #expect(await browser.setEngine(.chromium, for: a))
+        let elsewhere = try #require(URL(string: "https://other-\(UUID().uuidString.prefix(8).lowercased()).example/"))
+        a.load(elsewhere)
+        _ = await a.waitForPendingNavigation()
+        #expect(browser.engine(for: a) == .webKit)
+        // Nothing commits in a test, so name the page the load left, as a committed one would be.
+        a.pageBeforeEngineSwitch = (url: try #require(URL(string: site)), state: nil)
+        // A prompt would block on a modal alert here; Back must go straight to the page it left.
+        a.isPlayingAudio = true
+        a.goBack()
+        _ = await a.waitForPendingNavigation()
+        #expect(browser.engine(for: a) == .chromium)
+    }
+
     @Test func aComparisonTabSwitchesOnlyItself() async throws {
         let site = "https://compare-\(UUID().uuidString.prefix(8).lowercased()).example"
         let (browser, origin, comparison) = try browserWithTwoTabs(site: site)
