@@ -284,6 +284,7 @@
    "MicroShellTests",
    "MicroWindowTests",
    "PDFSavingTests",
+   "SidebarListHeightTests",
    "TabSleepScheduleTests",
    "TabSwitchWorkTests"
   ],
