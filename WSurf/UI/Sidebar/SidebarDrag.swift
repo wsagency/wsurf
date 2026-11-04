@@ -390,14 +390,18 @@ struct SidebarRows: View {
     /// The row that the pin line's seam follows.
     var seamAfter: SidebarItem?
 
-    /// Rows that exist: a missing one or the hidden pane of a split takes no room, not even a gap.
     private var shown: [SidebarItem] {
+        Self.shown(items, in: context.browser)
+    }
+
+    /// Rows that exist: a missing one or the hidden pane of a split takes no room, not even a gap.
+    static func shown(_ items: [SidebarItem], in browser: BrowserModel) -> [SidebarItem] {
         items.filter { item in
             switch item {
             case .folder(let id):
-                context.browser.folder(id: id) != nil
+                browser.folder(id: id) != nil
             case .tab(let id):
-                context.browser.tab(id: id) != nil && !context.browser.splits.isFollower(id)
+                browser.tab(id: id) != nil && !browser.splits.isFollower(id)
             }
         }
     }

@@ -131,6 +131,27 @@ struct WorkspaceList<TopBar: View, BottomBar: View>: View {
         )
     }
 
+    /// How tall the rows are when every one is a plain tab row, worked out from the model; nil when there is a folder, a
+    /// split or the pin line.
+    ///
+    /// A lazy stack guesses the height of the rows it has not built from the ones it has, and that guess could change with
+    /// every layout pass; each change resized the scroll view's document, which laid the stack out again. In the first
+    /// window of a launch with a few hundred tabs that never settled, at 115-145 ms of main-thread CPU per 400 ms at rest.
+    /// With a height the stack does not guess, a pass has nothing to change. Rows of one height (and no room among them)
+    /// are also the only ones the stack places exactly: with folders or splits it places a row it jumps to (a reveal far
+    /// down) by its guess, which can lie below a fixed height and out of reach, so such a list keeps the stack's own.
+    private func uniformHeight(of sections: (kept: [SidebarItem], loose: [SidebarItem]), spacing: CGFloat) -> CGFloat? {
+        guard sections.kept.isEmpty else { return nil }
+        let rows = SidebarRows.shown(sections.loose, in: browser)
+        let plain = rows.allSatisfy { item in
+            guard case .tab(let id) = item else { return false }
+            return browser.splits.splitLed(by: id) == nil
+        }
+        guard plain else { return nil }
+        return CGFloat(rows.count) * SidebarMetrics.rowHeight(settings: BrowserSettings.application)
+            + spacing * CGFloat(max(rows.count - 1, 0))
+    }
+
     /// The rows and the room under them. A lazy stack builds the rows near the window; a plain one builds them all.
     @ViewBuilder
     private func rowStack(_ sections: (kept: [SidebarItem], loose: [SidebarItem])) -> some View {
@@ -148,7 +169,16 @@ struct WorkspaceList<TopBar: View, BottomBar: View>: View {
             .contextMenu { emptySpaceMenu }
             .animation(Theme.Motion.drift, value: bottomClearance)
         Group {
-            if loadsLazily {
+            if loadsLazily, let height = uniformHeight(of: sections, spacing: spacing) {
+                // The room stays out of this stack, so every item in it is a row of one height.
+                VStack(spacing: spacing) {
+                    LazyVStack(spacing: spacing) {
+                        rows
+                    }
+                    .frame(height: height, alignment: .top)
+                    room
+                }
+            } else if loadsLazily {
                 LazyVStack(spacing: spacing) {
                     rows
                     room
