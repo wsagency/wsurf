@@ -493,6 +493,7 @@
    "ThemeResolutionTests",
    "ThemeSpacingTests",
    "ThemeToolbarInkTests",
+   "TitlebarPageClickTests",
    "ToolbarChipTests",
    "ToolbarSpeakerTests",
    "UpdateSurfaceTests",
