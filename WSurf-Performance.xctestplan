@@ -39,6 +39,7 @@
         "HistoryPerformanceTests",
         "LaunchPerformanceTests",
         "ListPerformanceTests",
+        "PageScriptPerformanceTests",
         "PageWatchPerformanceTests",
         "ReaderPerformanceTests",
         "SidebarPerformanceTests",
