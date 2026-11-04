@@ -77,6 +77,18 @@ struct EngineRoutingTests {
         #expect(b.preferredEngine(for: inSite) == .chromium)
     }
 
+    @Test func aNewAddressInAnotherEngineDoesNotAskToSwitch() async throws {
+        let site = "https://typed-\(UUID().uuidString.prefix(8).lowercased()).example"
+        let (browser, a, _) = try browserWithTwoTabs(site: site)
+        #expect(await browser.setEngine(.chromium, for: a))
+        // A prompt would block on a modal alert here; the load must go straight through.
+        a.isPlayingAudio = true
+        let elsewhere = try #require(URL(string: "https://other-\(UUID().uuidString.prefix(8).lowercased()).example/search?q=x"))
+        a.load(elsewhere)
+        _ = await a.waitForPendingNavigation()
+        #expect(browser.engine(for: a) == .webKit)
+    }
+
     @Test func aComparisonTabSwitchesOnlyItself() async throws {
         let site = "https://compare-\(UUID().uuidString.prefix(8).lowercased()).example"
         let (browser, origin, comparison) = try browserWithTwoTabs(site: site)

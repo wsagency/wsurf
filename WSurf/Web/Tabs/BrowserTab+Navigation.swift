@@ -68,7 +68,6 @@ extension BrowserTab {
         pendingNavigationTask?.cancel()
         pendingTransition = transition
         let desired = preferredEngine(for: url)
-        let previous = urlString
         urlString = url.absoluteString
         if liveView.map({ $0.engine != desired }) == true || retirement != nil || engineSwitchTask != nil {
             lastRequestedNavigation = nil
@@ -76,12 +75,7 @@ extension BrowserTab {
                 .map { (url: $0, state: page.interactionState as? Data) }
             pendingNavigationTask = Task { [weak self] in
                 guard let self else { return nil }
-                if liveView.map({ $0.engine != desired }) == true, await !confirmsEngineSwitch() {
-                    if !Task.isCancelled {
-                        urlString = previous
-                    }
-                    return nil
-                }
+                // A new address ends this page's work anyway, so unlike a same-page engine switch it is not confirmed.
                 guard !Task.isCancelled, await replaceEngine(with: desired), !Task.isCancelled else { return nil }
                 if let left {
                     pageBeforeEngineSwitch = left
