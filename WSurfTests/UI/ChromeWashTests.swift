@@ -126,7 +126,9 @@ struct ChromeWashTests {
                 .appending(path: path)
             let text = try String(contentsOf: url, encoding: .utf8)
             let lightness = text.components(separatedBy: "environment(\\.chromeIsLight").count - 1
+            // `sidebarWash(_:)` sets `chromeWash` too (SidebarGroundProvider).
             let wash = text.components(separatedBy: "environment(\\.chromeWash").count - 1
+                + text.components(separatedBy: ".sidebarWash(").count - 1
             #expect(lightness == wash, "\(path) publishes \(lightness) and \(wash)")
         }
     }
