@@ -107,8 +107,60 @@ private final class TestAgentRunner: AgentRunner {
     ) async {}
 }
 
+nonisolated private final class CountingCredentialStore: ProviderCredentialStore, @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+    var reads: Int {
+        lock.withLock { count }
+    }
+    private func read() {
+        lock.withLock { count += 1 }
+    }
+    func key(for provider: Provider) -> String? {
+        read()
+        return nil
+    }
+    func isConfigured(_ provider: Provider) -> Bool {
+        read()
+        return true
+    }
+    func source(for provider: Provider) -> CredentialStore.Source {
+        read()
+        return .none
+    }
+    func masked(for provider: Provider) -> String? {
+        read()
+        return nil
+    }
+    func save(_ key: String, for provider: Provider) -> String? {
+        nil
+    }
+    func delete(for provider: Provider) -> String? {
+        nil
+    }
+}
+
 @MainActor
 struct ModelProviderArchitectureTests {
+    @Test func creatingTheViewModelReadsNoCredentialsUntilSettingsAppear() async {
+        let provider = ProviderCatalog.openAI
+        let credentials = CountingCredentialStore()
+        let registry = ModelProviderRegistry(credentials: credentials, factories: [provider.id: { configuration in
+            TestModelProvider(configuration: configuration, capabilities: [.toolCalling], availability: .available, models: [])
+        }, ])
+        let model = IntelligenceViewModel(
+            settings: LLMSettings(defaults: UserDefaults(suiteName: AppDatabase.defaultsSuite(UUID().uuidString))!),
+            actionPolicy: AgentActionPolicy(storage: SessionAgentGrantStorage()),
+            catalog: TestProviderCatalog(providers: [provider], selectedID: provider.id),
+            credentials: credentials,
+            modelProviders: registry,
+            onConfigurationChanged: {}
+        )
+        #expect(credentials.reads == 0)
+        await model.onAppear()
+        #expect(credentials.reads > 0)
+    }
+
     @Test func credentialChangesRefreshPanelsEvenWhenMaskedKeysAreIdentical() {
         let model = credentialModel()
         let revision = model.credentialRevision

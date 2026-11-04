@@ -76,7 +76,8 @@ final class IntelligenceViewModel {
         self.onConfigurationChanged = onConfigurationChanged
         self.onVoiceConfigurationChanged = onVoiceConfigurationChanged
         selectedID = self.catalog.selected.id
-        adoptSubject()
+        // Keychain reads wait for `onAppear`: opening a window must not touch the Keychain.
+        adoptSubject(readsCredentials: false)
     }
 
     // MARK: - Providers
@@ -375,7 +376,7 @@ final class IntelligenceViewModel {
         }
     }
 
-    private func adoptSubject() {
+    private func adoptSubject(readsCredentials: Bool = true) {
         credentialRevision += 1
         let provider = subject
         selectedModel = settings.model(for: provider)
@@ -384,9 +385,11 @@ final class IntelligenceViewModel {
         isEditingCustomModel = false
         keyDraft = ""
         keyError = nil
-        keySource = credentials.source(for: provider)
-        maskedKey = credentials.masked(for: provider)
-        refreshProviderAvailability()
+        if readsCredentials {
+            keySource = credentials.source(for: provider)
+            maskedKey = credentials.masked(for: provider)
+            refreshProviderAvailability()
+        }
         availableModels = []
         catalogError = nil
         refreshTools()
