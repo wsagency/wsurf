@@ -18,8 +18,12 @@ final class SettingsWorkspace {
 
     @ObservationIgnored private var highlightTask: Task<Void, Never>?
 
+    /// How many workspaces this process has made; a test holds a tab switch to making none.
+    private(set) static var madeCount = 0
+
     init(coordinator: AppCoordinator) {
         intelligence = Self.makeIntelligence(coordinator: coordinator)
+        Self.madeCount += 1
     }
 
     func adoptProfile(coordinator: AppCoordinator) {
@@ -75,6 +79,26 @@ final class SettingsWorkspace {
         guard self.category != category else { return }
         self.category = category
         query = ""
+    }
+}
+
+/// A window view's workspace, made the first time the view's body asks for it. `State(initialValue:)` is evaluated whenever the
+/// view's parent re-runs and its result thrown away after the first, and a workspace reads the Keychain (the assistant's provider
+/// availability), so a view that made one in `init` paid that on every re-run of its parent.
+@MainActor
+final class LazySettingsWorkspace {
+    private var made: SettingsWorkspace?
+
+    func workspace(for coordinator: AppCoordinator) -> SettingsWorkspace {
+        if let made {
+            return made
+        }
+        let workspace = SettingsWorkspace(coordinator: coordinator)
+        workspace.onRoute = { [weak coordinator] category in
+            coordinator?.routeSettings(to: category)
+        }
+        made = workspace
+        return workspace
     }
 }
 

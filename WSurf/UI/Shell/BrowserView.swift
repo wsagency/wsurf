@@ -10,7 +10,7 @@ struct BrowserView: View {
     let browser: BrowserModel
     let coordinator: AppCoordinator
 
-    @State private var settingsWorkspace: SettingsWorkspace
+    @State private var lazySettingsWorkspace = LazySettingsWorkspace()
     /// The window style to draw; nil follows the app-wide setting. Tests pass one so they never write the setting.
     private let style: BrowserWindowStyle?
     /// Whether the Minimal tab list is kept open; nil follows the app-wide setting. Tests pass one for the same reason.
@@ -26,11 +26,10 @@ struct BrowserView: View {
         self.coordinator = coordinator
         self.style = style
         self.keepsSidebarOpen = keepsSidebarOpen
-        let workspace = SettingsWorkspace(coordinator: coordinator)
-        workspace.onRoute = { [weak coordinator] category in
-            coordinator?.routeSettings(to: category)
-        }
-        _settingsWorkspace = State(initialValue: workspace)
+    }
+
+    private var settingsWorkspace: SettingsWorkspace {
+        lazySettingsWorkspace.workspace(for: coordinator)
     }
 
     private var sidebar: SidebarLayout {

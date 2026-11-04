@@ -10,18 +10,12 @@ struct MicroWindowView: View {
     let browser: BrowserModel
     let coordinator: AppCoordinator
 
-    @State private var settingsWorkspace: SettingsWorkspace
+    /// `ContentArea` shows internal pages through one. A micro window never holds such a page, but it asks for a workspace.
+    @State private var lazySettingsWorkspace = LazySettingsWorkspace()
     @Environment(\.colorScheme) private var scheme
 
-    init(browser: BrowserModel, coordinator: AppCoordinator) {
-        self.browser = browser
-        self.coordinator = coordinator
-        // `ContentArea` shows internal pages through one. A micro window never holds such a page, but it asks for a workspace.
-        let workspace = SettingsWorkspace(coordinator: coordinator)
-        workspace.onRoute = { [weak coordinator] category in
-            coordinator?.routeSettings(to: category)
-        }
-        _settingsWorkspace = State(initialValue: workspace)
+    private var settingsWorkspace: SettingsWorkspace {
+        lazySettingsWorkspace.workspace(for: coordinator)
     }
 
     var body: some View {

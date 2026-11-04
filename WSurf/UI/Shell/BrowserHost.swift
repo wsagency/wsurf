@@ -542,6 +542,17 @@ struct BrowserRootView: View {
             .environment(\.titleStripInset, coordinator.titleStripInset)
             .environment(\.profileFavicons, coordinator.browser.context.favicons)
             .environment(\.assistantProviderID, coordinator.selectedProvider.id)
+            .background { WindowTitleFollower(coordinator: coordinator) }
+    }
+}
+
+/// Keeps the window's title in step with the front tab's. A leaf of its own, so a switch or a title change re-runs this and not
+/// the root, whose re-run rebuilds the whole window view.
+private struct WindowTitleFollower: View {
+    let coordinator: AppCoordinator
+
+    var body: some View {
+        Color.clear
             .onChange(of: coordinator.windowTitle) { _, _ in
                 coordinator.updateWindowAppearance()
             }

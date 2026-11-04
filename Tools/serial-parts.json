@@ -283,7 +283,8 @@
    "MicroShellTests",
    "MicroWindowTests",
    "PDFSavingTests",
-   "TabSleepScheduleTests"
+   "TabSleepScheduleTests",
+   "TabSwitchWorkTests"
   ],
   [
    "AgentActionPolicyTests",
