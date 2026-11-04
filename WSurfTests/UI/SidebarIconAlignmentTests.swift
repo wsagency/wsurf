@@ -193,7 +193,7 @@ struct SidebarIconAlignmentTests {
             .frame(width: rowWidth, height: height)
             .environment(\.sidebarStyle, .full)
             .environment(\.sidebarIsFloating, false)
-            .environment(\.chromeWash, .of(darkGround, isLight: false))
+            .sidebarWash(.of(darkGround, isLight: false))
             .environment(\.chromeIsLight, false)
             .environment(\.colorScheme, .dark)
             .environment(\.windowColorScheme, .dark)

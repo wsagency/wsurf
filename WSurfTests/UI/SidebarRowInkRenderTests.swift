@@ -72,7 +72,7 @@ struct SidebarRowInkRenderTests {
     @Test func aRowReadsTheSidebarGroundFromItsEnvironment() throws {
         let box = Box<SidebarRowInk>()
         let view = InkProbe(style: current(), box: box)
-            .environment(\.chromeWash, .of(darkGround, isLight: false))
+            .sidebarWash(.of(darkGround, isLight: false))
             .environment(\.colorScheme, .dark)
         _ = ImageRenderer(content: view).nsImage
 
@@ -85,7 +85,7 @@ struct SidebarRowInkRenderTests {
     @Test func aLightSidebarGetsADarkFill() throws {
         let box = Box<SidebarRowInk>()
         let view = InkProbe(style: current(), box: box)
-            .environment(\.chromeWash, .of(lightGround, isLight: true))
+            .sidebarWash(.of(lightGround, isLight: true))
             .environment(\.colorScheme, .light)
         _ = ImageRenderer(content: view).nsImage
 

@@ -202,7 +202,7 @@ private struct BrightnessPreviewSidebar: View {
         .background(Color(nsColor: ground))
         .coordinateSpace(name: context.space)
         .environment(\.sidebarStyle, .full)
-        .environment(\.chromeWash, .of(ground, isLight: false))
+        .sidebarWash(.of(ground, isLight: false))
         .environment(\.chromeIsLight, false)
         .environment(\.colorScheme, .dark)
         .environment(\.windowColorScheme, .dark)

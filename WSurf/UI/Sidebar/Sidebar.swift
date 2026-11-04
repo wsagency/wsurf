@@ -159,7 +159,7 @@ struct Sidebar: View {
             }
         }
         .environment(\.chromeIsLight, inkIsLight)
-        .environment(\.chromeWash, .of(inkColor, isLight: inkIsLight, ground: groundColor))
+        .sidebarWash(.of(inkColor, isLight: inkIsLight, ground: groundColor))
         .environment(\.windowColorScheme, scheme)
         .environment(\.colorScheme, inkIsLight ? .light : .dark)
         .animation(nil, value: inkIsLight)
