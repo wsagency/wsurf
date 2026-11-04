@@ -711,6 +711,17 @@ check_average \
   'Page watch scheduling memory growth' \
   'kB'
 
+# Page-load overhead of the page scripts: five loads of a login page with ten srcdoc iframes (eleven frames) in an ordinary
+# profile's tab, which installs every page script. Six-sample Pro baseline (2026-11-04, Debug gate configuration, two runs): mean
+# 0.341 s and 0.338 s per pass (68 ms a load). A scriptless web view on the pool's process pool, loading the same pages back to back
+# in the same host, took 68-70 ms a load: back to back, a new WebContent process per site dominates. Budget: twice the baseline.
+check_average \
+  'PageScriptPerformanceTests/testLoadingAPageWithTenFrames()' \
+  'com.apple.dt.XCTMetric_Clock.time.monotonic' \
+  '0.682' \
+  'Five loads of an eleven-frame page with the page scripts' \
+  's'
+
 # Large vault (20,000 credentials, 25,000 for the merge case). Five-sample Pro means in the app test host (2026-10-21):
 # edit 1.0926 s / -930.6 kB, whole-vault save 1.231078 s / 5292.04 kB, passkey merge targets 0.676352 s / -1821.9 kB,
 # merge choice in a full review 0.7291 s / -5665.6 kB. Budgets are twice the mean (memory at least 4096 kB).

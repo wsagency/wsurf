@@ -148,6 +148,7 @@
         "PageKeyChordTests",
         "PageScreenshotEncodingTests",
         "PageScreenshotGeometryTests",
+        "PageScriptPerformanceTests",
         "PageViewportTests",
         "PageWatchCenterTests",
         "PageWatchPerformanceTests",
