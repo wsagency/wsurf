@@ -105,7 +105,10 @@ final class HistoryStore {
     // hand (`access` and `withMutation`), since the macro cannot see through a load on first use. The load itself never
     // notifies: nothing has read a property that is not loaded, and a read happens inside a view's body.
     @ObservationIgnored private var storedEntries: [Entry] = [] {
-        didSet { shortIndex = nil }
+        didSet {
+            shortIndex = nil
+            dataDidChange()
+        }
     }
     /// What a query of one or two letters reads, made by the first such query after the entries change.
     @ObservationIgnored private var shortIndex: ShortIndex?
@@ -156,6 +159,27 @@ final class HistoryStore {
     private let database: AppDatabase
     private let windowSize: Int
 
+    /// Whether `search(_:limit:)` reads the full-text index off the main thread. Off, it reads on the caller's thread and answers
+    /// at once, which is what the tests of the rows expect; the app turns it on (`init`).
+    private let searchesInBackground: Bool
+    /// The answers of full-text queries, by query and limit, until anything stored changes. See `dataDidChange`.
+    @ObservationIgnored private var searchCache: [String: [Entry]] = [:]
+    /// The newest answer that arrived, shown for a query whose own answer is still being read, so the rows do not blink.
+    @ObservationIgnored private var latestSearch: [Entry] = []
+    @ObservationIgnored private var searchesInFlight: Set<String> = []
+    /// Counts what changed in the data, so an answer that was read before a change is dropped when it arrives.
+    @ObservationIgnored private var dataVersion = 0
+    @ObservationIgnored private var storedSearchRevision = 0
+    /// How many background reads were started, for the tests that hold a query to one read.
+    @ObservationIgnored private(set) var backgroundSearchCount = 0
+    private static let searchCacheCapacity = 64
+
+    /// Changes whenever a background search lands. A view that read `search(_:limit:)` and finds this changed reads it again.
+    var searchRevision: Int {
+        access(keyPath: \.searchRevision)
+        return storedSearchRevision
+    }
+
     /// Titles that arrived after a load and are not written yet, oldest first, one per visit. See `retitle`.
     @ObservationIgnored private var pendingTitles: [PendingTitle] = []
     @ObservationIgnored private var titleFlush: Task<Void, Never>?
@@ -167,8 +191,14 @@ final class HistoryStore {
         let title: String
     }
 
-    init(database: AppDatabase = .shared, windowSize: Int = 3000, titleDelay: Duration = .seconds(2)) {
+    init(
+        database: AppDatabase = .shared,
+        windowSize: Int = 3000,
+        titleDelay: Duration = .seconds(2),
+        searchesInBackground: Bool = !AppDatabase.isRunningTests
+    ) {
         self.database = database
+        self.searchesInBackground = searchesInBackground
         self.windowSize = windowSize
         self.titleDelay = titleDelay
         visitLimit = windowSize
@@ -377,6 +407,10 @@ final class HistoryStore {
         for pending in changed ?? [] {
             applyTitle(pending.title, to: pending.url)
         }
+        // The index now has titles that an answer read before this write does not.
+        if changed?.isEmpty == false {
+            dataDidChange()
+        }
     }
 
     /// Forgets the titles that wait, for a page that is about to be erased: not even its title is written.
@@ -562,7 +596,69 @@ final class HistoryStore {
         if let prefix = Self.shortPrefix(of: needle) {
             return mostVisited(withAWordStarting: prefix, limit: limit)
         }
-        return searchEverything(needle, limit: limit)
+        guard searchesInBackground else { return searchEverything(needle, limit: limit) }
+        return searchInBackground(needle, limit: limit)
+    }
+
+    /// Anything stored changed: answers read before it are stale.
+    private func dataDidChange() {
+        dataVersion += 1
+        searchCache = [:]
+        latestSearch = []
+    }
+
+    /// The answer to a full-text query from the cache. A miss starts a read on the database's reader and returns the newest answer
+    /// that arrived until this one does; `searchRevision` then changes, and whoever read this asks again and finds it cached.
+    /// Titles that wait to be written are not written first, as `searchEverything` does: the read must not wait for a write on the
+    /// main thread, and the timer writes them within `titleDelay`.
+    private func searchInBackground(_ needle: String, limit: Int) -> [Entry] {
+        _ = searchRevision
+        let key = "\(limit)\u{1}\(needle.lowercased())"
+        if let hit = searchCache[key] {
+            return hit
+        }
+        guard let pattern = FTS5Pattern(matchingAllPrefixesIn: needle) else { return [] }
+        if searchesInFlight.insert(key).inserted {
+            let version = dataVersion
+            backgroundSearchCount += 1
+            let reader = database.writer
+            Task { [weak self] in
+                let found = try? await reader.read { db in try Self.fetchMatches(db, pattern, limit: limit) }
+                self?.searchArrived(found, key: key, version: version)
+            }
+        }
+        return latestSearch
+    }
+
+    private func searchArrived(_ found: [Entry]?, key: String, version: Int) {
+        searchesInFlight.remove(key)
+        guard let found else {
+            Pipeline.log.error("history: read failed")
+            return
+        }
+        if version == dataVersion {
+            if searchCache.count >= Self.searchCacheCapacity {
+                searchCache = [:]
+            }
+            searchCache[key] = found
+            latestSearch = found
+        }
+        // A dropped answer notifies as well, so its readers ask again.
+        withMutation(keyPath: \.searchRevision) { storedSearchRevision += 1 }
+    }
+
+    private nonisolated static func fetchMatches(_ db: Database, _ pattern: FTS5Pattern, limit: Int) throws -> [Entry] {
+        try Entry.fetchAll(
+            db,
+            sql: """
+                SELECT historyPage.* FROM historyPage
+                JOIN historyPage_ft ON historyPage_ft.rowid = historyPage.rowid
+                    AND historyPage_ft MATCH ?
+                ORDER BY historyPage.visitCount DESC, historyPage.lastVisit DESC
+                LIMIT ?
+                """,
+            arguments: [pattern, limit]
+        )
     }
 
     /// The most visited of the pages in memory that have a word starting with `prefix`, by visits and then by recency, as the
@@ -592,19 +688,7 @@ final class HistoryStore {
         guard !needle.isEmpty else { return Array(entries.prefix(limit)) }
         guard let pattern = FTS5Pattern(matchingAllPrefixesIn: needle) else { return [] }
         flushPendingTitles()
-        return read { db in
-            try Entry.fetchAll(
-                db,
-                sql: """
-                    SELECT historyPage.* FROM historyPage
-                    JOIN historyPage_ft ON historyPage_ft.rowid = historyPage.rowid
-                        AND historyPage_ft MATCH ?
-                    ORDER BY historyPage.visitCount DESC, historyPage.lastVisit DESC
-                    LIMIT ?
-                    """,
-                arguments: [pattern, limit]
-            )
-        } ?? []
+        return read { db in try Self.fetchMatches(db, pattern, limit: limit) } ?? []
     }
 
     func search(matching query: HistoryQuery, limit: Int = 6) -> [Entry] {
@@ -750,6 +834,7 @@ final class HistoryStore {
     private func invalidate() {
         flushPendingTitles()
         isLoaded = false
+        dataDidChange()
         withMutation(keyPath: \.entries) {
             withMutation(keyPath: \.visits) {
                 withMutation(keyPath: \.count) {

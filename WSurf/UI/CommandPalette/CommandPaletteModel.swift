@@ -515,6 +515,24 @@ final class CommandPaletteModel {
         refreshSections()
     }
 
+    private var watchesHistorySearch = false
+
+    /// A history search that was read in the background lands later than the keystroke: the rows are made again then. Armed by
+    /// every `refreshSections`, since an observation fires once.
+    private func watchHistorySearch() {
+        guard !watchesHistorySearch else { return }
+        watchesHistorySearch = true
+        let history = browser.history
+        withObservationTracking {
+            _ = history.searchRevision
+        } onChange: { [weak self] in
+            Task { @MainActor in
+                self?.watchesHistorySearch = false
+                self?.suggestionsDidChange()
+            }
+        }
+    }
+
     func suggestionsDidChange() {
         guard suggestionPreview.sections == nil else { return }
         let selectedID = sections.flattened.indices.contains(interaction.selection)
@@ -637,6 +655,7 @@ final class CommandPaletteModel {
 
     private func refreshSections() {
         guard suggestionPreview.sections == nil else { return }
+        watchHistorySearch()
         if let searchSite {
             let query = interaction.query.trimmingCharacters(in: .whitespacesAndNewlines)
             if !query.isEmpty, let url = searchSite.searchURL(for: query) {

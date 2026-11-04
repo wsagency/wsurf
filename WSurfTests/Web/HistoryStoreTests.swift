@@ -258,6 +258,44 @@ struct HistoryStoreTests {
         #expect(store.search("cumenta").isEmpty)
     }
 
+    /// Waits for the background read of a search to land, as a view that read the rows would be told.
+    private func waitForSearch(of store: HistoryStore, after revision: Int) async {
+        for _ in 0..<400 where store.searchRevision == revision {
+            try? await Task.sleep(for: .milliseconds(5))
+        }
+    }
+
+    @Test func aBackgroundSearchIsReadOnceAndThenAnsweredFromTheCache() async {
+        let store = HistoryStore(database: .temporary(), searchesInBackground: true)
+        store.record(url: "https://example.com/documentation", title: "Documentation")
+        store.record(url: "https://example.com/other", title: "Other")
+        let revision = store.searchRevision
+
+        #expect(store.search("document").isEmpty, "nothing has arrived yet")
+        await waitForSearch(of: store, after: revision)
+        #expect(store.search("document").map(\.url) == ["https://example.com/documentation"])
+        #expect(store.search("document").map(\.url) == ["https://example.com/documentation"])
+        #expect(store.backgroundSearchCount == 1, "a repeat of the query, as when suggestions arrive, does not read again")
+    }
+
+    @Test func aChangeToHistoryDropsTheCachedAnswers() async {
+        let store = HistoryStore(database: .temporary(), searchesInBackground: true)
+        store.record(url: "https://example.com/documentation", title: "Documentation")
+        var revision = store.searchRevision
+        _ = store.search("document")
+        await waitForSearch(of: store, after: revision)
+
+        store.record(url: "https://example.com/documents", title: "Documents")
+        revision = store.searchRevision
+        _ = store.search("document")
+        await waitForSearch(of: store, after: revision)
+
+        #expect(store.backgroundSearchCount == 2)
+        #expect(Set(store.search("document").map(\.url)) == [
+            "https://example.com/documentation", "https://example.com/documents",
+        ])
+    }
+
     @Test func searchBoundsToTheDaysAPhraseNames() {
         let (store, _) = makeStore()
         let calendar = Calendar.current
