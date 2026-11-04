@@ -173,13 +173,17 @@ struct MicroPromptTests {
         try await withHiddenBar { rig in
             let other = rig.app.newWindow(profile: rig.micro.profiles.current, show: false)
             let otherWindow = try #require(other.nativeWindow)
+            // Opening a second window can move this one's inputs (focus, status), and a slow runner shows that late. Start from a
+            // bar that has settled back up, so only the other window's sheet can bring it down.
+            try #require(await waitUntil { !rig.reveal.isRevealed }, "this window's bar settles after the other window opens")
             let alert = NSAlert()
             alert.addButton(withTitle: "OK")
             let dialog = Task { await PageDialogs.present(alert, in: otherWindow) }
             try #require(await waitUntil { otherWindow.attachedSheet != nil })
 
             try? await Task.sleep(for: .milliseconds(200))
-            #expect(!rig.reveal.isRevealed && rig.reveal.openPrompts == 0)
+            #expect(rig.reveal.openPrompts == 0, "the other window's sheet is not this window's prompt")
+            #expect(!rig.reveal.isRevealed, "and it does not bring this window's bar down")
 
             endSheet(of: otherWindow)
             _ = await dialog.value
