@@ -288,7 +288,7 @@ for the code structure, and [Releasing](RELEASING.md) for distribution.
 ### Session worktrees
 
 omp sessions use [`.omp/config.yml`](.omp/config.yml) to place worktrees under
-`~/projects/wsurf/.worktrees`. Work on feature branches in those worktrees;
+`~/projects/wsurf-project/wsurf/.wt`. Work on feature branches in those worktrees;
 keep the primary checkout on `main`. Changes to `main` must be merged through
 a pull request; never commit or push directly to `main`.
 

@@ -11,7 +11,7 @@ worktree and a unique `feature/<short-name>` branch based on the latest
 `main` checkout, switch branches in a shared checkout, or stash, discard, move,
 or commit another task's uncommitted changes.
 
-Store task worktrees under `.worktrees/` in the project folder; this directory
+Store task worktrees under `.wt/` in the project folder; this directory
 is gitignored. OMP creates the isolated worktree automatically. Reuse its
 `feature/<short-name>` branch and worktree rather than creating a second one.
 
@@ -46,8 +46,8 @@ You need macOS 26 or later, Apple silicon, and Xcode 27.0 or later.
 git clone https://github.com/wsagency/wsurf.git
 cd wsurf
 git fetch origin main
-git worktree add -b feature/my-change .worktrees/my-change origin/main
-cd .worktrees/my-change
+git worktree add -b feature/my-change .wt/my-change origin/main
+cd .wt/my-change
 xcodebuild -downloadComponent MetalToolchain
 xcodebuild -resolvePackageDependencies \
   -project WSurf.xcodeproj -scheme WSurf \
