@@ -99,9 +99,6 @@ extension BrowserTab {
         pendingNavigationTask = Task { [weak self] in
             guard let self else { return nil }
             let desired = preferredEngine(for: left.url)
-            if liveView.map({ $0.engine != desired }) == true, await !confirmsEngineSwitch() {
-                return nil
-            }
             guard !Task.isCancelled else { return nil }
             pageBeforeEngineSwitch = nil
             urlString = left.url.absoluteString
@@ -115,17 +112,6 @@ extension BrowserTab {
             lastRequestedNavigation = result
             return result
         }
-    }
-
-    /// Moving to the other engine closes this page, with whatever it holds: the person confirms it first while it holds anything.
-    private func confirmsEngineSwitch() async -> Bool {
-        guard hasEditedForm || isAgentWorking || isPlayingAudio || isSharingScreen
-            || !permissions.live.isEmpty || hasActiveDownload?() == true else { return true }
-        return await ConfirmAlert.destructive(
-            "Switch rendering engine?",
-            detail: "This reloads the website and may end active work, media, or downloads.",
-            verb: "Switch Engine"
-        )
     }
 
     func loadDirect(_ url: URL) -> PageNavigation? {
