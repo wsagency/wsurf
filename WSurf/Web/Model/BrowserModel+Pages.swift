@@ -287,10 +287,14 @@ extension BrowserModel {
         sitePermissions.setAllowsAutomaticPicture(allows, for: origin)
     }
 
+    /// With Sleep inactive tabs on, a warning keeps the most recent background tabs and critical pressure takes them all. With
+    /// it off, only critical pressure (the app is about to be killed) unloads tabs, and the most recent ones stay. Every
+    /// protection holds either way: favorites, the tab in front, edited forms, media, devices, downloads, the assistant.
     func relieveMemoryPressure(_ level: MemoryPressureMonitor.Level) {
         context.webViewPool.discardIdleForMemoryPressure()
-        guard context.settings.sleepsInactiveTabs else { return }
-        let keep = level == .critical ? 0 : Self.warningKeepsRecent
+        let sleeps = context.settings.sleepsInactiveTabs
+        guard sleeps || level == .critical else { return }
+        let keep = sleeps && level == .critical ? 0 : Self.warningKeepsRecent
         let discarded = discardBackgroundTabs(keepingRecent: keep)
         guard discarded > 0 else { return }
         Pipeline.log.notice("memory pressure: discarded \(discarded, privacy: .public) background tabs")

@@ -39,7 +39,7 @@ struct FreeMemoryTests {
         let current = model.newTab(url: url("3"))
 
         model.relieveMemoryPressure(.critical)
-        #expect(!first.isDeferred && !second.isDeferred, "memory pressure honors the switch")
+        #expect(!first.isDeferred && !second.isDeferred, "with the switch off, critical pressure keeps the three most recent")
 
         #expect(model.freeMemory() == 2)
 
