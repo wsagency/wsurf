@@ -7,7 +7,7 @@
 #   Tools/check-performance.sh --self-test      check the statistics on fixed sample sets; reads no metrics file
 #
 # What a budget is compared with:
-#   time    the MEAN of all samples (XCTMetric_Clock.time.monotonic). Unchanged.
+#   time    the MEAN of the samples after the first (XCTMetric_Clock.time.monotonic).
 #   memory  the MEDIAN of the samples after the first (XCTMetric_Memory.physical).
 #
 # Why the median: XCTMemoryMetric is the change of the host's physical footprint over one pass. In a long-running test host one
@@ -25,9 +25,12 @@
 #
 # Why the first sample is dropped: every budgeted case measures one pass more than it is judged on (XCTMeasureOptions.budgeted in
 # WSurfTests/Helpers/BudgetedMeasureOptions.swift, six iterations), and the first pass is the warm-up that pays for lazy setup and
-# caches. A single sample, as in an old metrics file, is kept. Keep the iteration count and this rule together.
+# caches. A single sample, as in an old metrics file, is kept. Keep the iteration count and this rule together. Time drops it too:
+# on the hosted runner (no GPU) the warm-up alone carried means over budget while the five judged passes were well inside it
+# (CI 41766552499, first usable start page tab: first 0.128 s, mean 0.101903 against 0.100; CI 41799098958, four tab switches over
+# 1,000 tabs: 0.393 0.048 0.039 0.061 0.049 0.045, mean 0.105643 against 0.102, 0.048 without the warm-up).
 #
-# A real regression still fails: it lifts every sample, so it lifts the median.
+# A real regression still fails: it lifts every sample, so it lifts the mean and the median.
 
 set -eu
 
@@ -38,15 +41,15 @@ fi
 
 memory_metric='com.apple.dt.XCTMetric_Memory.physical'
 
-# summarize KIND: reads one sample per line and prints the mean (KIND mean), or the median of the samples after the first
-# (KIND median), to six decimals.
+# summarize KIND: reads one sample per line and prints the mean (KIND mean) or the median (KIND median) of the samples after the
+# first, to six decimals; a lone sample is kept.
 summarize() {
   awk -v kind="$1" '
     { sample[NR] = $1 + 0 }
     END {
       if (kind == "mean") {
-        for (i = 1; i <= NR; i++) { total += sample[i] }
-        printf "%.6f", total / NR
+        for (i = (NR > 1 ? 2 : 1); i <= NR; i++) { total += sample[i] }
+        printf "%.6f", total / (NR > 1 ? NR - 1 : 1)
         exit
       }
       n = 0
@@ -136,12 +139,12 @@ self_test() {
   }
 
   # The 0.1.5 layout option sidebar: the mean flips on the spike, the median does not.
-  expect_statistic mean '3424 4129 4112 6275 21496' 7887.200000
+  expect_statistic mean '0 3424 4129 4112 6275 21496' 7887.200000
   expect_statistic median '15000 3424 4129 4112 6275 21496' 4129.000000
   expect_verdict pass "$memory_metric" 7019 '15000 3424 4129 4112 6275 21496'
   # The 0.1.6 autofilled password, as measured before measureWrite trimmed the heap: mostly high samples, so the median is not
   # below the mean here. Recorded, not excused.
-  expect_statistic mean '-1311 23478 -18743 20349 18580' 8470.600000
+  expect_statistic mean '9 -1311 23478 -18743 20349 18580' 8470.600000
   expect_statistic median '9 -1311 23478 -18743 20349 18580' 18580.000000
   # An even count, a lone sample and the warm-up drop.
   expect_statistic median '0 1 2 3 10' 2.500000
@@ -152,10 +155,14 @@ self_test() {
   expect_verdict fail "$memory_metric" 4096 '0 5000 5100 4900 5050 5200'
   expect_verdict pass "$memory_metric" 4096 '100'
   expect_verdict fail "$memory_metric" 4096 '5000'
-  # Time stays on the mean of every sample: the first counts, and a median would have passed.
-  expect_statistic mean '0.5 0.1 0.1 0.1 0.1 0.1' 0.166667
-  expect_verdict fail "$clock_metric" 0.15 '0.5 0.1 0.1 0.1 0.1 0.1'
-  expect_verdict pass "$clock_metric" 0.2 '0.5 0.1 0.1 0.1 0.1 0.1'
+  # Time is the mean after the warm-up: CI 41799098958's tab switches pass, a lone sample is kept, and a judged pass still counts.
+  expect_statistic mean '0.393 0.048 0.039 0.061 0.049 0.045' 0.048400
+  expect_verdict pass "$clock_metric" 0.102 '0.393 0.048 0.039 0.061 0.049 0.045'
+  expect_statistic mean '0.5' 0.500000
+  expect_verdict fail "$clock_metric" 0.15 '0.5'
+  expect_statistic mean '0.1 0.5 0.1 0.1 0.1 0.1' 0.180000
+  expect_verdict fail "$clock_metric" 0.15 '0.1 0.5 0.1 0.1 0.1 0.1'
+  expect_verdict fail "$clock_metric" 0.15 '0.1 0.2 0.2 0.2 0.2 0.2'
 
   rm -f "$fixture"
   if [ "$failures" -ne 0 ]; then
@@ -180,12 +187,10 @@ if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
   printf '### Performance budgets\n\n' >> "$GITHUB_STEP_SUMMARY"
 fi
 
-# Pro baseline (0.1.22 gate): time mean 0.028928 s. The hosted runner (no GPU) measured 0.083-0.128 s, mean 0.101903 s, on main
-# CI 41766552499, so 0.100 failed on noise there. The budget is set by the runner, not the Pro.
 check_average \
   'BrowserPerformanceTests/testCreatingAUsableStartPageTab()' \
   'com.apple.dt.XCTMetric_Clock.time.monotonic' \
-  '0.150' \
+  '0.100' \
   'First usable start page tab' \
   's'
 check_average \
