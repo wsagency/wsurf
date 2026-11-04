@@ -375,6 +375,15 @@ check_average \
   '4096' \
   'Tab switching over the thousand-tab sidebar memory growth' \
   'kB'
+# Perf audit 0.1.22 item 3 (2026-11-04): twelve switches among four loaded WebKit pages in the app's own window, laid out and drawn.
+# Six-sample Pro means, Debug: 0.224 s before (the root re-ran on every switch, made a settings workspace and set the title twice),
+# 0.190 and 0.192 s after. Budget twice the after mean. Clock only: a WebKit page's footprint swings by more than a budget could hold.
+check_average \
+  'BrowserPerformanceTests/testSwitchingLoadedTabsInAWindow()' \
+  'com.apple.dt.XCTMetric_Clock.time.monotonic' \
+  '0.382' \
+  'Twelve switches among four loaded pages in a window' \
+  's'
 check_average \
   'BrowserPerformanceTests/testScrollingAThousandRowSidebar()' \
   'com.apple.dt.XCTMetric_Clock.time.monotonic' \
