@@ -50,6 +50,7 @@ struct SidebarTabRow: View {
 
     @Environment(\.sidebarStyle) private var sidebarStyle
     @Environment(\.sidebarIconTint) private var folderIconTint
+    @Environment(\.sidebarKeepsHiddenControls) private var keepsHiddenControls
     private var inkSource = SidebarRowInkSource()
     @State private var hovering = false
     @State private var returnHovering = false
@@ -57,7 +58,6 @@ struct SidebarTabRow: View {
     @State private var draftTitle = ""
     @FocusState private var renameFocused: Bool
     @State private var rowFrame = SidebarRowFrame()
-    @State private var controlsWidth: CGFloat = 0
     @State private var markWidth: CGFloat = 0
 
     private var showsTrailingControls: Bool {
@@ -135,11 +135,15 @@ struct SidebarTabRow: View {
         return Array(context.selection.items)
     }
 
-    private var trailingControls: some View {
-        SidebarTabActionButton(tab: tab, coordinator: coordinator, followsCommandKey: showsTrailingControls)
-            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { controlsWidth = $0 }
-            .opacity(showsTrailingControls ? 1 : 0)
-            .allowsHitTesting(showsTrailingControls)
+    /// Built only while it shows (it fades in and out with the hover), unless something that walks every row needs to reach it.
+    /// A hidden button in every drawn row made each row cost more to build while the list scrolls.
+    @ViewBuilder private var trailingControls: some View {
+        if showsTrailingControls || keepsHiddenControls {
+            SidebarTabActionButton(tab: tab, coordinator: coordinator, followsCommandKey: showsTrailingControls)
+                .opacity(showsTrailingControls ? 1 : 0)
+                .allowsHitTesting(showsTrailingControls)
+                .transition(.opacity)
+        }
     }
 
     private var peekedTab: BrowserTab? {
@@ -150,7 +154,8 @@ struct SidebarTabRow: View {
     private var titleMask: some View {
         let badge = (peekedTab == nil ? 0 : PeekRowBadge.extent + 4) + (tab.microTabID == nil ? 0 : MicroRowBadge.extent + 4)
         let mark = tab.processState.externalControllers.isEmpty ? 0 : markWidth + 4
-        let covered = (showsTrailingControls ? controlsWidth : 0) + badge + mark
+        // The action button is a row control, so its width is known without measuring it.
+        let covered = (showsTrailingControls ? SidebarMetrics.rowControlExtent : 0) + badge + mark
         return HStack(spacing: 0) {
             Rectangle()
             LinearGradient(colors: [.black, .clear], startPoint: .leading, endPoint: .trailing)
@@ -262,8 +267,11 @@ struct SidebarTabRow: View {
                 if sidebarStyle == .full {
                     HStack(spacing: 4) {
                         trailingControls
-                        ExternalControlMark(tab: tab, coordinator: coordinator)
-                            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { markWidth = $0 }
+                        // Measured only while there is a mark, so a plain row has one geometry callback: its frame.
+                        if !tab.processState.externalControllers.isEmpty {
+                            ExternalControlMark(tab: tab, coordinator: coordinator)
+                                .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { markWidth = $0 }
+                        }
                         if let peekedTab {
                             PeekRowBadge(tab: peekedTab, coordinator: coordinator)
                         }
@@ -306,10 +314,7 @@ struct SidebarTabRow: View {
             }
         }
         .onTapGesture { tapped() }
-        .onMiddleClick {
-            coordinator.tabPreview.dismiss()
-            coordinator.unloadTab(tab)
-        }
+        // A middle click unloads the tab: the list catches it for every row (`WorkspaceList`), so a row has no view of its own for it.
         .onHover { over in
             withAnimation(Theme.Motion.quick) { hovering = over }
             if over, !isRenaming {

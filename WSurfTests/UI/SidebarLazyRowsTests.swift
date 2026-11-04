@@ -54,6 +54,27 @@ struct SidebarLazyRowsTests {
         #expect(rig.frame(of: far) == nil)
     }
 
+    /// The list catches middle clicks for all its rows: a click goes to the tab of the row under it wherever the list is
+    /// scrolled, to nothing between and below the rows, and not to a split, whose cells catch their own.
+    @Test func aMiddleClickFindsTheRowUnderItWhileTheListIsScrolled() async throws {
+        let rig = SidebarDriveRig()
+        defer { rig.close() }
+        let tabs = rig.addPages(400)
+        rig.browser.split(tabs[201], with: tabs[202], axis: .sideBySide)
+        try await rig.settle()
+        try await rig.scroll(to: 5_000)
+        let frames = rig.coordinator.sidebarDrag.frames
+        func inContent(_ frame: CGRect, dy: CGFloat = 0) -> CGPoint {
+            CGPoint(x: frame.midX - frames.contentOrigin.x, y: frame.midY + dy - frames.contentOrigin.y)
+        }
+
+        let row = try #require(frames[.tab(tabs[200].id)], "the row is drawn")
+        #expect(frames.tab(atContentPoint: inContent(row), in: rig.browser) == tabs[200].id)
+        #expect(frames.tab(atContentPoint: inContent(row, dy: 100_000), in: rig.browser) == nil)
+        let split = try #require(frames[.tab(tabs[201].id)], "the split is drawn")
+        #expect(frames.tab(atContentPoint: inContent(split), in: rig.browser) == nil)
+    }
+
     @Test func theRowsOfAFolderThatClosesLeaveNoFramesBehind() async throws {
         let rig = SidebarDriveRig()
         defer { rig.close() }
