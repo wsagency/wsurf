@@ -570,7 +570,8 @@ final class WebKitSiteContentTests {
     @Test func aWebsiteToldMutedPlaysOnlyWithoutSound() async throws {
         #expect(try await outcome(of: Self.playing("new Audio('/tone.wav')"), under: .silent) == "NotAllowedError")
         let muted = "Object.assign(document.createElement('video'), {muted: true, src: '/tone.wav'})"
-        #expect(try await outcome(of: Self.playing(muted), under: .silent) == "played")
+        let mutedOutcome = try await outcome(of: Self.playing(muted), under: .silent)
+        #expect(mutedOutcome == "played", "\(mutedOutcome ?? "nil")")
     }
 
     @Test func aWebsitesOwnNeverOutranksTheSetting() async throws {
