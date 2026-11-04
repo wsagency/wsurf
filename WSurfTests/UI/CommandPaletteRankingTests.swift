@@ -222,6 +222,26 @@ struct CommandPaletteRankingTests {
         #expect(sections.first?.items.dropFirst().first?.title == "Open Start Page")
     }
 
+    /// Opening the palette again in the same state reuses the built list (its titles are string catalog lookups), and
+    /// every command still runs through the palette that asked for it.
+    @Test func anUnchangedContextReusesTheBuiltList() {
+        let context = fixtureContext()
+        _ = CommandPaletteCatalog.commands(context: context) { _ in }
+        let built = CommandPaletteCatalog.buildCount
+        var performed: [CommandPaletteAction] = []
+
+        let commands = CommandPaletteCatalog.commands(context: context) { performed.append($0) }
+        #expect(CommandPaletteCatalog.buildCount == built)
+        commands.first { $0.id == "action-newTab" }?.run()
+        #expect(performed == [.newTab])
+
+        var changed = context
+        changed.canReload.toggle()
+        let rebuilt = CommandPaletteCatalog.commands(context: changed) { _ in }
+        #expect(CommandPaletteCatalog.buildCount == built + 1)
+        #expect(rebuilt.contains { $0.id == "action-reload" } != commands.contains { $0.id == "action-reload" })
+    }
+
     private func section(_ id: String, count: Int) -> OmniboxSection {
         OmniboxSection(id: id, title: id, items: items(count))
     }

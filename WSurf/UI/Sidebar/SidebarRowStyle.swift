@@ -111,31 +111,35 @@ struct SidebarRowStyle: Equatable {
 extension BrowserModel {
     /// The style of one tab's row, for every place that draws the tab. `isMarked` is the multi-selection. The row asks
     /// the tab, not the model, which tab is current, so a switch redraws only the rows whose answer changed.
+    /// `paletteOpen` is read only where it can change the answer (here, the current row), so opening the new-tab palette
+    /// redraws that row and not every row that observes the flag.
     func rowStyle(
         of tab: BrowserTab,
         isMarked: Bool,
-        paletteOpen: Bool,
+        paletteOpen: @autoclosure () -> Bool,
         increasedContrast: Bool
     ) -> SidebarRowStyle {
-        SidebarRowStyle.resolve(
-            isCurrent: tab.isSidebarActive,
+        let isCurrent = tab.isSidebarActive
+        return SidebarRowStyle.resolve(
+            isCurrent: isCurrent,
             isMarked: isMarked,
             isUnseen: tab.isUnseen,
-            paletteOpen: paletteOpen,
+            paletteOpen: isCurrent && paletteOpen(),
             increasedContrast: increasedContrast
         )
     }
 
     /// The row of the split that `leading` heads. Only the pane in focus is current, so its own `rowStyle(of:)`
     /// decides that; this row is glass while the pair is on screen.
-    func rowStyle(ofSplitLedBy leading: BrowserTab, isMarked: Bool, paletteOpen: Bool) -> SidebarRowStyle {
-        SidebarRowStyle.splitRow(isOnScreen: isVisibleInSplit(leading), isMarked: isMarked, paletteOpen: paletteOpen)
+    func rowStyle(ofSplitLedBy leading: BrowserTab, isMarked: Bool, paletteOpen: @autoclosure () -> Bool) -> SidebarRowStyle {
+        let isOnScreen = isVisibleInSplit(leading)
+        return SidebarRowStyle.splitRow(isOnScreen: isOnScreen, isMarked: isMarked, paletteOpen: isOnScreen && paletteOpen())
     }
 
     func rowStyle(
         of folder: TabFolder,
         isMarked: Bool,
-        paletteOpen: Bool,
+        paletteOpen: @autoclosure () -> Bool,
         increasedContrast: Bool
     ) -> SidebarRowStyle {
         let inside = collapsedContents(of: folder)
@@ -143,7 +147,7 @@ extension BrowserModel {
             isMarked: isMarked,
             containsCurrent: inside.containsCurrent,
             containsNew: inside.containsNew,
-            paletteOpen: paletteOpen,
+            paletteOpen: inside.containsCurrent && paletteOpen(),
             increasedContrast: increasedContrast
         )
     }
