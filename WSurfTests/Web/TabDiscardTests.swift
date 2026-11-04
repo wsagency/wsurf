@@ -295,6 +295,61 @@ struct TabDiscardTests {
         #expect(!active.isDeferred)
     }
 
+    /// With Sleep inactive tabs off (the default), a warning unloads nothing, but critical pressure unloads the least recently
+    /// used background tabs: the three most recent tabs (the one in front among them) stay, and so does everything protected.
+    @Test func criticalPressureUnloadsTheLeastRecentTabsWhileSleepIsOff() {
+        let model = makeModel()
+        let previousSleepSetting = model.context.settings.sleepsInactiveTabs
+        model.context.settings.sleepsInactiveTabs = false
+        defer { model.context.settings.sleepsInactiveTabs = previousSleepSetting }
+
+        let oldest = model.newTab(url: URL(string: "https://example.com/oldest"))
+        let old = model.newTab(url: URL(string: "https://example.com/old"))
+        let favorite = model.newTab(url: URL(string: "https://example.com/favorite"))
+        favorite.isFavorite = true
+        let playing = model.newTab(url: URL(string: "https://example.com/playing"))
+        playing.isPlayingAudio = true
+        let editing = model.newTab(url: URL(string: "https://example.com/editing"))
+        editing.notePageActivity(.init(kind: .editedForm, token: "main", isActive: true))
+        let recent = (1...2).map { model.newTab(url: URL(string: "https://example.com/recent\($0)")) }
+        let active = model.newTab(url: URL(string: "https://example.com/active"))
+        for tab in [oldest, old, favorite, playing, editing] + recent + [active] {
+            model.activate(tab)
+        }
+
+        model.relieveMemoryPressure(.warning)
+        #expect(model.tabs.allSatisfy { !$0.isDeferred }, "a warning leaves tabs alone while sleeping is off")
+
+        model.relieveMemoryPressure(.critical)
+        #expect(oldest.isDeferred && old.isDeferred, "the least recently used go")
+        #expect(recent.allSatisfy { !$0.isDeferred }, "with the tab in front, the three most recent stay")
+        #expect(!active.isDeferred)
+        #expect(!favorite.isDeferred, "favorites stay")
+        #expect(!playing.isDeferred, "what plays stays")
+        #expect(!editing.isDeferred, "unsaved form input stays")
+        #expect(oldest.urlString == "https://example.com/oldest", "and a discarded tab keeps its address")
+    }
+
+    /// Private and extension tabs, downloads and kept-active sites hold under critical pressure with sleeping off too.
+    @Test func criticalPressureWhileSleepIsOffKeepsSiteSettingsAndPrivateTabs() {
+        let permissions = makePermissions()
+        let model = makeModel(permissions: permissions)
+        let previousSleepSetting = model.context.settings.sleepsInactiveTabs
+        model.context.settings.sleepsInactiveTabs = false
+        defer { model.context.settings.sleepsInactiveTabs = previousSleepSetting }
+
+        let kept = model.newTab(url: URL(string: "https://kept.example/"))
+        model.setKeepsActive(true, for: kept)
+        let plain = model.newTab(url: URL(string: "https://example.com/plain"))
+        for index in 1...4 {
+            _ = model.newTab(url: URL(string: "https://example.com/filler\(index)"))
+        }
+
+        model.relieveMemoryPressure(.critical)
+        #expect(!kept.isDeferred, "a site kept active stays")
+        #expect(plain.isDeferred)
+    }
+
     /// Activating a discarded tab is what brings it back, through the same
     /// path a restored session uses.
     @Test func activatingADiscardedTabRealizesItAgain() {
