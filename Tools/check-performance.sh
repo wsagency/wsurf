@@ -180,10 +180,12 @@ if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
   printf '### Performance budgets\n\n' >> "$GITHUB_STEP_SUMMARY"
 fi
 
+# Pro baseline (0.1.22 gate): time mean 0.028928 s. The hosted runner (no GPU) measured 0.083-0.128 s, mean 0.101903 s, on main
+# CI 41766552499, so 0.100 failed on noise there. The budget is set by the runner, not the Pro.
 check_average \
   'BrowserPerformanceTests/testCreatingAUsableStartPageTab()' \
   'com.apple.dt.XCTMetric_Clock.time.monotonic' \
-  '0.100' \
+  '0.150' \
   'First usable start page tab' \
   's'
 check_average \
