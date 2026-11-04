@@ -469,6 +469,26 @@ extension BrowserModel {
         }
     }
 
+    /// Reads one tab's saved `state` BLOB, which `restoreSession` leaves in the table.
+    private func savedStateLoader(for tabID: UUID) -> @MainActor () -> Data? {
+        { [database, windowID] in
+            try? database.writer.read { db in
+                try Data.fetchOne(
+                    db, sql: "SELECT state FROM sessionTab WHERE windowID = ? AND id = ?", arguments: [windowID, tabID]
+                )
+            }
+        }
+    }
+
+    private func deferRestore(_ tab: BrowserTab, url: URL?) {
+        let savedState = savedStateLoader(for: tab.id)
+        if let url {
+            tab.deferRestore(url: url, loadState: savedState)
+        } else {
+            tab.deferRestore(state: savedState(), url: nil)
+        }
+    }
+
     func restoreSession() {
         guard tabs.isEmpty, folders.isEmpty else { return }
         sessionClosedAt = nil
@@ -479,7 +499,10 @@ extension BrowserModel {
 
         let stored = try? database.writer.read { db in
             (
-                tabs: try TabRecord.filter(belongsToWindow).fetchAll(db),
+                // Without the `state` BLOBs: an unloaded tab reads its own when it is shown (`deferRestore(url:loadState:)`).
+                tabs: try TabRecord.filter(belongsToWindow)
+                    .select(try db.columns(in: TabRecord.databaseTableName).map(\.name).filter { $0 != "state" }.map { Column($0) })
+                    .fetchAll(db),
                 folders: try FolderRecord.filter(belongsToWindow).fetchAll(db),
                 items: try ItemRecord.filter(belongsToWindow).order(Column("position")).fetchAll(db),
                 savedAt: try Date.fetchOne(db, sql: "SELECT lastActiveAt FROM sessionWindow WHERE id = ?", arguments: [windowID])
@@ -547,7 +570,7 @@ extension BrowserModel {
             tab.microTabID = record.microTabID
             tab.lastActiveAt = Self.restoredUse(record.lastActiveAt, savedAt: stored.savedAt, now: now)
             lastVisitID[tab.id] = record.lastVisit.map { VisitMemory(visit: $0, trail: record.visitTrail) }
-            tab.deferRestore(state: record.state, url: restoredURL)
+            deferRestore(tab, url: restoredURL)
             if let host = URL(string: record.url)?.host() {
                 dressRow(tab, fromHost: host)
             }

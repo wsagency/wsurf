@@ -3,6 +3,7 @@
 
 import AppKit
 import Foundation
+import GRDB
 import XCTest
 
 @testable import WSurf
@@ -20,6 +21,13 @@ nonisolated final class LaunchPerformanceTests: XCTestCase, @unchecked Sendable 
             Self.fill(model, tabs: 300, folders: 10)
             model.saveBlocking()
             model.cancelPendingSave()
+            // A real saved tab carries its back/forward state: about 16 KB with a long history.
+            try? database.writer.write { db in
+                try db.execute(
+                    sql: "UPDATE sessionTab SET state = ? WHERE windowID = ?",
+                    arguments: [Data(repeating: 7, count: 16_384), model.windowID]
+                )
+            }
             measure(metrics: [XCTClockMetric(), XCTMemoryMetric()], options: .budgeted) {
                 let restored = BrowserModel(windowID: model.windowID, database: database)
                 restored.restoreSession()

@@ -330,6 +330,27 @@ struct SessionRestoreTests {
         #expect(restored.sessionState == state)
     }
 
+    /// A restored background tab reads its state only when it is needed. A save that restates it before then must write the
+    /// stored bytes, not a NULL, or the next relaunch loses its history.
+    @Test func aBackgroundTabSavedBeforeItIsShownKeepsItsState() throws {
+        let database = AppDatabase.temporary()
+        let model = BrowserModel(database: database)
+        let background = model.newTab(url: URL(string: "https://background.example/"))
+        let active = model.newTab(url: URL(string: "https://active.example/"))
+        let state = Data("interaction-state".utf8)
+        background.deferRestore(state: state, url: URL(string: "https://background.example/"))
+        model.activeTabID = active.id
+        model.saveBlocking()
+
+        let first = reopen(database)
+        let unshown = try #require(first.tabs.first { $0.id == background.id })
+        unshown.invalidateSessionState()
+        first.saveBlocking()
+
+        let second = reopen(database)
+        #expect(try #require(second.tabs.first { $0.id == background.id }).sessionState == state)
+    }
+
     @Test func aFolderComesBackWithItsTabsInPlace() throws {
         let database = AppDatabase.temporary()
         let model = BrowserModel(database: database)
