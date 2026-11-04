@@ -59,6 +59,9 @@ final class ChromiumPage: NSView {
     private static let startupResetRetryDelay: Duration = .milliseconds(100)
     /// Test seam: runs in place of the `Page.resetNavigationHistory` command; a throw is a refused reset.
     var startupResetCommand: (@MainActor () async throws -> Void)?
+    /// Times `closeTimeout` (ChromiumPage+Close.swift). Test seams: a clock, and losing CEF's `on_before_close`.
+    var closeClock: any Clock<Duration> = ContinuousClock()
+    var dropsCloseAnswerForTesting = false
     private(set) var htmlDocumentURL: URL?
     private var hasAppliedInitialSettings = false
     /// Whether `applySettings` left a user agent override in place, so a later return to the engine's own string clears it.
@@ -867,7 +870,7 @@ final class ChromiumPage: NSView {
             preparation?.cancel()
             devTools.close()
             // The tab's protected-work confirmation has already completed before retirement.
-            withHost { $0.pointee.close_browser?($0, 1) }
+            requestBrowserClose(timingOut: true)
             // CEF acknowledges destruction when its child host view is released.
             // Retaining that child until on_before_close would deadlock retirement.
             nativeView?.removeFromSuperview()
