@@ -563,6 +563,71 @@ nonisolated final class BrowserPerformanceTests: XCTestCase, @unchecked Sendable
         }
     }
 
+    /// Twelve switches among four loaded WebKit pages in the window the app builds, each laid out and drawn: the main-thread work of
+    /// a switch the person sees (perf audit 0.1.22, item 3). The window is the app's own, in a profile of its own, with onboarding
+    /// marked done in this host's defaults as `LaunchPerformanceTests` does, or every pass would draw it.
+    func testSwitchingLoadedTabsInAWindow() {
+        MainActor.assumeIsolated {
+            let defaults = StageMode.defaults
+            let completed = defaults.object(forKey: "onboarding.completed")
+            defaults.set(true, forKey: "onboarding.completed")
+            defer { defaults.set(completed, forKey: "onboarding.completed") }
+            let catalog = ProfileStore.shared
+            let previous = catalog.current
+            let profile = catalog.add(name: "Tab switch performance")
+            LiveWindowRig.useSharedDataStore(for: profile)
+            let app = BrowserApplication(defaults: InMemoryUserDefaults(inheriting: .standard), notifications: NotificationCenter())
+            let coordinator = app.newWindow(profile: profile, show: false)
+            let browser = coordinator.browser
+            @MainActor func draw() {
+                RunLoop.current.run(until: Date())
+                coordinator.nativeWindow?.contentView?.layoutSubtreeIfNeeded()
+                coordinator.nativeWindow?.contentView?.displayIfNeeded()
+            }
+            @MainActor func spin(until condition: () -> Bool) -> Bool {
+                let deadline = Date().addingTimeInterval(60)
+                while Date() < deadline, !condition() {
+                    RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.005))
+                }
+                return condition()
+            }
+            let tabs = (0..<4).map { index in
+                let tab = browser.newTab()
+                tab.loadHTML(
+                    "<!doctype html><title>Page \(index)</title>" + String(repeating: "<p>Paragraph of page \(index).</p>", count: 200),
+                    baseURL: URL(string: "https://switch-\(index).example/")
+                )
+                draw()
+                XCTAssertTrue(spin { !tab.hasNoPageYet && !tab.isLoading }, "page \(index) loaded")
+                return tab
+            }
+            draw()
+
+            measure(metrics: [XCTClockMetric()], options: .budgeted) {
+                for _ in 0..<3 {
+                    for tab in tabs {
+                        browser.activate(tab)
+                        draw()
+                    }
+                }
+            }
+            coordinator.closeWindow()
+            coordinator.releaseWindowHost()
+            let done = XCTestExpectation(description: "profile removed")
+            Task {
+                for tab in tabs {
+                    await tab.waitForRetirement()
+                }
+                await catalog.remove(profile)
+                await LiveWindowRig.releaseSharedDataStore(for: profile)
+                catalog.markCurrent(previous)
+                done.fulfill()
+            }
+            XCTAssertEqual(XCTWaiter().wait(for: [done], timeout: 120), .completed)
+            withExtendedLifetime(app) {}
+        }
+    }
+
     /// Scrolling down a sidebar of 1,000 tabs in 30 steps of 300 pt, laid out and drawn at each step, as a drag of the
     /// scroll bar or a fling does.
     func testScrollingAThousandRowSidebar() {

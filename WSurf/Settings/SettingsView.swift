@@ -18,8 +18,12 @@ final class SettingsWorkspace {
 
     @ObservationIgnored private var highlightTask: Task<Void, Never>?
 
+    /// How many workspaces this process has made; a test holds a tab switch to making none.
+    private(set) static var madeCount = 0
+
     init(coordinator: AppCoordinator) {
         intelligence = Self.makeIntelligence(coordinator: coordinator)
+        Self.madeCount += 1
     }
 
     func adoptProfile(coordinator: AppCoordinator) {
