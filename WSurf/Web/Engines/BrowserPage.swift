@@ -194,6 +194,17 @@ final class BrowserPage: NSView {
         !closed
     }
 
+    /// The browser window is full-size content under a transparent titlebar with a toolbar, so the top of the page (up to
+    /// about 66 pt from the window's top) lies in the titlebar. There the window server moves the window on a press and the
+    /// click never reaches the app, except over the views this private AppKit hook names. AppKit names a WKWebView by itself
+    /// but not Chromium's plain host view, so a Chromium page lost every click in that band (a Google avatar in the Minimal
+    /// window). Answering for the page covers both engines. Only the part on screen counts: a parked page sits at full size
+    /// in a zero-size shelf. A view that does not clip can report a visible rect past its bounds, so it is cut to them.
+    @objc(_opaqueRectForWindowMoveWhenInTitlebar)
+    func opaqueRectForWindowMoveWhenInTitlebar() -> NSRect {
+        isHiddenOrHasHiddenAncestor ? .zero : visibleRect.intersection(bounds)
+    }
+
     override func becomeFirstResponder() -> Bool {
         guard !closed else { return false }
         if let webKit {
