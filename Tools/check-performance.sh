@@ -375,10 +375,13 @@ check_average \
   '4096' \
   'Tab switching over the thousand-tab sidebar memory growth' \
   'kB'
+# 0.1.23, a row builds its hover-only action button only while it shows and the list catches middle clicks for every row, so a
+# scroll step no longer builds a hidden button and an AppKit view per row that comes in. Pro, Debug, same session: 0.479 s before
+# (mean of six), 0.139 s after (-O host: 0.133 s); CI's last green run before it measured 0.644 s. Budget twice the new mean.
 check_average \
   'BrowserPerformanceTests/testScrollingAThousandRowSidebar()' \
   'com.apple.dt.XCTMetric_Clock.time.monotonic' \
-  '1.050' \
+  '0.280' \
   'Thirty scroll steps down a sidebar of 1,000 tabs' \
   's'
 check_average \

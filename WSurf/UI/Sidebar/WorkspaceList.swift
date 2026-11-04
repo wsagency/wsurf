@@ -25,6 +25,9 @@ extension EnvironmentValues {
     /// Whether the sidebar draws every row at once (true) or only the rows near the window (false). nil, the
     /// default, follows assistive technology: every row while one that walks the rows is on.
     @Entry var sidebarDrawsEveryRow: Bool?
+    /// Whether a row builds the controls it shows only on hover while they are hidden. The list that draws every row for
+    /// assistive technology keeps them, so it still reaches them as before; the lazy list builds them only while they show.
+    @Entry var sidebarKeepsHiddenControls = false
 }
 
 private enum SpringLoad {
@@ -158,6 +161,7 @@ struct WorkspaceList<TopBar: View, BottomBar: View>: View {
             }
         }
         .environment(\.sidebarPulsesRevealedRows, true)
+        .environment(\.sidebarKeepsHiddenControls, !loadsLazily)
     }
 
     @ViewBuilder
@@ -193,6 +197,11 @@ struct WorkspaceList<TopBar: View, BottomBar: View>: View {
                 .padding(.leading, contentInsets.leading)
                 .padding(.trailing, contentInsets.trailing)
                 .coordinateSpace(.named(WorkspaceListCoordinateSpace.content))
+                .onMiddleClick(on: { frames.tab(atContentPoint: $0, in: browser) }) { id in
+                    guard let tab = browser.tab(id: id) else { return }
+                    coordinator.tabPreview.dismiss()
+                    coordinator.unloadTab(tab)
+                }
                 .onGeometryChange(for: CGPoint.self) {
                     $0.frame(in: .named(WorkspaceListCoordinateSpace.name)).origin
                 } action: { origin in

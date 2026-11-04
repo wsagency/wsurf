@@ -202,6 +202,18 @@ final class SidebarFrames {
         return found
     }
 
+    /// The tab whose row is at `point` in the list's content (where the rows measure themselves), for the list's middle click.
+    /// A split's row is left out: its cells catch their own clicks.
+    func tab(atContentPoint point: CGPoint, in browser: BrowserModel) -> UUID? {
+        let placed = CGPoint(x: point.x + contentOrigin.x, y: point.y + contentOrigin.y)
+        for (item, frame) in visible(in: browser) where frame.contains(placed) {
+            if case .tab(let id) = item, !browser.splits.contains(id) {
+                return id
+            }
+        }
+        return nil
+    }
+
     private func isInOpenFolders(_ item: SidebarItem, parents: [SidebarItem: UUID], in browser: BrowserModel) -> Bool {
         var parent = parents[item]
         while let id = parent {
