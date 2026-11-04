@@ -445,6 +445,8 @@ check_average \
   'Sidebar drag memory growth' \
   'kB'
 # A saved 300-tab window restored into the model: 0.0317 s (before 0.0315 s).
+# The same with a 16 KB saved page state in each tab, left in the table until the tab is shown (optimised host on the Pro): 0.019 s
+# (0.020 s when every tab's state was read at restore).
 check_average \
   'LaunchPerformanceTests/testRestoringA300TabWindowIntoTheModel()' \
   'com.apple.dt.XCTMetric_Clock.time.monotonic' \
