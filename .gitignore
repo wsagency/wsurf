@@ -15,7 +15,7 @@ DerivedData/
 *.dSYM
 
 # Task worktrees
-/.worktrees/
+/.wt/
 
 # Swift Package Manager
 .build/
