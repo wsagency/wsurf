@@ -61,13 +61,13 @@
       }
     },
     "NSHumanReadableCopyright" : {
-      "comment" : "The copyright line under the version in the standard About panel, and in the Finder’s Get Info. “WSurf Agency”, “Linen” and “Kavoye” are names, and “Business Source License 1.1” and “Apache 2.0” are license names — leave them as is. Only the word Copyright and “Based on” are translated.",
+      "comment" : "The copyright line under the version in the standard About panel, and in the Finder’s Get Info. “WSurf Agency” is a name and “Business Source License 1.1” a license name — leave them as is. Only the word Copyright is translated.",
       "extractionState" : "extracted_with_value",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "new",
-            "value" : "Copyright © 2026 WSurf Agency. Business Source License 1.1. Based on Linen by Kavoye (Apache 2.0)."
+            "value" : "Copyright © 2026 WSurf Agency. Business Source License 1.1."
           }
         }
       }
