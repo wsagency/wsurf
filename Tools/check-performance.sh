@@ -451,11 +451,13 @@ check_average \
   '4096' \
   'Sidebar drag memory growth' \
   'kB'
-# A saved 300-tab window restored into the model: 0.0317 s (before 0.0315 s).
+# A saved 300-tab window restored into the model: 0.0317 s (before 0.0315 s); 0.1.22 gate 0.032264 s, samples 0.0316-0.0328.
+# The hosted runner (no GPU) is about twice that and steady, so twice the Pro has no room there: mean 0.057903 s on CI
+# 41751273289, 0.065859 s on 41819810600 (judged samples 0.061-0.070). 0.072 is the runner's worst mean plus a tenth.
 check_average \
   'LaunchPerformanceTests/testRestoringA300TabWindowIntoTheModel()' \
   'com.apple.dt.XCTMetric_Clock.time.monotonic' \
-  '0.063' \
+  '0.072' \
   '300-tab window restored into the model' \
   's'
 check_average \
