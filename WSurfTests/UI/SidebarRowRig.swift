@@ -61,7 +61,7 @@ struct SidebarRowRig {
             .frame(width: width, height: height)
             .environment(\.sidebarStyle, style)
             .environment(\.sidebarIsFloating, false)
-            .environment(\.chromeWash, .of(NSColor(srgbRed: 0.105, green: 0.105, blue: 0.125, alpha: 1), isLight: false))
+            .sidebarWash(.of(NSColor(srgbRed: 0.105, green: 0.105, blue: 0.125, alpha: 1), isLight: false))
             .environment(\.chromeIsLight, false)
             .environment(\.colorScheme, .dark)
             .environment(\.windowColorScheme, .dark)

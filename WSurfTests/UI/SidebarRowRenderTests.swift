@@ -64,7 +64,7 @@ struct SidebarRowRenderTests {
             .frame(width: width ?? rowWidth, height: height ?? rowHeight)
             .environment(\.sidebarStyle, style)
             .environment(\.sidebarIsFloating, isFloating)
-            .environment(\.chromeWash, .of(ground ?? darkGround, isLight: scheme == .light))
+            .sidebarWash(.of(ground ?? darkGround, isLight: scheme == .light))
             .environment(\.chromeIsLight, scheme == .light)
             .environment(\.colorScheme, scheme)
             .environment(\.windowColorScheme, scheme)

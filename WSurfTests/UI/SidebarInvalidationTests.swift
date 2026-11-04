@@ -132,4 +132,17 @@ struct SidebarInvalidationTests {
         #expect(!invalidates({ _ = hidden.body }, by: { coordinator.linkModifiers = [] }), "the key comes up")
         #expect(!invalidates({ _ = hidden.body }, by: { coordinator.linkModifiers = [.command] }), "the key goes down")
     }
+
+    /// A theme slider moves the sidebar's color at every step. The rows read it through `SidebarGround`, so only a row that draws on
+    /// the ground (a marked or current one) follows it, and only a real change tells them.
+    @Test func theSidebarGroundTellsItsReadersOnlyOfARealChange() {
+        let ground = SidebarGround(.of(NSColor(srgbRed: 0.1, green: 0.1, blue: 0.12, alpha: 1), isLight: false))
+        let read = { _ = ground.wash }
+
+        #expect(!invalidates(read) { ground.update(ground.wash) }, "the same wash again")
+        #expect(invalidates(read) {
+            ground.update(.of(NSColor(srgbRed: 0.3, green: 0.3, blue: 0.34, alpha: 1), isLight: false))
+        }, "a brighter sidebar")
+        #expect(!invalidates({ _ = ground }) { ground.update(.neutral) }, "holding the ground does not observe it")
+    }
 }

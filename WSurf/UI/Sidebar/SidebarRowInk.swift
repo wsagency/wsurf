@@ -70,13 +70,61 @@ extension EnvironmentValues {
     @Entry var sidebarIconTint: Color?
 }
 
+/// The sidebar's `chromeWash`, held so that a row observes it only when the row draws on it. Reading `wash` observes it;
+/// holding the ground does not. A resting row draws only its ink, so while a theme slider moves the sidebar's color
+/// it stays as it is instead of evaluating its body at every step; a marked or current row reads the wash and follows.
+final class SidebarGround: Observable {
+    private let registrar = ObservationRegistrar()
+    private var stored: ChromeWash
+
+    init(_ wash: ChromeWash = .neutral) {
+        stored = wash
+    }
+
+    var wash: ChromeWash {
+        registrar.access(self, keyPath: \.wash)
+        return stored
+    }
+
+    /// Tells the rows that read the wash, and only when it really changes.
+    func update(_ wash: ChromeWash) {
+        guard wash != stored else { return }
+        registrar.withMutation(of: self, keyPath: \.wash) { stored = wash }
+    }
+}
+
+extension EnvironmentValues {
+    /// nil outside a sidebar: a row there draws on `ChromeWash.neutral`, as it did on the default `chromeWash`.
+    @Entry var sidebarGround: SidebarGround?
+}
+
+private struct SidebarGroundProvider: ViewModifier {
+    let wash: ChromeWash
+    @State private var ground = SidebarGround()
+
+    func body(content: Content) -> some View {
+        // Before the rows below evaluate, in the same update, so a row on the ground never lags a frame behind it.
+        ground.update(wash)
+        return content
+            .environment(\.chromeWash, wash)
+            .environment(\.sidebarGround, ground)
+    }
+}
+
+extension View {
+    /// Sets `chromeWash` for a sidebar's rows, and the `sidebarGround` their `SidebarRowInkSource` reads it through.
+    func sidebarWash(_ wash: ChromeWash) -> some View {
+        modifier(SidebarGroundProvider(wash: wash))
+    }
+}
+
 /// What a row reads from its surroundings to draw a `SidebarRowStyle`. Every kind of row keeps one, so none of
-/// them reads the environment on its own.
+/// them reads the environment on its own. The wash comes through `sidebarGround`, so set it with `sidebarWash(_:)`.
 struct SidebarRowInkSource: DynamicProperty {
     @Environment(\.windowColorScheme) private var windowScheme
     @Environment(\.sidebarIsFloating) private var isFloating
     @Environment(\.colorScheme) private var scheme
-    @Environment(\.chromeWash) private var wash
+    @Environment(\.sidebarGround) private var ground
     @Environment(\.colorSchemeContrast) private var contrast
 
     var increasedContrast: Bool {
@@ -89,15 +137,16 @@ struct SidebarRowInkSource: DynamicProperty {
         guard style.emphasis == .current || style.marksCurrentTab || style.mark != .none else {
             return SidebarRowInk(style: style, resting: resting, colors: nil)
         }
+        let groundColor = (ground?.wash ?? .neutral).groundColor
         return SidebarRowInk(
             style: style,
             resting: resting,
             colors: SidebarRowStyle.colors(
                 text: SidebarRowStyle.srgb(settings.sidebarTextColor(scheme: windowScheme, isFloating: isFloating), scheme: windowScheme),
-                ground: wash.groundColor,
+                ground: groundColor,
                 accent: SidebarRowStyle.srgb(Theme.accent, scheme: scheme)
             ),
-            ground: Color(nsColor: wash.groundColor)
+            ground: Color(nsColor: groundColor)
         )
     }
 }
