@@ -190,6 +190,7 @@
    "AskAddressLayoutTests",
    "CertificateEvaluationTests",
    "ChromiumCaptureDecodeTests",
+   "ChromiumCloseTimeoutTests",
    "ChromiumContextMenuTests",
    "ChromiumFindTests",
    "ColourChooserDismissalTests",

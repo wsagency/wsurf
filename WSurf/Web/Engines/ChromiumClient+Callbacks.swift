@@ -322,7 +322,7 @@ extension ChromiumClient {
             ChromiumClient.releaseBrowser(browser)
             guard let client = ChromiumClient.owner(handlerSelf.map(UnsafeMutableRawPointer.init)) else { return }
             MainActor.assumeIsolated {
-                client.page?.didClose()
+                client.page?.browserDidClose()
                 client.close()
             }
         }
