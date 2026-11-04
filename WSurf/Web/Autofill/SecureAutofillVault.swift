@@ -11,6 +11,8 @@ nonisolated protocol AutofillSecureStorage: Sendable {
     func read(service: String, context: LAContext) throws -> Data?
     func write(_ data: Data, service: String, context: LAContext) throws
     func erase(service: String) throws
+    /// Whether an item exists, without reading its secret and without any authentication prompt.
+    func exists(service: String) throws -> Bool
 }
 
 nonisolated struct AutofillKeychainStorage: AutofillSecureStorage {
@@ -20,9 +22,11 @@ nonisolated struct AutofillKeychainStorage: AutofillSecureStorage {
     }
 
     var access: Access = .userPresence
+    /// The item's account name; `nil` is the autofill stores' own ("records", or "records.when-unlocked").
+    var account: String?
 
-    private var account: String {
-        access == .whenUnlocked ? "records.when-unlocked" : "records"
+    private var itemAccount: String {
+        account ?? (access == .whenUnlocked ? "records.when-unlocked" : "records")
     }
 
     static func query(service: String, account: String = "records") -> [String: Any] {
@@ -33,7 +37,7 @@ nonisolated struct AutofillKeychainStorage: AutofillSecureStorage {
     }
 
     func read(service: String, context: LAContext) throws -> Data? {
-        var query = Self.query(service: service, account: account)
+        var query = Self.query(service: service, account: itemAccount)
         query[kSecUseAuthenticationContext as String] = context
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
@@ -47,7 +51,7 @@ nonisolated struct AutofillKeychainStorage: AutofillSecureStorage {
     }
 
     func write(_ data: Data, service: String, context: LAContext) throws {
-        var query = Self.query(service: service, account: account)
+        var query = Self.query(service: service, account: itemAccount)
         query[kSecUseAuthenticationContext as String] = context
         let status = SecItemUpdate(query as CFDictionary, [kSecValueData as String: data] as CFDictionary)
         if status == errSecSuccess {
@@ -64,8 +68,28 @@ nonisolated struct AutofillKeychainStorage: AutofillSecureStorage {
     }
 
     func erase(service: String) throws {
-        let status = SecItemDelete(Self.query(service: service, account: account) as CFDictionary)
+        let status = SecItemDelete(Self.query(service: service, account: itemAccount) as CFDictionary)
         guard status == errSecSuccess || status == errSecItemNotFound else { throw AutofillVaultError.keychain(status) }
+    }
+
+    /// Asks for the item's attributes only. An item that needs user presence still answers, and `interactionNotAllowed`
+    /// makes the system refuse to prompt: a protected item then reports `errSecInteractionNotAllowed`, which also means it exists.
+    func exists(service: String) throws -> Bool {
+        let context = LAContext()
+        context.interactionNotAllowed = true
+        var query = Self.query(service: service, account: itemAccount)
+        query[kSecUseAuthenticationContext as String] = context
+        query[kSecReturnAttributes as String] = true
+        query[kSecMatchLimit as String] = kSecMatchLimitOne
+        let status = SecItemCopyMatching(query as CFDictionary, nil)
+        switch status {
+        case errSecSuccess, errSecInteractionNotAllowed:
+            return true
+        case errSecItemNotFound:
+            return false
+        default:
+            throw AutofillVaultError.keychain(status)
+        }
     }
 }
 
@@ -124,12 +148,7 @@ actor SecureAutofillVault<Record: Codable & Identifiable & Sendable> where Recor
         saveCandidates: (@Sendable ([Record]) -> [AutofillSaveCandidate])? = nil
     ) {
         self.profileID = profileID
-        var namespace = "io.wsagency.wsurf.autofill"
-        if AppDatabase.isRunningTests { namespace += ".tests.\(ProcessInfo.processInfo.processIdentifier)" }
-        #if DEBUG
-        if StageMode.isActive { namespace += ".stage" }
-        #endif
-        service = "\(namespace).\(kind).\(profileID.uuidString)"
+        service = "\(AutofillVaults.serviceNamespace()).\(kind).\(profileID.uuidString)"
         self.reason = reason
         self.storage = storage
         self.saveKind = saveKind
@@ -157,6 +176,12 @@ actor SecureAutofillVault<Record: Codable & Identifiable & Sendable> where Recor
         guard profileID != Profile.privateID else { throw AutofillVaultError.privateBrowsing }
         try storage.erase(service: service)
         updateSaveIndex([])
+    }
+
+    /// Whether anything is stored, answered without reading it or prompting. Private browsing never stores anything.
+    func hasStoredRecords() throws -> Bool {
+        guard profileID != Profile.privateID else { return false }
+        return try storage.exists(service: service)
     }
 
     private func context(using session: AutofillAuthenticationSession?) throws -> LAContext {
@@ -193,6 +218,17 @@ actor SecureAutofillVault<Record: Codable & Identifiable & Sendable> where Recor
 }
 
 enum AutofillVaults {
+    /// The prefix of every autofill Keychain service. Tests and stage runs get their own, so they never share items with the
+    /// installed app.
+    nonisolated static func serviceNamespace() -> String {
+        var namespace = "io.wsagency.wsurf.autofill"
+        if AppDatabase.isRunningTests { namespace += ".tests.\(ProcessInfo.processInfo.processIdentifier)" }
+        #if DEBUG
+        if StageMode.isActive { namespace += ".stage" }
+        #endif
+        return namespace
+    }
+
     private static var cards: [UUID: PaymentCardVault] = [:]
 
     static func cards(for id: UUID) -> PaymentCardVault {
@@ -205,30 +241,33 @@ enum AutofillVaults {
     }
 
     private static var contacts: [UUID: SecureAutofillVault<AutofillContact>] = [:]
-    private static var passwords: [UUID: SecureAutofillVault<SavedPassword>] = [:]
+    private static var legacyPasswords: [UUID: SecureAutofillVault<SavedPassword>] = [:]
 
+    /// The contacts and addresses saved before they moved into the vault. Read and erased only (by `AutofillVaultMigration`, by filling
+    /// one before the move is confirmed, and by erasing a profile): nothing writes this list any more.
     static func contacts(for id: UUID) -> SecureAutofillVault<AutofillContact> {
         if let vault = contacts[id] {
             return vault
         }
         let vault = SecureAutofillVault<AutofillContact>(
             profileID: id, kind: "contacts", reason: String(localized: "Access your saved contacts in WSurf."),
-            storage: AutofillKeychainStorage(access: .whenUnlocked),
-            saveKind: .contact, saveCandidates: { $0.map(AutofillSaveCandidate.contact) }
+            storage: AutofillKeychainStorage(access: .whenUnlocked)
         )
         contacts[id] = vault
         return vault
     }
 
-    static func passwords(for id: UUID) -> SecureAutofillVault<SavedPassword> {
-        if let vault = passwords[id] {
+    /// The passwords saved before Credential Manager. Read and erased only (by `LegacyPasswordMigration` and by erasing a
+    /// profile): nothing writes this list any more.
+    static func legacyPasswords(for id: UUID) -> SecureAutofillVault<SavedPassword> {
+        if let vault = legacyPasswords[id] {
             return vault
         }
         let vault = SecureAutofillVault<SavedPassword>(
             profileID: id, kind: "passwords", reason: String(localized: "Access your saved passwords in WSurf."),
             saveKind: .password, saveCandidates: { $0.map(AutofillSaveCandidate.password) }
         )
-        passwords[id] = vault
+        legacyPasswords[id] = vault
         return vault
     }
 }

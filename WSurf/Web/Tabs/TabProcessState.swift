@@ -12,8 +12,15 @@ final class TabProcessState {
     private(set) var hasEditedForm = false
     private(set) var isSharingScreen = false
     private(set) var isAgentWorking = false
-    var isExternalAutomationWorking = false
+    var isExternalAutomationWorking = false {
+        didSet { onControlChange?() }
+    }
+    /// The MCP connections that hold a grant for this tab, kept by `MCPBrowserSession.grants`. Such a tab shows the AI mark
+    /// and is not unloaded to save memory, so a connection working in the background finds its page as it left it.
+    private(set) var externalControllers: Set<UUID> = []
     private(set) var reclaimState: TabReclaimState = .none
+    /// Told whenever the assistant or a connected app takes or leaves the tab (`BrowserTab.agentControlChanged`).
+    @ObservationIgnored var onControlChange: (() -> Void)?
 
     @ObservationIgnored private var editedFormFrames: Set<String> = []
     @ObservationIgnored private var screenShareFrames: Set<String> = []
@@ -43,6 +50,9 @@ final class TabProcessState {
         if isAgentWorking || isExternalAutomationWorking {
             return .agentWorking
         }
+        if !externalControllers.isEmpty {
+            return .externalControl
+        }
         if hasMediaPlayback {
             return .mediaPlayback
         }
@@ -51,6 +61,16 @@ final class TabProcessState {
 
     func setAgentWorking(_ isWorking: Bool) {
         isAgentWorking = isWorking
+        onControlChange?()
+    }
+
+    func setExternalController(_ connection: UUID, holds: Bool) {
+        if holds {
+            externalControllers.insert(connection)
+        } else {
+            externalControllers.remove(connection)
+        }
+        onControlChange?()
     }
 
     func notePageActivity(_ signal: PageActivitySignal) {

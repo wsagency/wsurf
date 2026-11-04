@@ -195,13 +195,19 @@ enum BrowsingData {
             since: range.since
         )
 
+        // Missed watch notices name the pages the person watched, so any clear takes them, whatever its kinds and range.
+        context.pageWatches?.dismissMissed()
+
         if kinds.contains(.history) {
             if range == .everything {
                 history.clear()
+                context.tabArchive.clear()
             } else {
                 history.removeEntries(since: range.since)
+                context.tabArchive.removeEntries(since: range.since)
             }
             context.conversationLog.clearAll()
+            context.pageWatches?.forgetPageText()
         }
 
         if kinds.contains(.cookies) {
@@ -240,6 +246,7 @@ enum BrowsingData {
             context: context
         )
         context.conversationLog.clearAll()
+        context.pageWatches?.forgetPageText()
     }
 
 }

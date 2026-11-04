@@ -6,6 +6,7 @@ import GRDB
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 @MainActor
 extension WebsiteAuthenticatorCeremonyTests {

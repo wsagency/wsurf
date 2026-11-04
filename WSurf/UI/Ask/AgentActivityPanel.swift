@@ -11,14 +11,20 @@ struct AgentActivityPanel: View {
     let browser: BrowserModel
     var isCompacting = false
     var compactionMessage: LocalizedStringResource?
+    var external: [ExternalActivityLog] = []
     let onRetry: (ConversationLog.TaskTrace) -> Void
     let onEdit: (ConversationLog.TaskTrace) -> Void
     let onSpeak: (String) -> Void
 
     @State private var edges = Edges()
 
+    /// Changes whenever an external connection adds an entry, so the panel scrolls to it.
+    private var externalCount: Int {
+        external.reduce(0) { $0 + $1.entries.count }
+    }
+
     var body: some View {
-        if traces.isEmpty {
+        if traces.isEmpty && external.isEmpty {
             AgentActivityEmptyState(browser: browser)
         } else {
             list
@@ -54,6 +60,10 @@ struct AgentActivityPanel: View {
                         Text(compactionMessage)
                             .font(.caption)
                             .foregroundStyle(.secondary)
+                    }
+
+                    ForEach(external) { log in
+                        ExternalActivityGroup(log: log, tabID: tabID)
                     }
 
                     Color.clear
@@ -104,13 +114,16 @@ struct AgentActivityPanel: View {
             .onChange(of: isCompacting) { _, _ in
                 scrollToLatest(using: scrollProxy)
             }
+            .onChange(of: externalCount) { _, _ in
+                scrollToLatest(using: scrollProxy)
+            }
         }
     }
 
     private static let bottomAnchor = "chat.bottom"
 
     private func scrollToLatest(using proxy: ScrollViewProxy) {
-        guard !traces.isEmpty else { return }
+        guard !traces.isEmpty || !external.isEmpty else { return }
         Task {
             await Task.yield()
             proxy.scrollTo(Self.bottomAnchor, anchor: .bottom)
@@ -140,7 +153,7 @@ private enum Metrics {
 
 struct AgentStateMarker: View {
     let isRunning: Bool
-    var tint: Color = Theme.accent
+    var tint: Color = Theme.assistant
 
     var body: some View {
         Circle()
@@ -306,6 +319,9 @@ private struct AgentTaskTraceView: View {
                     onOpenLink: open(_:),
                     allowsContinuation: isLatest
                 )
+                if !trace.memoryUpdates.isEmpty, let facts = browser.context.assistantFacts {
+                    AgentMemoryLine(updates: trace.memoryUpdates, facts: facts).transition(.opacity)
+                }
                 if let output = trace.checkpoint?.openAI?.presentation {
                     OpenAIOutputView(output: output, providerID: trace.providerID, onOpenLink: open(_:))
                 }
@@ -786,7 +802,7 @@ private struct AgentBreadcrumbNode: View {
     private var dotColor: Color {
         switch state {
         case .accent, .running:
-            Theme.accent
+            Theme.assistant
         case .complete:
             .secondary.opacity(0.62)
         case .failed:
@@ -823,7 +839,7 @@ private struct AgentBreadcrumbNode: View {
 
             if state == .running {
                 Circle()
-                    .fill(Theme.accent.opacity(0.22))
+                    .fill(Theme.assistant.opacity(0.22))
                     .frame(width: 13, height: 13)
                     .position(x: centerX, y: dotY)
             }
@@ -937,7 +953,7 @@ private struct AgentActivityLinkRow: View {
             HStack(spacing: 9) {
                 Image(systemName: "arrow.up.right")
                     .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(Theme.accent)
+                    .foregroundStyle(Theme.assistant)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(verbatim: link.title)
                         .font(Theme.Font.control)
@@ -960,39 +976,5 @@ private struct AgentActivityLinkRow: View {
         }
         .buttonStyle(.plain)
         .help("Open this link in the task’s tab")
-    }
-}
-
-private struct AgentOutcomeChip: View {
-    let label: LocalizedStringResource
-    let tint: Color
-
-    var body: some View {
-        Text(label)
-            .font(.system(size: 10, weight: .semibold, design: .monospaced))
-            .kerning(0.4)
-            .foregroundStyle(tint)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(tint.opacity(0.14), in: RoundedRectangle(cornerRadius: Theme.Radius.tight, style: .continuous))
-    }
-}
-
-private struct AgentInlineButtonStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.system(size: 11, weight: .medium))
-            .foregroundStyle(Theme.accent)
-            .padding(.horizontal, 9)
-            .padding(.vertical, 3)
-            .background {
-                RoundedRectangle(cornerRadius: Theme.Radius.chip, style: .continuous)
-                    .strokeBorder(Theme.Wash.strong, lineWidth: 1)
-                    .background(
-                        Theme.accent.opacity(configuration.isPressed ? 0.12 : 0),
-                        in: RoundedRectangle(cornerRadius: Theme.Radius.chip, style: .continuous)
-                    )
-            }
-            .contentShape(Rectangle())
     }
 }

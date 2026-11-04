@@ -25,6 +25,8 @@ extension BrowserModel {
         tab.pinnedURL = record.pinnedURL
         tab.pinnedTitle = record.pinnedTitle
         tab.isFavorite = record.isFavorite
+        tab.pinID = record.pinID
+        tab.spaceID = record.spaceID
         tab.deferRestore(state: record.state, url: URL(string: record.url))
         tabs.insert(tab, at: min(record.index, tabs.count))
         let parent = record.folderID.flatMap { folder(id: $0) }
@@ -43,6 +45,8 @@ extension BrowserModel {
         } else if isVisibleInSplit(tab) {
             tab.realizeDeferredSession()
         }
+        // Reopen Last Closed Tab and undoing a close both bring a tab back that may not be on screen.
+        revealInSidebar(tab)
         registerSidebarUndo(named: String(localized: "Close Tab")) { model in
             guard let restored = model.tab(id: record.id) else { return }
             model.close(restored)

@@ -14,7 +14,6 @@ struct SidebarDrag {
     let covered: Set<SidebarItem>
     let keepsSection: Bool
     let wasKept: Bool
-    var translation: CGSize = .zero
     var landing = false
 
     init(
@@ -64,11 +63,24 @@ enum SidebarDragGhost {
 @MainActor
 @Observable
 final class SidebarDragModel {
+    /// The list and every row read `drag`, so it changes only when a drag starts, lands or ends.
     var drag: SidebarDrag?
+    /// How far the pointer has moved since the drag began. It changes with every step of the drag and only the chip under the
+    /// pointer reads it (`SidebarDragOverlay`), so a step draws the chip and not the list.
+    var translation: CGSize = .zero
 
     let frames = SidebarFrames()
 
     var listOriginInWindow: CGPoint = .zero
+
+    /// The space switcher's icons, in global coordinates, so a dragged row can be dropped on one.
+    @ObservationIgnored var spaceDotFrames: [UUID: CGRect] = [:]
+    /// The space whose icon a dragged row is over; dropping moves the row there.
+    var armedSpaceID: UUID?
+
+    func spaceDot(at point: CGPoint) -> UUID? {
+        spaceDotFrames.first { $0.value.contains(point) }?.key
+    }
 
     var contentFrameInWindow: CGRect = .zero
 
@@ -133,27 +145,93 @@ final class SidebarDragModel {
     }
 }
 
+/// Where the rows are, for drops, drags and the preview card. The list draws its rows lazily, so a row records its
+/// frame while it exists and forgets it when it goes. Frames are kept in the list's content, which does not move as
+/// it scrolls, and placed in the list by `contentOrigin`, which does: scrolling costs one update, not one per row.
 @MainActor
 final class SidebarFrames {
     private var slots: [SidebarItem: CGRect] = [:]
+    private var owners: [SidebarItem: UUID] = [:]
+    /// Where the content starts in the list's coordinates (above the list's top while it is scrolled down).
+    var contentOrigin: CGPoint = .zero
 
-    func record(_ item: SidebarItem, at frame: CGRect) {
+    /// `owner` tells the row that drew the frame apart from the one that replaces it: a drop into a folder builds the
+    /// row again, and the new view records before the old one disappears.
+    func record(_ item: SidebarItem, at frame: CGRect, by owner: UUID? = nil) {
         slots[item] = frame
+        owners[item] = owner
     }
 
+    func forget(_ item: SidebarItem, recordedBy owner: UUID) {
+        guard owners[item] == owner else { return }
+        slots[item] = nil
+        owners[item] = nil
+    }
+
+    /// The row's frame in the list's coordinates.
     subscript(item: SidebarItem) -> CGRect? {
-        slots[item]
+        slots[item].map(placed)
     }
 
-    func live(tabIDs: Set<UUID>, folderIDs: Set<UUID>) -> [SidebarItem: CGRect] {
-        slots.filter { entry in
-            switch entry.key {
+    /// The row's frame in the window's, given where the list starts in it.
+    func windowFrame(of item: SidebarItem, listOrigin: CGPoint) -> CGRect? {
+        self[item]?.offsetBy(dx: listOrigin.x, dy: listOrigin.y)
+    }
+
+    private func placed(_ frame: CGRect) -> CGRect {
+        frame.offsetBy(dx: contentOrigin.x, dy: contentOrigin.y)
+    }
+
+    /// The frames, in the list's coordinates, of the rows a person can point at: drawn, in the space on screen, in a
+    /// folder that is open, and not the hidden pane of a split.
+    func visible(in browser: BrowserModel) -> [SidebarItem: CGRect] {
+        let hidden = browser.hiddenSidebarTabIDs
+        let parents = browser.sidebarTree.parents()
+        var found: [SidebarItem: CGRect] = [:]
+        found.reserveCapacity(slots.count)
+        for (item, frame) in slots {
+            switch item {
             case .tab(let id):
-                tabIDs.contains(id)
+                guard browser.tabsByID[id] != nil, !hidden.contains(id) else { continue }
             case .folder(let id):
-                folderIDs.contains(id)
+                guard browser.foldersByID[id] != nil else { continue }
             }
+            guard browser.isShown(item), isInOpenFolders(item, parents: parents, in: browser) else { continue }
+            found[item] = placed(frame)
         }
+        return found
+    }
+
+    private func isInOpenFolders(_ item: SidebarItem, parents: [SidebarItem: UUID], in browser: BrowserModel) -> Bool {
+        var parent = parents[item]
+        while let id = parent {
+            guard browser.foldersByID[id]?.isExpanded == true else { return false }
+            parent = parents[.folder(id)]
+        }
+        return true
+    }
+}
+
+/// What a row keeps for `SidebarFrames`: who it is, so a view that replaces it is not undone by its goodbye, and the last
+/// frame it measured. SwiftUI can bring a row back without measuring it again (nothing about its geometry changed), and
+/// then the row records that frame itself. A class, not state: remembering a frame must not redraw the row.
+@MainActor
+final class SidebarRowFrame {
+    private let owner = UUID()
+    private var measured: CGRect?
+
+    func measure(_ item: SidebarItem, at frame: CGRect, in frames: SidebarFrames) {
+        measured = frame
+        frames.record(item, at: frame, by: owner)
+    }
+
+    func appear(_ item: SidebarItem, in frames: SidebarFrames) {
+        guard let measured else { return }
+        frames.record(item, at: measured, by: owner)
+    }
+
+    func forget(_ item: SidebarItem, in frames: SidebarFrames) {
+        frames.forget(item, recordedBy: owner)
     }
 }
 
@@ -189,6 +267,18 @@ struct SidebarRowContext {
     var activeItem: SidebarItem? {
         guard case .tab(let id) = coordinator.sidebarDestination else { return nil }
         return .tab(browser.splits.split(containing: id)?.leader ?? id)
+    }
+
+    /// Where the row of `item` is in the window, or zero while it has no frame.
+    func windowFrame(of item: SidebarItem) -> CGRect {
+        frames.windowFrame(of: item, listOrigin: coordinator.sidebarDrag.listOriginInWindow) ?? .zero
+    }
+
+    /// Keeps the preview card of the row `id` names on that row when the row moves in the list (a folder above it
+    /// opens, a row above it goes). Scrolling moves every row at once and is followed by the list itself.
+    func followPreview(of item: SidebarItem, id: UUID) {
+        guard coordinator.tabPreview.shown?.subject.id == id else { return }
+        coordinator.tabPreview.moved(id, anchor: windowFrame(of: item))
     }
 }
 
@@ -261,6 +351,7 @@ struct SidebarDropMark: View {
                 label
                     .font(BrowserSettings.application.sidebarFont)
                     .lineLimit(1)
+                    .sidebarTitleCentered()
                 Spacer(minLength: 0)
             }
         }
@@ -278,20 +369,39 @@ struct SidebarDropMark: View {
     }
 }
 
+/// The rows of one level: a top-level list is a `ForEach` inside the list's lazy stack, so each row is one lazy item
+/// (the pin line's seam goes in the item of the last pinned row); a folder puts its rows in a stack of its own.
 struct SidebarRows: View {
     let items: [SidebarItem]
     let depth: Int
     let context: SidebarRowContext
+    /// The row that the pin line's seam follows.
+    var seamAfter: SidebarItem?
+
+    /// Rows that exist: a missing one or the hidden pane of a split takes no room, not even a gap.
+    private var shown: [SidebarItem] {
+        items.filter { item in
+            switch item {
+            case .folder(let id):
+                context.browser.folder(id: id) != nil
+            case .tab(let id):
+                context.browser.tab(id: id) != nil && !context.browser.splits.isFollower(id)
+            }
+        }
+    }
 
     var body: some View {
-        VStack(spacing: SidebarMetrics.rowVerticalSpacing(settings: BrowserSettings.application)) {
-            ForEach(Array(items.enumerated()), id: \.element) { _, item in
+        ForEach(shown, id: \.self) { item in
+            VStack(spacing: SidebarMetrics.rowVerticalSpacing(settings: BrowserSettings.application)) {
                 row(item)
                     .overlay {
                         if let mark = context.dropMark(item) {
                             SidebarDropMark(kind: mark, isArmed: true)
                         }
                     }
+                if item == seamAfter {
+                    SidebarSectionSeam()
+                }
             }
         }
     }
@@ -305,9 +415,7 @@ struct SidebarRows: View {
             }
         case .tab(let id):
             if let tab = context.browser.tab(id: id) {
-                if context.browser.splits.isFollower(id) {
-                    EmptyView()
-                } else if let grid = context.browser.splits.splitLed(by: id) {
+                if let grid = context.browser.splits.splitLed(by: id) {
                     SidebarSplitRow(leading: tab, split: grid, depth: depth, context: context)
                 } else {
                     SidebarTabRow(tab: tab, depth: depth, context: context)

@@ -130,17 +130,46 @@ struct AttachmentTests {
         }
         let large = try AttachmentImporter.prepare(data: Data(String(repeating: "a", count: 10_000).utf8), name: "notes.md")
         #expect(throws: AttachmentFailure.self) {
-            try AttachmentRequest.validate([large], message: "Read", textOnly: true, windowTokens: 4_096)
+            try AttachmentRequest.validate(
+                [large], message: "Read", textOnly: true, windowTokens: 4_096, imageTokens: AttachmentRequest.hostedImageTokens
+            )
         }
         let visual = AssistantAttachment(
             id: UUID(), name: "photo.jpg", contentType: UTType.jpeg.identifier,
             data: Data([1]), text: "", images: [.init(data: Data([1]), mimeType: "image/jpeg")]
         )
         #expect(throws: AttachmentFailure.self) {
-            try AttachmentRequest.validate([visual], message: "Read", textOnly: true, windowTokens: 32_000)
+            try AttachmentRequest.validate(
+                [visual], message: "Read", textOnly: true, windowTokens: 32_000, imageTokens: AttachmentRequest.hostedImageTokens
+            )
         }
         #expect(AttachmentRequest.images([visual], textOnly: true).isEmpty)
         #expect(AttachmentRequest.images([visual], textOnly: false).count == 1)
+    }
+
+    @Test func eachModelIsChargedItsOwnImageEstimateAgainstHalfTheWindow() throws {
+        // The page the importer makes of image(), built directly: the budget is the subject, and importing runs Vision OCR,
+        // which hosted CI VMs cannot load (see OCR_SKIPS in Tools/check-test-partition.py).
+        let png = try image()
+        let page = AssistantAttachment(
+            id: UUID(), name: "page.png", contentType: UTType.png.identifier,
+            data: png, text: "INVOICE 42", images: [.init(data: png, mimeType: "image/png")]
+        )
+        func allowed(_ provider: Provider, images: Int, window: Int) -> Bool {
+            (try? AttachmentRequest.validate(
+                Array(repeating: page, count: images), message: "Read", textOnly: false, windowTokens: window,
+                imageTokens: AttachmentRequest.imageTokens(for: provider)
+            )) != nil
+        }
+        let onDevice = ProviderCatalog.appleOnDevice
+        let reported = ContextWindow.resolve(for: onDevice, model: "", systemModelReportedTokens: 8_192).tokens
+        let fallback = ContextWindow.resolve(for: onDevice, model: "", systemModelReportedTokens: 0).tokens
+
+        #expect(allowed(onDevice, images: 4, window: reported))
+        #expect(allowed(onDevice, images: 4, window: fallback))
+        #expect(!allowed(onDevice, images: 16, window: reported))
+        #expect(allowed(ProviderCatalog.openAI, images: 2, window: reported))
+        #expect(!allowed(ProviderCatalog.openAI, images: 3, window: reported))
     }
 
     @Test func pastingAnImageCreatesARemovableAttachment() async throws {

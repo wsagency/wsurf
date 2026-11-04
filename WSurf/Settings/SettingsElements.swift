@@ -100,6 +100,8 @@ struct SiteIcon: View {
 struct SiteRow<Trailing: View>: View {
     let host: String
     var summary: String?
+    /// A last line under the summary, for a row that has one more thing to say, such as when a credential was added.
+    var caption: String?
     @ViewBuilder let trailing: Trailing
 
     var body: some View {
@@ -119,13 +121,22 @@ struct SiteRow<Trailing: View>: View {
                         .lineLimit(1)
                         .truncationMode(.tail)
                 }
+
+                if let caption, !caption.isEmpty {
+                    Text(verbatim: caption)
+                        .font(Theme.Font.label)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
             }
 
             Spacer(minLength: 8)
 
             trailing
         }
-        .padding(.vertical, 9)
+        .padding(.vertical, SettingsMetrics.rowPaddingV)
+        .environment(\.settingsSurfaceIsFlat, true)
     }
 }
 
@@ -179,7 +190,7 @@ struct DrillInRow: View {
 
                 DrillInChevron()
             }
-            .padding(.vertical, caption == nil ? 10 : SettingsMetrics.rowPaddingV)
+            .padding(.vertical, SettingsMetrics.rowPaddingV)
             .settingsRowTarget()
         }
         .buttonStyle(.plain)
@@ -212,7 +223,7 @@ struct AddRow: View {
 
                 Spacer(minLength: 8)
             }
-            .padding(.vertical, 9)
+            .padding(.vertical, SettingsMetrics.rowPaddingV)
             .settingsRowTarget()
         }
         .buttonStyle(.plain)
@@ -268,13 +279,21 @@ struct SubPageHeader<Accessory: View>: View {
 struct SettingsList<Content: View>: View {
     @ViewBuilder let content: Content
 
+    @Environment(\.settingsIsCompact) private var isCompact
+
+    /// The inset `SettingsCard` uses, so a lazy list lines up with the cards around it.
+    private var inset: CGFloat {
+        isCompact ? SettingsMetrics.compactCardInset : SettingsMetrics.cardInset
+    }
+
     var body: some View {
         LazyVStack(alignment: .leading, spacing: 0) {
             content
         }
-        .environment(\.settingsCardInset, SettingsMetrics.cardInset)
+        .environment(\.settingsCardInset, inset)
         .environment(\.settingsSectionLit, false)
-        .padding(.horizontal, SettingsMetrics.cardInset)
+        .environment(\.settingsSurfaceIsFlat, true)
+        .padding(.horizontal, inset)
         .padding(.vertical, SettingsMetrics.cardInsetV)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
@@ -285,12 +304,37 @@ struct SettingsList<Content: View>: View {
 }
 
 struct PreviewChoiceCard<Thumbnail: View>: View {
-    let label: LocalizedStringResource
+    private let label: Text
     let isSelected: Bool
     let action: () -> Void
-    @ViewBuilder let thumbnail: Thumbnail
+    let thumbnail: Thumbnail
 
     @State private var hovering = false
+
+    init(
+        label: LocalizedStringResource,
+        isSelected: Bool,
+        action: @escaping () -> Void,
+        @ViewBuilder thumbnail: () -> Thumbnail
+    ) {
+        self.label = Text(label)
+        self.isSelected = isSelected
+        self.action = action
+        self.thumbnail = thumbnail()
+    }
+
+    /// A card named by text that is not a localized key, such as the name of a saved theme.
+    init(
+        verbatim name: String,
+        isSelected: Bool,
+        action: @escaping () -> Void,
+        @ViewBuilder thumbnail: () -> Thumbnail
+    ) {
+        self.label = Text(verbatim: name)
+        self.isSelected = isSelected
+        self.action = action
+        self.thumbnail = thumbnail()
+    }
 
     private var shape: RoundedRectangle {
         RoundedRectangle(cornerRadius: Theme.Radius.control, style: .continuous)
@@ -320,7 +364,7 @@ struct PreviewChoiceCard<Thumbnail: View>: View {
                     )
                     .scaleEffect(hovering ? 1.015 : 1)
 
-                Text(label)
+                label
                     .font(.system(size: 11.5, weight: isSelected ? .semibold : .regular))
                     .frame(width: AppearanceThumbnailMetrics.width, alignment: .center)
             }
@@ -476,7 +520,7 @@ struct StatStrip: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
-        .padding(.vertical, 12)
+        .padding(.vertical, SettingsMetrics.rowPaddingV)
     }
 }
 
@@ -498,7 +542,7 @@ struct ChipList: View {
                     )
             }
         }
-        .padding(.vertical, 13)
+        .padding(.vertical, SettingsMetrics.rowPaddingV)
     }
 }
 

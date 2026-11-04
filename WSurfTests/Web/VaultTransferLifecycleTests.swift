@@ -8,6 +8,7 @@ import Synchronization
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 /// How an import or export ends, through the real coordinator, manager and store (spec §13.5). The tests assert kinds,
 /// actions, receipts and store bytes; the wording is production code's and never asserted here.
@@ -333,14 +334,13 @@ struct VaultTransferLifecycleTests {
             try await f.seed(base.neighbours(2))
             let inbox = inbox(f)
             try await stage(incomingLogin(in: f), in: f)
-            let review = try #require(f.coordinator.importReview(for: f.manager, owner: f.owner))
+            let outcome = try f.coordinator.plannedOutcome(for: f.manager, owner: f.owner)
 
             let receipt = try await f.coordinator.commitImport(into: f.manager, owner: f.owner)
             let message = try #require(inbox.messages.first)
             #expect(inbox.messages.count == 1 && message.kind == .succeeded && message.action == .none)
             let storedRevision = try await f.stored().revision
             #expect(message.receipt?.revision == receipt.revision && receipt.revision == storedRevision)
-            let outcome = try #require(review.outcome)
             #expect(outcome.added == 1 && outcome.updated == 0)
             #expect(outcome.results.map(\.action) == [.added] && outcome.results.first?.kind == .password)
             #expect(!String(reflecting: outcome).contains("incoming"))

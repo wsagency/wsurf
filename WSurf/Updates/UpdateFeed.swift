@@ -31,19 +31,6 @@ nonisolated enum UpdateFeed {
         string: "https://github.com/\(owner)/\(repository)/issues/new/choose"
     )!
 
-    static let releasesURL = URL(
-        string: "https://github.com/\(owner)/\(repository)/releases"
-    )!
-
-    /// One page holds every version this project has shipped so far.
-    static let releasePageSize = 100
-
-    static func releasesAPI(perPage: Int = releasePageSize) -> URL {
-        URL(
-            string: "https://api.github.com/repos/\(owner)/\(repository)/releases?per_page=\(perPage)"
-        )!
-    }
-
     static var currentVersion: String {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0"
     }

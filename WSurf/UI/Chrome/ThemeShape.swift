@@ -1,0 +1,80 @@
+// SPDX-FileCopyrightText: 2026 WSurf Agency
+// SPDX-License-Identifier: BUSL-1.1
+
+import SwiftUI
+
+/// The shape a theme gives the chrome: how the page and marked rows are edged, how round corners are, whether
+/// loaded tabs keep their favicon colors, how far the page and the sidebar sit from the window, how roomy rows are,
+/// and how far an open folder moves its rows in. Rows and the page observe only this value, so a color or brightness
+/// change does not redraw their shapes, and a theme switch reassigns it only when it differs.
+struct ThemeShape: Equatable {
+    var pageFrame = FrameStyle.standard
+    var rowFrame = FrameStyle.standard
+    var cornerScale: CGFloat = 1
+    var colorsFavicons = false
+    var pageSpacing = LoomChrome.canvasInset
+    var sidebarMargin = LoomChrome.canvasInset
+    var rowPadding: CGFloat = 9
+    var tabIconSize: CGFloat = 16
+    /// How strongly folder colors draw; see `ThemeAdjustment.folderColorOpacity`.
+    var folderColorOpacity: Double = 1
+    /// The step that each level of an open folder moves its rows in; see `ThemeAdjustment.folderIndent(level:)`.
+    var folderIndents: [CGFloat] = [0, 0, 0]
+
+    init() {}
+
+    init(_ adjustment: ThemeAdjustment) {
+        pageFrame = adjustment.pageFrame
+        rowFrame = adjustment.rowFrame
+        cornerScale = CGFloat(adjustment.cornerScale)
+        colorsFavicons = adjustment.loadedFavicons == .color
+        pageSpacing = CGFloat(adjustment.pageSpacing)
+        sidebarMargin = CGFloat(adjustment.sidebarMargin)
+        rowPadding = CGFloat(adjustment.rowPadding)
+        tabIconSize = CGFloat(adjustment.tabIconSize)
+        folderColorOpacity = adjustment.folderColorOpacity
+        folderIndents = (1...3).map { CGFloat(adjustment.folderIndent(level: $0)) }
+    }
+
+    /// The step that the rows inside a folder at `level` take; every level from 3 on takes the third.
+    func folderIndent(level: Int) -> CGFloat {
+        folderIndents[min(max(level, 1), 3) - 1]
+    }
+
+    /// How far a row at `depth` starts in from where it starts with no indent: the steps of every level down to its
+    /// depth (a top-level row is depth 0). A folder's row and a tab's row at the same depth start at the same place; the
+    /// open folder's own 2 pt outline is the only thing that sets a folder row apart. This is the one place the rule is.
+    func folderInset(depth: Int) -> CGFloat {
+        (0..<max(depth, 0)).reduce(0) { $0 + folderIndent(level: $1 + 1) }
+    }
+
+    /// How much further in than the folder's own row the rows inside a folder at `depth` start: the step between its
+    /// depth and the next. Each folder pads its rows by this, so the steps add up down the tree to `folderInset`.
+    func folderStep(below depth: Int) -> CGFloat {
+        folderInset(depth: depth + 1) - folderInset(depth: depth)
+    }
+
+    /// Half the shortest sidebar row. A larger radius would leave a row no straight edge on its ends.
+    static let rowRadiusLimit: CGFloat = 12
+
+    /// The radius of sidebar rows, their highlights and folder outlines, from the unscaled `base`.
+    func rowRadius(_ base: CGFloat) -> CGFloat {
+        min(base * cornerScale, Self.rowRadiusLimit)
+    }
+
+    /// The radius of the page, the side panel and split panes. It never rounds more than the window's own corner.
+    func pageRadius(_ base: CGFloat, window: CGFloat) -> CGFloat {
+        min(base * cornerScale, window)
+    }
+
+    /// The corner of the page, the side panel and split panes in a window of corner `window`. A page flush with the
+    /// window is square: the window's own corner rounds it where the two meet.
+    func canvasRadius(window: CGFloat) -> CGFloat {
+        pageSpacing == 0 ? 0 : pageRadius(Theme.Radius.nested(in: window, inset: pageSpacing), window: window)
+    }
+
+    /// The page edge that is drawn. Increase Contrast asks for firm edges, so a page without a frame gets the thin one.
+    func pageFrame(contrast: ColorSchemeContrast) -> FrameStyle {
+        contrast == .increased && pageFrame == .none ? .hairline : pageFrame
+    }
+}

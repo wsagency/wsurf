@@ -12,7 +12,7 @@ struct AutofillSaveBadge: View {
 
     var body: some View {
         if !coordinator.isShowingSettings, let tab = browser.activeTab, tab.internalPage == nil {
-            TabAutofillSaveBadge(session: tab.autofillSave)
+            TabAutofillSaveBadge(session: tab.autofillSave, setUpVault: { coordinator.openSettings(.autofill) })
                 .id(tab.id)
         }
     }
@@ -20,6 +20,7 @@ struct AutofillSaveBadge: View {
 
 private struct TabAutofillSaveBadge: View {
     let session: AutofillSaveSession
+    let setUpVault: () -> Void
     @State private var pendingReview: AutofillSaveSession.Offer?
     @State private var reviewing: AutofillSaveSession.Offer?
 
@@ -32,11 +33,16 @@ private struct TabAutofillSaveBadge: View {
                     session.isPopoverPresented.toggle()
                 }
                 .accessibilityLabel(Text(offer.title))
+            } else if let offer = session.websiteOffer {
+                ChromeIcon(symbol: "key", weight: .semibold, tint: Theme.accent, help: String(localized: offer.title)) {
+                    session.isPopoverPresented.toggle()
+                }
+                .accessibilityLabel(Text(offer.title))
             }
         }
         .popover(isPresented: $session.isPopoverPresented, arrowEdge: .bottom) {
             if let offer = session.current {
-                AutofillSavePopover(session: session, offer: offer) {
+                AutofillSavePopover(session: session, offer: offer, setUpVault: setUpVault) {
                     pendingReview = offer
                     session.isPopoverPresented = false
                 }
@@ -48,6 +54,10 @@ private struct TabAutofillSaveBadge: View {
                     }
                     pendingReview = nil
                 }
+            } else if let offer = session.websiteOffer {
+                AutofillWebsitePopover(session: session, offer: offer)
+                    .id(offer.id)
+                    .environment(\.colorScheme, NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? .dark : .light)
             }
         }
         .sheet(item: $reviewing) { offer in
@@ -71,7 +81,8 @@ private struct TabAutofillSaveBadge: View {
 
 private extension AutofillSaveSession.Offer {
     var title: LocalizedStringResource {
-        switch candidate.kind {
+        guard !needsVault else { return "Save passwords in Credential Manager?" }
+        return switch candidate.kind {
         case .password:
             isUpdate ? "Update password?" : "Save password?"
         case .card:
@@ -94,9 +105,87 @@ private extension AutofillSaveSession.Offer {
 
 }
 
+private extension AutofillSaveSession.WebsiteOffer {
+    var title: LocalizedStringResource {
+        isManual ? "Use “\(name)” on \(host)?" : "Add \(host) to “\(name)”?"
+    }
+
+    var explanation: LocalizedStringResource {
+        isManual ? "Add \(host) to its websites." : "This saved login is then offered on \(host) too. No copy is saved."
+    }
+}
+
+/// The offer to add the page's website to a saved login of a sibling website. It names the login and holds no secret; only "Add
+/// Website" writes, and it writes nothing but the website.
+private struct AutofillWebsitePopover: View {
+    let session: AutofillSaveSession
+    let offer: AutofillSaveSession.WebsiteOffer
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: "key")
+                    .font(.system(size: 20))
+                    .foregroundStyle(Theme.accent)
+                    .frame(width: 40, height: 40)
+                    .background(Theme.accent.opacity(0.12), in: .rect(cornerRadius: 10))
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(offer.title).font(.headline)
+                    Text(offer.explanation)
+                        .font(Theme.Font.label)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            if let original = offer.lookalike {
+                Label {
+                    Text("\(offer.host) looks like \(original), but it is a different website. Add it only if you are sure.")
+                        .fixedSize(horizontal: false, vertical: true)
+                } icon: {
+                    Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                }
+                .font(Theme.Font.label)
+            }
+            if let error = session.error {
+                Text(verbatim: error)
+                    .font(Theme.Font.label)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Divider()
+            HStack(spacing: 8) {
+                if session.isBusy {
+                    Spinner(size: 14)
+                }
+                Spacer(minLength: 0)
+                // A look-alike page makes "Not Now" the default: adding takes a deliberate click.
+                if offer.lookalike != nil {
+                    Button("Add Website") { Task { await session.addWebsite(offer) } }
+                    Button("Not Now") { session.dismissWebsite(offer) }
+                        .buttonStyle(.borderedProminent)
+                        .keyboardShortcut(.defaultAction)
+                } else {
+                    Button("Not Now") { session.dismissWebsite(offer) }
+                    Button("Add Website") { Task { await session.addWebsite(offer) } }
+                        .buttonStyle(.borderedProminent)
+                }
+            }
+            .controlSize(.regular)
+            .disabled(session.isBusy)
+        }
+        .padding(16)
+        .frame(width: 360)
+        .fixedSize(horizontal: false, vertical: true)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Autofill save suggestion")
+    }
+}
+
 private struct AutofillSavePopover: View {
     let session: AutofillSaveSession
     let offer: AutofillSaveSession.Offer
+    let setUpVault: () -> Void
     let review: () -> Void
 
     var body: some View {
@@ -108,7 +197,13 @@ private struct AutofillSavePopover: View {
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            AutofillSaveActions(session: session, offer: offer, review: review)
+            if offer.isGone {
+                AutofillGoneOfferActions(session: session, offer: offer)
+            } else if offer.needsVault {
+                AutofillVaultSetupActions(session: session, offer: offer, setUpVault: setUpVault)
+            } else {
+                AutofillSaveActions(session: session, offer: offer, review: review)
+            }
         }
         .padding(16)
         .frame(width: 360)
@@ -133,10 +228,20 @@ private struct AutofillSaveDescription: View {
                 Text(offer.title).font(.headline)
                 Text(verbatim: offer.origin).font(Theme.Font.label).foregroundStyle(.secondary)
                     .lineLimit(2).truncationMode(.middle)
-                Text(verbatim: offer.candidate.summary).font(Theme.Font.label)
-                    .lineLimit(offer.candidate.kind == .contact ? 4 : 2)
-                    .truncationMode(.middle)
-                    .help(offer.candidate.summary)
+                if offer.needsVault {
+                    Text("""
+                        WSurf saves passwords in an encrypted vault that you unlock with a passkey. There is no recovery: if you lose \
+                        every passkey that unlocks the vault, its passwords can’t be recovered. This password isn’t saved now. After you \
+                        set up the vault, sign in again to save it.
+                        """)
+                        .font(Theme.Font.label)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    Text(verbatim: offer.candidate.summary).font(Theme.Font.label)
+                        .lineLimit(offer.candidate.kind == .contact ? 4 : 2)
+                        .truncationMode(.middle)
+                        .help(offer.candidate.summary)
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -170,5 +275,43 @@ private struct AutofillSaveActions: View {
             .controlSize(.regular)
         }
         .disabled(session.isBusy)
+    }
+}
+
+/// What is left of an offer whose page changed: the reason is shown above, and the only thing to do is to close it. Dismissing it
+/// is not a refusal, so the same login is offered again from the page the user is on.
+private struct AutofillGoneOfferActions: View {
+    let session: AutofillSaveSession
+    let offer: AutofillSaveSession.Offer
+
+    var body: some View {
+        HStack {
+            Spacer(minLength: 0)
+            Button("OK") { session.dismiss(offer, rememberingChoice: false) }
+                .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.defaultAction)
+        }
+        .controlSize(.regular)
+    }
+}
+
+/// What the offer to set up the first vault allows. It saves nothing, so there is nothing to review, save or exclude: only the
+/// way to the setup, which asks nothing of the page.
+private struct AutofillVaultSetupActions: View {
+    let session: AutofillSaveSession
+    let offer: AutofillSaveSession.Offer
+    let setUpVault: () -> Void
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Spacer(minLength: 0)
+            Button("Not Now") { session.dismiss(offer) }
+            Button("Set Up Vault…") {
+                session.dismiss(offer, rememberingChoice: false)
+                setUpVault()
+            }
+            .buttonStyle(.borderedProminent)
+        }
+        .controlSize(.regular)
     }
 }

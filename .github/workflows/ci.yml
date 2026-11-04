@@ -27,7 +27,8 @@ jobs:
   test:
     name: Build and test
     runs-on: xcode-27
-    timeout-minutes: 45
+    # Four test runs (see the Test step) take about an hour on the Pro; this is a first estimate for the runner, revisit after a real run.
+    timeout-minutes: 120
     env:
       # Shared by the build, the identity guard and the cleanup: one exact test identity per run attempt.
       WSURF_BUNDLE_ID_SUFFIX: .ci-${{ github.run_id }}-${{ github.run_attempt }}
@@ -80,12 +81,29 @@ jobs:
       - name: Check watchdog
         run: python3 Tools/check-watchdog.py
 
+      - name: Check coverage script
+        run: python3 Tools/check-coverage-script.py
+
+      # The Serial split (Tools/serial-parts.json) is exactly the Serial suites and cases, and the plans partition the suites.
+      - name: Check test partition
+        run: python3 Tools/check-test-partition.py
+
       - name: Cache Swift packages
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: build/DD/SourcePackages
           key: spm-${{ hashFiles('WSurf.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
           restore-keys: spm-
+
+      # The Chromium Embedded Framework (about 130 MB) that Tools/embed-chromium.sh downloads during the build, into the
+      # gitignored Packages/CefSwift/.cef. Keyed on the vendored CEF pin (CEF_VERSION.json: version, archive names, SHA-1s),
+      # so a new CEF is a new key; no restore-keys, since an older framework would only be dead weight. The script downloads
+      # whatever the cache lacks, so a miss costs time and never correctness.
+      - name: Cache Chromium Embedded Framework
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: Packages/CefSwift/.cef
+          key: cef-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Packages/CefSwift/CEF_VERSION.json') }}
 
       - name: Resolve packages
         run: |
@@ -109,7 +127,7 @@ jobs:
       # and demanding one here would mean a signing certificate for every test
       # run. Some tests exercise security code under their own namespaced test
       # identity, so this is not a claim that nothing touches the keychain.
-      # The four -skip-testing OCR exclusions below were inherited when this job was
+      # The four -skip-testing OCR exclusions (OCR_SKIPS in Tools/check-test-partition.py, added to every run) were inherited when this job was
       # assumed to run on hosted Xcode 27 VMs that cannot load Vision's OCR backend.
       # The runner's account and OS isolation are unverified; those exclusions stay until OCR is
       # verified under the runner that executes this job. A native Pro full run did execute all four
@@ -118,10 +136,17 @@ jobs:
       # without rebuilding. A CLI build setting alone is not trusted: the guard refuses
       # to launch unless the app, extension and helpers carry the suffixed identity and
       # the test bundle (which keeps io.wsagency.wsurf.tests) belongs to that verified host.
-      # Each xcodebuild phase gets its own watchdog budget (default 1200s); the job's
-      # timeout-minutes stays the outer bound. One shared 1200s budget was too tight in real
-      # CI: green run 39611925580 used 1174s (476s build + 668s tests), and runs 39721600801
-      # and 41613391670 spent 854s / 699s building, so the tests were cut off mid-run.
+      # Four runs of that one verified .xctestrun, each in a test host of its own (Tools/check-test-partition.py
+      # --args): the Serial suites in three parts (Tools/serial-parts.json, the split the local gate uses) and then the
+      # Parallel and Performance suites, serially. One WebKit Networking process serves about 183 persistent stores and
+      # then opens no store's databases, and a host serves a Networking process until it exits; one host for all the
+      # Serial suites reached that limit. ChromiumLoadBenchmarkTests is skipped (its XCTest measure block crashes the host).
+      # Every run goes on after a failed one, so one red part does not hide the rest; the step fails at the end.
+      # Each xcodebuild phase gets its own watchdog budget; the job's timeout-minutes stays the outer bound. The build has
+      # the watchdog's default (1200s). One shared budget was too tight in real CI: green run 39611925580 used 1174s (476s
+      # build + 668s tests), and runs 39721600801 and 41613391670 spent 854s / 699s building, so the tests were cut off
+      # mid-run. The four test runs share one budget (default 5400s) that starts after the build. Calibration, not a
+      # measurement: the Pro took about 3500s for the same four runs; revisit after a real CI run.
       - name: Test
         run: |
           python3 Tools/run-xcodebuild-with-watchdog.py -- xcodebuild build-for-testing \
@@ -140,26 +165,60 @@ jobs:
           [ "$#" -eq 1 ] && [ -f "$1" ] || { echo "::error::expected exactly one generated .xctestrun in $DD/Build/Products"; exit 1; }
           xctestrun="$1"
           python3 Tools/check-built-identity.py "$DD" "$xctestrun"
-          python3 Tools/run-xcodebuild-with-watchdog.py -- xcodebuild test-without-building \
-            -xctestrun "$xctestrun" \
-            -destination 'platform=macOS,arch=arm64' \
-            -resultBundlePath build/TestResults.xcresult \
-            -enableCodeCoverage YES \
-            -parallel-testing-enabled NO \
-            '-skip-testing:WSurfTests/AttachmentTests/normalizesImagesAndRecognizesText()' \
-            '-skip-testing:WSurfTests/AttachmentTests/recognizesTextWithoutANeuralEngine()' \
-            '-skip-testing:WSurfTests/AttachmentTests/recognizesScannedPDFPages()' \
-            '-skip-testing:WSurfTests/AttachmentTests/pastingAnImageCreatesARemovableAttachment()'
+          total="${WSURF_CI_TEST_LIMIT_SECONDS:-5400}"
+          start=$SECONDS
+          mkdir -p build/results
+          failed=""
+          for plan in WSurf-Serial-1 WSurf-Serial-2 WSurf-Serial-3 WSurf-Rest; do
+            remaining=$((total - (SECONDS - start)))
+            if [ "$remaining" -le 0 ]; then
+              echo "::error::test budget of ${total}s spent before $plan started"
+              exit 124
+            fi
+            python3 Tools/check-test-partition.py --args "$plan" > "$RUNNER_TEMP/$plan.args"
+            selection=()
+            while IFS= read -r line; do selection+=("$line"); done < "$RUNNER_TEMP/$plan.args"
+            echo "::group::$plan (${#selection[@]} selection arguments)"
+            if ! WSURF_CI_TEST_LIMIT_SECONDS="$remaining" python3 Tools/run-xcodebuild-with-watchdog.py -- xcodebuild test-without-building \
+              -xctestrun "$xctestrun" \
+              -destination 'platform=macOS,arch=arm64' \
+              -resultBundlePath "build/results/$plan.xcresult" \
+              -enableCodeCoverage YES \
+              "${selection[@]}"; then
+              failed="$failed $plan"
+            fi
+            echo "::endgroup::"
+            if [ -f "build/results/$plan.xcresult/Info.plist" ]; then
+              xcrun xcresulttool get test-results tests --path "build/results/$plan.xcresult" --compact \
+                > "build/results/$plan-tests.json" || echo "::warning::could not export the test cases of $plan"
+            fi
+          done
+          if [ -n "$failed" ]; then
+            echo "::error::failed test runs:$failed"
+            exit 1
+          fi
+
+      # Every test the sources declare ran, in exactly one of the four runs, named with its argument labels, and no other.
+      - name: Check the runs cover every test
+        run: python3 Tools/check-test-partition.py --verify-results build/results/*-tests.json
+
+      # Coverage is read from one bundle that holds all four runs.
+      - name: Merge test results
+        run: |
+          xcrun xcresulttool merge build/results/WSurf-Serial-1.xcresult build/results/WSurf-Serial-2.xcresult \
+            build/results/WSurf-Serial-3.xcresult build/results/WSurf-Rest.xcresult \
+            --output-path build/TestResults.xcresult
 
       - name: Check coverage
         run: Tools/check-coverage.sh build/TestResults.xcresult 24.0
 
+      # The measure tests are all in the Rest run.
       - name: Export performance metrics
         if: always()
         run: |
-          if [ -f build/TestResults.xcresult/Info.plist ]; then
+          if [ -f build/results/WSurf-Rest.xcresult/Info.plist ]; then
             xcrun xcresulttool get test-results metrics \
-              --path build/TestResults.xcresult --compact \
+              --path build/results/WSurf-Rest.xcresult --compact \
               > build/performance-metrics.json
           fi
 
@@ -185,12 +244,13 @@ jobs:
           retention-days: 14
 
       # An .xcresult is a bundle. Uploaded as a directory it arrives as loose
-      # files that neither Xcode nor xcresulttool will open.
+      # files that neither Xcode nor xcresulttool will open. The zip holds the
+      # four runs' bundles and their case lists.
       - name: Package test results
         if: failure()
         run: |
-          if [ -f build/TestResults.xcresult/Info.plist ]; then
-            ditto -c -k --keepParent build/TestResults.xcresult build/TestResults.xcresult.zip
+          if [ -d build/results ]; then
+            ditto -c -k --keepParent build/results build/TestResults.zip
           fi
 
       - name: Upload test results
@@ -198,7 +258,7 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: TestResults
-          path: build/TestResults.xcresult.zip
+          path: build/TestResults.zip
           if-no-files-found: ignore
 
       # Removes only this run's own test identity (exact ids, no globs, never the production domain).

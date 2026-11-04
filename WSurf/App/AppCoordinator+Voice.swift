@@ -58,6 +58,16 @@ extension AppCoordinator {
 }
 
 extension AppCoordinator {
+    /// WSurf is muted, or no longer is (`BrowserApplication.muteAll`). The assistant's voice is silent while it is, whatever the
+    /// person's own setting for it says; unmuting leaves that setting as it was. A conversation by voice ends, as it does when
+    /// the person mutes the assistant's voice.
+    func silenceSpeech(_ silenced: Bool) {
+        speech.isSilenced = silenced
+        if silenced, isVoiceConversationPresented || conversationVoice != nil {
+            endVoiceConversation()
+        }
+    }
+
     var supportsVoiceConversation: Bool {
         selectedProvider.adapter == .openAIResponses
     }
@@ -66,6 +76,10 @@ extension AppCoordinator {
         guard supportsVoiceConversation else { return }
         isVoiceConversationPresented = true
         voiceConversationMessage = nil
+        guard !isWSurfMuted else {
+            voiceConversationMessage = String(localized: "Unmute WSurf to talk with the assistant by voice.")
+            return
+        }
         guard conversationVoice?.isActive != true else { return }
         conversationVoice = nil
         guard microphoneIsReady() else {
@@ -83,24 +97,24 @@ extension AppCoordinator {
         agentTurns.cancel()
         mcpServer.cancelActiveCall()
         let tab = browser.ensureActiveTab()
-        let spaceID = browser.spaceID(of: tab.id)
-        conversationSpaceID = spaceID
+        let anchorID = browser.anchorID(of: tab.id)
+        conversationAnchorID = anchorID
         let settings = OpenAISettingsStore.load(providerID: provider.id).voice
         let conversation = OpenAIRealtimeConversation(
             settings: settings,
             connect: OpenAIRealtimeConversation.connection(endpoint: endpoint, key: key, model: settings.conversationModel)
         ) { [weak self] request in
-            guard let self, browser.activeSpaceID == spaceID else { throw CancellationError() }
+            guard let self, browser.activeAnchorID == anchorID else { throw CancellationError() }
             mcpServer.cancelActiveCall()
             let result = try await agentTurns.perform(utterance: request)
             let state = conversationLog.traces.first { $0.id == result.taskID }?.state.rawValue ?? "unknown"
             let output: OpenAIJSON = ["state": .string(state), "result": .string(result.text)]
             return try output.text()
         }
-        conversation.onTranscriptChanged = conversationLog.voiceTranscriptWriter(tabID: spaceID, providerID: provider.id)
+        conversation.onTranscriptChanged = conversationLog.voiceTranscriptWriter(tabID: anchorID, providerID: provider.id)
         conversation.onUsage = { [weak self] usage in
             self?.conversationLog.recordUsage(
-                tabID: spaceID, input: max(0, usage["input_tokens"].int ?? 0),
+                tabID: anchorID, input: max(0, usage["input_tokens"].int ?? 0),
                 cached: max(0, usage["input_token_details"]["cached_tokens"].int ?? 0),
                 output: max(0, usage["output_tokens"].int ?? 0)
             )

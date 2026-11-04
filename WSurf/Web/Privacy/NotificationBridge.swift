@@ -18,8 +18,8 @@ final class NotificationBridge: NSObject {
     /// Resolves the page currently owned by a tab. The resolver is supplied by
     /// the browser coordinator so a retired page can never claim a request.
     var tabResolver: ((BrowserPage) -> BrowserTab?)?
-
-    private static let world = WKContentWorld.page
+    /// Opens a watched page from its notification, in a regular window of the watch's profile.
+    var openWatchedPage: ((URL, UUID) -> Void)?
 
     private override init() {
         super.init()
@@ -28,10 +28,11 @@ final class NotificationBridge: NSObject {
 
     // MARK: - Installation
 
+    /// WebKit offers an embedding app no Notification API, so the page gets this stand-in (the one page-world script
+    /// left here), reached through `PageStandInRelay`.
     @MainActor
     func install(in page: BrowserPage) {
-        page.installScript(Self.scriptSource, in: Self.world, injectionTime: .atDocumentStart, forMainFrameOnly: true)
-        page.addScriptMessageHandler(name: Self.handlerName, in: Self.world) { [weak self] message in
+        PageStandInRelay.install(Self.scriptSource, name: Self.handlerName, in: page) { [weak self] message in
             guard let self, message.frameInfo.isMainFrame,
                   let body = message.body as? [String: Any] else { return }
             self.handle(body, message: message)
@@ -42,9 +43,9 @@ final class NotificationBridge: NSObject {
 
     nonisolated static let scriptSource = """
         (function () {
-          var send = globalThis.__wsurfSend;
-          if (typeof send !== 'function' || globalThis.__wsurfNotify) { return; }
-          var post = function (m) { send('wsurfnotify', m); };
+          var Custom = CustomEvent, dispatch = EventTarget.prototype.dispatchEvent;
+          var stringify = JSON.stringify, parse = JSON.parse, later = setTimeout;
+          var post = function (m) { dispatch.call(document, new Custom('wsurfnotify', { detail: stringify(m) })); };
           var nextId = 1;
           var permission = 'default';
           var pending = {};
@@ -72,20 +73,23 @@ final class NotificationBridge: NSObject {
             });
           };
           window.Notification = WSurfNotification;
-          window.__wsurfNotify = {
-            setPermission: function (value) {
-              if (value === 'granted' || value === 'denied' || value === 'default') {
-                permission = value;
-              }
-            },
-            resolve: function (id, value) {
+          document.addEventListener('wsurfnotify-answer', function (event) {
+            var m;
+            try { m = parse(event.detail); } catch (e) { return; }
+            if (!m) { return; }
+            var value = m.value;
+            if (m.type === 'permission') {
+              if (value === 'granted' || value === 'denied' || value === 'default') { permission = value; }
+            } else if (m.type === 'resolve') {
               if (value === 'granted' || value === 'denied') { permission = value; }
-              var f = pending[id];
-              delete pending[id];
+              var f = pending[m.id];
+              delete pending[m.id];
               if (f) { f(value); }
             }
-          };
-          post({ type: 'hello', id: 0 });
+          });
+          // After every document-start script has run: WebKit does not order those of different worlds, so the relay may
+          // not be listening yet.
+          later(function () { post({ type: 'hello', id: 0 }); }, 0);
         })();
         """
 
@@ -181,7 +185,7 @@ final class NotificationBridge: NSObject {
         }
     }
 
-    private func systemAuthorizationIsGranted() async -> Bool {
+    func systemAuthorizationIsGranted() async -> Bool {
         let settings = await UNUserNotificationCenter.current().notificationSettings()
         switch settings.authorizationStatus {
         case .authorized, .provisional, .ephemeral:
@@ -192,17 +196,13 @@ final class NotificationBridge: NSObject {
     }
 
     private func resolve(_ jsID: Int, with answer: String, in page: BrowserPage, frame: BrowserFrame) async {
-        _ = try? await page.callAsyncJavaScript(
-            "globalThis.__wsurfNotify?.resolve(id, answer);",
-            arguments: ["id": jsID, "answer": answer], in: frame, contentWorld: Self.world
-        )
+        await PageStandInRelay.answer(["type": "resolve", "id": jsID, "value": answer],
+                                      name: Self.handlerName, in: page, frame: frame)
     }
 
     private func push(permission: String, to page: BrowserPage, frame: BrowserFrame) async {
-        _ = try? await page.callAsyncJavaScript(
-            "globalThis.__wsurfNotify?.setPermission(permission);",
-            arguments: ["permission": permission], in: frame, contentWorld: Self.world
-        )
+        await PageStandInRelay.answer(["type": "permission", "value": permission],
+                                      name: Self.handlerName, in: page, frame: frame)
     }
 
     // MARK: - Delivery
@@ -224,6 +224,86 @@ final class NotificationBridge: NSObject {
     }
 }
 
+// MARK: - Page watches
+
+extension NotificationBridge {
+    struct DeliveryStub: @unchecked Sendable {
+        var allowsAlerts = true
+        let deliver: @MainActor (UNNotificationRequest) async -> Bool
+    }
+
+    /// Replaces the system for a test: it answers the permission question, receives each watch notification and answers
+    /// whether it was shown. No test ever reaches the system's permission prompt.
+    @TaskLocal static var watchDeliveryForTesting: DeliveryStub?
+
+    private static let watchedURLKey = "wsurf.watch.url"
+    private static let watchedProfileKey = "wsurf.watch.profile"
+
+    /// Asked in context, right after the person agrees to a watch, and only while macOS has not asked yet. True when WSurf may
+    /// show alerts.
+    func requestAlerts() async -> Bool {
+        if let stub = Self.watchDeliveryForTesting {
+            return stub.allowsAlerts
+        }
+        let center = UNUserNotificationCenter.current()
+        if await center.notificationSettings().authorizationStatus == .notDetermined {
+            _ = try? await center.requestAuthorization(options: [.alert, .sound])
+        }
+        return await systemAuthorizationIsGranted()
+    }
+
+    /// The site and what the person waits for. Never the page's text, which only the watch's own judge reads.
+    static func request(for watch: PageWatch, _ notice: PageWatchCenter.Notice, profileID: UUID) -> UNNotificationRequest {
+        let content = UNMutableNotificationContent()
+        content.title = watch.place
+        content.body = body(condition: watch.condition, notice)
+        if notice == .met {
+            content.sound = .default
+        }
+        content.userInfo = [watchedURLKey: watch.url.absoluteString, watchedProfileKey: profileID.uuidString]
+        return UNNotificationRequest(identifier: watch.id.uuidString, content: content, trigger: nil)
+    }
+
+    /// What a notice says, in the notification and in the Watches tab: the condition is the person's words, never page text.
+    static func body(condition: String, _ notice: PageWatchCenter.Notice) -> String {
+        switch notice {
+        case .met where condition.isEmpty:
+            String(localized: "The page changed.")
+        case .met:
+            String(localized: "The page now shows what you were waiting for: \(condition)")
+        case .unreachable:
+            String(localized: "WSurf can’t read this page anymore, so it paused the watch.")
+        case .expired:
+            String(localized: "WSurf stopped watching this page after 30 days.")
+        case .denied:
+            String(localized: "WSurf stopped watching this page because this website’s Assistant Access is now No Access.")
+        }
+    }
+
+    /// Shows a watch's notice. False when notifications are off, so the Watches tab keeps it instead.
+    func announce(_ watch: PageWatch, _ notice: PageWatchCenter.Notice, profileID: UUID) async -> Bool {
+        let request = Self.request(for: watch, notice, profileID: profileID)
+        if let stub = Self.watchDeliveryForTesting {
+            return await stub.deliver(request)
+        }
+        guard await systemAuthorizationIsGranted() else { return false }
+        do {
+            try await UNUserNotificationCenter.current().add(request)
+            return true
+        } catch {
+            Pipeline.log.error("notification: watch delivery failed: \(error.localizedDescription)")
+            return false
+        }
+    }
+
+    /// The watched page and profile of a watch notification. Website notifications carry neither.
+    static func watchedPage(in info: [AnyHashable: Any]) -> (url: URL, profileID: UUID)? {
+        guard let url = (info[watchedURLKey] as? String).flatMap(URL.init(string:)), PageWatchReader.canWatch(url),
+              let profileID = (info[watchedProfileKey] as? String).flatMap(UUID.init(uuidString:)) else { return nil }
+        return (url, profileID)
+    }
+}
+
 // MARK: - UNUserNotificationCenterDelegate
 
 extension NotificationBridge: UNUserNotificationCenterDelegate {
@@ -239,5 +319,8 @@ extension NotificationBridge: UNUserNotificationCenterDelegate {
         didReceive response: UNNotificationResponse
     ) async {
         NSApp.activate()
+        guard response.actionIdentifier == UNNotificationDefaultActionIdentifier,
+              let watched = Self.watchedPage(in: response.notification.request.content.userInfo) else { return }
+        openWatchedPage?(watched.url, watched.profileID)
     }
 }

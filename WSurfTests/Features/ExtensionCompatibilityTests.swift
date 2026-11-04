@@ -71,6 +71,23 @@ struct ExtensionCompatibilityTests {
             == ["webNavigation.onHistoryStateUpdated"])
     }
 
+    @Test(arguments: [
+        "action.onUserSettingsChanged", "runtime.onRestartRequired", "runtime.onSuspendCanceled", "windows.onBoundsChanged",
+    ])
+    func anEventMeasuredOnMacOS27IsReported(member: String) {
+        #expect(ExtensionCompatibility.unsupportedMembers.contains(member))
+        let source = "chrome.\(member).addListener(() => {});"
+        #expect(ExtensionCompatibility.report(scanning: source).members == [member])
+        #expect(ExtensionCompatibility.membersMeasuredThroughMacOS >= 27)
+    }
+
+    @Test func everyReportedEventIsOneNamespaceDotOneEvent() {
+        for member in ExtensionCompatibility.unsupportedMembers {
+            let parts = member.split(separator: ".", omittingEmptySubsequences: false)
+            #expect(parts.count == 2 && parts[1].hasPrefix("on"), "\(member)")
+        }
+    }
+
     @Test func anEventWebKitHasIsNotReported() {
         let source = """
             chrome.webNavigation.onCompleted.addListener(() => {});

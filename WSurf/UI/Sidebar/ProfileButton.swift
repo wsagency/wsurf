@@ -57,11 +57,19 @@ struct ProfileSwitcher: View {
                     .padding(.vertical, 5)
             }
 
-            ProfileActionRow(title: "New Private Window", symbol: "eyeglasses") {
+            ProfileActionRow(title: "New Private Window", symbol: "plus.square.fill", shortcut: "⇧⌘N") {
                 dismiss()
                 coordinator.requestNewWindow(isPrivate: true)
             }
             .disabled(coordinator.isSwitchingProfile)
+
+            if coordinator.spaceStore != nil {
+                ProfileActionRow(title: "New Space…", symbol: "rectangle.stack.badge.plus") {
+                    dismiss()
+                    coordinator.showNewSpaceEditor()
+                }
+                .disabled(coordinator.isSwitchingProfile)
+            }
 
             ProfileActionRow(title: "Manage Profiles…", symbol: "person.2") {
                 dismiss()
@@ -69,8 +77,9 @@ struct ProfileSwitcher: View {
             }
         }
         .padding(Self.inset)
-        .frame(width: 244)
-        .glassEffect(.regular, in: .rect(cornerRadius: Theme.Radius.panel, style: .continuous))
+        // Wide enough for "New Private Window" beside its three key caps, which a narrower card wrapped onto two lines.
+        .frame(width: 280)
+        .chromeGlass(in: .rect(cornerRadius: Theme.Radius.panel, style: .continuous))
         .shadow(color: .black.opacity(0.3), radius: 22, y: 8)
     }
 
@@ -122,6 +131,8 @@ private struct ProfileSwitcherRow: View {
 private struct ProfileActionRow: View {
     let title: LocalizedStringResource
     let symbol: String
+    /// The shortcut the menu bar gives this command, drawn as keys.
+    var shortcut: String?
     let action: () -> Void
 
     @Environment(\.isEnabled) private var isEnabled
@@ -139,8 +150,13 @@ private struct ProfileActionRow: View {
                 Text(title)
                     .font(Theme.Font.row)
                     .foregroundStyle(.primary)
+                    .lineLimit(1)
 
-                Spacer(minLength: 0)
+                Spacer(minLength: 8)
+
+                if let shortcut {
+                    KeyCaps(shortcut)
+                }
             }
             .padding(.horizontal, 8)
             .frame(height: 30)

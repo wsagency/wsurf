@@ -18,7 +18,9 @@
 //
 // Vendored code is code that is copied into the app instead of linked as a
 // package. To add an entry: put its LICENSE in Tools/vendored/<name>/, then
-// add the name, version and URL to `vendored` below.
+// add the name, version and URL to `vendored` below. A vendored package that
+// keeps its own LICENSE in its folder (Packages/CefSwift) names that folder in
+// `licenseDirectory` instead.
 //
 // The output file is committed. The app reads it at runtime, and CI runs this
 // script again and fails if the result is different. Thus the license text
@@ -141,6 +143,10 @@ func text(of url: URL) -> String {
 }
 
 func licenseName(of text: String) -> String {
+    // Before Apache: the BSL text names the Apache License 2.0 as its Change License.
+    if text.contains("Business Source License 1.1") {
+        return "Business Source License 1.1"
+    }
     if text.contains("Apache License") && text.contains("Version 2.0") {
         return "Apache License 2.0"
     }
@@ -165,16 +171,29 @@ struct Vendor {
     let name: String
     let version: String
     let url: String
+    /// Folder that holds the license, relative to the repository root. `Tools/vendored/<name>` when nil.
+    var licenseDirectory: String?
 }
 
 let vendored = [
-    Vendor(name: "thinking-orbs", version: "0.3.1", url: "https://github.com/Jakubantalik/thinking-orbs")
+    Vendor(name: "thinking-orbs", version: "0.3.1", url: "https://github.com/Jakubantalik/thinking-orbs"),
+    // Color values for the Appearance presets; see WSurf/Settings/ThemePreset.swift.
+    Vendor(name: "catppuccin", version: "1.8.0", url: "https://github.com/catppuccin/palette"),
+    Vendor(name: "nord", version: "snapshot 2026-10-15", url: "https://www.nordtheme.com/docs/colors-and-palettes"),
+    Vendor(name: "dracula", version: "snapshot 2026-10-15", url: "https://draculatheme.com/contribute"),
+    Vendor(name: "gruvbox", version: "tinted-theming/schemes spec-0.11", url: "https://github.com/tinted-theming/schemes"),
+    Vendor(name: "rose-pine", version: "snapshot 2026-10-15", url: "https://github.com/rose-pine/palette"),
+    // Reader article extraction; see WSurf/Web/Reader/ReaderExtractor.swift.
+    Vendor(name: "readability", version: "0.6.0", url: "https://github.com/mozilla/readability"),
+    // Chromium bridge, vendored with a patch since 0.1.17: Packages/CefSwift/WSURF-PATCHES.md. Its LICENSE stays in the package.
+    Vendor(name: "CefSwift", version: "59cad64", url: "https://github.com/Rajaniraiyn/CefSwift", licenseDirectory: "Packages/CefSwift"),
 ]
 
 let vendoredPackages: [Package] = vendored.map { vendor in
-    let directory = root.appending(path: "Tools/vendored/\(vendor.name)")
+    let relative = vendor.licenseDirectory ?? "Tools/vendored/\(vendor.name)"
+    let directory = root.appending(path: relative)
     guard let licenseFile = file(in: directory, named: licenseNames) else {
-        fail("Tools/vendored/\(vendor.name) ships no license file.")
+        fail("\(relative) ships no license file.")
     }
 
     let body = text(of: licenseFile)
@@ -217,7 +236,19 @@ let packages: [Package] = resolved.pins.compactMap { pin in
     )
 }
 
-let allPackages = (packages + vendoredPackages)
+// WSurf's own terms first: LICENSE (BSL 1.1) with NOTICE, then Linen's Apache 2.0, which covers the Linen portions.
+func ownPackage(name: String, version: String, url: String, files: [String]) -> Package {
+    let body = files.map { text(of: root.appending(path: $0)) }.joined(separator: "\n\n")
+    guard !body.isEmpty else { fail("\(files.joined(separator: ", ")) missing.") }
+    return Package(name: name, version: version, url: url, license: licenseName(of: body), text: body)
+}
+
+let ownPackages = [
+    ownPackage(name: "WSurf", version: "WSurf Agency", url: "https://github.com/wsagency/wsurf", files: ["LICENSE", "NOTICE"]),
+    ownPackage(name: "Linen", version: "3c532ff", url: "https://github.com/kavoye/linen-browser", files: ["LICENSES/Apache-2.0.txt"]),
+]
+
+let allPackages = ownPackages + (packages + vendoredPackages)
     .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
 
 let encoder = JSONEncoder()

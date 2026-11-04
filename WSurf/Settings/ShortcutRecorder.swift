@@ -25,27 +25,31 @@ struct ShortcutRecorder: View {
     private var isDefault: Bool {
         shortcut == defaultShortcut
     }
+    private var complaintShown: Binding<Bool> {
+        Binding(
+            get: { complaint != nil },
+            set: { if !$0 { complaint = nil } }
+        )
+    }
 
+    /// The row keeps its height whatever the recorder has to say: the complaint opens over the field instead of under it,
+    /// and the hint to press a key or Escape is the field's own tooltip.
     var body: some View {
-        VStack(alignment: .trailing, spacing: 7) {
-            HStack(spacing: 7) {
-                field
-
-                if !isRecording, !isDefault {
-                    IconButton(symbol: "arrow.uturn.backward", help: "Reset to Default") {
-                        complaint = nil
-                        onChange(defaultShortcut)
+        HStack(spacing: 7) {
+            field
+                .popover(isPresented: complaintShown, arrowEdge: .bottom) {
+                    if let complaint {
+                        SettingsNotice(symbol: "exclamationmark.triangle.fill", text: complaint)
+                            .frame(maxWidth: 260, alignment: .leading)
+                            .padding(12)
                     }
                 }
-            }
 
-            if isRecording {
-                Text("Press a shortcut. Press Escape to cancel.")
-                    .font(Theme.Font.caption)
-                    .foregroundStyle(.tertiary)
-                    .multilineTextAlignment(.trailing)
-            } else if let complaint {
-                SettingsNotice(symbol: "exclamationmark.triangle.fill", text: complaint)
+            if !isRecording, !isDefault {
+                IconButton(symbol: "arrow.uturn.backward", help: "Reset to Default") {
+                    complaint = nil
+                    onChange(defaultShortcut)
+                }
             }
         }
         .onChange(of: isRecording) { _, listening in
@@ -74,9 +78,7 @@ struct ShortcutRecorder: View {
                         .font(Theme.Font.secondary)
                         .foregroundStyle(.tertiary)
                 } else {
-                    ForEach(shortcut.caps.enumerated(), id: \.offset) { _, cap in
-                        KeyCap(cap)
-                    }
+                    KeyCaps(caps: shortcut.caps)
                 }
             }
             .padding(.horizontal, 6)
@@ -91,7 +93,7 @@ struct ShortcutRecorder: View {
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
-        .help(isRecording ? "Cancel shortcut recording" : "Change the keyboard shortcut")
+        .help(isRecording ? "Press a shortcut. Press Escape to cancel." : "Change the keyboard shortcut")
         .animation(Theme.Motion.quick, value: isRecording)
         .animation(Theme.Motion.quick, value: hovering)
     }

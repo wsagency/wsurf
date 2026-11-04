@@ -5,6 +5,7 @@ import Foundation
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 /// A wrong `expectedRevision` relative to the head's current revision.
 nonisolated enum StalePolicyRevision: CaseIterable, Sendable {

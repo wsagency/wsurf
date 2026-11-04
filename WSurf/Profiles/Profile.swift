@@ -6,6 +6,7 @@
 import Foundation
 import os
 import WebKit
+import WSurfCore
 
 nonisolated struct Profile: Identifiable, Codable, Hashable, Sendable {
     let id: UUID
@@ -37,7 +38,7 @@ nonisolated struct Profile: Identifiable, Codable, Hashable, Sendable {
         Profile(
             id: privateID,
             name: String(localized: "Private Browsing"),
-            symbol: "eyeglasses",
+            symbol: "plus.square.fill",
             color: .gray
         )
     }
@@ -86,6 +87,22 @@ extension Profile {
         supportDirectory.appendingPathComponent("SitePermissions.json")
     }
 
+    var autofillLastUsedFile: URL {
+        supportDirectory.appendingPathComponent("AutofillLastUsed.json")
+    }
+
+    var spacesFile: URL {
+        supportDirectory.appendingPathComponent("Spaces.json")
+    }
+
+    #if DEBUG
+    /// Test hosts only: the WebKit store a throwaway profile uses instead of a persistent store of its own. WebKit's Networking
+    /// process takes sandbox extensions for each persistent store it ever serves and never gives them back, and after about 180
+    /// stores it can open no store's databases ("Unable to open database file on disk") until it restarts, which it does not
+    /// while any store is alive. A helper that makes a profile per case shares one store through this.
+    @MainActor static var dataStoreForTesting: [UUID: WKWebsiteDataStore] = [:]
+    #endif
+
     @MainActor
     func makeDataStore() -> WKWebsiteDataStore {
         if isPrivate {
@@ -94,6 +111,9 @@ extension Profile {
         #if DEBUG
         if StageMode.isActive, isOriginal {
             return StageMode.websiteDataStore()
+        }
+        if let store = Self.dataStoreForTesting[id] {
+            return store
         }
         #endif
         return isOriginal ? .default() : WKWebsiteDataStore(forIdentifier: id)
@@ -105,11 +125,14 @@ extension Profile {
         if !profile.isPrivate {
             // Revokes issued access and drains vault work before anything is deleted; never wipes the vault itself (the
             // support directory removal below does). First in this branch so no caller of `erase` can bypass it.
+            CloudSync.shared?.vaults?.profileErased(profile.id)
             await CredentialManager.retire(profileID: profile.id)
+            CloudTabs.shared?.forget(profileID: profile.id)
             try? await WKWebsiteDataStore.remove(forIdentifier: profile.id)
             try? await AutofillVaults.cards(for: profile.id).erase()
             try? await AutofillVaults.contacts(for: profile.id).erase()
-            try? await AutofillVaults.passwords(for: profile.id).erase()
+            try? await AutofillVaults.legacyPasswords(for: profile.id).erase()
+            await InputHistory.shared.erase(profile)
             _ = await Task.detached { try? AutofillSaveIndex.erase(profileID: profile.id) }.value
             do {
                 try await ChromiumRuntime.shared.erase(profile: profile)

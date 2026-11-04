@@ -293,6 +293,72 @@ struct FaviconLoaderTests {
         #expect(stub.responses.requestCount == 1)
     }
 
+    /// Every site row asks for its icon each time it is drawn. A site that has none is asked about once, then not again, and an icon
+    /// that turns up later is still found.
+    @Test func aHostWithoutAnIconIsNotAskedAgain() async throws {
+        let directory = makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let stub = StubIconProtocol.fixture(payload: Data("not an icon".utf8))
+        defer { stub.close() }
+        let loader = FaviconLoader(cacheDirectory: directory, session: stub.session)
+
+        #expect(await loader.load(forHost: "example.com") == nil)
+        #expect(await loader.load(forHost: "example.com") == nil)
+        #expect(stub.responses.requestCount == 1)
+
+        loader.store(try iconData(), forHost: "example.com")
+        #expect(await loader.load(forHost: "example.com") != nil)
+    }
+
+    @Test func aFetchThatWasForgottenIsAskedAgain() async throws {
+        let directory = makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let stub = StubIconProtocol.fixture(payload: Data("not an icon".utf8))
+        defer { stub.close() }
+        let loader = FaviconLoader(cacheDirectory: directory, session: stub.session)
+
+        #expect(await loader.load(forHost: "example.com") == nil)
+        loader.forget(host: "example.com")
+        #expect(await loader.load(forHost: "example.com") == nil)
+        #expect(stub.responses.requestCount == 2)
+
+        loader.clear(modifiedSince: .distantPast)
+        #expect(await loader.load(forHost: "example.com") == nil)
+        #expect(stub.responses.requestCount == 3)
+
+        loader.forgetSessionOnlyIcons()
+        #expect(await loader.load(forHost: "example.com") == nil)
+        #expect(stub.responses.requestCount == 4)
+    }
+
+    @Test func aMissingIconIsNotLookedUpOnDiskAgain() throws {
+        let directory = makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let loader = FaviconLoader(cacheDirectory: directory)
+
+        #expect(loader.cached(for: "example.com") == nil)
+        // A file the loader did not write is not seen again by the loader that already looked; a new loader sees it.
+        let other = FaviconLoader(cacheDirectory: directory)
+        #expect(other.store(try iconData(), forHost: "example.com") != nil)
+        #expect(loader.cached(for: "example.com") == nil)
+        #expect(FaviconLoader(cacheDirectory: directory).cached(for: "example.com") != nil)
+
+        // What the loader stores itself is found at once.
+        #expect(loader.store(try iconData(), forHost: "example.com") != nil)
+        #expect(loader.cached(for: "example.com") != nil)
+    }
+
+    @Test func memoryCachedNeverReadsTheDisk() throws {
+        let directory = makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        #expect(FaviconLoader(cacheDirectory: directory).store(try iconData(), forHost: "example.com") != nil)
+
+        let reopened = FaviconLoader(cacheDirectory: directory)
+        #expect(reopened.memoryCached(for: "example.com") == nil)
+        #expect(reopened.cached(for: "example.com") != nil)
+        #expect(reopened.memoryCached(for: "Example.COM") != nil)
+    }
+
     @Test func invalidImageDataIsNotCached() {
         let directory = makeDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }

@@ -202,6 +202,29 @@ struct MultiWindowTests {
         #expect(await waitUntil { releasedWindow == nil && releasedContext == nil })
     }
 
+    /// The window above never drew, so no view of it appeared. Once the shell has drawn, the pull-to-refresh monitor of its
+    /// `ContentArea` holds closures over the window's model and coordinator, and closing the window must not leave it alive.
+    @Test func aWindowThatDrewIsReleasedAfterClosing() async throws {
+        let app = BrowserApplication()
+        weak var releasedWindow: AppCoordinator?
+        weak var releasedModel: BrowserModel?
+        do {
+            let shown = window(in: app, context: .shared(for: .privateBrowsing()))
+            releasedWindow = shown
+            releasedModel = shown.browser
+            _ = shown.browser.newTab()
+            shown.showBrowser(activate: false)
+            let content = try #require(shown.nativeWindow?.contentView)
+            content.layoutSubtreeIfNeeded()
+            content.displayIfNeeded()
+            shown.closeWindow()
+            #expect(shown.isClosed)
+        }
+
+        #expect(app.windows.isEmpty)
+        #expect(await waitUntil { releasedWindow == nil && releasedModel == nil })
+    }
+
     @Test func closingAndReopeningARegularWindowKeepsItsConversation() {
         let app = BrowserApplication()
         let context = BrowserProfileContext.shared(for: .original())

@@ -2,10 +2,12 @@
 // SPDX-License-Identifier: BUSL-1.1
 
 import Foundation
+import WSurfVault
 
 /// Bounded conversion between the page-facing JSON messages and the native authenticator types. Nothing here grants
-/// authority: origin, frame, policy and profile come from native context, never from these messages.
-nonisolated enum WebAuthnWire {
+/// authority: origin, frame, policy and profile come from native context, never from these messages. The enum and its
+/// base64url helpers are declared in `WSurfVault`, because the vault stores an SSH key's bytes as base64url.
+nonisolated extension WebAuthnWire {
     enum Mediation: String, Sendable { case optional, required, conditional }
 
     struct Parsed: Sendable {
@@ -14,9 +16,6 @@ nonisolated enum WebAuthnWire {
         let mediation: Mediation
         let request: WebAuthnRequest
     }
-
-    /// A malformed message maps to `TypeError`; the page script already rejects most of these before sending.
-    struct Malformed: Error { let reason: String }
 
     struct PageError: Error, Sendable, Equatable {
         let name: String
@@ -33,21 +32,6 @@ nonisolated enum WebAuthnWire {
     private static func isBoolean(_ value: Any) -> Bool {
         guard let number = value as? NSNumber else { return false }
         return CFGetTypeID(number) == CFBooleanGetTypeID()
-    }
-
-    static func base64URLDecode(_ value: Any?, maximum: Int = 65_536) throws -> Data {
-        guard let value = value as? String, value.utf8.count <= maximum * 2,
-              value.utf8.allSatisfy({ $0 != 0x2B && $0 != 0x2F && $0 != 0x3D }) else { throw Malformed(reason: "buffer") }
-        var standard = value.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
-        standard += String(repeating: "=", count: (4 - standard.count % 4) % 4)
-        guard let data = Data(base64Encoded: standard), data.count <= maximum,
-              base64URL(data) == value else { throw Malformed(reason: "buffer") }
-        return data
-    }
-
-    static func base64URL(_ data: Data) -> String {
-        data.base64EncodedString().replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_")
-            .replacingOccurrences(of: "=", with: "")
     }
 
     /// Parses a relay `request` message. `now` is injectable so deadline arithmetic is testable.
@@ -79,7 +63,7 @@ nonisolated enum WebAuthnWire {
         }
         let isConditional = operation == .get && mediation == .conditional
         let deadline: ContinuousClock.Instant? = isConditional ? nil : now.advanced(by: .milliseconds(Int64(timeout)))
-        let challenge = try base64URLDecode(options["challenge"], maximum: 1_024)
+        let challenge = try base64URLDecode(options["challenge"], maximum: 64 * 1_024)
         let verification = try enumValue(WebAuthnUserVerification.self, options["userVerification"], default: .preferred)
 
         let parsed: WebAuthnRequestOptions
@@ -109,7 +93,7 @@ nonisolated enum WebAuthnWire {
             parsed = .creation(WebAuthnCreationOptions(
                 challenge: challenge,
                 rpID: rp["id"] as? String,
-                userID: try base64URLDecode(user["id"], maximum: 64),
+                userID: try base64URLDecode(user["id"], maximum: WebsitePasskey.userHandleLimit),
                 userName: userName,
                 userDisplayName: displayName,
                 publicKeyAlgorithms: integers,
@@ -125,18 +109,25 @@ nonisolated enum WebAuthnWire {
                 challenge: challenge,
                 rpID: options["rpId"] as? String,
                 allowCredentials: try descriptors(options["allowCredentials"]),
-                userVerification: verification
+                userVerification: verification,
+                appID: try appID(options["appid"])
             ))
         }
         return Parsed(
             id: id, operation: operation, mediation: mediation,
-            request: WebAuthnRequest(requestID: UUID(), options: parsed, deadline: deadline)
+            request: WebAuthnRequest(requestID: UUID(), options: parsed, deadline: deadline, userActivated: body["userActivated"] as? Bool == true)
         )
     }
 
     private static func enumValue<T: RawRepresentable>(_: T.Type, _ raw: Any?, default fallback: T) throws -> T where T.RawValue == String {
         guard let raw else { return fallback }
         guard let string = raw as? String, let value = T(rawValue: string) else { throw Malformed(reason: "enum") }
+        return value
+    }
+
+    private static func appID(_ raw: Any?) throws -> String? {
+        guard let raw else { return nil }
+        guard let value = raw as? String, (1...2_048).contains(value.utf8.count) else { throw Malformed(reason: "appid") }
         return value
     }
 
@@ -168,6 +159,7 @@ nonisolated enum WebAuthnWire {
         }
         var extensions: [String: Any] = [:]
         if let properties = result.clientExtensionResults?.credProps { extensions["credProps"] = ["rk": properties.rk] }
+        if let appid = result.clientExtensionResults?.appid { extensions["appid"] = appid }
         return [
             "operation": operation == .create ? "create" : "get",
             "id": id, "rawId": id, "type": "public-key", "authenticatorAttachment": "platform",

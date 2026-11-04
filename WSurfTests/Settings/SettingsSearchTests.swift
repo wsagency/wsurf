@@ -52,6 +52,48 @@ struct SettingsSearchTests {
         #expect(SettingsIndex.search("summarize").contains { $0.id == "assistant.linkPeek" })
     }
 
+    @Test func pageWatchesAreFoundByTheirOwnWordsOnTheAssistantPage() throws {
+        let entries = SettingsIndex.all.filter { $0.id == "assistant.watches" }
+        let entry = try #require(entries.first)
+
+        #expect(entries.count == 1)
+        #expect(entry.category == .provider)
+        #expect(entry.targetAnchor == "assistant.watches")
+        #expect(entry.searchableTitle == "Page Watches")
+        for query in ["watch", "page watch", "monitor", "notify when page changes", "price drop", "pause all"] {
+            #expect(SettingsIndex.search(query).contains { $0.id == "assistant.watches" }, "\(query)")
+        }
+        #expect(SettingsIndex.search("page watches").first?.id == "assistant.watches")
+    }
+
+    @Test func thePageWatchesSectionCarriesTheAnchorTheSearchEntryOpens() throws {
+        let source = try String(contentsOf: URL(filePath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appending(path: "WSurf/Agent/Watches/WatchesPanel.swift"), encoding: .utf8)
+
+        #expect(source.components(separatedBy: ".settingsAnchor(\"assistant.watches\")").count == 2)
+    }
+
+    @Test func thePaletteOrderIsFoundByItsOwnWords() {
+        for query in ["command palette", "reorder", "section order", "tabs first"] {
+            #expect(SettingsIndex.search(query).contains { $0.id == "general.paletteOrder" })
+        }
+        #expect(SettingsIndex.all.first { $0.id == "general.paletteOrder" }?.category == .general)
+    }
+
+    @Test func theArchiveRowIsFoundByItsOwnWordsAndNamesWhatTheStoreKeeps() throws {
+        let entries = SettingsIndex.all.filter { $0.id == "general.archiveTabs" }
+        let entry = try #require(entries.first)
+
+        #expect(entries.count == 1)
+        #expect(entry.category == .general)
+        #expect(entry.searchableTitle == "Archive unused tabs")
+        #expect(entry.searchableDetail.contains(String(TabArchive.capacity)))
+        for query in ["archive", "unused tabs", "old tabs", "command palette"] {
+            #expect(SettingsIndex.search(query).contains { $0.id == "general.archiveTabs" }, "\(query)")
+        }
+    }
+
     @Test func searchMatchesWordsInsideTitles() {
         #expect(SettingsIndex.search("links").contains { $0.id == "general.defaultBrowser" })
     }
@@ -93,7 +135,16 @@ struct SettingsSearchTests {
         #expect(SettingsIndex.search("endpoint").contains { $0.id == "provider.endpoint" })
         #expect(SettingsIndex.search("transparency").contains { $0.id == "appearance.transparency" })
         #expect(SettingsIndex.all.first { $0.id == "appearance.transparency" }?.targetAnchor
-            == "appearance.windowStyle")
+            == "appearance.material")
+    }
+
+    @Test func appearanceModeAndThemesAreSearchable() {
+        #expect(SettingsIndex.search("dark mode").contains { $0.id == "appearance.mode" })
+        #expect(SettingsIndex.search("system").contains { $0.id == "appearance.mode" })
+        for query in ["theme", "catppuccin", "nord", "dracula", "gruvbox", "rose pine", "calm"] {
+            #expect(SettingsIndex.search(query).contains { $0.id == "appearance.theme" }, "\(query)")
+        }
+        #expect(!SettingsIndex.all.contains { $0.id == "appearance.themePreset" })
     }
 
     @Test func openAISettingsBehindProviderNavigationAreSearchable() {
@@ -118,5 +169,15 @@ struct SettingsSearchTests {
         #expect(SettingsIndex.search("choose files to upload").contains { $0.id == "provider.tools" })
         #expect(SettingsIndex.search("safari extensions").contains { $0.id == "extensions.installed" })
         #expect(SettingsIndex.search("save suggestions").contains { $0.id == "autofill.passwords" })
+    }
+
+    @Test func passwordProviderIsNoLongerSearchable() {
+        #expect(!SettingsIndex.all.contains { $0.id == "autofill.passwordProvider" })
+        for query in ["password provider", "provider"] {
+            #expect(!SettingsIndex.search(query).contains { $0.id == "autofill.passwordProvider" })
+        }
+        // What the page still offers is found where it now lives.
+        #expect(SettingsIndex.search("save and fill passwords").first?.id == "autofill.passwords")
+        #expect(SettingsIndex.search("reset prompts").contains { $0.id == "autofill.credentials" })
     }
 }

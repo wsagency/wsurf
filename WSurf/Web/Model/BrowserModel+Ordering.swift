@@ -10,7 +10,7 @@ extension BrowserModel {
     // MARK: - Pinning
 
     func pin(_ tab: BrowserTab) {
-        guard let url = URL(string: tab.urlString), !tab.urlString.isEmpty else { return }
+        guard let url = tab.pinnableURL else { return }
         setPin(url, title: tab.title, for: tab)
     }
 
@@ -23,12 +23,20 @@ extension BrowserModel {
         scheduleSave()
     }
 
+    /// Pins `tab` to `url`. A tab already above the line keeps its place, and a new pinned page is one undo step.
     func setPin(_ url: URL, title: String? = nil, for tab: BrowserTab) {
-        let wasPinned = tab.pinnedURL != nil
+        let wasPinned = isPinned(.tab(tab.id))
+        let previous = tab.pinnedURL.map { (url: $0, title: tab.pinnedTitle) }
         tab.pinnedURL = url
         tab.pinnedTitle = title ?? (tab.pinnedTitle.isEmpty ? tab.title : tab.pinnedTitle)
         if !wasPinned {
             moveToPinnedBoundary(tab)
+        } else if let previous, previous.url != url {
+            let id = tab.id
+            registerSidebarUndo(named: String(localized: "Update Pinned URL")) { model in
+                guard let tab = model.tab(id: id) else { return }
+                model.setPin(previous.url, title: previous.title, for: tab)
+            }
         }
         scheduleSave()
     }
@@ -46,6 +54,46 @@ extension BrowserModel {
             tabsByID[id]?.pinnedURL != nil
         case .folder(let id):
             foldersByID[id]?.isPinned == true
+        }
+    }
+
+    /// The pin line: a root row is above it when it is kept, and everything inside a kept root folder is above it at any
+    /// depth. Everything above the line is pinned.
+    func isPinned(_ item: SidebarItem) -> Bool {
+        let tree = reconciledTree()
+        var top = item
+        while let parent = tree.parent(of: top) {
+            top = .folder(parent)
+        }
+        return isKept(top)
+    }
+
+    /// Settles the pinned pages after a change lands: a tab inside a pinned folder that has no pinned page takes the page
+    /// it shows now, and a tab inside a folder below the line has none. A root tab is a pin exactly when it has a pinned
+    /// page, so it settles itself. Never called while a row is in the air; a drag settles when it lands.
+    func settlePinnedPages() {
+        let tree = reconciledTree()
+        let liveTabs = Dictionary(tabs.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let liveFolders = Dictionary(folders.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        var changed = false
+        for case .folder(let id) in tree.root {
+            let pinned = liveFolders[id]?.isPinned == true
+            for case .tab(let tabID) in tree.descendants(ofFolder: id) {
+                guard let tab = liveTabs[tabID] else { continue }
+                if pinned, tab.pinnedURL == nil, let url = tab.pinnableURL {
+                    tab.pinnedURL = url
+                    tab.pinnedTitle = tab.title
+                    changed = true
+                } else if !pinned, tab.pinnedURL != nil {
+                    tab.pinnedURL = nil
+                    tab.pinnedTitle = ""
+                    tab.isFavorite = false
+                    changed = true
+                }
+            }
+        }
+        if changed {
+            scheduleSave()
         }
     }
 
@@ -76,11 +124,23 @@ extension BrowserModel {
         let moved = Set(items)
         let rest = reconciledTree().root.filter { !moved.contains($0) }
         let boundary = pinnedBoundary(in: rest, ignoring: [])
-        move(items, into: nil, before: rest.indices.contains(boundary) ? rest[boundary] : nil)
-        setPinned(true, for: items)
+        // Pin first: a child of a pinned folder with no pinned page yet would otherwise leave the profile's pins for a moment.
+        if flagPinned(true, for: items) {
+            scheduleSave()
+        }
+        move(items, into: nil, before: rest.indices.contains(boundary) ? rest[boundary] : nil, settlingPins: false)
+        settlePinnedPages()
     }
 
     func setPinned(_ pinned: Bool, for items: some Sequence<SidebarItem>) {
+        if flagPinned(pinned, for: items) {
+            scheduleSave()
+        }
+        settlePinnedPages()
+    }
+
+    /// Pins or unpins the rows themselves; what a folder holds settles afterwards.
+    private func flagPinned(_ pinned: Bool, for items: some Sequence<SidebarItem>) -> Bool {
         var changed = false
         for item in items {
             switch item {
@@ -91,7 +151,7 @@ extension BrowserModel {
             case .tab(let id):
                 guard let tab = tabsByID[id] else { continue }
                 if pinned, tab.pinnedURL == nil {
-                    guard let url = URL(string: tab.urlString), !tab.urlString.isEmpty else { continue }
+                    guard let url = tab.pinnableURL else { continue }
                     tab.pinnedURL = url
                     tab.pinnedTitle = tab.title
                     changed = true
@@ -103,9 +163,7 @@ extension BrowserModel {
                 }
             }
         }
-        if changed {
-            scheduleSave()
-        }
+        return changed
     }
 
     func pin(_ folder: TabFolder) {
@@ -124,6 +182,7 @@ extension BrowserModel {
             before: rest.indices.contains(boundary) ? rest[boundary] : nil,
             settlingPins: false
         )
+        settlePinnedPages()
         scheduleSave()
     }
 
@@ -150,17 +209,17 @@ extension BrowserModel {
         activeSplit?.contains(tab.id) == true
     }
 
-    func spaceID(of tabID: UUID) -> UUID {
+    func anchorID(of tabID: UUID) -> UUID {
         splits.split(containing: tabID)?.leader ?? tabID
     }
 
-    var activeSpaceID: UUID? {
-        activeTabID.map(spaceID(of:))
+    var activeAnchorID: UUID? {
+        activeTabID.map(anchorID(of:))
     }
 
-    func spaceTabs(_ spaceID: UUID) -> [BrowserTab] {
-        guard let split = splits.splitLed(by: spaceID) else {
-            return tabsByID[spaceID].map { [$0] } ?? []
+    func anchorTabs(_ anchorID: UUID) -> [BrowserTab] {
+        guard let split = splits.splitLed(by: anchorID) else {
+            return tabsByID[anchorID].map { [$0] } ?? []
         }
         return split.tabs.compactMap { tabsByID[$0] }
     }
@@ -187,13 +246,13 @@ extension BrowserModel {
     }
 
     func split(_ anchor: BrowserTab, with tab: BrowserTab, axis: SplitAxis) {
-        guard anchor !== tab else { return }
+        guard anchor !== tab, anchor.microTabID == nil, tab.microTabID == nil else { return }
         splits = splits.splitting(anchor.id, with: tab.id, axis: axis)
         settleSplit(containing: anchor)
     }
 
     func insertIntoSplit(_ tab: BrowserTab, beside anchor: BrowserTab, edge: SplitDropZone) {
-        guard anchor !== tab else { return }
+        guard anchor !== tab, anchor.microTabID == nil, tab.microTabID == nil else { return }
         splits = splits.inserting(tab.id, beside: anchor.id, edge: edge)
         settleSplit(containing: anchor)
     }
@@ -249,7 +308,7 @@ extension BrowserModel {
             }
             gather(split.tabs)
         }
-        reconcileSpaces()
+        reconcileAnchors()
         scheduleSave()
     }
 
@@ -286,12 +345,24 @@ extension BrowserModel {
         let survivor = splits.others(of: tab.id).first.flatMap { tabsByID[$0] }
         splits = splits.removing(tab.id)
         if activeTabID == tab.id {
-            activeTabID = (survivor ?? neighbor(of: tab))?.id
+            // A page a page opened (an SSO pop-up) hands the front back to its opener, not the next tab in the list.
+            let opener = openerByTab[tab.id].flatMap { tabsByID[$0] }.flatMap { isShown($0) && $0.microTabID == nil ? $0 : nil }
+            activeTabID = (survivor ?? opener ?? neighbor(of: tab))?.id
+            // The opener is in another window (this pop-up was shown in its own): select it there and bring that window up.
+            if survivor == nil, opener == nil, let there = openerElsewhere[tab.id],
+               let model = there.model.model, let page = model.tabsByID[there.tab], model.isShown(page), page.microTabID == nil {
+                model.activate(page)
+                onShowWindow?(model)
+            }
         }
+        openerElsewhere[tab.id] = nil
         tabs.removeAll { $0 === tab }
         storedTree = reconciledTree().removing([.tab(tab.id)])
         sidebarDidChange()
+        // The title this tab gave its last visit is written now: nothing renames that visit once the tab is gone.
+        history.flushPendingTitles()
         lastVisitID[tab.id] = nil
+        openerByTab[tab.id] = nil
         recentlyActive.removeAll { $0 == tab.id }
         onTabClosed?(tab)
         scheduleSave()
@@ -300,12 +371,14 @@ extension BrowserModel {
     }
 
     private func neighbor(of tab: BrowserTab) -> BrowserTab? {
-        guard let index = tabs.firstIndex(where: { $0 === tab }) else {
-            return tabs.first { $0 !== tab }
+        // A row standing for a page in a micro window is never the next page in front.
+        let peers = tabs.filter { $0 === tab || (isShown($0) && $0.microTabID == nil) }
+        guard let index = peers.firstIndex(where: { $0 === tab }) else {
+            return peers.first { $0 !== tab }
         }
         let hidden = hiddenSidebarTabIDs
-        let below = tabs[tabs.index(after: index)...]
-        let above = tabs[..<index].reversed()
+        let below = peers[peers.index(after: index)...]
+        let above = peers[..<index].reversed()
         return below.first { !hidden.contains($0.id) }
             ?? above.first { !hidden.contains($0.id) }
             ?? below.first
@@ -321,8 +394,9 @@ extension BrowserModel {
         return (try? await webView.evaluateJavaScript(script)) as? Bool ?? false
     }
 
+    /// Pins, and what a pinned folder holds, stay: the person removes those one by one. Other spaces stay too.
     func closeOthers(_ kept: BrowserTab) {
-        close(tabs.filter { $0 !== kept }.map { .tab($0.id) })
+        close(tabs.filter { $0 !== kept && !$0.isPinnedForProfile && isShown($0) }.map { .tab($0.id) })
     }
 
     func closeActiveTab() {
@@ -332,6 +406,10 @@ extension BrowserModel {
     }
 
     func activate(_ tab: BrowserTab) {
+        guard tab.microTabID == nil else {
+            onActivatingMicroPlaceholder?(tab)
+            return
+        }
         activeTabID = tab.id
         scheduleSave()
     }
@@ -348,6 +426,8 @@ extension BrowserModel {
         let pinnedURL: URL?
         let pinnedTitle: String
         let isFavorite: Bool
+        let pinID: UUID?
+        let spaceID: UUID?
         let wasActive: Bool
         let folderID: UUID?
         let before: SidebarItem?
@@ -364,6 +444,8 @@ extension BrowserModel {
             pinnedURL = tab.pinnedURL
             pinnedTitle = tab.pinnedTitle
             isFavorite = tab.isFavorite
+            pinID = tab.pinID
+            spaceID = tab.spaceID
             wasActive = model.activeTabID == tab.id
             folderID = model.folder(containing: tab)?.id
             before = model.sidebarTree.successor(of: .tab(tab.id))
@@ -384,17 +466,19 @@ extension BrowserModel {
     }
 
     func activateTab(at index: Int) {
+        let tabs = currentSpaceTabs
         guard tabs.indices.contains(index) else { return }
         activate(tabs[index])
     }
 
     func activateLastTab() {
-        if let last = tabs.last {
+        if let last = currentSpaceTabs.last {
             activate(last)
         }
     }
 
     func cycleTab(forward: Bool) {
+        let tabs = currentSpaceTabs.filter { $0.microTabID == nil }
         guard tabs.count > 1, let current = tabs.firstIndex(where: { $0.id == activeTab?.id }) else { return }
         let next = forward
             ? (current + 1) % tabs.count
@@ -473,9 +557,75 @@ extension BrowserModel {
         scheduleSave()
     }
 
+    /// A preset color. It also puts a color the person chose out of use. One undo step.
     func setFolderColor(_ color: TabFolderColor, for folder: TabFolder) {
-        guard folder.color != color else { return }
+        setFolderLook(color: color, customColor: nil, for: folder)
+    }
+
+    /// A color the person chose. One undo step, unless `registersUndo` is false: the color panel changes the color
+    /// again and again while a person drags in it, and only the first change of the drag is a step.
+    /// Returns whether the folder changed.
+    @discardableResult
+    func setFolderCustomColor(_ custom: CustomFolderColor, for folder: TabFolder, registersUndo: Bool = true) -> Bool {
+        setFolderLook(color: folder.color, customColor: custom, for: folder, registersUndo: registersUndo)
+    }
+
+    @discardableResult
+    private func setFolderLook(
+        color: TabFolderColor, customColor: CustomFolderColor?, for folder: TabFolder, registersUndo: Bool = true
+    ) -> Bool {
+        guard foldersByID[folder.id] === folder, folder.color != color || folder.customColor != customColor else { return false }
+        if registersUndo {
+            let previous = (color: folder.color, custom: folder.customColor)
+            let id = folder.id
+            registerSidebarUndo(named: String(localized: "Change Folder Color")) { model in
+                guard let folder = model.folder(id: id) else { return }
+                model.setFolderLook(color: previous.color, customColor: previous.custom, for: folder)
+            }
+        }
         folder.color = color
+        folder.customColor = customColor
+        scheduleSave()
+        return true
+    }
+
+    /// One undo step. nil is the plain folder icon. A pinned folder's symbol goes to the profile with the rest of its row.
+    func setFolderSymbol(_ symbol: String?, for folder: TabFolder) {
+        let symbol = symbol.flatMap { $0.isEmpty ? nil : $0 }
+        guard foldersByID[folder.id] === folder, folder.symbol != symbol else { return }
+        let previous = folder.symbol
+        let id = folder.id
+        registerSidebarUndo(named: String(localized: "Change Folder Icon")) { model in
+            guard let folder = model.folder(id: id) else { return }
+            model.setFolderSymbol(previous, for: folder)
+        }
+        folder.symbol = symbol
+        scheduleSave()
+    }
+
+    /// One undo step. A pinned folder's size goes to the profile with the rest of its row.
+    func setFolderSize(_ size: TabFolderSize, for folder: TabFolder) {
+        guard foldersByID[folder.id] === folder, folder.size != size else { return }
+        let previous = folder.size
+        let id = folder.id
+        registerSidebarUndo(named: String(localized: "Change Folder Size")) { model in
+            guard let folder = model.folder(id: id) else { return }
+            model.setFolderSize(previous, for: folder)
+        }
+        folder.size = size
+        scheduleSave()
+    }
+
+    /// One undo step. A pinned folder's setting goes to the profile with the rest of its row.
+    func setFolderTintsIcons(_ tints: Bool, for folder: TabFolder) {
+        guard foldersByID[folder.id] === folder, folder.tintsIcons != tints else { return }
+        let previous = folder.tintsIcons
+        let id = folder.id
+        registerSidebarUndo(named: String(localized: "Change Folder Icon Tint")) { model in
+            guard let folder = model.folder(id: id) else { return }
+            model.setFolderTintsIcons(previous, for: folder)
+        }
+        folder.tintsIcons = tints
         scheduleSave()
     }
 
@@ -494,6 +644,7 @@ extension BrowserModel {
             : next
         folders.removeAll { $0 === folder }
         syncTabOrder()
+        settlePinnedPages()
         scheduleSave()
         finishFolderRename(folder.id)
         sidebarSelection.takeKeyboard()
@@ -516,24 +667,16 @@ extension BrowserModel {
         let tree = reconciledTree()
         let moved = tree.normalized(items)
         guard !moved.isEmpty, let next = tree.moving(moved, into: folder?.id, before: target) else { return }
-        let entering = moved.filter { tree.parent(of: $0) != folder?.id }
         storedTree = next
         if let folder {
             folder.isExpanded = true
             autoName(folder)
-            if settlingPins {
-                setPinned(
-                    false,
-                    for: entering.filter {
-                        if case .tab = $0 {
-                            return true
-                        }
-                        return false
-                    }
-                )
-            }
         }
         syncTabOrder()
+        // A page filed in a pinned folder is pinned and one filed below the line is not; a drag settles when it lands.
+        if settlingPins {
+            settlePinnedPages()
+        }
         scheduleSave()
     }
 
@@ -546,6 +689,81 @@ extension BrowserModel {
         guard let next = tree.moving(moved, into: destination, before: tree.successor(of: folder))
         else { return }
         storedTree = destination == nil ? next.keepingPinsAtRootTop(isKept) : next
+        syncTabOrder()
+        settlePinnedPages()
+        scheduleSave()
+    }
+
+    // MARK: - Sorting a folder
+
+    enum FolderSort {
+        case byName
+        case foldersFirst
+    }
+
+    /// The rows the sidebar draws in a folder. A split's other panes sit behind their leader and are not rows.
+    private func drawnRows(in folder: TabFolder) -> [SidebarItem] {
+        reconciledTree().rows(in: folder.id).filter {
+            guard case .tab(let id) = $0 else { return true }
+            return !splits.isFollower(id)
+        }
+    }
+
+    func canSortChildren(of folder: TabFolder) -> Bool {
+        drawnRows(in: folder).count > 1
+    }
+
+    /// One-time reorder of the folder's direct children. Subfolders keep their own order. Both sorts are stable.
+    func sortChildren(of folder: TabFolder, _ sort: FolderSort) {
+        guard foldersByID[folder.id] === folder else { return }
+        let rows = drawnRows(in: folder)
+        let sorted: [SidebarItem]
+        switch sort {
+        case .byName:
+            let names = rows.map { item -> String in
+                switch item {
+                case .tab(let id):
+                    tabsByID[id]?.title ?? ""
+                case .folder(let id):
+                    foldersByID[id]?.name ?? ""
+                }
+            }
+            sorted = rows.indices.sorted {
+                switch names[$0].localizedStandardCompare(names[$1]) {
+                case .orderedAscending:
+                    true
+                case .orderedDescending:
+                    false
+                case .orderedSame:
+                    $0 < $1
+                }
+            }.map { rows[$0] }
+        case .foldersFirst:
+            let isFolder: (SidebarItem) -> Bool = {
+                if case .folder = $0 {
+                    return true
+                }
+                return false
+            }
+            sorted = rows.filter(isFolder) + rows.filter { !isFolder($0) }
+        }
+        setChildOrder(of: folder.id, to: sorted)
+    }
+
+    /// Reorders a folder's children in place, as one undo step. A child that has left the folder since `order`
+    /// was recorded stays out, and one that joined keeps its place behind the others, so an undo cannot pull rows back.
+    private func setChildOrder(of folderID: UUID, to order: [SidebarItem]) {
+        let tree = reconciledTree()
+        let current = tree.rows(in: folderID)
+        let live = Set(current)
+        var placed: Set<SidebarItem> = []
+        let wanted = withSplitMembers(order).filter { live.contains($0) && placed.insert($0).inserted }
+        guard let next = tree.moving(wanted + current.filter { !placed.contains($0) }, into: folderID, before: nil)
+        else { return }
+        registerSidebarUndo(named: String(localized: "Sort Folder")) { model in
+            model.setChildOrder(of: folderID, to: current)
+        }
+        storedTree = next
         syncTabOrder()
         scheduleSave()
     }
@@ -611,23 +829,25 @@ extension BrowserModel {
     func sidebarDidChange() {
         tabsByID = Dictionary(tabs.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         foldersByID = Dictionary(folders.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        sidebarTree = reconciledTree()
+        let tree = reconciledTree()
+        settleSpaces(in: tree)
+        sidebarTree = currentSpaceID == nil ? tree : tree.keepingRoot(where: isShown)
         splits = splits.reconciled(against: Set(tabsByID.keys))
-        reconcileSpaces()
+        reconcileAnchors()
     }
 
-    private func reconcileSpaces() {
-        let current = Dictionary(tabs.map { ($0.id, spaceID(of: $0.id)) }, uniquingKeysWith: { first, _ in first })
-        let previous = spaceAnchors
-        spaceAnchors = current
-        guard !previous.isEmpty, let onSpaceAnchorChanged else { return }
+    private func reconcileAnchors() {
+        let current = Dictionary(tabs.map { ($0.id, anchorID(of: $0.id)) }, uniquingKeysWith: { first, _ in first })
+        let previous = tabAnchors
+        tabAnchors = current
+        guard !previous.isEmpty, let onAnchorChanged else { return }
 
         let names = Set(current.values)
         for name in Set(previous.values) where !names.contains(name) {
             let members = previous.filter { $0.value == name }.keys
             let successors = Set(members.compactMap { current[$0] })
             guard successors.count == 1, let successor = successors.first, successor != name else { continue }
-            onSpaceAnchorChanged(name, successor)
+            onAnchorChanged(name, successor)
         }
     }
 

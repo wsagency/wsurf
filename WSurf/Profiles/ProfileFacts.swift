@@ -82,7 +82,7 @@ extension ProfileFacts {
             let earliest = try? Double.fetchOne(db, sql: "SELECT MIN(visitedAt) FROM historyVisit")
             return Counts(
                 tabs: count(db, table: "sessionTab"),
-                folders: count(db, table: "sessionFolder"),
+                folders: count(db, table: "sessionFolder") + profileFolders(db),
                 pages: count(db, table: "historyPage"),
                 firstVisit: earliest.map { Date(timeIntervalSinceReferenceDate: $0) }
             )
@@ -91,6 +91,11 @@ extension ProfileFacts {
 
     nonisolated private static func count(_ db: Database, table: String) -> Int {
         (try? Int.fetchOne(db, sql: "SELECT COUNT(*) FROM \(table)")) ?? 0
+    }
+
+    /// Pinned folders belong to the profile, not to a window, and a database from before they did has no such table.
+    nonisolated private static func profileFolders(_ db: Database) -> Int {
+        (try? Int.fetchOne(db, sql: "SELECT COUNT(*) FROM profilePin WHERE kind = 'folder'")) ?? 0
     }
 
     nonisolated private static func size(of root: URL, skippingProfiles: Bool) -> Int64 {
@@ -121,9 +126,15 @@ extension ProfileFacts {
 enum ProfileMaintenance {
     @MainActor
     static func clearHistory(of profile: Profile) {
+        // Missed watch notices name watched pages. The profile's watches may be running, so its center drops its list too; the
+        // file goes whether or not it does.
+        BrowserProfileContext.existing(for: profile.id)?.pageWatches?.dismissMissed()
+        try? FileManager.default.removeItem(at: PageWatchCenter.missedFile(beside: profile.pageWatchesFile))
         guard let database = profile.databaseURL,
               FileManager.default.fileExists(atPath: database.path)
         else { return }
-        HistoryStore(database: AppDatabase(at: database)).clear()
+        let profileDatabase = AppDatabase(at: database)
+        HistoryStore(database: profileDatabase).clear()
+        TabArchive(database: profileDatabase).clear()
     }
 }

@@ -7,6 +7,7 @@ import Synchronization
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 // Task 7: plumbing shared by `VaultMoveTests` and `VaultMoveBenchmark`. The helpers read through `StoreTables`, `StoreSeal` and the
 // fixture's own keys; only `HiddenHistoryOperation` drives the store's `commit`/`delete`.

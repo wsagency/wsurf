@@ -16,9 +16,13 @@ struct FolderSection: View {
 
     @Environment(\.sidebarStyle) private var sidebarStyle
     @Environment(\.windowColorScheme) private var windowColorScheme
-    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.displayScale) private var displayScale
+    @Environment(\.sidebarIconTint) private var outerIconTint
+    @Environment(\.chromeWash) private var wash
+    private var inkSource = SidebarRowInkSource()
     @State private var hovering = false
-    @State private var windowFrame: CGRect = .zero
+    @State private var showsIconPicker = false
+    @State private var rowFrame = SidebarRowFrame()
 
     private var browser: BrowserModel {
         context.browser
@@ -29,13 +33,41 @@ struct FolderSection: View {
     private var isSelected: Bool {
         context.isSelected(item)
     }
+    private var windowAnchor: CGRect {
+        context.windowFrame(of: item)
+    }
+    /// How far the rows inside this folder start to the right of its own row, from the theme's Folder indent for the
+    /// level they are on. The levels add up down the tree (`ThemeShape.folderInset`). The icons-only sidebar has no
+    /// room for it.
+    private var childIndent: CGFloat {
+        sidebarStyle == .full ? BrowserSettings.application.chromeShape.folderStep(below: depth) : 0
+    }
+
+    /// How strongly this folder's color draws, from the theme.
+    private var colorOpacity: Double {
+        BrowserSettings.application.chromeShape.folderColorOpacity
+    }
+
+    /// How much larger this folder's own row is drawn. The icons-only sidebar has no title and a fixed width, so
+    /// it keeps every folder at its normal size.
+    private var scale: CGFloat {
+        sidebarStyle == .full ? folder.size.factor : 1
+    }
+    private var rowStyle: SidebarRowStyle {
+        browser.rowStyle(
+            of: folder,
+            isMarked: isSelected,
+            paletteOpen: context.coordinator.isNewTabPaletteOpen,
+            increasedContrast: inkSource.increasedContrast
+        )
+    }
 
     static let outlineInset: CGFloat = 2
     static let fillOpacity: Double = 0.08
     static let edgeOpacity: Double = 0.14
 
     static func outlineRadius(depth: Int) -> CGFloat {
-        var radius = Theme.Radius.control
+        var radius = Theme.Radius.row
         for _ in 0..<max(depth, 0) {
             radius = Theme.Radius.nested(in: radius, inset: outlineInset)
         }
@@ -44,6 +76,21 @@ struct FolderSection: View {
 
     static func rowRadius(depth: Int) -> CGFloat {
         Theme.Radius.nested(in: outlineRadius(depth: depth), inset: outlineInset)
+    }
+
+    /// The width of the outline's edge for the theme's row edge, or nil for none. Increase Contrast always draws 1 pt.
+    static func outlineEdgeWidth(_ frame: FrameStyle, increasedContrast: Bool, displayScale: CGFloat) -> CGFloat? {
+        if increasedContrast {
+            return 1
+        }
+        switch frame {
+        case .standard:
+            return 1
+        case .hairline:
+            return 1 / displayScale
+        case .none:
+            return nil
+        }
     }
 
     private var outlineRadius: CGFloat {
@@ -67,30 +114,46 @@ struct FolderSection: View {
     var body: some View {
         let rows = browser.rows(in: folder)
         let audible = audibleTab
+        let style = rowStyle
+        let ink = inkSource.ink(for: style)
         let showsOutline = folder.isExpanded && !rows.isEmpty
+        let iconSize = SidebarMetrics.rowIconSize * scale
         VStack(spacing: SidebarMetrics.rowVerticalSpacing(settings: BrowserSettings.application)) {
-            HStack(spacing: 7) {
-                Image(systemName: audible == nil
-                    ? (folder.isExpanded ? "folder" : "folder.fill")
-                    : "speaker.wave.2.fill")
-                    .font(Theme.Font.caption)
-                    .foregroundStyle(folder.color.tint)
-                    .contentTransition(.symbolEffect(.replace))
-                    .animation(Theme.Motion.settle, value: audible?.id)
+            HStack(spacing: SidebarMetrics.rowIconSpacing) {
+                // Theme.Font.caption at the 16 pt icon size; the glyph grows with the theme's tab icons.
+                SidebarSymbol(
+                    audible == nil ? folder.glyph(isOpen: folder.isExpanded) : "speaker.wave.2.fill",
+                    size: 10.5 * iconSize / 16, box: iconSize
+                )
+                    .foregroundStyle(folder.ink(opacity: colorOpacity, on: wash))
+                    .frame(width: iconSize, height: iconSize)
                     .help(audible.map { Text("“\($0.title)” is playing") } ?? Text(verbatim: ""))
+                    .overlay(alignment: .bottomTrailing) {
+                        // Icons only has no count badge, so a small inverse dot carries the current tab instead.
+                        if sidebarStyle == .icons, let badge = ink.badge {
+                            Circle()
+                                .fill(badge.fill)
+                                .frame(width: 7, height: 7)
+                                .offset(x: 3, y: 3)
+                        }
+                    }
+                    .sidebarNewMark(ink)
+                    .sidebarRowName(folder.name, style: style, isIconOnly: sidebarStyle == .icons)
 
                 if isRenaming && sidebarStyle == .full {
                     renameField
                 } else if sidebarStyle == .full {
                     Text(verbatim: folder.name)
-                        .font(BrowserSettings.application.sidebarFont)
-                        .foregroundStyle(BrowserSettings.application.sidebarTextColor(scheme: colorScheme))
+                        .font(BrowserSettings.application.sidebarTitle(scale: scale).font)
+                        .foregroundStyle(ink.resting)
                         .lineLimit(1)
+                        .sidebarRowAccessibility(style)
+                        .sidebarTitleCentered(scale: scale)
                 }
 
                 if sidebarStyle == .full {
                     Image(systemName: "chevron.right")
-                        .font(.system(size: 8, weight: .bold))
+                        .font(.system(size: 8 * scale, weight: .bold))
                         .rotationEffect(.degrees(folder.isExpanded ? 90 : 0))
                         .foregroundStyle(.tertiary)
 
@@ -108,20 +171,23 @@ struct FolderSection: View {
 
                     countBadge(rows.count)
                         .font(BrowserSettings.application.sidebarFont)
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(ink.badge.map { AnyShapeStyle($0.text) } ?? AnyShapeStyle(.tertiary))
                         .padding(.horizontal, 5)
                         .padding(.vertical, 1.5)
-                        .background(Theme.Wash.hairline, in: Capsule())
+                        .background(
+                            ink.badge.map { AnyShapeStyle($0.fill) } ?? AnyShapeStyle(Theme.Wash.hairline),
+                            in: Capsule()
+                        )
                 }
             }
             .padding(.horizontal, SidebarMetrics.rowContentPadding(style: sidebarStyle))
             .frame(maxWidth: .infinity, alignment: .leading)
-            .frame(height: SidebarMetrics.rowHeight(settings: BrowserSettings.application))
+            .frame(height: SidebarMetrics.rowHeight(settings: BrowserSettings.application, scale: scale))
             .sidebarRowSelectionEffect(
-                isSelected: isSelected,
+                isSelected: style.emphasis != .resting,
                 isHovering: hovering,
-                hoverTint: folder.color.tint,
-                radius: showsOutline ? Self.rowRadius(depth: depth) : Theme.Radius.hover
+                hoverTint: folder.tint(opacity: colorOpacity),
+                radius: showsOutline ? Self.rowRadius(depth: depth) : Theme.Radius.row
             )
             .contentShape(Rectangle())
             .onHover { over in
@@ -129,20 +195,21 @@ struct FolderSection: View {
                 if over {
                     context.coordinator.tabPreview.hover(
                         .folder(folder, browser.tabs(in: folder)),
-                        anchor: windowFrame
+                        anchor: windowAnchor
                     )
                 } else {
                     context.coordinator.tabPreview.unhover(folder.id)
                 }
             }
-            .onDisappear { context.coordinator.tabPreview.unhover(folder.id) }
+            .onDisappear {
+                context.coordinator.tabPreview.unhover(folder.id)
+                rowFrame.forget(item, in: context.frames)
+            }
             .onGeometryChange(for: CGRect.self) { $0.frame(in: .named(context.space)) } action: {
-                context.frames.record(item, at: $0)
+                rowFrame.measure(item, at: $0, in: context.frames)
+                context.followPreview(of: item, id: folder.id)
             }
-            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frame in
-                windowFrame = frame
-                context.coordinator.tabPreview.moved(folder.id, anchor: frame)
-            }
+            .onAppear { rowFrame.appear(item, in: context.frames) }
             .onTapGesture { tapped() }
             .id(item)
             .help(sidebarStyle == .icons ? Text(verbatim: folder.name) : Text(verbatim: ""))
@@ -154,6 +221,9 @@ struct FolderSection: View {
                     .frame(width: 200, height: 24)
                     .padding(12)
             }
+            .popover(isPresented: $showsIconPicker, arrowEdge: .trailing) {
+                FolderIconPicker(folder: folder, browser: browser) { showsIconPicker = false }
+            }
             .overlay {
                 FolderContextMenuCatcher {
                     FolderContextMenu.make(
@@ -163,13 +233,17 @@ struct FolderSection: View {
                         selected: context.selection.count > 1 && isSelected
                             ? Array(context.selection.items)
                             : [],
-                        onRename: beginRename
+                        onRename: beginRename,
+                        onChooseIcon: { showsIconPicker = true }
                     )
                 }
             }
 
             if folder.isExpanded {
                 contents
+                    .padding(.leading, childIndent)
+                    // The nearest folder that tints wins: a folder inside a tinted one that tints too keeps its own color.
+                    .environment(\.sidebarIconTint, folder.tintsIcons ? folder.ink(opacity: colorOpacity, on: wash) : outerIconTint)
             }
         }
         .padding(showsOutline ? Self.outlineInset : 0)
@@ -177,16 +251,22 @@ struct FolderSection: View {
             if showsOutline {
                 let shape = RoundedRectangle(cornerRadius: outlineRadius, style: .continuous)
                 shape
-                    .fill(folder.color.tint.opacity(
-                        Self.fillOpacity * BrowserSettings.application.sidebarFolderTint
+                    .fill(folder.tint.opacity(
+                        Self.fillOpacity * BrowserSettings.application.sidebarFolderTint * colorOpacity
                     ))
                     .overlay {
-                        shape.strokeBorder(
-                            folder.color.tint.opacity(
-                                Self.edgeOpacity * BrowserSettings.application.sidebarFolderTint
-                            ),
-                            lineWidth: 1
-                        )
+                        if let edge = Self.outlineEdgeWidth(
+                            BrowserSettings.application.chromeShape.rowFrame,
+                            increasedContrast: inkSource.increasedContrast,
+                            displayScale: displayScale
+                        ) {
+                            shape.strokeBorder(
+                                folder.tint.opacity(
+                                    Self.edgeOpacity * BrowserSettings.application.sidebarFolderTint * colorOpacity
+                                ),
+                                lineWidth: edge
+                            )
+                        }
                     }
                 .environment(\.colorScheme, windowColorScheme)
             }
@@ -202,7 +282,7 @@ struct FolderSection: View {
     private var renameField: some View {
         SidebarFolderNameField(
             text: $draftName,
-            fontSize: BrowserSettings.application.sidebarFontSize,
+            fontSize: BrowserSettings.application.sidebarFontSize * scale,
             onCommit: commitRename,
             onCancel: cancelRename
         )
@@ -211,7 +291,11 @@ struct FolderSection: View {
     }
 
     private var contents: AnyView {
-        AnyView(SidebarRows(items: browser.rows(in: folder), depth: depth + 1, context: context))
+        AnyView(
+            VStack(spacing: SidebarMetrics.rowVerticalSpacing(settings: BrowserSettings.application)) {
+                SidebarRows(items: browser.rows(in: folder), depth: depth + 1, context: context)
+            }
+        )
     }
 
     private func unloadFolderTabs() {
@@ -239,6 +323,7 @@ struct FolderSection: View {
             withAnimation(Theme.Motion.settle) {
                 folder.isExpanded.toggle()
             }
+            browser.scheduleSave()
         }
         context.selection.excludeFavorites(browser.favorites)
     }
@@ -347,7 +432,8 @@ enum FolderContextMenu {
         browser: BrowserModel,
         coordinator: AppCoordinator,
         selected: [SidebarItem],
-        onRename: @escaping () -> Void
+        onRename: @escaping () -> Void,
+        onChooseIcon: @escaping () -> Void = {}
     ) -> NSMenu {
         let menu = NSMenu()
         menu.autoenablesItems = false
@@ -378,14 +464,21 @@ enum FolderContextMenu {
         menu.addItem(.separator())
 
         let colors = NSMenuItem()
-        colors.view = FolderColorMenuItemView(selected: folder.color) { [weak browser, weak folder] color in
+        colors.view = FolderColorMenuItemView(
+            selected: folder.customColor == nil ? folder.color : nil
+        ) { [weak browser, weak folder] color in
             guard let browser, let folder else { return }
             browser.setFolderColor(color, for: folder)
         }
         menu.addItem(colors)
+        menu.addItem(customColorItem(for: folder, browser: browser))
         menu.addItem(.separator())
 
         addFolderItems([.folder(folder.id)], to: menu, browser: browser)
+        menu.addItem(sortItem(for: folder, browser: browser))
+        menu.addItem(sizeItem(for: folder, browser: browser))
+        menu.addItem(tintIconsItem(for: folder, browser: browser))
+        menu.addItem(iconItem(onChoose: onChooseIcon))
         menu.addItem(.separator())
 
         let kept = browser.allTabs(in: folder).count
@@ -463,6 +556,91 @@ enum FolderContextMenu {
                 action: { [weak browser] in browser?.moveOut(items) }
             ))
         }
+    }
+
+    static func sortMenu(for folder: TabFolder, browser: BrowserModel) -> NSMenu {
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        let sorts: [(title: String, symbol: String, sort: BrowserModel.FolderSort)] = [
+            (String(localized: "By Name"), "textformat.abc", .byName),
+            (String(localized: "Folders First"), "folder", .foldersFirst),
+        ]
+        for entry in sorts {
+            let item = actionItem(
+                title: entry.title,
+                symbol: entry.symbol,
+                action: { [weak browser, weak folder] in
+                    guard let browser, let folder else { return }
+                    browser.sortChildren(of: folder, entry.sort)
+                }
+            )
+            item.isEnabled = browser.canSortChildren(of: folder)
+            menu.addItem(item)
+        }
+        return menu
+    }
+
+    static func sizeMenu(for folder: TabFolder, browser: BrowserModel) -> NSMenu {
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        for size in TabFolderSize.allCases {
+            let item = actionItem(
+                title: size.menuTitle,
+                symbol: nil,
+                action: { [weak browser, weak folder] in
+                    guard let browser, let folder else { return }
+                    browser.setFolderSize(size, for: folder)
+                }
+            )
+            item.state = folder.size == size ? .on : .off
+            menu.addItem(item)
+        }
+        return menu
+    }
+
+    private static func sizeItem(for folder: TabFolder, browser: BrowserModel) -> NSMenuItem {
+        let item = NSMenuItem(title: String(localized: "Size"), action: nil, keyEquivalent: "")
+        item.image = NSImage(systemSymbolName: "textformat.size", accessibilityDescription: nil)
+        item.submenu = sizeMenu(for: folder, browser: browser)
+        return item
+    }
+
+    static func tintIconsItem(for folder: TabFolder, browser: BrowserModel) -> NSMenuItem {
+        let item = actionItem(
+            title: String(localized: "Tint Icons as Folder"),
+            symbol: "paintpalette",
+            action: { [weak browser, weak folder] in
+                guard let browser, let folder else { return }
+                browser.setFolderTintsIcons(!folder.tintsIcons, for: folder)
+            }
+        )
+        item.state = folder.tintsIcons ? .on : .off
+        return item
+    }
+
+    /// Opens the system color panel on the folder. Checked while the folder wears a color of the person's own.
+    static func customColorItem(for folder: TabFolder, browser: BrowserModel) -> NSMenuItem {
+        let item = actionItem(
+            title: String(localized: "Custom Color…"),
+            symbol: "eyedropper",
+            action: { [weak browser, weak folder] in
+                guard let browser, let folder else { return }
+                FolderColorEdit.present(for: folder, browser: browser)
+            }
+        )
+        item.state = folder.customColor == nil ? .off : .on
+        return item
+    }
+
+    static func iconItem(onChoose: @escaping () -> Void) -> NSMenuItem {
+        actionItem(title: String(localized: "Icon…"), symbol: "square.grid.2x2", action: onChoose)
+    }
+
+    private static func sortItem(for folder: TabFolder, browser: BrowserModel) -> NSMenuItem {
+        let item = NSMenuItem(title: String(localized: "Sort"), action: nil, keyEquivalent: "")
+        item.image = NSImage(systemSymbolName: "arrow.up.arrow.down", accessibilityDescription: nil)
+        item.submenu = sortMenu(for: folder, browser: browser)
+        return item
     }
 
     static func moveMenu(_ items: [SidebarItem], browser: BrowserModel) -> NSMenu {
@@ -565,7 +743,7 @@ enum FolderContextMenu {
 
     private static func actionItem(
         title: String,
-        symbol: String,
+        symbol: String?,
         action: @escaping () -> Void
     ) -> NSMenuItem {
         let target = FolderMenuAction(action)
@@ -574,7 +752,7 @@ enum FolderContextMenu {
             action: #selector(FolderMenuAction.runFolderMenuAction),
             keyEquivalent: ""
         )
-        item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: title)
+        item.image = symbol.flatMap { NSImage(systemSymbolName: $0, accessibilityDescription: title) }
         item.target = target
         item.representedObject = target
         item.isEnabled = true
@@ -651,7 +829,7 @@ struct FolderContextMenuCatcher: NSViewRepresentable {
 private final class FolderColorMenuItemView: NSView {
     private let choose: (TabFolderColor) -> Void
 
-    init(selected: TabFolderColor, choose: @escaping (TabFolderColor) -> Void) {
+    init(selected: TabFolderColor?, choose: @escaping (TabFolderColor) -> Void) {
         self.choose = choose
         super.init(frame: NSRect(x: 0, y: 0, width: 176, height: 30))
 
@@ -732,6 +910,11 @@ extension TabFolderColor {
 
     var tint: Color {
         Color(nsTint)
+    }
+
+    /// The color at `opacity`. At 1 it is the color itself, as it always was.
+    func tint(opacity: Double) -> Color {
+        opacity >= 1 ? tint : tint.opacity(opacity)
     }
 
     func menuSwatch(isSelected: Bool) -> NSImage {

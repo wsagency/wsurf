@@ -54,29 +54,34 @@ struct RemoteSiteBadge: View {
     let size: CGFloat
 
     @Environment(\.profileFavicons) private var profileFavicons
-    @State private var icon: NSImage?
+    /// An icon read from the disk or fetched, with the lookup it answers, so a row reused for another site does not wear this one's.
+    @State private var loaded: (lookup: String, icon: NSImage)?
+
+    private var lookup: String {
+        "\(host)|\(profileFavicons.map { String(describing: ObjectIdentifier($0)) } ?? "")"
+    }
 
     var body: some View {
-        Group {
-            if let icon {
-                FaviconImage(image: icon)
-                    .clipShape(RoundedRectangle(cornerRadius: size / 5, style: .continuous))
-            } else {
-                Image(systemName: "globe")
-                    .font(.system(size: size * 0.75))
-                    .foregroundStyle(.tertiary)
-            }
-        }
-        .frame(width: size, height: size)
-        .task(id: "\(host)|\(profileFavicons.map { String(describing: ObjectIdentifier($0)) } ?? "")") {
-            guard let favicons = profileFavicons else { return }
-            if let cached = favicons.cached(for: host) {
-                icon = cached
-            } else {
-                let loaded = await favicons.load(forHost: host)
-                guard profileFavicons === favicons else { return }
-                icon = loaded
-            }
+        // A row whose icon is in memory draws it with no task of its own: a long list starts none for the icons it already has.
+        if let icon = profileFavicons?.memoryCached(for: host) ?? loaded.flatMap({ $0.lookup == lookup ? $0.icon : nil }) {
+            FaviconImage(image: icon)
+                .clipShape(RoundedRectangle(cornerRadius: size / 5, style: .continuous))
+                .frame(width: size, height: size)
+        } else {
+            Image(systemName: "globe")
+                .font(.system(size: size * 0.75))
+                .foregroundStyle(.tertiary)
+                .frame(width: size, height: size)
+                .task(id: lookup) {
+                    guard let favicons = profileFavicons else { return }
+                    let icon = if let cached = favicons.cached(for: host) {
+                        cached
+                    } else {
+                        await favicons.load(forHost: host)
+                    }
+                    guard profileFavicons === favicons, let icon else { return }
+                    loaded = (lookup, icon)
+                }
         }
     }
 }

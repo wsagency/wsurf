@@ -119,7 +119,7 @@ struct AskQuestionBlock: View {
                 Button { answer(draft) } label: {
                     Image(systemName: "arrow.up.circle.fill")
                         .font(.system(size: 17))
-                        .foregroundStyle(Theme.accent)
+                        .foregroundStyle(Theme.assistant)
                 }
                 .buttonStyle(.plain)
                 .help("Send")
@@ -171,7 +171,7 @@ private struct OptionRow: View {
                     if isChosen {
                         Image(systemName: "checkmark")
                             .font(.system(size: 10, weight: .bold))
-                            .foregroundStyle(.white)
+                            .foregroundStyle(Theme.onAccent)
                     } else {
                         Text(number, format: .number)
                             .font(Theme.Font.caption)
@@ -184,7 +184,7 @@ private struct OptionRow: View {
                 .frame(width: 22, height: 22)
                 .background(
                     RoundedRectangle(cornerRadius: Theme.Radius.tight, style: .continuous)
-                        .fill(isChosen ? AnyShapeStyle(Theme.accent) : AnyShapeStyle(Theme.Wash.hairline))
+                        .fill(isChosen ? AnyShapeStyle(Theme.assistant) : AnyShapeStyle(Theme.Wash.hairline))
                 )
 
                 Text(verbatim: label)

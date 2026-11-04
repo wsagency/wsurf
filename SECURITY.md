@@ -35,7 +35,7 @@ your report.
 - Credentials (`WSurf/Agent/Providers/CredentialStore.swift`). A key goes only
   in the Authorization header of the provider it belongs to.
 - The opt-in Credential Manager and credential-exchange extension
-  (`WSurf/Web/Credentials`, `WSurf/Web/Credentials/Store`,
+  (`WSurf/Web/Credentials`, `Packages/WSurfCore/Sources/WSurfVault`,
   `WSurfCredentialExchange`). Passwords, passkeys, and one-time codes belong
   to one profile, and any window leaving that profile revokes the
   authorization epoch for all of its windows. A request must pass the origin,
@@ -74,6 +74,17 @@ your report.
     chosen entries and their earlier versions with identifier-only records,
     and older database pages, backups and the pre-upgrade backup may still
     hold the data.
+  - Files. An entry's files are separate encrypted files beside the store
+    (`Credentials.blobs`), each under its own key, which only the sealed
+    entry holds, wrapped under a key derived from the vault key. A file is
+    decrypted only when the person previews, opens or saves a copy of it;
+    Quick Look and Open With get a copy in a private folder of the user's
+    Caches that WSurf removes when the preview closes, when a vault locks,
+    at quit and at the next launch, but the app it was opened in may keep
+    its own copy. A file is removed once no entry, earlier version or Trash
+    entry names it (after a purge, Delete Vault or an unsaved edit); like a
+    purge this is a logical removal, and backups keep the ciphertext. No
+    assistant or MCP tool reaches a file.
   - Bounds and exchange. Per vault: 1,000 accounts, 4,000,000 bytes of live
     data, 32 wrappers; 16 active vaults per profile (each Trash in addition);
     a history row is capped at 8,000,000 bytes and history has no count
@@ -113,3 +124,11 @@ your report.
   track and artist names to lrclib.net, only while the setting is on and never
   for a private tab. A lookup from a private tab, or one made while the setting
   is off, is a defect.
+- Page translation (`WSurf/Web/Translation`). Page text is detected and
+  translated only on this Mac, with NaturalLanguage and Apple's on-device
+  Translation models; missing languages come through the system's download
+  sheet. A private window's page is not read until the person asks for a
+  translation. The translator runs in its own content world and adds no
+  assistant or MCP access. Page text reaching a network service, or a private
+  page being read without that request, is a defect. The page can see its own
+  translated text, as with any in-page translation.

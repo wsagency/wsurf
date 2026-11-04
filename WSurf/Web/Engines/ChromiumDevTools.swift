@@ -15,7 +15,40 @@ final class ChromiumDevTools {
     private var pending: [Int: PendingCommand] = [:]
     private var timeouts: [Int: Task<Void, Never>] = [:]
     var closed = false
-    private var prepared = false
+    /// A cross-site frame's own session (`ChromiumDevTools+CrossSiteFrames`): its flat-protocol session ID, its target (the
+    /// frame's ID), the page's session it sends through and the session that attached it. All nil for the page's own session.
+    let sessionID: String?
+    let targetID: String?
+    private(set) weak var root: ChromiumDevTools?
+    private(set) weak var parent: ChromiumDevTools?
+    /// The page's session only: every cross-site frame session under it, at any depth, by session ID.
+    var sessions: [String: ChromiumDevTools] = [:]
+    /// The page's session only: the session each pending command went to, when not its own.
+    private var pendingSessions: [Int: String] = [:]
+    /// MCP development diagnostics. Nil unless a lease is capturing.
+    /// Set by `startDiagnostics`; a test sets it directly.
+    var diagnosticsSink: ((String, [String: Any]) -> Void)?
+    private var diagnosticsOwner: ObjectIdentifier?
+    /// Sees every command as it is sent, for tests.
+    var commandObserver: ((String, [String: Any]) -> Void)?
+
+    /// What this connection has spent on protocol traffic, as counters: the page's session counts for the frame sessions under it.
+    /// They cost an addition per event; tests and the Chromium load benchmark read them.
+    struct LoadStatistics: Equatable {
+        /// Events CEF handed to the page's session.
+        var eventsReceived = 0
+        /// Of those, the ones whose parameters were parsed as JSON.
+        var eventsParsed = 0
+        /// Messages of a cross-site frame session, which are always parsed whole.
+        var sessionMessagesParsed = 0
+        /// Cross-site frames held until their session had registered its scripts: how many, the sum and the longest hold
+        /// (from the frame's attach to the answer of the command that lets it run).
+        var framePauses = 0
+        var framePauseTotal: Duration = .zero
+        var framePauseMax: Duration = .zero
+    }
+    var loadStatistics = LoadStatistics()
+    private(set) var prepared = false
     private var preparing = false
     private var prepareWaiters: [CheckedContinuation<Void, Error>] = []
 
@@ -25,8 +58,10 @@ final class ChromiumDevTools {
         let documentID: String
         let url: URL
         let securityOrigin: BrowserSecurityOrigin
-        let hasTrustedSecurityOrigin: Bool
+        var hasTrustedSecurityOrigin: Bool
         let isMainFrame: Bool
+        /// Chromium's serialization of a trusted origin, the string `location.origin` reports in that document.
+        var serializedOrigin: String?
         var browserFrame: BrowserFrame {
             BrowserFrame(id: id, documentID: documentID, url: url,
                          isMainFrame: isMainFrame, securityOrigin: securityOrigin,
@@ -40,7 +75,11 @@ final class ChromiumDevTools {
         let frameID: String
         let worldName: String
         var documentID: String
+        var fromRuntimeEvent = false
         var markerSet = false
+        var bound = false
+        /// A subframe's main world, addressed by its `document` object (see `context(for:world:)`).
+        var objectID: String?
     }
 
     @MainActor
@@ -53,7 +92,7 @@ final class ChromiumDevTools {
         let result: CommandResult
     }
 
-    private struct Script {
+    struct Script {
         let source: String
         let worldName: String
         let injectionTime: WKUserScriptInjectionTime
@@ -70,29 +109,54 @@ final class ChromiumDevTools {
     typealias Handler = (BrowserScriptMessage) -> Void
 
     var framesByID: [String: FrameState] = [:]
+    /// The address of the main frame as the last main-frame navigation event left it, same-document moves included.
+    var mainFrameAddress: URL?
     var frameRevision = 0
-    var contextsByUniqueID: [String: ContextState] = [:]
+    /// Documents whose own `origin` was read in WSurf's isolated world: false when it is not the security origin Chromium reports
+    /// (`verifyOrigin`), which then is never trusted.
+    var documentOrigins: [String: Bool] = [:]
+    var contextsByUniqueID = ContextTable()
     var uniqueIDByExecutionID: [Int: String] = [:]
-    private var scripts: [Script] = []
+    var scripts: [Script] = []
     var handlers: [HandlerKey: Handler] = [:]
-    private var bindingWorlds: Set<String> = []
+    var bindingWorlds: Set<String> = []
     /// Serializes script registration so Chromium's registration order always matches `scripts`.
     private var scriptQueue: Task<Void, Never>?
 
     private let commandTimeout: Duration = .seconds(15)
     let maxBindingPayload = 1_048_576
+    /// The native binding. It exists only in WSurf's isolated worlds, never in a page's main world.
+    static let nativeBinding = "__wsurfNative"
+    /// Carries page-world messages: the main world's relay dispatches them as a DOM event only this world listens for.
+    static let pageBridgeWorld = "WSurfPageBridge"
+    private let pageMessageEvent = "wsurf-" + UUID().uuidString.lowercased()
 
     init(page: ChromiumPage) {
         self.page = page
+        sessionID = nil
+        targetID = nil
+    }
+
+    /// A cross-site frame's session, attached by `parent` and sending through `root`.
+    init(root: ChromiumDevTools, parent: ChromiumDevTools, sessionID: String, targetID: String) {
+        page = root.page
+        self.root = root
+        self.parent = parent
+        self.sessionID = sessionID
+        self.targetID = targetID
     }
 
     func attach(to host: UnsafeMutablePointer<cef_browser_host_t>) throws {
         guard !closed else { throw ChromiumError.closed }
         guard self.host == nil else { return }
         let observer = ChromiumInterop.allocate(cef_dev_tools_message_observer_t.self, owner: self)
-        observer.pointee.on_dev_tools_message = { _, browser, _, _ in
-            ChromiumDevTools.releaseBrowser(browser)
-            return 0
+        observer.pointee.on_dev_tools_message = { observerSelf, browser, message, size in
+            defer { ChromiumDevTools.releaseBrowser(browser) }
+            guard let observerSelf, let message,
+                  let owner = ChromiumInterop.owner(ChromiumDevTools.self,
+                                                    of: UnsafeMutableRawPointer(observerSelf)) else { return 0 }
+            // A cross-site frame session's message is taken here whole: CEF's parsed callbacks would drop its `sessionId`.
+            return MainActor.assumeIsolated { owner.receiveSessionMessage(message, size: size) } ? 1 : 0
         }
         observer.pointee.on_dev_tools_method_result = { observerSelf, browser, messageID, success, result, resultSize in
             defer { ChromiumDevTools.releaseBrowser(browser) }
@@ -123,10 +187,7 @@ final class ChromiumDevTools {
                                                     of: UnsafeMutableRawPointer(observerSelf)) else { return }
             MainActor.assumeIsolated {
                 owner.failAll(ChromiumError.unavailable("Chromium DevTools detached."))
-                owner.frameRevision &+= 1
-                owner.framesByID.removeAll()
-                owner.contextsByUniqueID.removeAll()
-                owner.uniqueIDByExecutionID.removeAll()
+                owner.forgetDocuments()
                 owner.page?.owner?.invalidateCredentialContexts()
             }
         }
@@ -148,7 +209,8 @@ final class ChromiumDevTools {
         self.registration = registration
     }
 
-    func prepare() async throws {
+    /// `marksNewDocuments`: the session of a pop-up, whose first document predates its scripts (`runScriptsInEarlierDocuments`).
+    func prepare(marksNewDocuments: Bool = false) async throws {
         guard !closed else { throw ChromiumError.closed }
         guard !prepared else { return }
         if preparing {
@@ -158,10 +220,14 @@ final class ChromiumDevTools {
         }
         preparing = true
         do {
-            _ = try await command("Page.enable")
-            _ = try await command("Runtime.enable")
-            _ = try await command("Security.enable")
-            _ = try await command("Network.enable")
+            // No Runtime.enable: pages can detect it. Contexts come from Page.createIsolatedWorld instead.
+            // Before the loop: nothing may suspend between its last check and `prepared`, or a script added meanwhile is lost.
+            // A cross-site frame's security state and responses are not the page's: its session enables neither.
+            if sessionID == nil {
+                try await preparePageSession(marksNewDocuments: marksNewDocuments)
+            } else {
+                try await prepareFrameSession()
+            }
 
             while true {
                 if let index = scripts.firstIndex(where: { $0.identifier == nil }) {
@@ -170,10 +236,13 @@ final class ChromiumDevTools {
                     let identifier = try await install(scripts[index])
                     guard !closed, scripts.indices.contains(index) else { throw ChromiumError.closed }
                     scripts[index].identifier = identifier
+                    if marksNewDocuments {
+                        try await markNewDocuments(registered: index + 1)
+                    }
                     continue
                 }
                 let worlds = Set(scripts.map(\.worldName)).union(handlers.keys.map(\.worldName))
-                if let worldName = worlds.sorted().first(where: { !bindingWorlds.contains($0) }) {
+                if let worldName = worlds.sorted().first(where: { !bindingWorlds.contains($0) && needsBinding($0) }) {
                     try await installBinding(worldName: worldName)
                     continue
                 }
@@ -195,6 +264,26 @@ final class ChromiumDevTools {
         dispatchCheck: (@MainActor @Sendable () throws -> Void)? = nil,
         prepareParameters: (@MainActor @Sendable () throws -> [String: Any])? = nil
     ) async throws -> [String: Any] {
+        guard !closed else { throw sessionID == nil ? ChromiumError.closed : ChromiumError.staleFrame }
+        if let sessionID {
+            // A cross-site frame's session sends through the page's connection, and nothing once it has ended.
+            guard let root else { throw ChromiumError.staleFrame }
+            return try await root.command(method, params: baseParams, session: sessionID, dispatchCheck: { [weak self] in
+                guard let self, !self.closed else { throw ChromiumError.staleFrame }
+                try dispatchCheck?()
+            }, prepareParameters: prepareParameters)
+        }
+        return try await command(method, params: baseParams, session: nil, dispatchCheck: dispatchCheck, prepareParameters: prepareParameters)
+    }
+
+    /// One attempt of `command(_:params:session:dispatchCheck:prepareParameters:)`.
+    private func send(
+        _ method: String,
+        params baseParams: [String: Any],
+        session: String?,
+        dispatchCheck: (@MainActor @Sendable () throws -> Void)?,
+        prepareParameters: (@MainActor @Sendable () throws -> [String: Any])?
+    ) async throws -> [String: Any] {
         guard !closed else { throw ChromiumError.closed }
         guard let host else { throw ChromiumError.unavailable("Chromium DevTools is not attached.") }
         if prepareParameters == nil, !JSONSerialization.isValidJSONObject(baseParams) {
@@ -211,7 +300,7 @@ final class ChromiumDevTools {
                     return
                 }
                 do {
-                    if method == "Runtime.evaluate" {
+                    if method == "Runtime.evaluate" || method == "Runtime.callFunctionOn" {
                         try Task.checkCancellation()
                         guard PageAutomationGuard.allowsExecution else { throw ChromiumError.staleFrame }
                     }
@@ -220,7 +309,10 @@ final class ChromiumDevTools {
                     guard JSONSerialization.isValidJSONObject(params) else {
                         throw ChromiumError.protocolFailure("DevTools parameters are not JSON serializable.")
                     }
-                    let object: [String: Any] = ["id": id, "method": method, "params": params]
+                    var object: [String: Any] = ["id": id, "method": method, "params": params]
+                    if let session {
+                        object["sessionId"] = session
+                    }
                     let data: Data
                     do {
                         data = try JSONSerialization.data(withJSONObject: object)
@@ -229,7 +321,9 @@ final class ChromiumDevTools {
                     }
                     try dispatchCheck?()
                     guard !closed, self.host == host else { throw ChromiumError.closed }
+                    commandObserver?(method, params)
                     pending[id] = PendingCommand(continuation: continuation, result: result)
+                    pendingSessions[id] = session
                     timeouts[id] = Task { [weak self] in
                         do { try await Task.sleep(for: self?.commandTimeout ?? .seconds(15)) } catch { return }
                         guard let self else { return }
@@ -260,6 +354,7 @@ final class ChromiumDevTools {
         closed = true
         finishPrepareWaiters(ChromiumError.closed)
         failAll(ChromiumError.closed)
+        endCrossSiteFrameSessions()
         // A browser closed natively (not through BrowserPage.close) must still end its credential contexts.
         if let owner = page?.owner, !owner.isClosed {
             owner.invalidateCredentialContexts()
@@ -277,6 +372,7 @@ final class ChromiumDevTools {
             self.host = nil
         }
         framesByID.removeAll()
+        mainFrameAddress = nil
         contextsByUniqueID.removeAll()
         uniqueIDByExecutionID.removeAll()
         bindingWorlds.removeAll()
@@ -293,7 +389,7 @@ final class ChromiumDevTools {
         framesByID.values.map(\.browserFrame)
     }
 
-    private func refreshFrames() async throws {
+    func refreshFrames() async throws {
         let revision = frameRevision
         let response = try await command("Page.getFrameTree")
         guard !closed else { throw ChromiumError.closed }
@@ -326,6 +422,8 @@ final class ChromiumDevTools {
     }
 
     func isLive(frame: BrowserFrame) async throws -> Bool {
+        let session = session(for: frame)
+        guard session === self else { return try await session.isLive(frame: frame) }
         guard !closed, frame.chromiumID != nil, !frame.documentID.isEmpty else { return false }
         try await refreshFrames()
         return frameIsCurrent(frame)
@@ -342,111 +440,11 @@ final class ChromiumDevTools {
             && current.securityOrigin == frame.securityOrigin
     }
 
-    /// Ordered requesting frame → top frame, from the live native tree. Fails closed on a stale requester,
-    /// missing ancestor, cycle, or a root that is not the single main frame.
-    func frameChain(for frame: BrowserFrame) async throws -> [BrowserFrame] {
-        guard let id = frame.chromiumID, !frame.documentID.isEmpty else { throw WebAuthnContextError.staleFrame }
-        try await refreshFrames()
-        guard let requesting = framesByID[id], requesting.documentID == frame.documentID,
-              requesting.securityOrigin == frame.securityOrigin,
-              requesting.parentID == frame.chromiumParentID else { throw WebAuthnContextError.staleFrame }
-        var chain = [requesting]
-        var visited: Set<String> = [id]
-        while let parentID = chain[chain.count - 1].parentID {
-            guard visited.insert(parentID).inserted, let parent = framesByID[parentID],
-                  !parent.documentID.isEmpty else { throw WebAuthnContextError.untrustedOrigin }
-            chain.append(parent)
-        }
-        guard chain[chain.count - 1].isMainFrame, framesByID.values.filter({ $0.parentID == nil }).count == 1 else {
-            throw WebAuthnContextError.untrustedOrigin
-        }
-        return chain.map(\.browserFrame)
-    }
-
-    func permissionsPolicyAllows(frame: BrowserFrame, feature: String) async throws -> Bool {
-        guard let frameID = frame.chromiumID else { throw WebAuthnContextError.staleFrame }
-        guard try await isLiveCredentialFrame(frame) else { throw WebAuthnContextError.staleFrame }
-        let response = try await command("Page.getPermissionsPolicyState", params: ["frameId": frameID])
-        guard let states = response["states"] as? [[String: Any]] else { throw WebAuthnContextError.policyUnavailable }
-        let matches = states.filter { $0["feature"] as? String == feature }
-        guard matches.count == 1, let allowed = matches[0]["allowed"] as? Bool else {
-            throw WebAuthnContextError.policyUnavailable
-        }
-        guard try await isLiveCredentialFrame(frame) else { throw WebAuthnContextError.staleFrame }
-        return allowed
-    }
-
-    /// Reports the document's current activation state; never grants or consumes one.
-    func transientUserActivationIsActive(in frame: BrowserFrame, world: WKContentWorld) async throws -> Bool {
-        let (target, snapshot) = try await credentialContext(for: frame, world: world)
-        let response = try await command("Runtime.evaluate", params: [
-            "expression": "navigator.userActivation?.isActive === true",
-            "uniqueContextId": snapshot.uniqueID,
-            "returnByValue": true,
-            "awaitPromise": false,
-            "userGesture": false,
-        ], dispatchCheck: { [self] in
-            guard credentialFrameIsCurrent(target), contextIsLive(snapshot) else { throw WebAuthnContextError.staleFrame }
-        })
-        let value = try runtimeValue(response)
-        guard try await isLiveCredentialFrame(target), contextIsLive(snapshot) else {
-            throw WebAuthnContextError.staleFrame
-        }
-        return value as? Bool == true
-    }
-
-    func executionContextIdentity(for frame: BrowserFrame, world: WKContentWorld) async throws -> String {
-        try await credentialContext(for: frame, world: world).context.uniqueID
-    }
-
-    func isCurrentCredentialContext(frame: BrowserFrame, executionContextID: String) -> Bool {
-        guard credentialFrameIsCurrent(frame),
-              let context = contextsByUniqueID[executionContextID],
-              context.frameID == frame.chromiumID,
-              context.documentID == frame.documentID,
-              uniqueIDByExecutionID[context.executionID] == executionContextID else { return false }
-        return contextIsLive(context)
-    }
-
-    private func credentialFrameIsCurrent(_ frame: BrowserFrame) -> Bool {
-        guard !closed, frame.hasTrustedSecurityOrigin, let id = frame.chromiumID, !frame.documentID.isEmpty,
-              let current = framesByID[id] else { return false }
-        return current.hasTrustedSecurityOrigin
-            && current.documentID == frame.documentID
-            && current.securityOrigin == frame.securityOrigin
-    }
-
-    private func isLiveCredentialFrame(_ frame: BrowserFrame) async throws -> Bool {
-        guard !closed, frame.chromiumID != nil else { return false }
-        try await refreshFrames()
-        return credentialFrameIsCurrent(frame)
-    }
-
-    /// The live frame and its (marked) execution context for `world`, revalidated after every async step.
-    private func credentialContext(
-        for frame: BrowserFrame, world: WKContentWorld
-    ) async throws -> (frame: BrowserFrame, context: ContextState) {
-        guard try await isLiveCredentialFrame(frame), let id = frame.chromiumID, let state = framesByID[id] else {
-            throw WebAuthnContextError.staleFrame
-        }
-        let target = state.browserFrame
-        let snapshot: ContextState
-        do {
-            snapshot = try await context(for: target, world: world)
-            if snapshot.worldName != "" {
-                try await setDocumentMarker(contextID: snapshot.uniqueID, documentID: snapshot.documentID)
-            }
-        } catch ChromiumError.staleFrame {
-            throw WebAuthnContextError.staleFrame
-        }
-        guard try await isLiveCredentialFrame(target), contextIsLive(snapshot) else {
-            throw WebAuthnContextError.staleFrame
-        }
-        return (target, snapshot)
-    }
-
-    func evaluate(_ script: String, in frame: BrowserFrame?, world: WKContentWorld) async throws -> Any {
-        try await evaluate(in: frame, world: world, userGesture: true, dispatchCheck: nil) { script }
+    /// `userGesture` only replays a person's own action; the page's activation is otherwise neither created nor consumed.
+    func evaluate(_ script: String, in frame: BrowserFrame?, world: WKContentWorld, userGesture: Bool = false) async throws -> Any {
+        let session = session(for: frame)
+        guard session === self else { return try await session.evaluate(script, in: frame, world: world, userGesture: userGesture) }
+        return try await evaluate(in: frame, world: world, userGesture: userGesture, dispatchCheck: nil) { script }
     }
 
     private func evaluate(
@@ -467,18 +465,20 @@ final class ChromiumDevTools {
         guard PageAutomationGuard.allowsExecution, canDispatch(to: target, snapshot) else {
             throw ChromiumError.staleFrame
         }
-        let response = try await command("Runtime.evaluate", dispatchCheck: { [self] in
+        let response = try await command(snapshot.objectID == nil ? "Runtime.evaluate" : "Runtime.callFunctionOn", dispatchCheck: { [self] in
             guard canDispatch(to: target, snapshot) else { throw ChromiumError.staleFrame }
             try dispatchCheck?()
-        }, prepareParameters: {
+        }, prepareParameters: { [self] in
             let source = try expression()
-            return [
-                "expression": source,
-                "uniqueContextId": snapshot.uniqueID,
-                "returnByValue": true,
-                "awaitPromise": true,
-                "userGesture": userGesture,
-            ]
+            let options: [String: Any] = ["returnByValue": true, "awaitPromise": true, "userGesture": userGesture]
+            guard let objectID = snapshot.objectID else {
+                return address(snapshot).merging(options) { $1 }.merging(["expression": documentGuard(snapshot) + source]) { $1 }
+            }
+            // Runs in the object's world. Only an expression (as every `callAsync` body becomes) can be returned this way.
+            return options.merging([
+                "objectId": objectID,
+                "functionDeclaration": "function() {\n" + documentGuard(snapshot) + "return (\n" + source + "\n);\n}",
+            ]) { $1 }
         })
         let value = try runtimeValue(response)
         guard try await isLive(frame: target), contextIsLive(snapshot) else { throw ChromiumError.staleFrame }
@@ -493,8 +493,8 @@ final class ChromiumDevTools {
         return contextIsLive(snapshot)
     }
 
-    func callAsync(_ body: String, arguments: [String: Any], in frame: BrowserFrame?, world: WKContentWorld) async throws -> Any {
-        try await evaluate(try asyncExpression(body, arguments: arguments), in: frame, world: world)
+    func callAsync(_ body: String, arguments: [String: Any], in frame: BrowserFrame?, world: WKContentWorld, userGesture: Bool = false) async throws -> Any {
+        try await evaluate(try asyncExpression(body, arguments: arguments), in: frame, world: world, userGesture: userGesture)
     }
 
     /// Arguments are built, then `dispatchCheck` runs, in the same synchronous turn that sends the command.
@@ -506,7 +506,11 @@ final class ChromiumDevTools {
         prepareArguments: @escaping @MainActor @Sendable () throws -> [String: Any],
         dispatchCheck: (@MainActor @Sendable () throws -> Void)? = nil
     ) async throws -> Any {
-        try await evaluate(in: frame, world: world, userGesture: false, dispatchCheck: dispatchCheck) { [self] in
+        let session = session(for: frame)
+        guard session === self else {
+            return try await session.callAsync(body, in: frame, world: world, prepareArguments: prepareArguments, dispatchCheck: dispatchCheck)
+        }
+        return try await evaluate(in: frame, world: world, userGesture: false, dispatchCheck: dispatchCheck) { [self] in
             try asyncExpression(body, arguments: prepareArguments())
         }
     }
@@ -534,9 +538,19 @@ final class ChromiumDevTools {
 
     func installScript(_ source: String, in world: WKContentWorld,
                        injectionTime: WKUserScriptInjectionTime, forMainFrameOnly: Bool) {
+        let name = worldName(world)
+        // Each autofill feature installs the shared form script before its own: once is enough, as in WebKit.
+        guard !scripts.contains(where: {
+            $0.worldName == name && $0.injectionTime == injectionTime && $0.mainFrameOnly == forMainFrameOnly && $0.source == source
+        }) else { return }
         let index = scripts.count
-        scripts.append(Script(source: source, worldName: worldName(world), injectionTime: injectionTime,
+        scripts.append(Script(source: source, worldName: name, injectionTime: injectionTime,
                               mainFrameOnly: forMainFrameOnly))
+        if sessionID == nil, Self.runsInCrossSiteFrames(scripts[index]) {
+            for session in sessions.values {
+                session.installScript(source, in: world, injectionTime: injectionTime, forMainFrameOnly: forMainFrameOnly)
+            }
+        }
         guard prepared else { return }
         schedule { [weak self] in try await self?.installPending(from: index) }
     }
@@ -626,6 +640,11 @@ final class ChromiumDevTools {
         Task { @MainActor [weak self] in
             guard let self, !self.closed else { return }
             try? await self.installBinding(worldName: key.worldName)
+            // A cross-site frame's session binds the world too when its handler hears such frames, for the documents to come.
+            guard Self.hearsCrossSiteFrames(key) else { return }
+            for session in Array(self.sessions.values) where !session.closed && session.prepared {
+                try? await session.installBinding(worldName: key.worldName)
+            }
         }
     }
 
@@ -634,7 +653,8 @@ final class ChromiumDevTools {
     }
 
     private func receiveResult(id: Int, success: Bool, pointer: UnsafeRawPointer?, size: Int) {
-        guard !closed else { return }
+        guard !closed, isPending(id, in: nil) else { return }
+
         guard size <= 8 * 1_048_576 else {
             finishFailure(id: id, error: ChromiumError.protocolFailure("DevTools result is too large."))
             return
@@ -652,42 +672,117 @@ final class ChromiumDevTools {
         }
     }
 
-    private func installBinding(worldName: String) async throws {
-        guard !bindingWorlds.contains(worldName) else { return }
-        var params: [String: Any] = ["name": "__wsurfSend"]
-        if !worldName.isEmpty { params["executionContextName"] = worldName }
-        _ = try await command("Runtime.addBinding", params: params)
-        let bridge = """
+    /// Registers, for new documents, the `__wsurfSend(name, body)` that scripts of `worldName` call. In an isolated world it
+    /// queues messages until native binds that document's context (`isolatedContext`). The page world gets no binding: a
+    /// relay there dispatches a DOM event that the page bridge world forwards, attributed to the page-world handlers.
+    func installBinding(worldName: String) async throws {
+        guard !bindingWorlds.contains(worldName), needsBinding(worldName) else { return }
+        // Claimed before the first await, so a concurrent call cannot register the same scripts twice.
+        bindingWorlds.insert(worldName)
+        do {
+            if worldName.isEmpty {
+                try await installBinding(worldName: Self.pageBridgeWorld)
+                _ = try await command("Page.addScriptToEvaluateOnNewDocument", params: [
+                    "source": pageBridgeSource, "worldName": Self.pageBridgeWorld,
+                ])
+                _ = try await command("Page.addScriptToEvaluateOnNewDocument", params: ["source": pageRelaySource])
+            } else {
+                _ = try await command("Page.addScriptToEvaluateOnNewDocument", params: [
+                    "source": Self.bindingSource, "worldName": worldName,
+                ])
+            }
+        } catch {
+            bindingWorlds.remove(worldName)
+            throw error
+        }
+    }
+
+    /// A world gets the `__wsurfSend` shim when something can use it: a handler that hears this session's frames (the handlers are
+    /// the page's session's, and a cross-site frame's hears only those listed for such frames), or, for an isolated world, a script
+    /// that calls it. A world with neither, such as the pull-to-refresh wheel watch's, is left unbound: no document costs it a
+    /// context, a binding and four commands. A page-world script alone (such as one that only marshals DOM events) gets no relay.
+    func needsBinding(_ worldName: String) -> Bool {
+        if worldName == Self.pageBridgeWorld {
+            return needsBinding("")
+        }
+        let heard = (root ?? self).handlers.keys.contains {
+            $0.worldName == worldName && (sessionID == nil || Self.hearsCrossSiteFrames($0))
+        }
+        return heard || (!worldName.isEmpty && scripts.contains { $0.worldName == worldName && $0.source.contains("__wsurfSend") })
+    }
+
+    /// Native calls `__wsurfAttach` after Runtime.addBinding put the native function on this context's global object; the
+    /// messages queued until then go out in order.
+    static let bindingSource = """
         (() => {
-          const native = globalThis.__wsurfSend;
+          if (Object.prototype.hasOwnProperty.call(globalThis, '__wsurfSend')) return;
+          const queue = [];
+          let native = null;
+          Object.defineProperty(globalThis, '__wsurfAttach', {
+            value: () => {
+              const binding = globalThis.\(nativeBinding);
+              if (typeof binding !== 'function') return false;
+              delete globalThis.\(nativeBinding);
+              native ??= binding;
+              while (queue.length > 0) native(queue.shift());
+              return true;
+            }, writable: false, configurable: false, enumerable: false
+          });
           Object.defineProperty(globalThis, '__wsurfSend', {
             value: (name, body) => {
               if (typeof name !== 'string' || name.length === 0 || name.length > 256) return;
-              native(JSON.stringify([name, body]));
+              const payload = JSON.stringify([name, body]);
+              if (native && queue.length === 0) native(payload);
+              else if (queue.length < 512) queue.push(payload);
             }, writable: false, configurable: false, enumerable: false
           });
         })();
         """
-        var params2: [String: Any] = ["source": bridge]
-        if !worldName.isEmpty { params2["worldName"] = worldName }
-        _ = try await command("Page.addScriptToEvaluateOnNewDocument", params: params2)
-        bindingWorlds.insert(worldName)
+
+    var pageBridgeSource: String {
+        """
+        (() => {
+          if (Object.prototype.hasOwnProperty.call(globalThis, '__wsurfPageBridge')) return;
+          Object.defineProperty(globalThis, '__wsurfPageBridge', {value: true});
+          const send = globalThis.__wsurfSend;
+          // On the window, for its current document: a frame's document can take over the window of its first, empty one.
+          addEventListener(\(jsonLiteral(pageMessageEvent)), event => {
+            if (event.target !== document || typeof event.detail !== 'string' || event.detail.length > \(maxBindingPayload)) return;
+            let pair;
+            try { pair = JSON.parse(event.detail); } catch { return; }
+            if (Array.isArray(pair) && pair.length === 2) send(pair[0], pair[1]);
+          }, true);
+        })();
+        """
     }
 
-    private func install(_ script: Script) async throws -> String {
-        let source: String
-        if script.injectionTime == .atDocumentStart {
-            source = script.mainFrameOnly
-                ? "if (window === window.top) {\n\(script.source)\n}"
-                : script.source
-        } else {
-            let body = script.mainFrameOnly ? "if (window === window.top) {\n\(script.source)\n}" : script.source
-            source = "(() => { const run = () => {\n\(body)\n}; " +
-                "if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', run, {once: true}); " +
-                "else queueMicrotask(run); })();"
-        }
+    /// The page world's `__wsurfSend`, present only while page-world handlers exist. It keeps its own references, so a
+    /// page that replaces the DOM methods later cannot intercept it.
+    var pageRelaySource: String {
+        """
+        (() => {
+          if (Object.prototype.hasOwnProperty.call(globalThis, '__wsurfSend')) return;
+          // The window's current document (a page cannot replace `document`), which a frame's document can take over.
+          const dispatch = EventTarget.prototype.dispatchEvent, Message = CustomEvent;
+          const stringify = JSON.stringify, type = \(jsonLiteral(pageMessageEvent));
+          Object.defineProperty(globalThis, '__wsurfSend', {
+            value: (name, body) => {
+              if (typeof name !== 'string' || name.length === 0 || name.length > 256) return;
+              dispatch.call(document, new Message(type, {detail: stringify([name, body])}));
+            }, writable: false, configurable: false, enumerable: false
+          });
+        })();
+        """
+    }
+
+    func install(_ script: Script) async throws -> String {
+        try await register(registrationSource(script), worldName: script.worldName)
+    }
+
+    /// Registers `source` to run in each new document, in `worldName` (the page's world when empty).
+    func register(_ source: String, worldName: String) async throws -> String {
         var params: [String: Any] = ["source": source]
-        if !script.worldName.isEmpty { params["worldName"] = script.worldName }
+        if !worldName.isEmpty { params["worldName"] = worldName }
         let response = try await command("Page.addScriptToEvaluateOnNewDocument", params: params)
         guard let identifier = response["identifier"] as? String else {
             throw ChromiumError.protocolFailure("Page.addScriptToEvaluateOnNewDocument returned no identifier.")
@@ -696,6 +791,10 @@ final class ChromiumDevTools {
     }
 
     func worldName(_ world: WKContentWorld) -> String {
+        Self.worldName(world)
+    }
+
+    static func worldName(_ world: WKContentWorld) -> String {
         world === WKContentWorld.page ? "" : world.name ?? "defaultClient"
     }
 
@@ -706,9 +805,9 @@ final class ChromiumDevTools {
         return contextsByUniqueID.removeValue(forKey: uniqueID)?.documentID
     }
 
-    func removeContexts(frameID: String) {
+    func removeContexts(frameID: String, where matches: (ContextState) -> Bool = { _ in true }) {
         let removed = contextsByUniqueID.compactMap { uniqueID, context -> (String, Int)? in
-            context.frameID == frameID ? (uniqueID, context.executionID) : nil
+            context.frameID == frameID && matches(context) ? (uniqueID, context.executionID) : nil
         }
         for (uniqueID, executionID) in removed {
             contextsByUniqueID.removeValue(forKey: uniqueID)
@@ -747,22 +846,37 @@ final class ChromiumDevTools {
         }
     }
 
-    private func finishSuccess(id: Int, value: [String: Any]) {
+    /// Whether a result from `session` (nil: the page's own) may settle command `id`: only the session it was sent to answers it.
+    func isPending(_ id: Int, in session: String?) -> Bool {
+        pending[id] != nil && pendingSessions[id] == session
+    }
+
+    func finishSuccess(id: Int, value: [String: Any]) {
         guard let pendingCommand = pending.removeValue(forKey: id) else { return }
+        pendingSessions.removeValue(forKey: id)
         timeouts.removeValue(forKey: id)?.cancel()
         pendingCommand.result.value = value
         pendingCommand.continuation.resume()
     }
 
-    private func finishFailure(id: Int, error: Error) {
+    func finishFailure(id: Int, error: Error) {
         guard let pendingCommand = pending.removeValue(forKey: id) else { return }
+        pendingSessions.removeValue(forKey: id)
         timeouts.removeValue(forKey: id)?.cancel()
         pendingCommand.continuation.resume(throwing: error)
+    }
+
+    /// Fails every command pending in `session`, whose target is gone: Chromium would answer none of them.
+    func failPending(in session: String) {
+        for (id, owner) in pendingSessions where owner == session {
+            finishFailure(id: id, error: ChromiumError.staleFrame)
+        }
     }
 
     private func failAll(_ error: Error) {
         let values = pending
         pending.removeAll()
+        pendingSessions.removeAll()
         for (id, pendingCommand) in values {
             timeouts.removeValue(forKey: id)?.cancel()
             pendingCommand.continuation.resume(throwing: error)
@@ -800,5 +914,77 @@ final class ChromiumDevTools {
         guard let data = try? JSONSerialization.data(withJSONObject: string, options: [.fragmentsAllowed]),
               let literal = String(data: data, encoding: .utf8) else { return "\"\"" }
         return literal
+    }
+}
+
+// MARK: A page still committing
+
+extension ChromiumDevTools {
+    /// Chromium's answer, for the top frame, while a cross-process navigation of it is between ready-to-commit and its commit:
+    /// the session already points at the new document, which is not active yet. The commands Chromium answers itself
+    /// (`Security.enable`, `Page.getNavigationHistory`, `Page.resetNavigationHistory`, `Page.navigateToHistoryEntry`, the
+    /// captures) are refused then, having done nothing. A pop-up's start-up runs into it: its first page commits meanwhile.
+    static let inactivePageRefusal = "Not attached to an active page"
+    static let commitWait: Duration = .milliseconds(50)
+
+    /// The page's session sends `method` to `session` (nil: itself). Only the cross-site frame sessions and the resume of a paused
+    /// frame use it directly. A refusal for a page still committing (`inactivePageRefusal`) is sent again every `commitWait` until it
+    /// is answered or `commandTimeout` has passed; each attempt prepares and checks its parameters again in the turn that sends it.
+    func command(
+        _ method: String,
+        params baseParams: [String: Any],
+        session: String?,
+        dispatchCheck: (@MainActor @Sendable () throws -> Void)?,
+        prepareParameters: (@MainActor @Sendable () throws -> [String: Any])?
+    ) async throws -> [String: Any] {
+        // ponytail: polls; a wake on the main frame's commit would save up to one `commitWait`, at the cost of following navigations.
+        let deadline = ContinuousClock.now + commandTimeout
+        while true {
+            do {
+                return try await send(method, params: baseParams, session: session, dispatchCheck: dispatchCheck,
+                                      prepareParameters: prepareParameters)
+            } catch let ChromiumError.protocolFailure(message) where message == Self.inactivePageRefusal && ContinuousClock.now < deadline {
+                try await Task.sleep(for: Self.commitWait)
+            }
+        }
+    }
+}
+
+// MARK: Diagnostics
+
+extension ChromiumDevTools {
+    /// Starts `owner`'s capture. Console and exception events need the Runtime domain, which pages can detect, so it is on
+    /// only while a capture runs. A capture whose domain did not start ends here and throws.
+    ///
+    /// Enabling the domain makes Chromium replay the console and exception events stored before it, ahead of its response.
+    /// They happened before the capture, so the sink is attached only once the response is in, and an event stamped
+    /// (milliseconds since the epoch) before the start is dropped as well, for one delivered late.
+    func startDiagnostics(owner: AnyObject, sink: @escaping (String, [String: Any]) -> Void) async throws {
+        diagnosticsOwner = ObjectIdentifier(owner)
+        diagnosticsSink = nil
+        let startedAt = Date().timeIntervalSince1970 * 1000
+        do {
+            _ = try await command("Runtime.enable")
+        } catch {
+            stopDiagnostics(owner: owner)
+            throw error
+        }
+        guard diagnosticsOwner == ObjectIdentifier(owner) else { return }
+        diagnosticsSink = { method, params in
+            if method.hasPrefix("Runtime."), let stamp = params["timestamp"] as? Double, stamp < startedAt { return }
+            sink(method, params)
+        }
+    }
+
+    /// Ends `owner`'s capture; another capture started since keeps its sink and the domain.
+    func stopDiagnostics(owner: AnyObject) {
+        guard diagnosticsOwner == ObjectIdentifier(owner) else { return }
+        diagnosticsOwner = nil
+        diagnosticsSink = nil
+        Task { [weak self] in
+            // The owner, not the sink: a capture that is still enabling the domain has no sink yet.
+            guard let self, diagnosticsOwner == nil else { return }
+            _ = try? await command("Runtime.disable")
+        }
     }
 }

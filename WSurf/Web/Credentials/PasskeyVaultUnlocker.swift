@@ -5,6 +5,7 @@ import AppKit
 import AuthenticationServices
 import CryptoKit
 import Foundation
+import WSurfVault
 
 nonisolated enum PasskeyUnlockError: Error {
     case busy
@@ -38,7 +39,7 @@ nonisolated struct VaultUnlockRegistration: Sendable {
 /// Results are never forwarded after `cancel()`; the vault key is only ever a real native PRF output.
 @MainActor
 final class PasskeyVaultUnlocker: NSObject, ASAuthorizationControllerDelegate, ASAuthorizationControllerPresentationContextProviding {
-    nonisolated static let relyingParty = "wsurf.app"
+    nonisolated static let relyingParty = RelyingPartyPolicy.vaultUnlockRelyingParty
     private typealias PRFValues = ASAuthorizationPublicKeyCredentialPRFAssertionInput.InputValues
 
     private final class Ceremony {
@@ -63,7 +64,7 @@ final class PasskeyVaultUnlocker: NSObject, ASAuthorizationControllerDelegate, A
     private var retired: [ObjectIdentifier: Ceremony] = [:]
 
     /// Creates an external passkey. Its PRF output is only a consistency check; unlock uses a fresh assertion.
-    func register(in anchor: ASPresentationAnchor) async throws -> VaultUnlockRegistration {
+    func register(in anchor: @autoclosure () -> ASPresentationAnchor) async throws -> VaultUnlockRegistration {
         try Task.checkCancellation()
         let challenge = Self.random(), userID = Self.random(), prfInput = Self.random()
         let request = ASAuthorizationPlatformPublicKeyCredentialProvider(relyingPartyIdentifier: Self.relyingParty)
@@ -74,7 +75,7 @@ final class PasskeyVaultUnlocker: NSObject, ASAuthorizationControllerDelegate, A
 
         let authorization: ASAuthorization
         do {
-            authorization = try await perform(request, in: anchor)
+            authorization = try await perform(request, in: anchor())
         } catch PasskeyUnlockError.appCancelled {
             throw PasskeyUnlockError.registrationOutcomeUnknown
         }
@@ -100,7 +101,7 @@ final class PasskeyVaultUnlocker: NSObject, ASAuthorizationControllerDelegate, A
     /// Confirms a registered credential with the same stable PRF input before its first vault write.
     func verifyRegistration(
         _ registration: VaultUnlockRegistration,
-        in anchor: ASPresentationAnchor,
+        in anchor: @autoclosure () -> ASPresentationAnchor,
         beforeAssertion: () throws -> Void
     ) async throws -> VaultUnlockProof {
         do {
@@ -108,7 +109,7 @@ final class PasskeyVaultUnlocker: NSObject, ASAuthorizationControllerDelegate, A
             try beforeAssertion()
             let assertion = try await assert(
                 among: [VaultUnlock(credentialID: registration.credentialID, prfInput: registration.prfInput)],
-                in: anchor
+                in: anchor()
             )
             return try registration.verifiedAssertion(assertion)
         } catch {
@@ -117,7 +118,7 @@ final class PasskeyVaultUnlocker: NSObject, ASAuthorizationControllerDelegate, A
     }
 
     /// One assertion where the provider picks any of `unlocks`; each credential keeps its own stable PRF input.
-    func assert(among unlocks: [VaultUnlock], in anchor: ASPresentationAnchor) async throws -> VaultUnlockProof {
+    func assert(among unlocks: [VaultUnlock], in anchor: @autoclosure () -> ASPresentationAnchor) async throws -> VaultUnlockProof {
         guard let first = unlocks.first else { throw PasskeyUnlockError.invalidNativeResult }
         let challenge = Self.random()
         let request = ASAuthorizationPlatformPublicKeyCredentialProvider(relyingPartyIdentifier: Self.relyingParty)
@@ -130,7 +131,7 @@ final class PasskeyVaultUnlocker: NSObject, ASAuthorizationControllerDelegate, A
         )
         request.prf = .inputValues(PRFValues(saltInput1: first.prfInput, saltInput2: nil), perCredentialInputValues: perCredential)
 
-        let authorization = try await perform(request, in: anchor)
+        let authorization = try await perform(request, in: anchor())
         guard let result = authorization.credential as? ASAuthorizationPlatformPublicKeyCredentialAssertion,
               let unlock = unlocks.first(where: { $0.credentialID == result.credentialID }) else {
             throw PasskeyUnlockError.invalidNativeResult

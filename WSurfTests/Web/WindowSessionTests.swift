@@ -226,10 +226,12 @@ struct WindowSessionTests {
         let before = try old.read { try Self.rows(in: $0, columns: columns) }
         let unrelatedSchemaSQL = """
             SELECT type, name, tbl_name, sql FROM sqlite_master
-            WHERE tbl_name NOT LIKE 'session%' AND name NOT LIKE 'sqlite_%'
+            WHERE tbl_name NOT LIKE 'session%' AND tbl_name NOT IN ('profilePin', 'archivedTab', 'assistantFact', 'historyVisit') AND name NOT LIKE 'sqlite_%'
+                AND NOT (type = 'table' AND name = 'agentTrace') AND name != '__historyPage_ft_au'
             ORDER BY type, name
             """
         let unrelatedSchema = try old.read { try Row.fetchAll($0, sql: unrelatedSchemaSQL) }
+        let historyShape = try old.read { try Self.historyShape(in: $0) }
         try old.close()
 
         // Deployed downloads live beside SQLite, in StoredDownload's JSON format.
@@ -250,9 +252,13 @@ struct WindowSessionTests {
         try #require(!database.isEphemeral)
         let after = try database.writer.read { db in
             #expect(try Row.fetchAll(db, sql: unrelatedSchemaSQL) == unrelatedSchema)
+            #expect(try Self.historyShape(in: db) == (historyShape + Self.addedToTheVisitLog).sorted())
+            #expect(try Self.indexTriggerIsNarrowed(in: db))
             #expect(try Row.fetchAll(db, sql: "PRAGMA foreign_key_check").isEmpty)
+            #expect(try db.tableExists("profilePin"))
+            #expect(try db.columns(in: "agentTrace").contains { $0.name == "openedTabIDs" })
             let migrations = try String.fetchAll(db, sql: "SELECT identifier FROM grdb_migrations")
-            #expect(Set(migrations).isSuperset(of: ["v1", "v2-folder-pinning"]))
+            #expect(Set(migrations).isSuperset(of: ["v1", "v2-folder-pinning", "v3-profile-pins", "v4-indexes"]))
             #expect(try String.fetchAll(db, sql: """
                 SELECT url FROM historyPage_ft WHERE historyPage_ft MATCH 'sentinel'
                 """) == ["https://history.example/"])
@@ -309,8 +315,11 @@ struct WindowSessionTests {
         #expect(model.activeSplit?.root.children.map(\.share) == [0.3, 0.7])
         let additional = BrowserModel(windowID: UUID(), database: database)
         additional.restoreSession()
-        #expect(additional.tabs.isEmpty)
-        #expect(additional.folders.isEmpty)
+        // A new window has no tabs of its own. It shows the pins and pinned folders of the profile, which the
+        // upgrade took from the old window.
+        #expect(additional.tabs.count == 2 && additional.tabs.allSatisfy { $0.pinID != nil })
+        #expect(Set(additional.tabs.compactMap(\.pinID)) == Set(model.tabs.compactMap(\.pinID)))
+        #expect(Set(additional.folders.map(\.name)) == ["Outer", "Inner", "Empty"])
         #expect(additional.splits.isEmpty)
         #expect(try Data(contentsOf: downloadsFile) == downloadsJSON)
         #expect(try Data(contentsOf: downloadFile) == downloadBytes)
@@ -382,6 +391,23 @@ struct WindowSessionTests {
         try database.writer.write { try $0.execute(sql: "DROP TRIGGER reject_window_remap") }
         #expect(BrowserModel.remapSavedWindow(in: database, from: original.windowID, to: destinationID))
         #expect(Set(BrowserModel.savedWindows(in: database).map(\.id)) == [destinationID, other.windowID])
+    }
+
+    /// What opening a deployed database adds to the visit log: the trail column and the indexes of the trail and of the referrer.
+    private nonisolated static let addedToTheVisitLog = ["column trail", "index historyVisit_trail", "index historyVisit_fromVisit"]
+
+    /// The one trigger that changed, by name: the full-text index is touched only when `url` or `title` is.
+    private nonisolated static func indexTriggerIsNarrowed(in db: Database) throws -> Bool {
+        let sql = try String.fetchOne(db, sql: "SELECT sql FROM sqlite_master WHERE name = '__historyPage_ft_au'")
+        return sql?.contains("WHEN old.\"url\" IS NOT new.\"url\"") == true
+    }
+
+    /// The columns and indexes of the visit log, as sorted words. An upgrade may add to it (the trail column and the indexes of
+    /// the trail and of the referrer) and must keep what was there.
+    private nonisolated static func historyShape(in db: Database) throws -> [String] {
+        let columns = try db.columns(in: "historyVisit").map { "column \($0.name)" }
+        let indexes = try String.fetchAll(db, sql: "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'historyVisit'")
+        return (columns + indexes.map { "index \($0)" }).sorted()
     }
 
     private nonisolated static func deployedColumns(in old: DatabaseQueue) throws -> [String: [String]] {

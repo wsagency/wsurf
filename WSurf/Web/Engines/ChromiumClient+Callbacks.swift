@@ -7,6 +7,19 @@ import CefKit
 import Foundation
 
 extension ChromiumClient {
+    // MARK: File access
+
+    /// Whether `url`, a subresource, must be cancelled because it is a file the page may not read. The scope is judged by the
+    /// document of the frame that asks, never by the browser's last address; a frame that cannot say what it shows is refused.
+    nonisolated func refusesFile(_ url: URL, requestedBy frame: UnsafeMutablePointer<cef_frame_t>?) -> Bool {
+        guard url.isFileURL else { return false }
+        var document: URL?
+        if let frame, frame.pointee.is_valid?(frame) == 1 {
+            document = URL(string: ChromiumInterop.takeString(frame.pointee.get_url?(frame)))
+        }
+        return fileScope.refuses(url, requestedBy: document)
+    }
+
     // MARK: JavaScript dialogs
 
     func makeJSDialogHandler() {
@@ -44,58 +57,64 @@ extension ChromiumClient {
     private func presentJSDialog(_ raw: UnsafeMutableRawPointer, kind: Int, origin: String, message: String, prompt: String) {
         guard !isClosed else { Self.release(raw); return }
         hold(raw)
-        guard let window = page?.window else {
-            guard finish(raw) else { return }
-            let callback = raw.assumingMemoryBound(to: cef_jsdialog_callback_t.self)
-            callback.pointee.cont?(callback, 0, nil)
-            drop(raw)
-            return
-        }
+        let request = PageDialogQueue.Request(
+            kind: kind == 0 ? .alert : (kind == 1 ? .confirm : .prompt), message: message,
+            origin: PageDialogText.origin(ofURL: origin), defaultText: kind == 2 ? prompt : nil)
+        completeDialog(raw, request) { Self.jsDialogAlert(kind: kind, origin: origin, message: message, prompt: prompt) }
+    }
+
+    /// The sheet for an alert (0), confirm (1) or prompt (2). A prompt takes plain text, like WebKit's.
+    static func jsDialogAlert(kind: Int, origin: String, message: String, prompt: String) -> NSAlert {
         let alert = NSAlert()
         alert.messageText = origin.isEmpty ? "JavaScript" : origin
         alert.informativeText = message
-        switch kind {
-        case 0:
-            alert.addButton(withTitle: String(localized: "OK"))
-        case 1:
-            alert.addButton(withTitle: String(localized: "OK"))
-            alert.addButton(withTitle: String(localized: "Cancel"))
-        default:
-            let field = NSSecureTextField(string: prompt)
+        alert.addButton(withTitle: String(localized: "OK"))
+        guard kind != 0 else { return alert }
+        alert.addButton(withTitle: String(localized: "Cancel"))
+        if kind == 2 {
+            let field = NSTextField(string: prompt)
             field.frame.size = NSSize(width: 260, height: 24)
             alert.accessoryView = field
-            alert.addButton(withTitle: String(localized: "OK"))
-            alert.addButton(withTitle: String(localized: "Cancel"))
         }
-        alert.beginSheetModal(for: window) { [weak self, weak alert] response in
-            guard let self, self.finish(raw), !self.isClosed else { return }
-            let success = response == .alertFirstButtonReturn
-            let input = (alert?.accessoryView as? NSSecureTextField)?.stringValue
-            let callback = raw.assumingMemoryBound(to: cef_jsdialog_callback_t.self)
-            ChromiumInterop.withString(input ?? "") { value in callback.pointee.cont?(callback, success ? 1 : 0, value) }
-            self.drop(raw)
-        }
+        return alert
     }
 
     private func presentBeforeUnload(_ raw: UnsafeMutableRawPointer, message: String, isReload: Bool) {
         guard !isClosed else { Self.release(raw); return }
         hold(raw)
-        guard let window = page?.window else {
-            guard finish(raw) else { return }
-            let callback = raw.assumingMemoryBound(to: cef_jsdialog_callback_t.self)
-            callback.pointee.cont?(callback, 0, nil)
-            drop(raw)
-            return
+        let request = PageDialogQueue.Request(
+            kind: .beforeUnload, message: message, origin: PageDialogText.origin(ofURL: page?.owner?.url?.absoluteString ?? ""),
+            isReload: isReload)
+        completeDialog(raw, request) {
+            let alert = NSAlert()
+            alert.messageText = isReload ? String(localized: "Reload page?") : String(localized: "Leave page?")
+            alert.informativeText = message
+            alert.addButton(withTitle: String(localized: "Leave"))
+            alert.addButton(withTitle: String(localized: "Stay"))
+            return alert
         }
-        let alert = NSAlert()
-        alert.messageText = isReload ? String(localized: "Reload page?") : String(localized: "Leave page?")
-        alert.informativeText = message
-        alert.addButton(withTitle: String(localized: "Leave"))
-        alert.addButton(withTitle: String(localized: "Stay"))
-        alert.beginSheetModal(for: window) { [weak self] response in
+    }
+
+    /// Hands the dialog to the tab's queue, which shows `makeSheet` to the user, once they can see the tab, unless a connection
+    /// answers first; then completes CEF's callback, with Cancel or Stay when the page went away first. Nothing is sent once
+    /// the browser has closed.
+    private func completeDialog(
+        _ raw: UnsafeMutableRawPointer, _ request: PageDialogQueue.Request, makeSheet: @escaping @MainActor () -> NSAlert
+    ) {
+        let queue = page?.owner?.dialogs
+        Task { @MainActor [weak self] in
+            let answer = await PageDialogs.routed(request, via: queue) {
+                // A page its tab has let go of (CEF asks one being closed before it unloads) is shown to nobody.
+                guard let queue else { return .init(accepted: false) }
+                let alert = makeSheet()
+                let response = await PageDialogs.present(alert, over: self?.page, queue: queue)
+                return .init(accepted: response == .alertFirstButtonReturn, text: (alert.accessoryView as? NSTextField)?.stringValue)
+            }
             guard let self, self.finish(raw), !self.isClosed else { return }
             let callback = raw.assumingMemoryBound(to: cef_jsdialog_callback_t.self)
-            callback.pointee.cont?(callback, response == .alertFirstButtonReturn ? 1 : 0, nil)
+            ChromiumInterop.withString(answer?.text ?? "") { value in
+                callback.pointee.cont?(callback, answer?.accepted == true ? 1 : 0, value)
+            }
             self.drop(raw)
         }
     }
@@ -109,6 +128,7 @@ extension ChromiumClient {
         makeJSDialogHandler()
         makeDialogHandler()
         makeContextMenuHandler()
+        makeFindHandler()
         makePermissionHandler()
         makeResourceHandler()
         makeRequestHandler()
@@ -125,7 +145,9 @@ extension ChromiumClient {
             totalBytes: item.pointee.get_total_bytes?(item) ?? 0,
             isComplete: item.pointee.is_complete?(item) != 0,
             isCanceled: item.pointee.is_canceled?(item) != 0 || item.pointee.is_interrupted?(item) != 0,
-            fullPath: path.isEmpty ? nil : URL(fileURLWithPath: path)
+            fullPath: path.isEmpty ? nil : URL(fileURLWithPath: path),
+            originalURL: URL(string: ChromiumInterop.takeString(item.pointee.get_original_url?(item))),
+            mimeType: Optional(ChromiumInterop.takeString(item.pointee.get_mime_type?(item))).flatMap { $0.isEmpty ? nil : $0 }
         )
     }
 
@@ -221,12 +243,6 @@ extension ChromiumClient {
         try await setCapturePermission(permission, setting: "denied")
     }
 
-    /// Restore the browser's prompt state after a site policy changes back to
-    /// Ask. This intentionally never grants permission.
-    func restoreCapturePrompt(_ permission: WebPermission) async throws {
-        try await setCapturePermission(permission, setting: "prompt")
-    }
-
     private func setCapturePermission(_ permission: WebPermission, setting: String) async throws {
         let name = try permissionName(permission)
         guard !isClosed, let page else { throw ChromiumError.closed }
@@ -289,8 +305,10 @@ extension ChromiumClient {
             guard let browser else { return }
             // Parent owns the browser +1 returned by browser creation. This is
             // the callback's independent +1 and must always be released.
-            ChromiumClient.release(UnsafeMutableRawPointer(browser))
-            guard ChromiumClient.owner(handlerSelf.map(UnsafeMutableRawPointer.init)) != nil else { return }
+            defer { ChromiumClient.release(UnsafeMutableRawPointer(browser)) }
+            guard let client = ChromiumClient.owner(handlerSelf.map(UnsafeMutableRawPointer.init)) else { return }
+            // Only a pop-up's page takes it: every other browser is the one its page made itself.
+            MainActor.assumeIsolated { client.page?.adoptPopup(browser) }
         }
         life.pointee.do_close = { handlerSelf, browser in
             ChromiumClient.releaseBrowser(browser)
@@ -308,19 +326,41 @@ extension ChromiumClient {
                 client.close()
             }
         }
-        life.pointee.on_before_popup = { handlerSelf, browser, frame, _, targetURL, _, _, userGesture, _, _, _, _, _, _ in
+        life.pointee.on_before_popup = { handlerSelf, browser, frame, popupID, targetURL, _, disposition, userGesture, _, windowInfo, popupClient, _, extraInfo, _ in
             ChromiumClient.releaseBrowser(browser)
             let sourceURL = frame?.pointee.is_valid?(frame) == 1
                 ? URL(string: ChromiumInterop.takeString(frame?.pointee.get_url?(frame))) : nil
             ChromiumClient.releaseFrame(frame)
-            let url = URL(string: ChromiumClient.string(targetURL))
+            // The client and extra information CEF offers (the opener's) arrive with a reference that is ours to drop, kept or
+            // replaced; a replacement goes back with one of its own.
+            ChromiumClient.release(popupClient?.pointee.map(UnsafeMutableRawPointer.init))
+            ChromiumClient.release(extraInfo?.pointee.map(UnsafeMutableRawPointer.init))
+            // `window.open()` with no address opens about:blank, which its opener then writes or navigates.
+            let target = ChromiumClient.string(targetURL)
+            let url = target.isEmpty ? URL(string: "about:blank") : URL(string: target)
             guard let client = ChromiumClient.owner(handlerSelf.map(UnsafeMutableRawPointer.init)) else { return 1 }
             return MainActor.assumeIsolated {
                 guard let page = client.page, !client.isClosed, let url else { return 1 }
                 let sourceFrame = page.sourceFrame(for: sourceURL)
-                page.openWindow?(url, userGesture != 0, sourceURL, sourceFrame)
-                return 1
+                let gesture = userGesture != 0
+                let click = ChromiumPage.ClickDisposition(disposition)
+                guard let openPopup = page.openPopup else {
+                    page.openWindow?(url, gesture, sourceURL, sourceFrame, click)
+                    return 1
+                }
+                guard let host = openPopup(url, gesture, sourceURL, sourceFrame, click) else { return 1 }
+                guard let windowInfo, let popupClient, let hosted = host.hostPopup(id: popupID, opener: page, in: &windowInfo.pointee) else {
+                    host.popupAborted()
+                    return 1
+                }
+                popupClient.pointee = hosted
+                return 0
             }
+        }
+        life.pointee.on_before_popup_aborted = { handlerSelf, browser, popupID in
+            ChromiumClient.releaseBrowser(browser)
+            guard let client = ChromiumClient.owner(handlerSelf.map(UnsafeMutableRawPointer.init)) else { return }
+            MainActor.assumeIsolated { client.page?.pendingPopups[popupID]?.popupAborted() }
         }
         lifeSpanPointer = life
     }
@@ -352,6 +392,9 @@ extension ChromiumClient {
         load.pointee.on_loading_state_change = { handlerSelf, browser, loading, back, forward in
             ChromiumClient.releaseBrowser(browser)
             guard let client = ChromiumClient.owner(handlerSelf.map(UnsafeMutableRawPointer.init)) else { return }
+            if loading == 0 {
+                client.endMainFrameRequest()
+            }
             MainActor.assumeIsolated {
                 client.page?.didChangeLoading(loading != 0, canGoBack: back != 0, canGoForward: forward != 0)
             }
@@ -364,6 +407,7 @@ extension ChromiumClient {
             MainActor.assumeIsolated {
                 client.advanceDocument(frame)
                 if frame.pointee.is_main?(frame) == 1 {
+                    client.endMainFrameRequest()
                     client.page?.didStartLoad()
                 }
             }
@@ -373,6 +417,7 @@ extension ChromiumClient {
             defer { ChromiumClient.releaseFrame(frame) }
             guard let frame, frame.pointee.is_main?(frame) != 0,
                   let client = ChromiumClient.owner(handlerSelf.map(UnsafeMutableRawPointer.init)) else { return }
+            client.endMainFrameRequest()
             MainActor.assumeIsolated { client.page?.didFinishLoad(status: Int(status)) }
         }
         load.pointee.on_load_error = { handlerSelf, browser, frame, code, text, failedURL in
@@ -385,6 +430,7 @@ extension ChromiumClient {
                     client.advanceDocument(frame)
                 }
                 if frame.pointee.is_main?(frame) == 1 {
+                    client.endMainFrameRequest()
                     client.page?.didFailLoad(code: Int(code.rawValue),
                                             text: ChromiumClient.string(text), url: ChromiumClient.string(failedURL))
                 }
@@ -571,6 +617,12 @@ extension ChromiumClient {
             ChromiumInterop.retain(UnsafeMutableRawPointer(handler))
             return handler
         }
+        client.pointee.get_find_handler = { clientSelf in
+            guard let me = ChromiumClient.owner(clientSelf.map(UnsafeMutableRawPointer.init)),
+                  let handler = me.findPointer else { return nil }
+            ChromiumInterop.retain(UnsafeMutableRawPointer(handler))
+            return handler
+        }
         // The context handler leaves the native CEF menu and editing commands untouched.
         clientPointer = client
         return client
@@ -578,7 +630,25 @@ extension ChromiumClient {
 
     func makeContextMenuHandler() {
         let handler = ChromiumInterop.allocate(cef_context_menu_handler_t.self, owner: self)
-        handler.pointee.on_before_context_menu = { _, browser, frame, params, model in
+        handler.pointee.on_before_context_menu = { handlerSelf, browser, frame, params, model in
+            if let client = ChromiumClient.owner(handlerSelf.map(UnsafeMutableRawPointer.init)), let params, let model {
+                let editable = params.pointee.is_editable?(params) == 1
+                let clicked = frame.map { frame in
+                    CredentialPicker.ChromiumFrame(
+                        id: ChromiumInterop.takeString(frame.pointee.get_identifier?(frame)),
+                        url: URL(string: ChromiumInterop.takeString(frame.pointee.get_url?(frame))),
+                        isMain: frame.pointee.is_main?(frame) == 1
+                    )
+                }
+                let target = ChromiumClient.contextTarget(of: params, frameURL: clicked?.url)
+                let clickPoint = CGPoint(x: Int(params.pointee.get_xcoord?(params) ?? 0), y: Int(params.pointee.get_ycoord?(params) ?? 0))
+                MainActor.assumeIsolated {
+                    client.offerPDFItems(in: model)
+                    client.offerContextItems(in: model, target: target)
+                    client.offerCredentialPicker(in: model, editable: editable, frame: clicked)
+                    client.offerInspectItem(in: model, at: clickPoint)
+                }
+            }
             ChromiumClient.releaseBrowser(browser)
             ChromiumClient.releaseFrame(frame)
             ChromiumClient.release(params.map(UnsafeMutableRawPointer.init))
@@ -592,17 +662,129 @@ extension ChromiumClient {
             ChromiumClient.release(callback.map(UnsafeMutableRawPointer.init))
             return 0
         }
-        handler.pointee.on_context_menu_command = { _, browser, frame, params, _, _ in
+        handler.pointee.on_context_menu_command = { handlerSelf, browser, frame, params, command, _ in
             ChromiumClient.releaseBrowser(browser)
             ChromiumClient.releaseFrame(frame)
             ChromiumClient.release(params.map(UnsafeMutableRawPointer.init))
-            return 0
+            guard let client = ChromiumClient.owner(handlerSelf.map(UnsafeMutableRawPointer.init)) else { return 0 }
+            return MainActor.assumeIsolated {
+                command == ChromiumClient.pickCredentialCommand
+                    ? client.runCredentialPicker()
+                    : client.runContextItem(command) || client.runPDFCommand(command) || client.runInspectCommand(command)
+            } ? 1 : 0
         }
         handler.pointee.on_context_menu_dismissed = { _, browser, frame in
             ChromiumClient.releaseBrowser(browser)
             ChromiumClient.releaseFrame(frame)
         }
         contextMenuPointer = handler
+    }
+
+    /// The Pick Credential… command: the first id CEF leaves to the embedder.
+    nonisolated static let pickCredentialCommand = Int32(MENU_ID_USER_FIRST.rawValue)
+
+    /// The Open Link commands, the ids after it. A private tab offers no plain window, as a WebKit one does not
+    /// (`TabContextMenu.linkWindowItems`).
+    nonisolated static func linkCommands(isPrivate: Bool) -> [(id: Int32, opening: ChromiumPage.LinkOpening, title: LocalizedStringResource)] {
+        let all: [(id: Int32, opening: ChromiumPage.LinkOpening, title: LocalizedStringResource)] = [
+            (pickCredentialCommand + 1, .tab, "Open Link in New Tab"),
+            (pickCredentialCommand + 2, .window, "Open Link in New Window"),
+            (pickCredentialCommand + 3, .privateWindow, "Open Link in New Private Window"),
+        ]
+        return all.filter { $0.opening != .window || !isPrivate }
+    }
+
+    /// The PDF commands, the ids after the Open Link ones.
+    nonisolated static let downloadPDFCommand = pickCredentialCommand + 4
+    nonisolated static let openPDFCommand = pickCredentialCommand + 5
+
+    /// The engine's own menu has no Save for a PDF viewer's page, so a tab that shows a PDF gets Download PDF, which saves the PDF
+    /// as a download, and Open in Preview, which saves it and opens the copy (`BrowserTab.savePDF`).
+    func offerPDFItems(in model: UnsafeMutablePointer<cef_menu_model_t>) {
+        guard let page, page.showsPDF?() == true else { return }
+        let items = [
+            (Self.downloadPDFCommand, String(localized: "Download PDF")),
+            (Self.openPDFCommand, String(localized: "Open in Preview")),
+        ]
+        var index = 0
+        for (command, title) in items {
+            let added = ChromiumInterop.withString(title) { model.pointee.insert_item_at?(model, index, command, $0) }
+            if added == 1 {
+                index += 1
+            }
+        }
+        guard index > 0 else { return }
+        _ = model.pointee.insert_separator_at?(model, index)
+    }
+
+    /// Runs a PDF command of the menu that is open, if `command` is one.
+    func runPDFCommand(_ command: Int32) -> Bool {
+        guard command == Self.downloadPDFCommand || command == Self.openPDFCommand, let save = page?.onSavePDF else { return false }
+        save(command == Self.openPDFCommand)
+        return true
+    }
+
+    /// Puts Pick Credential… at the top of an editable field's menu when the tab offers it, and remembers which frame the engine says
+    /// was right-clicked and when.
+    func offerCredentialPicker(in model: UnsafeMutablePointer<cef_menu_model_t>, editable: Bool, frame: CredentialPicker.ChromiumFrame?) {
+        pickCredentialMenu = nil
+        guard editable, let page, page.canPickCredential?() == true else { return }
+        let added = ChromiumInterop.withString(String(localized: "Pick Credential…")) {
+            model.pointee.insert_item_at?(model, 0, Self.pickCredentialCommand, $0)
+        }
+        guard added == 1 else { return }
+        if (model.pointee.get_count?(model) ?? 0) > 1 {
+            _ = model.pointee.insert_separator_at?(model, 1)
+        }
+        pickCredentialMenu = CredentialPicker.Menu(opened: .now, chromiumFrame: frame)
+    }
+
+    func runCredentialPicker() -> Bool {
+        guard let menu = pickCredentialMenu, let page else { return false }
+        pickCredentialMenu = nil
+        page.onPickCredential?(menu)
+        return true
+    }
+
+    /// The Inspect Element command. Far from the ids above so another item added there cannot reach it.
+    nonisolated static let inspectElementCommand = pickCredentialCommand + 100
+
+    /// Inspect Element at the end of the menu, after a separator, where a WebKit tab's menu puts it, and only when the tab offers the
+    /// inspector (`BrowserTab.canShowWebInspector`: the Web Inspector setting, or a website in Developer mode).
+    func offerInspectItem(in model: UnsafeMutablePointer<cef_menu_model_t>, at point: CGPoint) {
+        inspectPoint = nil
+        guard page?.canInspect?() == true else { return }
+        if (model.pointee.get_count?(model) ?? 0) > 0 {
+            _ = model.pointee.add_separator?(model)
+        }
+        let added = ChromiumInterop.withString(String(localized: "Inspect Element")) {
+            model.pointee.add_item?(model, Self.inspectElementCommand, $0)
+        }
+        if added == 1 {
+            inspectPoint = point
+        }
+    }
+
+    /// Opens DevTools on the element the open menu was opened over, if `command` is Inspect Element.
+    func runInspectCommand(_ command: Int32) -> Bool {
+        guard command == Self.inspectElementCommand, let page, let point = inspectPoint else { return false }
+        inspectPoint = nil
+        page.showDevTools(inspectAt: point)
+        return true
+    }
+
+    /// Reports the native find's results (`ChromiumFind`).
+    func makeFindHandler() {
+        let handler = ChromiumInterop.allocate(cef_find_handler_t.self, owner: self)
+        handler.pointee.on_find_result = { handlerSelf, browser, identifier, count, _, active, final in
+            ChromiumClient.releaseBrowser(browser)
+            guard let client = ChromiumClient.owner(handlerSelf.map(UnsafeMutableRawPointer.init)) else { return }
+            MainActor.assumeIsolated {
+                client.page?.find.receive(
+                    identifier: Int(identifier), count: Int(count), active: Int(active), isFinal: final != 0)
+            }
+        }
+        findPointer = handler
     }
 
     func makeDialogHandler() {

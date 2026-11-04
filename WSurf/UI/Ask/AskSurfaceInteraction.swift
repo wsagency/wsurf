@@ -124,7 +124,8 @@ enum AskRestingContent: Equatable {
     case notice(String)
     case status(String)
     case placeholder(String)
-    case address(String)
+    /// The website name, or with the full address on also its scheme and the rest (port, path, query, fragment).
+    case address(String, scheme: String = "", rest: String = "")
 
     var isCentred: Bool {
         switch self {
@@ -145,9 +146,22 @@ enum AskRestingContent: Equatable {
             text
         case .placeholder:
             ""
-        case .address:
-            fallback
+        case .address(let host, let scheme, let rest):
+            scheme.isEmpty ? fallback : scheme + host + rest
         }
+    }
+
+    /// What hovering the address says. The full address is on the line cut at its end when it is long, so hovering shows all of it,
+    /// as the line draws it (rebuilt by `AddressText`, so the page cannot word the tooltip either). The engine follows on its own line.
+    func tooltip(engine: BrowserEngine?) -> String {
+        var lines: [String] = []
+        if case .address(let host, let scheme, let rest) = self, !scheme.isEmpty {
+            lines.append(scheme + host + rest)
+        }
+        if let engine {
+            lines.append(String(localized: engine.label))
+        }
+        return lines.joined(separator: "\n")
     }
 
     // swiftlint:disable:next function_parameter_count
@@ -161,7 +175,8 @@ enum AskRestingContent: Equatable {
         notice: String?,
         status: String?,
         placeholder: String,
-        currentURL: String
+        currentURL: String,
+        showsFullAddress: Bool = false
     ) -> AskRestingContent? {
         if isListening {
             return .transcript(transcript)
@@ -177,13 +192,14 @@ enum AskRestingContent: Equatable {
             return .status(status)
         }
         guard mirrorsPageURL, !isFocused else { return nil }
-        let address = displayAddress(for: currentURL)
-        return address.isEmpty ? .placeholder(placeholder) : .address(address)
+        // The tab's address is always a URL's absoluteString; one that does not parse back shows the placeholder.
+        guard let address = AddressText(URL(string: currentURL)) else { return .placeholder(placeholder) }
+        return showsFullAddress ? .address(address.host, scheme: address.scheme, rest: address.rest) : .address(address.name)
     }
 
-    static func displayAddress(for value: String) -> String {
-        guard let url = URL(string: value), let host = url.host() else { return value }
-        return host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
+    /// The website name without “www.”, as `AddressText` shows it; nil for an address that does not parse.
+    static func displayAddress(for value: String) -> String? {
+        AddressText(URL(string: value))?.name
     }
 }
 

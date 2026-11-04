@@ -104,8 +104,10 @@ struct AskSurfaceStatusTests {
         #expect(distance(AskSurfaceStatus.listening.color, Theme.danger) < 0.01)
     }
 
-    @Test func theAssistantWorkingIsDrawnInTheAccent() {
-        #expect(distance(AskSurfaceStatus.agent.color, Theme.accent) < 0.01)
+    /// The assistant's own color, which is the accent only for a theme that sets none (ThemeColorControlsTests holds that rule); the
+    /// default WSurf theme sets its own.
+    @Test func theAssistantWorkingIsDrawnInTheAssistantColor() {
+        #expect(distance(AskSurfaceStatus.agent.color, Theme.assistant) < 0.01)
     }
 
     @Test func aWarningIsNotDrawnInTheAccent() {

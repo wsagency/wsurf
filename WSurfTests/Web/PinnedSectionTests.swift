@@ -150,19 +150,19 @@ struct PinnedSectionTests {
         ])
     }
 
-    @Test func theShelfCannotPinATabWithNoPage() {
+    @Test func theShelfPinsANewTabAsTheStartPage() {
         let model = model()
         _ = tab("https://one.example/", in: model)
         let blank = model.newTab()
 
         model.pinAtTop([.tab(blank.id)])
 
-        #expect(blank.pinnedURL == nil)
+        #expect(blank.pinnedURL == SystemPages.start)
     }
 
     // MARK: - Folders
 
-    @Test func aFolderPinIsIndependentOfItsChildBookmarks() {
+    @Test func pinningAFolderPinsItsPagesAndUnpinningItUnpinsThem() {
         let model = model()
         let one = tab("https://one.example/", in: model)
         let two = tab("https://two.example/", in: model)
@@ -172,17 +172,13 @@ struct PinnedSectionTests {
 
         model.setPinned(true, for: [.folder(folder.id)])
 
-        #expect(one.pinnedURL == nil)
-        #expect(two.pinnedURL == nil)
-        #expect(model.isKept(.folder(folder.id)))
-
-        model.setPinned(true, for: [.tab(two.id)])
-
+        #expect(one.pinnedURL?.absoluteString == "https://one.example/")
         #expect(two.pinnedURL?.absoluteString == "https://two.example/")
         #expect(model.isKept(.folder(folder.id)))
+
         model.setPinned(false, for: [.folder(folder.id)])
         #expect(!model.isKept(.folder(folder.id)))
-        #expect(two.pinnedURL?.absoluteString == "https://two.example/")
+        #expect(one.pinnedURL == nil && two.pinnedURL == nil)
     }
     @Test func anEmptyFolderIsNotKept() {
         let model = model()
@@ -211,7 +207,7 @@ struct PinnedSectionTests {
         #expect(model.keptRunAtTop() == [.tab(kept.id)])
     }
 
-    @Test func theShelfPinsAFolderWithoutPinningItsChildren() {
+    @Test func theShelfPinsAFolderAndEveryPageInIt() {
         let model = model()
         let one = tab("https://one.example/", in: model)
         let two = tab("https://two.example/", in: model)
@@ -220,26 +216,25 @@ struct PinnedSectionTests {
 
         model.pinAtTop([.folder(folder.id)])
 
-        #expect(one.pinnedURL == nil)
-        #expect(two.pinnedURL == nil)
+        #expect(one.pinnedURL?.absoluteString == "https://one.example/")
+        #expect(two.pinnedURL?.absoluteString == "https://two.example/")
         #expect(folder.isPinned)
         #expect(loose.pinnedURL == nil)
         #expect(model.keptRunAtTop() == [.folder(folder.id)])
     }
 
-    @Test func takingAFolderOutOfTheSectionPreservesItsChildBookmarks() {
+    @Test func takingAFolderOutOfTheSectionUnpinsItsPages() {
         let model = model()
         let one = tab("https://one.example/", in: model)
         let two = tab("https://two.example/", in: model)
         let folder = model.createFolder(named: "Work", containing: [one, two])
-        model.setPinned(true, for: [.tab(one.id), .tab(two.id)])
         model.pinAtTop([.folder(folder.id)])
+        one.urlString = "https://one.example/away"
 
         model.setPinned(false, for: [.folder(folder.id)])
 
         #expect(!folder.isPinned)
-        #expect(one.pinnedURL?.absoluteString == "https://one.example/")
-        #expect(two.pinnedURL?.absoluteString == "https://two.example/")
+        #expect(one.pinnedURL == nil && two.pinnedURL == nil)
         #expect(model.keptRunAtTop().isEmpty)
     }
 
@@ -317,11 +312,13 @@ struct PinnedSectionTests {
         let folder = model.createFolder(named: "Work", containing: gathered)
         model.setPinned(true, for: gathered)
         #expect(!model.isKept(.folder(folder.id)))
-        #expect(one.pinnedURL != nil && two.pinnedURL != nil)
+        // Below the line nothing is pinned, so the pages of an ordinary folder are not.
+        #expect(one.pinnedURL == nil && two.pinnedURL == nil)
         model.pin(folder)
 
         #expect(model.isKept(.folder(folder.id)))
         #expect(model.keptRunAtTop() == [.folder(folder.id)])
+        #expect(one.pinnedURL != nil && two.pinnedURL != nil)
         #expect(loose.pinnedURL == nil)
     }
     @Test func filingAPinnedTabInAFolderUnpinsIt() {
@@ -335,7 +332,7 @@ struct PinnedSectionTests {
         #expect(kept.pinnedURL == nil)
     }
 
-    @Test func aTabWithNoPageCannotBePinnedByADrop() {
+    @Test func aDroppedNewTabPinsAsTheStartPage() {
         let model = model()
         let kept = tab("https://kept.example/", in: model)
         model.pin(kept)
@@ -344,7 +341,7 @@ struct PinnedSectionTests {
         model.move([.tab(blank.id)], into: nil, before: .tab(kept.id))
         model.setPinned(true, for: [.tab(blank.id)])
 
-        #expect(blank.pinnedURL == nil)
+        #expect(blank.pinnedURL == SystemPages.start)
     }
 
     @Test func editingThePinKeepsTheTabInTheSection() {

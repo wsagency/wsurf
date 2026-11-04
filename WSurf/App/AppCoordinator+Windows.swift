@@ -14,7 +14,7 @@ extension AppCoordinator {
             return
         }
         let loose = browser.tabs.filter {
-            browser.folder(containing: $0) == nil && $0.pinnedURL == nil
+            browser.folder(containing: $0) == nil && !$0.isPinnedForProfile && browser.isShown($0)
         }
         guard loose.count >= 4 else {
             statusMessage = String(localized: "Not enough loose tabs to organize.")
@@ -54,7 +54,7 @@ extension AppCoordinator {
             for folder in plan.folders {
                 let members = folder.tabIDs
                     .compactMap { id in browser.tabs.first { $0.id == id } }
-                    .filter { browser.folder(containing: $0) == nil && $0.pinnedURL == nil }
+                    .filter { browser.folder(containing: $0) == nil && !$0.isPinnedForProfile && browser.isShown($0) }
                 guard members.count >= 2 else { continue }
                 let made = browser.createFolder(named: folder.name, containing: members)
                 if browser.tabs(in: made).count < 2 {
@@ -70,18 +70,24 @@ extension AppCoordinator {
         browser.onTabClosed = { [weak self] tab in
             extensionTabClosed?(tab)
             self?.tabDidClose(tab)
+            self?.releaseMicroPlaceholders(for: [tab.id])
+            self?.closeMicroWindowIfEmpty()
+        }
+        browser.onShowWindow = { [weak self] model in
+            self?.application?.windows.first { $0.browser === model }?.showBrowser()
         }
         let extensionTabChanged = browser.onActiveTabChanged
         browser.onActiveTabChanged = { [weak self] newTab, previousTab in
             extensionTabChanged?(newTab, previousTab)
             guard let self else { return }
-            if conversationSpaceID != browser.activeSpaceID {
+            if conversationAnchorID != browser.activeAnchorID {
                 conversationVoice?.stop()
             }
             followMedia(to: newTab, from: previousTab)
             applyHoverShield()
             updateWindowAppearance()
         }
+        configureMicroCallbacks()
     }
 
     var windowTitle: String {
@@ -144,17 +150,17 @@ extension AppCoordinator {
         if profiles.isPrivate {
             browser.context.favicons.schemeOverride = .dark
         } else {
-            switch settings.appearance {
+            switch settings.colorMode {
             case .system:
                 browser.context.favicons.schemeOverride = nil
-            case .light, .lightCalm:
+            case .light:
                 browser.context.favicons.schemeOverride = .light
-            case .dark, .darkCalm:
+            case .dark:
                 browser.context.favicons.schemeOverride = .dark
             }
         }
         nativeWindow?.appearance = profiles.isPrivate
-            ? NSAppearance(named: .darkAqua) : settings.appearance.nsAppearance
+            ? NSAppearance(named: .darkAqua) : settings.colorMode.nsAppearance
         nativeWindow?.title = windowTitle
         reloadFaviconsIfSchemeChanged()
     }
@@ -162,7 +168,12 @@ extension AppCoordinator {
     func windowDidClose() {
         guard application?.isTerminating != true, beginClosingWindow() else { return }
         if !profiles.isPrivate {
-            browser.markSessionClosed()
+            // A micro window whose page left or closed has nothing to reopen.
+            if isMicro, browser.tabs.isEmpty {
+                browser.retireSession()
+            } else {
+                browser.markSessionClosed()
+            }
         }
         conversationLog.saveBlocking()
         stopAgent()
@@ -170,7 +181,13 @@ extension AppCoordinator {
         voicePreparation?.cancel()
         voicePreparation = nil
         activation.stop()
+        if isMicro {
+            microReveal.stop()
+            // Its page closes with it, so the rows other windows kept for that page go too.
+            releaseMicroPlaceholders(for: Set(browser.tabs.map(\.id)))
+        }
         memoryPressure.stop()
+        sleepTimer.stop()
         media.releaseControl()
         media.unwatch()
         downloadFlights.stopWatching()
@@ -203,14 +220,19 @@ extension AppCoordinator {
         }
         releaseWindowHost()
         if profiles.isPrivate {
-            browser.downloads.forgetPrivateDownloads()
-            conversationLog.clearAll()
             privateSession = nil
+            // Another window of this private session, such as the micro window a page was moved to, still shows its pages.
+            // The session ends with the last of them.
             let context = browser.context
-            if let application {
-                application.endPrivateSession(context)
-            } else {
-                Task { await context.endPrivateSession() }
+            let isLast = application?.windows.contains { !$0.isClosed && $0.context === context } != true
+            if isLast {
+                browser.downloads.forgetPrivateDownloads()
+                conversationLog.clearAll()
+                if let application {
+                    application.endPrivateSession(context)
+                } else {
+                    Task { await context.endPrivateSession() }
+                }
             }
         }
     }
@@ -224,10 +246,10 @@ extension AppCoordinator {
     }
 
     func moveTabToNewWindow(_ tab: BrowserTab) {
-        // Private windows have independent cookie stores. Moving a live page
-        // between those stores would also move its authenticated session.
-        guard !profiles.isPrivate, let application else { return }
-        let destination = application.newWindow(profile: profiles.current)
+        // A private window has a cookie store of its own, and moving a live page to another store would move its
+        // authenticated session too: the new window joins this window's session instead.
+        guard let application else { return }
+        let destination = newCompanionWindow(kind: .standard, show: true, in: application)
         let placeholder = destination.browser.activeTab
         if moveTab(tab, to: destination), let placeholder {
             destination.browser.close(placeholder, recordForReopening: false)

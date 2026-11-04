@@ -50,7 +50,7 @@ struct AddressLoadingIndicator: View {
     private func artwork(at time: Double) -> some View {
         AddressLoadingArtwork(
             frame: animation.frame(at: time, reduceMotion: reduceMotion),
-            color: .accentColor
+            color: Theme.systemAccent
         )
     }
 }

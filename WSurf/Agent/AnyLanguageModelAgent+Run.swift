@@ -21,6 +21,7 @@ extension AnyLanguageModelAgent {
         let started = ContinuousClock.now
         let state = RunState(agent: self, utterance: utterance, task: task, reply: reply)
         toolkit.taskLedger = task.isContinuation ? (state.checkpoint.taskLedger ?? .init()) : .init()
+        toolkit.givenAnswers = []
         if task.isContinuation, !toolkit.taskLedger.outcomes.isEmpty || toolkit.taskLedger.actionRevision > 0 {
             toolkit.taskLedger.actionRevision += 1
         }
@@ -44,11 +45,11 @@ extension AnyLanguageModelAgent {
             }
             log.saveCheckpoint(state.checkpoint, taskID: task.id)
             log.recordContextEstimate(
-                tabID: task.spaceID,
-                tokens: (state.checkpoint.openAI?.contextTokens ?? Self.estimatedTokens(in: state.checkpoint.transcript)) + budget.toolSchemaTokens
+                tabID: task.anchorID,
+                tokens: (state.checkpoint.openAI?.contextTokens ?? estimatedTokens(in: state.checkpoint.transcript)) + budget.toolSchemaTokens
             )
-            if !discardedTabIDs.contains(task.spaceID) {
-                sessions[task.spaceID] = makeSession(transcript: state.checkpoint.transcript)
+            if !discardedTabIDs.contains(task.anchorID) {
+                sessions[task.anchorID] = makeSession(transcript: state.checkpoint.transcript)
             }
         }
 
@@ -56,13 +57,13 @@ extension AnyLanguageModelAgent {
             let text = String(raw.trimmingCharacters(in: .whitespacesAndNewlines).prefix(2_000))
             guard !Task.isCancelled, !text.isEmpty else { return }
             log.updateLiveProgress(nil, taskID: task.id)
-            if log.latestTrace(forTab: task.spaceID)?.response == text {
+            if log.latestTrace(forTab: task.anchorID)?.response == text {
                 state.reply.update(text: "")
                 log.updateResponse("", taskID: task.id, closingSteps: false)
             }
             guard state.checkpoint.progressUpdates?.last?.text != text else { return }
             state.checkpoint.progressUpdates?.append(AgentProgressUpdate(
-                text: text, afterStepCount: log.latestTrace(forTab: task.spaceID)?.steps.count ?? 0
+                text: text, afterStepCount: log.latestTrace(forTab: task.anchorID)?.steps.count ?? 0
             ))
             event("progress_update", ["status": "completed"])
             save()
@@ -76,7 +77,7 @@ extension AnyLanguageModelAgent {
         do {
             try AttachmentRequest.validate(
                 task.attachments, message: utterance, textOnly: task.attachmentTextOnly || !acceptsImages,
-                windowTokens: budget.windowTokens
+                windowTokens: budget.windowTokens, imageTokens: imageTokens
             )
             if openAI != nil, !task.isContinuation {
                 state.attachmentInput = try OpenAIAttachmentInput.make(prompt: utterance, attachments: task.attachments,
@@ -122,6 +123,8 @@ extension AnyLanguageModelAgent {
         toolkit.finishTask(task)
         reply.setActivity(nil)
         reply.endStream()
+        let said = ([AgentToolkit.userText(of: utterance)] + toolkit.givenAnswers).filter { !$0.isEmpty }.joined(separator: "\n")
+        pendingFacts = Task.isCancelled || said.isEmpty ? nil : (taskID: task.id, said: said)
     }
 
     private func runLoop(_ state: RunState, callbacks: RunCallbacks) async throws {
@@ -132,9 +135,9 @@ extension AnyLanguageModelAgent {
             }
             let resumeCharacters = state.task.isContinuation ? AgentCheckpoint.resumePrompt.count + state.utterance.count : 0
             let ledgerCharacters = toolkit.taskLedger.context.count
-            if isOverBudget(state.session, nativeState: state.nativeState, promptCharacters: state.prompt.count + ledgerCharacters + state.images.count * 6_400 + resumeCharacters) {
+            if isOverBudget(state.session, nativeState: state.nativeState, promptCharacters: state.prompt.count + ledgerCharacters + resumeCharacters, images: state.images.count) {
                 callbacks.event("context_compaction", ["reason": "input_budget"])
-                try await compact(state, pendingPromptTokens: max(1, (state.prompt.count + ledgerCharacters + resumeCharacters) / 4) + state.images.count * 1_600,
+                try await compact(state, pendingPromptTokens: max(1, (state.prompt.count + ledgerCharacters + resumeCharacters) / 4) + state.images.count * imageTokens,
                                   event: callbacks.event)
                 callbacks.save()
             }
@@ -340,6 +343,15 @@ extension AnyLanguageModelAgent {
                 continue
             }
             callbacks.event("tool_proposed", ["name": call.toolName])
+            // A preference only the person knows: the first page change waits for their answer, and nothing runs.
+            if let refusal = state.preferenceGate.refusal(for: call.toolName) {
+                let reason = toolkit.rejectTool(name: call.toolName, reason: refusal)
+                entries.append(.toolOutput(.init(id: call.id, toolName: call.toolName, segments: [.text(.init(content: reason))])))
+                state.session = makeSession(transcript: Transcript(entries: entries))
+                callbacks.save()
+                continue
+            }
+            let answersBefore = toolkit.givenAnswers.count
             if AgentTaskLedger.mutations.contains(call.toolName) {
                 toolkit.taskLedger.beginAction(call.toolName)
                 callbacks.save()
@@ -352,6 +364,8 @@ extension AnyLanguageModelAgent {
             if call.toolName == "askUser", !failed, !text.isEmpty {
                 state.checkpoint.userAnswers.append(text)
             }
+            // Only the replies the question model handed back count as the person's answer, never the transcript text above.
+            state.preferenceGate.noteAnswers(Array(toolkit.givenAnswers.dropFirst(answersBefore)))
             callbacks.save()
             let progress = inspectProgress(state.monitor.observe(
                 name: call.toolName, arguments: call.arguments.jsonString, output: text, failed: failed,
@@ -360,7 +374,7 @@ extension AnyLanguageModelAgent {
             needsRecovery = progress.recovery
             state.stop = progress.stop ?? state.stop
         }
-        state.session = makeSession(transcript: settledTranscript(state.session.transcript))
+        state.session = makeSession(transcript: settledTranscript(state.session.transcript, keepingReasoning: true))
         state.prompt = needsRecovery ? Self.recoveryPrompt : Self.continuationPrompt
         callbacks.save()
     }
@@ -390,22 +404,28 @@ extension AnyLanguageModelAgent {
         var responsePrefix = 0
         var verificationRounds = 0
         var providerRetries = 0
+        /// A new task only: a continuation already asked, or acted, in the run before it.
+        var preferenceGate: AgentPreferenceGate
 
         init(agent: AnyLanguageModelAgent, utterance: String, task: AgentTaskContext, reply: AgentReplyModel) {
             self.task = task
             self.utterance = utterance
             self.reply = reply
             diagnostics = AgentRunDiagnostics(model: agent.modelID, reasoningEffort: agent.reasoningEffort)
-            checkpoint = agent.log.checkpoint(forTab: task.spaceID) ?? AgentCheckpoint()
+            checkpoint = agent.log.checkpoint(forTab: task.anchorID) ?? AgentCheckpoint()
             nativeState = agent.openAI?.restoring(checkpoint.openAI)
             nativeState?.presentation = .init()
             checkpoint.progressUpdates = []
-            session = agent.session(for: task.spaceID)
+            session = agent.session(for: task.anchorID)
             policy = agent.executionPolicy ?? .current
             monitor = AgentProgressMonitor(policy: policy)
-            prompt = task.isContinuation ? AnyLanguageModelAgent.continuationPrompt : AssistantAttachment.prompt(
-                utterance, attachments: task.attachments, textOnly: task.attachmentTextOnly || !agent.acceptsImages
-            )
+            let toolkit = agent.toolkit
+            preferenceGate = AgentPreferenceGate(request: task.isContinuation ? "" : AgentToolkit.userText(of: utterance)) { toolkit.knowsPreference($0) }
+            prompt = task.isContinuation
+                ? AnyLanguageModelAgent.continuationPrompt
+                : toolkit.rememberedContext() + preferenceGate.hint + AssistantAttachment.prompt(
+                    utterance, attachments: task.attachments, textOnly: task.attachmentTextOnly || !agent.acceptsImages
+                )
             images = AttachmentRequest.images(task.attachments, textOnly: task.attachmentTextOnly || !agent.acceptsImages)
             originalPrompt = prompt
             originalImages = images

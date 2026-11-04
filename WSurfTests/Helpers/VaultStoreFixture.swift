@@ -7,6 +7,7 @@ import GRDB
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 extension Testing.Tag {  // qualified: the app module declares its own `struct Tag: View` (Settings/SettingsPrimitives.swift)
     /// Slow, Pro-only measurements. Also gated by `WSURF_VAULT_BENCHMARK=1` (pass it as `TEST_RUNNER_WSURF_VAULT_BENCHMARK=1`).

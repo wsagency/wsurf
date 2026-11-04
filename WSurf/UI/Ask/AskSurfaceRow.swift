@@ -24,8 +24,20 @@ struct AskSurfaceRow: View {
     let placeholder: String
     let accessibilityValue: String
     let security: PageSecurity
+    /// Tests read where the address line and the row's controls were laid out, in the row's own space.
+    var onFrame: ((Part, CGRect) -> Void)?
+
+    enum Part {
+        case address
+        case controls
+    }
+
+    /// The width the row's controls take at its end. The centred address stops before them instead of running under them.
+    @State private var controlsWidth: CGFloat = 0
 
     private static let centredAddressInset: CGFloat = 78
+    /// `nonisolated`: the `onGeometryChange` transforms are `@Sendable` and read it off the main actor.
+    private nonisolated static let space = "askSurfaceRow"
 
     var body: some View {
         @Bindable var model = model
@@ -37,31 +49,50 @@ struct AskSurfaceRow: View {
                 .frame(width: placement.iconSlot, height: placement.rowHeight)
 
             ZStack(alignment: .leading) {
-                MentionField(
-                    text: $model.interaction.text,
-                    chips: model.mentionChips,
-                    placeholder: placeholder,
-                    fontSize: placement.textSize,
-                    isFocused: model.isFocused,
-                    selectAllToken: model.selectAllToken,
-                    accessibilityLabel: String(localized: placement.accessibilityLabel),
-                    textColor: placement == .toolbar ? Theme.urlOverride.map { NSColor($0) } : nil,
-                    onFocusChange: { model.fieldFocusDidChange($0) },
-                    onChipsChange: { model.mentionsDidChange($0) },
-                    onSubmit: { model.submit(in: sections) },
-                    onCommandSubmit: { model.askWhateverIsTyped() },
-                    onCancel: { model.cancelEditing() },
-                    onMove: { delta, bySection in
-                        if bySection {
-                            model.moveSection(by: delta, in: sections)
-                        } else {
-                            model.moveSelection(by: delta, in: sections)
+                HStack(spacing: 8) {
+                    if let site = model.searchSite, restingContent == nil {
+                        SiteSearchChip(site: site, fontSize: placement.textSize - 1) {
+                            model.removeSearchSite()
+                            model.focusForEditing()
                         }
                     }
-                )
-                .opacity(restingContent == nil ? 1 : 0)
-                .allowsHitTesting(restingContent == nil)
-                .accessibilityValue(Text(verbatim: accessibilityValue))
+
+                    MentionField(
+                        text: $model.interaction.text,
+                        chips: model.mentionChips,
+                        placeholder: placeholder,
+                        fontSize: placement.textSize,
+                        isFocused: model.isFocused,
+                        selectAllToken: model.selectAllToken,
+                        accessibilityLabel: model.searchSite.map { String(localized: "Search \($0.name)") }
+                            ?? String(localized: placement.accessibilityLabel),
+                        textColor: placement == .toolbar ? Theme.urlOverride.map { NSColor($0) } : nil,
+                        onFocusChange: { model.fieldFocusDidChange($0) },
+                        onChipsChange: { model.mentionsDidChange($0) },
+                        onSubmit: { model.submit(in: sections) },
+                        onCommandSubmit: { model.askWhateverIsTyped() },
+                        onCancel: { model.cancelEditing() },
+                        onMove: { delta, bySection in
+                            if bySection {
+                                model.moveSection(by: delta, in: sections)
+                            } else {
+                                model.moveSelection(by: delta, in: sections)
+                            }
+                        },
+                        onTab: { model.activateSiteSearch() },
+                        onDeleteBackward: { model.removeSearchSite() }
+                    )
+                    .opacity(restingContent == nil ? 1 : 0)
+                    .allowsHitTesting(restingContent == nil)
+                    .accessibilityValue(Text(verbatim: accessibilityValue))
+
+                    if let site = model.suggestedSite, restingContent == nil {
+                        SearchScopeHint(title: String(localized: "Search \(site.name)")) {
+                            model.activateSiteSearch()
+                            model.focusForEditing()
+                        }
+                    }
+                }
 
                 if let restingContent, !restingContent.isCentred {
                     AskRestingLine(
@@ -80,11 +111,12 @@ struct AskSurfaceRow: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
             .onTapGesture { model.focusForEditing() }
-            .help(Text(model.addressEngine?.label ?? ""))
+            .help(Text(verbatim: restingContent?.tooltip(engine: model.addressEngine) ?? ""))
 
             HStack(spacing: placement.controlSpacing) {
                 if placement.showsSiteControls {
                     AutofillSaveBadge(browser: model.browser, coordinator: model.coordinator)
+                    InputHistoryBadge(browser: model.browser, coordinator: model.coordinator)
                     TabAudioBadge(browser: model.browser, coordinator: model.coordinator)
                         .frame(width: placement.iconSlot)
                     TabPictureBadge(browser: model.browser, coordinator: model.coordinator)
@@ -92,14 +124,29 @@ struct AskSurfaceRow: View {
                     PermissionBadge(browser: model.browser)
                         .frame(width: placement.iconSlot)
                     PopupBadge(browser: model.browser, coordinator: model.coordinator)
+                    if let tab = model.browser.activeTab, tab.usesDevMode {
+                        DevModeBadge(tab: tab, coordinator: model.coordinator)
+                            .frame(width: placement.iconSlot)
+                            .transition(.scale(scale: 0.6).combined(with: .opacity))
+                    }
+                    ReaderBadge(coordinator: model.coordinator)
+                    TranslationBadge(browser: model.browser, coordinator: model.coordinator)
+                    PDFDownloadBadge(browser: model.browser)
                     PinBadge(browser: model.browser)
                         .frame(width: placement.iconSlot)
+                    MicroWindowBadge(browser: model.browser, coordinator: model.coordinator)
                     SiteControlsMenu(browser: model.browser)
                         .frame(width: placement.iconSlot)
                 }
             }
             .frame(height: placement.rowHeight)
             .environment(\.chromeIconExtent, placement.iconSlot)
+            .onGeometryChange(for: CGRect.self) { $0.frame(in: .named(Self.space)) } action: {
+                if controlsWidth != $0.width {
+                    controlsWidth = $0.width
+                }
+                onFrame?(.controls, $0)
+            }
         }
         .padding(.horizontal, placement.rowInset)
         .overlay {
@@ -110,11 +157,16 @@ struct AskSurfaceRow: View {
                     security: security,
                     engine: model.addressEngine
                 )
-                .padding(.horizontal, Self.centredAddressInset)
+                .onGeometryChange(for: CGRect.self) { $0.frame(in: .named(Self.space)) } action: {
+                    onFrame?(.address, $0)
+                }
+                .padding(.leading, Self.centredAddressInset)
+                .padding(.trailing, max(Self.centredAddressInset, controlsWidth + placement.rowInset + placement.controlSpacing))
                 .allowsHitTesting(false)
                 .accessibilityHidden(true)
             }
         }
+        .coordinateSpace(.named(Self.space))
         .frame(minHeight: placement.rowHeight)
         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: {
             model.interaction.rowHeight = $0

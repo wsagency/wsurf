@@ -9,6 +9,7 @@ import Testing
 import WebKit
 
 @testable import WSurf
+@testable import WSurfVault
 
 // Native ceremony invariants against a real encrypted vault, a real WebKit page and the independent verifier. The
 // native context is the engine's own `WebAuthnContext` for a fixture page served from localhost; the only scripted
@@ -17,7 +18,7 @@ import WebKit
 
 @MainActor
 struct WebsiteAuthenticatorCeremonyTests {
-    private let rpID = "localhost"
+    let rpID = "localhost"
 
     // MARK: Doubles
 
@@ -47,7 +48,10 @@ struct WebsiteAuthenticatorCeremonyTests {
             return respond(prompt)
         }
 
-        func offerStart(operation: WebAuthnPrompt.Operation, origin: String, locked: Bool, in anchor: ASPresentationAnchor, until deadline: ContinuousClock.Instant?) async -> WebAuthnDecision {
+        func offerStart(
+            operation: WebAuthnPrompt.Operation, origin: String, topOrigin: String?, locked: Bool, in anchor: ASPresentationAnchor,
+            until deadline: ContinuousClock.Instant?
+        ) async -> WebAuthnDecision {
             offers.append(locked)
             deadlines.append(deadline)
             return offer(locked)
@@ -72,6 +76,8 @@ struct WebsiteAuthenticatorCeremonyTests {
     /// One real WebKit page on localhost whose profile is the fresh, test-owned profile of an unlocked encrypted vault.
     struct Fixture {
         let manager: CredentialManager
+        /// The stand-in for the system's passkey unlock sheet that this vault's manager uses.
+        let passkeys: VaultPasskeys
         let vaultID: UUID
         /// The page's own regular profile (never the original or a shared one), erased again by `cleanup`.
         let profile: Profile
@@ -159,7 +165,7 @@ struct WebsiteAuthenticatorCeremonyTests {
         }
         let port = url.port.map { ":\($0)" } ?? ""
         return Fixture(
-            manager: vault.manager, vaultID: vault.vaultID, profile: profile, page: page, tab: tab, window: window, server: server,
+            manager: vault.manager, passkeys: made.passkeys, vaultID: vault.vaultID, profile: profile, page: page, tab: tab, window: window, server: server,
             origin: "\(scheme)://\(host)\(port)", next: url.appendingPathComponent("next"), frame: frame
         )
     }
@@ -172,7 +178,7 @@ struct WebsiteAuthenticatorCeremonyTests {
         await fixture.cleanup()
     }
 
-    private func creation(
+    func creation(
         challenge: String = "create challenge",
         userVerification: WebAuthnUserVerification = .discouraged,
         exclude: [Data] = [],
@@ -245,13 +251,13 @@ struct WebsiteAuthenticatorCeremonyTests {
         )
     }
 
-    private func passkeys(_ fixture: Fixture) async throws -> [WebsitePasskey] {
+    func passkeys(_ fixture: Fixture) async throws -> [WebsitePasskey] {
         try await fixture.manager.snapshot().accounts.flatMap(\.passkeys)
     }
 
     /// A passkey registered through the ceremony itself, so the account is one the ceremony would offer again.
     @discardableResult
-    private func seed(_ fixture: Fixture, _ number: UInt8, userName: String = "ada@example.com") async throws -> UUID {
+    func seed(_ fixture: Fixture, _ number: UInt8, userName: String = "ada@example.com") async throws -> UUID {
         let outcome = try await create(fixture, User(), request: creation(challenge: "seed \(number)", userID: Data([number]), userName: userName))
         let accounts = try await fixture.manager.snapshot().accounts
         return try #require(accounts.first { $0.passkeys.contains { $0.credentialID == outcome.result.credentialID } }).id
@@ -591,70 +597,6 @@ struct WebsiteAuthenticatorCeremonyTests {
         }
     }
 
-    /// A vault with no matching passkey must not answer instantly: that would let a page probe for credentials with no
-    /// native step. The prompt (here the scripted user, with the origin and relying party) comes first, has nothing to
-    /// approve, and the page's refusal arrives only after it is dismissed or expires.
-    @Test(.boundedWebViews) func aGetWithNoMatchingPasskeyAsksFirstHasNothingToApproveAndFailsOnlyAfterTheDecision() async throws {
-        try await withFixture { fixture in
-            let seeded = try await seed(fixture, 1)
-            let stored = try #require(try await passkeys(fixture).first)
-            let before = try fixture.bytes()
-
-            @MainActor func outcome(_ decision: WebAuthnDecision, allow: [Data] = [Data([0xFF])]) async throws -> (String, User) {
-                let user = User()
-                user.respond = { _ in decision }
-                do {
-                    try await get(fixture, user, request: assertion(allow: allow))
-                    return ("signed", user)
-                } catch WebsiteAuthenticatorError.notAllowed {
-                    return ("notAllowed", user)
-                } catch WebsiteAuthenticatorError.expired {
-                    return ("expired", user)
-                } catch is CancellationError {
-                    return ("cancelled", user)
-                } catch {
-                    return ("other \(error)", user)
-                }
-            }
-
-            for (decision, expected) in [
-                (WebAuthnDecision.declined, "notAllowed"), (.expired, "expired"), (.cancelled, "cancelled"),
-                // Nothing is approvable, whatever a (scripted) approval names, including a real passkey of this vault.
-                (.approved(choice: nil), "notAllowed"), (.approved(choice: stored.id), "notAllowed"), (.approved(choice: seeded), "notAllowed"),
-            ] {
-                let (result, user) = try await outcome(decision)
-                #expect(result == expected, "\(decision)")
-                #expect(user.prompts.count == 1, "the user is asked before any refusal: \(decision)")
-                let prompt = try #require(user.prompts.first)
-                #expect(prompt.operation == .get && prompt.choices.isEmpty && !prompt.offersNewAccount)
-                #expect(prompt.origin == fixture.origin && prompt.rpID == rpID)
-                #expect(user.verifications == 0 && user.offers.isEmpty)
-            }
-            #expect(try fixture.bytes() == before)
-            // A get that does match is still exactly one prompt: no extra dialog was added to the success path.
-            let matching = User()
-            matching.respond = { prompt in .approved(choice: prompt.choices[0].id) }
-            try await get(fixture, matching)
-            #expect(matching.prompts.count == 1 && matching.offers.isEmpty)
-        }
-    }
-
-    /// The native no-match sheet cannot be approved: the only decision it ever reports is a dismissal.
-    @Test func theNativeNoMatchPromptCarriesNoChoicesAndNothingToChoose() {
-        let prompt = WebAuthnPrompt(
-            operation: .get, origin: "https://login.example", topOrigin: nil, rpID: "login.example", requestedUserName: nil,
-            choices: [], offersNewAccount: false, userVerification: .preferred, willVerifyUser: true
-        )
-        #expect(NativeWebAuthnInteraction.hasNothingToApprove(prompt))
-        #expect(NativeWebAuthnInteraction.makeChooser(for: prompt) == nil)
-        let withChoice = WebAuthnPrompt(
-            operation: .get, origin: "https://login.example", topOrigin: nil, rpID: "login.example", requestedUserName: nil,
-            choices: [WebAuthnPromptChoice(id: UUID(), title: "Ada", detail: "")], offersNewAccount: false,
-            userVerification: .preferred, willVerifyUser: true
-        )
-        #expect(!NativeWebAuthnInteraction.hasNothingToApprove(withChoice))
-    }
-
     @Test(.boundedWebViews) func assertionCancelledDeclinedStaleOrRemovedSignsNothing() async throws {
         try await withFixture { fixture in
             try await create(fixture, User())
@@ -728,45 +670,25 @@ struct WebsiteAuthenticatorCeremonyTests {
 
     // MARK: Conditional (page-gesture) requests
 
-    @Test(.boundedWebViews) func conditionalRequestOffersBeforeAnythingElseAndDecliningDoesNothing() async throws {
+    /// The user started it in a native row, so the account prompt is the first step, and it still decides.
+    @Test(.boundedWebViews) func aConditionalRequestStartsAtTheAccountPromptAndDecliningItDoesNothing() async throws {
         try await withFixture { fixture in
             try await create(fixture, User())
             let before = try fixture.bytes()
 
             let user = User()
-            user.offer = { _ in .declined }
+            user.respond = { _ in .declined }
             await #expect(throws: WebsiteAuthenticatorError.self) {
                 try await get(fixture, user, request: assertion(userVerification: .required), conditional: true)
             }
-            #expect(user.offers == [false], "an unlocked vault is offered as such")
-            #expect(user.prompts.isEmpty && user.verifications == 0, "no account prompt, verification or signature before the offer is accepted")
+            #expect(user.offers.isEmpty && user.prompts.count == 1 && user.verifications == 0)
             #expect(try fixture.bytes() == before)
-
-            // Accepting the offer only starts the normal ceremony: the account prompt still decides.
-            let accepting = User()
-            accepting.respond = { prompt in .approved(choice: prompt.choices[0].id) }
-            let outcome = try await get(fixture, accepting, conditional: true)
-            #expect(accepting.offers == [false] && accepting.prompts.count == 1)
-            #expect(outcome.result.signature != nil)
-        }
-    }
-
-    @Test(.boundedWebViews) func lockedVaultIsOfferedAsLockedAndNeverUnlockedByADeclinedOffer() async throws {
-        try await withFixture { fixture in
-            try await create(fixture, User())
-            fixture.manager.lock(reason: .manual)
-
-            let user = User()
-            user.offer = { _ in .declined }
-            await #expect(throws: WebsiteAuthenticatorError.self) { try await get(fixture, user, conditional: true) }
-            #expect(user.offers == [true])
-            #expect(!fixture.manager.isUnlocked && user.prompts.isEmpty)
         }
     }
 
     // MARK: Lifetime
 
-    /// WebAuthn L3: a conditional get has no lifetime timer. Every native step it reaches (offer, prompt, verification) is
+    /// WebAuthn L3: a conditional get has no lifetime timer. Every native step it reaches (prompt, verification) is
     /// given no deadline at all, while the same request as a modal one is bounded at each of them.
     @Test(.boundedWebViews) func aConditionalGetHasNoDeadlineAtAnyNativeStepWhileAModalOneIsBoundedAtEach() async throws {
         try await withFixture { fixture in
@@ -780,8 +702,8 @@ struct WebsiteAuthenticatorCeremonyTests {
             let conditional = approving()
             let outcome = try await get(fixture, conditional, request: assertion(userVerification: .required, deadline: nil), conditional: true)
             #expect(outcome.result.signature != nil)
-            #expect(conditional.offers.count == 1 && conditional.prompts.count == 1 && conditional.verifications == 1)
-            #expect(conditional.deadlines.count == 3 && conditional.deadlines.allSatisfy { $0 == nil }, "no native step may carry a timer")
+            #expect(conditional.offers.isEmpty && conditional.prompts.count == 1 && conditional.verifications == 1)
+            #expect(conditional.deadlines.count == 2 && conditional.deadlines.allSatisfy { $0 == nil }, "no native step may carry a timer")
 
             let modal = approving()
             try await get(fixture, modal, request: assertion(userVerification: .required))
@@ -876,6 +798,21 @@ struct WebsiteAuthenticatorCeremonyTests {
         #expect(!choices[2].detail.contains("#"))
     }
 
+    @Test func anAccountOfNotesOrItemsOnlySaysWhatItHolds() {
+        var memo = CredentialAccount(
+            id: UUID(), username: "", displayName: "Memo", origins: ["https://login.example.com"], loginURLs: [], password: nil,
+            passkeys: [], totp: nil, exchangeAccountID: nil, exchangeItemID: nil
+        )
+        memo.notes = [CredentialNote(text: "synthetic note", field: nil)]
+        var wallet = memo
+        wallet.id = UUID()
+        wallet.notes = nil
+        wallet.secureItems = [SecureItemFixtures.address()]
+
+        let choices = WebsiteAuthenticator.registrationChoices([memo, wallet], rpID: "example.com", origin: "https://login.example.com")
+        #expect(choices.map(\.detail) == [String(localized: "notes"), String(localized: "cards and other items")])
+    }
+
     // MARK: Native chooser identity
     // Real AppKit controls, never presented: this proves which identity each menu position carries, not that the sheet
     // or the user's click works (native consent stays an acceptance item).
@@ -936,8 +873,10 @@ struct WebsiteAuthenticatorCeremonyTests {
         #expect(NativeWebAuthnInteraction.makeChooser(for: prompt([one], offersNewAccount: false)) == nil)
         let many = [one, WebAuthnPromptChoice(id: UUID(), title: "Ada", detail: "ada")]
         let chooser = try #require(NativeWebAuthnInteraction.makeChooser(for: prompt(many, offersNewAccount: false)))
-        #expect(chooser.numberOfItems == 2)
-        chooser.selectItem(at: 1)
+        #expect(chooser.numberOfItems == 3, "a placeholder, then every passkey")
+        // Nothing is preselected: using the default declines rather than signing with a passkey the user did not pick.
+        #expect(chooser.indexOfSelectedItem == 0 && NativeWebAuthnInteraction.decision(from: chooser) == .declined)
+        chooser.selectItem(at: 2)
         guard case .approved(let picked) = NativeWebAuthnInteraction.decision(from: chooser) else { Issue.record("not approved"); return }
         #expect(picked == many[1].id)
     }

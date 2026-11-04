@@ -65,10 +65,21 @@ final class MediaCenter {
     var onReturnedInline: ((BrowserPage) -> Void)?
     var onTabAudioChanged: ((BrowserPage, Bool) -> Void)?
     var onTabVideoChanged: ((BrowserPage, Bool) -> Void)?
-    var onTabUnmuted: ((BrowserPage) -> Void)?
+    /// A player of the page was unmuted. `isTheUsers`: it was the person, by the player's own control, in the page's own frame or
+    /// in the frame they pointed at (`isUsersUnmute`).
+    var onTabUnmuted: ((BrowserPage, _ isTheUsers: Bool) -> Void)?
+    /// A page began a new document. It starts unmuted whatever its tab asked for, so the window mutes it again.
+    var onPageStarted: ((BrowserPage) -> Void)?
     var onPictureOutChanged: ((BrowserPage, Bool) -> Void)?
     var onControlledTabChanged: ((UUID?, UUID?) -> Void)?
     var onPictureChanged: (() -> Void)?
+
+    /// The pointer is over the player panel, wherever it rests. A page under a floating panel must not hear it: its
+    /// web view takes hover through its own tracking areas, whatever is drawn on top.
+    var isPointerOverPlayer = false {
+        didSet { if isPointerOverPlayer != oldValue { onPointerOverPlayerChanged?() } }
+    }
+    var onPointerOverPlayerChanged: (() -> Void)?
 
     nonisolated static var frameScriptSource: String {
         MediaScript.source
@@ -77,29 +88,38 @@ final class MediaCenter {
 
     @MainActor
     func install(in page: BrowserPage) {
-        page.installScript(MediaScript.source, in: .page, injectionTime: .atDocumentStart, forMainFrameOnly: false)
-        page.addScriptMessageHandler(name: Self.frameScriptHandlerName, in: .page) { [weak self] message in
+        page.installScript(MediaScript.source, in: BrowserPage.servicesWorld, injectionTime: .atDocumentStart, forMainFrameOnly: false)
+        page.addScriptMessageHandler(name: Self.frameScriptHandlerName, in: BrowserPage.servicesWorld) { [weak self] message in
             guard let body = message.body as? String else { return }
-            self?.receiveScriptMessage(body, from: message.page, isMainFrame: message.frameInfo.isMainFrame)
+            self?.receiveScriptMessage(
+                body, from: message.page, isMainFrame: message.frameInfo.isMainFrame, frameID: message.frameInfo.chromiumID
+            )
         }
+        Self.watchFrames(of: page) { [weak self] _ in self }
     }
 
-    func receiveScriptMessage(_ message: String, from page: BrowserPage, isMainFrame: Bool) {
+    /// `frameID` is the engine's id for the frame the message came from, when the engine has one (Chromium).
+    func receiveScriptMessage(_ message: String, from page: BrowserPage, isMainFrame: Bool, frameID: String? = nil) {
         if message == "picture-in-picture" || message == "inline" {
             applyPresentationMode(message, from: page)
             return
         }
         if isMainFrame, message == "hello" {
             forgetPicture(page)
+            updateAudio(of: page) { $0.startDocument() }
+            onPageStarted?(page)
         }
-        if message == "tabunmuted" {
-            onTabUnmuted?(page)
+        if message == "tabunmuted" || message == "tabunmuted:direct" {
+            onTabUnmuted?(page, Self.isUsersUnmute(message, isMainFrame: isMainFrame))
             return
         }
+        if message == "frames:moved" {
+            refreshFrames(of: page)
+        }
+        if let report = FrameAudio.report(in: message, isMainFrame: isMainFrame) {
+            updateAudio(of: page) { $0.apply(report, engineFrame: frameID) }
+        }
         if let controlled = controlledPage, page === controlled {
-            if isMainFrame, let playing = Self.audioReport(in: message) {
-                onTabAudioChanged?(controlled, playing)
-            }
             if isMainFrame, let hasVideo = Self.videoReport(in: message) {
                 onTabVideoChanged?(controlled, hasVideo)
             }
@@ -109,9 +129,6 @@ final class MediaCenter {
         if page === pipTargetPage,
            handlePiPMessage(message, from: page, isMainFrame: isMainFrame) { return }
         guard isMainFrame else { return }
-        if let playing = Self.audioReport(in: message) {
-            onTabAudioChanged?(page, playing)
-        }
         if let hasVideo = Self.videoReport(in: message) {
             onTabVideoChanged?(page, hasVideo)
         }
@@ -231,6 +248,8 @@ final class MediaCenter {
 
     func pageDidReset(_ page: BrowserPage) {
         forgetPicture(page)
+        // Its renderer is gone with everything it played; the tab has already said so for itself.
+        forgetAudio(of: page)
         if page === watchedPage {
             watched.currentTime = 0
             watched.duration = 0
@@ -365,17 +384,51 @@ final class MediaCenter {
 
     private func send(_ message: String) {
         guard let controlledPage else { return }
-        Self.post(message, to: controlledPage)
+        Self.post(message, to: controlledPage, userGesture: true)
     }
 
     static func seek(to seconds: Double, on page: BrowserPage) {
-        post("wsurf-seekabs:\(seconds)", to: page)
+        post("wsurf-seekabs:\(seconds)", to: page, userGesture: true)
+    }
+
+    /// The page's players are muted by its script, in each frame the script runs in. Chromium is told as well: its own mute
+    /// covers what the script cannot reach, such as Web Audio.
+    /// Whether a page's report that a player was unmuted comes from where the person's press can have been: the page's own frame,
+    /// or a frame that says the input was its own (`tabunmuted:direct`). Which other frame holds the element they pressed is not
+    /// known here, so another frame's plain report is not theirs. The script only reports at all after user activation.
+    nonisolated static func isUsersUnmute(_ message: String, isMainFrame: Bool) -> Bool {
+        isMainFrame ? message.hasPrefix("tabunmuted") : message == "tabunmuted:direct"
+    }
+
+    enum UnmuteAnswer: Equatable {
+        /// The person unmuted the tab by the page's own control.
+        case liftTabMute
+        /// Not theirs to do, or Mute WSurf is on: the page dropped its mute, and is told to have it again.
+        case putMuteBack
+        case ignore
+    }
+
+    /// What the app does with a page's report that a player was unmuted. While WSurf is muted nothing in a page lifts the mute, the
+    /// person's press included: only the speaker, ⌃⌘M and the menu do. A tab's own mute is lifted only by the person.
+    nonisolated static func answer(toUnmute isTheUsers: Bool, isWSurfMuted: Bool, isTabMuted: Bool) -> UnmuteAnswer {
+        if isWSurfMuted {
+            return .putMuteBack
+        }
+        guard isTabMuted else { return .ignore }
+        return isTheUsers ? .liftTabMute : .putMuteBack
     }
 
     static func setMuted(_ muted: Bool, on page: BrowserPage) {
-        post("wsurf-mute:\(muted ? 1 : 0)", to: page)
+        post("wsurf-mute:\(muted ? 1 : 0)", to: page, userGesture: true)
+        page.chromium?.setAudioMuted(muted)
     }
-    private static func post(_ message: String, to page: BrowserPage) {
+
+    /// `userGesture` for the person's own press on WSurf's controls, so its play is theirs under any auto-play answer;
+    /// WSurf's own requests (resend, rect, reveal, Picture in Picture setup) carry none. A mute never does, though the person
+    /// pressed for it: a gesture is user activation for the page, and the page's script would take the activation of WSurf's mute
+    /// button for the person's press on the player's own control, and lift the mute with it.
+    static func post(_ message: String, to page: BrowserPage, userGesture: Bool = false) {
+        let userGesture = userGesture && message != "wsurf-mute:1"
         guard let data = try? JSONSerialization.data(withJSONObject: message, options: [.fragmentsAllowed]),
               let escaped = String(data: data, encoding: .utf8) else { return }
         Task { @MainActor in
@@ -384,13 +437,8 @@ final class MediaCenter {
             Array.prototype.forEach.call(document.querySelectorAll('iframe'), function (f) {
               try { f.contentWindow.postMessage(\(escaped), '*'); } catch (e) {}
             });
-            """)
+            """, in: nil, contentWorld: BrowserPage.servicesWorld, userGesture: userGesture)
         }
-    }
-
-    nonisolated private static func audioReport(in message: String) -> Bool? {
-        guard message.hasPrefix("audio:") else { return nil }
-        return message.hasSuffix("1")
     }
 
     nonisolated private static func videoReport(in message: String) -> Bool? {

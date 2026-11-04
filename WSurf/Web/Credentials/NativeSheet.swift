@@ -10,6 +10,18 @@ import AuthenticationServices
 enum NativeSheet {
     enum Presented { case response(NSApplication.ModalResponse), expired, cancelled }
 
+    /// Waits for a sheet already on `anchor` to finish closing. The system's passkey sheet (a vault unlock) is still attached
+    /// for a moment after its answer arrives, and the step that follows asks for the same window. `false` when a sheet is
+    /// still there at the bound: the caller refuses, it never queues behind it.
+    static func waitForSheetToClose(on anchor: ASPresentationAnchor, limit: Duration = .seconds(3)) async -> Bool {
+        // ponytail: polls every 50 ms for up to `limit`; observe NSWindow.didEndSheetNotification if the poll ever shows in a profile.
+        let end = ContinuousClock.now.advanced(by: limit)
+        while anchor.attachedSheet != nil, ContinuousClock.now < end, !Task.isCancelled {
+            try? await Task.sleep(for: .milliseconds(50))
+        }
+        return anchor.attachedSheet == nil
+    }
+
     /// Runs `alert` as a sheet that ends at the deadline or when the awaiting task is cancelled. Cancellation ends only this alert's
     /// own sheet; an already-cancelled task never shows one.
     static func present(_ alert: NSAlert, in anchor: ASPresentationAnchor, until deadline: ContinuousClock.Instant?) async -> Presented {

@@ -17,7 +17,7 @@ enum AskSurfaceStatus: Equatable {
         case .warning:
             Theme.warning
         case .agent:
-            Theme.accent
+            Theme.assistant
         }
     }
 }
@@ -112,7 +112,7 @@ struct AskSurfaceMaterial: ViewModifier {
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                     .fill(wash)
             }
-            .glassEffect(.regular, in: .rect(cornerRadius: cornerRadius, style: .continuous))
+            .chromeGlass(in: .rect(cornerRadius: cornerRadius, style: .continuous))
     }
 }
 
@@ -168,6 +168,7 @@ struct AskRestingLine: View {
     let content: AskRestingContent
     let security: PageSecurity
     let engine: BrowserEngine?
+    @Environment(\.windowColorScheme) private var windowColorScheme
 
     var body: some View {
         HStack(spacing: 5) {
@@ -216,33 +217,78 @@ struct AskRestingLine: View {
                     .font(.system(size: placement.textSize))
                     .foregroundStyle(.tertiary)
 
-            case .address(let host):
+            case .address(let host, let scheme, let rest):
                 if let symbol = security.symbol {
                     Image(systemName: symbol)
                         .font(.system(size: 9.5, weight: .medium))
-                        .foregroundStyle(Theme.controlOverride ?? security.tint)
+                        .foregroundStyle(Theme.controlOverride(in: windowColorScheme) ?? security.tint)
                 }
                 if let engine {
                     Text(verbatim: engine == .webKit ? "WK" : "Cr")
                         .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
-                        .foregroundStyle(Theme.controlOverride ?? .secondary)
+                        .foregroundStyle(Theme.controlOverride(in: windowColorScheme) ?? .secondary)
                         .padding(.horizontal, 3)
                         .padding(.vertical, 1)
                         .background(.quaternary, in: .rect(cornerRadius: 3))
                         .fixedSize()
                 }
-                Text(verbatim: host)
-                    .font(.system(size: placement.textSize))
-                    .foregroundStyle(
-                        placement == .toolbar
-                            ? Theme.urlOverride.map { AnyShapeStyle($0) }
-                                ?? (security == .insecure ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
-                            : (security == .insecure ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
+                if scheme.isEmpty {
+                    Text(verbatim: host)
+                        .font(.system(size: placement.textSize))
+                        .foregroundStyle(hostStyle)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                } else {
+                    FullAddressLine(
+                        address: AddressText(scheme: scheme, host: host, rest: rest),
+                        fontSize: placement.textSize,
+                        hostStyle: urlInk.map { AnyShapeStyle($0) } ?? AnyShapeStyle(.primary),
+                        detailStyle: urlInk.map { AnyShapeStyle($0.opacity(0.6)) } ?? AnyShapeStyle(.tertiary)
                     )
-                    .lineLimit(1)
-                    .truncationMode(.tail)
+                }
             }
         }
+    }
+}
+
+extension AskRestingLine {
+    /// The theme's own address ink, which only the toolbar wears.
+    private var urlInk: Color? {
+        placement == .toolbar ? Theme.urlOverride : nil
+    }
+
+    private var hostStyle: AnyShapeStyle {
+        urlInk.map { AnyShapeStyle($0) } ?? (security == .insecure ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
+    }
+}
+
+/// The whole address on one line with the website name drawn strongest. When the line is short, the path and query give
+/// way first, so the host is never cut while there is room for it.
+struct FullAddressLine: View {
+    let address: AddressText
+    let fontSize: CGFloat
+    var hostStyle = AnyShapeStyle(.primary)
+    var detailStyle = AnyShapeStyle(.tertiary)
+    /// Tests read the host's laid-out width here.
+    var onHostWidth: ((CGFloat) -> Void)?
+
+    var body: some View {
+        HStack(spacing: 0) {
+            Group {
+                Text(verbatim: address.scheme)
+                    .foregroundStyle(detailStyle)
+                Text(verbatim: address.host)
+                    .foregroundStyle(hostStyle)
+                    .fontWeight(.medium)
+                    .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { onHostWidth?($0) }
+            }
+            .layoutPriority(1)
+            Text(verbatim: address.rest)
+                .foregroundStyle(detailStyle)
+                .truncationMode(.tail)
+        }
+        .font(.system(size: fontSize))
+        .lineLimit(1)
     }
 }
 
@@ -264,9 +310,7 @@ struct AskKeyHints: View {
         if typed.isEmpty {
             HStack(spacing: 4) {
                 Text("hold")
-                HStack(spacing: 3) {
-                    ForEach(ActivationSettings.talk.caps, id: \.self) { KeyCap($0) }
-                }
+                KeyCaps(caps: ActivationSettings.talk.caps)
                 Text("to speak")
             }
             .font(Theme.Font.caption)
@@ -295,7 +339,7 @@ private struct AskKeyHint: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: 3) {
-                ForEach(caps, id: \.self) { KeyCap($0) }
+                KeyCaps(caps: caps)
                 Text(verb)
                     .font(Theme.Font.caption)
                     .foregroundStyle(hovering ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tertiary))

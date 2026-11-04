@@ -5,16 +5,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/huggingface/AnyLanguageModel.git",
       "state" : {
-        "revision" : "c4a1acdbc8a2a9f967fada82208798b3a719a458",
-        "version" : "0.15.1"
-      }
-    },
-    {
-      "identity" : "cefswift",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/Rajaniraiyn/CefSwift.git",
-      "state" : {
-        "revision" : "59cad64e124b8efdb6b2ee811963097bb6e689e8"
+        "revision" : "80d50b0b22291d956d43f2c67ad1339c188084a3",
+        "version" : "1.0.0"
       }
     },
     {

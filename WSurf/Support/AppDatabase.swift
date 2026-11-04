@@ -51,6 +51,15 @@ struct AppDatabase: Sendable {
         return url
     }()
 
+    /// The name to give `UserDefaults(suiteName:)` and `removePersistentDomain(forName:)`. Under XCTest it is an absolute path in
+    /// the per-process test directory, which CFPreferences reads as the plist's location, so a test run adds nothing to the
+    /// user's ~/Library/Preferences (emptying a domain does not delete its plist, so tens of thousands of test files piled up
+    /// there). Otherwise it is `name` unchanged.
+    nonisolated static func defaultsSuite(_ name: String) -> String {
+        guard isRunningTests else { return name }
+        return testSupportDirectory.appendingPathComponent("Preferences", isDirectory: true).appendingPathComponent(name).path
+    }
+
     static var defaultURL: URL {
         supportDirectory.appendingPathComponent("WSurf.sqlite")
     }
@@ -69,8 +78,9 @@ struct AppDatabase: Sendable {
                 withIntermediateDirectories: true
             )
             let pool = try DatabasePool(path: url.path, configuration: Self.configuration)
+            let hadMigrations = try pool.read { try !Self.migrator.hasCompletedMigrations($0) }
             try Self.migrator.migrate(pool)
-            try pool.write { try Self.defineSchema(in: $0) }
+            try Self.defineSchemaIfItChanged(in: pool, migrated: hadMigrations)
             writer = pool
             isEphemeral = false
         } catch {
@@ -93,7 +103,6 @@ struct AppDatabase: Sendable {
         // swiftlint:disable:next force_try
         let queue = try! DatabaseQueue(configuration: configuration)
         try? migrator.migrate(queue)
-        try? queue.write { try defineSchema(in: $0) }
         return queue
     }
 
@@ -107,6 +116,25 @@ struct AppDatabase: Sendable {
     }
 
     // MARK: - Schema
+
+    /// A migration cannot see a change made behind the app's back: a table that went missing from a database whose migrations
+    /// are all recorded, a column that was dropped. Every open used to repair those, since every open defined the schema. SQLite
+    /// counts the changes of a schema (`schema_version`). The count as of the last definition is kept in `user_version`, which
+    /// nothing else here uses, and an open that finds another count defines the schema once more and keeps the new one. The
+    /// check is two pragma reads. `migrated`: a migration ran in this open, and it defined the schema.
+    private nonisolated static func defineSchemaIfItChanged(in pool: DatabasePool, migrated: Bool) throws {
+        let changed = try pool.read { db in
+            try Int.fetchOne(db, sql: "PRAGMA schema_version") != Int.fetchOne(db, sql: "PRAGMA user_version")
+        }
+        guard changed else { return }
+        try pool.write { db in
+            if !migrated {
+                try defineSchema(in: db)
+            }
+            let version = try Int.fetchOne(db, sql: "PRAGMA schema_version") ?? 0
+            try db.execute(sql: "PRAGMA user_version = \(version)")
+        }
+    }
 
     private static var migrator: DatabaseMigrator {
         var migrator = DatabaseMigrator()
@@ -137,7 +165,48 @@ struct AppDatabase: Sendable {
                 )
                 """)
         }
+        // The pins and Favorites of every window, open or closed, become the profile's, once and in one transaction.
+        migrator.registerMigration("v3-profile-pins") { db in
+            try defineSchema(in: db)
+            try ProfilePinMigration.run(in: db)
+        }
+        // The schema is defined by migrations, and not on every open (see `defineSchemaIfItChanged`). Until this one, every open
+        // ran `defineSchema`, and that is how a column added later (folder colors and symbols, trails, micro windows) reached a
+        // database whose migrations were all recorded. This migration runs it once more for such a database, then adds what
+        // clearing and pruning history lacked. A later change to `defineSchema` needs a migration after this one:
+        // `AppDatabaseMigrationTests.anUpgradedDatabaseHasTheSchemaOfANewOne` fails until it has one.
+        //
+        // Every statement is additive and idempotent. Foreign keys stay on (`.immediate`). The default `.deferred` check runs
+        // `PRAGMA foreign_key_check` over the whole database and would refuse to open one that holds a stray row, which every
+        // open until now accepted.
+        migrator.registerMigration("v4-indexes", foreignKeyChecks: .immediate) { db in
+            try defineSchema(in: db)
+            // `historyVisit.fromVisit` references its own table `ON DELETE SET NULL`. With no index, each deleted visit scanned the
+            // whole table for the visits that name it, so clearing or pruning a large history took quadratic time. The session
+            // and pin tables have the same cascades from their parents.
+            try db.create(index: "historyVisit_fromVisit", on: "historyVisit", columns: ["fromVisit"], options: .ifNotExists)
+            try db.create(index: "sessionItem_tabID", on: "sessionItem", columns: ["tabID"], options: .ifNotExists)
+            try db.create(index: "sessionItem_folderID", on: "sessionItem", columns: ["folderID"], options: .ifNotExists)
+            try db.create(index: "sessionItem_parentID", on: "sessionItem", columns: ["parentID"], options: .ifNotExists)
+            try db.create(index: "profilePin_parentID", on: "profilePin", columns: ["parentID"], options: .ifNotExists)
+            try narrowHistoryIndexTrigger(in: db)
+        }
         return migrator
+    }
+
+    /// GRDB's `synchronize(withTable:)` re-indexes a page on every update of its row, and a visit updates `visitCount` and
+    /// `lastVisit`, which the index does not hold. This is the same trigger behind a condition: the index is touched exactly
+    /// when `url` or `title` changes, so it never holds a row it should not. The name is kept on purpose. `defineSchema` creates
+    /// the trigger only when it is missing, and a build that still runs it on every open leaves this one alone.
+    private nonisolated static func narrowHistoryIndexTrigger(in db: Database) throws {
+        try db.execute(sql: """
+            DROP TRIGGER IF EXISTS "__historyPage_ft_au";
+            CREATE TRIGGER "__historyPage_ft_au" AFTER UPDATE OF "url", "title" ON "historyPage"
+            WHEN old."url" IS NOT new."url" OR old."title" IS NOT new."title" BEGIN
+                INSERT INTO "historyPage_ft"("historyPage_ft", "rowid", "url", "title") VALUES('delete', old."rowid", old."url", old."title");
+                INSERT INTO "historyPage_ft"("rowid", "url", "title") VALUES (new."rowid", new."url", new."title");
+            END;
+            """)
     }
 
     private nonisolated static func defineSessionFolders(in db: Database) throws {
@@ -153,6 +222,30 @@ struct AppDatabase: Sendable {
         if try !db.columns(in: "sessionFolder").contains(where: { $0.name == "isPinned" }) {
             try db.alter(table: "sessionFolder") { t in
                 t.add(column: "isPinned", .boolean).notNull().defaults(to: false)
+            }
+        }
+        // The size factor of the folder's own row. NULL (every row saved before sizes) is normal.
+        if try !db.columns(in: "sessionFolder").contains(where: { $0.name == "sizeFactor" }) {
+            try db.alter(table: "sessionFolder") { t in
+                t.add(column: "sizeFactor", .double)
+            }
+        }
+        // Whether the folder draws the icons inside it in its own color. NULL is off.
+        if try !db.columns(in: "sessionFolder").contains(where: { $0.name == "tintsIcons" }) {
+            try db.alter(table: "sessionFolder") { t in
+                t.add(column: "tintsIcons", .boolean)
+            }
+        }
+        // A color the person chose (`#RRGGBB`) and the SF Symbol they chose for the folder. NULL is the preset color and
+        // the plain folder icon, which is what every row saved before them is.
+        if try !db.columns(in: "sessionFolder").contains(where: { $0.name == "customColor" }) {
+            try db.alter(table: "sessionFolder") { t in
+                t.add(column: "customColor", .text)
+            }
+        }
+        if try !db.columns(in: "sessionFolder").contains(where: { $0.name == "symbol" }) {
+            try db.alter(table: "sessionFolder") { t in
+                t.add(column: "symbol", .text)
             }
         }
     }
@@ -221,6 +314,11 @@ struct AppDatabase: Sendable {
                 t.add(column: "diagnostics", .blob)
             }
         }
+        if !traceColumns.contains("openedTabIDs") {
+            try db.alter(table: "agentTrace") { t in
+                t.add(column: "openedTabIDs", .text)
+            }
+        }
         try db.create(table: "agentConversationMemory", options: .ifNotExists) { t in
             t.primaryKey("traceID", .blob).references("agentTrace", onDelete: .cascade)
             t.column("payload", .blob).notNull()
@@ -235,16 +333,7 @@ struct AppDatabase: Sendable {
             t.column("estimatedContextTokens", .integer).notNull()
         }
 
-        try db.create(table: "historyVisit", options: .ifNotExists) {  t in
-            t.autoIncrementedPrimaryKey("id")
-            t.column("url", .text)
-                .notNull()
-                .indexed()
-                .references("historyPage", onDelete: .cascade)
-            t.column("visitedAt", .double).notNull().indexed()
-            t.column("transition", .text).notNull()
-            t.column("fromVisit", .integer).references("historyVisit", onDelete: .setNull)
-        }
+        try defineHistoryVisits(in: db)
 
         try db.create(table: "sessionSplitTree", options: .ifNotExists) { t in
             t.primaryKey("id", .blob)
@@ -263,6 +352,98 @@ struct AppDatabase: Sendable {
         }
 
         try defineWindowSessions(in: db)
+        try defineProfilePins(in: db)
+        try defineTabArchive(in: db)
+        try defineAssistantFacts(in: db)
+    }
+
+    private nonisolated static func defineHistoryVisits(in db: Database) throws {
+        try db.create(table: "historyVisit", options: .ifNotExists) {  t in
+            t.autoIncrementedPrimaryKey("id")
+            t.column("url", .text)
+                .notNull()
+                .indexed()
+                .references("historyPage", onDelete: .cascade)
+            t.column("visitedAt", .double).notNull().indexed()
+            t.column("transition", .text).notNull()
+            t.column("fromVisit", .integer).references("historyVisit", onDelete: .setNull)
+        }
+        // The first visit of a trail names it. NULL (every visit saved before trails) is normal: such a visit has no trail.
+        if try !db.columns(in: "historyVisit").contains(where: { $0.name == "trail" }) {
+            try db.alter(table: "historyVisit") { t in
+                t.add(column: "trail", .integer)
+            }
+        }
+        try db.create(index: "historyVisit_trail", on: "historyVisit", columns: ["trail"], options: .ifNotExists)
+    }
+
+    /// Notes the assistant keeps about the person, one per subject. History-class data in the profile's database; not
+    /// `agentConversationMemory`, which holds one conversation's payload.
+    private nonisolated static func defineAssistantFacts(in db: Database) throws {
+        try db.create(table: "assistantFact", options: .ifNotExists) { t in
+            t.primaryKey("id", .blob)
+            t.column("subject", .text).notNull().unique()
+            t.column("value", .text).notNull()
+            t.column("source", .text).notNull()
+            t.column("savedAt", .datetime).notNull().indexed()
+        }
+    }
+
+    /// Tabs closed for sitting unused. They are history-class data and live in the profile's database next to the
+    /// history.
+    private nonisolated static func defineTabArchive(in db: Database) throws {
+        try db.create(table: "archivedTab", options: .ifNotExists) { t in
+            t.primaryKey("id", .blob)
+            t.column("title", .text).notNull()
+            t.column("url", .text).notNull().indexed()
+            t.column("archivedAt", .datetime).notNull().indexed()
+        }
+    }
+
+    /// Pins, pinned folders and Favorites belong to the profile, not to a window. A window's tab and folder rows
+    /// keep a `pinID` for the profile row they stand for.
+    private nonisolated static func defineProfilePins(in db: Database) throws {
+        try db.create(table: "profilePin", options: .ifNotExists) { t in
+            t.primaryKey("id", .blob)
+            t.column("parentID", .blob).references("profilePin", onDelete: .cascade)
+            t.column("orderKey", .text).notNull()
+            t.column("kind", .text).notNull()
+            t.column("url", .text).notNull().defaults(to: "")
+            t.column("title", .text).notNull().defaults(to: "")
+            t.column("customTitle", .text)
+            t.column("pinnedURL", .text)
+            t.column("pinnedTitle", .text)
+            t.column("isFavorite", .boolean).notNull().defaults(to: false)
+            t.column("color", .text)
+            t.column("isExpanded", .boolean).notNull().defaults(to: true)
+            t.column("isPinned", .boolean).notNull().defaults(to: false)
+        }
+        for table in ["sessionTab", "sessionFolder"] {
+            guard try !db.columns(in: table).contains(where: { $0.name == "pinID" }) else { continue }
+            try db.alter(table: table) { t in
+                t.add(column: "pinID", .blob)
+            }
+        }
+        if try !db.columns(in: "profilePin").contains(where: { $0.name == "sizeFactor" }) {
+            try db.alter(table: "profilePin") { t in
+                t.add(column: "sizeFactor", .double)
+            }
+        }
+        if try !db.columns(in: "profilePin").contains(where: { $0.name == "tintsIcons" }) {
+            try db.alter(table: "profilePin") { t in
+                t.add(column: "tintsIcons", .boolean)
+            }
+        }
+        if try !db.columns(in: "profilePin").contains(where: { $0.name == "customColor" }) {
+            try db.alter(table: "profilePin") { t in
+                t.add(column: "customColor", .text)
+            }
+        }
+        if try !db.columns(in: "profilePin").contains(where: { $0.name == "symbol" }) {
+            try db.alter(table: "profilePin") { t in
+                t.add(column: "symbol", .text)
+            }
+        }
     }
 
     private nonisolated static func defineSessionSchema(in db: Database) throws {
@@ -278,6 +459,7 @@ struct AppDatabase: Sendable {
             t.column("internalPage", .text)
             t.column("isActive", .boolean).notNull().defaults(to: false)
             t.column("isFavorite", .boolean).notNull().defaults(to: false)
+            t.column("lastActiveAt", .datetime)
         }
 
         if try !db.columns(in: "sessionTab").contains(where: { $0.name == "customTitle" }) {
@@ -289,6 +471,38 @@ struct AppDatabase: Sendable {
         if try !db.columns(in: "sessionTab").contains(where: { $0.name == "isFavorite" }) {
             try db.alter(table: "sessionTab") { t in
                 t.add(column: "isFavorite", .boolean).notNull().defaults(to: false)
+            }
+        }
+
+        // A NULL means no use was recorded: the tab reads as used when the window restores.
+        if try !db.columns(in: "sessionTab").contains(where: { $0.name == "lastActiveAt" }) {
+            try db.alter(table: "sessionTab") { t in
+                t.add(column: "lastActiveAt", .datetime)
+            }
+        }
+
+        // The space a window shows a row in. NULL (rows saved before spaces, pins) joins the space on screen.
+        for table in ["sessionTab", "sessionFolder"] {
+            guard try !db.columns(in: table).contains(where: { $0.name == "spaceID" }) else { continue }
+            try db.alter(table: table) { t in
+                t.add(column: "spaceID", .blob)
+            }
+        }
+
+        // The last visit a tab recorded and the trail it belongs to, so a restored tab goes on with its trail. No foreign
+        // key: a saved id may name a visit Clear History removed, and `HistoryStore.record` treats such an id as none.
+        let sessionColumns = try db.columns(in: "sessionTab").map(\.name)
+        for column in ["lastVisit", "visitTrail"] where !sessionColumns.contains(column) {
+            try db.alter(table: "sessionTab") { t in
+                t.add(column: column, .integer)
+            }
+        }
+
+        // The tab of a micro window a row stands for (`BrowserTab.microTabID`). NULL, every row saved before micro windows
+        // and every real tab, is a tab. Holds an id only, never an address; older builds ignore it and restore an ordinary row.
+        if try !db.columns(in: "sessionTab").contains(where: { $0.name == "microTabID" }) {
+            try db.alter(table: "sessionTab") { t in
+                t.add(column: "microTabID", .blob)
             }
         }
 
@@ -307,6 +521,12 @@ struct AppDatabase: Sendable {
             t.column("lastActiveAt", .datetime).notNull()
             t.column("closedAt", .datetime)
             t.column("revision", .integer).notNull().defaults(to: 0)
+        }
+        // The window's kind ("micro", or see `WindowKind`). NULL, every window saved before micro windows, is a standard window.
+        if try !db.columns(in: "sessionWindow").contains(where: { $0.name == "kind" }) {
+            try db.alter(table: "sessionWindow") { t in
+                t.add(column: "kind", .text)
+            }
         }
         try db.create(table: "sessionWindowRetirement", options: .ifNotExists) { t in
             t.primaryKey("id", .blob)

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 
 import SwiftUI
+import WSurfVault
 
 extension CredentialSettings {
     /// The one button a locked page offers. Create appears only for a definite miss (`vaultExists == false`); a store that
@@ -32,7 +33,7 @@ extension CredentialSettings {
         guard model.vaults.count > 1, let vault = model.vaults.first(where: { $0.vaultID == model.selectedVaultID }) else {
             return String(localized: "Unlock Credentials")
         }
-        return String(localized: "Unlock “\(vault.displayName)”")
+        return String(localized: "Unlock “\(vault.numberedName)”")
     }
 
     /// Replaces the whole page. The store refused to open, so nothing here creates, resets or acknowledges anything: the only
@@ -119,6 +120,8 @@ extension StoreFailCause {
             "An upgrade of the older vault didn’t finish."
         case .witnessMismatch:
             "The credential store doesn’t match its own records, so it may have been replaced or rolled back."
+        case .newerVersion:
+            "These credentials were saved by a newer version of WSurf. Update WSurf to open them. Nothing was changed."
         }
     }
 }

@@ -5,6 +5,7 @@
 
 import AppKit
 import SwiftUI
+import WebKit
 
 struct PullState: Equatable {
     var offset: CGFloat = 0
@@ -29,6 +30,7 @@ nonisolated struct PullStartProbe: Equatable, Codable {
 
     var scrollY: Double
     var ancestors: [Ancestor]
+    var wheelClaimed = false
 
     static func decode(_ answer: String) -> PullStartProbe? {
         try? JSONDecoder().decode(PullStartProbe.self, from: Data(answer.utf8))
@@ -58,6 +60,7 @@ final class PullToRefreshMonitor {
 
     nonisolated static func canBeginPull(_ probe: PullStartProbe) -> Bool {
         probe.scrollY <= topSlack
+            && !probe.wheelClaimed
             && !probe.ancestors.contains(where: \.consumesVerticalScroll)
     }
 
@@ -66,8 +69,62 @@ final class PullToRefreshMonitor {
         return hit.isDescendant(of: page)
     }
 
+    /// Isolated world for the wheel watch, so page scripts cannot see or clear it.
+    static let world = WKContentWorld.world(name: "WSurfPull")
+
+    /// How long after the page last cancelled a wheel event it still counts as owning the wheel.
+    static let wheelClaimWindow: Double = 500
+
+    /// Remembers that the page cancelled a wheel event: a map or canvas that zooms on the wheel
+    /// never moves the document, which reads as a pull. Each document installs it once, so the
+    /// probes can include it to cover a document that loaded before the user script existed.
+    /// This listener runs before the page's own, so a cancel is not visible yet. The event is
+    /// kept, and its `defaultPrevented` is read at the next event or probe. `at` is when the
+    /// kept event arrived and moves to `claimedAt` if it was cancelled.
+    static let wheelWatchScript = """
+        (() => {
+          if (window.__wsurfWheel) return;
+          const watch = { last: null, at: -Infinity, claimedAt: -Infinity };
+          window.__wsurfWheel = watch;
+          window.addEventListener('wheel', event => {
+            if (watch.last && watch.last.defaultPrevented) watch.claimedAt = watch.at;
+            watch.last = event;
+            watch.at = performance.now();
+          }, { capture: true, passive: true });
+        })();
+        """
+
+    /// Runs the watch at document start in every engine through `BrowserPage`.
+    static func install(in page: BrowserPage) {
+        page.installScript(
+            wheelWatchScript, in: world, injectionTime: .atDocumentStart, forMainFrameOnly: true
+        )
+    }
+
+    /// True while the page's last wheel event, or the one before it, was cancelled less than
+    /// `wheelClaimWindow` ago. A probe also drops an event older than the window, so the watch
+    /// holds at most one event, and only until the next wheel event, a probe or the unload.
+    private static let wheelClaimedExpression = """
+        (() => {
+          const watch = window.__wsurfWheel;
+          if (!watch) return false;
+          const now = performance.now();
+          if (now - watch.at >= \(wheelClaimWindow)) {
+            watch.last = null;
+            return false;
+          }
+          return now - watch.claimedAt < \(wheelClaimWindow) || watch.last.defaultPrevented;
+        })()
+        """
+
+    static let finishProbeScript = """
+        \(wheelWatchScript)
+        JSON.stringify({ scrollY: window.scrollY, ancestors: [], wheelClaimed: \(wheelClaimedExpression) })
+        """
+
     static func startProbeScript(x: CGFloat, y: CGFloat) -> String {
         """
+        \(wheelWatchScript)
         (() => {
           const ancestors = [];
           let node = document.elementFromPoint(\(x), \(y));
@@ -81,7 +138,7 @@ final class PullToRefreshMonitor {
             });
             node = node.parentElement;
           }
-          return JSON.stringify({ scrollY: window.scrollY, ancestors });
+          return JSON.stringify({ scrollY: window.scrollY, ancestors, wheelClaimed: \(wheelClaimedExpression) });
         })()
         """
     }
@@ -109,6 +166,11 @@ final class PullToRefreshMonitor {
             self.monitor = nil
         }
         reset(animated: false)
+        // The closures capture their view, which owns this monitor through its State: left set, they keep the window's model and
+        // coordinator alive after it closes. `onAppear` sets them again before `start()`.
+        onChange = nil
+        pageProvider = nil
+        isCovered = nil
     }
 
     private func handle(_ event: NSEvent) {
@@ -170,7 +232,7 @@ final class PullToRefreshMonitor {
         topCheck = Task { [weak self, weak page] in
             guard let page else { return }
             let answer = (try? await page.evaluateJavaScript(
-                Self.startProbeScript(x: x, y: y)
+                Self.startProbeScript(x: x, y: y), in: nil, contentWorld: Self.world
             )) as? String
             guard let self, !Task.isCancelled else { return }
             let probe = answer.flatMap(PullStartProbe.decode)
@@ -225,8 +287,13 @@ final class PullToRefreshMonitor {
 
         reloadCheck = Task { [weak page] in
             guard let page else { return }
-            let y = (try? await page.evaluateJavaScript("window.scrollY")) as? Double ?? 1
-            guard !Task.isCancelled, y <= Self.topSlack else { return }
+            let answer = (try? await page.evaluateJavaScript(
+                Self.finishProbeScript, in: nil, contentWorld: Self.world
+            )) as? String
+            guard !Task.isCancelled,
+                  let probe = answer.flatMap(PullStartProbe.decode),
+                  Self.canBeginPull(probe)
+            else { return }
             page.reload()
         }
     }

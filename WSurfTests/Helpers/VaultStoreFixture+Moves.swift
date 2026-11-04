@@ -4,6 +4,7 @@
 import Foundation
 
 @testable import WSurf
+@testable import WSurfVault
 
 /// Extra `.revision` rows `VaultStoreFixture.make(extraHistory:)` seeds beside the default password rows (`historyRows`): `count`
 /// rows of `subject` owned by `accounts[ownerIndex]`, versions `1...count`, journalled in the source journal like the others.

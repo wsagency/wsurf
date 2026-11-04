@@ -3,13 +3,14 @@
 
 import AppKit
 import AuthenticationServices
+import WSurfVault
 
 extension VaultRoute {
     /// The manager a browser action may use: the routed one, or the vault the user picks in `VaultChoicePrompt`. Selection only:
     /// nothing is unlocked here, so a caller that unlocks does so after revalidating its own page, frame, offer and lifecycle (the
     /// prompt suspends, and a lock or sleep while it was open must not be followed by an unlock the user never asked for then).
     /// `nil` when there is no usable vault or the user canceled.
-    func resolve(profile: Profile, in anchor: ASPresentationAnchor) async -> CredentialManager? {
+    func resolve(profile: Profile, in anchor: @autoclosure () -> ASPresentationAnchor) async -> CredentialManager? {
         let candidates: [VaultListing]
         let reason: VaultChoiceReason
         switch self {
@@ -22,7 +23,9 @@ extension VaultRoute {
         case .needsChoice(let listings, let why):
             (candidates, reason) = (listings, why)
         }
-        guard let vaultID = await VaultChoicePrompt.present(candidates, reason: reason, profileID: profile.id, in: anchor) else { return nil }
+        guard let vaultID = await VaultChoicePrompt.present(candidates, reason: reason, profileID: profile.id, in: anchor()) else {
+            return nil
+        }
         return try? CredentialManager.forVault(profile, vaultID: vaultID)
     }
 }

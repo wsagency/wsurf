@@ -24,6 +24,8 @@ struct ChromiumDownloadRequest {
     let isPrivate: Bool
     let window: NSWindow?
     let controls: ChromiumDownloadControls
+    /// Open the file in its app once it is saved (Open in Preview on a PDF).
+    var opensWhenFinished = false
 }
 
 @Observable
@@ -77,7 +79,11 @@ final class DownloadManager: NSObject {
     }
 
     private(set) var items: [Item] = [] {
-        didSet { scheduleWrite() }
+        didSet {
+            if !isPublishingBytes {
+                scheduleWrite()
+            }
+        }
     }
 
     @ObservationIgnored var onFinished: ((String) -> Void)?
@@ -93,6 +99,9 @@ final class DownloadManager: NSObject {
     @ObservationIgnored private var resumeData: [UUID: Data] = [:]
     @ObservationIgnored private var resuming: Set<UUID> = []
     @ObservationIgnored private var explicitSaves: Set<UUID> = []
+    @ObservationIgnored private var opensWhenFinished: Set<UUID> = []
+    /// What opening a saved file asks of the system. A test stands in for `NSWorkspace`.
+    @ObservationIgnored var workspace = DownloadWorkspace.system
     @ObservationIgnored private var writingDestinations: Set<URL> = []
 
     @ObservationIgnored var webViewProvider: (() -> WKWebView?)?
@@ -108,6 +117,20 @@ final class DownloadManager: NSObject {
     @ObservationIgnored private let file: URL?
     @ObservationIgnored private let settings: BrowserSettings
     @ObservationIgnored private var writeTask: Task<Void, Never>?
+
+    /// Times the wait before the list is written and the windows of `noteProgress`.
+    @ObservationIgnored var clock: any Clock<Duration> = ContinuousClock()
+    /// How often one download's byte count may reach `items`. `.zero` lets every update through.
+    @ObservationIgnored var progressInterval: Duration = .milliseconds(100)
+    @ObservationIgnored private var progressWindows: [UUID: ProgressWindow] = [:]
+    @ObservationIgnored private var isPublishingBytes = false
+
+    /// The time after a download's byte count reached `items`, in which later counts only wait: the newest is kept in
+    /// `pending` and published when `timer` closes the window.
+    private struct ProgressWindow {
+        var pending: (received: Int64, expected: Int64)?
+        let timer: Task<Void, Never>
+    }
 
     init(
         destinationFolder: URL? = nil,
@@ -150,8 +173,8 @@ final class DownloadManager: NSObject {
     private func scheduleWrite() {
         guard file != nil else { return }
         writeTask?.cancel()
-        writeTask = Task { [weak self] in
-            try? await Task.sleep(for: .milliseconds(400))
+        writeTask = Task { [weak self, clock] in
+            try? await clock.sleep(for: .milliseconds(400))
             guard !Task.isCancelled else { return }
             self?.write()
         }
@@ -273,6 +296,9 @@ final class DownloadManager: NSObject {
             privately: request.isPrivate
         )
         chromiumIDs[request.download.id] = id
+        if request.opensWhenFinished {
+            opensWhenFinished.insert(id)
+        }
         chromiumControls[request.download.id] = request.controls
         if request.controls.isLive() {
             retiredChromiumPages.remove(request.controls.pageID)
@@ -333,6 +359,9 @@ final class DownloadManager: NSObject {
             }
             if let destination {
                 Self.quarantine(destination, from: origins[id])
+                if opensWhenFinished.contains(id) {
+                    openInPreview(destination, mimeType: download.mimeType)
+                }
             }
             finish(id)
             onFinished?(filename)
@@ -510,11 +539,31 @@ final class DownloadManager: NSObject {
         }
     }
 
+    /// Progress arrives with every chunk, and each change of `items` redraws every view that reads the list. The first
+    /// count is published at once, the newest of the ones that follow when `progressInterval` has passed, and any other
+    /// change to the row publishes the newest at once (see `update`). A byte count alone does not schedule a write.
     func noteProgress(received: Int64, expected: Int64, for id: UUID) {
+        if progressWindows[id] != nil {
+            progressWindows[id]?.pending = (received, expected)
+            return
+        }
+        isPublishingBytes = true
+        defer { isPublishingBytes = false }
         update(id) {
             $0.bytesReceived = received
             $0.bytesExpected = max(0, expected)
         }
+        guard progressInterval > .zero else { return }
+        progressWindows[id] = ProgressWindow(timer: Task { [weak self, clock, progressInterval] in
+            try? await clock.sleep(for: progressInterval)
+            guard !Task.isCancelled else { return }
+            self?.closeProgressWindow(id)
+        })
+    }
+
+    private func closeProgressWindow(_ id: UUID) {
+        guard let pending = progressWindows.removeValue(forKey: id)?.pending else { return }
+        noteProgress(received: pending.received, expected: pending.expected, for: id)
     }
 
     func holdsResumeState(for id: UUID) -> Bool {
@@ -582,7 +631,17 @@ final class DownloadManager: NSObject {
 
     private func update(_ id: UUID, _ change: (inout Item) -> Void) {
         guard let index = items.firstIndex(where: { $0.id == id }) else { return }
-        change(&items[index])
+        let pending = progressWindows[id]?.pending
+        progressWindows[id]?.pending = nil
+        // One change of `items`: a state change shows the newest byte count with it, not after it.
+        func apply(to item: inout Item) {
+            if let pending {
+                item.bytesReceived = pending.received
+                item.bytesExpected = max(0, pending.expected)
+            }
+            change(&item)
+        }
+        apply(to: &items[index])
     }
 
     private func finish(_ id: UUID, keepingResumeState: Bool = false) {
@@ -593,7 +652,9 @@ final class DownloadManager: NSObject {
         nativeIDs.forEach { chromiumControls.removeValue(forKey: $0) }
         chromiumIDs = chromiumIDs.filter { $0.value != id }
         chromiumPaused.remove(id)
+        opensWhenFinished.remove(id)
         observations.removeValue(forKey: id)?.invalidate()
+        progressWindows.removeValue(forKey: id)?.timer.cancel()
         guard !keepingResumeState else { return }
         origins.removeValue(forKey: id)
         resumeData.removeValue(forKey: id)

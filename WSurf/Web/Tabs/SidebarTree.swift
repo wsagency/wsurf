@@ -19,6 +19,13 @@ nonisolated struct SidebarTree: Equatable, Sendable {
         return children[parent] ?? []
     }
 
+    /// The tree with only the root items `isKept` accepts. What a folder holds is left as it is.
+    func keepingRoot(where isKept: (SidebarItem) -> Bool) -> SidebarTree {
+        var next = self
+        next.root = root.filter(isKept)
+        return next
+    }
+
     private mutating func setRows(_ rows: [SidebarItem], in parent: UUID?) {
         guard let parent else {
             root = rows

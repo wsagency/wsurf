@@ -12,18 +12,74 @@ extension BrowserModel {
 
     private static let warningKeepsRecent = 3
 
+    /// `idleSince` limits the sweep to tabs that left the foreground at or before that instant.
     @discardableResult
-    func discardBackgroundTabs(keepingRecent keep: Int = 0) -> Int {
+    func discardBackgroundTabs(keepingRecent keep: Int = 0, idleSince cutoff: ContinuousClock.Instant? = nil) -> Int {
         let spared = Set([activeTabID].compactMap { $0 } + recentlyActive.prefix(keep))
         var discarded = 0
         for tab in tabs where !spared.contains(tab.id)
             && !tab.isFavorite
+            && cutoff.map({ tab.lastForegroundAt <= $0 }) ?? true
             && tab.canDiscardWebContent
             && protectionReason(for: tab) == nil {
-            tab.discardWebContent()
+            discard(tab)
             discarded += 1
         }
         return discarded
+    }
+
+    /// Drops `tab`'s page. A pinned tab that has wandered from its pinned page comes back on that page the next time it
+    /// is shown, without the history it made away from it.
+    private func discard(_ tab: BrowserTab) {
+        tab.discardWebContent()
+        guard tab.isDeferred, tab.isPinnedForProfile, tab.isAwayFromPin, let base = tab.pinnedURL else { return }
+        let host = base.host()
+        if host?.lowercased() != URL(string: tab.urlString)?.host()?.lowercased() {
+            tab.favicon = nil
+        }
+        tab.deferRestore(state: nil, url: base)
+        tab.invalidateSessionState()
+        tab.urlString = base.absoluteString
+        if !tab.pinnedTitle.isEmpty {
+            tab.pageTitle = tab.pinnedTitle
+        }
+        if let host {
+            dressRow(tab, fromHost: host)
+        }
+        scheduleSave()
+    }
+
+    /// Unloads every background tab now, with the protections memory pressure uses, whether or not Sleep inactive tabs is on.
+    @discardableResult
+    func freeMemory() -> Int {
+        context.webViewPool.discardIdleForMemoryPressure()
+        let discarded = discardBackgroundTabs()
+        Pipeline.log.notice("free memory: unloaded \(discarded, privacy: .public) background tabs")
+        return discarded
+    }
+
+    /// Unloads background tabs idle for `limit`, with the protections memory pressure uses. A tab on screen when this
+    /// runs restarts its clock, so a split pane that was in front all along is not idle the moment the split closes.
+    @discardableResult
+    func sleepIdleTabs(after limit: Duration, now: ContinuousClock.Instant = .now) -> Int {
+        stampForeground(at: now)
+        let discarded = discardBackgroundTabs(idleSince: now - limit)
+        guard discarded > 0 else { return 0 }
+        Pipeline.log.notice("idle sweep: unloaded \(discarded, privacy: .public) background tabs")
+        return discarded
+    }
+
+    /// The active tab and the other panes of its split, which are all on screen.
+    func stampForeground(at now: ContinuousClock.Instant) {
+        stampPanes(of: activeTabID, in: splits, at: now)
+    }
+
+    /// Marks the tab `id` and the other panes of its split in `splits` as leaving, or being in, the foreground at `now`.
+    func stampPanes(of id: UUID?, in splits: TabSplits, at now: ContinuousClock.Instant) {
+        guard let id else { return }
+        for pane in splits.split(containing: id)?.tabs ?? [id] {
+            tabsByID[pane]?.lastForegroundAt = now
+        }
     }
 
     @discardableResult
@@ -54,7 +110,7 @@ extension BrowserModel {
                 activeTabID = nil
             }
         }
-        tab.discardWebContent()
+        discard(tab)
         scheduleSave()
         return !tab.isMaterialised
     }
@@ -109,9 +165,14 @@ extension BrowserModel {
         guard let scheme = URL(string: canonical)?.scheme?.lowercased(),
               scheme == "http" || scheme == "https"
         else { return false }
+        guard !SitePermissions.webKitOnlyOrigins.contains(canonical) else {
+            // Only WebKit is offered there; choosing it clears a Chromium record kept from before.
+            sitePermissions.setEngine(.webKit, for: canonical)
+            return engine == .webKit
+        }
         guard sitePermissions.engine(for: canonical) != engine else { return true }
 
-        let affected = tabs.filter { siteOrigin(for: $0) == canonical && $0.isMaterialised }
+        let affected = openTabs(of: canonical).filter(\.isMaterialised)
         let protected = affected.contains {
             $0.intrinsicProtectionReason != nil || downloads.hasActiveDownload(for: $0.id)
         }
@@ -124,18 +185,75 @@ extension BrowserModel {
         }
         guard sitePermissions === permissions else { return false }
 
+        // A default chosen for the website is the user's word for every open tab of it: pins no longer hold.
+        for tab in openTabs(of: canonical) {
+            tab.pinnedEngine = nil
+        }
         sitePermissions.setEngine(engine, for: canonical)
         await applyStoredEngine(to: canonical)
         return true
     }
 
+    /// The engine change a tab's own menu makes: only `tab` switches. The website's setting changes for tabs opened from
+    /// now on, and every other open tab of it keeps the engine it has (`BrowserTab.pinnedEngine`). A comparison tab
+    /// (`engineOverride`) changes only itself and leaves the setting alone.
+    func setEngine(_ engine: BrowserEngine, for tab: BrowserTab) async -> Bool {
+        let origin = siteOrigin(for: tab)
+        guard !origin.isEmpty else { return false }
+        guard !SitePermissions.webKitOnlyOrigins.contains(origin) else { return await setEngine(engine, for: origin) }
+        guard self.engine(for: tab) != engine else { return true }
+
+        let permissions = sitePermissions
+        if tab.isMaterialised,
+           tab.intrinsicProtectionReason != nil || downloads.hasActiveDownload(for: tab.id) {
+            guard await ConfirmAlert.destructive(
+                "Switch rendering engine?",
+                detail: "This reloads the website and may end active work, media, or downloads.",
+                verb: "Switch Engine"
+            ) else { return false }
+        }
+        guard sitePermissions === permissions, !tab.isClosed else { return false }
+
+        if tab.engineOverride != nil {
+            tab.engineOverride = engine
+        } else {
+            // Pin the others before the setting changes: its change moves every unpinned tab of the website.
+            for other in openTabs(of: origin) where other !== tab && other.engineOverride == nil
+                && other.pinnedEngine?.origin != origin {
+                other.pinnedEngine = (origin, other.preferredEngine(for: URL(string: other.urlString)))
+            }
+            tab.pinnedEngine = nil
+            sitePermissions.setEngine(engine, for: origin)
+        }
+        if tab.isMaterialised {
+            _ = await tab.switchEngine(to: engine)
+        }
+        return true
+    }
+
+    /// The tabs of `origin` in this window and the profile's other windows.
+    private func openTabs(of origin: String) -> [BrowserTab] {
+        let own = tabs.filter { siteOrigin(for: $0) == origin }
+        return own + context.tabs(of: origin).filter { other in !own.contains { $0 === other } }
+    }
+
+    /// The engine `tab` is set to run: its own (comparison or pinned), else the website's.
     func engine(for tab: BrowserTab) -> BrowserEngine {
-        sitePermissions.engine(for: siteOrigin(for: tab))
+        let origin = siteOrigin(for: tab)
+        if let engineOverride = tab.engineOverride {
+            return engineOverride
+        }
+        if let pinned = tab.pinnedEngine, pinned.origin == origin {
+            return pinned.engine
+        }
+        return sitePermissions.engine(for: origin)
     }
 
     func applyStoredEngine(to origin: String) async {
         let engine = sitePermissions.engine(for: origin)
-        for tab in tabs where siteOrigin(for: tab) == origin && tab.isMaterialised {
+        // A tab opened to compare engines, or pinned by another tab's switch, keeps its engine until it is closed.
+        for tab in tabs where siteOrigin(for: tab) == origin && tab.isMaterialised && tab.engineOverride == nil
+            && tab.pinnedEngine?.origin != origin {
             guard tab.page.engine != engine else { continue }
             _ = await tab.switchEngine(to: engine)
         }
@@ -176,7 +294,6 @@ extension BrowserModel {
         let settings = context.settings
         for tab in tabs where tab.isMaterialised {
             settings.apply(to: tab.page)
-            tab.refreshPopupPolicy()
         }
         context.webViewPool.discardIdle()
     }
@@ -202,7 +319,6 @@ extension BrowserModel {
         guard !origin.isEmpty else { return }
         let fallback: PopupPolicy = context.settings.blocksPopups ? .blockAndNotify : .allow
         sitePermissions.setPopups(policy == fallback ? nil : policy, for: origin)
-        tab.refreshPopupPolicy()
     }
 
     // MARK: - The browser's own pages
@@ -237,7 +353,8 @@ extension BrowserModel {
         }
 
         let tab: BrowserTab
-        if let active = activeTab, SystemPages.showsStartFace(active) {
+        // A micro window never holds an internal page: the page opens as a tab, which the window hands to the main window.
+        if let active = activeTab, windowKind == .standard, SystemPages.showsStartFace(active) {
             tab = active
             activeTabID = tab.id
             tab.load(page.url)

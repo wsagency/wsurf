@@ -237,8 +237,11 @@ struct MediaScriptTests {
         #expect(selected["p"] == 1)
         #expect(selected["t"] == 21)
 
+        // `postMessage` delivers the seek as a task of its own, so the new time is read once the page has handled it.
         _ = try await webView.evaluateJavaScript("window.postMessage('wsurf-seek:1', '*'); true")
-        #expect((try? await webView.evaluateJavaScript("document.querySelectorAll('video')[1].currentTime")) as? Int == 22)
+        #expect(await waitUntil {
+            (try? await webView.evaluateJavaScript("document.querySelectorAll('video')[1].currentTime")) as? Int == 22
+        }, "the seek never reached the playing video")
         #expect((try? await webView.evaluateJavaScript("document.querySelectorAll('video')[0].currentTime")) as? Int == 5)
     }
 
@@ -545,5 +548,274 @@ struct MediaScriptTests {
 
         let unmuted = await state(webView, collector, after: post("wsurf-mute:0"), resending: false)
         #expect(unmuted["m"] == 0)
+    }
+
+    // MARK: - Muting the page as a whole
+
+    private func muted(_ webView: WKWebView, _ selector: String) async -> Bool? {
+        (try? await webView.evaluateJavaScript("document.querySelector('\(selector)').muted")) as? Bool
+    }
+
+    private func bound(_ webView: WKWebView, _ selector: String) async -> Bool {
+        await waitUntil {
+            (try? await webView.evaluateJavaScript("document.querySelector('\(selector)').__wsurfBound === true")) as? Bool == true
+        }
+    }
+
+    /// The app mutes a page before the page has a player: the message is kept, and the player it makes later is born muted.
+    @Test func aPageWithNothingToPlayYetStillTakesTheMute() async throws {
+        let (webView, _) = await player(hasVideo: false)
+        _ = try await webView.evaluateJavaScript("\(post("wsurf-mute:1")); true")
+        try await Task.sleep(for: .milliseconds(150))
+
+        _ = try await webView.evaluateJavaScript("document.body.append(document.createElement('audio')); true")
+
+        #expect(await bound(webView, "audio"))
+        #expect(await muted(webView, "audio") == true)
+
+        _ = try await webView.evaluateJavaScript("\(post("wsurf-mute:0")); true")
+        #expect(await waitUntil { await muted(webView, "audio") == false })
+    }
+
+    /// Unmuting gives back what the app muted and nothing else: a loop the page muted itself stays muted.
+    @Test func unmutingGivesBackOnlyWhatTheAppMuted() async throws {
+        let (webView, _) = await player(hasVideo: false)
+        _ = try await webView.evaluateJavaScript("""
+        const own = document.createElement('audio'); own.id = 'own';
+        const quiet = document.createElement('audio'); quiet.id = 'quiet'; quiet.muted = true;
+        document.body.append(own, quiet); true
+        """)
+        #expect(await bound(webView, "#own"))
+        #expect(await bound(webView, "#quiet"))
+
+        _ = try await webView.evaluateJavaScript("\(post("wsurf-mute:1")); true")
+        #expect(await waitUntil { await muted(webView, "#own") == true })
+        #expect(await muted(webView, "#quiet") == true)
+
+        _ = try await webView.evaluateJavaScript("\(post("wsurf-mute:0")); true")
+        #expect(await waitUntil { await muted(webView, "#own") == false }, "what the app muted is heard again")
+        #expect(await muted(webView, "#quiet") == true, "what the page muted is not the app's to unmute")
+    }
+
+    /// A player the page starts while muted is silenced by its own play event, not at the next scan, so no first sound gets out.
+    @Test func aPlayerStartedWhileMutedIsSilencedByItsPlayEvent() async throws {
+        let (webView, _) = await player(hasVideo: false)
+        _ = try await webView.evaluateJavaScript("\(post("wsurf-mute:1")); true")
+        try await Task.sleep(for: .milliseconds(150))
+
+        let silenced = try await webView.evaluateJavaScript("""
+        const song = document.createElement('audio'); document.body.append(song);
+        song.dispatchEvent(new Event('play'));
+        song.muted
+        """)
+
+        #expect(silenced as? Bool == true)
+    }
+
+    /// Muted by the app still counts as playing (the tab stays in the list to be unmuted); a player the page muted does not,
+    /// whatever the app has done.
+    @Test func aPlayerThePageMutedIsNotCountedWhileTheAppHasTheTabMuted() async {
+        let (webView, collector) = await player()
+
+        collector.messages.removeAll()
+        await state(webView, collector, after: "window.__box.paused = false; window.__box.muted = true")
+        #expect(await audio(collector) == "audio:0")
+
+        collector.messages.removeAll()
+        await state(webView, collector, after: post("wsurf-mute:1"))
+        #expect(await audio(collector) == "audio:0", "the page's own muted loop is no sound for the list")
+    }
+    // MARK: - Frames
+
+    /// A frame made of its own document, with an `audio` element whose `paused` the page controls, as the player of an embed is.
+    private static let framePlayer = """
+    <!doctype html><audio id="song"></audio><script>
+    let playing = true;
+    const song = document.getElementById('song');
+    Object.defineProperty(song, 'paused', { get() { return !playing; } });
+    addEventListener('message', (event) => {
+      if (event.data !== 'play' && event.data !== 'stop') { return; }
+      playing = event.data === 'play';
+      song.dispatchEvent(new Event(playing ? 'play' : 'pause'));
+    });
+    </script>
+    """
+
+    private func addFrame(_ id: String, source: String = MediaScriptTests.framePlayer, to webView: WKWebView) async throws {
+        let literal = String(data: try JSONSerialization.data(withJSONObject: source, options: [.fragmentsAllowed]), encoding: .utf8) ?? "\"\""
+        _ = try await webView.evaluateJavaScript("""
+        (() => {
+          const frame = document.createElement('iframe'); frame.id = '\(id)'; frame.srcdoc = \(literal);
+          document.body.append(frame);
+        })(); true
+        """)
+    }
+
+    private func frameReports(_ collector: Collector) -> [(key: String, playing: Bool)] {
+        collector.messages.compactMap { message in
+            guard message.hasPrefix("frameaudio:") else { return nil }
+            let fields = message.dropFirst("frameaudio:".count).split(separator: ":")
+            guard fields.count == 2 else { return nil }
+            return (String(fields[0]), fields[1] == "1")
+        }
+    }
+
+    /// A frame says what plays in it under a key of its own, and the page's own document keeps saying `audio:`.
+    @Test func aFrameReportsItsOwnSoundUnderItsOwnKey() async throws {
+        let (webView, collector) = await player(hasVideo: false)
+        collector.messages.removeAll()
+
+        try await addFrame("a", to: webView)
+        #expect(await waitUntil { frameReports(collector).contains { $0.playing } }, "a player in a frame is reported")
+        let key = try #require(frameReports(collector).first?.key)
+        #expect(!collector.messages.contains("audio:1"), "the page's own document plays nothing")
+
+        _ = try await webView.evaluateJavaScript("document.getElementById('a').contentWindow.postMessage('stop', '*'); true")
+        #expect(await waitUntil { frameReports(collector).last.map { $0.key == key && !$0.playing } == true }, "and when it stops")
+
+        try await addFrame("b", to: webView)
+        #expect(await waitUntil { frameReports(collector).contains { $0.playing && $0.key != key } }, "another frame, another key")
+    }
+
+    @Test func aFrameThatGoesSaysItsSoundIsOver() async throws {
+        let (webView, collector) = await player(hasVideo: false)
+        try await addFrame("a", to: webView)
+        try #require(await waitUntil { frameReports(collector).contains { $0.playing } })
+        let key = try #require(frameReports(collector).first?.key)
+
+        _ = try await webView.evaluateJavaScript("document.getElementById('a').remove(); true")
+        #expect(
+            await waitUntil { frameReports(collector).last.map { $0.key == key && !$0.playing } == true },
+            "a frame removed while it plays says so as it goes"
+        )
+    }
+
+    @Test func aFrameWithNothingToPlayStaysQuiet() async throws {
+        let (webView, collector) = await player(hasVideo: false)
+        collector.messages.removeAll()
+        try await addFrame("quiet", source: "<!doctype html><p>No player here.</p>", to: webView)
+        try await Task.sleep(for: .milliseconds(600))
+        #expect(frameReports(collector).isEmpty, "no word, rather than a word of silence from every frame of the page")
+    }
+
+    /// The mute still reaches a player that lives in a frame, and the frame still counts as playing under it.
+    @Test func aFramePlayerMutedByTheAppStillCountsAsPlaying() async throws {
+        let (webView, collector) = await player(hasVideo: false)
+        try await addFrame("a", to: webView)
+        try #require(await waitUntil { frameReports(collector).contains { $0.playing } })
+
+        _ = try await webView.evaluateJavaScript("\(post("wsurf-mute:1")); true")
+        try await Task.sleep(for: .milliseconds(400))
+        #expect(frameReports(collector).last?.playing == true, "muted by the app, it is still playing, for the list")
+    }
+    /// A document that sees one of its frames go, or load another page, says so: the frame itself may not get to.
+    @Test func aDocumentSaysWhenItsFramesMove() async throws {
+        let (webView, collector) = await player(hasVideo: false)
+        collector.messages.removeAll()
+
+        try await addFrame("a", source: "<!doctype html><p>Quiet.</p>", to: webView)
+        #expect(await waitUntil { collector.messages.contains("frames:moved") }, "a frame loaded")
+
+        try await Task.sleep(for: .milliseconds(400))
+        collector.messages.removeAll { $0 == "frames:moved" }
+        _ = try await webView.evaluateJavaScript("document.getElementById('a').remove(); true")
+        #expect(await waitUntil { collector.messages.contains("frames:moved") }, "a frame was removed")
+    }
+
+    /// Asking again reaches a frame inside a frame, which the app has no way to address itself.
+    @Test func aResendReachesTheFramesInsideFrames() async throws {
+        let (webView, collector) = await player(hasVideo: false)
+        let inner = String(
+            data: try JSONSerialization.data(withJSONObject: Self.framePlayer, options: [.fragmentsAllowed]), encoding: .utf8
+        )?.replacingOccurrences(of: "</", with: "<\\/") ?? "\"\""
+        try await addFrame(
+            "outer",
+            source: "<!doctype html><script>const f = document.createElement('iframe'); f.srcdoc = \(inner); document.documentElement.append(f);</script>",
+            to: webView
+        )
+        try #require(await waitUntil { frameReports(collector).contains { $0.playing } }, "the inner frame plays")
+        let key = try #require(frameReports(collector).first { $0.playing }?.key)
+
+        collector.messages.removeAll()
+        _ = try await webView.evaluateJavaScript("\(post("wsurf-resend")); true")
+        #expect(await waitUntil { frameReports(collector).contains { $0.playing && $0.key == key } }, "it says so again")
+    }
+    // MARK: - Who lifts a mute
+
+    /// The page's `muted` read without a user gesture: the public script call grants one, which is user activation, and a test of
+    /// what happens without it must not give it.
+    private func quietMuted(_ webView: WKWebView, _ selector: String) async -> Bool? {
+        (try? await webView.evaluate(
+            "document.querySelector('\(selector)').muted", asFunction: false, in: nil, in: .page
+        )) as? Bool
+    }
+
+    private func quietRun(_ webView: WKWebView, _ script: String) async throws {
+        _ = try await webView.evaluate("\(script); true", asFunction: false, in: nil, in: .page)
+    }
+
+    private func mutedPage() async throws -> (WKWebView, Collector) {
+        let (webView, collector) = await player(hasVideo: false)
+        try await quietRun(webView, "const song = document.createElement('audio'); song.id = 'song'; document.body.append(song)")
+        try #require(await waitUntil {
+            (try? await webView.evaluate("document.querySelector('#song').__wsurfBound === true", asFunction: false, in: nil, in: .page)) as? Bool == true
+        })
+        try await quietRun(webView, post("wsurf-mute:1"))
+        try #require(await waitUntil { await quietMuted(webView, "#song") == true })
+        collector.messages.removeAll()
+        return (webView, collector)
+    }
+
+    /// Waits until the page has no user activation: the public script calls the test's own setup made grant it for a few seconds.
+    private func quietPage(_ webView: WKWebView) async throws {
+        try #require(await waitUntil(timeout: .seconds(30)) {
+            (try? await webView.evaluate("navigator.userActivation.isActive", asFunction: false, in: nil, in: .page)) as? Bool == false
+        }, "the page still has user activation")
+    }
+
+    /// An advertisement does this: its own script lifts the mute, with no one having pressed anything.
+    @Test func aScriptThatUnmutesAPlayerOnItsOwnIsSilencedAgainAndTheMuteStays() async throws {
+        let (webView, collector) = try await mutedPage()
+        try await quietPage(webView)
+
+        try await quietRun(webView, "document.getElementById('song').muted = false")
+        #expect(await waitUntil { await quietMuted(webView, "#song") == true }, "the player is silenced again at once")
+        try await Task.sleep(for: .milliseconds(250))
+        #expect(!collector.messages.contains { $0.hasPrefix("tabunmuted") }, "and the app is not told the person unmuted it")
+
+        try await quietRun(webView, "const late = document.createElement('audio'); late.id = 'late'; document.body.append(late)")
+        #expect(await waitUntil { await quietMuted(webView, "#late") == true }, "the page is still muted: a player made later is born so")
+    }
+
+    /// The person pressed the player's own control: the frame has user activation, and the page's script lifts the mute. A real
+    /// press cannot be made here without a system event, and WebKit's script gesture is not user activation, so the activation is
+    /// stood in for, as `stand` does for the rest of what a player answers.
+    @Test func anUnmuteWithUserActivationIsReportedAsTheUsers() async throws {
+        let (webView, collector) = try await mutedPage()
+        try await quietRun(webView, """
+        Object.defineProperty(navigator, 'userActivation', { configurable: true, get() { return { hasBeenActive: true, isActive: true }; } })
+        """)
+
+        try await quietRun(webView, "document.getElementById('song').muted = false")
+        #expect(await waitUntil { collector.messages.contains("tabunmuted") }, "the person unmuted it")
+        #expect(await quietMuted(webView, "#song") == false, "and it stays unmuted until the app answers")
+    }
+
+    /// A frame has the person's own input or it has not: a script cannot make one, so a frame that unmutes its player on its own is
+    /// silenced again even while its page has user activation.
+    @Test func aFrameThatUnmutesItsPlayerWithoutTheInputItselfIsSilencedAgain() async throws {
+        let (webView, collector) = await player(hasVideo: false)
+        try await addFrame("a", to: webView)
+        try #require(await waitUntil { frameReports(collector).contains { $0.playing } })
+        try await quietRun(webView, post("wsurf-mute:1"))
+        let song = "document.getElementById('a').contentDocument.getElementById('song')"
+        try #require(await waitUntil { (try? await webView.evaluate("\(song).muted", asFunction: false, in: nil, in: .page)) as? Bool == true })
+        collector.messages.removeAll()
+
+        // With user activation in the page (the public call grants it, and a same-origin frame shares it): still no input in the frame.
+        _ = try await webView.evaluateJavaScript("\(song).muted = false; true")
+        #expect(await waitUntil { (try? await webView.evaluate("\(song).muted", asFunction: false, in: nil, in: .page)) as? Bool == true }, "silenced again")
+        try await Task.sleep(for: .milliseconds(250))
+        #expect(!collector.messages.contains { $0.hasPrefix("tabunmuted") }, "no report from a frame the person did not touch")
     }
 }

@@ -49,7 +49,7 @@ extension OnboardingUI {
                     content(revealsCopy)
                 }
 
-                Image(nsImage: NSApp.applicationIconImage)
+                Image(nsImage: AppIcon.bundle)
                     .resizable()
                     .interpolation(.high)
                     .frame(width: markSize, height: markSize)

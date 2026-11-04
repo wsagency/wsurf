@@ -3,6 +3,7 @@
 
 import CryptoKit
 import Foundation
+import WSurfVault
 
 nonisolated enum WebAuthnResidentKeyRequirement: String, Sendable {
     case required
@@ -52,6 +53,9 @@ nonisolated struct WebAuthnAssertionOptions: Sendable {
     var rpID: String?
     var allowCredentials: [Data]
     var userVerification: WebAuthnUserVerification
+    /// The FIDO AppID extension input (`extensions.appid`), which relying parties with old U2F keys send (GitHub). Only answered,
+    /// never used: a vault passkey is always scoped to a domain RP ID, never to a U2F AppID URL.
+    var appID: String?
 }
 
 nonisolated enum WebAuthnRequestOptions: Sendable {
@@ -65,6 +69,9 @@ nonisolated struct WebAuthnRequest: Sendable {
     var requestID: UUID
     var options: WebAuthnRequestOptions
     var deadline: ContinuousClock.Instant?
+    /// The document had transient user activation when it asked, read by the relay in its isolated world. It only decides
+    /// whether a touch alone may answer; it authorizes nothing.
+    var userActivated = false
 }
 
 nonisolated struct WebAuthnClientData: Sendable {
@@ -86,6 +93,8 @@ nonisolated struct WebAuthnCredentialProperties: Sendable {
 
 nonisolated struct WebAuthnClientExtensionResults: Sendable {
     var credProps: WebAuthnCredentialProperties?
+    /// `appid` output: present when the request asked for it. Always false, since the assertion is made under the RP ID.
+    var appid: Bool?
 }
 
 nonisolated struct WebAuthnResult: Sendable {
@@ -121,8 +130,7 @@ nonisolated enum WebsiteAuthenticatorError: Error, Sendable {
 
 nonisolated enum WebsiteAuthenticator {
     private static let maximumRequestBytes = 256 * 1_024
-    private static let maximumChallengeBytes = 1_024
-    private static let maximumUserHandleBytes = 64
+    private static let maximumChallengeBytes = 64 * 1_024
     private static let maximumDescriptors = 1_000
     private static let maximumCredentialIDBytes = 1_024
     private static let maximumUserNameBytes = 2_048
@@ -238,7 +246,7 @@ nonisolated enum WebsiteAuthenticator {
             rpID: context.rpID,
             userVerified: consent.userVerified,
             backupEligible: passkey.backupEligible,
-            backupState: passkey.backupState
+            backupState: passkey.isBackedUp
         )
         var signedData = authenticatorData
         signedData.append(Data(SHA256.hash(data: clientDataJSON)))
@@ -252,7 +260,9 @@ nonisolated enum WebsiteAuthenticator {
             authenticatorData: authenticatorData,
             signature: signature,
             userHandle: passkey.userHandle,
-            clientExtensionResults: nil,
+            // WebAuthn §10.1.1: an RP that sent appid reads `appid: false` as "verify against the RP ID hash", which is what
+            // this assertion carries.
+            clientExtensionResults: options.appID == nil ? nil : WebAuthnClientExtensionResults(appid: false),
             publicKeySPKI: nil,
             publicKeyAlgorithm: nil
         )
@@ -330,8 +340,10 @@ nonisolated enum WebsiteAuthenticator {
         return canonicalURL
     }
     private static func validateCreation(_ options: WebAuthnCreationOptions) throws {
+        // `user.id` may be up to `WebsitePasskey.userHandleLimit` bytes, not the 64 that WebAuthn and CTAP2 recommend: a relying
+        // party that sends more must still get a passkey, and the assertion returns the handle exactly as it was registered.
         guard options.challenge.count <= maximumChallengeBytes,
-              (1...maximumUserHandleBytes).contains(options.userID.count),
+              (1...WebsitePasskey.userHandleLimit).contains(options.userID.count),
               options.userName.utf8.count <= maximumUserNameBytes,
               options.userDisplayName.utf8.count <= maximumUserNameBytes,
               options.publicKeyAlgorithms.count <= maximumRequestBytes / MemoryLayout<Int>.size,

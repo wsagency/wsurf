@@ -164,8 +164,10 @@ private struct TabPreviewCard: View {
                 TabFace(tab: tab)
             case .folder(let folder, let tabs):
                 GroupFace(
-                    symbol: "folder",
-                    tint: folder.color == .gray ? .secondary : folder.color.tint,
+                    symbol: folder.glyph(isOpen: true),
+                    tint: folder.customColor == nil && folder.color == .gray
+                        ? .secondary
+                        : folder.tint(opacity: BrowserSettings.application.chromeShape.folderColorOpacity),
                     title: folder.name,
                     detail: tabs.count == 1
                         ? String(localized: "1 tab")
@@ -251,7 +253,7 @@ private struct GroupFace: View {
     }
 }
 
-private struct TabFaviconMark: View {
+struct TabFaviconMark: View {
     let tab: BrowserTab
 
     var body: some View {

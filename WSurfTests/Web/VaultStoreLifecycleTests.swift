@@ -5,6 +5,7 @@ import Foundation
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 // The store's lifecycle root guard: after `close()` no operation (started before or after) may touch the profile directory, because the
 // directory may already have been erased and recreating it would resurrect the profile's credential files.

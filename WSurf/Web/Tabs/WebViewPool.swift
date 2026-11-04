@@ -62,6 +62,15 @@ final class TabWebView: WKWebView {
     var onOpenLinkInNewWindow: ((URL, Bool) -> Void)?
     var onPeekLink: ((URL) -> Void)?
     var onSummarizeLink: ((URL, CGPoint?) -> Void)?
+    /// Download PDF: whether the tab shows a PDF it can save (`BrowserTab.shownPDF`), and what choosing the item does
+    /// (`BrowserTab.savePDF`).
+    var showsPDF: (() -> Bool)?
+    var onSavePDF: (() -> Void)?
+    private var pdfMenuObserver: NSObjectProtocol?
+    /// Pick Credential…: whether the tab offers it now (`CredentialPicker.isOffered`), and what choosing it does.
+    var canPickCredential: (() -> Bool)?
+    var onPickCredential: ((CredentialPicker.Menu) -> Void)?
+    private var pickCredentialMenu: CredentialPicker.Menu?
 
     var onZoomChanged: (() -> Void)?
 
@@ -109,9 +118,63 @@ final class TabWebView: WKWebView {
         onZoomChanged?()
     }
 
-    private var contextImageURL: URL?
+    /// The image or video the page's own hit test found under the right-click.
+    var contextImageURL: URL?
     private var contextLinkURL: URL?
     private var contextLinkAnchor: CGPoint?
+    /// The link under the pointer as WebKit last reported it (`TabNavigationDelegate`), in any frame.
+    var hoveredLinkURL: URL?
+    /// The link a context menu was opened on. The page's own hit test (`rightMouseDown`) finds one in the document it runs in
+    /// and none in a frame, which only WebKit's own hit test, behind the hover, can see into.
+    private var linkAtContextMenu: URL? {
+        contextLinkURL ?? hoveredLinkURL
+    }
+
+    /// WebKit does not call the window that follows a choice from its context menu (Open Link in New Tab and the like) the
+    /// person's own: for `createWebViewWith` it is not user-initiated, as a script's pop-up is not, so the pop-up gate would
+    /// refuse it. Choosing the item is the person's act, so the items that name the address they open are wrapped to record it:
+    /// the choice and that address, which the one window WebKit then asks for must have (`takeNewWindowChoice(for:)`), so a
+    /// page's own `window.open` in that moment is not the choice. Open Frame has no address to bind to and is not wrapped.
+    private var wrappedNewWindowItems: [(item: NSMenuItem, target: AnyObject?, action: Selector?)] = []
+    private var newWindowChoice: (url: URL, at: ContinuousClock.Instant)?
+    /// How long WebKit may take, after the item's action, to ask for its window. The request is one message to the web process
+    /// and back: 1 to 6 ms after the choice in a hosted run on a loaded Mac (`OpenInNewTabTests`), so this is about forty times that.
+    /// A window that takes longer is refused like any pop-up, with its notice, which the person can allow.
+    var newWindowChoiceLifetime = Duration.milliseconds(250)
+    /// A menu that closes drops a choice older than this. A choice younger is its own menu's, made by the action that came
+    /// first, and its window is still on its way.
+    private static let choiceGraceAtClose = Duration.milliseconds(50)
+    private static let choiceItems: Set<String> = [
+        openLinkItem, "WKMenuItemIdentifierOpenImageInNewWindow", "WKMenuItemIdentifierOpenMediaInNewWindow",
+    ]
+
+    @objc private func chooseNewWindowItem(_ sender: NSMenuItem) {
+        guard let wrapped = wrappedNewWindowItems.first(where: { $0.item === sender }), let action = wrapped.action else { return }
+        let address = sender.identifier?.rawValue == Self.openLinkItem ? linkAtContextMenu : contextImageURL
+        newWindowChoice = address.map { ($0, .now) }
+        NSApp.sendAction(action, to: wrapped.target, from: sender)
+    }
+
+    /// Whether `url` is the window the person just chose from the menu, which WebKit asks for now. True once per choice, and only
+    /// for the address that was chosen: another window is a page's own, and leaves the choice for the one that is the person's.
+    func takeNewWindowChoice(for url: URL?) -> Bool {
+        guard let choice = newWindowChoice else { return false }
+        guard choice.at.duration(to: .now) < newWindowChoiceLifetime else {
+            newWindowChoice = nil
+            return false
+        }
+        guard let url, url.absoluteString == choice.url.absoluteString else { return false }
+        newWindowChoice = nil
+        return true
+    }
+
+    /// A choice nobody used goes when a menu closes, as it does when a menu opens.
+    override func didCloseMenu(_ menu: NSMenu, with event: NSEvent?) {
+        super.didCloseMenu(menu, with: event)
+        if let choice = newWindowChoice, choice.at.duration(to: .now) > Self.choiceGraceAtClose {
+            newWindowChoice = nil
+        }
+    }
 
     private static let reloadItem = "WKMenuItemIdentifierReload"
     private static let openLinkItem = "WKMenuItemIdentifierOpenLinkInNewWindow"
@@ -143,11 +206,59 @@ final class TabWebView: WKWebView {
                 .map { CGPoint(x: local.x, y: $0 * zoom) }
         }
 
+        awaitPDFMenu()
         super.rightMouseDown(with: event)
+    }
+
+    /// WebKit's PDF viewer pops its own menu up without asking the view (`willOpenMenu` never runs for it), so the menu is
+    /// met as it begins to track: the first one to do so in the moment after a right-click on a PDF, and only when it is the
+    /// viewer's (its items act through `contextMenuAction:`). Items added there are on screen when the menu is.
+    private func awaitPDFMenu() {
+        stopAwaitingPDFMenu()
+        guard showsPDF?() == true, isDisplayingPDF else { return }
+        pdfMenuObserver = NotificationCenter.default.addObserver(
+            forName: NSMenu.didBeginTrackingNotification, object: nil, queue: .main
+        ) { [weak self] note in
+            nonisolated(unsafe) let menu = note.object as? NSMenu
+            MainActor.assumeIsolated {
+                guard let self, let menu, Self.isPDFViewerMenu(menu) else { return }
+                self.stopAwaitingPDFMenu()
+                self.addPDFItems(to: menu)
+            }
+        }
+        // The viewer's menu comes back from the web process within milliseconds; after this the click was not on the PDF.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in self?.stopAwaitingPDFMenu() }
+    }
+
+    private func stopAwaitingPDFMenu() {
+        if let pdfMenuObserver {
+            NotificationCenter.default.removeObserver(pdfMenuObserver)
+        }
+        pdfMenuObserver = nil
+    }
+
+    private static let viewerAction = NSSelectorFromString("contextMenuAction:")
+
+    static func isPDFViewerMenu(_ menu: NSMenu) -> Bool {
+        menu.items.contains { $0.action == viewerAction }
+    }
+
+    /// Download PDF goes in the viewer's first group of items, which holds Open with Preview.
+    func addPDFItems(to menu: NSMenu) {
+        let item = NSMenuItem(title: String(localized: "Download PDF"), action: #selector(downloadPDF), keyEquivalent: "")
+        item.target = self
+        item.image = NSImage(systemSymbolName: "arrow.down.doc", accessibilityDescription: nil)
+        menu.insertItem(item, at: menu.items.firstIndex(where: \.isSeparatorItem) ?? menu.items.count)
+    }
+
+    @objc private func downloadPDF() {
+        onSavePDF?()
     }
 
     override func willOpenMenu(_ menu: NSMenu, with event: NSEvent) {
         super.willOpenMenu(menu, with: event)
+        wrappedNewWindowItems.removeAll()
+        newWindowChoice = nil
         var reloadIndex: Int?
         var linkIndex: Int?
         for (index, item) in menu.items.enumerated() {
@@ -159,6 +270,11 @@ final class TabWebView: WKWebView {
 
             if let title = Self.newWindowItems[identifier] {
                 item.title = String(localized: title)
+                if Self.choiceItems.contains(identifier) {
+                    wrappedNewWindowItems.append((item, item.target, item.action))
+                    item.target = self
+                    item.action = #selector(chooseNewWindowItem(_:))
+                }
             }
 
             if identifier == Self.reloadItem {
@@ -184,6 +300,17 @@ final class TabWebView: WKWebView {
             TabContextMenu.sinkLinkTail(in: menu)
         }
         TabContextMenu.sinkInspect(in: menu)
+        pickCredentialMenu = nil
+        if TabContextMenu.isEditable(menu), canPickCredential?() == true {
+            TabContextMenu.addPickCredential(to: menu, target: self, action: #selector(pickCredential))
+            pickCredentialMenu = CredentialPicker.Menu(opened: .now)
+        }
+    }
+
+    @objc private func pickCredential() {
+        guard let menu = pickCredentialMenu else { return }
+        pickCredentialMenu = nil
+        onPickCredential?(menu)
     }
 
     @discardableResult
@@ -217,17 +344,17 @@ final class TabWebView: WKWebView {
     }
 
     @objc private func openContextLinkInNewWindow(_ sender: NSMenuItem) {
-        guard let url = contextLinkURL else { return }
+        guard let url = linkAtContextMenu else { return }
         onOpenLinkInNewWindow?(url, sender.tag == 1)
     }
 
     @objc private func peekAtContextLink() {
-        guard let url = contextLinkURL else { return }
+        guard let url = linkAtContextMenu else { return }
         onPeekLink?(url)
     }
 
     @objc private func summarizeContextLink() {
-        guard let url = contextLinkURL else { return }
+        guard let url = linkAtContextMenu else { return }
         onSummarizeLink?(url, contextLinkAnchor)
     }
 
@@ -261,7 +388,7 @@ final class TabWebView: WKWebView {
 
     @objc private func startContextDownload(_ sender: NSMenuItem) {
         let isImage = sender.identifier?.rawValue == "WKMenuItemIdentifierDownloadImage"
-        guard let url = isImage ? contextImageURL : (contextLinkURL ?? contextImageURL) else { return }
+        guard let url = isImage ? contextImageURL : (linkAtContextMenu ?? contextImageURL) else { return }
         startDownload(using: URLRequest(url: url)) { [weak self] download in
             self?.onContextDownload?(download, url)
         }
@@ -323,6 +450,7 @@ final class WebViewPool {
     var configurePage: ((BrowserPage) -> Void)?
 
     private var extensionController: WKWebExtensionController?
+    private var extensionsPresent: () -> Bool = { true }
 
     let dataStore: WKWebsiteDataStore
 
@@ -346,8 +474,14 @@ final class WebViewPool {
         return configuration
     }
 
-    func installExtensionController(_ controller: WKWebExtensionController?) {
+    /// `extensionsPresent` says whether any extension is switched on. Only then do pages get the extension page scripts
+    /// (the `document.currentScript` fix and the external-connect relay), so a profile without extensions leaves the
+    /// page world untouched.
+    func installExtensionController(
+        _ controller: WKWebExtensionController?, extensionsPresent: @escaping () -> Bool = { true }
+    ) {
         extensionController = controller
+        self.extensionsPresent = extensionsPresent
         idle.removeAll()
     }
 
@@ -441,7 +575,9 @@ final class WebViewPool {
         let contentController = configuration.userContentController
 
         contentBlocker.apply(to: contentController)
-        if extensionController != nil {
+        // ponytail: decided when a view is made; tabs open (and two warm views) when the first extension is switched on
+        // get the scripts once remade. Add them to live controllers if an extension needs them sooner.
+        if extensionController != nil, extensionsPresent() {
             for source in [ExtensionPageAssets.script, ExtensionExternalConnect.pageScript] {
                 contentController.addUserScript(WKUserScript(
                     source: source,

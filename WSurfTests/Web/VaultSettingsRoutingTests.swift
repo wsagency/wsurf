@@ -1,10 +1,12 @@
 // SPDX-FileCopyrightText: 2026 WSurf Agency
 // SPDX-License-Identifier: BUSL-1.1
 
+import AppKit
 import Foundation
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 // The Settings page works on one selected vault of the profile's real store: what it offers (Create, Unlock) comes from the store's
 // own listing, and a v1 vault is never offered Create and never prompts for a passkey before the user agrees to migrate it.
@@ -154,7 +156,8 @@ struct VaultSettingsRoutingTests {
             await model.unlock(in: VaultManagerFixture.anchor())
             let epoch = try #require(model.authorizationEpoch)
             let unknown = CredentialExportSelection(accountID: UUID(), password: true, passkeyIDs: [], totp: false)
-            #expect(await model.exportCredentials(selection: [unknown], epoch: epoch, in: VaultManagerFixture.anchor()) == nil)
+            // The system's own export manager is reached here and takes a real window (it is never shown).
+            #expect(await model.exportCredentials(selection: [unknown], epoch: epoch, in: NSWindow()) == nil)
             let ending = try #require(model.transferMessage)
 
             await model.createVault(name: "Second", choice: .newPasskey(authorizedBy: nil), in: VaultManagerFixture.anchor())

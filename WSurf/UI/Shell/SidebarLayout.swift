@@ -24,24 +24,31 @@ enum SidebarMetrics {
         iconsWidth + LoomChrome.canvasInset
     }
 
-    static let rowIconSize: CGFloat = 16
+    /// The theme's tab icon size.
+    static var rowIconSize: CGFloat {
+        BrowserSettings.application.chromeShape.tabIconSize
+    }
     static let rowControlExtent: CGFloat = 20
 
     static let rowIconSpacing: CGFloat = 8
-    nonisolated static var fullContentInset: CGFloat {
-        LoomChrome.canvasInset - LoomChrome.sidebarContentBalanceOffset
-    }
 
     static var profileLeading: CGFloat {
         max(0, rowContentPadding(style: .full) + rowIconSize / 2 - 14)
     }
 
-    static func rowHeight(settings: BrowserSettings) -> CGFloat {
-        max(24, settings.sidebarLineHeight + CGFloat(settings.sidebarRowSpacing * 2 + 8))
+    /// A row is at least as tall as its icon plus 4 pt above and below, which a 16 pt icon in the 24 pt floor has.
+    /// A folder row drawn at `scale` times its size grows with its icon and title.
+    static func rowHeight(settings: BrowserSettings, scale: CGFloat = 1) -> CGFloat {
+        max(
+            24,
+            settings.globalSettings.chromeShape.tabIconSize * scale + 8,
+            settings.sidebarTitle(scale: scale).lineHeight + CGFloat(settings.sidebarRowSpacing * 2 + 8)
+        )
     }
 
+    /// The theme's tab padding in the full sidebar.
     static func rowContentPadding(style: SidebarStyle) -> CGFloat {
-        style == .icons ? 0 : 9
+        style == .icons ? 0 : BrowserSettings.application.chromeShape.rowPadding
     }
 
     static func rowVerticalSpacing(settings: BrowserSettings) -> CGFloat {
@@ -56,30 +63,29 @@ enum SidebarMetrics {
             - rowContentPadding(style: style)
     }
 
-    nonisolated static func contentInsets(style: SidebarStyle, isFloating: Bool) -> EdgeInsets {
+    /// A docked sidebar, full or icons only, sits `margin` from the window edge, and its rows keep at least that much
+    /// room from the page: the page spacing already gives them some. A floating one keeps `margin` on both sides.
+    /// The style no longer changes the insets (the icons column keeps its width, so its icons take what is left).
+    nonisolated static func contentInsets(
+        style _: SidebarStyle,
+        isFloating: Bool,
+        margin: CGFloat = LoomChrome.canvasInset,
+        pageSpacing: CGFloat = LoomChrome.canvasInset
+    ) -> EdgeInsets {
         if isFloating {
-            let inset = LoomChrome.canvasInset
-            return EdgeInsets(top: 0, leading: inset, bottom: 0, trailing: inset)
+            return EdgeInsets(top: 0, leading: margin, bottom: 0, trailing: margin)
         }
-        guard style == .full else {
-            return EdgeInsets(top: 0, leading: LoomChrome.canvasInset, bottom: 0, trailing: 0)
-        }
-        let inset = fullContentInset
-        let balance = LoomChrome.sidebarContentBalanceOffset
-        return EdgeInsets(
-            top: 0,
-            leading: inset + balance,
-            bottom: 0,
-            trailing: inset - balance
-        )
+        return EdgeInsets(top: 0, leading: margin, bottom: 0, trailing: max(0, margin - pageSpacing))
     }
 
     nonisolated static func contentWidth(
         _ sidebarWidth: CGFloat,
         style: SidebarStyle,
-        isFloating: Bool
+        isFloating: Bool,
+        margin: CGFloat = LoomChrome.canvasInset,
+        pageSpacing: CGFloat = LoomChrome.canvasInset
     ) -> CGFloat {
-        let insets = contentInsets(style: style, isFloating: isFloating)
+        let insets = contentInsets(style: style, isFloating: isFloating, margin: margin, pageSpacing: pageSpacing)
         return max(0, sidebarWidth - insets.leading - insets.trailing)
     }
 
@@ -98,6 +104,13 @@ enum SidebarMetrics {
             ? max(minWidth, min(maxWidth, container * maxWindowFraction))
             : maxWidth
         return min(max(width, minWidth), ceiling)
+    }
+
+    /// How far from the window's leading edge the page starts while the Minimal window keeps its tab list open: the
+    /// list at the full sidebar's width and clamp, and the page spacing it keeps from the window edge. Nothing while the
+    /// list floats, so the page is under it, as before.
+    static func pinnedTabListInset(isPinned: Bool, sidebarWidth: CGFloat, container: CGFloat, pageSpacing: CGFloat) -> CGFloat {
+        isPinned ? clampWidth(sidebarWidth, container: container) + pageSpacing : 0
     }
 
     static func topControlsOpacity(isShowing: Bool) -> Double {
@@ -134,9 +147,10 @@ enum SidebarPeekShield {
         isPeeking: Bool,
         viewMaxX: CGFloat,
         width: CGFloat,
-        isMediaPicture: Bool
+        isMediaPicture: Bool,
+        isPointerOverPlayer: Bool = false
     ) -> Bool {
-        if isMediaPicture {
+        if isMediaPicture || isPointerOverPlayer {
             return true
         }
         return !isVisible && isPeeking && viewMaxX > width

@@ -1,0 +1,12 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width">
+<title>WSurf smoke fixture</title>
+<h1>WSurf smoke fixture</h1>
+<p id="marker">smoke-marker-7f3a</p>
+<button id="go" type="button" onclick="document.getElementById('marker').textContent = 'smoke-clicked'">Go</button>
+<script>
+  // Logs after load so a capture started later by the client always sees records.
+  var tick = 0;
+  setInterval(function () { console.log('smoke tick ' + (tick++)); }, 300);
+</script>

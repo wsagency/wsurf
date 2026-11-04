@@ -267,7 +267,7 @@ struct MediaCenterTests {
     // MARK: - The player turned off in Settings
 
     @Test func theMediaPlayerIsOnUntilItIsTurnedOff() {
-        let defaults = UserDefaults(suiteName: "MediaPlayerTests-\(UUID().uuidString)")!
+        let defaults = UserDefaults(suiteName: AppDatabase.defaultsSuite("MediaPlayerTests-\(UUID().uuidString)"))!
 
         #expect(BrowserSettings(defaults: defaults).showsMediaPlayer)
 
@@ -279,7 +279,7 @@ struct MediaCenterTests {
     // MARK: - Automatic Picture in Picture
 
     @Test func picturesStayInTheirTabUntilAutomaticPiPIsTurnedOn() {
-        let defaults = UserDefaults(suiteName: "AutomaticPiPTests-\(UUID().uuidString)")!
+        let defaults = UserDefaults(suiteName: AppDatabase.defaultsSuite("AutomaticPiPTests-\(UUID().uuidString)"))!
 
         #expect(!BrowserSettings(defaults: defaults).automaticPictureInPicture)
 
@@ -289,7 +289,7 @@ struct MediaCenterTests {
     }
 
     @Test func theVideoInThePlayerIsAnExperimentNobodyOptedInto() {
-        let defaults = UserDefaults(suiteName: "VideoInPlayerTests-\(UUID().uuidString)")!
+        let defaults = UserDefaults(suiteName: AppDatabase.defaultsSuite("VideoInPlayerTests-\(UUID().uuidString)"))!
 
         #expect(!BrowserSettings(defaults: defaults).showsVideoInPlayer)
 
@@ -299,7 +299,7 @@ struct MediaCenterTests {
     }
 
     @Test func theExperimentTakesAutomaticPiPWithIt() {
-        let defaults = UserDefaults(suiteName: "VideoInPlayerTakesPiP-\(UUID().uuidString)")!
+        let defaults = UserDefaults(suiteName: AppDatabase.defaultsSuite("VideoInPlayerTakesPiP-\(UUID().uuidString)"))!
         let settings = BrowserSettings(defaults: defaults)
         settings.automaticPictureInPicture = true
 

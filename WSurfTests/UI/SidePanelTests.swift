@@ -19,7 +19,7 @@ struct SidePanelTests {
     }
 
     private func scratch() -> UserDefaults {
-        UserDefaults(suiteName: "SidePanelTests-\(UUID().uuidString)")!
+        UserDefaults(suiteName: AppDatabase.defaultsSuite("SidePanelTests-\(UUID().uuidString)"))!
     }
 
     @Test func itStartsClosedWithATabForEveryKind() {
@@ -128,7 +128,7 @@ struct SidePanelTests {
 
         panel.setAvailable(false, for: .lyrics)
 
-        #expect(panel.tabs.map(\.kind) == [.activity])
+        #expect(panel.tabs.map(\.kind) == [.activity, .watches])
     }
 
     @Test func turningOffTheTabYouAreLookingAtStepsToTheNextOne() {

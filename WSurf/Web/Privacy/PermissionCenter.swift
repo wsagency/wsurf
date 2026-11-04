@@ -48,7 +48,6 @@ final class TabPermissionCenter {
     var isPopoverPresented = false
 
     var onRevoke: ((WebPermission) -> Void)?
-    var onPolicyChanged: ((WebPermission, PermissionPolicy) -> Void)?
 
     init(store: SitePermissions) {
         self.store = store
@@ -224,7 +223,6 @@ final class TabPermissionCenter {
                 onRevoke?(permission)
             }
         }
-        onPolicyChanged?(permission, policy)
     }
 
     // MARK: - What the badge and popover show

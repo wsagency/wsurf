@@ -7,11 +7,14 @@ import AppKit
 import Foundation
 
 extension BrowserModel {
-    /// Transfer the same live page; navigation and POST state belong to the tab.
+    /// Transfer the same live page; navigation and POST state belong to the tab. The page becomes the tab in front, unless
+    /// `activate` is false: a page that was opened in the background stays there.
     @discardableResult
-    func adoptTab(_ tab: BrowserTab, from source: BrowserModel) -> Bool {
+    func adoptTab(_ tab: BrowserTab, from source: BrowserModel, activate: Bool = true) -> Bool {
+        // Only within one context: a private page never reaches another private window's cookie store, only a window that
+        // joined its own session.
         guard source !== self, source.windowID != windowID, source.context === context,
-              !opensPrivately, source.sessionClosedAt == nil, sessionClosedAt == nil,
+              source.sessionClosedAt == nil, sessionClosedAt == nil,
               context.isRegistered(source), context.isRegistered(self),
               (source.database.writer as AnyObject) === (database.writer as AnyObject),
               source.tabsByID[tab.id] === tab, tab.context === context,
@@ -24,6 +27,17 @@ extension BrowserModel {
               (source.database.writer as AnyObject) === (database.writer as AnyObject),
               let oldIndex = source.tabs.firstIndex(where: { $0 === tab }),
               !tabs.contains(where: { $0.id == tab.id }), !tab.isClosed else { return false }
+        // The page leaves as an ordinary tab. Its pin stays in this window and every other one, so the source
+        // gets a new unloaded page for it below.
+        let wasPin = tab.pinID != nil
+        // A micro window shows none of the profile's pins, so a page that reaches one is an ordinary tab even where this
+        // window has no pin store to say it was a pin.
+        if wasPin || windowKind == .micro {
+            tab.pinID = nil
+            tab.pinnedURL = nil
+            tab.pinnedTitle = ""
+            tab.isFavorite = false
+        }
         source.cancelPendingSave()
         cancelPendingSave()
         // Undo snapshots contain tab and tree ownership; neither old stack may replay across a move.
@@ -31,20 +45,43 @@ extension BrowserModel {
         sidebarUndoManager.removeAllActions()
         source.closedTabs.removeAll { $0.id == tab.id }
         closedTabs.removeAll { $0.id == tab.id }
+        func neighbor(in list: [BrowserTab]) -> BrowserTab? {
+            let list = list.filter { $0 === tab || $0.microTabID == nil }
+            guard let index = list.firstIndex(where: { $0 === tab }) else { return nil }
+            return list.dropFirst(index + 1).first ?? list.prefix(index).last
+        }
+        // A neighbor in the space the source shows comes first, so the source window stays in that space.
         let survivor = source.splits.others(of: tab.id).first.flatMap { source.tabsByID[$0] }
-            ?? source.tabs.dropFirst(oldIndex + 1).first
-            ?? source.tabs.prefix(oldIndex).last
+            ?? neighbor(in: source.currentSpaceTabs)
+            ?? neighbor(in: source.tabs)
         let wasActive = source.activeTabID == tab.id
         let visitID = source.lastVisitID.removeValue(forKey: tab.id)
         source.splits = source.splits.removing(tab.id)
         source.storedTree = source.reconciledTree().removing([.tab(tab.id)])
         source.tabs.remove(at: oldIndex)
+        // The opener stays reachable across the move: here if it lives here, else in the window it stayed in.
+        if let id = source.openerByTab.removeValue(forKey: tab.id) {
+            if tabsByID[id] != nil {
+                openerByTab[tab.id] = id
+            } else {
+                openerElsewhere[tab.id] = (WeakBrowserModel(model: source), id)
+            }
+        } else if let there = source.openerElsewhere.removeValue(forKey: tab.id) {
+            if there.model.model === self, tabsByID[there.tab] != nil {
+                openerByTab[tab.id] = there.tab
+            } else {
+                openerElsewhere[tab.id] = there
+            }
+        }
         source.recentlyActive.removeAll { $0 == tab.id }
         source.switcherRecency = nil
         if source.paneInAir == tab.id {
             source.paneInAir = nil
         }
         source.sidebarDidChange()
+        if wasPin, let store = source.attachedPinStore {
+            source.applyProfilePins(store.pins)
+        }
         if wasActive {
             source.activeTabID = survivor?.id
         }
@@ -53,12 +90,16 @@ extension BrowserModel {
             page.removeFromSuperview()
         }
         bindCallbacks(to: tab)
+        // The page joins the space this window shows, whatever space it had in the other window.
+        tab.spaceID = nil
         insert(tab, after: nil)
         lastVisitID[tab.id] = visitID
         writtenStateGeneration[tab.id] = nil
         source.onTabTransferredOut?(tab, oldIndex)
         onTabTransferredIn?(tab, source, oldIndex)
-        activeTabID = tab.id
+        if activate {
+            activeTabID = tab.id
+        }
         saveTransferredSession(from: source)
         return true
     }

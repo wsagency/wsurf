@@ -6,6 +6,7 @@ import GRDB
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 /// Pro only, excluded from the default run: needs `WSURF_VAULT_BENCHMARK=1` in the environment of the test host (the Pro runner
 /// sets it only in its own generated `.xctestrun`; a SKIPPED case is not a pass).

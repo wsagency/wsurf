@@ -1,0 +1,250 @@
+// SPDX-FileCopyrightText: 2026 WSurf Agency
+// SPDX-License-Identifier: BUSL-1.1
+
+import SwiftUI
+
+struct AppearanceThemeSection: View {
+    @Bindable var settings: BrowserSettings
+    let scheme: ColorScheme
+    /// Opens the Colors card, where a custom theme's base colors are edited.
+    var onEditColors: () -> Void = {}
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.colorSchemeContrast) private var contrast
+    @State private var isEditing = false
+    @State private var naming: ThemeNaming?
+    @State private var deleting: ThemeDefinition?
+    @State private var isConfirmingReset = false
+
+    private var themes: [ThemeDefinition] {
+        let selected = settings.previewedTheme
+        return settings.allThemes.map { $0.id == selected.id ? selected : $0 }
+    }
+
+    private var adjustments: [String: ThemeAdjustment] {
+        var values = settings.themeAdjustments
+        values[settings.selectedTheme.id] = settings.themeAdjustment
+        return values
+    }
+
+    private var materialCaption: LocalizedStringResource {
+        GlassPolicy.fallsBack(reduceTransparency: reduceTransparency, contrast: contrast)
+            ? "Reduce transparency or increase contrast is on in System Settings, so WSurf uses Plain."
+            : "Glass shows your desktop through the window. It uses more GPU."
+    }
+
+    private var selectedThemeIsSaved: Bool {
+        !ThemeCatalog.isBuiltIn(settings.selectedTheme.id)
+    }
+
+    private var deleteTitle: Text {
+        Text("Delete “\(deleting?.name ?? "")”?")
+    }
+
+    private var customizeCaption: LocalizedStringResource {
+        if selectedThemeIsSaved {
+            return "Edit this theme’s base colors, text and accent under Colors."
+        }
+        guard settings.canSaveAnotherTheme else {
+            return "You have saved \(BrowserSettings.userThemeLimit) themes, the most WSurf keeps. Delete one to save another."
+        }
+        return "Saves a copy named “\(settings.customThemeName(for: settings.selectedTheme))” with this theme’s brightness, material and layout, and opens its colors."
+    }
+
+    private var resetCaption: LocalizedStringResource {
+        guard settings.canResetTheme else { return "This theme is already at its defaults." }
+        if let origin = settings.themeResetOrigin {
+            return "Puts this theme’s colors and settings back to “\(origin.name)”, the theme it was made from."
+        }
+        return "Puts this theme’s brightness, transparency and layout settings back to how WSurf ships them."
+    }
+
+    private var resetTitle: Text {
+        Text("Reset “\(settings.selectedTheme.name)” to its defaults?")
+    }
+
+    private var resetMessage: Text {
+        if let origin = settings.themeResetOrigin {
+            return Text("Its colors, brightness, transparency, spacing, folder indent and layout go back to “\(origin.name)”, the theme it was made from. You can’t undo this.")
+        }
+        return Text("Its brightness, transparency, spacing, folder indent and layout go back to how WSurf ships them. You can’t undo this.")
+    }
+
+    private var confirmsDeletion: Binding<Bool> {
+        Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } })
+    }
+
+    var body: some View {
+        SettingsSection(title: "Theme", symbol: "paintpalette") {
+            DetailRow(title: "Appearance") {
+                SegmentedControl(
+                    items: AppearanceMode.allCases.map { .init(value: $0, label: $0.label) },
+                    selection: settings.colorMode,
+                    onSelect: { settings.colorMode = $0 }
+                )
+            }
+            .settingsAnchor("appearance.mode")
+            RowSeparator()
+            DetailRow(title: "Theme", layout: .stacked) {
+                ThemeGallery(
+                    themes: themes, selection: settings.selectedTheme.id,
+                    mode: settings.colorMode, adjustments: adjustments,
+                    onSelect: { settings.themeID = $0 },
+                    canDuplicate: settings.canSaveAnotherTheme,
+                    onDuplicate: { settings.duplicateTheme($0.id) },
+                    onRename: { naming = .rename($0) },
+                    onDelete: { deleting = $0 }
+                )
+            }
+            .settingsAnchor("appearance.theme")
+            RowSeparator()
+            DetailRow(title: "Material", caption: materialCaption) {
+                SegmentedControl(
+                    items: [
+                        .init(value: ThemeMaterial.plain, label: "Plain"),
+                        .init(value: ThemeMaterial.glass, label: "Glass"),
+                    ],
+                    selection: settings.themeMaterial,
+                    onSelect: { settings.themeMaterial = $0 }
+                )
+            }
+            .settingsAnchor("appearance.material")
+            if settings.themeMaterial == .glass {
+                RowSeparator()
+                DetailRow(title: "Transparency", layout: .stacked) {
+                    LoomTransparencyControl(
+                        opacity: adjustmentBinding(\.glassOpacity), onEditingChanged: editingChanged
+                    )
+                }
+                .settingsAnchor("appearance.transparency")
+            }
+            RowSeparator()
+            DetailRow(
+                title: "Brightness",
+                caption: scheme == .dark
+                    ? "Makes this theme’s dark colors darker or lighter."
+                    : "Makes this theme’s light colors darker or lighter."
+            ) {
+                HStack(spacing: 8) {
+                    Slider(value: brightness, in: ThemeAdjustment.brightnessRange, onEditingChanged: editingChanged)
+                        .frame(width: 140)
+                        .accessibilityLabel("Theme brightness")
+                        .accessibilityValue(Text(brightness.wrappedValue, format: .percent))
+                    Text(brightness.wrappedValue, format: .percent.precision(.fractionLength(0)))
+                        .monospacedDigit()
+                        .frame(width: 42, alignment: .trailing)
+                }
+            }
+            .settingsAnchor("appearance.brightness")
+            RowSeparator()
+            DetailRow(
+                title: "Website tint",
+                caption: "Use the current website’s color in the toolbar and sidebar. Off while a theme’s colors or brightness are changed."
+            ) {
+                SettingsToggle($settings.matchesWebsiteColor)
+            }
+            .settingsAnchor("appearance.websiteTint")
+            RowSeparator()
+            DetailRow(title: "Customize", caption: customizeCaption) {
+                if selectedThemeIsSaved {
+                    SettingsButton(title: "Edit Colors") { onEditColors() }
+                } else {
+                    SettingsButton(title: "Customize…") {
+                        settings.commitThemePreview()
+                        naming = .customize(name: settings.customThemeName(for: settings.selectedTheme))
+                    }
+                    .disabled(!settings.canSaveAnotherTheme)
+                }
+            }
+            .settingsAnchor("appearance.customize")
+            if selectedThemeIsSaved {
+                RowSeparator()
+                DetailRow(title: "This theme", controlWidth: nil) {
+                    HStack(spacing: 8) {
+                        SettingsButton(title: "Rename…") { naming = .rename(settings.selectedTheme) }
+                        SettingsButton(title: "Duplicate") { settings.duplicateTheme(settings.selectedTheme.id) }
+                            .disabled(!settings.canSaveAnotherTheme)
+                        SettingsButton(title: "Delete…", isDestructive: true) { deleting = settings.selectedTheme }
+                    }
+                }
+                .settingsAnchor("appearance.manageTheme")
+            }
+            RowSeparator()
+            DetailRow(title: "Reset theme", caption: resetCaption) {
+                SettingsButton(title: "Reset Theme to Default") { isConfirmingReset = true }
+                    .disabled(!settings.canResetTheme)
+            }
+            .settingsAnchor("appearance.resetTheme")
+            // On the row, not the section: two dialogs on one view can shadow each other.
+            .confirmationDialog(resetTitle, isPresented: $isConfirmingReset, titleVisibility: .visible) {
+                Button("Reset Theme", role: .destructive) { settings.resetSelectedTheme() }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                resetMessage
+            }
+        }
+        .onDisappear { settings.commitThemePreview() }
+        .onChange(of: scheme) { _, _ in
+            settings.commitThemePreview()
+            isEditing = false
+        }
+        .sheet(item: $naming) { request in
+            ThemeNameSheet(naming: request) { name in
+                switch request {
+                case .customize:
+                    if settings.saveTheme(named: name) != nil {
+                        onEditColors()
+                    }
+                case .rename(let theme):
+                    _ = settings.renameTheme(theme.id, to: name)
+                }
+            }
+        }
+        .confirmationDialog(
+            deleteTitle, isPresented: confirmsDeletion, titleVisibility: .visible, presenting: deleting
+        ) { theme in
+            Button("Delete Theme", role: .destructive) { settings.deleteTheme(theme.id) }
+            Button("Cancel", role: .cancel) {}
+        } message: { _ in
+            Text("You can’t undo this.")
+        }
+    }
+
+    private var brightness: Binding<Double> {
+        Binding(
+            get: { settings.themeAdjustment.brightness(scheme) },
+            set: { value in
+                var adjustment = settings.themeAdjustment
+                adjustment.setBrightness(value, for: scheme)
+                store(adjustment)
+            }
+        )
+    }
+
+    private func adjustmentBinding(_ keyPath: WritableKeyPath<ThemeAdjustment, Double>) -> Binding<Double> {
+        Binding(
+            get: { settings.themeAdjustment[keyPath: keyPath] },
+            set: { value in
+                var adjustment = settings.themeAdjustment
+                adjustment[keyPath: keyPath] = value
+                store(adjustment)
+            }
+        )
+    }
+
+    private func store(_ adjustment: ThemeAdjustment) {
+        if isEditing {
+            settings.previewThemeAdjustment(adjustment)
+        } else {
+            settings.themeAdjustment = adjustment
+        }
+    }
+
+    private func editingChanged(_ editing: Bool) {
+        isEditing = editing
+        if editing {
+            settings.beginThemePreview()
+        } else {
+            settings.commitThemePreview()
+        }
+    }
+}

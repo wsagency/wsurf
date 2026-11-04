@@ -71,7 +71,7 @@ struct AssistantComposer: View {
             field
         }
         .onDrop(of: [UTType.fileURL, UTType.image], isTargeted: $dropTargeted, perform: attachments.drop)
-        .onChange(of: coordinator.browser.activeSpaceID) { _, _ in
+        .onChange(of: coordinator.browser.activeAnchorID) { _, _ in
             attachments.clear()
             draft = ""
             mentions = []
@@ -142,7 +142,7 @@ struct AssistantComposer: View {
         .overlay {
             RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous)
                 .strokeBorder(
-                    dropTargeted ? Color.accentColor : Color.primary.opacity(
+                    dropTargeted ? Theme.assistant : Color.primary.opacity(
                         contrast == .increased ? 0.4 : (writing ? 0.18 : 0.08)
                     ),
                     lineWidth: dropTargeted ? 2 : 1
@@ -214,7 +214,8 @@ struct AssistantComposer: View {
         do {
             try AttachmentRequest.validate(
                 attachments.files, message: message, textOnly: effectiveTextOnly,
-                windowTokens: ContextWindow.tokens(for: coordinator.selectedProvider, model: coordinator.selectedModel)
+                windowTokens: ContextWindow.tokens(for: coordinator.selectedProvider, model: coordinator.selectedModel),
+                imageTokens: AttachmentRequest.imageTokens(for: coordinator.selectedProvider)
             )
         } catch {
             attachments.error = error.localizedDescription

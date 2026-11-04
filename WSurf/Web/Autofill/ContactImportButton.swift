@@ -7,15 +7,17 @@ import Contacts
 import ContactsUI
 import SwiftUI
 
+/// Shows the system's contact picker beside the button. Every contact clicked while it is open is collected, once; when it closes, the
+/// collected contacts are handed to `onSelect` together and nothing else is read.
 struct ContactImportButton: NSViewRepresentable {
-    let onSelect: (CNContact) -> Void
+    let onSelect: ([CNContact]) -> Void
 
     func makeCoordinator() -> Coordinator {
         Coordinator(onSelect: onSelect)
     }
 
     func makeNSView(context: Context) -> NSButton {
-        let button = NSButton(title: String(localized: "Import from Contacts…"), target: context.coordinator, action: #selector(Coordinator.show(_:)))
+        let button = NSButton(title: String(localized: "Choose Contacts…"), target: context.coordinator, action: #selector(Coordinator.show(_:)))
         button.bezelStyle = .rounded
         return button
     }
@@ -24,27 +26,42 @@ struct ContactImportButton: NSViewRepresentable {
         context.coordinator.onSelect = onSelect
     }
 
+    /// The row is gone: what was clicked is dropped, not reviewed.
     static func dismantleNSView(_ nsView: NSButton, coordinator: Coordinator) {
+        coordinator.onSelect = { _ in }
         coordinator.picker.close()
     }
 
     final class Coordinator: NSObject, CNContactPickerDelegate {
-        var onSelect: (CNContact) -> Void
+        var onSelect: ([CNContact]) -> Void
         let picker = CNContactPicker()
+        /// The contacts clicked since the picker opened, in order, each once.
+        private(set) var picked: [CNContact] = []
 
-        init(onSelect: @escaping (CNContact) -> Void) {
+        init(onSelect: @escaping ([CNContact]) -> Void) {
             self.onSelect = onSelect
             super.init()
             picker.delegate = self
         }
 
         @objc func show(_ sender: NSButton) {
+            picked = []
             picker.showRelative(to: sender.bounds, of: sender, preferredEdge: .maxY)
         }
 
+        /// The picker stays open, so several contacts can be clicked in one go.
         func contactPicker(_ picker: CNContactPicker, didSelect contact: CNContact) {
-            onSelect(contact)
-            picker.close()
+            if !picked.contains(where: { $0.identifier == contact.identifier }) {
+                picked.append(contact)
+            }
+        }
+
+        func contactPickerDidClose(_ picker: CNContactPicker) {
+            let chosen = picked
+            picked = []
+            if !chosen.isEmpty {
+                onSelect(chosen)
+            }
         }
     }
 }

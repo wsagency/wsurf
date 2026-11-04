@@ -9,6 +9,7 @@ import Synchronization
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 // Task 6: the §6.8 unlock pipeline of `ProfileVaultStore`, asserted only at the store's public boundary plus the real files and
 // defaults. Every store comes from the fixture (`with`/`withEnvironment`), which closes it before the directory is removed.

@@ -4,6 +4,7 @@
 // Linen portions: Apache-2.0; WSurf modifications: BUSL-1.1. See NOTICE.
 
 import Foundation
+import WSurfVault
 
 nonisolated enum TrackerList {
     private static let advertising = [
@@ -116,8 +117,7 @@ nonisolated enum TrackerList {
               scheme == "http" || scheme == "https",
               let host = resourceURL.host?.lowercased(),
               let topLevelURL,
-              let topHost = topLevelURL.host?.lowercased(),
-              !isSameOrigin(resourceURL, topLevelURL)
+              let topHost = topLevelURL.host?.lowercased()
         else { return false }
         let normalizedTopHost = normalized(topHost)
         guard !exemptHosts.contains(where: {
@@ -127,7 +127,8 @@ nonisolated enum TrackerList {
         for rule in rules {
             guard host == rule.host || host.hasSuffix(".\(rule.host)") else { continue }
             if rule.path.isEmpty || resourceURL.path.hasPrefix(rule.path) {
-                return true
+                // Checked after a rule matches: the suffix-list lookup costs more than the rule scan.
+                return !isSameSite(resourceURL, topLevelURL)
             }
         }
         return false
@@ -143,13 +144,14 @@ nonisolated enum TrackerList {
             guard let url = URL(string: rawURL),
                   let scheme = url.scheme?.lowercased(),
                   scheme == "http" || scheme == "https",
-                  let host = url.host?.lowercased(),
-                  !isSameOrigin(url, topLevelURL)
+                  let host = url.host?.lowercased()
             else { continue }
 
             for rule in rules where host == rule.host || host.hasSuffix(".\(rule.host)") {
                 guard rule.path.isEmpty || url.path.hasPrefix(rule.path) else { continue }
-                matches.insert(rule.host)
+                if !isSameSite(url, topLevelURL) {
+                    matches.insert(rule.host)
+                }
                 break
             }
         }
@@ -169,24 +171,15 @@ nonisolated enum TrackerList {
         )
     }
 
-    private static func isSameOrigin(_ resourceURL: URL, _ topLevelURL: URL?) -> Bool {
-        guard let topLevelURL else { return false }
-        return resourceURL.scheme?.lowercased() == topLevelURL.scheme?.lowercased()
-            && resourceURL.host?.lowercased() == topLevelURL.host?.lowercased()
-            && effectivePort(of: resourceURL) == effectivePort(of: topLevelURL)
+    /// WebKit's `third-party` load type compares registrable domains, ignoring scheme and port, so the
+    /// Chromium blocker and the tracker count use the same test.
+    private static func isSameSite(_ resourceURL: URL, _ topLevelURL: URL?) -> Bool {
+        guard let topLevelURL, let site = site(of: resourceURL) else { return false }
+        return site == self.site(of: topLevelURL)
     }
 
-    private static func effectivePort(of url: URL) -> Int? {
-        if let port = url.port {
-            return port
-        }
-        return switch url.scheme?.lowercased() {
-        case "http":
-            80
-        case "https":
-            443
-        default:
-            nil
-        }
+    private static func site(of url: URL) -> String? {
+        guard let host = url.host?.lowercased() else { return nil }
+        return RelyingPartyPolicy.registrableDomain(of: host) ?? host
     }
 }

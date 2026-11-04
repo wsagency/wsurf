@@ -150,13 +150,14 @@ struct BrowserModelTests {
         #expect(copy.pinnedURL != nil)
     }
 
-    /// "Pin this" needs a page to mean; an empty tab has none to offer.
-    @Test func pinningAnEmptyTabRefuses() {
+    /// A new tab is the Start page, and pins as one.
+    @Test func pinningANewTabPinsTheStartPage() {
         let model = makeModel()
         let tab = model.newTab()
 
         model.pin(tab)
-        #expect(tab.pinnedURL == nil)
+        #expect(tab.pinnedURL == SystemPages.start)
+        #expect(tab.isShowingPin && !tab.isAwayFromPin)
     }
 
     @Test func aFolderGathersTabsAndDeletionFreesThemInPlace() {
@@ -369,5 +370,46 @@ struct BrowserModelTests {
             // only thing a blank tab loads is its own start page.
             #expect(opened.page.url == nil || opened.page.url == SystemPages.start)
         }
+    }
+
+    /// An SSO pop-up closes itself: the tab that opened it comes back to the front, not the tab below the pop-up. Both
+    /// engines close through `BrowserModel.close`, so this covers WebKit and Chromium pop-ups alike.
+    @Test func closingTheFrontPopupReturnsToItsOpener() {
+        let browser = BrowserModel(database: .temporary())
+        let opener = browser.addPage("https://app.example/")
+        let popup = browser.addPage("https://sso.example/")
+        let bystander = browser.addPage("https://other.example/")
+        browser.openerByTab[popup.id] = opener.id
+        browser.tabs = [opener, bystander, popup]
+        browser.activate(popup)
+        browser.closeFromPage(popup)
+        #expect(browser.activeTabID == opener.id)
+
+        // An ordinary tab keeps the old behaviour: the one that was above it.
+        let plain = browser.addPage("https://plain.example/")
+        browser.activate(plain)
+        browser.close(plain)
+        #expect(browser.activeTabID == bystander.id)
+    }
+
+    /// An SSO pop-up shown in a window of its own: closing it selects the opener and brings the opener's window forward.
+    @Test func closingAPopupInAnotherWindowFocusesTheOpenersWindow() {
+        let profile = Profile(id: UUID(), name: "Popup fixture", symbol: "person", color: .gray)
+        let context = BrowserProfileContext.shared(for: profile)
+        let database = AppDatabase.temporary()
+        let main = BrowserModel(context: context, windowID: UUID(), database: database)
+        let micro = BrowserModel(context: context, windowID: UUID(), database: database)
+        defer { BrowserProfileContext.forget(profile.id) }
+        let opener = main.addPage("https://app.example/")
+        let other = main.addPage("https://other.example/")
+        main.activate(other)
+        let popup = main.addPage("https://sso.example/")
+        main.openerByTab[popup.id] = opener.id
+        #expect(micro.adoptTab(popup, from: main))
+        var shown: BrowserModel?
+        micro.onShowWindow = { shown = $0 }
+        micro.closeFromPage(popup)
+        #expect(shown === main)
+        #expect(main.activeTabID == opener.id)
     }
 }

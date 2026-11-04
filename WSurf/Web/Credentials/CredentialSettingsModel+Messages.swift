@@ -3,6 +3,8 @@
 
 import AuthenticationServices
 import Foundation
+import WSurfCore
+import WSurfVault
 
 /// What the page says for an error, by cause: the vault and its passkeys, then the store, then the exchange. `nil` is a
 /// user cancel, which says nothing.
@@ -34,6 +36,8 @@ extension CredentialSettingsModel {
             return String(localized: "The import ended because \(reason), and nothing was saved. To import these credentials, send them again from the other app.")
         case .csvFile:
             return String(localized: "The import ended because \(reason), and nothing was saved. To import the file, choose it again.")
+        case .legacyPasswords:
+            return String(localized: "The import ended because \(reason), and nothing was saved. Your saved passwords are still in the old list. To import them, choose Review again.")
         }
     }
 
@@ -64,10 +68,32 @@ extension CredentialSettingsModel {
         case PasskeyUnlockError.failed(let domain, let code)
             where domain == ASAuthorizationError.errorDomain && code == ASAuthorizationError.Code.canceled.rawValue:
             return nil
+        case WebsiteAuthenticatorError.notAllowed:
+            return String(localized: "Authentication didn’t finish. Nothing was shown or copied.")
         case PasskeyUnlockError.unsupportedPRF:
             return String(localized: "That passkey can’t protect the vault. Choose a passkey provider that supports the PRF extension.")
         case is CancellationError:
             return nil
+        case let error as VaultFileError:
+            return error.message
+        default:
+            return syncMessage(for: error)
+        }
+    }
+
+    /// The errors of iCloud vault sync: turning it on, and adding a vault another Mac synced.
+    private static func syncMessage(for error: any Error) -> String? {
+        switch error {
+        case VaultSyncFailure.locked:
+            return String(localized: "Credentials are locked.")
+        case VaultSyncFailure.signedOut:
+            return String(localized: "Sign in with your Apple Account in System Settings to sync.")
+        case VaultSyncFailure.unavailable, VaultSyncFailure.tooLarge, is URLError:
+            return String(localized: "Couldn’t reach iCloud. Check your connection and try again.")
+        case VaultSyncError.unsupportedGeneration, VaultSyncError.unsupportedFormat:
+            return String(localized: "This vault was synced by a newer version of WSurf. Update WSurf to add it.")
+        case CredentialManagerError.syncedVaultOfAnotherProfile:
+            return String(localized: "This vault belongs to another profile.")
         default:
             return storeMessage(for: error)
         }
@@ -89,6 +115,10 @@ extension CredentialSettingsModel {
             return String(localized: "Your credential files changed while WSurf was reading them. Check again.")
         case CredentialStoreError.noSuchVault:
             return String(localized: "That vault is no longer listed. Check again.")
+        case CredentialStoreError.lastVault:
+            return String(localized: "A profile keeps at least one vault. Nothing was deleted.")
+        case CredentialStoreError.vaultNotEmpty:
+            return String(localized: "This vault isn’t empty. Nothing was deleted.")
         default:
             return exchangeMessage(for: error)
         }
@@ -107,7 +137,7 @@ extension CredentialSettingsModel {
         case CredentialExchangeCoordinatorError.unresolvedConflicts, CredentialExchangeCoordinatorError.unknownConflict:
             return String(localized: "Choose what to do with every conflict first.")
         case CredentialExchangeCoordinatorError.invalidChoice:
-            return String(localized: "That choice isn’t available for this credential.")
+            return String(localized: "That choice isn’t available, or it doesn’t fit with the other choices. Change it, or skip the credential, and try again.")
         case CredentialExchangeCoordinatorError.replaceTaken:
             return String(localized: "Another row already replaces that saved login. Change that one first.")
         case CredentialExchangeCoordinatorError.emptySelection:

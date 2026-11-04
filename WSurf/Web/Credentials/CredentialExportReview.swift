@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 
 import Foundation
+import WSurfVault
 
 /// What a re-read vault did to the parts the user chose for export. The export sheet applies it to the selection it
 /// shows, so what the next click sends is exactly what the sheet then displays: a part that no longer exists is dropped
@@ -38,9 +39,11 @@ nonisolated struct CredentialExportReview: Sendable {
             var kept = chosen
             kept.password = chosen.password && now.hasLogin
             kept.totp = chosen.totp && now.hasTOTP
+            kept.notes = chosen.notes && now.hasNotes
+            kept.secureItems = chosen.secureItems && !now.itemKinds.isEmpty
             kept.passkeyIDs = chosen.passkeyIDs.intersection(now.passkeys.map(\.id))
             let partsChanged = kept.password != chosen.password || kept.totp != chosen.totp
-                || kept.passkeyIDs != chosen.passkeyIDs
+                || kept.notes != chosen.notes || kept.secureItems != chosen.secureItems || kept.passkeyIDs != chosen.passkeyIDs
             let stampChanged = freshStamps.map { $0[before.id] != shownStamps[before.id] } ?? false
             if partsChanged || now != before || stampChanged {
                 result.changed.append(now.title)
@@ -55,6 +58,65 @@ nonisolated struct CredentialExportReview: Sendable {
 
 nonisolated extension CredentialExportSelection {
     var hasParts: Bool {
-        password || totp || !passkeyIDs.isEmpty
+        password || totp || notes || secureItems || !passkeyIDs.isEmpty
+    }
+
+    /// The kinds of item `selection` sends from `summaries`, each once, in `SecureItemKind` order: what the export sheet lists.
+    static func itemKinds(_ selection: [UUID: CredentialExportSelection], in summaries: [CredentialSummary]) -> [SecureItemKind] {
+        let held = Set(summaries.filter { selection[$0.id]?.secureItems == true }.flatMap(\.itemKinds))
+        return SecureItemKind.allCases.filter(held.contains)
+    }
+
+    /// The files the selected credentials hold. An export carries none (owner decision 4): the sheet says so, and each file has Save
+    /// Copy… in the editor.
+    static func fileCount(_ selection: [UUID: CredentialExportSelection], in summaries: [CredentialSummary]) -> Int {
+        summaries.reduce(0) { $0 + (selection[$1.id]?.hasParts == true ? $1.fileCount : 0) }
+    }
+
+    /// Whether `selection` sends a card or an identity document of `summaries`, which needs Touch ID first.
+    static func sendsSensitiveItems(_ selection: [CredentialExportSelection], in summaries: [CredentialSummary]) -> Bool {
+        let sensitive = Set(summaries.filter(\.hasSensitiveItems).map(\.id))
+        return selection.contains { $0.secureItems && sensitive.contains($0.accountID) }
+    }
+}
+
+// MARK: - A credential as one unit
+
+nonisolated extension CredentialExportSelection {
+    /// Everything of `summary` the export can carry: its login, every passkey, its code setup, its notes and its items. A CSV file
+    /// carries only a login and its notes.
+    init(allOf summary: CredentialSummary, csv: Bool = false) {
+        self.init(
+            accountID: summary.id,
+            password: summary.hasLogin,
+            passkeyIDs: csv ? [] : Set(summary.passkeys.map(\.id)),
+            totp: !csv && summary.hasTOTP,
+            notes: summary.hasNotes,
+            secureItems: !csv && !summary.itemKinds.isEmpty
+        )
+    }
+
+    /// How many of the parts `summary` offers for this export are selected, and how many it offers.
+    func parts(of summary: CredentialSummary, csv: Bool = false) -> (selected: Int, offered: Int) {
+        let offered = Self(allOf: summary, csv: csv)
+        let selected = Self(
+            accountID: summary.id, password: password && offered.password, passkeyIDs: passkeyIDs.intersection(offered.passkeyIDs),
+            totp: totp && offered.totp, notes: notes && offered.notes, secureItems: secureItems && offered.secureItems
+        )
+        func count(_ selection: Self) -> Int {
+            [selection.password, selection.totp, selection.notes, selection.secureItems].filter { $0 }.count + selection.passkeyIDs.count
+        }
+        return (count(selected), count(offered))
+    }
+
+    /// `selection` with every credential of `summaries` selected whole (`on`) or not selected at all.
+    static func setting(
+        _ on: Bool, for summaries: [CredentialSummary], csv: Bool = false, in selection: [UUID: CredentialExportSelection]
+    ) -> [UUID: CredentialExportSelection] {
+        var result = selection
+        for summary in summaries {
+            result[summary.id] = on ? Self(allOf: summary, csv: csv) : nil
+        }
+        return result
     }
 }

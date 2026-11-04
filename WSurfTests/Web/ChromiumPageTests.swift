@@ -11,6 +11,76 @@ import WebKit
 @MainActor
 @Suite(.serialized)
 struct ChromiumPageTests {
+    private struct SecureCase {
+        let url: String, connection: Bool, cert: UInt32, content: UInt32, secure: Bool
+        init(_ url: String, _ connection: Bool, _ cert: UInt32, _ content: UInt32, _ secure: Bool) {
+            (self.url, self.connection, self.cert, self.content, self.secure) = (url, connection, cert, content, secure)
+        }
+    }
+
+    /// Address, TLS connection, certificate status, content status, secure.
+    private static let secureCases: [SecureCase] = [
+        .init("https://login.example/", true, 0, 0, true),
+        .init("https://login.example/", true, 1 << 16, 0, true), // EV is no error
+        .init("https://login.example/", true, 1 << 17, 0, true), // revocation checking enabled is no error
+        .init("https://login.example/", true, 1 << 19 | 1 << 20, 0, true), // SHA-1 present, CT compliance failed: bits 16-23 are no errors
+        .init("http://login.example/", true, 0, 0, false), // an insecure main frame
+        .init("HTTPS://login.example/", true, 0, 0, true),
+        .init("file:///tmp/login.html", true, 0, 0, false),
+        .init("chrome://settings/", true, 0, 0, false),
+        .init("https://login.example/", false, 0, 0, false), // no certificate: no TLS connection
+        .init("https://login.example/", true, 1 << 2, 0, false), // an untrusted authority, accepted past a warning
+        .init("https://login.example/", true, 1 << 1, 0, false), // an expired certificate
+        .init("https://login.example/", true, 1 << 15, 0, false), // the highest error bit of the low 16
+        .init("https://login.example/", true, 1 << 24, 0, false), // certificate transparency required
+        .init("https://login.example/", true, 1 << 26, 0, false), // known interception blocked
+        .init("https://login.example/", true, 1 << 31, 0, false), // the top of net::CERT_STATUS_ALL_ERRORS
+        .init("https://login.example/", true, 0, 1 << 0, false), // insecure content shown (mixed passive)
+        .init("https://login.example/", true, 0, 1 << 1, false), // insecure content run (mixed active)
+        .init("https://login.example/", true, 0, 1 << 2, false), // content with a certificate error
+        .init("https://login.example/", true, 0, 1 << 4, false), // any further content flag
+    ]
+
+    /// Chromium's secure-page rule is WebKit's `hasOnlySecureContent`, never looser: saved logins are offered only while it holds.
+    @Test func securePageRuleIsWebKits() {
+        for test in Self.secureCases {
+            #expect(ChromiumPage.hasOnlySecureContent(
+                url: URL(string: test.url), isSecureConnection: test.connection, certStatus: test.cert, contentStatus: test.content
+            ) == test.secure, "\(test.url) \(test.connection) \(test.cert) \(test.content)")
+        }
+        #expect(!ChromiumPage.hasOnlySecureContent(url: nil, isSecureConnection: true, certStatus: 0, contentStatus: 0))
+    }
+
+    /// A DevTools security cue reads the page again under that rule; it never makes an HTTP page secure.
+    @Test(.boundedWebViews)
+    func aSecurityCueNeverMakesAnInsecurePageSecure() async throws {
+        let server = try await HTTPFixtureServer.start(routes: ["/": .html("<!doctype html><form><input type=password></form>")])
+        let url = try server.url("/")
+        try ChromiumRuntime.shared.ensureInitialized()
+        let context = BrowserProfileContext(profile: .privateBrowsing())
+        let native = ChromiumPage(context: context)
+        let page = BrowserPage(chromium: native)
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: .borderless, backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = page
+        window.orderBack(nil)
+        defer { window.contentView = nil; window.close() }
+        do {
+            page.load(URLRequest(url: url))
+            try #require(await waitUntil { page.url == url && !page.isLoading })
+            #expect(!page.hasOnlySecureContent)
+            page.hasOnlySecureContent = true
+            native.didChangeSecurity()
+            #expect(!page.hasOnlySecureContent, "the cue's own rating is not used")
+        } catch {
+            await page.close()
+            await context.endPrivateSession()
+            throw error
+        }
+        await page.close()
+        await context.endPrivateSession()
+    }
+
     @Test(.boundedWebViews)
     func cachedHistoryRestoresIsolatedWorldAndMessages() async throws {
         let server = try await HTTPFixtureServer.start(routes: [
@@ -100,6 +170,91 @@ struct ChromiumPageTests {
         await ChromiumRuntime.shared.releaseContext(contextID: context.contextID)
     }
 
+    /// Chromium reaches a subframe's world through an object of it, so a reply finds the frame that asked: the site guard
+    /// (in the services world) of an iframe with an autoplay player hears its own Allow, which gives it no user activation.
+    @Test(.boundedWebViews)
+    func subframePageWorldRepliesReachTheFrameThatAsked() async throws {
+        let server = try await HTTPFixtureServer.start(routes: [
+            "/": .html("<!doctype html><title>Top</title><iframe src='/child' width='300' height='150'></iframe>"),
+            "/child": .html("<!doctype html><title>Child</title><audio id='media' src='/tone.wav' autoplay muted loop></audio>"),
+            "/tone.wav": .bytes(Self.silentWAV(), contentType: "audio/wav"),
+        ])
+        let url = try server.url("/")
+        try ChromiumRuntime.shared.ensureInitialized()
+        let profile = Profile(id: UUID(), name: "Subframe page world", symbol: "globe", color: .gray)
+        let context = BrowserProfileContext(profile: profile)
+        let native = ChromiumPage(context: context)
+        let page = BrowserPage(chromium: native)
+        let suite = AppDatabase.defaultsSuite("ChromiumSubframe-\(UUID().uuidString)")
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        let settings = BrowserSettings(defaults: defaults)
+        settings.autoplay = .allow
+        let storage = FileManager.default.temporaryDirectory.appendingPathComponent("ChromiumSubframe-\(UUID().uuidString).json")
+        SiteContentGuard.shared.install(in: page, permissions: SitePermissions(storageURL: storage), settings: settings)
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 800, height: 600),
+            styleMask: [.titled], backing: .buffered, defer: false
+        )
+        window.isReleasedWhenClosed = false
+        window.contentView = page
+        window.orderBack(nil)
+        defer {
+            window.close()
+            defaults.removePersistentDomain(forName: suite)
+            try? FileManager.default.removeItem(at: storage)
+        }
+
+        do {
+            page.load(URLRequest(url: url))
+            try #require(await waitUntil { page.url == url && !page.isLoading })
+            var child: BrowserFrame?
+            try #require(await waitUntil {
+                child = try? await native.frames().first { !$0.isMainFrame && $0.request.url?.path == "/child" }
+                return child != nil
+            })
+            let frame = try #require(child)
+            #expect(try await page.callAsyncJavaScript(
+                "return location.pathname + ':' + typeof globalThis.__wsurfSiteGuard;", in: frame, contentWorld: BrowserPage.servicesWorld
+            ) as? String == "/child:object")
+            #expect(await waitUntil {
+                (try? await page.evaluateJavaScript(
+                    "globalThis.__wsurfSiteGuard?.autoplay", in: frame, contentWorld: BrowserPage.servicesWorld
+                )) as? String == "allow"
+            }, "the iframe never heard its answer")
+            #expect(try await page.evaluateJavaScript(
+                "navigator.userActivation.hasBeenActive", in: frame, contentWorld: .defaultClient
+            ) as? Bool == false, "the answer activated the iframe")
+        } catch {
+            await page.close()
+            await ChromiumRuntime.shared.releaseContext(contextID: context.contextID)
+            throw error
+        }
+        await page.close()
+        await ChromiumRuntime.shared.releaseContext(contextID: context.contextID)
+    }
+
+    /// Half a second of 8 kHz mono 16-bit silence: playable media without a codec dependency.
+    private static func silentWAV() -> Data {
+        let bytes = 8_000
+        var data = Data("RIFF".utf8)
+        func append<Value: FixedWidthInteger>(_ value: Value) {
+            withUnsafeBytes(of: value.littleEndian) { data.append(contentsOf: $0) }
+        }
+        append(UInt32(36 + bytes))
+        data.append(contentsOf: Data("WAVEfmt ".utf8))
+        append(UInt32(16))
+        append(UInt16(1))
+        append(UInt16(1))
+        append(UInt32(8_000))
+        append(UInt32(16_000))
+        append(UInt16(2))
+        append(UInt16(16))
+        data.append(contentsOf: Data("data".utf8))
+        append(UInt32(bytes))
+        data.append(Data(count: bytes))
+        return data
+    }
+
     /// A credential context minted before A→B→A must not survive the restore, and every context record kept for the
     /// restored frame must belong to the restored document. Page state surviving the step (`globalThis`, the loader ID)
     /// is the evidence that Chromium restored from its cache rather than reloading; without it the test fails rather
@@ -129,9 +284,10 @@ struct ChromiumPageTests {
         defer { window.close() }
 
         func pathname(inContext uniqueID: String) async throws -> String? {
-            let response = try await native.devTools.command("Runtime.evaluate", params: [
-                "expression": "location.pathname", "uniqueContextId": uniqueID, "returnByValue": true,
-            ])
+            let record = try #require(native.devTools.contextsByUniqueID[uniqueID])
+            let response = try await native.devTools.command("Runtime.evaluate", params: native.devTools.address(record).merging([
+                "expression": "location.pathname", "returnByValue": true,
+            ]) { $1 })
             return try native.devTools.runtimeValue(response) as? String
         }
 

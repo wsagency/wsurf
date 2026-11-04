@@ -108,6 +108,7 @@ final class AppCoordinator {
     let tabPreview = TabPreviewModel()
     let linkPeek = LinkPeek()
     let peek = PeekPanel()
+    let translationDownloads = TranslationDownloads()
     let sidebarDrag = SidebarDragModel()
     var settings: BrowserSettings {
         context.settings
@@ -136,7 +137,7 @@ final class AppCoordinator {
     var conversationVoice: OpenAIRealtimeConversation?
     var isVoiceConversationPresented = false
     var voiceConversationMessage: String?
-    @ObservationIgnored var conversationSpaceID: UUID?
+    @ObservationIgnored var conversationAnchorID: UUID?
     let voiceInput: VoiceInputModel
     let speech: ProviderSpeechOutput
     @ObservationIgnored var voiceConfigurationID: String?
@@ -152,11 +153,12 @@ final class AppCoordinator {
     let attention = AgentAttention()
     #endif
     let memoryPressure = MemoryPressureMonitor()
+    let sleepTimer = TabSleepTimer()
     private var host: BrowserHost?
     var mainMenu: MainMenu?
 
     @ObservationIgnored private var isAskingForMicrophone = false
-    @ObservationIgnored private var shellFrameInWindow: CGRect = .zero
+    @ObservationIgnored private(set) var shellFrameInWindow: CGRect = .zero
     @ObservationIgnored private var appearanceObservation: NSKeyValueObservation?
     @ObservationIgnored private var iconScheme: FaviconLoader.IconScheme?
 
@@ -165,11 +167,26 @@ final class AppCoordinator {
 
     private(set) var browserVisible = false
     private(set) var windowControlsInset: CGFloat = 0
+    private(set) var titleStripInset: CGFloat = 0
     private(set) var addressBarFocusToken = 0
     private(set) var isPaletteOpen = false
     private(set) var isNewTabPaletteOpen = false
     var isProfileSwitcherOpen = false
+    /// The list of tabs playing sound is open over the speaker (`AudioIndicatorButton`).
+    var isAudioListOpen = false
+    /// The list of recent downloads is open over the Downloads button (`SidebarDownloadsButton`).
+    var isDownloadsListOpen = false
+    /// The Minimal window's tab list. It never touches the Standard sidebar's `isVisible` or `isPeeking`.
+    var isMinimalTabListOpen = false {
+        didSet { if isMinimalTabListOpen != oldValue { applyHoverShield() } }
+    }
     var profileButtonFrame: CGRect?
+    /// A micro window's Float on Top: above other windows, on every desktop and over full-screen apps. Never saved.
+    var floatsOnTop = false {
+        didSet { if floatsOnTop != oldValue { applyFloatOnTop() } }
+    }
+    /// When a micro window's bar is down. Made, and started, only for micro windows (`configureMicroCallbacks`).
+    @ObservationIgnored lazy var microReveal = makeMicroReveal()
     private(set) var paletteToken = 0
     var sidebarDestination: SidebarDestination? {
         SidebarDestination.resolve(activeTabID: browser.activeTab?.id)
@@ -306,12 +323,14 @@ final class AppCoordinator {
             view.setHoverParked(
                 SidebarPeekShield.suppressesHover(
                     isVisible: sidebar.isVisible,
-                    isPeeking: sidebar.isPeeking,
+                    isPeeking: sidebar.isPeeking && !isMinimal,
                     viewMaxX: viewMaxX,
                     width: width,
-                    isMediaPicture: view === media.model.picturePage?.webKit
+                    isMediaPicture: view === media.model.picturePage?.webKit,
+                    isPointerOverPlayer: media.isPointerOverPlayer
                 )
-                    || shell.panelCoversPage
+                    || (shell.panelCoversPage && !isMicro)
+                    || (isMinimal && isMinimalTabListOpen)
             )
         }
     }
@@ -344,13 +363,13 @@ final class AppCoordinator {
     }
 
     var isSpeakingInChrome: Bool {
-        agentReply.isStreaming && agentReply.showsInChrome(inSpace: browser.activeSpaceID)
+        agentReply.isStreaming && agentReply.showsInChrome(inAnchor: browser.activeAnchorID)
     }
 
     func pendingAgentQuestion(inChrome: Bool) -> AgentQuestionModel.Ask? {
-        let spaceID = browser.activeSpaceID
-        guard agentReply.showsInChrome(inSpace: spaceID) == inChrome else { return nil }
-        return agentQuestions.ask(inSpace: spaceID)
+        let anchorID = browser.activeAnchorID
+        guard agentReply.showsInChrome(inAnchor: anchorID) == inChrome else { return nil }
+        return agentQuestions.ask(inAnchor: anchorID)
     }
 
     func readAloud(_ text: String) {
@@ -444,6 +463,9 @@ final class AppCoordinator {
         guard let category else { return }
         route(to: category, in: tab)
     }
+
+    /// A setting for the Settings page to reveal (see `openSettings(revealing:)`). The page takes it and clears it.
+    var pendingSettingsAnchor: String?
 
     func routeSettings(to category: SettingsCategory) {
         guard let tab = browser.tabs.first(where: { $0.internalPage == .settings }) else { return }
@@ -545,8 +567,8 @@ final class AppCoordinator {
     }
 
     func printActivePage() {
-        guard let page = pageCommandTab?.page else { return }
-        PagePrinting.begin(for: page)
+        guard let tab = pageCommandTab else { return }
+        PagePrinting.begin(for: tab.shownPage)
     }
 
     func toggleFullScreen() {
@@ -593,6 +615,11 @@ final class AppCoordinator {
     }
 
     func openTab(_ tab: BrowserTab) {
+        // The row of a page in a micro window: a click brings the page back, an Option-click shows the micro window.
+        if tab.microTabID != nil {
+            openMicroPlaceholder(tab, showingWindow: NSEvent.modifierFlags.contains(.option))
+            return
+        }
         browser.activate(tab)
     }
 
@@ -687,6 +714,8 @@ final class AppCoordinator {
                 message = String(localized: "This tab is using the camera or microphone.")
             case .agentWorking:
                 message = String(localized: "The assistant is working in this tab.")
+            case .externalControl:
+                message = String(localized: "A connected app controls this tab. Take it over first.")
             case .mediaPlayback:
                 message = String(localized: "This tab is playing media.")
             case .visibleInSplit:
@@ -726,13 +755,6 @@ final class AppCoordinator {
         sidePanel.toggle(.activity)
     }
 
-    func toggleSidebar() {
-        if !browserVisible {
-            showBrowser()
-        }
-        sidebar.toggleVisible()
-    }
-
     func useProvider(_ provider: Provider) {
         guard provider.id != selectedProvider.id else { return }
         modelSettings.providerID = provider.id
@@ -751,11 +773,6 @@ final class AppCoordinator {
         } else if microphoneIsReady() {
             voiceInput.begin(endsOnSilence: true)
         }
-    }
-
-    func hostDidChange(visible: Bool, controlsInset: CGFloat) {
-        browserVisible = visible
-        windowControlsInset = controlsInset
     }
 
     func prepareWindowBloom() {
@@ -899,7 +916,8 @@ final class AppCoordinator {
         do {
             try AttachmentRequest.validate(
                 attachments, message: text, textOnly: attachmentTextOnly,
-                windowTokens: ContextWindow.tokens(for: selectedProvider, model: selectedModel, settings: modelSettings)
+                windowTokens: ContextWindow.tokens(for: selectedProvider, model: selectedModel, settings: modelSettings),
+                imageTokens: AttachmentRequest.imageTokens(for: selectedProvider)
             )
         } catch {
             statusMessage = error.localizedDescription
@@ -919,5 +937,16 @@ final class AppCoordinator {
             trace: LatencyTrace(),
             showsInChrome: showsInChrome
         )
+    }
+}
+
+extension AppCoordinator {
+    /// Called about once a frame while the full-screen strip slides, so only a real change reaches the views.
+    func hostDidChange(visible: Bool, controlsInset: CGFloat, titleStripInset: CGFloat) {
+        guard visible != browserVisible || controlsInset != windowControlsInset || titleStripInset != self.titleStripInset
+        else { return }
+        browserVisible = visible
+        windowControlsInset = controlsInset
+        self.titleStripInset = titleStripInset
     }
 }

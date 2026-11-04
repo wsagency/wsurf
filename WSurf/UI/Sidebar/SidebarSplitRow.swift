@@ -45,7 +45,7 @@ struct SidebarSplitRow: View {
     @Environment(\.sidebarStyle) private var sidebarStyle
 
     @State private var hoveringRow = false
-    @State private var windowFrame: CGRect = .zero
+    @State private var rowFrame = SidebarRowFrame()
 
     private var interaction: SplitRowInteraction {
         .mode(isOnScreen: isOnScreen)
@@ -56,12 +56,15 @@ struct SidebarSplitRow: View {
     }
 
     private var isOnScreen: Bool {
-        guard case .tab = coordinator.sidebarDestination else { return false }
-        return browser.isVisibleInSplit(leading)
+        browser.isVisibleInSplit(leading)
+    }
+
+    private var style: SidebarRowStyle {
+        browser.rowStyle(ofSplitLedBy: leading, isMarked: isSelected, paletteOpen: coordinator.isNewTabPaletteOpen)
     }
 
     private var radius: CGFloat {
-        depth == 0 ? Theme.Radius.hover : FolderSection.rowRadius(depth: depth - 1)
+        depth == 0 ? Theme.Radius.row : FolderSection.rowRadius(depth: depth - 1)
     }
 
     private var shape: TabSplit {
@@ -111,7 +114,7 @@ struct SidebarSplitRow: View {
         }
         .frame(height: height)
         .sidebarRowSelectionEffect(
-            isSelected: (isOnScreen && !coordinator.isNewTabPaletteOpen) || isSelected,
+            isSelected: style.emphasis != .resting,
             isHovering: interaction == .wholeRow && hoveringRow,
             radius: radius
         )
@@ -120,19 +123,20 @@ struct SidebarSplitRow: View {
         .onHover { over in
             withAnimation(Theme.Motion.quick) { hoveringRow = over }
             if over {
-                coordinator.tabPreview.hover(.split(split, panes), anchor: windowFrame)
+                coordinator.tabPreview.hover(.split(split, panes), anchor: context.windowFrame(of: item))
             } else {
                 coordinator.tabPreview.unhover(panes.first?.id ?? leading.id)
             }
         }
         .onGeometryChange(for: CGRect.self) { $0.frame(in: .named(context.space)) } action: {
-            context.frames.record(item, at: $0)
+            rowFrame.measure(item, at: $0, in: context.frames)
+            context.followPreview(of: item, id: panes.first?.id ?? leading.id)
         }
-        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frame in
-            windowFrame = frame
-            coordinator.tabPreview.moved(panes.first?.id ?? leading.id, anchor: frame)
+        .onAppear { rowFrame.appear(item, in: context.frames) }
+        .onDisappear {
+            coordinator.tabPreview.unhover(panes.first?.id ?? leading.id)
+            rowFrame.forget(item, in: context.frames)
         }
-        .onDisappear { coordinator.tabPreview.unhover(panes.first?.id ?? leading.id) }
         .contextMenu { menu }
     }
 
@@ -193,6 +197,7 @@ struct SidebarSplitRow: View {
 
     @ViewBuilder
     private var menu: some View {
+        ExternalControlMenuItems(tabs: panes, coordinator: coordinator)
         SidebarLinkMenuItems(tabs: panes, coordinator: coordinator)
         SidebarFavoriteMenuItems(tabs: panes, browser: browser)
 
@@ -240,7 +245,8 @@ private struct SplitRowCell: View {
     let onTap: (BrowserTab) -> Void
 
     @Environment(\.sidebarStyle) private var sidebarStyle
-    @Environment(\.colorScheme) private var windowColorScheme
+    @Environment(\.sidebarIconTint) private var folderIconTint
+    private var inkSource = SidebarRowInkSource()
     @State private var hovering = false
     @State private var controlsWidth: CGFloat = 0
     @State private var windowFrame: CGRect = .zero
@@ -252,12 +258,26 @@ private struct SplitRowCell: View {
         context.coordinator
     }
 
-    private var isFocused: Bool {
-        coordinator.sidebarDestination == .tab(tab.id) && browser.isVisibleInSplit(tab)
+    /// Only the pane in focus is current; the other keeps the glass of the row to show that it is on screen too.
+    private var style: SidebarRowStyle {
+        browser.rowStyle(
+            of: tab,
+            isMarked: false,
+            paletteOpen: coordinator.isNewTabPaletteOpen,
+            increasedContrast: inkSource.increasedContrast
+        )
+    }
+
+    private var ink: SidebarRowInk {
+        inkSource.ink(for: style, isDeferred: tab.isDeferred)
     }
 
     private var showsPinReturn: Bool {
         sidebarStyle == .full && tab.isAwayFromPin && hovering && answersAlone
+    }
+
+    private var showsTitle: Bool {
+        sidebarStyle == .full && !isNarrow
     }
 
     private var titleMask: some View {
@@ -278,10 +298,17 @@ private struct SplitRowCell: View {
                     browser.returnToPin(tab)
                 }
             } else {
-                TabIcon(tab: tab, tint: BrowserSettings.application.sidebarTextColor(
-                    isDeferred: tab.isDeferred,
-                    scheme: windowColorScheme
-                ))
+                let icon = ink.iconStyle(
+                    folderTint: folderIconTint,
+                    colorsFavicon: BrowserSettings.application.chromeShape.colorsFavicons,
+                    isDeferred: tab.isDeferred
+                )
+                TabIcon(tab: tab, tint: icon.tint, colorsFavicon: icon.colorsFavicon)
+                    .sidebarNewMark(ink)
+                    .sidebarRowName(tab.title, style: style, isIconOnly: !showsTitle)
+                    .overlay(alignment: .bottomTrailing) {
+                        ExternalControlMark(tab: tab, coordinator: coordinator, isCompact: true)
+                    }
             }
 
             if sidebarStyle == .full, tab.isPlayingAudio || tab.isMuted {
@@ -290,16 +317,15 @@ private struct SplitRowCell: View {
                 }
             }
 
-            if sidebarStyle == .full, !isNarrow {
+            if showsTitle {
                 Text(verbatim: tab.title)
-                    .font(BrowserSettings.application.sidebarFont)
-                    .foregroundStyle(BrowserSettings.application.sidebarTextColor(
-                        isDeferred: tab.isDeferred,
-                        scheme: windowColorScheme
-                    ))
+                    .font(ink.titleFont)
+                    .foregroundStyle(ink.text)
                     .lineLimit(1)
+                    .sidebarRowAccessibility(style)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .mask(alignment: .leading) { titleMask }
+                    .sidebarTitleCentered()
             }
         }
         .overlay(alignment: .trailing) {
@@ -314,7 +340,8 @@ private struct SplitRowCell: View {
         }
         .padding(.horizontal, SidebarMetrics.rowContentPadding(style: sidebarStyle))
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .sidebarHoverFill(isHovering: answersAlone && hovering, in: shape)
+        .sidebarInverse(ink, in: shape)
+        .sidebarHoverFill(isHovering: answersAlone && hovering && style.emphasis != .current, in: shape)
         .contentShape(Rectangle())
         .onTapGesture { onTap(tab) }
         .onMiddleClick {

@@ -106,11 +106,12 @@ on both the app and exchange extension; each needs its own authorized profile.
 WSurf deliberately does not declare Apple's managed
 `com.apple.developer.web-browser.public-key-credential` entitlement. This does
 not change routing: native system passkeys for arbitrary relying parties via
-WebKit are not guaranteed in legacy/default or private tabs. Vault-managed
-WebAuthn and Apple Passwords exchange use separate paths. A Developer ID
-signature needs a profile authorizing the restricted entitlements it declares.
-Gatekeeper refuses to launch an app that declares a restricted entitlement
-without the profile.
+WebKit are not guaranteed: a normal tab reaches them only through its "Use
+Another Device or Key…" hand-off, and a private tab uses them directly.
+Vault-managed WebAuthn and Apple Passwords exchange use separate paths. A
+Developer ID signature needs a profile authorizing the restricted entitlements
+it declares. Gatekeeper refuses to launch an app that declares a restricted
+entitlement without the profile.
 
 The managed browser capability is not needed for WSurf's vault-managed WebAuthn,
 `wsurf.app` PRF unlock, or Apple Passwords exchange. Signing still requires
@@ -322,6 +323,69 @@ Release requirements:
   build number that goes down stops every installed copy from updating. Do not
   change a version by hand in the Xcode project. The values in the Xcode project
   apply only to local builds.
+- **Every candidate build has its own build number and changelog section.** A
+  candidate is a local signed build, so it carries the Xcode project's values;
+  this is the one place they change by hand. Each candidate build increments
+  `CURRENT_PROJECT_VERSION` and sets `MARKETING_VERSION`: while the version is
+  0.x, build N is `0.<minor>.N` (the 123rd build is `0.1.123`), and the
+  orchestrator proposes a minor bump (0.1 to 0.2) at checkpoints. Each candidate
+  adds its own `## <version> (build <n>) — <date>` section at the top of
+  `CHANGELOG.md`. `Tools/check-changelog.sh` runs in the candidate gate and
+  fails without that section, and for a 0.x version also when the patch number
+  differs from the build number. The release workflow still finds the section
+  by its `## <version>` prefix.
+- **Every candidate build says which candidate it is.** The gate and the sign
+  driver add two build settings to every `xcodebuild` call (build, test,
+  archive): `WSURF_CANDIDATE=<label>`, the orchestrator's label (for now the
+  version, such as `0.1.4`), and `WSURF_COMMIT=$(git rev-parse --short=8 HEAD)`. They become the
+  `WSurfCandidate` and `WSurfCommit` keys in `WSurf/Info.plist`, and the About
+  panel and Settings › About show `Candidate <label> · <commit>` under the
+  version. The defaults are `dev` and empty; a `dev` or empty candidate shows no
+  line. Pass them on the command line, as with `WSURF_BUNDLE_ID_SUFFIX`: the
+  Xcode project keeps the defaults, so nothing changes by hand and the build
+  stays reproducible from the commit and the label.
+- **A partitioned candidate gate runs the three test plans from one build.**
+  After one `build-for-testing`, it runs `WSurf-Parallel`, `WSurf-Serial` and
+  then `WSurf-Performance` against the same `.xctestrun`, all under one hold of
+  the machine lock. `python3 -I Tools/check-test-partition.py` runs first and
+  must pass, and each run takes its selection from
+  `Tools/check-test-partition.py --args <plan>`. Coverage comes from the three
+  result bundles merged with `xcresulttool merge`. Xcode lists a varying subset of
+  its static package targets for coverage in each build's `.xctestrun` (the test
+  plans pin which targets to report, not which it lists), so the gate checks
+  that list after `build-for-testing` and repeats the build, up to eight times,
+  until WSurf.app, WSurfVault and WSurfCore are all in it; `Tools/check-coverage.sh`
+  then reads all three. The budgets in
+  `Tools/check-performance.sh` come from the `WSurf-Performance` bundle. The test
+  counts of the three runs must add up to the merged total. A new suite is
+  serial until someone shows it is safe in parallel; see CONTRIBUTING.md,
+  "Parallel and serial tests".
+- **Memory budgets are judged on the median, time budgets on the mean.**
+  `XCTMemoryMetric` is the change of the test host's physical footprint over one
+  pass, and in a long-running host a single sample swings by tens of MB either
+  way while time and behavior are fine, so the mean of five flipped sign on one
+  outlier (0.1.5, layout option sidebar: 3424, 4129, 4112, 6275 and 21496 kB,
+  mean 7887 against a budget of 7019). `Tools/check-performance.sh` holds the
+  median of the memory samples to the budget and the mean of all the time
+  samples, as before. Every budgeted case measures six iterations
+  (`XCTMeasureOptions.budgeted`), and the gate drops the first memory sample as
+  the warm-up, so the median is taken over the other five. A real regression
+  lifts every sample and still fails. No budget is raised for noise: a case
+  whose samples are mostly high, such as the 0.1.6 autofilled password among
+  20,000 credentials (median 18580 kB against 4096), is a measurement problem
+  to fix in the test, not a budget to raise. That one (and 0.1.17 gate 4's
+  18924 kB) was the allocator's large-block cache: freed large blocks stay in
+  the footprint, `malloc_zone_pressure_relief` does not empty the cache, and
+  the kernel takes them back only when the Mac is under memory pressure, at
+  moments of its own. So `WSurf.xctestplan` sets `MallocLargeCache=0` for the
+  test host, the large-vault write cases (`VaultScalePerformanceTests.measureWrite`)
+  drop what a pass prepared and return the free pages just before the
+  measurement starts and stops, and
+  `VaultScalePerformanceTests.testFreedLargeBlocksLeaveTheFootprint` fails if
+  the cache is on: a sample is what the step retained. If you change the iteration count, change the rule
+  in the script with it. `Tools/check-performance.sh
+  --self-test` checks the statistics on those sample sets and needs no metrics
+  file.
 - **The release body supplies the “What’s New” sheet.** The workflow makes the
   body from two parts. `CHANGELOG.md` is optional: make it only when a release
   needs notes of its own. If it contains a `## 1.1` section, that section comes
@@ -361,6 +425,11 @@ After you add, remove or update a package:
 CI runs the same command and stops the build if the result is different. The
 MIT and Apache licenses require their terms to be included with distributed
 binaries, so this file is required.
+
+CefSwift is vendored in `Packages/CefSwift`, so it is not in `Package.resolved`. The script
+reads its license from that folder (`licenseDirectory` in the script's `vendored` list).
+When you update the vendored copy, change the version there and in
+`Packages/CefSwift/WSURF-PATCHES.md`.
 
 ### The disk image
 
@@ -412,6 +481,40 @@ Mac:
 9. Notarize the disk image with `notarytool`.
 10. Staple the ticket to the disk image with `staple`.
 11. Attach the disk image, the zip file **and** `appcast.xml` to the release.
+
+## Local development-signed candidates
+
+The candidates tried by hand on the owner's Macs (development-signed, `WSURF_BUNDLE_ID_SUFFIX` empty) are built in the configuration
+that ships. A Debug app is 477 MB on disk (a 145 MB debug dylib, coverage counters, unoptimised code) and as slow as the code can be;
+`release.yml` and `tip.yml` already archive Release, so the local candidate should too.
+
+- **Build** with `xcodebuild archive -configuration Release -destination 'generic/platform=macOS'`, the `release.yml` command with the
+  development identity and profiles, and `ENABLE_DEBUG_DYLIB=NO ENABLE_PREVIEWS=NO`. An archive strips the executables and writes
+  `dSYMs/`: keep them with the build's evidence, they are what symbolicates a crash of that exact build. A plain `xcodebuild build`
+  of the scheme turns on code coverage, because the scheme's test action enables it, and leaves the debug map in the binary. An
+  archive does neither, and `xcodebuild` refuses `-enableCodeCoverage` for it ("only supported when testing").
+- **Assert the result** instead of trusting the settings: no `*.debug.dylib` or `__preview.dylib`, no `__llvm_prf` or `__LLVM_COV`
+  section in any Mach-O, a host `__LINKEDIT` of a few MB (the Debug build's was 80 MB) and exactly the kept Chromium languages.
+- **Chromium languages.** `Tools/embed-chromium.sh` keeps the locale paks named in `WSURF_CEF_LOCALES` (lproj names separated by
+  spaces, default `en en_GB hr`, `en` required, set but empty keeps all) and removes the rest before the first signature: 217 of 220
+  directories, 47 MB. The list is part of the embed fingerprint. Pages see the same languages with or without them: the app declares
+  only `en`, so Chromium loads its en-US strings and CEF reports `en-US,en` whatever the system languages are
+  (`ChromiumLanguageTests`).
+- **Install copy.** Stage with `ditto --noclone --hfsCompression <verified unzipped app> <staged app>`: about 162 to 172 MB on disk instead of 316.
+  `--noclone` is required on macOS 27: its `ditto` clones same-volume copies by default and `--hfsCompression` then compresses nothing (macOS 26 accepts the flag too).
+  Never `ditto -x -k --hfsCompression`, which produced an incomplete tree. A later Finder or `cp -R` copy loses the compression
+  (`ditto` and `cp -cR` keep it).
+- **Tests stay Debug.** Never host tests in the Release configuration: its bundle identifier is fixed and Stage mode is compiled out.
+  `CredentialStore` now isolates tests in every configuration, but nothing else promises that for a Release test host. The
+  candidate gate adds one optimised host, a Debug build with `SWIFT_OPTIMIZATION_LEVEL=-O ENABLE_DEBUG_DYLIB=NO
+  ENABLE_HARDENED_RUNTIME=NO`, that runs the Performance plan and a short smoke subset. It catches bugs only the optimiser causes,
+  which the Debug binary cannot show. Performance budgets stay the Debug budgets.
+- **What differs at runtime**, from the `#if DEBUG` sites: Stage mode is gone (screenshot and staged-profile work needs a Debug build),
+  extension contexts are not inspectable, WebAuthn counts and `AutofillDiagnostics.policyFailed` log less, Swift `assert`s are compiled
+  out, and `MoveToApplications` offers to move a copy that does not run from `/Applications` (never launch a candidate from its
+  staging path). A development-signed Release build is expected not to carry `com.apple.security.get-task-allow`: no lldb,
+  Instruments or `sample` on the installed candidate. The candidate verifier reports that as a named entitlement difference that needs
+  the owner's approval.
 
 ## Preview builds
 

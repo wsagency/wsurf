@@ -34,13 +34,13 @@ struct SidebarPinMenuItems: View {
     let browser: BrowserModel
 
     var body: some View {
-        if tab.pinnedURL == nil {
+        if !tab.isPinnedForProfile {
             Button {
                 browser.pin(tab)
             } label: {
                 Label("Pin This Page", systemImage: "pin")
             }
-            .disabled(tab.urlString.isEmpty)
+            .disabled(tab.pinnableURL == nil)
         } else {
             if tab.isAwayFromPin {
                 Button {
@@ -48,22 +48,17 @@ struct SidebarPinMenuItems: View {
                 } label: {
                     Label("Back to Pinned Page", systemImage: "arrow.uturn.backward")
                 }
-            }
-            Menu {
                 Button {
                     browser.pin(tab)
+                    browser.sidebarSelection.takeKeyboard()
                 } label: {
-                    Label("Move Pin to This Page", systemImage: "pin")
+                    Label("Update Pinned URL", systemImage: "pin")
                 }
-                .disabled(!tab.isAwayFromPin)
-
-                Button {
-                    PinEditor.edit(tab, in: browser)
-                } label: {
-                    Label("Edit…", systemImage: "pencil")
-                }
+            }
+            Button {
+                PinEditor.edit(tab, in: browser)
             } label: {
-                Label("Edit Pinned Page", systemImage: "pin.circle")
+                Label("Edit Pinned Page…", systemImage: "pin.circle")
             }
         }
         Divider()
@@ -159,6 +154,7 @@ struct SidebarFolderMenuItems: View {
         } label: {
             Label("Move to Folder", systemImage: "folder")
         }
+        SidebarSpaceMenuItems(items: items, browser: browser)
         if isFiled {
             Button {
                 browser.moveOut(items)
@@ -167,6 +163,33 @@ struct SidebarFolderMenuItems: View {
             }
         }
         Divider()
+    }
+}
+
+/// Move to Space: the other spaces of the window's profile, for rows that belong to a space (pins belong to all).
+struct SidebarSpaceMenuItems: View {
+    let items: [SidebarItem]
+    let browser: BrowserModel
+
+    var body: some View {
+        let targets = browser.spaceMoveTargets
+        if !targets.isEmpty, items.contains(where: { browser.spaceID(ofItem: $0) != nil }) {
+            Menu {
+                ForEach(targets) { space in
+                    Button {
+                        browser.move(items, toSpace: space.id)
+                    } label: {
+                        Label {
+                            Text(verbatim: space.name)
+                        } icon: {
+                            Image(systemName: space.symbol)
+                        }
+                    }
+                }
+            } label: {
+                Label("Move to Space", systemImage: "square.on.square")
+            }
+        }
     }
 }
 

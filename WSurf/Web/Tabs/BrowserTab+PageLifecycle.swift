@@ -8,22 +8,16 @@ import os
 import WebKit
 
 extension BrowserTab {
-    func changeChromiumCapture(in view: BrowserPage, permission: WebPermission, revoke: Bool) {
+    func revokeChromiumCapture(in view: BrowserPage, permission: WebPermission) {
         guard let chromium = view.chromium else { return }
         Task { [weak self, weak view] in
             do {
-                if revoke {
-                    try await chromium.revokeCapture(permission)
-                } else {
-                    try await chromium.restoreCapturePrompt(permission)
-                }
+                try await chromium.revokeCapture(permission)
             } catch {
                 guard let self, let view, self.liveView === view else { return }
                 // A failed revocation must not leave untracked live device access.
-                if revoke {
-                    await view.close()
-                    restartPage()
-                }
+                await view.close()
+                restartPage()
                 let alert = NSAlert()
                 alert.messageText = String(localized: "Could not change website device access")
                 alert.informativeText = error.localizedDescription
@@ -38,6 +32,7 @@ extension BrowserTab {
     }
 
     func navigationStarted(_ navigation: PageNavigation?, url: URL?) {
+        pendingPDFOpening = nil
         if !isLoadingErrorPage {
             isShowingError = false
         }
@@ -53,12 +48,21 @@ extension BrowserTab {
     }
 
     func navigationCommitted(_ navigation: PageNavigation?) {
+        pendingPDFOpening = nil
         committedNavigation = navigation
         autofillSave.resetDismissalsForNavigation()
         if provisionalNavigation === navigation {
             provisionalNavigation = nil
         }
         noteDocumentChanged()
+        // WebKit applies Developer mode's page appearance in its own didCommit; the committed document decides it here too, so
+        // leaving a website in Developer mode puts the page's own color scheme back.
+        if page.chromium != nil {
+            applyDevModeAppearance()
+        }
+        translation.documentChanged()
+        reader.pageChanged()
+        probeReader()
         noteHoveredLink(nil)
         clearPageActivity()
         if isShowingRealPage, !hasPresentedContent {
@@ -67,6 +71,8 @@ extension BrowserTab {
         holdPageColorUntilLoaded()
         refreshChrome()
         invalidateSessionState()
+        developmentDocumentChanged()
+        dialogs.documentCommitted()
     }
 
     func navigationFinished(_ navigation: PageNavigation?) {
@@ -82,10 +88,16 @@ extension BrowserTab {
             return
         }
         didPresentContent()
+        // WebKit re-applies Developer mode's overlays in its own didFinish; Chromium's new document gets them here.
+        if page.chromium != nil {
+            applyDevModeOverlays()
+        }
         refreshFavicon()
         releasePageColorHold()
         refreshPageColor(from: page)
         restoreScrollOffsetIfNeeded()
+        probeReader()
+        offerTranslation()
         onNavigationFinished?(wasRestore || isShowingError)
     }
 
@@ -93,6 +105,10 @@ extension BrowserTab {
         guard !isClosed else { return }
         if (error as? URLError)?.code != .cancelled {
             autofillSave.submissions.clear()
+        }
+        // A navigation another one replaced fails after the new one started and must not end the new one's wait.
+        if let navigation, provisionalNavigation === navigation || committedNavigation === navigation {
+            noteNavigationEnded()
         }
         if provisionalNavigation === navigation {
             provisionalNavigation = nil
@@ -130,14 +146,26 @@ extension BrowserTab {
         refreshChrome()
     }
 
+    /// Google sign-in completes only in WebKit. The navigations its pages make next (the redirect back to the service that
+    /// asked) stay there: a site set to Chromium would get them without the sign-in and send the tab back to sign in again.
+    /// A navigation the user starts ends the hold. `startedByUser` is false for those the engine asks a decision for.
+    func noteNavigation(to url: URL, startedByUser: Bool) {
+        if SitePermissions.webKitOnlyOrigins.contains(SitePermissions.origin(for: url)) {
+            signInEngine = .webKit
+        } else if startedByUser {
+            signInEngine = nil
+        }
+    }
+
     /// Only safe GET navigation is reissued in another engine; submitted requests stay in their original engine.
     func permitsEngineNavigation(_ request: URLRequest, isMainFrame: Bool) -> Bool {
         guard isMainFrame, let url = request.url,
-              SitePermissions.origin(for: url).isEmpty == false,
-              preferredEngine(for: url) != engine,
+              SitePermissions.origin(for: url).isEmpty == false else { return true }
+        noteNavigation(to: url, startedByUser: false)
+        guard preferredEngine(for: url) != engine,
               (request.httpMethod ?? "GET").uppercased() == "GET",
               request.httpBody == nil, request.httpBodyStream == nil else { return true }
-        load(url, transition: pendingTransition)
+        load(url, transition: pendingTransition, startedByUser: false)
         return false
     }
 
@@ -174,28 +202,53 @@ extension BrowserTab {
 
     private func offerChromiumExternalApp(_ url: URL, sourceURL: URL?, sourceFrame: BrowserFrame?) {
         let view = page
-        guard let chromium = view.chromium, let client = chromium.client,
-              let native = client.externalAppSnapshot(for: sourceFrame) else { return }
-        let source = native.sourceIsUnique ? sourceFrame : nil
+        guard let chromium = view.chromium, let client = chromium.client else {
+            ExternalApp.noteDropped(url, .stale)
+            return
+        }
+        let document = committedNavigation
+        let source: BrowserFrame?
+        let requestIsCurrent: () -> Bool
+        if document == nil, sourceFrame == nil {
+            // Nothing committed yet (a fresh tab's first redirect): no document can prove it, and the DevTools frame map
+            // can still be empty (the startup page may commit before Page.enable). No newer main-frame navigation is the
+            // proof, as WebKit's first redirect; the request names no site, so nothing can be remembered.
+            let generation = chromium.mainFrameGeneration
+            source = nil
+            requestIsCurrent = { chromium.mainFrameGeneration == generation }
+        } else {
+            guard let native = client.externalAppSnapshot(for: sourceFrame) else {
+                ExternalApp.noteDropped(url, .stale)
+                return
+            }
+            source = native.sourceIsUnique ? sourceFrame : nil
+            // ponytail: ambiguous initiators bind every live native document until CEF can prove the source.
+            let snapshot = source.map { [$0] } ?? chromium.devTools.frameSnapshot()
+            // DevTools renderer RPCs are suspended by an unrelated pending top-level navigation.
+            requestIsCurrent = {
+                client.isCurrentExternalAppSnapshot(native.documents) && chromium.devTools.isCurrent(snapshot: snapshot)
+            }
+        }
         let candidate = SitePermissions.webOrigin(for: sourceURL)
         let origin = source.map { ChromiumClient.sameOrigin(candidate, $0.securityOrigin) } == true ? candidate : ""
-        let document = committedNavigation
-        // ponytail: ambiguous initiators bind every live native document until CEF can prove the source.
-        let snapshot = source.map { [$0] } ?? chromium.devTools.frameSnapshot()
         Task { [weak self, weak view] in
-            guard let self, !isClosed, let view, liveView === view else { return }
+            guard let self, !isClosed, let view, liveView === view else {
+                ExternalApp.noteDropped(url, .tabClosed)
+                return
+            }
             await ExternalApp.offerToOpen(url, from: origin, policy: externalApps, in: view.window, isCurrent: {
-                // DevTools renderer RPCs are suspended by an unrelated pending top-level navigation.
-                client.isCurrentExternalAppSnapshot(native.documents)
-                    && chromium.devTools.isCurrent(snapshot: snapshot)
-                    && !self.isClosed && self.liveView === view && self.committedNavigation === document
+                requestIsCurrent() && !self.isClosed && self.liveView === view && self.committedNavigation === document
             })
         }
     }
 
     func adopt(_ view: BrowserPage) {
         precondition(view.context === context)
+        translation.documentChanged()
         liveView = view
+        followBackgroundHiding(of: view)
+        view.dialogs = dialogs
+        dialogs.leaseHolder = { [weak self] in self?.dialogLeaseHolder }
         engine = view.engine
         Self.applyObscuredInsets(to: view)
         fullscreenObservation = view.observe(\.isFullscreen, options: [.new]) { view, _ in
@@ -214,6 +267,10 @@ extension BrowserTab {
         }
         view.onContentProcessTerminated = { [weak self] in self?.contentProcessDidTerminate() }
         view.onHistoryChanged = { [weak self] in self?.refreshChrome() }
+        view.onNavigatedWithinDocument = { [weak self, weak view] in
+            guard let self, let view, !isClosed, liveView === view, isShowingRealPage, !isRestoring else { return }
+            onInPageMove?()
+        }
         view.onLinkHovered = { [weak self, weak view] url in
             guard let view else { return }
             self?.noteHoveredLink(url, modifiers: NSEvent.modifierFlags, at: TabNavigationDelegate.pointer(in: view))
@@ -239,9 +296,39 @@ extension BrowserTab {
                     self?.onSummarizeLink?(url, anchor ?? TabNavigationDelegate.pointer(in: view))
                 }
                 tabView.onZoomChanged = { [weak self] in self?.zoomDidChange() }
+                tabView.canPickCredential = { [weak self, weak view] in
+                    guard let self, let view, liveView === view else { return false }
+                    return CredentialPicker.isOffered(in: view, allowedByTab: allowsCredentialPicker)
+                }
+                tabView.onPickCredential = { [weak self, weak view] menu in self?.pickCredential(in: view, menu: menu) }
+                tabView.showsPDF = { [weak self, weak view] in
+                    guard let self, let view else { return false }
+                    return liveView === view && shownPDF != nil
+                }
+                tabView.onSavePDF = { [weak self, weak view] in
+                    guard let self, let view, liveView === view else { return }
+                    savePDF()
+                }
             }
         } else if let chromium = view.chromium {
             installChromiumCallbacks(on: chromium, in: view)
+            chromium.canPickCredential = { [weak self, weak view] in
+                guard let self, let view, liveView === view else { return false }
+                return CredentialPicker.isOffered(in: view, allowedByTab: allowsCredentialPicker)
+            }
+            chromium.onPickCredential = { [weak self, weak view] menu in self?.pickCredential(in: view, menu: menu) }
+            chromium.canInspect = { [weak self, weak view] in
+                guard let self, let view else { return false }
+                return liveView === view && canShowWebInspector
+            }
+            chromium.showsPDF = { [weak self, weak view] in
+                guard let self, let view else { return false }
+                return liveView === view && shownPDF != nil
+            }
+            chromium.onSavePDF = { [weak self, weak view] opening in
+                guard let self, let view, liveView === view else { return }
+                savePDF(opening: opening)
+            }
         }
 
         context.webViewPool.configurePage?(view)
@@ -255,14 +342,14 @@ extension BrowserTab {
             guard let view else { return }
             PageClickWatcher.shared.onClick?(view, point)
         }
-        SiteContentGuard.shared.install(in: view, permissions: sitePermissions, settings: context.settings) { [weak self] url in
-            self?.popups.note(url)
-        }
+        PullToRefreshMonitor.install(in: view)
+        SiteContentGuard.shared.install(in: view, permissions: sitePermissions, settings: context.settings)
         PaymentCardAutofill.shared.install(in: view)
         ContactAutofill.shared.install(in: view)
         PasswordAutofill.shared.install(in: view)
         WebAuthnAdapter.install(in: view)
         AutofillSaveCoordinator.shared.install(in: view, session: autofillSave)
+        InputHistoryCapture.shared.install(in: view) { [weak self] in self?.isUnderAssistantControl ?? false }
         installPageObservations(for: view)
         installPermissionCallbacks(for: view)
         permissions.pageChanged(url: view.url ?? (urlString.isEmpty ? nil : URL(string: urlString)))
@@ -308,6 +395,17 @@ extension BrowserTab {
         microphoneObservation = native.observe(\.microphoneCaptureState, options: [.new, .initial]) { [weak self] view, _ in
             MainActor.assumeIsolated { self?.permissions.setLive(.microphone, view.microphoneCaptureState != .none) }
         }
+        displayCaptureObservation = DisplayCaptureObservation(native) { [weak self] isSharing in
+            self?.notePageActivity(PageActivitySignal(
+                kind: .screenShare, token: DisplayCaptureObservation.token, isActive: isSharing
+            ))
+        }
+    }
+
+    /// Chromium never reports a screen share ending, so one protects the tab for the rest of the document.
+    func noteChromiumDisplayCapture(in view: BrowserPage?) {
+        guard let view, liveView === view else { return }
+        notePageActivity(PageActivitySignal(kind: .screenShare, token: "chromium-display-capture", isActive: true))
     }
 
     private func installPermissionCallbacks(for view: BrowserPage) {
@@ -318,13 +416,13 @@ extension BrowserTab {
                 if let native = view.webKit {
                     native.setCameraCaptureState(.none)
                 } else {
-                    changeChromiumCapture(in: view, permission: permission, revoke: true)
+                    revokeChromiumCapture(in: view, permission: permission)
                 }
             case .microphone:
                 if let native = view.webKit {
                     native.setMicrophoneCaptureState(.none)
                 } else {
-                    changeChromiumCapture(in: view, permission: permission, revoke: true)
+                    revokeChromiumCapture(in: view, permission: permission)
                 }
             case .location:
                 onLocationRevoked?()
@@ -332,10 +430,138 @@ extension BrowserTab {
                 break
             }
         }
-        permissions.onPolicyChanged = { [weak self, weak view] permission, policy in
-            guard let self, let view, self.liveView === view, view.chromium != nil,
-                  permission == .camera || permission == .microphone, policy != .deny else { return }
-            changeChromiumCapture(in: view, permission: permission, revoke: false)
+    }
+
+    /// Pick Credential… from the page's context menu. The tab's policy is asked again before every step of the picker.
+    private func pickCredential(in view: BrowserPage?, menu: CredentialPicker.Menu) {
+        guard let view, liveView === view else { return }
+        CredentialPicker.shared.pick(in: view, menu: menu) { [weak self, weak view] in
+            guard let self, let view else { return false }
+            return liveView === view && allowsCredentialPicker
+        }
+    }
+
+    /// A page's pop-up opens in a tab of its own, unless an app takes it or the pop-up blocker refuses it. The tab's page hosts the
+    /// browser CEF makes for it, so the pop-up keeps `window.opener` and can close itself; nil cancels it.
+    func openChromiumPopup(
+        _ url: URL, userGesture: Bool, sourceURL: URL?, sourceFrame: BrowserFrame?, click: ChromiumPage.ClickDisposition
+    ) -> ChromiumPage? {
+        if !ExternalApp.staysInWebView(url) {
+            offerChromiumExternalApp(url, sourceURL: sourceURL, sourceFrame: sourceFrame)
+            return nil
+        }
+        if peekAtChromiumClick(url, userGesture: userGesture, click: click) {
+            return nil
+        }
+        if popups.effective.blocks && !userGesture {
+            noteBlockedPopup(url)
+            return nil
+        }
+        // The site's engine setting wins: a pop-up of a site set to WebKit (Google sign-in among them) opens as a plain WebKit tab,
+        // as before, and the page gets no window. One with no site of its own (about:blank) stays with its opener.
+        let origin = SitePermissions.origin(for: url)
+        guard let onNewChromiumPopup, origin.isEmpty || sitePermissions.engine(for: origin) == .chromium else {
+            onOpenInNewTab?(url, userGesture && click != .backgroundTab)
+            return nil
+        }
+        // Reserved for CEF's browser before its tab can show it: a page shown first would make a browser of its own.
+        let popup = ChromiumPage(context: context, popup: url)
+        onNewChromiumPopup(BrowserPage(chromium: popup), click != .backgroundTab)
+        return popup
+    }
+
+    /// A page, or the person, asked for another window: it opens as a tab of its own, unless the pop-up blocker refuses a page's.
+    /// A click the person made opens as it does in a WebKit tab: Command or the middle button in the background (Shift too, in
+    /// front), Shift alone in a Peek.
+    func openChromiumWindow(
+        _ url: URL, userGesture: Bool, sourceURL: URL?, sourceFrame: BrowserFrame?, click: ChromiumPage.ClickDisposition = .other
+    ) {
+        if !ExternalApp.staysInWebView(url) {
+            offerChromiumExternalApp(url, sourceURL: sourceURL, sourceFrame: sourceFrame)
+            return
+        }
+        if peekAtChromiumClick(url, userGesture: userGesture, click: click) {
+            return
+        }
+        if popups.effective.blocks && !userGesture {
+            noteBlockedPopup(url)
+            return
+        }
+        onOpenInNewTab?(url, userGesture && click != .backgroundTab)
+    }
+
+    /// Shift-click on a link, which the engine reports as a window: a Peek, as in WebKit (`TabNavigationDelegate`). Only the person's
+    /// own click counts, and only where the tab can peek.
+    private func peekAtChromiumClick(_ url: URL, userGesture: Bool, click: ChromiumPage.ClickDisposition) -> Bool {
+        guard click == .window, userGesture, let onOpenInPeek, let view = liveView else { return false }
+        onOpenInPeek(url, TabNavigationDelegate.pointer(in: view))
+        return true
+    }
+
+    /// The pop-up notice, for a window the blocker refused. A pop-up with no address of its own is refused without one.
+    private func noteBlockedPopup(_ url: URL) {
+        if url.scheme != "about" {
+            popups.note(url)
+        }
+    }
+
+    /// A page called `window.open`: when no click was behind it and the site's answer blocks pop-ups, the notice is shown here, as
+    /// Chromium's own blocker may refuse the window before `openChromiumPopup` is asked.
+    func noteChromiumWindowOpen(_ url: URL, userGesture: Bool) {
+        if popups.effective.blocks && !userGesture {
+            noteBlockedPopup(url)
+        }
+    }
+
+    /// A WSurf item of a Chromium page's context menu that is not an Open item: what its WebKit twin does (`TabWebView`).
+    func runChromiumContextAction(_ action: ChromiumClient.ContextAction, in view: BrowserPage) {
+        switch action {
+        case .peek(let url):
+            onOpenInPeek?(url, TabNavigationDelegate.pointer(in: view))
+        case .summarize(let url):
+            onSummarizeLink?(url, TabNavigationDelegate.pointer(in: view))
+        case .download(let url):
+            view.chromium?.startDownload(of: url)
+        case .savePage:
+            PageSaving.begin(for: view)
+        case .printPage:
+            PagePrinting.begin(for: view)
+        }
+    }
+
+    /// An Open Link item of a Chromium page's context menu. A tab is the person's own choice, as a click is.
+    private func openChromiumLink(_ url: URL, from sourceURL: URL?, opening: ChromiumPage.LinkOpening, sourceFrame: BrowserFrame?) {
+        switch opening {
+        case .tab:
+            openChromiumWindow(url, userGesture: true, sourceURL: sourceURL, sourceFrame: sourceFrame)
+        case .window:
+            onOpenInNewWindow?(url, isPrivate)
+        case .privateWindow:
+            onOpenInNewWindow?(url, true)
+        }
+    }
+
+    /// What a Chromium page's windows, clicks and context-menu items ask of the tab.
+    private func installChromiumWindowCallbacks(on chromium: ChromiumPage, in view: BrowserPage) {
+        chromium.openWindow = { [weak self, weak view] url, userGesture, sourceURL, sourceFrame, click in
+            guard let self, let view, self.liveView === view else { return }
+            openChromiumWindow(url, userGesture: userGesture, sourceURL: sourceURL, sourceFrame: sourceFrame, click: click)
+        }
+        chromium.openPopup = { [weak self, weak view] url, userGesture, sourceURL, sourceFrame, click in
+            guard let self, let view, self.liveView === view else { return nil }
+            return openChromiumPopup(url, userGesture: userGesture, sourceURL: sourceURL, sourceFrame: sourceFrame, click: click)
+        }
+        chromium.windowOpenAttempt = { [weak self, weak view] url, userGesture in
+            guard let self, let view, self.liveView === view else { return }
+            noteChromiumWindowOpen(url, userGesture: userGesture)
+        }
+        chromium.onContextAction = { [weak self, weak view] action in
+            guard let self, let view, self.liveView === view else { return }
+            runChromiumContextAction(action, in: view)
+        }
+        chromium.openLinkFromMenu = { [weak self, weak view, weak chromium] url, sourceURL, opening in
+            guard let self, let view, self.liveView === view else { return }
+            openChromiumLink(url, from: sourceURL, opening: opening, sourceFrame: chromium?.sourceFrame(for: sourceURL))
         }
     }
 
@@ -369,18 +595,7 @@ extension BrowserTab {
             autofillSave.submissions.navigationRequested(isMainFrame: main, kind: kind, sourceURL: sourceURL)
             return true
         }
-        chromium.openWindow = { [weak self, weak view] url, userGesture, sourceURL, sourceFrame in
-            guard let self, let view, self.liveView === view else { return }
-            if !ExternalApp.staysInWebView(url) {
-                offerChromiumExternalApp(url, sourceURL: sourceURL, sourceFrame: sourceFrame)
-                return
-            }
-            if popups.effective.blocks && !userGesture {
-                popups.note(url)
-                return
-            }
-            onOpenInNewTab?(url, userGesture)
-        }
+        installChromiumWindowCallbacks(on: chromium, in: view)
         chromium.onCloseRequested = { [weak self, weak view] in
             guard let self, let view, self.liveView === view else { return }
             onCloseRequested?()
@@ -400,6 +615,7 @@ extension BrowserTab {
             permissions.setLive(.camera, camera)
             permissions.setLive(.microphone, microphone)
         }
+        chromium.displayCaptureStarted = { [weak self, weak view] in self?.noteChromiumDisplayCapture(in: view) }
         chromium.downloadDecision = { [weak self, weak view] download, name, completion in
             guard let self, let view, self.liveView === view, let handler = onChromiumDownload else {
                 completion(.deny)
@@ -427,12 +643,41 @@ extension BrowserTab {
         refreshFavicon()
         measureBandUnderBar()
         invalidateSessionState()
+        readerPageMoved(from: previous)
+        translationPageMoved()
         onSameDocumentNavigation?()
+        if movedWithinDocument(from: previous, in: page) {
+            onInPageMove?()
+        }
+    }
+
+    /// Whether a WebKit page's address changed inside the document the tab already shows, which is what `pushState`,
+    /// `replaceState` and Back or Forward between such entries do. A change of the fragment is a jump within the page, not
+    /// a move. The URL of the committed history entry is the proof: it is the address of the entry the page is on, so a
+    /// document that is still loading, and whose entry is not committed, does not pass. A Chromium page reports its moves
+    /// itself (`onNavigatedWithinDocument`); its history is read later than its address, so this proof does not fit it.
+    func movedWithinDocument(from previous: String, in page: BrowserPage) -> Bool {
+        guard page.webKit != nil, isShowingRealPage, !isRestoring, let url = page.url, url == committedURL,
+              var before = URLComponents(string: previous),
+              var after = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        else { return false }
+        before.fragment = nil
+        after.fragment = nil
+        return before != after
     }
     func contentProcessDidTerminate() {
         guard !isClosed else { return }
         isPlayingAudio = false
+        awaitsVisit = false
+        dialogs.cancelAll()
         onContentProcessTerminated?()
+        // Only a WebKit page can come back from its saved interaction state; a Chromium page
+        // reloads in place, as before, because unloading would drop its back/forward history.
+        if liveView?.webKit != nil, canDiscardWebContent, mayUnloadAfterTermination?() == true {
+            Pipeline.log.notice("web content process died in a background tab; restoring it when shown")
+            unloadUntilShown()
+            return
+        }
         if !processState.shouldReloadAfterUnexpectedTermination() {
             Pipeline.log.error("web content process died twice; leaving the tab alone")
             return

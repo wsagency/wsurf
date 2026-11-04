@@ -5,6 +5,7 @@ import Foundation
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 struct VaultAccountModelTests {
     /// Only the keys a v1 payload carries today: none of the new optional fields appears.

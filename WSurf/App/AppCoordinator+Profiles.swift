@@ -9,19 +9,26 @@ import os
 extension AppCoordinator {
     // MARK: - Profiles
 
-    func switchProfile(to profile: Profile) async {
+    /// `spaceID` is the space of `profile` to show once the switch is done, as choosing a space of another profile asks.
+    func switchProfile(to profile: Profile, landingIn spaceID: UUID? = nil) async {
         guard !isClosed else { return }
         if profile.isPrivate {
             requestNewWindow(isPrivate: true)
             return
         }
         await profileSwitches.run { [weak self] in
-            await self?.performProfileSwitch(to: profile)
+            await self?.performProfileSwitch(to: profile, landingIn: spaceID)
         }
     }
 
-    private func performProfileSwitch(to profile: Profile) async {
-        guard !isClosed, profile.id != profiles.current.id else { return }
+    private func performProfileSwitch(to profile: Profile, landingIn spaceID: UUID?) async {
+        guard !isClosed else { return }
+        guard profile.id != profiles.current.id else {
+            if let spaceID {
+                browser.switchSpace(to: spaceID)
+            }
+            return
+        }
         // Revoked synchronously, before the first suspension, so nothing issued to the profile being left outlives the
         // switch. Locked again at adoption: until then that profile's settings are still on screen and can unlock it anew.
         let leaving = context.profile.id
@@ -77,13 +84,19 @@ extension AppCoordinator {
 
         browser.restoreSession()
         retainAgentMemory()
-        browser.ensureActiveTab()
+        if let spaceID {
+            browser.switchSpace(to: spaceID)
+        }
+        if browser.activeTabID == nil {
+            browser.newTab()
+        }
         timing.mark("restore session")
 
         show(notice: profile.name)
         timing.log(isPrivate: profile.isPrivate)
 
         await extensions.start()
+        Task { [weak self] in await self?.offerLegacyPasswordImport() }
     }
 
     func enterPrivateBrowsing() {
@@ -98,6 +111,7 @@ extension AppCoordinator {
         linkPeek.forget()
         browser.adopt(database: context.database, sitePermissions: context.sitePermissions, privately: profile.isPrivate)
         agentTurns.adopt(context: context)
+        browser.adoptSpaces(context.spaces?.spaces.map(\.id) ?? [])
         privateSession = profile.isPrivate
             ? PrivateBrowsingSession(database: context.database, dataStore: context.dataStore)
             : nil

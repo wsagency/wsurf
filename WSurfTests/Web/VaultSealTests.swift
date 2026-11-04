@@ -6,6 +6,7 @@ import Foundation
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 /// Fixed values and an independent AAD/MAC builder. The builder spells out spec §5/§7 with `StoreWriter`, so a
 /// sealed value that only opens under the documented fields proves the production code binds exactly those.

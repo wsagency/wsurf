@@ -4,6 +4,7 @@
 // Linen portions: Apache-2.0; WSurf modifications: BUSL-1.1. See NOTICE.
 
 import Foundation
+import os
 import WebKit
 
 /// Services shared by regular windows of one profile, or isolated to one private window.
@@ -48,16 +49,36 @@ final class BrowserProfileContext {
         persists: !profile.isPrivate && !AppDatabase.isRunningTests && AppDatabase.ownsSession,
         settings: settings
     )
+    // The intervals db.open and convlog.load are for Instruments, next to "launch" (`LaunchSignpost`). The history window is read by
+    // its first reader, not here, so its interval, history.reload, is in `HistoryStore.loadIfNeeded`.
     lazy var history = HistoryStore(database: database)
-    lazy var conversationLog = ConversationLog(database: database)
+    lazy var tabArchive = TabArchive(database: database)
+    lazy var autofillLastUsed = AutofillLastUsed(file: profile.autofillLastUsedFile, persists: !profile.isPrivate)
+    /// Nil in a private window: notes about the person are never kept there.
+    lazy var assistantFacts: AssistantFacts? = profile.isPrivate ? nil : AssistantFacts(database: database, settings: modelSettings)
+    lazy var conversationLog = Pipeline.signposter.withIntervalSignpost("convlog.load") { ConversationLog(database: database) }
+    /// Nil in a private window: nothing is watched there.
+    lazy var pageWatches: PageWatchCenter? = profile.isPrivate ? nil : PageWatchCenter.live(for: self)
+    /// Nil in a private window, which has no spaces.
+    var spaces: SpaceStore? {
+        SpaceStore.shared(for: profile)
+    }
     lazy var extensions = ExtensionManager(profile: profile, dataStore: dataStore)
 
     private var browsers = NSHashTable<BrowserModel>.weakObjects()
+    /// Every open tab of `origin` in this profile's windows.
+    func tabs(of origin: String) -> [BrowserTab] {
+        browsers.allObjects.flatMap { browser in browser.tabs.filter { browser.siteOrigin(for: $0) == origin } }
+    }
+    /// The tabs of this profile's windows whose page is open on Chromium (`ChromiumRuntime.mirrorSiteAnswers`).
+    var chromiumTabs: [BrowserTab] {
+        browsers.allObjects.flatMap(\.tabs).filter { $0.liveView?.chromium != nil }
+    }
     private(set) var privateSessionEnded = false
 
     init(profile: Profile, settingsOwner: Profile? = nil) {
         self.profile = profile
-        database = profile.makeDatabase()
+        database = Pipeline.signposter.withIntervalSignpost("db.open") { profile.makeDatabase() }
         dataStore = profile.makeDataStore()
         let owner = profile.isPrivate ? (settingsOwner ?? .original()) : profile
         let profileDefaults = ProfileSettingsStore.defaults(for: owner)
@@ -69,7 +90,9 @@ final class BrowserProfileContext {
         settings = BrowserSettings(sessionDefaults: defaults, application: .application)
         sitePermissions = SitePermissions(storageURL: profile.permissionsFile, persists: !profile.isPrivate)
         pageZoom = PageZoomStore(file: profile.zoomFile, persists: !profile.isPrivate)
-        contentBlocker = ContentBlocker(defaults: defaults, settings: settings, persists: !profile.isPrivate)
+        contentBlocker = ContentBlocker(
+            defaults: defaults, settings: settings, persists: !profile.isPrivate, scope: profile.id.uuidString
+        )
         favicons = FaviconLoader(cacheDirectory: FaviconLoader.cacheDirectory(for: owner))
         favicons.persistsToDisk = !profile.isPrivate
         if profile.isPrivate {
@@ -77,19 +100,6 @@ final class BrowserProfileContext {
         }
         webViewPool = WebViewPool(dataStore: dataStore, settings: settings, contentBlocker: contentBlocker)
         settings.onContentBlockingChanged = { [weak contentBlocker] in contentBlocker?.refresh() }
-        var provider = settings.passwordProvider
-        settings.onPasswordProviderChanged = { [weak self] in
-            // Synchronous on purpose: no pending request, ceremony or account pick of the old provider may outlive the switch.
-            guard let self else { return }
-            let previous = provider
-            provider = self.settings.passwordProvider
-            if previous == .credentialManager {
-                CredentialManager.lock(profileID: self.profile.id, reason: .manual)
-            }
-            WebAuthnAdapter.providerChanged(in: self)
-            AutofillSuggestions.shared.providerChanged(in: self)
-            PasswordAutofill.shared.providerChanged(in: self)
-        }
         sitePermissions.onEngineChanged = { [weak self] origin in
             guard let self, !self.privateSessionEnded else { return }
             for browser in self.browsers.allObjects
@@ -101,6 +111,18 @@ final class BrowserProfileContext {
                           browser.sessionClosedAt == nil
                     else { return }
                     await browser.applyStoredEngine(to: origin)
+                }
+            }
+        }
+        sitePermissions.onCaptureChanged = { [weak self] origins in
+            guard let self else { return }
+            ChromiumRuntime.shared.mirrorCapture(origins, in: self)
+        }
+        sitePermissions.onAssistantAccessChanged = { [weak self] in
+            guard let self else { return }
+            for browser in self.browsers.allObjects where browser.context === self && browser.sitePermissions === self.sitePermissions {
+                for tab in browser.tabs {
+                    tab.assistantAccess.onPolicyChanged?()
                 }
             }
         }

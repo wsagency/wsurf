@@ -5,6 +5,7 @@ import Foundation
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 // Task 7: the history preflight of a removal (`StoreVerifier.verifyHistories`: source and Trash ledgers, run inside `perform`'s
 // transaction before the first write) and the verification scratch it needs. Shared plumbing lives in VaultMoveSupport.swift.

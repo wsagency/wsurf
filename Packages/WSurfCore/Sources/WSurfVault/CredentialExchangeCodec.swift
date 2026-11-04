@@ -1,0 +1,967 @@
+// SPDX-FileCopyrightText: 2026 WSurf Agency
+// SPDX-License-Identifier: BUSL-1.1
+
+import AuthenticationServices
+import Foundation
+
+public nonisolated enum CredentialIdentity: Hashable, Sendable {
+    case password(accountID: UUID)
+    case passkey(accountID: UUID, passkeyID: UUID)
+    case totp(accountID: UUID)
+    case note(accountID: UUID)
+    /// The credential's cards, addresses and other items, as one part (like its notes).
+    case secureItems(accountID: UUID)
+}
+
+public nonisolated struct CredentialImportConflict: Sendable {
+    public var incoming: CredentialIdentity
+    public var existing: CredentialIdentity
+
+    public init(incoming: CredentialIdentity, existing: CredentialIdentity) {
+        self.incoming = incoming
+        self.existing = existing
+    }
+}
+
+public nonisolated enum CredentialImportDecision: Sendable {
+    case keep(incoming: CredentialIdentity)
+    case add(incoming: CredentialIdentity, targetAccountID: UUID?)
+    case replace(incoming: CredentialIdentity, target: CredentialIdentity)
+}
+
+public nonisolated struct CredentialImportPreview: Sendable {
+    public let base: StoreSnapshot
+    public let candidates: [CredentialAccount]
+    public let conflicts: [CredentialImportConflict]
+    /// What the transfer held that WSurf did not keep. It never refuses a transfer.
+    public var omitted: [CredentialImportOmission] = []
+    /// For each omission, the `id` of the candidate it belongs to; `nil` when its item was not kept. Empty for a preview that
+    /// doesn't say (a CSV file has no omissions), otherwise as long as `omitted`.
+    public var omittedItems: [UUID?] = []
+
+    public init(
+        base: StoreSnapshot,
+        candidates: [CredentialAccount],
+        conflicts: [CredentialImportConflict],
+        omitted: [CredentialImportOmission] = [],
+        omittedItems: [UUID?] = []
+    ) {
+        self.base = base
+        self.candidates = candidates
+        self.conflicts = conflicts
+        self.omitted = omitted
+        self.omittedItems = omittedItems
+    }
+
+    public var revision: UInt64 {
+        base.revision
+    }
+}
+
+public nonisolated struct CredentialExportSelection: Sendable {
+    public var accountID: UUID
+    public var password: Bool
+    public var passkeyIDs: Set<UUID>
+    public var totp: Bool
+    public var notes = false
+    /// The credential's cards, addresses and other items, all of them, as one part (like its notes).
+    public var secureItems = false
+
+    public init(
+        accountID: UUID,
+        password: Bool,
+        passkeyIDs: Set<UUID>,
+        totp: Bool,
+        notes: Bool = false,
+        secureItems: Bool = false
+    ) {
+        self.accountID = accountID
+        self.password = password
+        self.passkeyIDs = passkeyIDs
+        self.totp = totp
+        self.notes = notes
+        self.secureItems = secureItems
+    }
+}
+
+/// An import size limit was exceeded. Only `CredentialExchangeError` reads it, to name the limit in the refusal.
+private nonisolated struct ImportLimitExceeded: Error {
+    let limit: CredentialExchangeError.Limit
+
+    init(_ limit: CredentialExchangeError.Limit) {
+        self.limit = limit
+    }
+}
+
+public nonisolated struct CredentialExchangeError: Error, LocalizedError, CustomStringConvertible, Sendable, Equatable {
+    public enum Reason: String, Equatable, Sendable {
+        case invalidData
+        case duplicateIdentifier
+        case oversized
+    }
+
+    /// The size limit an `.oversized` refusal hit. A fixed vocabulary: it names a bound, never a title, a value or an amount.
+    public enum Limit: String, Equatable, Sendable, CaseIterable {
+        case items, credentials, collections, nesting, websites, notes, keyBytes, itemBytes, itemEncodedBytes, transferBytes
+    }
+
+    public enum Record: CustomStringConvertible, Sendable, Equatable {
+        case exporter
+        case account(index: Int)
+        case item(account: Int, item: Int)
+        case credential(account: Int, item: Int, credential: Int)
+        case collection(account: Int, path: [Int])
+        case payload
+
+        public var description: String {
+            switch self {
+            case .exporter:
+                return "exporter"
+            case let .account(index):
+                return "account[\(index)]"
+            case let .item(account, item):
+                return "account[\(account)]/item[\(item)]"
+            case let .credential(account, item, credential):
+                return "account[\(account)]/item[\(item)]/credential[\(credential)]"
+            case let .collection(account, path):
+                let indices = path.prefix(33).map(String.init).joined(separator: "/")
+                return "account[\(account)]/collection[\(indices)]"
+            case .payload:
+                return "payload"
+            }
+        }
+    }
+
+    /// The kind of credential an error was raised on: the SDK case name only, never a value. It lets an unsupported or
+    /// invalid record be told apart when its index alone cannot.
+    public enum CredentialKind: String, Equatable, Sendable {
+        case address, apiKey, basicAuthentication, creditCard, customFields, driversLicense, generatedPassword
+        case identityDocument, itemReference, note, passkey, passport, personName, sshKey, totp, wifi, unknown
+
+        init(_ credential: ASImportableCredential) {
+            switch credential {
+            case .address:
+                self = .address
+            case .apiKey:
+                self = .apiKey
+            case .basicAuthentication:
+                self = .basicAuthentication
+            case .creditCard:
+                self = .creditCard
+            case .customFields:
+                self = .customFields
+            case .driversLicense:
+                self = .driversLicense
+            case .generatedPassword:
+                self = .generatedPassword
+            case .identityDocument:
+                self = .identityDocument
+            case .itemReference:
+                self = .itemReference
+            case .note:
+                self = .note
+            case .passkey:
+                self = .passkey
+            case .passport:
+                self = .passport
+            case .personName:
+                self = .personName
+            case .sshKey:
+                self = .sshKey
+            case .totp:
+                self = .totp
+            case .wifi:
+                self = .wifi
+            @unknown default:
+                self = .unknown
+            }
+        }
+    }
+
+    public let record: Record
+    public let reason: Reason
+    /// Set only for an `.oversized` refusal that knows which limit it hit.
+    public var limit: Limit?
+    /// Set only when `record` is a credential.
+    public var credentialKind: CredentialKind?
+
+    public var description: String {
+        let name = limit.map { "\(reason.rawValue)(\($0.rawValue))" } ?? reason.rawValue
+        return credentialKind.map { "\(name) at \(record.description) (\($0.rawValue))" } ?? "\(name) at \(record.description)"
+    }
+    public var errorDescription: String? {
+        description
+    }
+
+    init(record: Record, underlying: any Error) {
+        self.record = record
+        switch underlying {
+        case CredentialVaultError.duplicateIdentifier:
+            reason = .duplicateIdentifier
+        case CredentialVaultError.oversized:
+            reason = .oversized
+        case let exceeded as ImportLimitExceeded:
+            reason = .oversized
+            limit = exceeded.limit
+        default:
+            reason = .invalidData
+        }
+    }
+
+    init(record: Record, reason: Reason) {
+        self.record = record
+        self.reason = reason
+    }
+}
+
+public nonisolated enum CredentialExchangeCodec {
+    /// Deepest nesting of collections an import accepts.
+    public static let maximumCollectionDepth = 32
+    /// Most websites one item may list in a transfer before the transfer is refused. An item keeps its first
+    /// `CredentialAccount.websiteLimit` and the rest are named as left out, so this only bounds the work.
+    public static let maximumWebsites = 1_024
+
+    public struct ExternalItemID: Hashable, Sendable {
+        public let account: Data
+        public let item: Data
+    }
+    private struct ExternalPasskeyID: Hashable {
+        let relyingPartyID: String
+        let credentialID: Data
+    }
+    struct ExchangeLink: Codable {
+        var item: Data
+        var account: Data?
+    }
+    struct ExchangeCollection: Codable {
+        var id: Data
+        var created: Date?
+        var lastModified: Date?
+        var title: String
+        var subtitle: String?
+        var items: [ExchangeLink]
+        var subcollections: [ExchangeCollection]
+    }
+    public struct ExchangeMetadata: Codable, Sendable {
+        var accountName: String
+        var email: String
+        var fullName: String?
+        var collections: [ExchangeCollection]
+        var subtitle: String?
+        public var created: Date?
+        var lastModified: Date?
+        var favorite: Bool
+        var tags: [String]
+    }
+
+    /// The bytes one transfer asks WSurf to read. `total` is bounded for the whole transfer. `item` is the bytes of the item being
+    /// read, or `nil` outside an item, so a field of the account or of a collection counts toward the transfer only.
+    private struct PayloadBudget {
+        var total = 0
+        var item: Int?
+
+        mutating func add(_ count: Int) throws {
+            let (sum, overflow) = total.addingReportingOverflow(count)
+            guard count >= 0, !overflow else { throw ImportLimitExceeded(.transferBytes) }
+            if let item {
+                let (itemSum, itemOverflow) = item.addingReportingOverflow(count)
+                guard !itemOverflow, itemSum <= CredentialVaultLimits.accountBytes else { throw ImportLimitExceeded(.itemBytes) }
+                self.item = itemSum
+            }
+            guard sum <= CredentialVaultLimits.liveBytes else { throw ImportLimitExceeded(.transferBytes) }
+            total = sum
+        }
+
+        mutating func add(_ value: String) throws {
+            try add(value.utf8.count)
+        }
+
+        mutating func add(_ value: Data) throws {
+            try add(value.count)
+        }
+    }
+
+    /// The running state of one `preview` call. `record` names where an error is raised from.
+    private struct ImportState {
+        var budget = PayloadBudget()
+        /// What the kept items add up to under the store's own measure (`CredentialVaultCrypto.liveBytes(of:)`).
+        var liveBytes = 0
+        var seenAccountIDs = Set<Data>()
+        var seenItemIDs = Set<ExternalItemID>()
+        var seenPasskeyIDs = Set<ExternalPasskeyID>()
+        var totalCredentials = 0
+        var totalCollections = 0
+        var candidates: [CredentialAccount] = []
+        var omitted: [CredentialImportOmission] = []
+        /// For each omission, the id of the kept item it belongs to (`nil` for an item that was not kept).
+        var omittedItems: [UUID?] = []
+        var itemTitle = ""
+        /// The id the item's account gets if it is kept, so an omission can be shown with its item.
+        var itemCandidateID: UUID?
+        var record = CredentialExchangeError.Record.exporter
+        var credentialKind: CredentialExchangeError.CredentialKind?
+    }
+
+    public static func preview(_ data: ASExportedCredentialData, against base: StoreSnapshot) throws -> CredentialImportPreview {
+        guard data.formatVersion == .v1 else { throw CredentialVaultError.invalidData }
+        try validateAccounts(base.accounts, blockedOrigins: base.blockedPasswordOrigins)
+        guard base.accounts.count <= CredentialVaultLimits.accounts,
+              data.accounts.count <= CredentialVaultLimits.accounts else { throw CredentialVaultError.oversized }
+
+        var state = ImportState()
+        do {
+            try state.budget.add(data.exporterRelyingPartyIdentifier)
+            try state.budget.add(data.exporterDisplayName)
+            for (accountIndex, appleAccount) in data.accounts.enumerated() {
+                try importAccount(appleAccount, index: accountIndex, state: &state)
+            }
+
+            state.record = .payload
+            try validateAccounts(state.candidates)
+            let conflicts = try makeConflicts(state.candidates, against: base.accounts)
+            return CredentialImportPreview(
+                base: base, candidates: state.candidates, conflicts: conflicts, omitted: state.omitted, omittedItems: state.omittedItems
+            )
+        } catch {
+            var failure = error as? CredentialExchangeError ?? CredentialExchangeError(record: state.record, underlying: error)
+            if case .credential = failure.record {
+                failure.credentialKind = state.credentialKind
+            }
+            throw failure
+        }
+    }
+
+    private static func importAccount(
+        _ appleAccount: ASImportableAccount,
+        index accountIndex: Int,
+        state: inout ImportState
+    ) throws {
+        state.record = .account(index: accountIndex)
+        guard !appleAccount.id.isEmpty, state.seenAccountIDs.insert(appleAccount.id).inserted else {
+            throw CredentialVaultError.duplicateIdentifier
+        }
+        try state.budget.add(appleAccount.id)
+        try state.budget.add(appleAccount.userName)
+        try state.budget.add(appleAccount.email)
+        try state.budget.add(appleAccount.fullName ?? "")
+        var collections: [ExchangeCollection] = []
+        collections.reserveCapacity(min(appleAccount.collections.count, CredentialVaultLimits.accounts - state.totalCollections))
+        for (collectionIndex, collection) in appleAccount.collections.enumerated() {
+            state.record = .collection(account: accountIndex, path: [collectionIndex])
+            collections.append(try importCollection(
+                collection,
+                budget: &state.budget,
+                count: &state.totalCollections,
+                depth: 0
+            ))
+        }
+
+        for (itemIndex, item) in appleAccount.items.enumerated() {
+            try importItem(
+                item,
+                from: appleAccount,
+                at: (account: accountIndex, item: itemIndex),
+                collections: collections,
+                state: &state
+            )
+        }
+    }
+
+    /// What `importCredential` raises for a part WSurf cannot keep: the item stays, the part is named in `omitted`.
+    private struct Skip: Error {
+        let reason: CredentialImportOmission.Reason
+    }
+
+    /// Names a part of the transfer that was not kept, where `state` currently is.
+    private static func omit(_ reason: CredentialImportOmission.Reason, _ state: inout ImportState) {
+        state.omitted.append(CredentialImportOmission(
+            record: state.record, title: state.itemTitle, kind: state.credentialKind, reason: reason
+        ))
+        state.omittedItems.append(state.itemCandidateID)
+    }
+
+    /// Whether `account` holds anything WSurf can keep: a login, a passkey, a code, a note or an item.
+    private static func hasContent(_ account: CredentialAccount) -> Bool {
+        !account.username.isEmpty || account.password != nil || !account.passkeys.isEmpty || account.totp != nil || account.notes != nil
+            || account.secureItems != nil
+    }
+
+    private static func importItem(
+        _ item: ASImportableItem,
+        from appleAccount: ASImportableAccount,
+        at position: (account: Int, item: Int),
+        collections: [ExchangeCollection],
+        state: inout ImportState
+    ) throws {
+        state.record = .item(account: position.account, item: position.item)
+        state.itemTitle = item.title
+        let candidateID = UUID()
+        state.itemCandidateID = candidateID
+        let itemIdentity = ExternalItemID(account: appleAccount.id, item: item.id)
+        guard state.candidates.count < CredentialVaultLimits.accounts else { throw ImportLimitExceeded(.items) }
+        guard !item.id.isEmpty, state.seenItemIDs.insert(itemIdentity).inserted else { throw CredentialVaultError.invalidData }
+        state.budget.item = 0
+        defer { state.budget.item = nil }
+        try state.budget.add(item.id)
+        try state.budget.add(item.title)
+        try state.budget.add(item.subtitle ?? "")
+        for tag in item.tags {
+            try state.budget.add(tag)
+        }
+        if #available(macOS 26.4, iOS 26.4, *), !item.extensions.isEmpty {
+            omit(.sharingNotKept, &state)
+        }
+        guard item.credentials.count <= CredentialVaultLimits.credentials - state.totalCredentials else {
+            throw ImportLimitExceeded(.credentials)
+        }
+        state.totalCredentials += item.credentials.count
+
+        let itemCollections = collections.compactMap {
+            collection($0, linkedTo: item.id, accountID: appleAccount.id)
+        }
+        var candidate = CredentialAccount(
+            id: candidateID,
+            username: "",
+            displayName: item.title.isEmpty ? nil : item.title,
+            origins: [],
+            loginURLs: [],
+            password: nil,
+            passkeys: [],
+            totp: nil,
+            exchangeAccountID: appleAccount.id,
+            exchangeItemID: item.id,
+            basicAuthenticationMetadata: nil
+        )
+        candidate.exchangeMetadata = try JSONEncoder().encode(ExchangeMetadata(
+            accountName: appleAccount.userName,
+            email: appleAccount.email,
+            fullName: appleAccount.fullName,
+            collections: itemCollections,
+            subtitle: item.subtitle,
+            created: item.created,
+            lastModified: item.lastModified,
+            favorite: item.favorite,
+            tags: item.tags
+        ))
+        // Shared collection ancestry is re-encoded into every linked item; charge what is retained.
+        try state.budget.add(candidate.exchangeMetadata?.count ?? 0)
+        try importScope(item.scope, into: &candidate, state: &state)
+
+        for (credentialIndex, credential) in item.credentials.enumerated() {
+            state.record = .credential(account: position.account, item: position.item, credential: credentialIndex)
+            state.credentialKind = CredentialExchangeError.CredentialKind(credential)
+            do {
+                try importCredential(credential, into: &candidate, state: &state)
+            } catch let skip as Skip {
+                omit(skip.reason, &state)
+            }
+        }
+        state.credentialKind = nil
+        state.record = .item(account: position.account, item: position.item)
+        guard hasContent(candidate) else {
+            state.itemCandidateID = nil
+            omit(.nothingToKeep, &state)
+            return
+        }
+        // The store's own measure, so a kept item can never fail the store's check of one account or of the whole vault.
+        let bytes = try CredentialVaultCrypto.liveBytes(of: candidate)
+        guard bytes <= CredentialVaultLimits.accountBytes else { throw ImportLimitExceeded(.itemBytes) }
+        guard try CredentialVaultCrypto.storedBytes(of: candidate) <= CredentialVaultLimits.encodedAccountBytes else {
+            throw ImportLimitExceeded(.itemEncodedBytes)
+        }
+        guard bytes <= CredentialVaultLimits.liveBytes - state.liveBytes else { throw ImportLimitExceeded(.transferBytes) }
+        state.liveBytes += bytes
+        try candidate.validate()
+        state.candidates.append(candidate)
+    }
+
+    /// A part of an item is skipped, never the transfer, when WSurf has no place for it or cannot keep it as sent. The checks that
+    /// guard the vault (duplicate identifiers, a login id used twice, size budgets) still refuse the whole transfer.
+    private static func importCredential(
+        _ credential: ASImportableCredential,
+        into candidate: inout CredentialAccount,
+        state: inout ImportState
+    ) throws {
+        switch credential {
+        case let .basicAuthentication(value):
+            try importBasicAuthentication(value, into: &candidate, state: &state)
+        case let .passkey(value):
+            try importPasskey(value, into: &candidate, state: &state)
+        case let .totp(value):
+            try importTOTP(value, into: &candidate, state: &state)
+        case let .note(value):
+            try importNote(value, into: &candidate, state: &state)
+        default:
+            // Cards, addresses, names, Wi-Fi, keys, documents and custom fields are kept as items. A generated password, a link to
+            // another item and every kind added later are named in the review, not stored.
+            guard let source = secureItemSource(credential) else { throw Skip(reason: .unsupportedKind) }
+            try importSecureItem(source, into: &candidate, state: &state)
+        }
+    }
+
+    /// An item keeps every value in the order the exporter sent it, with its exact field type, id and label. An empty value holds
+    /// nothing, and an item left with nothing is not kept. Past the limits the first items and values are kept and the rest named.
+    private static func importSecureItem(
+        _ source: SecureItemSource,
+        into candidate: inout CredentialAccount,
+        state: inout ImportState
+    ) throws {
+        // Past the limit the whole item is named once; nothing else of it is read or named.
+        guard (candidate.secureItems?.count ?? 0) < SecureItem.itemLimit else { throw Skip(reason: .extraItems) }
+        try state.budget.add(source.id ?? Data())
+        try state.budget.add(source.label ?? "")
+        var fields: [SecureItemField] = []
+        for (name, value) in source.plain where !value.isEmpty {
+            try state.budget.add(value)
+            fields.append(SecureItemField(name: name, value: value, field: nil))
+        }
+        for (name, field) in source.fields {
+            let imported = try importField(field, state: &state, keepsType: true)
+            if !imported.value.isEmpty {
+                fields.append(SecureItemField(name: name, value: imported.value, field: imported.metadata))
+            }
+        }
+        if fields.count > SecureItem.fieldLimit {
+            fields.removeSubrange(SecureItem.fieldLimit...)
+            omit(.extraFields, &state)
+        }
+        // An empty title is no title, so an untouched item reads the same in the editor as it was imported.
+        var item = SecureItem(kind: source.kind, id: source.id, label: source.label.flatMap { $0.isEmpty ? nil : $0 }, fields: fields)
+        if (item.id?.count ?? 0) > 1_024 {
+            item.id = nil
+            omit(.fieldDetailsSimplified, &state)
+        }
+        if (item.label?.utf8.count ?? 0) > 2_048 {
+            item.label = nil
+            omit(.fieldDetailsSimplified, &state)
+        }
+        guard !item.fields.isEmpty || item.label != nil else { return }
+        candidate.secureItems = (candidate.secureItems ?? []) + [item]
+    }
+
+    private static func importBasicAuthentication(
+        _ value: ASImportableCredential.BasicAuthentication,
+        into candidate: inout CredentialAccount,
+        state: inout ImportState
+    ) throws {
+        guard candidate.basicAuthenticationMetadata == nil else { throw Skip(reason: .extraLogin) }
+        let username = try value.userName.map { try importField($0, state: &state) }
+        let password = try value.password.map { try importField($0, state: &state) }
+        guard username != nil || password != nil else { throw Skip(reason: .emptyLogin) }
+        candidate.username = username?.value ?? ""
+        candidate.password = password?.value
+        candidate.basicAuthenticationMetadata = CredentialBasicAuthenticationMetadata(
+            username: username?.metadata,
+            password: password?.metadata
+        )
+        if let usernameID = username?.metadata.id,
+           usernameID == password?.metadata.id {
+            throw CredentialVaultError.duplicateIdentifier
+        }
+    }
+
+    private static func importPasskey(
+        _ value: ASImportableCredential.Passkey,
+        into candidate: inout CredentialAccount,
+        state: inout ImportState
+    ) throws {
+        let passkeyID = ExternalPasskeyID(
+            relyingPartyID: value.relyingPartyIdentifier.lowercased(),
+            credentialID: value.credentialID
+        )
+        guard !state.seenPasskeyIDs.contains(passkeyID) else { throw CredentialVaultError.duplicateIdentifier }
+        try state.budget.add(value.credentialID)
+        try state.budget.add(value.relyingPartyIdentifier)
+        try state.budget.add(value.userName)
+        try state.budget.add(value.userDisplayName)
+        try state.budget.add(value.userHandle)
+        guard value.key.count <= PasskeyKeyEncoding.maximumDERBytes else { throw ImportLimitExceeded(.keyBytes) }
+        try state.budget.add(value.key)
+        // A passkey is left out, with the reason named, when its key is not an ES256 key WSurf can read, a field is out of bounds, or
+        // its website is one the vault will not serve.
+        guard let key = try? PasskeyKeyEncoding.importPKCS8(value.key),
+              let privateKey = try? PasskeyKeyEncoding.exportPKCS8(key) else {
+            throw Skip(reason: PasskeyKeyEncoding.isAnotherAlgorithm(value.key) ? .passkeyAlgorithmNotSupported : .passkeyKeyUnreadable)
+        }
+        let passkey = WebsitePasskey(
+            id: UUID(),
+            credentialID: value.credentialID,
+            rpID: value.relyingPartyIdentifier.lowercased(),
+            userHandle: value.userHandle,
+            userName: value.userName,
+            userDisplayName: value.userDisplayName,
+            algorithm: -7,
+            privateKeyPKCS8: privateKey,
+            backupEligible: true,
+            backupState: false,
+            exchangeFIDO2Metadata: try importFIDO2Metadata(value, budget: &state.budget),
+            source: .imported
+        )
+        if let problem = passkey.problem {
+            throw Skip(reason: .passkey(problem))
+        }
+        do {
+            guard let origin = URL(string: "https://\(passkey.rpID)"),
+                  try RelyingPartyPolicy.validate(rpID: passkey.rpID, origin: origin) == passkey.rpID else {
+                throw RelyingPartyPolicy.PolicyError.invalidRelyingParty
+            }
+        } catch RelyingPartyPolicy.PolicyError.suffixListUnavailable {
+            throw Skip(reason: .passkeyWebsiteNotChecked)
+        } catch {
+            throw Skip(reason: .passkeyWebsiteNotAllowed)
+        }
+        guard !candidate.passkeys.contains(where: {
+            $0.credentialID == passkey.credentialID && $0.rpID == passkey.rpID
+        }) else {
+            throw CredentialVaultError.duplicateIdentifier
+        }
+        state.seenPasskeyIDs.insert(passkeyID)
+        candidate.passkeys.append(passkey)
+    }
+
+    private static func importTOTP(
+        _ value: ASImportableCredential.TOTP,
+        into candidate: inout CredentialAccount,
+        state: inout ImportState
+    ) throws {
+        guard candidate.totp == nil else { throw Skip(reason: .extraCode) }
+        try state.budget.add(value.secret)
+        try state.budget.add(value.issuer ?? "")
+        try state.budget.add(value.userName ?? "")
+        guard let algorithm = TOTPAlgorithm(rawValue: value.algorithm.rawValue) else { throw Skip(reason: .codeNotKept) }
+        let generator = TOTPGenerator(
+            secret: value.secret,
+            algorithm: algorithm,
+            period: value.period,
+            digits: value.digits,
+            issuer: value.issuer,
+            userName: value.userName
+        )
+        guard (try? generator.validate()) != nil else { throw Skip(reason: .codeNotKept) }
+        candidate.totp = generator
+    }
+
+    /// Notes are kept in the order the exporter sent them. An empty one holds nothing to keep. A plain field (no id, no label,
+    /// ordinary text) is the default, so it is stored as none: the same text typed in WSurf then compares equal.
+    private static func importNote(
+        _ value: ASImportableCredential.Note,
+        into candidate: inout CredentialAccount,
+        state: inout ImportState
+    ) throws {
+        let field = try importField(value.content, state: &state)
+        guard !field.value.isEmpty else { return }
+        var notes = candidate.notes ?? []
+        guard notes.count < CredentialAccount.noteLimit else { throw ImportLimitExceeded(.notes) }
+        let isPlain = field.metadata.id == nil && field.metadata.label == nil && field.metadata.fieldType == .string
+        notes.append(CredentialNote(text: field.value, field: isPlain ? nil : field.metadata))
+        candidate.notes = notes
+    }
+
+    private static func collection(
+        _ collection: ExchangeCollection,
+        linkedTo itemID: Data,
+        accountID: Data
+    ) -> ExchangeCollection? {
+        let items = collection.items.filter {
+            $0.item == itemID && ($0.account == nil || $0.account == accountID)
+        }
+        let subcollections = collection.subcollections.compactMap {
+            self.collection($0, linkedTo: itemID, accountID: accountID)
+        }
+        guard !items.isEmpty || !subcollections.isEmpty else { return nil }
+        return ExchangeCollection(
+            id: collection.id,
+            created: collection.created,
+            lastModified: collection.lastModified,
+            title: collection.title,
+            subtitle: collection.subtitle,
+            items: items,
+            subcollections: subcollections
+        )
+    }
+
+    private static func importCollection(
+        _ collection: ASImportableCollection,
+        budget: inout PayloadBudget,
+        count: inout Int,
+        depth: Int
+    ) throws -> ExchangeCollection {
+        guard depth <= maximumCollectionDepth else { throw ImportLimitExceeded(.nesting) }
+        guard count < CredentialVaultLimits.accounts else { throw ImportLimitExceeded(.collections) }
+        count += 1
+        try budget.add(collection.id)
+        try budget.add(collection.title)
+        try budget.add(collection.subtitle ?? "")
+        let items = try collection.items.map { item in
+            try budget.add(item.item)
+            try budget.add(item.account ?? Data())
+            return ExchangeLink(item: item.item, account: item.account)
+        }
+        let subcollections = try collection.subcollections.map {
+            try importCollection($0, budget: &budget, count: &count, depth: depth + 1)
+        }
+        return ExchangeCollection(
+            id: collection.id,
+            created: collection.created,
+            lastModified: collection.lastModified,
+            title: collection.title,
+            subtitle: collection.subtitle,
+            items: items,
+            subcollections: subcollections
+        )
+    }
+
+    /// A field of a login or a note of a type WSurf has no use for there (a number, a date, ...) is kept as plain text, and one whose
+    /// id or label is over the limit keeps its value without that description. Either way the field is named, since it will export as it is kept.
+    private static func importField(
+        _ field: ASImportableEditableField,
+        state: inout ImportState,
+        keepsType: Bool = false
+    ) throws -> (value: String, metadata: CredentialEditableFieldMetadata) {
+        try state.budget.add(field.value)
+        try state.budget.add(field.id ?? Data())
+        try state.budget.add(field.label ?? "")
+        var simplified = false
+        let fieldType: CredentialEditableFieldType
+        switch field.fieldType {
+        case .string:
+            fieldType = .string
+        case .concealedString:
+            fieldType = .concealedString
+        case .email:
+            fieldType = .email
+        default:
+            // An item's value keeps any type WSurf knows; a login or a note shows plain text.
+            if keepsType, let kept = CredentialEditableFieldType(exchange: field.fieldType) {
+                fieldType = kept
+            } else {
+                fieldType = .string
+                simplified = true
+            }
+        }
+        var metadata = CredentialEditableFieldMetadata(id: field.id, label: field.label, fieldType: fieldType)
+        if (try? metadata.validate()) == nil {
+            metadata.id = nil
+            metadata.label = nil
+            simplified = true
+        }
+        if simplified {
+            omit(.fieldDetailsSimplified, &state)
+        }
+        return (field.value, metadata)
+    }
+
+    /// The websites WSurf can keep: HTTPS addresses, stored without a user, query or fragment. Anything else is dropped from the
+    /// item's websites and named; the item itself stays.
+    private static func importScope(
+        _ scope: ASImportableCredentialScope?,
+        into account: inout CredentialAccount,
+        state: inout ImportState
+    ) throws {
+        guard let scope else { return }
+        guard scope.urls.count <= maximumWebsites else { throw ImportLimitExceeded(.websites) }
+        var origins = Set<String>()
+        var loginURLs = Set<URL>()
+        var dropped = false
+        var surplus = false
+        for url in scope.urls {
+            try state.budget.add(url.absoluteString)
+            guard let sanitized = try? CredentialAccount.sanitizedLoginURL(url),
+                  let origin = CredentialAccount.origin(for: sanitized) else {
+                dropped = true
+                continue
+            }
+            // A website already kept is the same website. Past the account's limit the rest are named, not kept; each login
+            // address has an origin, so the origins stay inside the limit as well.
+            guard loginURLs.contains(sanitized) || loginURLs.count < CredentialAccount.websiteLimit else {
+                surplus = true
+                continue
+            }
+            origins.insert(origin)
+            loginURLs.insert(sanitized)
+        }
+        if dropped {
+            omit(.websitesNotKept, &state)
+        }
+        if surplus {
+            omit(.extraWebsites, &state)
+        }
+        if !scope.androidApps.isEmpty {
+            omit(.androidAppsNotKept, &state)
+        }
+        account.origins = origins.sorted()
+        account.loginURLs = loginURLs.sorted { $0.absoluteString < $1.absoluteString }
+    }
+
+    private static func importFIDO2Metadata(
+        _ passkey: ASImportableCredential.Passkey,
+        budget: inout PayloadBudget
+    ) throws -> Data? {
+        if #available(macOS 26.4, iOS 26.4, *) {
+            guard let metadata = passkey.fido2Extensions else { return nil }
+            if let hmac = metadata.hmacCredentials {
+                try budget.add(hmac.credentialWithUV)
+                try budget.add(hmac.credentialWithoutUV)
+            }
+            if let largeBlob = metadata.largeBlob {
+                try budget.add(largeBlob.data)
+            }
+            return try JSONEncoder().encode(metadata)
+        }
+        return nil
+    }
+
+    private static func makeConflicts(
+        _ candidates: [CredentialAccount],
+        against existing: [CredentialAccount]
+    ) throws -> [CredentialImportConflict] {
+        var existingByExternalID: [ExternalItemID: CredentialAccount] = [:]
+        // An item that was merged into a saved credential is held by that credential (`MergedItemLink`).
+        var holderOfMergedItem: [ExternalItemID: CredentialAccount] = [:]
+        for account in existing {
+            let key = try externalItemID(for: account)
+            guard existingByExternalID.updateValue(account, forKey: key) == nil else {
+                throw CredentialVaultError.duplicateIdentifier
+            }
+            for link in account.mergedFrom ?? [] {
+                holderOfMergedItem[link.identity] = holderOfMergedItem[link.identity] ?? account
+            }
+        }
+
+        // Every stored passkey by identity, so each incoming passkey finds its match without scanning the vault.
+        var existingPasskeys: [ExternalPasskeyID: [(account: CredentialAccount, passkey: WebsitePasskey)]] = [:]
+        for account in existing {
+            for passkey in account.passkeys {
+                existingPasskeys[ExternalPasskeyID(relyingPartyID: passkey.rpID, credentialID: passkey.credentialID), default: []]
+                    .append((account, passkey))
+            }
+        }
+
+        var conflicts: [CredentialImportConflict] = []
+        for candidate in candidates {
+            let key = try externalItemID(for: candidate)
+            let linked = existingByExternalID[key] ?? holderOfMergedItem[key]
+            if let linked {
+                if hasBasicAuthentication(candidate), hasBasicAuthentication(linked) {
+                    conflicts.append(.init(
+                        incoming: .password(accountID: candidate.id),
+                        existing: .password(accountID: linked.id)
+                    ))
+                }
+                if candidate.totp != nil, linked.totp != nil {
+                    conflicts.append(.init(
+                        incoming: .totp(accountID: candidate.id),
+                        existing: .totp(accountID: linked.id)
+                    ))
+                }
+                // Identical notes need no decision: merging them adds nothing.
+                if candidate.notes != nil, linked.notes != nil,
+                   try CredentialContent.hash(.note(candidate)) != CredentialContent.hash(.note(linked)) {
+                    conflicts.append(.init(
+                        incoming: .note(accountID: candidate.id),
+                        existing: .note(accountID: linked.id)
+                    ))
+                }
+                // Identical items need no decision either.
+                if candidate.secureItems != nil, linked.secureItems != nil,
+                   try CredentialContent.hash(.secureItems(candidate)) != CredentialContent.hash(.secureItems(linked)) {
+                    conflicts.append(.init(
+                        incoming: .secureItems(accountID: candidate.id),
+                        existing: .secureItems(accountID: linked.id)
+                    ))
+                }
+            }
+            for passkey in candidate.passkeys {
+                let matches = existingPasskeys[ExternalPasskeyID(relyingPartyID: passkey.rpID, credentialID: passkey.credentialID)] ?? []
+                guard matches.count <= 1 else { throw CredentialVaultError.duplicateIdentifier }
+                if let (account, existingPasskey) = matches.first {
+                    conflicts.append(.init(
+                        incoming: .passkey(accountID: candidate.id, passkeyID: passkey.id),
+                        existing: .passkey(accountID: account.id, passkeyID: existingPasskey.id)
+                    ))
+                }
+            }
+        }
+        return conflicts
+    }
+
+    public static func identities(in account: CredentialAccount) -> [CredentialIdentity] {
+        var result: [CredentialIdentity] = []
+        if hasBasicAuthentication(account) {
+            result.append(.password(accountID: account.id))
+        }
+        result += account.passkeys.map { .passkey(accountID: account.id, passkeyID: $0.id) }
+        if account.totp != nil {
+            result.append(.totp(accountID: account.id))
+        }
+        if account.notes != nil {
+            result.append(.note(accountID: account.id))
+        }
+        if account.secureItems != nil {
+            result.append(.secureItems(accountID: account.id))
+        }
+        return result
+    }
+
+    /// The identity notes and items follow when nobody decided them: the item's login, else its first passkey, else its code.
+    public static func leadIdentity(of account: CredentialAccount) -> CredentialIdentity? {
+        identities(in: account).first { !$0.followsLogin }
+    }
+
+    public static func hasBasicAuthentication(_ account: CredentialAccount) -> Bool {
+        account.password != nil || account.basicAuthenticationMetadata != nil || !account.username.isEmpty
+    }
+
+    public static func externalItemID(for account: CredentialAccount) throws -> ExternalItemID {
+        ExternalItemID(
+            account: try externalID(account.exchangeAccountID, fallback: account.id),
+            item: try externalID(account.exchangeItemID, fallback: account.id)
+        )
+    }
+
+    static func externalID(_ stored: Data?, fallback: UUID) throws -> Data {
+        if let stored {
+            guard !stored.isEmpty else { throw CredentialVaultError.invalidData }
+            return stored
+        }
+        return withUnsafeBytes(of: fallback.uuid) { Data($0) }
+    }
+
+    /// The checks the store makes of a vault: distinct ids, each account valid, one account per exporter item, and the live byte
+    /// budgets, measured as the store measures them (one account within `accountBytes`; all accounts plus `blockedOrigins` within
+    /// `liveBytes`).
+    ///
+    /// `checked` holds accounts that already passed these checks, at the positions they keep in `accounts` (`apply` starts from the
+    /// vault's accounts and only appends). An account equal to its checked one still counts towards the totals and the one-holder rule,
+    /// but its own validity and encoded size are not checked again.
+    static func validateAccounts(_ accounts: [CredentialAccount], blockedOrigins: Set<String> = [], checked: [CredentialAccount] = []) throws {
+        guard accounts.count <= CredentialVaultLimits.accounts else { throw CredentialVaultError.oversized }
+        guard Set(accounts.map({ $0.id })).count == accounts.count else { throw CredentialVaultError.duplicateIdentifier }
+        let rechecks = accounts.indices.map { $0 >= checked.count || accounts[$0] != checked[$0] }
+        for (position, account) in accounts.enumerated() where rechecks[position] {
+            try account.validate()
+        }
+        // Two accounts claiming one exporter item, as their own or as one merged into them, would make every later import and export
+        // ambiguous.
+        var claimed = Set<ExternalItemID>()
+        for account in accounts {
+            guard claimed.insert(try externalItemID(for: account)).inserted,
+                  (account.mergedFrom ?? []).allSatisfy({ claimed.insert($0.identity).inserted }) else {
+                throw CredentialVaultError.duplicateIdentifier
+            }
+        }
+        var total = blockedOrigins.reduce(0) { $0 + $1.utf8.count }
+        for (position, account) in accounts.enumerated() {
+            let bytes = try CredentialVaultCrypto.liveBytes(of: account)
+            guard bytes <= CredentialVaultLimits.accountBytes, bytes <= CredentialVaultLimits.liveBytes - total,
+                  try !rechecks[position] || CredentialVaultCrypto.storedBytes(of: account) <= CredentialVaultLimits.encodedAccountBytes else {
+                throw CredentialVaultError.oversized
+            }
+            total += bytes
+        }
+    }
+
+    static func encodedSize<T: Encodable>(_ value: T) throws -> Int {
+        try JSONEncoder().encode(value).count
+    }
+}

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 
 import Foundation
+import WSurfVault
 
 /// What a focused field on a login page is asking for.
 nonisolated enum CredentialAutofillField: Sendable {
@@ -14,6 +15,28 @@ nonisolated enum CredentialSavePlan: Equatable, Sendable {
 
 nonisolated enum CredentialSaveOutcome: Equatable, Sendable {
     case saved, unchanged, needsReview
+}
+
+/// What the password dropdown opens with, decided before any secret is read.
+nonisolated enum CredentialDropdown: Equatable, Sendable {
+    /// The default list: the accounts associated with the page's exact origin.
+    case accounts
+    /// Nothing for the exact origin, but accounts (for a code field: verification codes) for other websites of its registrable
+    /// domain: one row that lists them.
+    case siblings(site: String)
+    /// Nothing to offer: the dropdown stays closed.
+    case empty
+
+    /// Sibling websites are a fallback, for a password field and for a verification-code field alike (the owner's rule: no match here
+    /// but other websites of the same domain, offer "Check other logins for *.example.com"). They never extend a list that already has
+    /// an exact match, and they are only listed once that row is chosen. `field` decides which siblings were counted (`siblings`).
+    static func plan(exact: Int, siblings: Int, origin: String, field: CredentialAutofillField) -> CredentialDropdown {
+        if exact > 0 {
+            return .accounts
+        }
+        guard siblings > 0, let site = CredentialAccountSelection.site(of: origin) else { return .empty }
+        return .siblings(site: site)
+    }
 }
 
 /// Account choices for the credential manager. Everything is pure except `commitSave`, the one vault write: callers
@@ -65,6 +88,81 @@ nonisolated enum CredentialAccountSelection {
         }
     }
 
+    /// The registrable domain two websites must share to be siblings (`example.com` for `https://login.example.com`). `nil` for
+    /// an origin that is not HTTPS, an address, a bare public suffix, or when the suffix list can't be read: such a page has none.
+    static func site(of origin: String) -> String? {
+        guard let url = URL(string: origin), CredentialAccount.origin(for: url) == origin, let host = url.host else { return nil }
+        return RelyingPartyPolicy.registrableDomain(of: host)
+    }
+
+    /// Accounts saved for another HTTPS website of `origin`'s registrable domain and not for `origin` itself, each with the first
+    /// such website: for a password field the ones with a login, for a code field the ones with a verification code. Public suffix
+    /// rules decide the domain, so `a.github.io` and `b.github.io` (or a look-alike such as `paypa1.com` of `paypal.com`) are never
+    /// siblings. Typing filters as in `candidates`. Only identity is used here: a chosen account's secret is read again at delivery.
+    static func siblings(
+        in accounts: [CredentialAccount], origin: String, entered: String?, field: CredentialAutofillField = .password
+    ) -> [(account: CredentialAccount, website: String)] {
+        guard let site = site(of: origin) else { return [] }
+        let typed = entered.flatMap { $0.isEmpty ? nil : $0 }
+        var sites = ImportDuplicates.Sites()
+        var result: [(account: CredentialAccount, website: String)] = []
+        for account in accounts where field == .totp ? account.totp != nil : account.password != nil || !account.username.isEmpty {
+            if let typed, account.username.range(of: typed, options: [.anchored, .caseInsensitive]) == nil {
+                continue
+            }
+            if let website = siblingWebsite(of: account, for: origin, site: site, sites: &sites) {
+                result.append((account: account, website: website))
+            }
+        }
+        return result.sorted { left, right in
+            if left.account.username != right.account.username {
+                return left.account.username < right.account.username
+            }
+            if left.website != right.website {
+                return left.website < right.website
+            }
+            return left.account.id.uuidString < right.account.id.uuidString
+        }
+    }
+
+    /// Whether `account`, chosen from the sibling list, still belongs there when its secret is read.
+    static func isSibling(_ account: CredentialAccount, of origin: String) -> Bool {
+        guard let site = site(of: origin) else { return false }
+        var sites = ImportDuplicates.Sites()
+        return siblingWebsite(of: account, for: origin, site: site, sites: &sites) != nil
+    }
+
+    /// Whether `origin` may be added to `account`: an account of a sibling website (or, with `anySite`, one the person picked by hand
+    /// for this page in Pick Credential…), not saved for `origin` yet, with room under `CredentialAccount.websiteLimit`. `origin` must
+    /// be a normalized HTTPS origin. A full account is never made room in by dropping another website.
+    static func canAddWebsite(_ origin: String, to account: CredentialAccount, anySite: Bool = false) -> Bool {
+        guard account.origins.count < CredentialAccount.websiteLimit else { return false }
+        guard anySite else { return isSibling(account, of: origin) }
+        return !account.origins.contains(origin) && URL(string: origin).flatMap(CredentialAccount.origin(for:)) == origin
+    }
+
+    /// The accounts with `origin` added to the account `id`, and nothing else changed.
+    static func addingWebsite(
+        _ origin: String, to id: UUID, in accounts: [CredentialAccount], anySite: Bool = false
+    ) throws -> [CredentialAccount] {
+        guard let index = accounts.firstIndex(where: { $0.id == id }), canAddWebsite(origin, to: accounts[index], anySite: anySite) else {
+            throw CredentialVaultError.invalidData
+        }
+        var accounts = accounts
+        accounts[index].origins.append(origin)
+        return accounts
+    }
+
+    private static func siblingWebsite(
+        of account: CredentialAccount, for origin: String, site: String, sites: inout ImportDuplicates.Sites
+    ) -> String? {
+        guard !account.origins.contains(origin) else { return nil }
+        for website in account.origins where website.hasPrefix("https://") && sites.site(ofOrigin: website) == site {
+            return website
+        }
+        return nil
+    }
+
     /// Native picker rows. Each row carries enough context to tell similar accounts apart.
     static func suggestions(
         _ accounts: [CredentialAccount], origin: String, pageURL: URL?, entered: String?,
@@ -83,6 +181,52 @@ nonisolated enum CredentialAccountSelection {
                 : row.detail
             return AutofillSuggestion(id: row.account.id, title: row.title, detail: detail, origin: origin)
         }
+    }
+
+    /// `rows` with those whose username the person typed exactly first (`typed`: what they typed is what they meant), then the one whose
+    /// credential was used last on this website, then the others in their order; among the typed ones too, the one used last leads.
+    /// `usedAt` answers only for a credential saved for the website (`AutofillLastUsed`); of two equal dates the earlier row wins. Nothing
+    /// is added or removed.
+    static func lastUsedFirst<Row>(_ rows: [Row], typed: (Row) -> Bool = { _ in false }, usedAt: (Row) -> Date?) -> [Row] {
+        func promoted(_ rows: [Row]) -> [Row] {
+            var latest: (index: Int, date: Date)?
+            for (index, row) in rows.enumerated() {
+                if let date = usedAt(row), date > (latest?.date ?? .distantPast) {
+                    latest = (index, date)
+                }
+            }
+            guard let index = latest?.index, index > 0 else { return rows }
+            var rows = rows
+            rows.insert(rows.remove(at: index), at: 0)
+            return rows
+        }
+        return promoted(rows.filter(typed)) + promoted(rows.filter { !typed($0) })
+    }
+
+    /// One row of the dropdown's default list: the vault and account it fills, and what it shows.
+    struct Listed: Equatable {
+        let vault: UUID
+        let account: UUID
+        let title: String
+        let detail: String
+    }
+
+    /// The dropdown's default list over the unlocked vaults, in vault order (`label` names the vault when several are open): what
+    /// `suggestions` offers in each, then `lastUsedFirst` over all of them, with `entered` as what the person typed.
+    static func listed(
+        in vaults: [(id: UUID, label: String?, accounts: [CredentialAccount])], origin: String, pageURL: URL?, entered: String?,
+        field: CredentialAutofillField, pinned: UUID? = nil, usedAt: (_ vault: UUID, _ account: UUID) -> Date?
+    ) -> [Listed] {
+        let typed = entered.flatMap { $0.isEmpty ? nil : $0 }
+        var rows: [(listed: Listed, typed: Bool)] = []
+        for vault in vaults {
+            let exact = typed.map { name in Set(vault.accounts.lazy.filter { $0.username == name }.map(\.id)) } ?? []
+            for row in suggestions(vault.accounts, origin: origin, pageURL: pageURL, entered: entered, field: field, pinned: pinned) {
+                let detail = vault.label.map { [row.detail, $0].filter { !$0.isEmpty }.joined(separator: " · ") } ?? row.detail
+                rows.append((Listed(vault: vault.id, account: row.id, title: row.title, detail: detail), exact.contains(row.id)))
+            }
+        }
+        return lastUsedFirst(rows, typed: { $0.typed }) { usedAt($0.listed.vault, $0.listed.account) }.map { $0.listed }
     }
 
     /// What saving `login` would do. An explicitly selected account only applies to the same username; otherwise
@@ -142,9 +286,10 @@ nonisolated enum CredentialAccountSelection {
         return sanitized
     }
 
-    /// A fresh code for `account` at `date`, only when the account explicitly lists `origin`. The seed stays here.
-    static func totpCode(for account: CredentialAccount, origin: String, at date: Date) -> String? {
-        guard account.origins.contains(origin), let generator = account.totp else { return nil }
+    /// A fresh code for `account` at `date`, only when the account explicitly lists `origin`, or (`sibling`, a row the person chose
+    /// from "Check other logins") still holds a sibling website of it. The seed stays here.
+    static func totpCode(for account: CredentialAccount, origin: String, at date: Date, sibling: Bool = false) -> String? {
+        guard account.origins.contains(origin) || sibling && isSibling(account, of: origin), let generator = account.totp else { return nil }
         return try? TOTP.code(generator, at: date.timeIntervalSince1970).value
     }
 
@@ -161,7 +306,10 @@ nonisolated enum CredentialAccountSelection {
         guard plan != .unchanged else { return .unchanged }
         guard plan == offered else { return .needsReview }
         let accounts = try applying(plan, login: login, origin: origin, loginURL: loginURL, to: snapshot.accounts)
-        _ = try await manager.commit(accounts, expectedRevision: snapshot.revision, authorizedEpoch: epoch)
+        // Only the offered account changes; a new one is not stored yet.
+        _ = try await manager.commit(
+            accounts, expectedRevision: snapshot.revision, authorizedEpoch: epoch, changing: Set([selected].compactMap { $0 })
+        )
         return .saved
     }
 
@@ -169,7 +317,7 @@ nonisolated enum CredentialAccountSelection {
         path.isEmpty ? "/" : path
     }
 
-    private static func title(_ account: CredentialAccount, origin: String) -> String {
+    static func title(_ account: CredentialAccount, origin: String) -> String {
         if !account.username.isEmpty {
             return account.username
         }

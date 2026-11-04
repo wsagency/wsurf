@@ -7,6 +7,7 @@ import GRDB
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 // Task 9: vault creation (spec §8) through the public `createVault`, asserted on files, the unlock result and the open state.
 

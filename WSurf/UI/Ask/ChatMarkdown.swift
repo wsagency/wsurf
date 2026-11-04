@@ -17,16 +17,24 @@ struct ChatMarkdown: View {
     }
 
     var body: some View {
+        // Only a caller that handles links sets the action: a markdown view with none leaves the environment alone.
+        if let onOpenLink {
+            content
+                .environment(\.openURL, OpenURLAction { url in
+                    onOpenLink(url)
+                    return .handled
+                })
+        } else {
+            content
+        }
+    }
+
+    private var content: some View {
         VStack(alignment: .leading, spacing: spacing) {
             ForEach(blocks) { block in
                 row(block)
             }
         }
-        .environment(\.openURL, OpenURLAction { url in
-            guard let onOpenLink else { return .systemAction }
-            onOpenLink(url)
-            return .handled
-        })
     }
 
     @ViewBuilder

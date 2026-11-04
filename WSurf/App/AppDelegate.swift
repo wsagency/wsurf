@@ -4,6 +4,7 @@
 // Linen portions: Apache-2.0; WSurf modifications: BUSL-1.1. See NOTICE.
 
 import AppKit
+import os
 
 /// WSurf installs no SwiftUI `App` scene. SwiftUI replaces `NSApp.mainMenu`
 /// during launch and discards the shortcuts set before it.
@@ -17,12 +18,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        AppleSpeechVoiceCatalog.shared.prepare()
-        guard !isRunningTests else { return }
+        guard !isRunningTests else {
+            // No Dock tile or app switcher entry: a click on a "WSurf" tile (or Quit in its menu) while someone uses the machine
+            // sent the test host an `aevt quit`, which ended the run with exit code 0. Tests that need a regular app switch to
+            // `.regular` themselves and restore the previous policy.
+            NSApp.setActivationPolicy(.accessory)
+            AppleSpeechVoiceCatalog.shared.prepare()
+            return
+        }
+        LaunchSignpost.begin()
+        // Decrypted vault files an earlier run showed and could not remove (a crash, a forced quit).
+        VaultFilePreviewFolder.shared.removeLeftovers()
         NSApp.setActivationPolicy(.regular)
         guard MoveToApplications.offerIfNeeded() != .relaunching else { return }
         Task {
             await application.bootstrap()
+            // Nothing speaks before a window is up. Apple's voice lookup warns when it runs inside a Swift task, so it runs from
+            // the main queue once launch has drawn its windows.
+            DispatchQueue.main.async {
+                AppleSpeechVoiceCatalog.shared.prepare()
+            }
             #if DEBUG
             if let coordinator = application.activeCoordinator {
                 AnimationProbe.runIfRequested(coordinator: coordinator)
@@ -69,6 +84,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Task {
             do {
                 try await application.clearDataOnQuitIfNeeded()
+                await CloudSync.shared?.sendBeforeQuit()
                 await application.closePagesForTermination()
                 NSApp.reply(toApplicationShouldTerminate: true)
             } catch {
@@ -87,6 +103,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         guard !isRunningTests else { return }
+        VaultFilePreviewFolder.shared.removeAll()
         application.finishTermination()
+    }
+}
+
+/// Launch, for Instruments and the log: from `applicationDidFinishLaunching` to the first window ordered front. The interval is
+/// "launch" in the pipeline category, next to `db.open`, `history.reload` and `convlog.load` (`BrowserProfileContext`).
+@MainActor
+enum LaunchSignpost {
+    private static var started: (state: OSSignpostIntervalState, at: ContinuousClock.Instant)?
+
+    static func begin() {
+        started = (Pipeline.signposter.beginInterval("launch"), .now)
+    }
+
+    /// Ends the interval at the first window shown in front; every later one changes nothing.
+    static func windowShown() {
+        guard let started else { return }
+        self.started = nil
+        Pipeline.signposter.endInterval("launch", started.state)
+        let elapsed = (ContinuousClock.now - started.at).milliseconds
+        Pipeline.log.notice("launch: first window in front after \(elapsed, privacy: .public)ms")
     }
 }

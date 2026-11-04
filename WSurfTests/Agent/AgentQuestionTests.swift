@@ -10,7 +10,7 @@ import Testing
 
 @MainActor
 struct AgentQuestionTests {
-    private let space = UUID()
+    private let anchor = UUID()
 
     private func questions(_ texts: [String]) -> [AgentQuestionModel.Question] {
         texts.map { AgentQuestionModel.Question(text: $0, options: []) }
@@ -18,7 +18,7 @@ struct AgentQuestionTests {
 
     @Test func everyAnswerComesBackAsOneResult() async {
         let model = AgentQuestionModel()
-        let asked = model.present(questions(["Which city?", "Which day?"]), inSpace: space)
+        let asked = model.present(questions(["Which city?", "Which day?"]), inAnchor: anchor)
 
         #expect(model.current != nil)
         #expect(model.count == 2)
@@ -32,7 +32,7 @@ struct AgentQuestionTests {
 
     @Test func aSkippedQuestionIsNeverOfferedAgain() async {
         let model = AgentQuestionModel()
-        let asked = model.present(questions(["Which city?", "Which day?"]), inSpace: space)
+        let asked = model.present(questions(["Which city?", "Which day?"]), inAnchor: anchor)
 
         model.skip()
         #expect(model.index == 1)
@@ -47,7 +47,7 @@ struct AgentQuestionTests {
             text: "What is your budget?",
             options: ["Low-cost", "Moderate", "Flexible"]
         )
-        let asked = model.present([budget], inSpace: space)
+        let asked = model.present([budget], inAnchor: anchor)
 
         model.skip()
 
@@ -58,7 +58,7 @@ struct AgentQuestionTests {
 
     @Test func skippingAnOpenQuestionSaysNothingAtAll() async {
         let model = AgentQuestionModel()
-        let asked = model.present(questions(["Which city?"]), inSpace: space)
+        let asked = model.present(questions(["Which city?"]), inAnchor: anchor)
 
         model.skip()
 
@@ -67,7 +67,7 @@ struct AgentQuestionTests {
 
     @Test func steppingBackFillsTheGapItLeft() async {
         let model = AgentQuestionModel()
-        let asked = model.present(questions(["Which city?", "Which day?"]), inSpace: space)
+        let asked = model.present(questions(["Which city?", "Which day?"]), inAnchor: anchor)
 
         model.goForward()
         #expect(model.index == 1)
@@ -80,14 +80,14 @@ struct AgentQuestionTests {
 
     @Test func changingAnAnswerStepsOnRatherThanClosing() async {
         let model = AgentQuestionModel()
-        let first = model.present(questions(["Which city?", "Which day?"]), inSpace: space)
+        let first = model.present(questions(["Which city?", "Which day?"]), inAnchor: anchor)
 
         model.answer("Lisbon")
         model.answer("Friday")
         #expect(model.ask == nil, "both answered closes it")
         _ = await model.result(for: first)
 
-        let second = model.present(questions(["Which city?", "Which day?"]), inSpace: space)
+        let second = model.present(questions(["Which city?", "Which day?"]), inAnchor: anchor)
         #expect(model.current?.text == "Which city?")
 
         model.answer("Lisbon")
@@ -97,7 +97,7 @@ struct AgentQuestionTests {
 
     @Test func anAnsweredQuestionRemembersWhatWasChosen() async {
         let model = AgentQuestionModel()
-        let asked = model.present(questions(["Which city?", "Which day?"]), inSpace: space)
+        let asked = model.present(questions(["Which city?", "Which day?"]), inAnchor: anchor)
 
         model.answer("Lisbon")
         #expect(model.index == 1)
@@ -116,7 +116,7 @@ struct AgentQuestionTests {
 
     @Test func closingTheCardHandsTheRestToTheAgent() async {
         let model = AgentQuestionModel()
-        let asked = model.present(questions(["Which city?", "Which day?"]), inSpace: space)
+        let asked = model.present(questions(["Which city?", "Which day?"]), inAnchor: anchor)
 
         model.answer("Lisbon")
         model.dismiss()
@@ -130,20 +130,20 @@ struct AgentQuestionTests {
 
     @Test func closingWithEverythingAnsweredHandsOverNothing() async {
         let model = AgentQuestionModel()
-        let asked = model.present(questions(["Which city?"]), inSpace: space)
+        let asked = model.present(questions(["Which city?"]), inAnchor: anchor)
 
         model.answer("Lisbon")
 
         #expect(await model.result(for: asked) == "Q: Which city?\nA: Lisbon")
     }
 
-    @Test func aQuestionOnlyShowsInTheSpaceThatAskedIt() async {
+    @Test func aQuestionOnlyShowsInTheAnchorThatAskedIt() async {
         let model = AgentQuestionModel()
-        let asked = model.present(questions(["Which city?"]), inSpace: space)
+        let asked = model.present(questions(["Which city?"]), inAnchor: anchor)
 
-        #expect(model.ask(inSpace: space) != nil)
-        #expect(model.ask(inSpace: UUID()) == nil)
-        #expect(model.ask(inSpace: nil) == nil)
+        #expect(model.ask(inAnchor: anchor) != nil)
+        #expect(model.ask(inAnchor: UUID()) == nil)
+        #expect(model.ask(inAnchor: nil) == nil)
 
         model.dismiss()
         _ = await model.result(for: asked)
@@ -151,7 +151,7 @@ struct AgentQuestionTests {
 
     @Test func cancellingTheTurnReleasesTheWaitingTool() async {
         let model = AgentQuestionModel()
-        let asked = model.present(questions(["Which city?"]), inSpace: space)
+        let asked = model.present(questions(["Which city?"]), inAnchor: anchor)
 
         model.abandon()
 
@@ -161,10 +161,10 @@ struct AgentQuestionTests {
 
     @Test func askingAgainReplacesTheCardWaitingBefore() async {
         let model = AgentQuestionModel()
-        let first = model.present(questions(["Which city?"]), inSpace: space)
+        let first = model.present(questions(["Which city?"]), inAnchor: anchor)
         #expect(model.current?.text == "Which city?")
 
-        let second = model.present(questions(["Which day?"]), inSpace: space)
+        let second = model.present(questions(["Which day?"]), inAnchor: anchor)
         #expect(model.current?.text == "Which day?")
 
         #expect(await model.result(for: first).isEmpty)
@@ -174,7 +174,7 @@ struct AgentQuestionTests {
 
     @Test func aQuestionStillWaitingHandsBackWhatItHasWhenAwaited() async {
         let model = AgentQuestionModel()
-        let asked = model.present(questions(["Which city?"]), inSpace: space)
+        let asked = model.present(questions(["Which city?"]), inAnchor: anchor)
 
         async let result = model.result(for: asked)
         #expect(await waitUntil { model.ask != nil })
@@ -201,12 +201,12 @@ struct AgentQuestionTests {
         }
         first.browser.newTab()
         second.browser.newTab()
-        let firstSpace = try #require(first.browser.activeSpaceID)
-        let secondSpace = try #require(second.browser.activeSpaceID)
-        first.agentReply.bind(toSpace: firstSpace, showsInChrome: true)
-        second.agentReply.bind(toSpace: secondSpace, showsInChrome: false)
-        let firstAsk = first.agentQuestions.present(questions(["Which city?"]), inSpace: firstSpace)
-        let secondAsk = second.agentQuestions.present(questions(["Which day?"]), inSpace: secondSpace)
+        let firstAnchor = try #require(first.browser.activeAnchorID)
+        let secondAnchor = try #require(second.browser.activeAnchorID)
+        first.agentReply.bind(toAnchor: firstAnchor, showsInChrome: true)
+        second.agentReply.bind(toAnchor: secondAnchor, showsInChrome: false)
+        let firstAsk = first.agentQuestions.present(questions(["Which city?"]), inAnchor: firstAnchor)
+        let secondAsk = second.agentQuestions.present(questions(["Which day?"]), inAnchor: secondAnchor)
         app.focus(second)
 
         #expect(first.pendingAgentQuestion(inChrome: true) == firstAsk)

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 
 import Foundation
+import WSurfVault
 
 enum VaultChoiceReason: Sendable {
     /// The match is in more than one unlocked vault.
@@ -23,7 +24,15 @@ enum VaultRoute {
 
 /// Which one vault a write or a lookup belongs to. Locked vaults are never read; ambiguity is an explicit choice, never a guess.
 enum CredentialRouting {
-    static func route(profile: Profile, origin: String, username: String?) async -> VaultRoute {
+    /// Whether the profile has never made a vault, which is the only state a page may suggest setting one up in. A vault from an
+    /// older format that still has to be upgraded, an unreadable store and a private context are not: those are fixed in Settings.
+    static func profileNeedsFirstVault(_ profile: Profile) async -> Bool {
+        guard let store = try? CredentialManager.store(for: profile) else { return false }
+        return await store.openState() == .firstRun
+    }
+
+    /// `origin` nil routes a new entry that belongs to no website (a card or an address): straight to the default vault.
+    static func route(profile: Profile, origin: String?, username: String?) async -> VaultRoute {
         guard let store = try? CredentialManager.store(for: profile),
               case .provisional = await store.openState(),
               let listing = try? await store.listing(), !listing.isEmpty else { return .unavailable }
@@ -32,6 +41,7 @@ enum CredentialRouting {
 
         var holders: [CredentialManager] = []
         for manager in unlocked {
+            guard let origin else { break }
             guard let snapshot = try? await manager.snapshot() else { continue }
             if snapshot.accounts.contains(where: { $0.origins.contains(origin) && (username == nil || $0.username == username) }) {
                 holders.append(manager)

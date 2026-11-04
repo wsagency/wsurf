@@ -149,7 +149,7 @@ struct ModelProviderArchitectureTests {
             TestModelProvider(configuration: configuration, capabilities: [.toolCalling], availability: .available, models: [])
         }, ])
         return IntelligenceViewModel(
-            settings: LLMSettings(defaults: UserDefaults(suiteName: UUID().uuidString)!),
+            settings: LLMSettings(defaults: UserDefaults(suiteName: AppDatabase.defaultsSuite(UUID().uuidString))!),
             actionPolicy: AgentActionPolicy(storage: SessionAgentGrantStorage()),
             catalog: TestProviderCatalog(providers: [provider], selectedID: provider.id),
             credentials: credentials,
@@ -188,7 +188,7 @@ struct ModelProviderArchitectureTests {
         )
         var configurationChanges = 0
         let model = IntelligenceViewModel(
-            settings: LLMSettings(defaults: UserDefaults(suiteName: UUID().uuidString)!),
+            settings: LLMSettings(defaults: UserDefaults(suiteName: AppDatabase.defaultsSuite(UUID().uuidString))!),
             actionPolicy: AgentActionPolicy(storage: SessionAgentGrantStorage()),
             catalog: catalog,
             credentials: credentials,

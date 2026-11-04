@@ -9,6 +9,7 @@ import SQLite3
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 // MARK: - Helpers
 

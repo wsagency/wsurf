@@ -22,6 +22,8 @@ struct OnboardingModelTests {
         model.advance()
         #expect(model.step == .model)
         model.advance()
+        #expect(model.step == .layout)
+        model.advance()
         #expect(model.step == .extensions)
         model.advance()
         #expect(model.step == .bookmarks)
@@ -52,6 +54,9 @@ struct OnboardingModelTests {
         model.back()
         #expect(model.step == .extensions)
         model.back()
+        #expect(model.step == .layout)
+        model.back()
+        #expect(model.step == .model)
         model.back()
         #expect(model.step == .welcome)
 
@@ -68,10 +73,16 @@ struct OnboardingModelTests {
         model.beginIfNeeded()
         #expect(!model.showsNavigation)
         model.advance()
+        #expect(model.step == .model)
         #expect(model.showsNavigation)
         model.advance()
+        #expect(model.step == .layout)
         #expect(model.showsNavigation)
         model.advance()
+        #expect(model.step == .extensions)
+        #expect(model.showsNavigation)
+        model.advance()
+        #expect(model.step == .bookmarks)
         #expect(model.showsNavigation)
         model.advance()
         #expect(!model.showsNavigation)
@@ -88,8 +99,43 @@ struct OnboardingModelTests {
         #expect(model.step == .welcome)
     }
 
+    @Test func aLayoutChosenDuringSetupIsAppliedWhenItCompletes() {
+        let (defaults, suite) = makeDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let settingsSuite = AppDatabase.defaultsSuite("WSurf.OnboardingModelTests.settings.\(UUID().uuidString)")
+        let settingsDefaults = UserDefaults(suiteName: settingsSuite)!
+        defer { settingsDefaults.removePersistentDomain(forName: settingsSuite) }
+        let settings = BrowserSettings(defaults: settingsDefaults, appliesAppearanceGlobally: false)
+        let model = OnboardingModel(defaults: defaults)
+
+        model.beginIfNeeded()
+        model.advance()
+        model.advance()
+        #expect(model.step == .layout)
+        model.windowStyleChoice = .minimal
+        #expect(settings.windowStyle == .standard)
+
+        model.applyChoices(to: settings)
+        #expect(settings.windowStyle == .minimal)
+    }
+
+    @Test func skippingWithoutChoosingKeepsStandard() {
+        let (defaults, suite) = makeDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let settingsSuite = AppDatabase.defaultsSuite("WSurf.OnboardingModelTests.settings.\(UUID().uuidString)")
+        let settingsDefaults = UserDefaults(suiteName: settingsSuite)!
+        defer { settingsDefaults.removePersistentDomain(forName: settingsSuite) }
+        let settings = BrowserSettings(defaults: settingsDefaults, appliesAppearanceGlobally: false)
+        let model = OnboardingModel(defaults: defaults)
+
+        model.beginIfNeeded()
+        model.applyChoices(to: settings)
+
+        #expect(settings.windowStyle == .standard)
+    }
+
     private func makeDefaults() -> (UserDefaults, String) {
-        let suite = "WSurf.OnboardingModelTests.\(UUID().uuidString)"
+        let suite = AppDatabase.defaultsSuite("WSurf.OnboardingModelTests.\(UUID().uuidString)")
         let defaults = UserDefaults(suiteName: suite)!
         defaults.removePersistentDomain(forName: suite)
         return (defaults, suite)

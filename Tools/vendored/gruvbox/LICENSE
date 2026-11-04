@@ -1,0 +1,31 @@
+Gruvbox color values, as published in the Tinted Theming schemes
+(https://github.com/tinted-theming/schemes, tag spec-0.11, base16/gruvbox-*.yaml).
+
+Those schemes credit the palette to "Dawid Kurek (dawikur@gmail.com), morhetz
+(https://github.com/morhetz/gruvbox)". WSurf takes the values from the Tinted
+Theming schemes, which are MIT-licensed; no separate notice from the original
+Gruvbox author is published there or claimed here.
+
+The full MIT text below is verbatim from
+https://github.com/tinted-theming/schemes/blob/spec-0.11/LICENSE.
+
+Copyright (c) 2022 Tinted Theming (https://github.com/tinted-theming)
+
+Permission is hereby granted, free of charge, to any person obtaining
+a copy of this software and associated documentation files (the
+"Software"), to deal in the Software without restriction, including
+without limitation the rights to use, copy, modify, merge, publish,
+distribute, sublicense, and/or sell copies of the Software, and to
+permit persons to whom the Software is furnished to do so, subject to
+the following conditions:
+
+The above copyright notice and this permission notice shall be
+included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE
+LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
+WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.

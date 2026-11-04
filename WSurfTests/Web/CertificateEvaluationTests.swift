@@ -6,6 +6,7 @@
 import Foundation
 import Security
 import Testing
+import WebKit
 
 @testable import WSurf
 
@@ -67,6 +68,51 @@ struct CertificateEvaluationTests {
             #expect((error as NSError).domain == NSOSStatusErrorDomain)
             #expect((error as NSError).code == Int(errSecParam))
         }
+    }
+
+    /// A WebKit page is secure for credentials only while its main frame's certificate passes evaluation and no certificate
+    /// exception was accepted for its document; WebKit's own flag stays on past a warning. A self-signed certificate stands in
+    /// for one accepted past a warning (nothing is trusted or stored outside this test).
+    @Test(.boundedWebViews)
+    func aWebKitPageIsSecureOnlyWithACertificateThatPassesAndNoException() async throws {
+        let failing = try makeTrust(anchored: false), passing = try makeTrust(anchored: true)
+        let configuration = interactiveWebViewConfiguration()
+        configuration.websiteDataStore = .nonPersistent()
+        let context = BrowserProfileContext(profile: .privateBrowsing())
+        let page = BrowserPage(webKit: WKWebView(frame: NSRect(x: 0, y: 0, width: 200, height: 200), configuration: configuration), context: context)
+        page.certificateStanding.webKitSecure = true
+        #expect(!page.hasOnlySecureContent, "no certificate, no secure page")
+
+        page.serverTrustChanged(failing)
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(!page.hasOnlySecureContent, "a certificate that fails evaluation, as one accepted past a warning does")
+
+        page.serverTrustChanged(passing)
+        #expect(!page.hasOnlySecureContent, "not before its evaluation")
+        #expect(await waitUntil(timeout: .seconds(5)) { page.hasOnlySecureContent })
+
+        page.certificateStanding.exceptionAccepted()
+        #expect(!page.hasOnlySecureContent, "a subresource past a warning taints the document")
+        page.certificateStanding.navigationStarted()
+        page.certificateStanding.navigationCommitted()
+        #expect(page.hasOnlySecureContent, "the next document is clean")
+
+        page.certificateStanding.navigationStarted()
+        page.certificateStanding.exceptionAccepted()
+        #expect(!page.hasOnlySecureContent)
+        page.certificateStanding.navigationCommitted()
+        #expect(!page.hasOnlySecureContent, "an exception while the navigation was provisional belongs to the new document too")
+
+        page.certificateStanding.navigationStarted()
+        page.certificateStanding.navigationCommitted()
+        #expect(page.hasOnlySecureContent)
+        page.certificateStanding.webKitSecure = false
+        #expect(!page.hasOnlySecureContent, "WebKit's own rule still holds")
+        page.certificateStanding.webKitSecure = true
+        page.serverTrustChanged(nil)
+        #expect(!page.hasOnlySecureContent)
+        await page.close()
+        await context.endPrivateSession()
     }
 
     private func makeTrust(anchored: Bool = true) throws -> SecTrust {

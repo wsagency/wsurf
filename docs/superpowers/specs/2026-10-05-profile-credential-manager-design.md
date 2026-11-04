@@ -2,7 +2,7 @@
 
 Date: 2026-10-05
 
-Status: Approved architectural design; this workstream's binding 2026-10-09 direction supersedes the historical PRF-first and legacy-cutover decisions below. Existing Keychain `SavedPassword`/`SecureAutofillVault`, password settings/autofill, and data remain unchanged and active by default. The new encrypted manager is developed alongside them, with no automatic migration/deletion/cutover. No native/provider success is implied.
+Status: Approved architectural design; this workstream's binding 2026-10-09 direction supersedes the historical PRF-first and legacy-cutover decisions below. Superseded in part on 2026-10-17: the legacy Passwords provider is removed and Credential Manager is the only password store; passwords saved by earlier builds move through a reviewed, user-confirmed import, and the old Keychain list is erased only after it. Statements below that the legacy store stays active, unchanged or selectable describe the earlier state. No native/provider success is implied.
 
 ## Intent and agreed scope
 
@@ -34,7 +34,9 @@ Existing password records and behavior remain intact. Do not migrate, delete, re
 
 - Automatic migration, legacy recovery, or deletion/cutover of existing password records. Preserve existing legacy password manager as active default until explicit mutually exclusive selection.
 - Changes to payment-card, contact, assistant API-key, or MCP credential storage.
-- WSurf account servers, cloud-vault synchronization, recovery escrow, or a new cryptography dependency.
+- WSurf account servers, recovery escrow, or a new cryptography dependency. Cloud-vault synchronization was a non-goal of this
+  design; it exists only as the opt-in iCloud sync of sealed vault data in the user's own private CloudKit database, keyed only by
+  the synced unlock passkey (2026-10-12 spec, §18 amendment 2026-10-22).
 - General macOS AutoFill-provider functionality outside WSurf. An exchange extension does not replace the app-owned manager.
 - CSV as a substitute for the requested password/passkey/TOTP exchange.
 
@@ -111,8 +113,8 @@ Keep the PRF input stable for each external credential. Repeating an assertion f
 - Adding an unlock credential requires an already unlocked vault and successful verification of the new wrapper before committing it.
 - Removing an unlock wrapper must leave at least one valid unlock path. It does not delete the external Apple credential automatically.
 - Removing a wrapper affects the current vault state only. It denies that wrapper's normal unlock of the current manifest, but the vault data key is unchanged (`CredentialVault.removeUnlock` re-seals the payload under the same key). A removed wrapper and its PRF output can still recover that key from any copy of the vault file that contains the wrapper, and with it decrypt later envelopes obtained from the same vault, not only an old backup. This is a stated boundary, not forward revocation: there is no key rotation, and no anti-rollback, power-loss durability or cross-process guarantee is claimed.
-- Manual lock, profile switch, screen lock, sleep, exit, and authentication timeout invalidate credential access and pending operations. A late callback cannot reopen or mutate a different/currently locked profile.
-- Keep the existing five-minute authentication/context ceiling; webpage activity does not silently prolong authorization.
+- Manual lock, profile switch, screen lock, sleep, display sleep, exit, and authentication timeout invalidate credential access and pending operations. A late callback cannot reopen or mutate a different/currently locked profile.
+- Each vault locks the time chosen for it after it unlocks: 1, 5 (the default), 15 or 30 minutes, 1 hour, or only when WSurf quits. The time counts from the unlock and is read once, then. A shorter choice applies to a vault that is already open; a longer one applies from the next unlock. Webpage activity and use of the vault do not silently prolong authorization. Sleep, display sleep, screen lock, user switch, profile switch, a manual lock and quit lock in every choice. The unlock itself stays bounded by five minutes.
 
 Store the encrypted payload and manifest consistently with atomic replacement. Failed decoding, authentication, validation, or pre-commit writes preserve the previous valid state. A callback canceled after a successful commit must not pretend no mutation occurred.
 
@@ -195,7 +197,8 @@ Public Apple exchange documentation establishes transfer between participating c
 
 Before accepting Apple Passwords integration as implemented, demonstrate WSurf to Apple Passwords and Apple Passwords to WSurf transfer of a password, a usable passkey, and a TOTP generator on the target OS. Verify the received secrets by actual use. If the target app does not participate or rejects a type, report the exact blocker and stop that dependent work. Do not substitute CSV, export screenshots, or mark a generic exchange API wrapper as complete.
 
-Apple synchronizes credentials it holds. The exchange API is not an inventory/readback channel, does not prove remote synchronization completeness, and does not provide automatic bidirectional WSurf updates. Changes in either manager require another explicit transfer. Synchronizing an unlock passkey does not synchronize WSurf's encrypted vault file.
+Apple synchronizes credentials it holds. The exchange API is not an inventory/readback channel, does not prove remote synchronization completeness, and does not provide automatic bidirectional WSurf updates. Changes in either manager require another explicit transfer. Synchronizing an unlock passkey does not synchronize WSurf's encrypted vault file. The opt-in
+iCloud sync of the 2026-10-12 spec (§18, 2026-10-22) syncs a vault's sealed entries separately; it does not use the exchange API.
 
 ### Conflicts and errors
 

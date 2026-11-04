@@ -34,18 +34,31 @@ struct SidebarTabRow: View {
         context.isSelected(item)
     }
     private var isActive: Bool {
-        coordinator.sidebarDestination == .tab(tab.id)
+        tab.isSidebarActive
+    }
+    private var windowAnchor: CGRect {
+        context.windowFrame(of: item)
+    }
+    private var style: SidebarRowStyle {
+        browser.rowStyle(
+            of: tab,
+            isMarked: isSelected,
+            paletteOpen: coordinator.isNewTabPaletteOpen,
+            increasedContrast: inkSource.increasedContrast
+        )
     }
 
     @Environment(\.sidebarStyle) private var sidebarStyle
-    @Environment(\.colorScheme) private var windowColorScheme
+    @Environment(\.sidebarIconTint) private var folderIconTint
+    private var inkSource = SidebarRowInkSource()
     @State private var hovering = false
     @State private var returnHovering = false
     @State private var isRenaming = false
     @State private var draftTitle = ""
     @FocusState private var renameFocused: Bool
-    @State private var windowFrame: CGRect = .zero
+    @State private var rowFrame = SidebarRowFrame()
     @State private var controlsWidth: CGFloat = 0
+    @State private var markWidth: CGFloat = 0
 
     private var showsTrailingControls: Bool {
         hovering && !isRenaming
@@ -59,8 +72,16 @@ struct SidebarTabRow: View {
         sidebarStyle == .full && (tab.isPlayingAudio || tab.isMuted)
     }
 
+    private var ink: SidebarRowInk {
+        inkSource.ink(for: style, isDeferred: tab.isDeferred)
+    }
+
     private var textColor: Color {
-        BrowserSettings.application.sidebarTextColor(isDeferred: tab.isDeferred, scheme: windowColorScheme)
+        ink.text
+    }
+
+    private var radius: CGFloat {
+        depth == 0 ? Theme.Radius.row : FolderSection.rowRadius(depth: depth - 1)
     }
 
     private var returnHelp: String {
@@ -115,7 +136,7 @@ struct SidebarTabRow: View {
     }
 
     private var trailingControls: some View {
-        SidebarTabActionButton(tab: tab, coordinator: coordinator)
+        SidebarTabActionButton(tab: tab, coordinator: coordinator, followsCommandKey: showsTrailingControls)
             .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { controlsWidth = $0 }
             .opacity(showsTrailingControls ? 1 : 0)
             .allowsHitTesting(showsTrailingControls)
@@ -127,8 +148,9 @@ struct SidebarTabRow: View {
     }
 
     private var titleMask: some View {
-        let badge = peekedTab == nil ? 0 : PeekRowBadge.extent + 4
-        let covered = (showsTrailingControls ? controlsWidth : 0) + badge
+        let badge = (peekedTab == nil ? 0 : PeekRowBadge.extent + 4) + (tab.microTabID == nil ? 0 : MicroRowBadge.extent + 4)
+        let mark = tab.processState.externalControllers.isEmpty ? 0 : markWidth + 4
+        let covered = (showsTrailingControls ? controlsWidth : 0) + badge + mark
         return HStack(spacing: 0) {
             Rectangle()
             LinearGradient(colors: [.black, .clear], startPoint: .leading, endPoint: .trailing)
@@ -139,21 +161,30 @@ struct SidebarTabRow: View {
     }
 
     @ViewBuilder private var leadingIcon: some View {
+        let icon = ink.iconStyle(
+            folderTint: folderIconTint,
+            colorsFavicon: BrowserSettings.application.chromeShape.colorsFavicons,
+            isDeferred: tab.isDeferred
+        )
         if sidebarStyle == .full {
-            TabIcon(tab: tab, tint: textColor)
+            TabIcon(tab: tab, tint: icon.tint, colorsFavicon: icon.colorsFavicon)
                 .frame(width: SidebarMetrics.rowIconSize)
+                .sidebarNewMark(ink)
         } else {
-            TabIcon(tab: tab, tint: textColor)
+            TabIcon(tab: tab, tint: icon.tint, colorsFavicon: icon.colorsFavicon)
+                .sidebarNewMark(ink)
         }
     }
 
-    @ViewBuilder private var titleColumn: some View {
+    /// `color` is the row's text color. The rename popover of the icons-only sidebar sits outside the row, so it
+    /// takes the sidebar's own text color rather than the one on an inverse fill.
+    @ViewBuilder private func titleColumn(color: Color) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             if isRenaming {
                 TextField("", text: $draftTitle)
                     .textFieldStyle(.plain)
                     .font(BrowserSettings.application.sidebarFont)
-                    .foregroundStyle(textColor)
+                    .foregroundStyle(color)
                     .focused($renameFocused)
                     .onSubmit(commitRename)
                     .onAppear { renameFocused = true }
@@ -175,9 +206,10 @@ struct SidebarTabRow: View {
             } else {
                 HStack(spacing: 0) {
                     Text(verbatim: tab.title)
-                        .font(BrowserSettings.application.sidebarFont)
-                        .foregroundStyle(textColor)
+                        .font(ink.titleFont)
+                        .foregroundStyle(color)
                         .lineLimit(1)
+                        .sidebarRowAccessibility(style)
                     Spacer(minLength: 0)
                 }
             }
@@ -191,6 +223,7 @@ struct SidebarTabRow: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .mask(alignment: .leading) { titleMask }
+        .sidebarTitleCentered(!returnHovering)
     }
 
     var body: some View {
@@ -207,6 +240,12 @@ struct SidebarTabRow: View {
 
             HStack(spacing: SidebarMetrics.rowIconSpacing) {
                 leadingIcon
+                    .sidebarRowName(tab.title, style: style, isIconOnly: sidebarStyle == .icons)
+                    .overlay(alignment: .bottomTrailing) {
+                        if sidebarStyle == .icons {
+                            ExternalControlMark(tab: tab, coordinator: coordinator, isCompact: true)
+                        }
+                    }
 
                 if showsSpeaker {
                     SidebarTabMuteButton(isMuted: tab.isMuted) {
@@ -216,16 +255,19 @@ struct SidebarTabRow: View {
                 }
 
                 if sidebarStyle == .full {
-                    titleColumn
+                    titleColumn(color: textColor)
                 }
             }
             .overlay(alignment: .trailing) {
                 if sidebarStyle == .full {
                     HStack(spacing: 4) {
                         trailingControls
+                        ExternalControlMark(tab: tab, coordinator: coordinator)
+                            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { markWidth = $0 }
                         if let peekedTab {
                             PeekRowBadge(tab: peekedTab, coordinator: coordinator)
                         }
+                        MicroRowBadge(tab: tab)
                     }
                     .padding(.trailing, SidebarMetrics.rowControlEdgeOffset(
                         style: sidebarStyle,
@@ -238,22 +280,30 @@ struct SidebarTabRow: View {
         }
         .frame(height: SidebarMetrics.rowHeight(settings: BrowserSettings.application))
         .environment(\.chromeIconExtent, SidebarMetrics.rowControlExtent)
+        .sidebarInverse(ink, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
         .sidebarRowSelectionEffect(
-            isSelected: (isActive && !coordinator.isNewTabPaletteOpen) || isSelected,
-            isHovering: hovering,
+            isSelected: style.emphasis == .lit,
+            isHovering: hovering && style.emphasis != .current,
             glassTint: context.refractsTabColor
                 ? FaviconTint.of(tab.favicon, heldBy: tab.id)
                 : nil,
-            radius: depth == 0 ? Theme.Radius.hover : FolderSection.rowRadius(depth: depth - 1)
+            radius: radius
         )
+        .overlay { SidebarRevealPulse(browser: browser, tabID: tab.id, radius: radius) }
         .opacity(isLifted ? 0 : 1)
         .contentShape(Rectangle())
         .onGeometryChange(for: CGRect.self) { $0.frame(in: .named(context.space)) } action: {
-            context.frames.record(item, at: $0)
+            rowFrame.measure(item, at: $0, in: context.frames)
+            context.followPreview(of: item, id: tab.id)
         }
-        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frame in
-            windowFrame = frame
-            coordinator.tabPreview.moved(tab.id, anchor: frame)
+        .onAppear { rowFrame.appear(item, in: context.frames) }
+        // The list holds still while a title is being edited, so it needs to know.
+        .onChange(of: isRenaming) { _, renaming in
+            if renaming {
+                browser.tabRenameID = tab.id
+            } else if browser.tabRenameID == tab.id {
+                browser.tabRenameID = nil
+            }
         }
         .onTapGesture { tapped() }
         .onMiddleClick {
@@ -263,18 +313,24 @@ struct SidebarTabRow: View {
         .onHover { over in
             withAnimation(Theme.Motion.quick) { hovering = over }
             if over, !isRenaming {
-                coordinator.tabPreview.hover(tab, anchor: windowFrame)
+                coordinator.tabPreview.hover(tab, anchor: windowAnchor)
             } else {
                 coordinator.tabPreview.unhover(tab.id)
             }
         }
-        .onDisappear { coordinator.tabPreview.unhover(tab.id) }
+        .onDisappear {
+            coordinator.tabPreview.unhover(tab.id)
+            rowFrame.forget(item, in: context.frames)
+            if browser.tabRenameID == tab.id {
+                browser.tabRenameID = nil
+            }
+        }
         .help(sidebarStyle == .icons ? Text(verbatim: tab.title) : Text(verbatim: ""))
         .popover(isPresented: Binding(
             get: { isRenaming && sidebarStyle == .icons },
             set: { if !$0 { commitRename() } }
         )) {
-            titleColumn
+            titleColumn(color: ink.resting)
                 .frame(width: 220, height: 24)
                 .padding(12)
         }
@@ -289,6 +345,7 @@ struct SidebarTabRow: View {
 
     @ViewBuilder
     private var menu: some View {
+        ExternalControlMenuItems(tabs: [tab], coordinator: coordinator)
         SidebarLinkMenuItems(tabs: [tab], coordinator: coordinator)
 
         Button {
@@ -301,20 +358,10 @@ struct SidebarTabRow: View {
         } label: {
             Label("Duplicate Tab", systemImage: "plus.square.on.square")
         }
-        if let anchor = browser.activeTab, anchor !== tab {
-            Button {
-                coordinator.split(anchor, with: tab, axis: .sideBySide)
-            } label: {
-                Label("Open Beside Current Page", systemImage: "rectangle.split.2x1")
-            }
-        }
-        if browser.splits.contains(tab.id) {
-            Button {
-                browser.dissolveSplit(containing: tab)
-            } label: {
-                Label("Exit Split", systemImage: "rectangle")
-            }
-        }
+        OpenBesideCurrentPageItem(tab: tab, browser: browser, coordinator: coordinator)
+        ExitSplitItem(tab: tab, browser: browser)
+        MoveToMicroWindowItem(tab: tab, coordinator: coordinator)
+        MicroRowMenuItems(tab: tab, coordinator: coordinator)
         Divider()
 
         SidebarPinMenuItems(tab: tab, browser: browser)
@@ -322,7 +369,7 @@ struct SidebarTabRow: View {
         SidebarAudioMenuItems(tab: tab, coordinator: coordinator)
         SidebarFolderMenuItems(items: [item], browser: browser)
 
-        if tab.pinnedURL != nil {
+        if tab.isPinnedForProfile {
             SidebarUnpinButton(tab: tab, browser: browser)
         }
         if !tab.isDeferred {
@@ -338,24 +385,86 @@ struct SidebarTabRow: View {
         } label: {
             Label("Remove Tab", systemImage: "xmark")
         }
-        if tab.pinnedURL == nil, browser.tabs.count > 1 {
-            Button(role: .destructive) {
-                let count = browser.tabs.count - 1
-                Task {
-                    guard await ConfirmAlert.destructive(
-                        "Remove \(count) tabs?",
-                        verb: "Remove Tabs"
-                    ) else { return }
-                    browser.closeOthers(tab)
-                }
+        RemoveOtherTabsItem(tab: tab, browser: browser)
+    }
+}
+
+/// Open Beside Current Page, in a view of its own: a row builds its context menu with its body, so a menu item that read which
+/// tab is current there would draw every row again on each tab switch.
+private struct OpenBesideCurrentPageItem: View {
+    let tab: BrowserTab
+    let browser: BrowserModel
+    let coordinator: AppCoordinator
+
+    var body: some View {
+        if let anchor = browser.activeTab, anchor !== tab {
+            Button {
+                coordinator.split(anchor, with: tab, axis: .sideBySide)
             } label: {
-                Label("Remove Other Tabs", systemImage: "trash")
+                Label("Open Beside Current Page", systemImage: "rectangle.split.2x1")
             }
         }
     }
 }
 
-private struct PinReturnSegment: View {
+/// Remove Other Tabs, Exit Split and Move to Micro Window, in views of their own for the reason above: read in the row, the
+/// tabs, the splits and the window would make every drawn row draw again whenever a tab opens, closes or is pinned.
+private struct RemoveOtherTabsItem: View {
+    let tab: BrowserTab
+    let browser: BrowserModel
+
+    var body: some View {
+        if !tab.isPinnedForProfile {
+            let others = browser.tabs.filter { $0 !== tab && !$0.isPinnedForProfile && browser.isShown($0) }
+            if !others.isEmpty {
+                Button(role: .destructive) {
+                    let count = others.count
+                    Task {
+                        guard await ConfirmAlert.destructive(
+                            "Remove \(count) tabs?",
+                            verb: "Remove Tabs"
+                        ) else { return }
+                        browser.closeOthers(tab)
+                    }
+                } label: {
+                    Label("Remove Other Tabs", systemImage: "trash")
+                }
+            }
+        }
+    }
+}
+
+private struct ExitSplitItem: View {
+    let tab: BrowserTab
+    let browser: BrowserModel
+
+    var body: some View {
+        if browser.splits.contains(tab.id) {
+            Button {
+                browser.dissolveSplit(containing: tab)
+            } label: {
+                Label("Exit Split", systemImage: "rectangle")
+            }
+        }
+    }
+}
+
+private struct MoveToMicroWindowItem: View {
+    let tab: BrowserTab
+    let coordinator: AppCoordinator
+
+    var body: some View {
+        if coordinator.canMoveToMicroWindow(tab) {
+            Button {
+                coordinator.moveToMicroWindow(tab)
+            } label: {
+                Label("Move to Micro Window", systemImage: "arrow.up.forward.square")
+            }
+        }
+    }
+}
+
+struct PinReturnSegment: View {
     let tab: BrowserTab
     let help: String
     let tint: Color
@@ -384,15 +493,16 @@ private struct PinReturnSegment: View {
                     .foregroundStyle(.secondary)
                     .opacity(hovering || isSameSite || pinnedFavicon == nil ? 1 : 0)
             }
-            .frame(width: 34, height: 32)
+            .frame(width: 34)
+            .frame(maxHeight: .infinity)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .sidebarHoverFill(
             isHovering: hovering,
             in: UnevenRoundedRectangle(
-                topLeadingRadius: Theme.Radius.hover,
-                bottomLeadingRadius: Theme.Radius.hover
+                topLeadingRadius: Theme.Radius.row,
+                bottomLeadingRadius: Theme.Radius.row
             )
         )
         .onHover { over in
@@ -452,18 +562,21 @@ nonisolated enum SidebarTabAction: Equatable {
 struct SidebarTabActionButton: View {
     let tab: BrowserTab
     let coordinator: AppCoordinator
+    /// False for a button that is not shown. It stays in the row but does not read the Command key, so a press draws the one
+    /// row under the pointer and not every row that is drawn.
+    var followsCommandKey = true
 
     var body: some View {
         let action = SidebarTabAction.resolve(
-            isPinned: tab.pinnedURL != nil,
+            isPinned: tab.isPinnedForProfile,
             isDeferred: tab.isDeferred,
-            command: coordinator.linkModifiers.contains(.command)
+            command: followsCommandKey && coordinator.linkModifiers.contains(.command)
         )
         ChromeIcon.rowControl(symbol: action.symbol, help: String(localized: action.label)) {
             coordinator.tabPreview.dismiss()
             let modifiers = NSApp.currentEvent?.modifierFlags ?? NSEvent.modifierFlags
             switch SidebarTabAction.resolve(
-                isPinned: tab.pinnedURL != nil,
+                isPinned: tab.isPinnedForProfile,
                 isDeferred: tab.isDeferred,
                 command: modifiers.contains(.command)
             ) {
@@ -554,27 +667,35 @@ struct TabIcon: View {
     var size: CGFloat = SidebarMetrics.rowIconSize
     var tint: Color?
     var loadingColor: Color = .secondary
+    /// A loaded tab shows its favicon's own colors instead of `tint`. Unloaded tabs and symbols keep the tint, so
+    /// loaded and unloaded tabs stay apart.
+    var colorsFavicon = false
+
+    /// nil draws the favicon in its own colors.
+    var faviconTint: Color? {
+        if colorsFavicon, !tab.isDeferred {
+            return nil
+        }
+        return tint ?? (tab.isDeferred ? .secondary : nil)
+    }
 
     var body: some View {
         Group {
             if let internalPage = tab.internalPage {
-                Image(systemName: internalPage.symbol)
-                    .font(.system(size: size * 0.72, weight: .medium))
+                SidebarSymbol(internalPage.symbol, size: size * 0.72, weight: .medium, box: size)
                     .foregroundStyle(tint ?? .secondary)
             } else if tab.isLoading, !tab.isRestoring {
                 Spinner(size: size * 0.8)
                     .foregroundStyle(tint ?? loadingColor)
             } else if SystemPages.showsStartFace(tab) {
-                Image(systemName: SystemPages.startSymbol)
-                    .font(.system(size: size * 0.66, weight: .medium))
+                SidebarSymbol(SystemPages.startSymbol, size: size * 0.66, weight: .medium, box: size)
                     .foregroundStyle(tint ?? .secondary)
             } else if let favicon = tab.favicon {
-                FaviconImage(image: favicon, tint: tint ?? (tab.isDeferred ? .secondary : nil))
+                FaviconImage(image: favicon, tint: faviconTint)
                     .frame(width: size - 1, height: size - 1)
                     .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.tight, style: .continuous))
             } else {
-                Image(systemName: "globe")
-                    .font(.system(size: size * 0.69))
+                SidebarSymbol("globe", size: size * 0.69, box: size)
                     .foregroundStyle(tint ?? .secondary)
             }
         }

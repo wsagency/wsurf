@@ -27,6 +27,7 @@ nonisolated enum OpenAIToolSearch {
               functions: ["chooseFilesOnPage", "inspectDownloads"]),
         .init(name: "browser_tabs", description: "List, open, switch, and close browser tabs.", functions: ["listTabs", "newTab", "switchTab", "closeTab"]),
         .init(name: "browser_media", description: "Play videos and control or close media playback.", functions: ["playVideo", "closeVideo", "controlMedia"]),
+        .init(name: "browser_watches", description: "Watch a page for a change the person confirms, list watches, or stop one.", functions: ["watchPage", "listWatches", "stopWatch"]),
     ]
 
     static func supports(_ model: String) -> Bool {

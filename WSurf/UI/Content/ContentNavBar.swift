@@ -43,7 +43,17 @@ struct ContentNavBar: View {
     private var extensionBudget: CGFloat? {
         guard barWidth > 0 else { return nil }
         let sideRoom = (barWidth - Self.addressBarMinWidth) / 2
-        return max(0, sideRoom - Self.barInset - Self.clusterGap - Self.buttonSlot)
+        return max(0, sideRoom - Self.barInset - Self.clusterGap - Self.buttonSlot - externalBadgeReserve - speakerReserve)
+    }
+
+    /// Room the speaker takes from the extension icons while the toolbar carries it (the sidebar is not on screen).
+    private var speakerReserve: CGFloat {
+        ToolbarAudioIndicator.isShown(in: coordinator) ? Self.buttonSlot + 6 : 0
+    }
+
+    /// Room the external-connection badge takes from the extension icons while it shows.
+    private var externalBadgeReserve: CGFloat {
+        coordinator.mcpServer.controllers(in: browser).isEmpty ? 0 : ExternalConnectionChip.maximumWidth + 6
     }
 
     private var toolbarLeadingPadding: CGFloat {
@@ -83,7 +93,7 @@ struct ContentNavBar: View {
 
     private var barContent: some View {
         HStack(spacing: 6) {
-            navigationControls
+            ToolbarNavigationControls(browser: browser, coordinator: coordinator)
 
             Spacer(minLength: 8)
 
@@ -103,19 +113,24 @@ struct ContentNavBar: View {
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { barWidth = $0 }
         .background { WindowDragArea() }
         .onDrop(of: [.url, .fileURL], isTargeted: nil) { providers in
-            guard let provider = providers.first else { return false }
-            _ = provider.loadObject(ofClass: URL.self) { url, _ in
-                guard let url else { return }
-                Task { @MainActor in
-                    if let tab = browser.activeTab {
-                        tab.load(url)
-                    } else {
-                        coordinator.openNewTab(url: url)
-                    }
+            Self.openDropped(providers) { url in
+                if let tab = browser.activeTab {
+                    tab.load(url)
+                } else {
+                    coordinator.openNewTab(url: url)
                 }
             }
-            return true
         }
+    }
+
+    /// Opens the first dropped link or file. A dropped file loads like a typed `file:` address: with read access to that file only.
+    static func openDropped(_ providers: [NSItemProvider], open: @escaping @MainActor (URL) -> Void) -> Bool {
+        guard let provider = providers.first else { return false }
+        _ = provider.loadObject(ofClass: URL.self) { url, _ in
+            guard let url else { return }
+            Task { @MainActor in open(url) }
+        }
+        return true
     }
 
     private var addressSurface: some View {
@@ -123,55 +138,10 @@ struct ContentNavBar: View {
             .holdsWindowStillOnHover()
     }
 
-    private var reloadHelp: LocalizedStringResource {
-        (browser.activeTab?.isLoading ?? false) ? "Stop" : "Reload"
-    }
-
-    private var navigationControls: some View {
-        HStack(spacing: 6) {
-            ToolbarButton(
-                symbol: "chevron.left",
-                enabled: browser.activeTab?.canGoBack ?? false,
-                help: String(localized: "Back"),
-                heldMenu: {
-                    guard let tab = browser.activeTab else { return nil }
-                    return NavigationHoldMenu.back(for: tab, coordinator: coordinator)
-                }
-            ) {
-                browser.activeTab?.goBack()
-            }
-            ToolbarButton(
-                symbol: "chevron.right",
-                enabled: browser.activeTab?.canGoForward ?? false,
-                help: String(localized: "Forward"),
-                heldMenu: {
-                    guard let tab = browser.activeTab else { return nil }
-                    return NavigationHoldMenu.forward(for: tab, coordinator: coordinator)
-                }
-            ) {
-                browser.activeTab?.goForward()
-            }
-            ToolbarButton(
-                symbol: (browser.activeTab?.isLoading ?? false) ? "xmark" : "arrow.clockwise",
-                enabled: !(browser.activeTab?.urlString.isEmpty ?? true),
-                help: String(localized: reloadHelp),
-                heldMenu: {
-                    guard let tab = browser.activeTab else { return nil }
-                    return NavigationHoldMenu.reload(for: tab)
-                }
-            ) {
-                guard let tab = browser.activeTab else { return }
-                if tab.isLoading {
-                    tab.stopLoading()
-                } else {
-                    tab.reload()
-                }
-            }
-        }
-    }
-
     private var trailingControls: some View {
         HStack(spacing: 6) {
+            ToolbarAudioIndicator(coordinator: coordinator)
+            ExternalConnectionBadge(server: coordinator.mcpServer, browser: browser)
             if !coordinator.isShowingSettings {
                 StoreInstallButton(manager: coordinator.extensions, browser: browser)
             }
@@ -186,6 +156,62 @@ struct ContentNavBar: View {
     }
 }
 
+/// Back, Forward and Reload, with their hold menus. The toolbar and the Minimal bar share them.
+struct ToolbarNavigationControls: View {
+    let browser: BrowserModel
+    let coordinator: AppCoordinator
+
+    private var reloadHelp: LocalizedStringResource {
+        (browser.activeTab?.isLoading ?? false) ? "Stop" : "Reload"
+    }
+
+    var body: some View {
+        HStack(spacing: 6) {
+            ToolbarButton(
+                symbol: "chevron.left",
+                enabled: browser.activeTab?.canGoBack ?? false,
+                help: String(localized: "Back"),
+                heldMenu: {
+                    guard let tab = browser.activeTab else { return nil }
+                    return NavigationHoldMenu.back(for: tab, coordinator: coordinator)
+                }
+            ) {
+                browser.activeTab?.goBack()
+            }
+            .accessibilityLabel(Text("Back"))
+            ToolbarButton(
+                symbol: "chevron.right",
+                enabled: browser.activeTab?.canGoForward ?? false,
+                help: String(localized: "Forward"),
+                heldMenu: {
+                    guard let tab = browser.activeTab else { return nil }
+                    return NavigationHoldMenu.forward(for: tab, coordinator: coordinator)
+                }
+            ) {
+                browser.activeTab?.goForward()
+            }
+            .accessibilityLabel(Text("Forward"))
+            ToolbarButton(
+                symbol: (browser.activeTab?.isLoading ?? false) ? "xmark" : "arrow.clockwise",
+                enabled: browser.activeTab.map { $0.isLoading || $0.canReload } ?? false,
+                help: String(localized: reloadHelp),
+                heldMenu: {
+                    guard let tab = browser.activeTab else { return nil }
+                    return NavigationHoldMenu.reload(for: tab)
+                }
+            ) {
+                guard let tab = browser.activeTab else { return }
+                if tab.isLoading {
+                    tab.stopLoading()
+                } else {
+                    tab.reload()
+                }
+            }
+            .accessibilityLabel(Text(reloadHelp))
+        }
+    }
+}
+
 enum ChromeBand {
     static func measuredColor(browser: BrowserModel, coordinator: AppCoordinator) -> NSColor? {
         guard BrowserSettings.application.matchesWebsiteColor else { return nil }
@@ -195,6 +221,11 @@ enum ChromeBand {
     static func pageColor(browser: BrowserModel, coordinator: AppCoordinator) -> NSColor? {
         guard !coordinator.isShowingSettings, !showsStartPage(browser: browser) else { return nil }
         guard browser.activeSplit == nil else { return nil }
+        // Reader covers the page, so the bar takes the color of the article's page instead.
+        if let tab = browser.activeTab, tab.reader.isActive {
+            let isDark = NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            return BrowserSettings.application.readerPalette.resolved(isDark: isDark).background
+        }
         return browser.activeTab?.pageColor
     }
 

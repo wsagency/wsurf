@@ -12,9 +12,25 @@ import WebKit
 
 @testable import WSurf
 
+/// Selects Standard, the page-tinted theme, in the app-wide settings that `LoomChrome` reads, and returns what puts the
+/// earlier theme back. A solid theme such as WSurf, the default of a fresh install, sets the chrome itself and ignores the page.
+@MainActor
+func useStandardTheme() -> () -> Void {
+    let settings = BrowserSettings.application
+    let saved = (settings.themeID, settings.themeAdjustments)
+    settings.themeID = "standard"
+    settings.themeAdjustments["standard"] = nil
+    return {
+        settings.themeAdjustments = saved.1
+        settings.themeID = saved.0
+    }
+}
+
 @MainActor
 struct LoomChromeTests {
     @Test func siteColourIsPresentButConstrained() throws {
+        let restore = useStandardTheme()
+        defer { restore() }
         let source = NSColor(srgbRed: 1, green: 0.16, blue: 0, alpha: 1)
         let sampled = try #require(
             LoomChrome.sampledColor(source, scheme: .light).usingColorSpace(.sRGB)
@@ -26,6 +42,8 @@ struct LoomChromeTests {
     }
 
     @Test func anAchromaticPageStillSetsTheLoomsTone() throws {
+        let restore = useStandardTheme()
+        defer { restore() }
         let black = try #require(
             LoomChrome.sampledColor(.black, scheme: .light).usingColorSpace(.sRGB)
         )
@@ -38,6 +56,8 @@ struct LoomChromeTests {
     }
 
     @Test func aDarkColouredPageCanSetADarkAppearance() throws {
+        let restore = useStandardTheme()
+        defer { restore() }
         let navy = NSColor(srgbRed: 0.02, green: 0.05, blue: 0.35, alpha: 1)
         let tinted = try #require(
             LoomChrome.sampledColor(navy, scheme: .light).usingColorSpace(.sRGB)
@@ -265,7 +285,7 @@ struct SidebarDragGhostTests {
 @MainActor
 struct SidebarIconsOnlyMenuTests {
     private func makeLayout() -> (SidebarLayout, UserDefaults, String) {
-        let suite = "SidebarIconsOnlyMenuTests-\(UUID().uuidString)"
+        let suite = AppDatabase.defaultsSuite("SidebarIconsOnlyMenuTests-\(UUID().uuidString)")
         let defaults = UserDefaults(suiteName: suite)!
         return (SidebarLayout(defaults: defaults), defaults, suite)
     }
@@ -334,6 +354,37 @@ struct SidebarPeekShieldTests {
             isVisible: false, isPeeking: false, viewMaxX: pageMaxX, width: width,
             isMediaPicture: true
         ))
+    }
+
+    /// A floating player panel rests over the page. The page under the pointer must not hear hover or mouse moves
+    /// there, wherever the sidebar is; the rest of the page keeps them.
+    @Test func thePlayerPanelUnderThePointerSuppressesThePagesHover() {
+        #expect(SidebarPeekShield.suppressesHover(
+            isVisible: true, isPeeking: false, viewMaxX: pageMaxX, width: width,
+            isMediaPicture: false, isPointerOverPlayer: true
+        ))
+        #expect(!SidebarPeekShield.suppressesHover(
+            isVisible: true, isPeeking: false, viewMaxX: pageMaxX, width: width,
+            isMediaPicture: false, isPointerOverPlayer: false
+        ))
+        // Callers that know of no player ask as before.
+        #expect(!SidebarPeekShield.suppressesHover(
+            isVisible: true, isPeeking: false, viewMaxX: pageMaxX, width: width, isMediaPicture: false
+        ))
+    }
+
+    /// The panel reports the pointer entering and leaving, once each, so the shield is applied and lifted exactly
+    /// when the pointer crosses the panel's edge.
+    @Test func thePointerCrossingThePlayerPanelAsksForTheShieldOnce() {
+        let media = MediaCenter()
+        var asked = 0
+        media.onPointerOverPlayerChanged = { asked += 1 }
+        media.isPointerOverPlayer = true
+        media.isPointerOverPlayer = true
+        #expect(asked == 1 && media.isPointerOverPlayer)
+        media.isPointerOverPlayer = false
+        media.isPointerOverPlayer = false
+        #expect(asked == 2 && !media.isPointerOverPlayer)
     }
 
     /// The mechanism itself: parking removes every tracking area WebKit owns

@@ -18,15 +18,20 @@ final class AskSurfaceModel {
         didSet {
             if oldValue.text != interaction.text, !isPreviewingSelection {
                 suggestionPreview.clear()
-                suggestions.update(
-                    for: MentionText.stripped(interaction.text),
-                    settings: coordinator.context.settings
-                )
+                if searchSite == nil {
+                    suggestions.update(
+                        for: MentionText.stripped(interaction.text),
+                        settings: coordinator.context.settings
+                    )
+                } else {
+                    suggestions.clear()
+                }
             }
         }
     }
     private(set) var isFocused = false
     private(set) var mentionedTabIDs: [UUID] = []
+    private(set) var searchSite: SearchEngine?
     private(set) var selectAllToken = 0
     private var isPreviewingSelection = false
     private var suggestionPreview = OmniboxSuggestionPreview()
@@ -44,8 +49,8 @@ final class AskSurfaceModel {
     var activeTabID: UUID? {
         browser.activeTab?.id
     }
-    var activeSpaceID: UUID? {
-        browser.activeSpaceID
+    var activeAnchorID: UUID? {
+        browser.activeAnchorID
     }
     var currentURL: String {
         browser.activeTab?.urlString ?? ""
@@ -57,8 +62,42 @@ final class AskSurfaceModel {
         Omnibox.isAgentOnly(settings: coordinator.context.settings)
     }
     var placeholder: String {
-        agentOnly ? Omnibox.agentOnlyPlaceholder : placement.placeholder
+        if let searchSite {
+            return String(localized: "Search \(searchSite.name)")
+        }
+        return agentOnly ? Omnibox.agentOnlyPlaceholder : placement.placeholder
     }
+
+    var suggestedSite: SearchEngine? {
+        guard isFocused, searchSite == nil, mentionedTabIDs.isEmpty,
+              !placement.mirrorsPageURL || interaction.text != currentURL
+        else { return nil }
+        return SiteSearch.match(interaction.text, customEngine: coordinator.context.settings.searchEngine)
+    }
+
+    @discardableResult
+    func activateSiteSearch() -> Bool {
+        guard let site = suggestedSite else { return false }
+        searchSite = site
+        suggestionPreview.clear()
+        suggestions.clear()
+        interaction.text = ""
+        return true
+    }
+
+    @discardableResult
+    func removeSearchSite() -> Bool {
+        guard searchSite != nil else { return false }
+        searchSite = nil
+        suggestionPreview.clear()
+        interaction.selection = 0
+        suggestions.update(
+            for: MentionText.stripped(interaction.text),
+            settings: coordinator.context.settings
+        )
+        return true
+    }
+
     var restingText: String {
         placement.mirrorsPageURL ? currentURL : ""
     }
@@ -74,7 +113,7 @@ final class AskSurfaceModel {
     }
 
     var agentMessage: String? {
-        coordinator.agentReply.message(inSpace: activeSpaceID)
+        coordinator.agentReply.message(inAnchor: activeAnchorID)
     }
 
     var restingContent: AskRestingContent? {
@@ -84,11 +123,14 @@ final class AskSurfaceModel {
             agentMessage: agentMessage,
             mirrorsPageURL: placement.mirrorsPageURL,
             isFocused: isFocused,
-            typedText: interaction.trimmedText,
+            // An active site search counts as typed input, so a message cannot hide the chip.
+            typedText: interaction.trimmedText.isEmpty ? (searchSite?.name ?? "") : interaction.trimmedText,
             notice: coordinator.notice,
             status: coordinator.statusMessage,
             placeholder: placeholder,
-            currentURL: currentURL
+            currentURL: currentURL,
+            showsFullAddress: coordinator.context.settings.showsFullAddress
+                || browser.activeTab?.usesDevMode == true
         )
     }
 
@@ -99,10 +141,10 @@ final class AskSurfaceModel {
     }
 
     var activity: AskSurfaceActivity {
-        guard let activeSpaceID,
-              coordinator.agentReply.showsInChrome(inSpace: activeSpaceID)
+        guard let activeAnchorID,
+              coordinator.agentReply.showsInChrome(inAnchor: activeAnchorID)
         else { return .none }
-        let traces = coordinator.conversationLog.traces(forTab: activeSpaceID)
+        let traces = coordinator.conversationLog.traces(forTab: activeAnchorID)
         guard let last = traces.last else { return .none }
         let isRunning = last.state == .running
         let isThinking = isRunning
@@ -126,9 +168,59 @@ final class AskSurfaceModel {
         AskContext.pages(browser: browser, mentionedTabIDs: mentionedTabIDs)
     }
 
+    /// The rows under the field. A history search runs on the main thread, and the surface's body runs for many reasons, so the
+    /// rows are computed when something they read has changed and read from here the rest of the time. What `resultSections` reads
+    /// is recorded as it runs (`withObservationTracking`), which keeps this in step with every input of it that is observable:
+    /// the text, focus, mentions, the site search, a previewed row, suggestions, the settings, the tabs and their titles.
+    var sections: [OmniboxSection] {
+        access(keyPath: \.sections)
+        if let cachedSections {
+            return cachedSections
+        }
+        sectionComputations += 1
+        let computed = withObservationTracking {
+            resultSections()
+        } onChange: { [weak self] in
+            // Runs where the change is made, before it lands: drop the rows now and let the next read compute them from the new state.
+            MainActor.assumeIsolated { self?.sectionsWentStale() }
+        }
+        cachedSections = computed
+        return computed
+    }
+
+    @ObservationIgnored private var cachedSections: [OmniboxSection]?
+    /// How often `sections` was computed rather than read, for the tests that hold it to once per change.
+    @ObservationIgnored private(set) var sectionComputations = 0
+
+    private func sectionsWentStale() {
+        guard cachedSections != nil else { return }
+        cachedSections = nil
+        withMutation(keyPath: \.sections) {}
+    }
+
+    /// The rows for the state now, computed afresh.
     func resultSections() -> [OmniboxSection] {
-        if isFocused, !isListening, let sections = suggestionPreview.sections {
+        // Nothing below shows without focus, so an unfocused surface reads nothing else and a change elsewhere leaves it alone.
+        guard isFocused else { return [] }
+        if !isListening, let sections = suggestionPreview.sections {
             return sections
+        }
+        if let searchSite {
+            let query = interaction.trimmedText
+            guard isFocused, !query.isEmpty, let url = searchSite.searchURL(for: query) else { return [] }
+            return [
+                OmniboxSection(id: "site-search", title: "", items: [
+                    OmniboxItem(
+                        id: "site-search-\(searchSite.id)",
+                        kind: .search,
+                        title: query,
+                        detail: String(localized: "Search \(searchSite.name)"),
+                        iconHost: searchSite.host
+                    ) { [weak self] in
+                        self?.open(url)
+                    },
+                ]),
+            ]
         }
         return AskSurfaceResults.sections(
             placement: placement,
@@ -189,6 +281,8 @@ final class AskSurfaceModel {
     }
 
     func focusFromAddressCommand() {
+        searchSite = nil
+        suggestionPreview.clear()
         if placement.mirrorsPageURL {
             interaction.text = currentURL
         }
@@ -212,6 +306,10 @@ final class AskSurfaceModel {
     }
 
     func submit(in sections: [OmniboxSection]) {
+        if searchSite != nil {
+            run(at: interaction.selection, in: sections)
+            return
+        }
         switch interaction.submission(
             resultCount: sections.flattened.count,
             agentOnly: agentOnly,
@@ -233,6 +331,10 @@ final class AskSurfaceModel {
     }
 
     func askWhateverIsTyped() {
+        if searchSite != nil {
+            submit(in: resultSections())
+            return
+        }
         guard case .ask(let prompt) = interaction.commandSubmission() else { return }
         ask(prompt)
     }
@@ -325,6 +427,7 @@ final class AskSurfaceModel {
         guard isFocused != focused else { return }
         isFocused = focused
         if !focused {
+            searchSite = nil
             suggestionPreview.clear()
             suggestions.clear()
         }

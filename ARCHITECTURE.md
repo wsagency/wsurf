@@ -82,6 +82,43 @@ native view without navigation, cancels source assistant/voice/media/Peek activi
 rebinds callbacks, invalidates both sidebar Undo histories and saves both windows
 atomically. Closed or superseded owners cannot resurrect tabs with queued saves.
 
+Only a close the user makes records a window as closed. AppKit closes every window
+after `applicationWillTerminate`, so the application is marked terminating before that
+(`prepareToTerminate`, `finishTermination` and the will-terminate notification) and
+those closes leave the saved session open. The last regular window the user closes is
+remembered in `UserDefaults` until another regular window opens; if the app quits in
+between, the next launch reopens it for a profile with no open window. A window closed
+while another stays open, and any private window, is never brought back this way.
+
+A micro window is a regular window (coordinator, model and host) with `BrowserModel.windowKind
+== .micro` that shows one page with no chrome until the pointer reaches the top, where a bar
+and the traffic lights slide down. It never attaches the profile's pins and never enters full
+screen. It holds exactly one page: any other tab that reaches it (a link, a popup, an extension,
+the assistant) moves live to the regular window of its context used last, and Settings, History,
+Downloads and the vault pages are never moved into one. It is never an MCP or external-link
+target. It restores as a micro window (`sessionWindow.kind`, NULL meaning standard) and retires
+its saved session when it empties. A private page moves into a micro window that joins its
+source's private context, and that context ends with its last window, not with the first to close.
+
+Pins, pinned folders with everything inside them, and Favorites belong to the profile,
+not to a window. They are `profilePin` rows in the profile's database: a stable UUID, a
+parent, and a fractional order key (`OrderKey`) for each item. The upgrade merges the
+pins of every window, closed ones included, once and in one transaction; it fills
+`pinID` on the window rows and deletes none of them. Every regular window shows the set
+and keeps its own page for each pin, linked by `BrowserTab.pinID`, so navigating or
+unloading one window's page never touches another's. `scheduleSave` first publishes a
+changed set to `ProfilePinStore`, which writes it in one transaction and applies it to
+the profile's other windows before returning. A loaded page whose pin was removed
+elsewhere stays open as an ordinary tab; an unloaded one closes. Only the person removes
+a pin: a page or extension that closes one only unloads it, and the assistant and MCP
+refuse. Everything above the pin line is pinned (`BrowserModel.isPinned`): a root tab
+with a pinned page, and every tab at any depth in a pinned root folder.
+`settlePinnedPages()` runs when a change lands, never during a drag: it gives a tab in a
+pinned folder its current page as its pinned page and takes it from a tab in a folder
+below the line. Unloading a pinned tab returns it to its pinned page. A window detaches when it closes, quits or switches profile, so it never
+publishes an empty set. A private window has an in-memory store of its own and neither
+sees nor changes the profile's pins.
+
 `ChromiumRuntime` initializes CEF only for the first Chromium page and stays
 initialized until quit because CEF cannot be restarted in-process. Its AppKit
 application subclass is installed at startup without loading Chromium.
@@ -90,13 +127,87 @@ tab closes that child, never the containing WSurf window.
 
 External-app approvals require a proven requesting origin and app identity.
 Ambiguous, inherited or opaque sources may request one-time consent but cannot
-reuse or persist an origin grant. WebKit binds suspended offers to its document
-and main-frame navigation generation. CEF binds them to native frame/document
+reuse or persist an origin grant. WebKit binds a suspended offer to its document
+and main-frame navigation generation; an unattributed request asks once and
+names no site. The person's approval of a main-frame request is for that link
+from that site, so it survives the page moving on within the site and ends if
+the tab closes or shows another site. A request that ends without opening an app
+and without the person declining logs its scheme and reason (category
+`app-handoff`), never the link. CEF binds offers to native frame/document
 epochs plus cached DevTools document/origin identity: renderer RPCs cannot
 validate a handoff while an unrelated top-level navigation suspends those RPCs.
 Native detach, replacement, non-aborted load failure, termination and close invalidate the offer;
 CEF frame IDs are not DevTools frame IDs. Ordinary JavaScript and permission
 operations retain their asynchronous live-document checks.
+
+A Chromium page's DevTools session reaches only the page's own renderer, so a
+cross-site (out-of-process) iframe got none of WSurf's page scripts. The session
+auto-attaches to each one (`Target.setAutoAttach`, flat protocol, the frame
+paused until its scripts are registered) and gives it a child `ChromiumDevTools`
+that sends with the frame's `sessionId` through the page's connection and keeps
+that process's frames, isolated-world contexts and bindings. A message from the
+frame names Chromium's frame and origin for it; such a frame is never a main
+frame, and is trusted only when its own address is of its origin. Only the
+worlds, scripts and handlers listed in
+`ChromiumDevTools.crossSiteFrameScripts` run there (autofill, and the media
+script and its handler for iframe audio; never the page world), one level
+deeper too. Calls aimed at such a frame go to its
+session; when Chromium detaches it, its pending calls fail and its documents end.
+The frame is held while its session starts up, so the session sends `Page.enable`, its own
+auto-attach and one registration per world (the world's relay, then its scripts in order, each in its own
+`try`) at once, and lets the frame run only after every answer is in. A script installed
+twice is registered once, a world is given the relay only when a handler hears it or one of its
+scripts sends, and the page session parses only the events something acts on.
+
+## Page translation
+
+Each `BrowserTab` owns a `PageTranslation`. After a finished load in a regular
+window, the tab reads a sample of the page in the `WSurfTranslate` content world,
+detects its language with NaturalLanguage and offers the person's preferred
+languages that the page is not in. A private window's page is read only after the
+person chooses Translate Page. The target and the always-translated languages are
+per-profile settings.
+
+`PageTranslationScript` works through `BrowserPage`, so WebKit and Chromium behave
+alike. It groups each block's text nodes and hands blocks out nearest the viewport
+first, ranking again only after the viewport moves or content arrives. The Swift
+loop translates a batch with one on-device `TranslationSession`, keeps markup by
+sending a block's segments as one attributed request, and writes the batch back in
+one call. Show Original restores only text the page did not change itself. A new
+document, a new engine page or a closed tab ends the run.
+
+`TranslationServices` owns the process's only `LanguageAvailability` objects (one
+per strategy) and `TranslationSession`s (one per model and language pair). It never
+releases them and runs every framework call one at a time: releasing an
+availability while its language-status stream was still replying crashed the app
+inside the framework. A load waits `PageTranslation.offerDelay` before its
+language is read, so tabs that open and close quickly never reach the framework.
+
+While Reader shows an article, Translate Page, Show Original and the translate
+control act on Reader's WebKit view and the `ReaderSession`'s own
+`PageTranslation` (`BrowserTab.shownTranslation`); the page behind keeps its own
+state and is not touched. The script runs in the same content world, which answers
+with the view's JavaScript off. Leaving Reader, or a new article view, starts the
+article's translation over. Reader reads a page that is already translated as the
+website wrote it: the extraction runs in that same world and sets every translated
+node of its copy back (`untranslate`), so the article starts in the page's language
+and Translate Page offers to translate it.
+
+## Reader read-aloud
+
+Each tab's `ReaderSession` makes a `ReaderListener` the first time Reader needs one,
+over its own `AppleSpeechOutput` (the on-device voice; no cloud voice is offered), so
+the assistant's output and an article never stop each other. The listener speaks one
+sentence at a time (`ReaderSpeech.sentences`, the system's boundaries) and, just
+before each block, asks `ReaderSession` for its text from the article's own view in
+the app's content world. That view holds the text as shown, so an article that is
+translated while it is read is heard translated, in the translation target's voice.
+The sentence being read is marked with a CSS highlight over a range: the article's
+DOM is not changed, which keeps a screen reader's place. Nothing starts without a
+command (View › Read Aloud, ⌥⌘P, or the bar's button). The speed, 0.5× to 1.5× in
+tenths, is the app-level `reader.speechRate`; the voice restarts what is left of the
+sentence at the new pace. Hiding Reader, a new page, a closed tab or a new view of the
+article (another tab brought to the front) stops it.
 
 ## Agent trust boundaries
 
@@ -105,11 +216,20 @@ model describes it as an instruction.
 
 - `AgentToolkit` exposes the supported browser actions.
 - `TabAssistantAccessCenter` authorizes visible-page reads and controls by
-  origin before `AgentToolkit` reaches the page driver.
+  origin before `AgentToolkit` reaches the page driver. A website's own record
+  wins. Without one, the profile's default applies, except in private tabs and
+  embedded frames, which always ask. Under an Allow Control default, a visible
+  password or payment field makes control ask first (`PageSensitiveProbe`).
 - `PageDriver` resolves actual page elements and enforces sensitive-field and
   consequential-action rules.
 - `AgentActionConsent` asks from trusted app UI. The model cannot suppress it.
 - `AgentActionPolicy` stores narrow, revocable category-and-host grants.
+- `AgentTabClosing` asks before an agent closes a tab. Pinned tabs never close, and a
+  tab the agent opened itself closes without asking. Only the in-app assistant reads
+  the profile's "Allow closing tabs" choice, and only under an Allow Control default.
+  A connection skips the question for its own tabs and under the keychain-backed
+  Developer tier; the profile file, which a process with a shell can edit, never
+  relaxes it.
 - `ConversationLog` persists the activity trail inside the active profile.
 
 Background research uses a non-persistent WebKit data store for each task. It
@@ -126,6 +246,10 @@ uses `PageDriver` through a revocable `PageAutomationGuard`; it does not enter
 one regular window when it connects. Focus changes do not retarget it; closing or
 switching that owner revokes its connections without disrupting another window.
 Consent sheets attach to the originating registered native window.
+A connection drives a shared tab that is not on screen without changing the selection:
+`MCPBrowserSession.keepInWindow` parks its page on the window's shelf, and a parked page never takes keyboard focus.
+`TabProcessState.externalControllers` mirrors each connection's grants for the sidebar's AI mark and keeps those tabs
+loaded; it is a projection, not a second grant store.
 
 MCP enablement and the listener are application-wide. New connections are refused
 while the focused window is private; existing regular-window connections remain
@@ -137,6 +261,21 @@ without opening another browser session. See [MCP.md](MCP.md) for its boundaries
 standard JSON configs and uses the installed Codex CLI on a staged TOML copy.
 `MCPConfigurationFile` owns private backups and checked atomic replacement.
 These services have no browser, profile, assistant, or sharing-grant dependency.
+`MCPTrustStore` keeps the hashes of per-client pairing tokens in the keychain;
+`LocalMCPTransport` verifies an optional hello line and `BrowserMCPServer`
+attaches the paired client to the connection's session. The same store holds each
+paired client's standing level, the developer sites and the Developer profile, so a
+process with a shell cannot widen them. `MCPDeveloperAccess` matches sites and the
+profile; `MCPBrowserSession` judges a standing or Developer grant against the store on
+every use, and a paired client with a standing level is moved to a window of the
+Developer profile when its hello arrives.
+
+Developer-tier tools act on one tab through its development lease: `DevelopmentOwner`
+records the viewport, the media and network emulation (`DevelopmentMediaState`) and
+the diagnostics it applied, and one release removes exactly those. `clearSiteData`
+holds no lease. It removes the tab's own origin storage and its host's cookies, and
+`MCPBrowserSession.siteDataRefusal` re-checks the Developer profile (never the
+everyday one) and the developer site before every removal.
 
 ## Assistant execution and context
 
@@ -148,6 +287,19 @@ Rate-limit recovery retries only safe model generation within the request budget
 not completed or uncertain browser actions. Exhaustion saves a resumable checkpoint
 without requesting another summary. Visual no-progress detection ignores pointer
 coordinates and screenshot variation on an unchanged page.
+
+Attached images follow the model's image input. The on-device model accepts them
+only when the system reports the vision capability. It never receives screenshots:
+its session omits the visual tools, a pending screenshot becomes a text note, and
+images in tool results are removed when a transcript is restored. A hosted model
+keeps its per-window, per-model image setting and receives screenshots as before.
+The on-device context window is the capacity the system model reports, unless a
+configured or discovered window exists; 4,096 tokens applies only when none is
+reported. The budget charges an attached or retained image a per-model estimate
+(`AttachmentRequest.imageTokens`: 256 on-device, 1,600 hosted) in the pre-send
+check (against half the window), the run-loop check, compaction and transcript estimates.
+The on-device value is an empirical margin over the measured peak of 195, to be
+replaced by the framework's token count once it supports images.
 
 Conversation messages, attachments and checkpoints belong to the originating
 profile, which stays task-local across awaits and focus changes. They are private
@@ -177,6 +329,14 @@ screen or independently changing section should be a real `View` type with
 narrow inputs; a computed `some View` property does not create an observation
 boundary.
 
+The sidebar list (`WorkspaceList`) draws its top-level rows in a `LazyVStack`, so a window of thousands of
+tabs builds only the rows near the screen; a folder builds its rows as one unit. A row measures itself once in
+the list's content space (`SidebarRowFrame`, `SidebarFrames`) and forgets the frame when it leaves, and the
+list adds the scroll offset (`contentOrigin`), so scrolling is one update instead of one per row. A tab row
+reads `BrowserTab.isSidebarActive`, which `BrowserModel` maintains, instead of asking the model which tab is
+active, so a tab switch redraws two rows. With VoiceOver, Switch Control or Full Keyboard Access on, the list
+is a plain `VStack` and every row exists, as it did before rows were lazy.
+
 Use the components and metrics in `WSurf/UI/Chrome` and
 `WSurf/Settings/SettingsPrimitives.swift`. `Theme` owns shared visual tokens.
 User-facing strings remain localizable; protocol values, URLs, model IDs and
@@ -189,6 +349,47 @@ GRDB stores structured browser and agent data. Small preferences use
 website permissions, page zoom and the download list — use atomic writes through
 the support layer. A write needed for quit or profile teardown
 must be awaited or flushed synchronously before its owner is released.
+
+Appearance is a theme plus the person's knobs. A built-in theme in `ThemeCatalog`
+is read-only and holds a light and a dark variant of its colors; changing one of
+its colors saves a copy under `appearance.themes.user`. The knobs — Plain or
+Glass, brightness and shape — are stored per theme id under
+`appearance.themes.adjustments` and never make a copy. `BrowserSettings.resolvedTheme`
+resolves both into one cached `ResolvedTheme` that `Theme`, the sidebar and the
+window backdrops read; it is rebuilt only when the selected theme, a saved theme
+or an adjustment changes. The appearance keys from before themes stay in place:
+`ThemeMigration` reads them once, and an older build still finds them.
+
+## Shared packages
+
+`Packages/WSurfCore` holds platform-neutral code that an iOS app can share with the Mac app. Its first target, `WSurfVault`,
+holds the profile vault: the store, its crypto, the Credential Exchange codec, TOTP and passkey key encoding. It imports no
+AppKit, SwiftUI, WebKit or CefKit, and it builds for iOS. It uses the app target's Swift settings (Main Actor default
+isolation, Member Import Visibility), so code behaves the same on either side of the boundary. The app links the product
+statically, which adds no framework to the bundle. The tests stay in `WSurfTests` and use `@testable import WSurfVault`
+without linking it, so the app is the only copy of the vault code in a test process. A resource the package reads through
+`Bundle.main`, such as the public suffix list, stays in the app.
+
+The second target, `WSurfCore`, holds the CloudKit sync of tabs and of vaults. One `CKSyncEngine` on the account's private
+database sits behind the `SyncEngine` protocol, and `CloudKitSyncEngine` is the only place that creates a `CKContainer`. The
+app's `CloudSync` creates that one engine and `SyncRouter` is its one delegate: the router keeps the engine's state and hands
+each zone to the feature that owns it. Tab sync (`TabSync`) uses the `Device` and `DeviceSession` records: a device publishes the
+Favorites, pins and open tabs of its Personal profile's regular windows and lists the other devices' in the sidebar, read-only.
+Vault sync (`VaultSync`) uses one zone per vault, `v-<profile UUID>-<vault UUID>`, with one `Vault` record (the wrapper list,
+the sealed name and the profile's name and color) and one `Item` record per entry. Every entry is sealed with AES-256-GCM
+under a sync key that HKDF derives from the vault's key, so the record opens only on a Mac that opened the vault with the
+synced unlock passkey. Each Mac merges what arrives into its own store through its own commit, part by part against a sync
+base it keeps sealed in `Credentials.sync` in the profile's folder; it works only while the vault is unlocked and never
+prompts or touches a lease. A row is never sent over a record that was fetched and not merged, a record only a newer WSurf
+reads parks that one entry, a store older than the last state it synced reads and sends nothing, and a pass that would delete
+many entries at once waits for the owner. A removed entry's `Item` carries what the entry stood for as keyed digests (its
+import trace, HMAC under a vault-derived subkey), and entries removed before the vault synced are sent once as removed states, so a
+Mac that never held an entry keeps it as a tombstone and an import there does not bring it back; a merge is part of what an entry
+syncs. Store rows, History, Trash, files, settings and Input History never sync. Nothing
+reaches CloudKit unless the feature's hidden flag (`experiments.iCloudTabs`, `experiments.iCloudVault`) is on and the signed
+binary carries the iCloud, CloudKit and push entitlements (`CloudSyncGate`); a build that is unsigned, staged or has a bundle ID
+suffix never creates the container. Private windows, the private profile, page state, history, autofill, cookies, permissions
+and favicons never sync, and `NeverSyncTests` pins the record types and scans the sync sources for them.
 
 ## Tests
 

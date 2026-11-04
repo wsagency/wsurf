@@ -24,6 +24,7 @@ final class BrowserHost: NSObject, NSWindowDelegate {
     private weak var coordinator: AppCoordinator?
     private let content: NSHostingView<BrowserRootView>
     private var window: BrowserWindow?
+    private var outline: WindowOutlineView?
 
     private let frameToolbar: NSToolbar = {
         let toolbar = NSToolbar(identifier: "wsurf.browser.frame")
@@ -134,6 +135,7 @@ final class BrowserHost: NSObject, NSWindowDelegate {
             return window
         }
 
+        let isMicro = coordinator?.isMicro == true
         let created = BrowserWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1280, height: 820),
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
@@ -146,22 +148,17 @@ final class BrowserHost: NSObject, NSWindowDelegate {
         created.toolbar = frameToolbar
         created.toolbarStyle = .unified
         created.titlebarSeparatorStyle = .none
-        created.isOpaque = false
-        created.backgroundColor = .clear
-        created.minSize = NSSize(width: BrowserWindowMetrics.minWidth, height: 580)
+        applyTransparencyPreference(to: created)
+        created.minSize = isMicro ? MicroWindowMetrics.minSize : NSSize(width: BrowserWindowMetrics.minWidth, height: 580)
         created.preservesContentDuringLiveResize = true
-        created.collectionBehavior = [.fullScreenPrimary]
+        created.collectionBehavior = isMicro ? MicroWindowMetrics.collectionBehavior(floating: false) : [.fullScreenPrimary]
         created.isReleasedWhenClosed = false
         created.isMovableByWindowBackground = false
         created.tabbingMode = .disallowed
         created.isRestorable = false
-        created.onSideButton = { [weak coordinator] forward in
-            guard let tab = coordinator?.pageCommandTab else { return }
-            if forward {
-                tab.goForward()
-            } else {
-                tab.goBack()
-            }
+        created.sideButtonTab = { [weak coordinator] in
+            guard let coordinator, coordinator.context.settings.sideButtonsNavigate else { return nil }
+            return coordinator.pageCommandTab
         }
         created.delegate = self
         dropSavedTilingState()
@@ -169,23 +166,91 @@ final class BrowserHost: NSObject, NSWindowDelegate {
             created.setFrameAutosaveName(frameKey)
         }
         if coordinator?.profiles.isPrivate == true || !created.setFrameUsingName(frameKey) {
-            created.setFrame(Self.openingFrame(for: created), display: false)
+            created.setFrame(isMicro ? Self.microOpeningFrame(for: created) : Self.openingFrame(for: created), display: false)
         }
         let root = NSView(frame: NSRect(x: 0, y: 0, width: 1280, height: 820))
         content.frame = root.bounds
         content.autoresizingMask = [.width, .height]
         root.addSubview(content)
         root.addSubview(WebViewParkingShelf(frame: .zero))
+        // Last, so that nothing in the window covers the border.
+        let outline = WindowOutlineView(frame: root.bounds)
+        root.addSubview(outline)
+        self.outline = outline
         created.contentView = root
         SystemWindowShape.adopt(created)
         roundContentCorners(of: created)
+        applyWindowEdge(to: created)
         Self.hideTitlebarDecoration(of: created)
 
         window = created
+        observeAppearance()
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self,
+            selector: #selector(accessibilityDisplayOptionsDidChange),
+            name: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification,
+            object: nil
+        )
         if let coordinator {
             coordinator.extensions.register(browser: coordinator.browser, window: created)
         }
         return created
+    }
+
+    /// Plain solid themes and accessibility fallbacks spare WindowServer from compositing the desktop.
+    func applyTransparencyPreference(to window: NSWindow, isOpaque: Bool = WindowOpacity.isOpaqueForThemeNow) {
+        window.isOpaque = isOpaque
+        window.backgroundColor = isOpaque ? NSColor(Theme.windowBackground) : .clear
+    }
+
+    /// Re-applies the window's look when the theme or the shadow and border settings change. The settings are read
+    /// inside the tracking closure; a value read outside it would never re-run this.
+    private func observeAppearance() {
+        withObservationTracking {
+            let settings = BrowserSettings.application
+            _ = settings.resolvedTheme
+            _ = settings.windowShadow
+            _ = settings.windowBorder
+            _ = settings.windowBorderColor
+        } onChange: { [weak self] in
+            Task { @MainActor [weak self] in
+                guard let self, let window = self.window else { return }
+                self.observeAppearance()
+                self.applyTransparencyPreference(to: window)
+                self.applyWindowEdge(to: window)
+            }
+        }
+    }
+
+    @objc private func accessibilityDisplayOptionsDidChange(_ notification: Notification) {
+        guard let window else { return }
+        applyTransparencyPreference(to: window)
+        applyWindowEdge(to: window)
+    }
+
+    /// The window's shadow and border line from the app-wide settings. The line takes the corner radius that
+    /// `roundContentCorners` gave the content, so call this after it. A full-screen window has neither corners nor a border.
+    func applyWindowEdge(
+        to window: NSWindow,
+        increaseContrast: Bool = NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast,
+        isFullScreen: Bool? = nil
+    ) {
+        let settings = BrowserSettings.application
+        let shadow = settings.windowShadow
+        if window.hasShadow != shadow {
+            window.hasShadow = shadow
+            window.invalidateShadow()
+        }
+        outline?.apply(
+            border: settings.windowBorder.drawn(
+                shadow: shadow,
+                increaseContrast: increaseContrast,
+                isFullScreen: isFullScreen ?? window.styleMask.contains(.fullScreen)
+            ),
+            customRGB: settings.windowBorderColor,
+            increasesContrast: increaseContrast,
+            cornerRadius: window.contentView?.layer?.cornerRadius ?? 0
+        )
     }
 
     /// Answers false when it hid nothing: the decoration is matched by private
@@ -238,6 +303,20 @@ final class BrowserHost: NSObject, NSWindowDelegate {
         )
     }
 
+    /// Beside the last micro window, or in the corner of the screen for the first.
+    private static func microOpeningFrame(for window: NSWindow) -> NSRect {
+        guard let visible = (window.screen ?? NSScreen.main)?.visibleFrame else { return window.frame }
+        let last = UserDefaults.standard.string(forKey: MicroWindowMetrics.lastFrameKey).map(NSRectFromString)
+        return MicroWindowMetrics.openingFrame(visible: visible, last: last.flatMap { $0.isEmpty ? nil : $0 })
+    }
+
+    /// The next micro window opens beside this one. A private window leaves no trace of where it was.
+    private func rememberMicroFrame() {
+        guard let window, coordinator?.isMicro == true, coordinator?.profiles.isPrivate == false,
+              !AppDatabase.isRunningTests else { return }
+        UserDefaults.standard.set(NSStringFromRect(window.frame), forKey: MicroWindowMetrics.lastFrameKey)
+    }
+
     // MARK: - Window delegate
 
     func windowDidBecomeKey(_ notification: Notification) {
@@ -249,6 +328,7 @@ final class BrowserHost: NSObject, NSWindowDelegate {
     }
 
     func windowWillClose(_ notification: Notification) {
+        stopWatchingTitleStrip()
         isVisible = false
         publish()
         guard let coordinator else { return }
@@ -264,13 +344,16 @@ final class BrowserHost: NSObject, NSWindowDelegate {
     }
 
     func windowWillExitFullScreen(_ notification: Notification) {
+        stopWatchingTitleStrip()
         window?.toolbar = frameToolbar
     }
 
     func windowDidEnterFullScreen(_ notification: Notification) {
         if let window {
             roundContentCorners(of: window)
+            applyWindowEdge(to: window)
         }
+        watchTitleStrip()
         publish()
     }
 
@@ -278,25 +361,65 @@ final class BrowserHost: NSObject, NSWindowDelegate {
         window?.alignWindowControls()
         if let window {
             roundContentCorners(of: window)
+            applyWindowEdge(to: window)
         }
         publish()
     }
 
     func windowDidResize(_ notification: Notification) {
         window?.alignWindowControls()
+        rememberMicroFrame()
+    }
+
+    func windowDidMove(_ notification: Notification) {
+        rememberMicroFrame()
     }
 
     // MARK: - State out
 
+    private var isFullScreen: Bool {
+        window?.styleMask.contains(.fullScreen) == true
+    }
+
     private var windowControlsInset: CGFloat {
-        guard let window, window.styleMask.contains(.fullScreen) else {
-            return Self.windowControlsInset
-        }
-        return 0
+        isFullScreen ? 0 : Self.windowControlsInset
     }
 
     private func publish() {
-        coordinator?.hostDidChange(visible: isVisible, controlsInset: windowControlsInset)
+        coordinator?.hostDidChange(
+            visible: isVisible,
+            controlsInset: windowControlsInset,
+            titleStripInset: BrowserWindowMetrics.titleStripInset(of: window)
+        )
+    }
+
+    private var titleStripObservers: [any NSObjectProtocol] = []
+
+    /// Follows the full-screen strip while it slides in and out with the menu bar, about once a frame. The system moves the
+    /// strip's own window, and AppKit moves the title bar inside it, so both are watched.
+    private func watchTitleStrip() {
+        stopWatchingTitleStrip()
+        guard let window, let bar = window.standardWindowButton(.closeButton)?.superview,
+              let strip = bar.window, strip !== window else { return }
+        var watched: [(Notification.Name, AnyObject)] = [
+            (NSWindow.didMoveNotification, strip),
+            (NSWindow.didResizeNotification, strip),
+        ]
+        var view: NSView? = bar
+        while let ancestor = view {
+            watched.append((NSView.frameDidChangeNotification, ancestor))
+            view = ancestor.superview
+        }
+        titleStripObservers = watched.map { name, object in
+            NotificationCenter.default.addObserver(forName: name, object: object, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.publish() }
+            }
+        }
+    }
+
+    private func stopWatchingTitleStrip() {
+        titleStripObservers.forEach(NotificationCenter.default.removeObserver)
+        titleStripObservers = []
     }
 }
 
@@ -334,7 +457,7 @@ enum SystemWindowShape {
         return radius
     }
 
-    private static func radius(of window: NSWindow) -> CGFloat? {
+    static func radius(of window: NSWindow) -> CGFloat? {
         guard let frameView = window.contentView?.superview else { return nil }
         for key in ["cornerRadius", "_cornerRadius"] {
             guard frameView.responds(to: NSSelectorFromString(key)),
@@ -406,10 +529,17 @@ struct BrowserRootView: View {
     let coordinator: AppCoordinator
 
     var body: some View {
-        BrowserView(browser: coordinator.browser, coordinator: coordinator)
+        Group {
+            if coordinator.isMicro {
+                MicroWindowView(browser: coordinator.browser, coordinator: coordinator)
+            } else {
+                BrowserView(browser: coordinator.browser, coordinator: coordinator)
+            }
+        }
             .disclosureGroupStyle(ClickableDisclosureStyle())
             .writingToolsAffordanceVisibility(.hidden)
             .environment(\.windowControlsInset, coordinator.windowControlsInset)
+            .environment(\.titleStripInset, coordinator.titleStripInset)
             .environment(\.profileFavicons, coordinator.browser.context.favicons)
             .environment(\.assistantProviderID, coordinator.selectedProvider.id)
             .onChange(of: coordinator.windowTitle) { _, _ in
@@ -419,21 +549,70 @@ struct BrowserRootView: View {
 }
 extension EnvironmentValues {
     @Entry var windowControlsInset: CGFloat = 0
+    /// How far below the window's top edge the layout starts: in full screen, as far as the system's title strip reaches
+    /// into the window right now (0 while it is hidden); windowed, 0.
+    @Entry var titleStripInset: CGFloat = 0
 }
 
 nonisolated enum BrowserWindowMetrics {
     static let minWidth: CGFloat = 680
+
+    /// The titlebar height AppKit reports for a window without a toolbar, and the least the strip is ever given.
+    private static let plainTitlebarHeight: CGFloat = 28
+
+    /// In full screen the system shows its own strip, the title bar with the traffic lights, below the menu bar whenever the
+    /// menu bar shows: while the pointer is at the top edge, or all the time when the menu bar is set not to hide. The strip
+    /// floats over the content instead of making room for it, and the browser window is full-size content with no safe
+    /// area, so the layout starts as far down as the strip reaches into the window right now: 0 while it is hidden, the
+    /// strip (and the menu bar above it, where that overlaps the window) while it shows. Windowed, the traffic lights sit in
+    /// the toolbar's own leading inset and nothing is reserved.
+    ///
+    /// In full screen the strip lives in a window of its own, reached through the close button; `BrowserHost` watches it
+    /// and asks again as it moves. If there is no separate strip to measure, the whole strip is kept clear instead.
+    @MainActor
+    static func titleStripInset(of window: NSWindow?) -> CGFloat {
+        guard let window, window.styleMask.contains(.fullScreen) else { return 0 }
+        guard let bar = window.standardWindowButton(.closeButton)?.superview,
+              let strip = bar.window, strip !== window
+        else { return fullScreenTitleStrip(isFullScreen: true) }
+        return covered(window: window.frame, strip: strip.convertToScreen(bar.convert(bar.bounds, to: nil)))
+    }
+
+    /// How far down from the top of `window` a strip at `strip` reaches; both in screen coordinates. A hidden strip sits
+    /// above the window's top and covers nothing.
+    static func covered(window: NSRect, strip: NSRect) -> CGFloat {
+        min(max(0, window.maxY - strip.minY), window.height).rounded(.up)
+    }
+
+    /// The whole strip: AppKit's titlebar height for a plain titled window, kept clear when the strip cannot be measured.
+    @MainActor
+    static func fullScreenTitleStrip(isFullScreen: Bool) -> CGFloat {
+        guard isFullScreen else { return 0 }
+        let content = NSRect(x: 0, y: 0, width: 100, height: 100)
+        let frame = NSWindow.frameRect(
+            forContentRect: content,
+            styleMask: [.titled, .closable, .miniaturizable, .resizable]
+        )
+        return max(frame.height - content.height, plainTitlebarHeight)
+    }
 }
 
 private final class BrowserWindow: NSWindow {
-    var onSideButton: ((Bool) -> Void)?
+    /// The tab a mouse's side buttons move Back (3) and Forward (4), or nil when they are left to the page
+    /// (`BrowserSettings.sideButtonsNavigate`). The window takes them before any view, so they work over the sidebar, the
+    /// bars and either engine's page alike.
+    var sideButtonTab: (() -> BrowserTab?)?
 
     override func sendEvent(_ event: NSEvent) {
         switch event.type {
         case .otherMouseDown, .otherMouseUp, .otherMouseDragged:
-            guard event.buttonNumber == 3 || event.buttonNumber == 4 else { break }
+            guard event.buttonNumber == 3 || event.buttonNumber == 4, let tab = sideButtonTab?() else { break }
             if event.type == .otherMouseDown {
-                onSideButton?(event.buttonNumber == 4)
+                if event.buttonNumber == 4 {
+                    tab.goForward()
+                } else {
+                    tab.goBack()
+                }
             }
             return
         default:

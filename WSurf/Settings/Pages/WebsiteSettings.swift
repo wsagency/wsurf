@@ -122,6 +122,7 @@ struct WebsiteSettings: View {
         .settingsAnchor("websites.permissions")
 
         SettingsSection(title: "Websites you’ve changed", symbol: "list.bullet", isLongList: true) {
+            let entries = entries
             if entries.isEmpty {
                 SettingsEmptyState(
                     symbol: "globe",
@@ -130,12 +131,11 @@ struct WebsiteSettings: View {
                 )
             } else {
                 ForEach(Array(entries.enumerated()), id: \.element.id) { index, entry in
-                    if index > 0 {
-                        RowSeparator()
-                    }
                     WebsiteSettingsEntryRow(host: entry.host, summary: entry.summary) {
                         destination = .site(entry.origin)
                     }
+                    .equatable()
+                    .separated(above: index > 0)
                 }
             }
         }
@@ -161,7 +161,8 @@ struct WebsiteSettings: View {
     }
 }
 
-private struct WebsiteSettingsEntryRow: View {
+/// Equatable on what it shows, not on its action, so a list that is built again leaves the rows that read the same alone.
+private struct WebsiteSettingsEntryRow: View, Equatable {
     let host: String
     let summary: String
     let action: () -> Void
@@ -174,6 +175,10 @@ private struct WebsiteSettingsEntryRow: View {
             .settingsRowTarget()
         }
         .buttonStyle(.plain)
+    }
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.host == rhs.host && lhs.summary == rhs.summary
     }
 }
 
@@ -223,7 +228,8 @@ private struct PermissionDetailPage: View {
             )
         }
 
-        SettingsSection(title: "Saved website permissions", symbol: "list.bullet") {
+        SettingsSection(title: "Saved website permissions", symbol: "list.bullet", isLongList: true) {
+            let origins = origins
             if origins.isEmpty {
                 SettingsEmptyState(
                     symbol: permission.slashedSymbol,
@@ -232,9 +238,6 @@ private struct PermissionDetailPage: View {
                 )
             } else {
                 ForEach(Array(origins.enumerated()), id: \.element) { index, origin in
-                    if index > 0 {
-                        RowSeparator()
-                    }
                     SiteRow(host: SiteSettingsIndex.host(of: origin)) {
                         SettingsMenu(
                             options: [
@@ -248,10 +251,23 @@ private struct PermissionDetailPage: View {
                             )
                         )
                     }
+                    .separated(above: index > 0)
                 }
             }
         }
 
+    }
+}
+
+/// What resetting one website clears. Assistant Access belongs to the whole website, so resetting a subdomain's page resets
+/// it for every page of that site, and the confirmation says so.
+enum WebsiteReset {
+    static func message(for origin: String) -> String {
+        let site = SitePermissions.displayName(for: SitePermissions.site(for: origin))
+        return String(localized: """
+            The website will ask again to use your camera, microphone, location, or notifications. \
+            The assistant will ask again before reading any page on \(site).
+            """)
     }
 }
 
@@ -325,6 +341,14 @@ private struct SiteDetailPage: View {
         grants.grantsByHost.first { $0.host == host }?.categories ?? []
     }
 
+    private var assistantAccessOptions: [SettingsMenu<AssistantAccessPolicy?>.Option] {
+        var options: [SettingsMenu<AssistantAccessPolicy?>.Option] = [
+            .init(value: nil, label: AssistantAccessPolicy.followsDefaultLabel(permissions.assistantDefault)),
+        ]
+        options += AssistantAccessPolicy.allCases.map { .init(value: $0, label: String(localized: $0.label)) }
+        return options
+    }
+
     private var popupFallback: PopupPolicy {
         settings.blocksPopups ? .blockAndNotify : .allow
     }
@@ -346,7 +370,7 @@ private struct SiteDetailPage: View {
                 }
                 Button("Cancel", role: .cancel) {}
             } message: {
-                Text("The website will ask again to use your camera, microphone, location, or notifications. The assistant will ask again before reading the website.")
+                Text(WebsiteReset.message(for: origin))
             }
         }
 
@@ -358,7 +382,9 @@ private struct SiteDetailPage: View {
         SettingsCard {
             DetailRow(
                 title: "Browser engine",
-                caption: "Changing this reloads the website and resets Back/Forward history. Sign-ins are separate. Unloaded Chromium tabs restore only their URL."
+                caption: SitePermissions.webKitOnlyOrigins.contains(origin)
+                    ? "Google blocks sign-in from embedded Chromium, so this page always opens in WebKit." as LocalizedStringResource
+                    : "Changing this reloads the website and resets Back/Forward history. Sign-ins are separate. Unloaded Chromium tabs restore only their URL."
             ) {
                 SettingsMenu(
                     options: BrowserEngine.allCases.map {
@@ -371,16 +397,18 @@ private struct SiteDetailPage: View {
                         }
                     )
                 )
+                .disabled(SitePermissions.webKitOnlyOrigins.contains(origin))
             }
             .settingsAnchor("websites.engine")
             RowSeparator()
-            DetailRow(title: "Assistant access") {
+            DetailRow(
+                title: "Assistant access",
+                caption: "Applies to every page on \(SitePermissions.displayName(for: SitePermissions.site(for: origin)))."
+            ) {
                 SettingsMenu(
-                    options: AssistantAccessPolicy.allCases.map {
-                        .init(value: $0, label: String(localized: $0.label))
-                    },
+                    options: assistantAccessOptions,
                     selection: Binding(
-                        get: { permissions.assistantAccess(for: origin) },
+                        get: { permissions.assistantRecord(for: origin) },
                         set: { permissions.setAssistantAccess($0, for: origin) }
                     )
                 )
@@ -518,7 +546,7 @@ private struct SiteDetailPage: View {
         for permission in WebPermission.allCases {
             permissions.set(.ask, for: origin, permission)
         }
-        permissions.setAssistantAccess(.ask, for: origin)
+        permissions.setAssistantAccess(nil, for: origin)
         permissions.setKeepsActive(false, for: origin)
         permissions.setAllowsAutomaticPicture(true, for: origin)
         permissions.setAutoplay(nil, for: origin)

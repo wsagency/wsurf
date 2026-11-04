@@ -5,6 +5,7 @@
 
 import AppKit
 import SwiftUI
+import WSurfCore
 
 struct Sidebar: View {
     let browser: BrowserModel
@@ -16,10 +17,14 @@ struct Sidebar: View {
 
     @Environment(\.windowControlsInset) private var windowControlsInset
     @Environment(\.sidebarStyle) private var sidebarStyle
+    /// A peeking sidebar, or the Minimal window's tab list: it draws its own ground over the page.
+    @Environment(\.sidebarIsFloating) private var isFloating
     @Environment(\.colorScheme) private var scheme
     @State private var bottomObscuredHeight: CGFloat = 0
     @State private var newFolderDrop = SidebarNewFolderDrop()
     @State private var pinDrop = SidebarPinDrop()
+    /// The install ID of the other device whose tabs are shown, or nil for This Mac.
+    @State private var shownDevice: String?
 
     private var selection: SidebarSelection {
         browser.sidebarSelection
@@ -37,6 +42,15 @@ struct Sidebar: View {
         LoomChrome.sampledColor(
             ChromeBand.measuredColor(browser: browser, coordinator: coordinator),
             scheme: scheme
+        )
+    }
+
+    /// What the sidebar surface really is: a preset colors a floating sidebar differently from the window.
+    private var groundColor: NSColor {
+        LoomChrome.sampledColor(
+            ChromeBand.measuredColor(browser: browser, coordinator: coordinator),
+            scheme: scheme,
+            isFloating: isFloating
         )
     }
 
@@ -63,51 +77,76 @@ struct Sidebar: View {
     }
 
     private var contentInsets: EdgeInsets {
-        if sidebar.isFloating {
-            let inset = LoomChrome.canvasInset
-            return EdgeInsets(top: 0, leading: inset, bottom: 0, trailing: inset)
-        }
-        guard sidebarStyle == .full else {
-            return EdgeInsets(top: 0, leading: LoomChrome.canvasInset, bottom: 0, trailing: 0)
-        }
-        let inset = SidebarMetrics.fullContentInset
-        let balance = LoomChrome.sidebarContentBalanceOffset
-        return EdgeInsets(
-            top: 0,
-            leading: inset + balance,
-            bottom: 0,
-            trailing: inset - balance
+        let shape = BrowserSettings.application.chromeShape
+        return SidebarMetrics.contentInsets(
+            style: sidebarStyle,
+            isFloating: isFloating,
+            margin: shape.sidebarMargin,
+            pageSpacing: shape.pageSpacing
         )
     }
 
-    var body: some View {
-        WorkspaceList(
+    private func topBar(remote: [RemoteDeviceSession]) -> SidebarTopChrome {
+        SidebarTopChrome(
             browser: browser,
             coordinator: coordinator,
             selection: selection,
             newFolderDrop: newFolderDrop,
             pinDrop: pinDrop,
-            frames: frames,
-            bottomClearance: bottomObscuredHeight,
-            topBar: SidebarTopChrome(
-                browser: browser,
-                coordinator: coordinator,
-                selection: selection,
-                newFolderDrop: newFolderDrop,
-                pinDrop: pinDrop
-            ),
-            bottomBar: SidebarBottomChrome(
-                coordinator: coordinator,
-                obscuredHeight: $bottomObscuredHeight
-            ),
-            contentInsets: contentInsets
+            remote: remote,
+            shownDevice: $shownDevice
         )
+    }
+
+    /// The bottom chrome of either list. A remote device's list has no spaces, so its switcher is left out.
+    private func bottomBar(showsSpaces: Bool) -> SidebarBottomChrome {
+        SidebarBottomChrome(
+            coordinator: coordinator,
+            obscuredHeight: $bottomObscuredHeight,
+            showsSpaceSwitcher: showsSpaces
+        )
+    }
+
+    var body: some View {
+        let remote = CloudTabs.shared?.remoteSessions(for: coordinator.context.profile) ?? []
+        let shown = sidebarStyle == .full ? SidebarDeviceFilter.shown(shownDevice, in: remote) : nil
+        Group {
+            if let shown {
+                RemoteSessionList(
+                    session: shown,
+                    coordinator: coordinator,
+                    bottomClearance: bottomObscuredHeight,
+                    topBar: topBar(remote: remote),
+                    bottomBar: bottomBar(showsSpaces: false),
+                    contentInsets: contentInsets,
+                    onOpen: { shownDevice = nil }
+                )
+            } else {
+                WorkspaceList(
+                    browser: browser,
+                    coordinator: coordinator,
+                    selection: selection,
+                    newFolderDrop: newFolderDrop,
+                    pinDrop: pinDrop,
+                    frames: frames,
+                    bottomClearance: bottomObscuredHeight,
+                    topBar: topBar(remote: remote),
+                    bottomBar: bottomBar(showsSpaces: coordinator.showsSpaceSwitcher),
+                    contentInsets: contentInsets
+                )
+                .background {
+                    if coordinator.showsSpaceSwitcher {
+                        SpaceSwipeCatcher { coordinator.switchSpace(by: $0) }
+                    }
+                }
+            }
+        }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(.bottom, 12)
         .padding(.top, topPadding)
         .background {
             ZStack {
-                if sidebar.isFloating {
+                if isFloating {
                     LoomFloatingFill(
                         sampledPageColor: ChromeBand.pageColor(
                             browser: browser,
@@ -120,11 +159,23 @@ struct Sidebar: View {
             }
         }
         .environment(\.chromeIsLight, inkIsLight)
-        .environment(\.chromeWash, .of(inkColor, isLight: inkIsLight))
+        .environment(\.chromeWash, .of(inkColor, isLight: inkIsLight, ground: groundColor))
         .environment(\.windowColorScheme, scheme)
         .environment(\.colorScheme, inkIsLight ? .light : .dark)
         .animation(nil, value: inkIsLight)
         .animation(Theme.Motion.settle, value: coordinator.media.model.isActive)
+        .onChange(of: coordinator.context.profile.id) {
+            shownDevice = nil
+        }
+        // A space chosen by menu, swipe, ⌘K or a link shows this Mac's list of that space.
+        .onChange(of: browser.currentSpaceID) {
+            shownDevice = nil
+        }
+        .onChange(of: shownDevice) { _, device in
+            if device != nil {
+                CloudTabs.shared?.refresh()
+            }
+        }
     }
 }
 
@@ -134,9 +185,18 @@ private struct SidebarTopChrome: View {
     let selection: SidebarSelection
     let newFolderDrop: SidebarNewFolderDrop
     let pinDrop: SidebarPinDrop
+    let remote: [RemoteDeviceSession]
+    @Binding var shownDevice: String?
+
+    @Environment(\.sidebarStyle) private var sidebarStyle
 
     private var offersPin: Bool {
         coordinator.sidebarDrag.acceptsPin
+    }
+
+    /// Favorites belong to This Mac. Another device's list brings its own.
+    private var showsFavorites: Bool {
+        sidebarStyle != .full || SidebarDeviceFilter.shown(shownDevice, in: remote) == nil
     }
 
     var body: some View {
@@ -145,17 +205,24 @@ private struct SidebarTopChrome: View {
                 browser: browser,
                 coordinator: coordinator,
                 selection: selection,
-                newFolderDrop: newFolderDrop
+                newFolderDrop: newFolderDrop,
+                allowsNewFolder: showsFavorites
             )
 
-            SidebarFavorites(browser: browser, coordinator: coordinator)
-                .opacity(offersPin ? 0 : 1)
-                .overlay {
-                    if offersPin {
-                        SidebarDropMark(kind: .pin, isArmed: pinDrop.isArmed)
+            if sidebarStyle == .full, !remote.isEmpty {
+                SidebarDevicePicker(sessions: remote, shown: $shownDevice)
+            }
+
+            if showsFavorites {
+                SidebarFavorites(browser: browser, coordinator: coordinator)
+                    .opacity(offersPin ? 0 : 1)
+                    .overlay {
+                        if offersPin {
+                            SidebarDropMark(kind: .pin, isArmed: pinDrop.isArmed)
+                        }
                     }
-                }
-                .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { pinDrop.frame = $0 }
+                    .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { pinDrop.frame = $0 }
+            }
         }
         .frame(maxWidth: .infinity)
     }
@@ -164,6 +231,7 @@ private struct SidebarTopChrome: View {
 private struct SidebarBottomChrome: View {
     let coordinator: AppCoordinator
     @Binding var obscuredHeight: CGFloat
+    let showsSpaceSwitcher: Bool
 
     @Environment(\.sidebarStyle) private var sidebarStyle
 
@@ -184,6 +252,10 @@ private struct SidebarBottomChrome: View {
 
             if sidebarStyle == .icons {
                 VStack(spacing: 6) {
+                    if showsSpaceSwitcher {
+                        SidebarSpaceSwitcher(coordinator: coordinator, axis: .vertical)
+                    }
+                    AudioIndicatorButton(coordinator: coordinator)
                     SidebarProfileControl(coordinator: coordinator)
                     downloadsButton
                     SidebarSettingsRow(coordinator: coordinator)
@@ -193,7 +265,13 @@ private struct SidebarBottomChrome: View {
                     SidebarProfileControl(coordinator: coordinator)
                         .padding(.leading, SidebarMetrics.profileLeading)
 
-                    Spacer(minLength: 0)
+                    AudioIndicatorButton(coordinator: coordinator)
+
+                    if showsSpaceSwitcher {
+                        SidebarSpaceSwitcher(coordinator: coordinator)
+                    } else {
+                        Spacer(minLength: 0)
+                    }
 
                     downloadsButton
                     SidebarSettingsRow(coordinator: coordinator)
@@ -214,7 +292,7 @@ private struct SidebarPinnedCards: View {
     private static let spacing: CGFloat = 6
 
     private var bannerHeight: CGFloat {
-        coordinator.updates.model.isBannerVisible ? measuredBanner : 0
+        UpdateBanner.isVisible(for: coordinator) ? measuredBanner : 0
     }
 
     private var stackedHeight: CGFloat {
@@ -234,9 +312,10 @@ private struct SidebarPinnedCards: View {
                 .transition(.move(edge: .bottom).combined(with: .opacity))
             }
 
-            UpdateBanner(updates: coordinator.updates)
+            UpdateBanner(coordinator: coordinator)
                 .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { measuredBanner = $0 }
         }
+        .glassGroup()
         .frame(maxWidth: .infinity)
         .zIndex(1)
         .onAppear { obscuredHeight = stackedHeight }
@@ -254,8 +333,11 @@ struct SidebarTopRow: View {
     let coordinator: AppCoordinator
     let selection: SidebarSelection
     let newFolderDrop: SidebarNewFolderDrop
+    /// False while another device's list is shown: a new folder would appear in a list that is not on screen.
+    var allowsNewFolder = true
 
     @Environment(\.sidebarStyle) private var sidebarStyle
+    @Environment(\.sidebarIsFloating) private var isFloating
 
     private var sidebar: SidebarLayout {
         coordinator.sidebar
@@ -269,7 +351,8 @@ struct SidebarTopRow: View {
                         browser: browser,
                         coordinator: coordinator,
                         selection: selection,
-                        newFolderDrop: newFolderDrop
+                        newFolderDrop: newFolderDrop,
+                        allowsNewFolder: allowsNewFolder
                     )
                 }
             } else {
@@ -279,13 +362,14 @@ struct SidebarTopRow: View {
                         browser: browser,
                         coordinator: coordinator,
                         selection: selection,
-                        newFolderDrop: newFolderDrop
+                        newFolderDrop: newFolderDrop,
+                        allowsNewFolder: allowsNewFolder
                     )
                 }
             }
         }
         .padding(.bottom, 2)
-        .opacity(SidebarMetrics.topControlsOpacity(isShowing: sidebar.isShowing))
+        .opacity(SidebarMetrics.topControlsOpacity(isShowing: sidebar.isShowing || isFloating))
     }
 }
 
@@ -354,9 +438,22 @@ private struct SidebarTopActions: View {
     let coordinator: AppCoordinator
     let selection: SidebarSelection
     let newFolderDrop: SidebarNewFolderDrop
+    let allowsNewFolder: Bool
 
     var body: some View {
         Group {
+            // The Minimal window's tab list slides away when it is not pointed at; the pin keeps it open.
+            if coordinator.isMinimal {
+                QuietIconButton(
+                    symbol: coordinator.keepsMinimalSidebarOpen ? "pin.fill" : "pin",
+                    isOn: coordinator.keepsMinimalSidebarOpen,
+                    help: String(localized: "Keep Sidebar Open")
+                ) {
+                    coordinator.toggleMinimalSidebarPin()
+                }
+                .accessibilityLabel(Text("Keep Sidebar Open"))
+                .accessibilityAddTraits(coordinator.keepsMinimalSidebarOpen ? .isSelected : [])
+            }
             QuietIconButton(
                 symbol: "magnifyingglass",
                 isOn: false,
@@ -374,6 +471,7 @@ private struct SidebarTopActions: View {
                     : browser.sidebarTree.normalized(selection.items))
                 selection.clear()
             }
+            .disabled(!allowsNewFolder)
             .overlay {
                 if newFolderDrop.isArmed {
                     Circle()
@@ -417,24 +515,43 @@ private struct SidebarFavorites: View {
     }
 }
 
-private struct SidebarFavoriteButton: View {
+struct SidebarFavoriteButton: View {
     let tab: BrowserTab
     let browser: BrowserModel
     let coordinator: AppCoordinator
 
     @State private var hovering = false
+    private var inkSource = SidebarRowInkSource()
+
+    private var style: SidebarRowStyle {
+        browser.rowStyle(
+            of: tab,
+            isMarked: false,
+            paletteOpen: coordinator.isNewTabPaletteOpen,
+            increasedContrast: inkSource.increasedContrast
+        )
+    }
+
+    private var favoriteValue: Text {
+        let loaded = tab.isDeferred ? Text("Unloaded") : Text("Loaded")
+        guard let status = style.spokenStatus else { return loaded }
+        return Text("\(status), \(loaded)")
+    }
 
     var body: some View {
+        let ink = inkSource.ink(for: style, isDeferred: tab.isDeferred)
         Button {
             coordinator.tabPreview.dismiss()
             coordinator.openTab(tab)
         } label: {
             TabIcon(tab: tab)
+                .sidebarNewMark(ink)
                 .frame(maxWidth: .infinity)
                 .frame(height: 32)
+                .sidebarInverse(ink, in: RoundedRectangle(cornerRadius: Theme.Radius.row, style: .continuous))
                 .sidebarRowSelectionEffect(
-                    isSelected: coordinator.sidebarDestination == .tab(tab.id) && !coordinator.isNewTabPaletteOpen,
-                    isHovering: hovering
+                    isSelected: style.emphasis == .lit,
+                    isHovering: hovering && style.emphasis != .current
                 )
                 .contentShape(Rectangle())
         }
@@ -442,9 +559,16 @@ private struct SidebarFavoriteButton: View {
         .onHover { hovering = $0 }
         .help(Text(verbatim: tab.title))
         .accessibilityLabel(Text(verbatim: tab.title))
-        .accessibilityValue(tab.isDeferred ? Text("Unloaded") : Text("Loaded"))
+        .accessibilityValue(favoriteValue)
+        .accessibilityAddTraits(style.isSelected ? .isSelected : [])
+        .overlay {
+            ExternalControlMark(tab: tab, coordinator: coordinator, isCompact: true)
+                .offset(x: 8, y: 8)
+        }
         .contextMenu {
+            ExternalControlMenuItems(tabs: [tab], coordinator: coordinator)
             SidebarLinkMenuItems(tabs: [tab], coordinator: coordinator)
+            SidebarPinMenuItems(tab: tab, browser: browser)
             if !tab.isDeferred {
                 Button {
                     coordinator.tabPreview.dismiss()
@@ -467,13 +591,23 @@ private struct SidebarFavoriteButton: View {
     }
 }
 
+/// The Downloads button. Pointing at it lists the newest downloads, each with Open and Show in Finder (`RecentDownloadsList`);
+/// pressing it opens the Downloads page, which is also what VoiceOver and the keyboard use.
 struct SidebarDownloadsButton: View {
     let coordinator: AppCoordinator
+    /// The side of the button the list opens to.
+    var listEdge: Edge = .trailing
 
     @Environment(\.sidebarStyle) private var sidebarStyle
     @State private var hovering = false
+    @State private var showsList = false
+    @State private var overList = false
+    @State private var pending: Task<Void, Never>?
 
     private static let barWidth: CGFloat = 15
+    // The same moments as the speaker's list (`AudioIndicatorButton`).
+    private static let openDelay: Duration = .milliseconds(350)
+    private static let closeDelay: Duration = .milliseconds(220)
 
     private var downloads: DownloadManager {
         coordinator.browser.downloads
@@ -484,6 +618,8 @@ struct SidebarDownloadsButton: View {
 
     var body: some View {
         Button {
+            pending?.cancel()
+            showsList = false
             coordinator.showDownloads()
         } label: {
             VStack(spacing: isRunning ? 3 : 0) {
@@ -516,12 +652,49 @@ struct SidebarDownloadsButton: View {
         } action: { point in
             coordinator.downloadFlights.target = point
         }
-        .onHover { hovering = $0 }
+        .onHover { inside in
+            hovering = inside
+            settle()
+        }
         .animation(Theme.Motion.quick, value: hovering)
         .animation(Theme.Motion.settle, value: isRunning)
         .help(isRunning
               ? Text("Downloads — \(downloads.activeCount) in progress")
               : Text("Downloads"))
+        .accessibilityAction(named: Text("Show Recent Downloads")) { showsList = true }
+        .popover(isPresented: $showsList, arrowEdge: listEdge) {
+            RecentDownloadsList(downloads: downloads, showAll: coordinator.showDownloads) { showsList = false }
+                .onHover { inside in
+                    overList = inside
+                    settle()
+                }
+                .onExitCommand { showsList = false }
+        }
+        .onChange(of: showsList) { _, isOpen in
+            coordinator.isDownloadsListOpen = isOpen
+            // A list closed by a press inside it sends no exit, and the stale "inside" would keep the next one open.
+            if !isOpen {
+                overList = false
+            }
+        }
+        .onDisappear {
+            pending?.cancel()
+            showsList = false
+            coordinator.isDownloadsListOpen = false
+        }
+    }
+
+    /// Opens the list a moment after the pointer arrives and closes it a moment after the pointer has left both the button and
+    /// the list, so the way from one to the other does not close it.
+    private func settle() {
+        pending?.cancel()
+        let wanted = hovering || overList
+        guard wanted != showsList else { return }
+        pending = Task {
+            try? await Task.sleep(for: wanted ? Self.openDelay : Self.closeDelay)
+            guard !Task.isCancelled else { return }
+            showsList = wanted
+        }
     }
 }
 

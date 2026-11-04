@@ -68,6 +68,12 @@ nonisolated enum AutofillSuggestionScript {
         return {...rect,x:rect.x + frame.clientLeft*sx,y:rect.y + frame.clientTop*sy,
           width:frame.clientWidth*sx,height:frame.clientHeight*sy};
       };
+      // While autofill itself moves focus through the fields it fills, no tracker of this frame starts a selection from it.
+      let quiet = false;
+      const quietly = fill => {
+        quiet = true;
+        try { return fill(); } finally { quiet = false; }
+      };
       const track = (channel, state, accepts, extra) => {
         let pending = null, timer = null;
         const cancelPending = () => {
@@ -129,7 +135,7 @@ nonisolated enum AutofillSuggestionScript {
           settle();
         };
         const remember = event => {
-          if (event.isTrusted) selectTarget(event.composedPath()[0]);
+          if (event.isTrusted && !quiet) selectTarget(event.composedPath()[0]);
         };
         document.addEventListener('focusin', remember, true);
         document.addEventListener('click', remember, true);
@@ -160,7 +166,7 @@ nonisolated enum AutofillSuggestionScript {
       const valid = (state,token,url) => !!token && state.token === token && state.url === url &&
         location.href === url && active() === state.target && forms.id(state.target) === state.fieldID &&
         forms.group(state.target)?.id === state.formID;
-      globalThis.__wsurfAutofillSuggestions = {active,geometry,frameBounds,track,valid};
+      globalThis.__wsurfAutofillSuggestions = {active,geometry,frameBounds,track,valid,quietly};
     })();
     """#
 }

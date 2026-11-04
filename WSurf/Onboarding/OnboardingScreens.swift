@@ -91,6 +91,53 @@ extension OnboardingUI {
         }
     }
 
+    struct LayoutScreen: View {
+        let coordinator: AppCoordinator
+        let model: OnboardingModel
+        let clock: ShimmerClock
+
+        var body: some View {
+            let shown = model.windowStyleChoice ?? coordinator.settings.windowStyle
+
+            Screen {
+                Heading(
+                    title: "Choose a layout",
+                    caption: "You can change this later in Settings."
+                )
+
+                HStack(spacing: 14) {
+                    ForEach(BrowserWindowStyle.allCases) { style in
+                        PreviewChoiceCard(label: style.label, isSelected: shown == style) {
+                            model.windowStyleChoice = style
+                        } thumbnail: {
+                            WindowStyleThumbnail(style: style)
+                        }
+                    }
+                }
+                .accessibilityElement(children: .contain)
+                .accessibilityLabel(Text("Layout"))
+                .padding(.top, 24)
+
+                Text(shown.caption)
+                    .font(Theme.Font.secondary)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(width: OnboardingUI.columnWidth)
+                    .padding(.top, 16)
+
+                Actions(
+                    primary: "Continue",
+                    primaryAction: {
+                        OnboardingUI.advance(model: model, coordinator: coordinator, clock: clock)
+                    },
+                    secondary: "Back",
+                    secondaryAction: { OnboardingUI.back(model: model) }
+                )
+            }
+        }
+    }
+
     struct ExtensionsScreen: View {
         let coordinator: AppCoordinator
         let model: OnboardingModel
@@ -374,7 +421,7 @@ extension OnboardingUI {
         var size: CGFloat = 104
 
         var body: some View {
-            Image(nsImage: NSApp.applicationIconImage)
+            Image(nsImage: AppIcon.bundle)
                 .resizable()
                 .interpolation(.high)
                 .frame(width: size, height: size)

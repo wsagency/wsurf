@@ -17,6 +17,30 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
         self.tab = tab
     }
 
+    /// WebKit asks this variant when it exists. A main-frame navigation takes the website's auto-play answer for the
+    /// document it makes; every other decision is the one below.
+    func webView(
+        _ webView: WKWebView,
+        decidePolicyFor navigationAction: WKNavigationAction,
+        preferences: WKWebpagePreferences,
+        decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy, WKWebpagePreferences) -> Void
+    ) {
+        if let tab, navigationAction.targetFrame?.isMainFrame == true {
+            SiteContentGuard.apply(
+                SiteContentGuard.autoplay(for: navigationAction.request.url, permissions: tab.sitePermissions,
+                                          settings: tab.context.settings),
+                to: preferences
+            )
+        }
+        // WebKit lets an HTML file read its folder whatever it was granted, so a downloaded page runs no script of its own. A
+        // navigation with no target frame is a new window's own page, held to the same rule.
+        if navigationAction.targetFrame?.isMainFrame != false, let url = navigationAction.request.url,
+           !FileAccessScope.allowsScript(inFile: url) {
+            preferences.allowsContentJavaScript = false
+        }
+        self.webView(webView, decidePolicyFor: navigationAction) { decisionHandler($0, preferences) }
+    }
+
     func webView(
         _ webView: WKWebView,
         decidePolicyFor navigationAction: WKNavigationAction,
@@ -25,8 +49,16 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
         if navigationAction.targetFrame?.isMainFrame == true {
             mainFrameActionGeneration &+= 1
         }
+        // The script rule above covers a page's frames, so a frame may not bring a downloaded file into one that runs script, nor
+        // any file into a downloaded page.
+        if navigationAction.targetFrame?.isMainFrame == false, let url = navigationAction.request.url,
+           FileAccessScope.refusesSubframe(to: url, inPageAt: webView.url) {
+            decisionHandler(.cancel)
+            return
+        }
         if navigationAction.shouldPerformDownload {
             downloadSource = navigationAction.request.url
+            pendingMainFrameURL = nil
             decisionHandler(.download)
             return
         }
@@ -35,40 +67,17 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
             return
         }
         if let url = navigationAction.request.url, !ExternalApp.staysInWebView(url) {
-            let origin = requestingOrigin(for: navigationAction)
-            let page = tab?.liveView
-            let sourceFrame = page.flatMap {
-                PageFrameRegistry.shared.captureSourceFrame(navigationAction.sourceFrame, in: $0)
-            }
-            let initialRedirect = sourceFrame == nil && tab?.committedNavigation == nil
-                && navigationAction.sourceFrame.isMainFrame && navigationAction.targetFrame?.isMainFrame == true
-                && !origin.isEmpty && navigationAction.responds(to: NSSelectorFromString("_isRedirect"))
-                && navigationAction.value(forKey: "_isRedirect") as? Bool == true
-            let actionGeneration = mainFrameActionGeneration
+            offerExternalApp(url, for: navigationAction, in: webView)
             decisionHandler(.cancel)
-            let window = webView.window
-            let document = tab?.committedNavigation
-            Task { [weak self, weak tab, weak webView, weak page] in
-                guard let self, let tab, !tab.isClosed, let webView, tab.liveView?.webKit === webView else { return }
-                await ExternalApp.offerToOpen(url, from: origin, policy: tab.externalApps, in: window, isCurrent: {
-                    guard let page else { return false }
-                    if let sourceFrame {
-                        guard await PageFrameRegistry.shared.isLiveAfterReady(sourceFrame, in: page) else { return false }
-                    } else {
-                        // A first HTTP redirect has no committed document token; bind its accepted request instead.
-                        guard initialRedirect, self.mainFrameActionGeneration == actionGeneration else { return false }
-                    }
-                    return !tab.isClosed && tab.liveView?.webKit === webView
-                        && tab.liveView === page && tab.committedNavigation === document
-                })
-            }
             return
         }
+        // A modifier is the person's only when they clicked: a page's own synthetic Cmd-click is a plain click.
         if let tab, let onOpenInNewTab = tab.onOpenInNewTab,
            navigationAction.navigationType == .linkActivated,
            navigationAction.modifierFlags.contains(.command)
                || navigationAction.buttonNumber == Self.middleButton,
            navigationAction.targetFrame?.isMainFrame != false,
+           Self.isUserInitiated(navigationAction),
            let url = navigationAction.request.url {
             decisionHandler(.cancel)
             onOpenInNewTab(url, navigationAction.modifierFlags.contains(.shift))
@@ -78,13 +87,13 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
            navigationAction.navigationType == .linkActivated,
            navigationAction.modifierFlags == .shift,
            navigationAction.targetFrame?.isMainFrame != false,
+           Self.isUserInitiated(navigationAction),
            let url = navigationAction.request.url {
             decisionHandler(.cancel)
             onOpenInPeek(url, Self.pointer(in: webView))
             return
         }
         if let tab, navigationAction.targetFrame?.isMainFrame != false {
-            pendingMainFrameURL = navigationAction.request.url
             tab.rememberScrollOffset()
             if let mapped = Self.transition(for: navigationAction.navigationType) {
                 tab.noteTransition(mapped)
@@ -103,11 +112,47 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
               url.scheme != base.scheme || url.host != base.host
         else {
             tab?.autofillSave.submissions.navigationRequested(navigationAction)
+            // The pending address is set only for a main-frame navigation that is allowed, after every refusal above.
+            if navigationAction.targetFrame?.isMainFrame == true {
+                pendingMainFrameURL = navigationAction.request.url
+            }
             decisionHandler(.allow)
             return
         }
         decisionHandler(.cancel)
         tab.onNavigationOutsideExtension?(url)
+    }
+
+    /// Offers to hand `url` to its app on behalf of the page that navigated to it. The page itself never navigates.
+    /// The source frame is captured now, while WebKit is still deciding, and proven later.
+    private func offerExternalApp(_ url: URL, for action: WKNavigationAction, in webView: WKWebView) {
+        guard let tab, let page = tab.liveView else {
+            ExternalApp.noteDropped(url, .tabClosed)
+            return
+        }
+        let requested = requestingOrigin(for: action)
+        let source = PageFrameRegistry.shared.captureSourceFrame(action.sourceFrame, in: page)
+        // A first HTTP redirect has no committed document to prove; its accepted request is the proof instead.
+        let initialRedirect = source == nil && tab.committedNavigation == nil
+            && action.sourceFrame.isMainFrame && action.targetFrame?.isMainFrame == true
+            && !requested.isEmpty && action.responds(to: NSSelectorFromString("_isRedirect"))
+            && action.value(forKey: "_isRedirect") as? Bool == true
+        // A source that cannot be proven may still ask once, but it names no site, so nothing can be remembered.
+        let origin = source == nil && !initialRedirect ? "" : requested
+        let request = AppLinkRequest(
+            tab: tab, webView: webView, page: page, document: tab.committedNavigation,
+            source: source, origin: origin, generation: mainFrameActionGeneration,
+            currentGeneration: { [weak self] in self?.mainFrameActionGeneration }
+        )
+        let policy = tab.externalApps
+        let window = webView.window
+        Task {
+            await ExternalApp.offerToOpen(
+                url, from: origin, policy: policy, in: window,
+                staleness: { await request.staleness() },
+                approvalStaleness: { await request.approvalStaleness() }
+            )
+        }
     }
 
     /// WebKit numbers the middle button 4, not NSEvent's 2.
@@ -184,8 +229,25 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
         for navigationAction: WKNavigationAction,
         windowFeatures: WKWindowFeatures
     ) -> WKWebView? {
-        guard let tab, let onNewWindow = tab.onNewWindow else { return nil }
+        guard let tab else { return nil }
+        // The window the person chose from the context menu is theirs although WebKit does not say so; only that address is (`TabWebView`).
+        let chosenFromMenu = (webView as? TabWebView)?.takeNewWindowChoice(for: navigationAction.request.url) == true
+        // WebKit hands over every pop-up (`javaScriptCanOpenWindowsAutomatically`): one the person did not start obeys
+        // the website's answer here, so the page's `window.open` stays WebKit's own.
+        if tab.popups.effective.blocks, !chosenFromMenu, !Self.isUserInitiated(navigationAction) {
+            if let url = navigationAction.request.url, url.scheme != "about" {
+                tab.popups.note(url)
+            }
+            return nil
+        }
+        guard let onNewWindow = tab.onNewWindow else { return nil }
 
+        // The window's first document may never be navigated (its opener can write it), so it starts under the opener's
+        // auto-play answer; its own navigations then take their website's.
+        SiteContentGuard.apply(
+            SiteContentGuard.autoplay(for: webView.url, permissions: tab.sitePermissions, settings: tab.context.settings),
+            to: configuration.defaultWebpagePreferences
+        )
         let view = TabWebView(frame: webView.frame, configuration: configuration)
         tab.context.settings.apply(to: view)
         view.allowsBackForwardNavigationGestures = true
@@ -195,6 +257,15 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
         let activate = !modifiers.contains(.command) || modifiers.contains(.shift)
         onNewWindow(view, activate)
         return view
+    }
+
+    /// `_isUserInitiated` (SPI): whether a person's click or key started a navigation. Without it WebKit keeps its own
+    /// pop-up blocker (`BrowserSettings.apply`), and every pop-up that still reaches the tab counts as the person's.
+    static let decidesPopUps = WKNavigationAction.instancesRespond(to: NSSelectorFromString("_isUserInitiated"))
+
+    private static func isUserInitiated(_ action: WKNavigationAction) -> Bool {
+        guard decidesPopUps else { return true }
+        return action.value(forKey: "_isUserInitiated") as? Bool == true
     }
 
     func webViewDidClose(_ webView: WKWebView) {
@@ -215,6 +286,7 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
            hitTestResult.responds(to: NSSelectorFromString("absoluteLinkURL")) {
             url = hitTestResult.value(forKey: "absoluteLinkURL") as? URL
         }
+        (webView as? TabWebView)?.hoveredLinkURL = url
         tab?.noteHoveredLink(url, modifiers: flags, at: Self.pointer(in: webView))
     }
 
@@ -224,6 +296,13 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
         let inView = webView.convert(inWindow, from: nil)
         guard !webView.isFlipped else { return inView }
         return CGPoint(x: inView.x, y: webView.bounds.height - inView.y)
+    }
+
+    /// `WKUIDelegatePrivate`. Without an answer WebKit gives pages a zero `outerWidth`, `outerHeight`, `screenX` and
+    /// `screenY`, which bot checks read as a headless browser. Safari answers with its window's frame, as here.
+    @objc(_webView:getWindowFrameWithCompletionHandler:)
+    func webView(_ webView: WKWebView, getWindowFrameWithCompletionHandler completionHandler: @escaping (CGRect) -> Void) {
+        completionHandler(webView.window?.frame ?? .zero)
     }
 
     @objc(_webView:hasVideoInPictureInPictureDidChange:)
@@ -245,7 +324,7 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
         runJavaScriptAlertPanelWithMessage message: String,
         initiatedByFrame frame: WKFrameInfo
     ) async {
-        await PageDialogs.alert(message, from: frame, in: webView.window)
+        await PageDialogs.alert(message, from: frame, over: webView, queue: tab?.dialogs)
     }
 
     func webView(
@@ -253,7 +332,7 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
         runJavaScriptConfirmPanelWithMessage message: String,
         initiatedByFrame frame: WKFrameInfo
     ) async -> Bool {
-        await PageDialogs.confirm(message, from: frame, in: webView.window)
+        await PageDialogs.confirm(message, from: frame, over: webView, queue: tab?.dialogs)
     }
 
     func webView(
@@ -263,7 +342,7 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
             String?,
         initiatedByFrame frame: WKFrameInfo
     ) async -> String? {
-        await PageDialogs.prompt(prompt, defaultText: defaultText, from: frame, in: webView.window)
+        await PageDialogs.prompt(prompt, defaultText: defaultText, from: frame, over: webView, queue: tab?.dialogs)
     }
 
     func webView(
@@ -348,6 +427,10 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
         @unknown default:
             return .deny
         }
+        // WebKit lets one page capture at a time and mutes the others, and it counts a tab WSurf keeps alive off screen (a
+        // favorite loading at launch, a parked tab) as visible. Granted at once, such a tab takes the camera and microphone from
+        // the page in front, which Meet reports as muted by the system; so it waits until it is shown.
+        guard await tab.untilOnScreen(webView) else { return .deny }
         for permission in wanted {
             guard await tab.permissions.decide(permission) else { return .deny }
         }
@@ -384,7 +467,6 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
               let save = tab.onSaveDocument else { return }
         let source = frame.request.url
         let filename = tab.documentFilename(for: source) ?? fileURL.lastPathComponent
-        let window = webView.window
         Task {
             do {
                 let data = try await Task.detached(priority: .userInitiated) {
@@ -393,7 +475,7 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
                 await save(data, filename, source, true)
             } catch {
                 Pipeline.log.error("PDF: reading WebKit's temporary copy failed")
-                await PageDialogs.alert(error.localizedDescription, from: frame, in: window)
+                await PageDialogs.alert(error.localizedDescription, from: frame, over: webView)
             }
         }
     }
@@ -418,6 +500,12 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
             return
         }
         downloadSource = navigationResponse.response.url
+        if navigationResponse.isForMainFrame {
+            pendingMainFrameURL = nil
+        }
+        if navigationResponse.isForMainFrame, let page = BrowserPage.from(webView) {
+            PageFrameRegistry.shared.mainFrameNavigationBecameDownload(in: page)
+        }
         decisionHandler(.download)
     }
 
@@ -440,12 +528,14 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
     private func hand(_ download: WKDownload, source: URL?) {
         let origin = source ?? downloadSource
         downloadSource = nil
+        pendingMainFrameURL = nil
         tab?.onDownload?(download, origin)
     }
 
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
         guard let page = BrowserPage.from(webView) else { return }
         let nativeNavigation = page.navigation(for: navigation)
+        page.certificateStanding.navigationStarted()
         PageFrameRegistry.shared.navigationStarted(navigation, in: page)
         page.onNavigationStarted?(nativeNavigation, webView.url)
     }
@@ -456,9 +546,12 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
 
     // MARK: - Authentication
 
+    /// The Swift name of `webView:didReceiveAuthenticationChallenge:completionHandler:`. The SDK renames the async form
+    /// (`WK_SWIFT_ASYNC_NAME`), so a `didReceive challenge:` method is no requirement at all: WebKit never calls it and
+    /// answers every challenge with "reject". `HTTPAuthenticationTests` pins the selector this method answers to.
     func webView(
         _ webView: WKWebView,
-        didReceive challenge: URLAuthenticationChallenge
+        respondTo challenge: URLAuthenticationChallenge
     ) async -> (URLSession.AuthChallengeDisposition, URLCredential?) {
         let space = challenge.protectionSpace
         switch AuthChallenge.decision(
@@ -474,6 +567,8 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
             case .useDefaultHandling:
                 return (.performDefaultHandling, nil)
             case .proceed(let credential):
+                // Past a certificate warning: whatever this loads, the page is no longer secure for credentials.
+                BrowserPage.from(webView)?.certificateStanding.exceptionAccepted()
                 return (.useCredential, credential)
             case .cancel:
                 return (.cancelAuthenticationChallenge, nil)
@@ -483,6 +578,14 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
         case .rejectProtectionSpace:
             return (.rejectProtectionSpace, nil)
         case .promptForCredential:
+            // WebKit does not say which frame is asking. Only the page's own website or a proxy may raise the sheet; another
+            // website's image or frame is turned away, as the other browsers do. `webView.url` is WebKit's own answer: the
+            // committed page, or the address of the navigation in flight, and the committed page again once one is cancelled, fails
+            // or turns into a download. No state of this delegate stands in for it, because that could outlive the navigation.
+            guard AuthChallenge.mayPrompt(for: space, topLevel: [webView.url]) else {
+                Pipeline.log.notice("HTTP sign-in cancelled: the request is not for the page's own website")
+                return (.cancelAuthenticationChallenge, nil)
+            }
             let credential = await AuthChallenge.requestCredential(
                 for: space,
                 previousFailures: challenge.previousFailureCount,
@@ -496,16 +599,23 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
         pendingMainFrameURL = nil
         guard let page = BrowserPage.from(webView) else { return }
+        page.certificateStanding.navigationCommitted()
         PageFrameRegistry.shared.navigationCommitted(navigation, in: page)
+        // The committed document decides the inspector and the page appearance: leaving a website in Developer mode switches both off.
+        tab?.context.settings.applyInspector(to: webView)
+        tab?.applyDevModeAppearance()
         page.onNavigationCommitted?(page.navigation(for: navigation))
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        pendingMainFrameURL = nil
         guard let page = BrowserPage.from(webView) else { return }
+        tab?.applyDevModeOverlays()
         page.onNavigationFinished?(page.navigation(for: navigation))
     }
 
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        pendingMainFrameURL = nil
         guard let page = BrowserPage.from(webView) else { return }
         PageFrameRegistry.shared.navigationFailed(navigation, in: page)
         page.onNavigationFailed?(page.navigation(for: navigation), error)
@@ -529,4 +639,46 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
         tab?.contentProcessDidTerminate()
     }
 
+}
+
+/// A page's request to open an app, as the navigation delegate knew it when WebKit asked.
+/// It holds the tab and page weakly: an open prompt must not keep a closed tab alive.
+private struct AppLinkRequest {
+    weak var tab: BrowserTab?
+    weak var webView: WKWebView?
+    weak var page: BrowserPage?
+    let document: PageNavigation?
+    /// Nil when WebKit's source frame could not be matched to exactly one registered document.
+    let source: PageFrameRegistry.SourceFrameClaim?
+    let origin: String
+    let generation: Int
+    let currentGeneration: () -> Int?
+
+    private func live() -> (tab: BrowserTab, page: BrowserPage)? {
+        guard let tab, let webView, let page, !tab.isClosed,
+              tab.liveView?.webKit === webView, tab.liveView === page else { return nil }
+        return (tab, page)
+    }
+
+    /// Whether the page that asked is still the one on screen. A proven frame must also still be that live document.
+    /// Without a proven frame, any later main-frame navigation ends the request.
+    func staleness() async -> ExternalApp.Drop? {
+        guard let live = live() else { return .tabClosed }
+        guard live.tab.committedNavigation === document else { return .documentChanged }
+        guard let source else { return currentGeneration() == generation ? nil : .navigated }
+        guard await PageFrameRegistry.shared.isLiveAfterReady(source, in: live.page) else { return .frameChanged }
+        // The proof suspended; the tab may have moved on while it ran.
+        guard let again = self.live() else { return .tabClosed }
+        return again.tab.committedNavigation === document ? nil : .documentChanged
+    }
+
+    /// What the person approved was this link from this site. A page of that site that moved on, such as
+    /// a sign-in page showing "return to the app", does not withdraw it. Another site, a replaced frame
+    /// or a request that never named a site does.
+    func approvalStaleness() async -> ExternalApp.Drop? {
+        guard let reason = await staleness() else { return nil }
+        guard reason == .documentChanged, let source, source.frame.isMainFrame, !origin.isEmpty,
+              let live = live() else { return reason }
+        return SitePermissions.webOrigin(for: live.tab.committedURL) == origin ? nil : .siteChanged
+    }
 }

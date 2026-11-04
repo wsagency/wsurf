@@ -3,7 +3,6 @@
 // Modified for WSurf by wsagency in 2026; based on Linen by Kavoye.
 // Linen portions: Apache-2.0; WSurf modifications: BUSL-1.1. See NOTICE.
 
-import AppKit
 import SwiftUI
 
 struct StartPage: View {
@@ -42,11 +41,7 @@ struct StartPage: View {
             EditStartPageButton(settings: coordinator.settings)
                 .padding(20)
         }
-        .background(
-            Color.clear
-                .contentShape(Rectangle())
-                .onTapGesture { NSApp.keyWindow?.makeFirstResponder(nil) }
-        )
+        .takesFocusOnClick()
     }
 }
 

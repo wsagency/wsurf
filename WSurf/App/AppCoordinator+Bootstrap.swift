@@ -38,19 +38,24 @@ extension AppCoordinator {
         timing.mark("web setup")
         if restoring {
             browser.restoreSession()
+        } else {
+            browser.attachProfilePins()
         }
         for url in urls.reversed() {
             browser.newTab(url: url, transition: .link)
         }
-        browser.ensureActiveTab()
+        // The profile's pins fill a window before it has a page of its own, so the first tab would be a pin.
+        if browser.activeTabID == nil {
+            browser.newTab()
+        }
         retainAgentMemory()
         timing.mark("session")
         wireMedia()
-        browser.onSpaceAnchorChanged = { [weak self] from, to in
-            if self?.conversationSpaceID == from {
+        browser.onAnchorChanged = { [weak self] from, to in
+            if self?.conversationAnchorID == from {
                 self?.conversationVoice?.stop()
             }
-            self?.agentTurns.reassignSpace(from: from, to: to)
+            self?.agentTurns.reassignAnchor(from: from, to: to)
         }
         browser.onLinkHovered = { [weak self] tab, url, modifiers, anchor in
             guard let self else { return }
@@ -68,7 +73,8 @@ extension AppCoordinator {
             linkPeek.show(url, tabID: tab.id, anchor: anchor, context: context)
         }
         linkPeek.begin()
-        if application == nil || application?.windows.count == 1 {
+        // A micro window has no onboarding to show and no release notes to open: those belong to the window to browse in.
+        if !isMicro, application?.isOpeningFirstWindow ?? true {
             onboarding.beginIfNeeded()
         }
         if onboarding.isPresented {
@@ -92,17 +98,13 @@ extension AppCoordinator {
             updates.setChannel(settings.updateChannel)
             updates.start()
         }
-        if application == nil || application?.windows.count == 1 {
+        if !isMicro, application?.isOpeningFirstWindow ?? true {
             MoveToApplications.reregisterDefaultBrowserIfNeeded()
-            Task { [weak self] in
-                guard let self, await releaseNotes.shouldOpenForNewVersion(), !isClosed else { return }
-                showReleaseNotes()
-            }
+            releaseNotes.checkForNewVersion()
         }
         timing.mark("updates")
         Task { [extensions] in
-            await extensions.start()
-            await extensions.updateInstalledIfDue()
+            await extensions.startOnce()
         }
         activation.onPress = { [weak self] in
             guard let self, isKeyWindow, !onboarding.isPresented, microphoneIsReady() else { return }
@@ -139,7 +141,9 @@ extension AppCoordinator {
                 downloadFlights.noteClick(at: point)
             }
         }
-        context.webViewPool.installExtensionController(extensions.controller)
+        context.webViewPool.installExtensionController(extensions.controller) { [weak extensions] in
+            extensions?.hasEnabledExtensions == true
+        }
         prepareWindowHost()
         installDownloadFlights()
     }
@@ -148,7 +152,25 @@ extension AppCoordinator {
         modelProviders.resolve(configuration)
     }
 
+    /// At launch a window draws before its engine, the assistant's tools and the voices are built: they wait for the next turn of
+    /// the main queue, when the windows are on screen. What the first frame shows, the provider, model and effort chosen, is set
+    /// at once.
     func configureEngines() {
+        guard !isClosed else { return }
+        guard application?.isLaunching == true else {
+            configureEnginesNow()
+            return
+        }
+        LLMSettings.$scoped.withValue(modelSettings) {
+            configureEngineChoice()
+        }
+        DispatchQueue.main.async { [weak self] in
+            guard let self, application?.isTerminating != true else { return }
+            configureEnginesNow()
+        }
+    }
+
+    private func configureEnginesNow() {
         guard !isClosed else { return }
         LLMSettings.$scoped.withValue(modelSettings) {
             configureWindowEngines()
@@ -160,6 +182,18 @@ extension AppCoordinator {
         windows.forEach { $0.configureEngines() }
     }
 
+    /// The provider, model and reasoning effort the person chose, which the assistant's chip shows: settings only.
+    private func configureEngineChoice() {
+        selectedProvider = ProviderCatalog.shared.provider(id: modelSettings.providerID) ?? ProviderCatalog.openAI
+        selectedModel = modelSettings.model(for: selectedProvider)
+        selectedEffort = ReasoningCatalog.resolve(
+            modelSettings.reasoningEffort(for: selectedProvider),
+            for: selectedProvider,
+            model: selectedModel
+        )
+        supportsReasoningEffort = modelProviders.resolve(selectedProvider).capabilities.contains(.reasoning)
+    }
+
     private func configureWindowEngines() {
         let toolkit = AgentToolkit(
             browser: browser,
@@ -168,16 +202,9 @@ extension AppCoordinator {
             questions: agentQuestions
         )
         agentTurns.onCancel = { [weak self] in self?.agentQuestions.abandon() }
-        selectedProvider = ProviderCatalog.shared.provider(id: modelSettings.providerID) ?? ProviderCatalog.openAI
-        selectedModel = modelSettings.model(for: selectedProvider)
-        selectedEffort = ReasoningCatalog.resolve(
-            modelSettings.reasoningEffort(for: selectedProvider),
-            for: selectedProvider,
-            model: selectedModel
-        )
+        configureEngineChoice()
 
         let selected = modelProviders.resolve(selectedProvider)
-        supportsReasoningEffort = selected.capabilities.contains(.reasoning)
         let onDeviceFallback = modelProviders.resolve(ProviderCatalog.appleOnDevice)
         let hostedFallback = modelProviders.resolve(ProviderCatalog.openAI)
         let decision = AgentProviderSelection.decide(
@@ -230,6 +257,21 @@ extension AppCoordinator {
         discoverContextWindow()
     }
 
+    /// Runs the idle-tab sweep while Sleep inactive tabs has a duration; otherwise the timer does not exist. The archive
+    /// sweep follows its own setting.
+    func applySleepTimer() {
+        browser.applyArchiveSweeper(running: !isClosed)
+        let minutes = settings.sleepAfterMinutes
+        guard !isClosed, settings.sleepsInactiveTabs, minutes > 0 else {
+            sleepTimer.stop()
+            return
+        }
+        let limit = Duration.seconds(minutes * 60)
+        sleepTimer.start(every: min(.seconds(60), limit / 4)) { [weak self] in
+            self?.browser.sleepIdleTabs(after: limit)
+        }
+    }
+
     func followSettings() {
         let context = context
         let targets: () -> [AppCoordinator] = { [weak context, weak application, weak self] in
@@ -243,6 +285,8 @@ extension AppCoordinator {
         media.isEnabled = settings.showsMediaPlayer
         applyPictureLending()
         sidePanel.setAvailable(settings.showsLyrics, for: .lyrics)
+        sidePanel.setAvailable(!context.profile.isPrivate, for: .watches)
+        applySleepTimer()
         updateWindowAppearance()
         browser.downloads.webViewProvider = {
             let windows = targets()
@@ -382,11 +426,16 @@ extension AppCoordinator {
             return false
         }
         if onboarding.isPresented {
+            onboarding.applyChoices(to: settings)
             onboarding.finish()
             return true
         }
         if isProfileSwitcherOpen {
             isProfileSwitcherOpen = false
+            return true
+        }
+        if isMinimalTabListOpen {
+            isMinimalTabListOpen = false
             return true
         }
         if closePeek() {
@@ -407,6 +456,30 @@ extension AppCoordinator {
             return true
         }
         return closedInspector
+    }
+}
+
+private extension ExtensionManager {
+    /// The profile's running start, if one is: every window of a profile starts the same manager when it opens, as all of them do
+    /// at launch.
+    static var runningStarts: [ObjectIdentifier: Task<Void, Never>] = [:]
+
+    /// `start()` and the update check, one run at a time: a window that opens while a run is going waits for it instead of
+    /// starting another, which would read every manifest and write every shim again.
+    func startOnce() async {
+        let key = ObjectIdentifier(self)
+        if let running = Self.runningStarts[key] {
+            await running.value
+            return
+        }
+        // The task keeps the manager, so its identifier is not reused before the entry goes.
+        let run = Task {
+            await start()
+            await updateInstalledIfDue()
+        }
+        Self.runningStarts[key] = run
+        await run.value
+        Self.runningStarts[key] = nil
     }
 }
 

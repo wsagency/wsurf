@@ -8,13 +8,30 @@ import SwiftUI
 
 private enum WorkspaceListCoordinateSpace {
     static let name = "sidebar-workspace"
+    /// The scrolling content. A row measures itself here, so scrolling does not change what it measured.
+    static let content = "sidebar-workspace-content"
+}
+
+/// What the list does with its rows: it draws them as they come near the window, unless something that walks every row
+/// is on. VoiceOver, Switch Control and Full Keyboard Access reach a row only if it exists, so they get all of them,
+/// as before.
+nonisolated enum SidebarRowLoading {
+    static func isLazy(voiceOver: Bool, switchControl: Bool, fullKeyboardAccess: Bool) -> Bool {
+        !(voiceOver || switchControl || fullKeyboardAccess)
+    }
+}
+
+extension EnvironmentValues {
+    /// Whether the sidebar draws every row at once (true) or only the rows near the window (false). nil, the
+    /// default, follows assistive technology: every row while one that walks the rows is on.
+    @Entry var sidebarDrawsEveryRow: Bool?
 }
 
 private enum SpringLoad {
     static let dwell: Duration = .milliseconds(250)
 }
 
-private struct WorkspaceListFadeMask: View {
+struct WorkspaceListFadeMask: View {
     var body: some View {
         VStack(spacing: 0) {
             Rectangle()
@@ -46,10 +63,16 @@ struct WorkspaceList<TopBar: View, BottomBar: View>: View {
     let bottomBar: BottomBar
     let contentInsets: EdgeInsets
 
+    @Environment(\.accessibilityVoiceOverEnabled) private var voiceOver
+    @Environment(\.accessibilitySwitchControlEnabled) private var switchControl
+    @Environment(\.sidebarDrawsEveryRow) private var drawsEveryRow
+
     @State private var pinsCarried = false
     @State private var reopening: [UUID] = []
     @State private var dwelling: UUID?
     @State private var dwell: Task<Void, Never>?
+    /// True while a finger or trackpad scrolls the list, and while it coasts to a stop.
+    @State private var isScrolling = false
 
     private var model: SidebarDragModel {
         coordinator.sidebarDrag
@@ -89,9 +112,52 @@ struct WorkspaceList<TopBar: View, BottomBar: View>: View {
             selection: selection,
             drag: drag,
             pinsCarried: pinsCarried,
-            space: WorkspaceListCoordinateSpace.name,
+            space: WorkspaceListCoordinateSpace.content,
             frames: frames
         )
+    }
+
+    private var loadsLazily: Bool {
+        if let drawsEveryRow {
+            return !drawsEveryRow
+        }
+        return SidebarRowLoading.isLazy(
+            voiceOver: voiceOver,
+            switchControl: switchControl,
+            fullKeyboardAccess: NSApp?.isFullKeyboardAccessEnabled == true
+        )
+    }
+
+    /// The rows and the room under them. A lazy stack builds the rows near the window; a plain one builds them all.
+    @ViewBuilder
+    private func rowStack(_ sections: (kept: [SidebarItem], loose: [SidebarItem])) -> some View {
+        let spacing = SidebarMetrics.rowVerticalSpacing(settings: context.coordinator.context.settings)
+        let rows = SidebarRows(
+            items: sections.kept + sections.loose,
+            depth: 0,
+            context: context,
+            seamAfter: sections.kept.last
+        )
+        let room = Color.clear
+            .frame(height: 26 + bottomClearance)
+            .contentShape(Rectangle())
+            .onTapGesture { selection.takeKeyboard() }
+            .contextMenu { emptySpaceMenu }
+            .animation(Theme.Motion.drift, value: bottomClearance)
+        Group {
+            if loadsLazily {
+                LazyVStack(spacing: spacing) {
+                    rows
+                    room
+                }
+            } else {
+                VStack(spacing: spacing) {
+                    rows
+                    room
+                }
+            }
+        }
+        .environment(\.sidebarPulsesRevealedRows, true)
     }
 
     @ViewBuilder
@@ -122,24 +188,17 @@ struct WorkspaceList<TopBar: View, BottomBar: View>: View {
     var body: some View {
         ScrollViewReader { proxy in
         ScrollView {
-            VStack(spacing: SidebarMetrics.rowVerticalSpacing(settings: context.coordinator.context.settings)) {
-                let sections = sections
-                if !sections.kept.isEmpty {
-                    SidebarRows(items: sections.kept, depth: 0, context: context)
-                    SidebarSectionSeam()
+            rowStack(sections)
+                .glassGroup()
+                .padding(.leading, contentInsets.leading)
+                .padding(.trailing, contentInsets.trailing)
+                .coordinateSpace(.named(WorkspaceListCoordinateSpace.content))
+                .onGeometryChange(for: CGPoint.self) {
+                    $0.frame(in: .named(WorkspaceListCoordinateSpace.name)).origin
+                } action: { origin in
+                    frames.contentOrigin = origin
+                    followPreview()
                 }
-
-                SidebarRows(items: sections.loose, depth: 0, context: context)
-
-                Color.clear
-                    .frame(height: 26 + bottomClearance)
-                    .contentShape(Rectangle())
-                    .onTapGesture { selection.takeKeyboard() }
-                    .contextMenu { emptySpaceMenu }
-                    .animation(Theme.Motion.drift, value: bottomClearance)
-            }
-            .padding(.leading, contentInsets.leading)
-            .padding(.trailing, contentInsets.trailing)
         }
         .onChange(of: browser.folderRenameID, initial: true) { _, id in
             guard let id else { return }
@@ -147,6 +206,13 @@ struct WorkspaceList<TopBar: View, BottomBar: View>: View {
                 await Task.yield()
                 proxy.scrollTo(SidebarItem.folder(id), anchor: .center)
             }
+        }
+        .onScrollPhaseChange { _, phase in
+            isScrolling = phase == .interacting || phase == .decelerating
+        }
+        .onChange(of: browser.sidebarReveal) { _, reveal in
+            guard let reveal else { return }
+            Task { @MainActor in await show(reveal, with: proxy) }
         }
         .scrollIndicators(.never)
         .scrollEdgeEffectHidden(true, for: .bottom)
@@ -196,6 +262,30 @@ struct WorkspaceList<TopBar: View, BottomBar: View>: View {
         }
     }
 
+    /// Scrolls to the row of a tab that was just opened, unless something else has the list: a drag, a rename, or the
+    /// person's own scrolling. The row may not be built yet (the list is lazy), so this waits for it where it must.
+    private func show(_ reveal: SidebarReveal, with proxy: ScrollViewProxy) async {
+        await Task.yield()
+        let steps = SidebarRevealPlan.steps(
+            for: reveal.tabID,
+            in: browser.sidebarTree,
+            isDrawn: { frames[$0] != nil },
+            isDragging: drag != nil,
+            isRenaming: browser.folderRenameID != nil || browser.tabRenameID != nil,
+            isScrolling: isScrolling
+        )
+        for (index, step) in steps.enumerated() {
+            if index > 0 {
+                // The folder is on its way in; its rows come with it.
+                for _ in 0..<30 where frames[.tab(reveal.tabID)] == nil {
+                    try? await Task.sleep(for: .milliseconds(16))
+                }
+            }
+            guard browser.sidebarReveal == reveal, drag == nil, !isScrolling else { return }
+            proxy.scrollTo(step.item, anchor: step.anchor)
+        }
+    }
+
     private func collapse(_ items: [SidebarItem]) -> [UUID] {
         var closed: [UUID] = []
         for case .folder(let id) in items {
@@ -210,21 +300,40 @@ struct WorkspaceList<TopBar: View, BottomBar: View>: View {
         browser.folder(id: folderID)?.isExpanded ?? false
     }
 
-    private var liveFrames: [SidebarItem: CGRect] {
-        frames.live(
-            tabIDs: Set(browser.tabs.map(\.id)).subtracting(browser.hiddenSidebarTabIDs),
-            folderIDs: Set(browser.folders.map(\.id))
-        )
-        .filter { item, _ in isShowing(item) }
+    /// The preview card, if one is up, goes where its row went when the list scrolled.
+    private func followPreview() {
+        guard let shown = coordinator.tabPreview.shown else { return }
+        let item: SidebarItem
+        switch shown.subject {
+        case .folder(let folder, _):
+            item = .folder(folder.id)
+        case .split(_, let panes):
+            guard let leader = panes.first else { return }
+            item = .tab(leader.id)
+        case .tab(let tab):
+            // A pane of a split is the card of its own cell, which follows itself.
+            guard !browser.splits.contains(tab.id) else { return }
+            item = .tab(tab.id)
+        }
+        guard let anchor = frames.windowFrame(of: item, listOrigin: listOrigin) else { return }
+        coordinator.tabPreview.moved(shown.subject.id, anchor: anchor)
     }
 
-    private func isShowing(_ item: SidebarItem) -> Bool {
-        var parent = browser.sidebarTree.parent(of: item)
-        while let id = parent {
-            guard browser.folder(id: id)?.isExpanded == true else { return false }
-            parent = browser.sidebarTree.parent(of: .folder(id))
+    private var liveFrames: [SidebarItem: CGRect] {
+        frames.visible(in: browser)
+    }
+
+    /// The bottom of the list's last row, or nil while that row is not drawn: below the rows that are drawn there are
+    /// rows that are not, so a pointer past them is not past the list.
+    private func endOfList(in slots: [SidebarItem: CGRect]) -> CGFloat? {
+        let hidden = browser.hiddenSidebarTabIDs
+        let last = browser.sidebarTree.visibleRows(isExpanded: isExpanded).last { item in
+            if case .tab(let id) = item, hidden.contains(id) {
+                return false
+            }
+            return !browser.isFavorite(item) && browser.isShown(item)
         }
-        return true
+        return last.flatMap { slots[$0]?.maxY }
     }
 
     private func dragChanged(_ value: DragGesture.Value) {
@@ -251,7 +360,9 @@ struct WorkspaceList<TopBar: View, BottomBar: View>: View {
             reopening = collapse(carried)
             coordinator.tabPreview.beginSuppression()
         }
-        model.drag?.translation = value.translation
+        if model.translation != value.translation {
+            model.translation = value.translation
+        }
 
         let inWindow = CGPoint(x: value.location.x + listOrigin.x, y: value.location.y + listOrigin.y)
         let overButton = newFolderDrop.frame.contains(inWindow)
@@ -262,7 +373,11 @@ struct WorkspaceList<TopBar: View, BottomBar: View>: View {
         if overShelf != pinDrop.isArmed {
             withAnimation(Theme.Motion.quick) { pinDrop.isArmed = overShelf }
         }
-        guard !overButton, !overShelf else {
+        let overSpace = overButton || overShelf ? nil : model.spaceDot(at: inWindow)
+        if overSpace != model.armedSpaceID {
+            model.armedSpaceID = overSpace
+        }
+        guard !overButton, !overShelf, overSpace == nil else {
             rest()
             return
         }
@@ -287,8 +402,13 @@ struct WorkspaceList<TopBar: View, BottomBar: View>: View {
             rest()
             newFolderDrop.isArmed = false
             pinDrop.isArmed = false
+            model.armedSpaceID = nil
             for id in reopening {
                 browser.folder(id: id)?.isExpanded = true
+            }
+            if !reopening.isEmpty {
+                // A drop saved the folders collapsed; the profile keeps whether a folder is open.
+                browser.scheduleSave()
             }
             reopening = []
             coordinator.tabPreview.endSuppression()
@@ -307,6 +427,9 @@ struct WorkspaceList<TopBar: View, BottomBar: View>: View {
             settled = true
         } else if pinDrop.isArmed {
             browser.pinAtTop(drag.items)
+            settled = true
+        } else if let space = model.armedSpaceID.flatMap({ id in coordinator.spaceMoveTargets.first { $0.id == id } }) {
+            coordinator.moveToSpace(drag.items, space: space)
             settled = true
         }
 
@@ -332,9 +455,9 @@ struct WorkspaceList<TopBar: View, BottomBar: View>: View {
         guard let hit = slots.first(where: {
             !drag.carries($0.key) && $0.value.minY <= point.y && point.y < $0.value.maxY
         }) else {
-            if let lowest = slots.values.map(\.maxY).max(), point.y > lowest {
+            if let lowest = endOfList(in: slots), point.y > lowest {
                 pinsCarried = false
-                browser.move(drag.items, into: nil, before: nil)
+                browser.move(drag.items, into: nil, before: nil, settlingPins: false)
             }
             return
         }
@@ -356,8 +479,9 @@ struct WorkspaceList<TopBar: View, BottomBar: View>: View {
         place(drag.items, before: before, of: hit.key)
     }
 
+    /// Above the pin line, so a row landing in it is pinned: a folder inside a pinned folder counts too.
     private func keepsSection(_ item: SidebarItem) -> Bool {
-        browser.isKept(item)
+        browser.isPinned(item)
     }
 
     private func lands(before isBefore: Bool, of anchor: SidebarItem) -> Bool {
@@ -406,7 +530,9 @@ struct WorkspaceList<TopBar: View, BottomBar: View>: View {
         }
     }
 
+    /// Runs at every step of a drag over the page or a drop target; it writes the list's state only when there is a dwell to end.
     private func rest() {
+        guard dwell != nil || dwelling != nil else { return }
         dwell?.cancel()
         dwell = nil
         dwelling = nil
@@ -451,12 +577,12 @@ struct SidebarDragOverlay: View {
 
     private func chipX(_ drag: SidebarDrag) -> CGFloat {
         guard !drag.landing else { return drag.origin.minX }
-        return drag.origin.minX + drag.translation.width
+        return drag.origin.minX + model.translation.width
     }
 
     private func chipY(_ drag: SidebarDrag) -> CGFloat {
         guard !drag.landing else { return model.frames[drag.lead]?.minY ?? drag.origin.minY }
-        return drag.origin.minY + drag.translation.height
+        return drag.origin.minY + model.translation.height
     }
 }
 
@@ -508,7 +634,7 @@ private struct SidebarDragStack: View {
             if !drag.isSingle {
                 Text(drag.items.count, format: .number)
                     .font(Theme.Font.badge)
-                    .foregroundStyle(.white)
+                    .foregroundStyle(Theme.onAccent)
                     .padding(.horizontal, 5)
                     .padding(.vertical, 1.5)
                     .background(Theme.accent, in: Capsule())
@@ -526,7 +652,7 @@ struct SidebarDragChip: View {
     @Environment(\.windowColorScheme) private var windowColorScheme
 
     private var glass: Glass {
-        .clear.tint(Theme.controlSurface.opacity(SidebarDragGhost.chipFillOpacity))
+        .regular.tint(Theme.controlSurface.opacity(SidebarDragGhost.chipFillOpacity))
     }
 
     var body: some View {
@@ -534,7 +660,7 @@ struct SidebarDragChip: View {
         content
             .padding(.horizontal, SidebarMetrics.rowContentPadding(style: sidebarStyle))
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .glassEffect(glass, in: shape)
+            .chromeGlass(glass, fill: Theme.controlSurface, in: shape)
             .overlay {
                 shape.strokeBorder(Color.primary.opacity(0.14), lineWidth: 0.5)
             }
@@ -547,7 +673,7 @@ struct SidebarDragChip: View {
         switch item {
         case .tab(let id):
             if let tab = browser.tab(id: id) {
-                HStack(spacing: 8) {
+                HStack(spacing: SidebarMetrics.rowIconSpacing) {
                     TabIcon(tab: tab, tint: BrowserSettings.application.sidebarTextColor(
                         isDeferred: tab.isDeferred,
                         scheme: windowColorScheme
@@ -560,20 +686,23 @@ struct SidebarDragChip: View {
                                 scheme: windowColorScheme
                             ))
                             .lineLimit(1)
+                            .sidebarTitleCentered()
                         Spacer(minLength: 0)
                     }
                 }
             }
         case .folder(let id):
             if let folder = browser.folder(id: id) {
-                HStack(spacing: 7) {
-                    Image(systemName: "folder.fill")
-                        .font(Theme.Font.caption)
-                        .foregroundStyle(folder.color.tint)
+                HStack(spacing: SidebarMetrics.rowIconSpacing) {
+                    SidebarSymbol(
+                        folder.glyph(isOpen: false), size: 10.5 * SidebarMetrics.rowIconSize / 16, box: SidebarMetrics.rowIconSize
+                    )
+                    .foregroundStyle(folder.tint(opacity: BrowserSettings.application.chromeShape.folderColorOpacity))
                     if sidebarStyle == .full {
                         Text(verbatim: folder.name)
                             .font(BrowserSettings.application.sidebarFont)
                             .foregroundStyle(BrowserSettings.application.sidebarTextColor(scheme: windowColorScheme))
+                            .sidebarTitleCentered()
                         Spacer(minLength: 0)
                     }
                 }

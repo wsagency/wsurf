@@ -7,6 +7,8 @@ import SwiftUI
 
 struct AutofillPasswordField: View {
     @Binding var password: String
+    /// Adds a copy button; the save review leaves it out.
+    var copy: (() -> Void)?
     @State private var isRevealed = false
     @FocusState private var focusedField: Field?
 
@@ -41,6 +43,9 @@ struct AutofillPasswordField: View {
                 .foregroundStyle(.secondary)
                 .accessibilityLabel(isRevealed ? "Hide password" : "Show password")
                 .help(isRevealed ? "Hide password" : "Show password")
+                if let copy {
+                    CredentialCopyButton(label: "Copy Password", action: copy).disabled(password.isEmpty)
+                }
             }
         }
         .onDisappear { isRevealed = false }

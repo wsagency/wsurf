@@ -3,7 +3,6 @@
 // Modified for WSurf by wsagency in 2026; based on Linen by Kavoye.
 // Linen portions: Apache-2.0; WSurf modifications: BUSL-1.1. See NOTICE.
 
-import AppKit
 import SwiftUI
 
 private enum DestinationLayout {
@@ -36,11 +35,6 @@ struct DestinationPage<Toolbar: View, Content: View>: View {
             .scrollContentBackground(.hidden)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(
-            Color.clear
-                .contentShape(Rectangle())
-                .onTapGesture { NSApp.keyWindow?.makeFirstResponder(nil) }
-        )
     }
 }
 

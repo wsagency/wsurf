@@ -5,94 +5,42 @@
 
 import SwiftUI
 
-enum AutofillDestination: String {
-    case passwords, credentials, cards, contacts
+/// Where a Settings search result or a deep link lands on the Autofill page: a tab, and on the Vault tab a section. Every Autofill
+/// entry of `SettingsIndex` resolves to one; the anchor itself is on the row it names, so the row is highlighted there.
+enum AutofillDestination: Equatable {
+    case vault(CredentialListFilter)
+    case inputHistory
+    case settings
 
     init?(anchor: String?) {
-        guard let anchor else { return nil }
-        self.init(rawValue: anchor == "autofill.applePay" ? "cards" : anchor.replacingOccurrences(of: "autofill.", with: ""))
+        switch anchor {
+        case "autofill.credentials":
+            self = .vault(.all)
+        case "autofill.inputHistory":
+            self = .inputHistory
+        case "autofill.passwords", "autofill.cards", "autofill.applePay", "autofill.contacts":
+            self = .settings
+        default:
+            return nil
+        }
     }
 }
 
+/// Settings > Autofill. The page is the vault's (`CredentialSettings`): its Vault and Settings tabs also hold Input History, the
+/// autofill switches and the move of the cards and addresses saved on this Mac into the vault.
 struct AutofillSettings: View {
     let coordinator: AppCoordinator
     var highlight: String?
-    @State private var destination: AutofillDestination?
-
-    private var passwordProvider: Binding<PasswordProvider> {
-        Binding(
-            get: { coordinator.context.settings.passwordProvider },
-            set: { coordinator.context.settings.passwordProvider = $0 }
-        )
-    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: SettingsMetrics.sectionSpacing) {
-            if let destination {
-                SubPageHeader(backTitle: "Autofill", onBack: { self.destination = nil }) {}
-                switch destination {
-                case .passwords:
-                    PasswordSettings(context: coordinator.context)
-                case .credentials:
-                    CredentialSettings(profile: coordinator.context.profile)
-                case .cards:
-                    PaymentCardSettings(context: coordinator.context)
-                case .contacts:
-                    ContactAutofillSettings(context: coordinator.context)
-                }
-            } else {
-                SettingsPageHeader(title: "Autofill", caption: "WSurf stores saved details on this Mac.")
-                SettingsCard {
-                    DrillInRow(title: "Passwords", symbol: "key", tint: .orange, caption: "Save and fill website logins.") { destination = .passwords }
-                    RowSeparator()
-                    DrillInRow(
-                        title: "Credential Manager",
-                        symbol: "lock.shield",
-                        tint: .indigo,
-                        caption: "Passwords, passkeys and verification codes in an encrypted vault."
-                    ) {
-                        destination = .credentials
-                    }
-                    RowSeparator()
-                    DrillInRow(title: "Payment cards", symbol: "creditcard", tint: .blue, caption: "Save and fill payment cards.") { destination = .cards }
-                    RowSeparator()
-                    DrillInRow(title: "Contacts and addresses", symbol: "person.crop.rectangle", tint: .green, caption: "Save and fill contact details.") { destination = .contacts }
-                }
-                SettingsCard {
-                    DetailRow(title: "Password provider", caption: "Choose which store fills and saves website logins. Switching never moves or deletes saved data.") {
-                        Picker("Password provider", selection: passwordProvider) {
-                            Text("Passwords").tag(PasswordProvider.legacy)
-                            Text("Credential Manager").tag(PasswordProvider.credentialManager)
-                        }.labelsHidden().fixedSize()
-                    }
-                }
-                .disabled(coordinator.context.profile.isPrivate)
-                .settingsAnchor("autofill.passwordProvider")
-                if coordinator.context.settings.passwordProvider == .credentialManager,
-                   let installed = PasswordExtensionPolicy.provider(
-                       in: coordinator.context.extensions.installed + coordinator.context.extensions.systemExtensions,
-                       selectedID: coordinator.context.settings.passwordExtensionID
-                   ) {
-                    Text("\(installed.displayName) is also enabled and may still fill passwords on its own. Turn it off in Extensions to use only Credential Manager.")
-                        .font(Theme.Font.label).foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
+            CredentialSettings(context: coordinator.context, highlight: highlight) { url in
+                // The window this page is in: the same profile, so a private window never opens a normal one.
+                coordinator.browser.newTab(url: url, activate: true, after: coordinator.browser.activeTab)
             }
         }
         .environment(\.settingsDescriptionLineLimit, 1)
         .id(coordinator.context.contextID)
-        .onChange(of: highlight, initial: true) { _, anchor in
-            if let target = AutofillDestination(anchor: anchor) {
-                destination = target
-            }
-        }
-        // A queued system import opens the credential page of the profile this window shows. Showing it fetches
-        // nothing and unlocks nothing; the import is claimed only when the user reviews it from a profile's page.
-        .onChange(of: CredentialExchangeCoordinator.shared.pendingToken, initial: true) { _, token in
-            if token != nil {
-                destination = .credentials
-            }
-        }
     }
 }
 

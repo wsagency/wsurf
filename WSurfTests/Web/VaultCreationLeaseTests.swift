@@ -6,6 +6,7 @@ import GRDB
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 // Creation authorization crosses the store boundary: every `VaultCreationAuthority` carries a creation-scoped `VaultAccess` that the
 // caller can revoke. The store checks it under the operation lock before the first durable write and again at the commit point.

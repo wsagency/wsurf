@@ -9,7 +9,8 @@ struct SiteSettingsEntry: Identifiable, Equatable {
     let origin: String
     let host: String
     var permissions: [WebPermission: PermissionPolicy] = [:]
-    var assistantAccess: AssistantAccessPolicy = .ask
+    /// `nil` follows the default; Ask is a choice like the others.
+    var assistantAccess: AssistantAccessPolicy?
     var keepsActive = false
     var blocksAutomaticPicture = false
     var allowsTrackers = false
@@ -30,7 +31,7 @@ struct SiteSettingsEntry: Identifiable, Equatable {
 
     var isEmpty: Bool {
         permissions.isEmpty
-            && assistantAccess == .ask
+            && assistantAccess == nil
             && !keepsActive
             && !blocksAutomaticPicture
             && !allowsTrackers
@@ -59,8 +60,10 @@ struct SiteSettingsEntry: Identifiable, Equatable {
         }
 
         switch assistantAccess {
-        case .ask:
+        case nil:
             break
+        case .ask:
+            phrases.append(String(localized: "assistant asks first"))
         case .readOnly:
             phrases.append(String(localized: "assistant may read"))
         case .control:
@@ -149,7 +152,7 @@ enum SiteSettingsIndex {
 
         for origin in permissions.assistantOrigins {
             var found = entry(for: origin)
-            found.assistantAccess = permissions.assistantAccess(for: origin)
+            found.assistantAccess = permissions.assistantRecord(for: origin)
             byOrigin[origin] = found
         }
 
@@ -189,9 +192,15 @@ enum SiteSettingsIndex {
             byOrigin[origin] = found
         }
 
+        var originsByHost = Dictionary(grouping: byOrigin.values, by: \.host).mapValues { $0.map(\.origin) }
+
         func origins(forHost host: String) -> [String] {
-            let matching = byOrigin.keys.filter { self.host(of: $0) == host }
-            return matching.isEmpty ? ["https://\(host)"] : Array(matching)
+            if let known = originsByHost[host] {
+                return known
+            }
+            let made = "https://\(host)"
+            originsByHost[host] = [made]
+            return [made]
         }
 
         for host in exemptHosts.map(ContentBlocker.normalized) {
@@ -213,8 +222,8 @@ enum SiteSettingsIndex {
 
         return byOrigin.values
             .filter { !$0.isEmpty }
-            .sorted { left, right in
-                left.displayName.localizedStandardCompare(right.displayName) == .orderedAscending
-            }
+            .map { ($0, $0.displayName) }
+            .sorted { $0.1.localizedStandardCompare($1.1) == .orderedAscending }
+            .map(\.0)
     }
 }

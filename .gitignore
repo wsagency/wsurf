@@ -20,6 +20,8 @@ DerivedData/
 # Swift Package Manager
 .build/
 .swiftpm/
+# A standalone `swift build` of a local package writes one; the app's Package.resolved pins the dependencies.
+/Packages/*/Package.resolved
 
 # Coverage data
 *.profraw

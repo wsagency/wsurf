@@ -4,29 +4,60 @@
 import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
+import WSurfVault
 
-/// Account, passkey and verification-code management for one profile's vault. Reached from `AutofillSettings`
-/// as its own entry, separate from the legacy Passwords page.
+/// Settings > Autofill: a vault picker, then two tabs. Vault holds every entry of the selected vault by section (Logins, Identities,
+/// Cards, Addresses, Contacts, Notes…) with Trash, plus Input History and, until they are moved, the offer to move the cards and
+/// addresses saved on this Mac into the vault. Settings holds what autofill saves and fills, the vaults, unlock passkeys, import and
+/// export.
 struct CredentialSettings: View {
+    /// How many credentials of a finished import are listed by name; the transfer message has the totals.
+    private static let listedResults = 50
     @State var model: CredentialSettingsModel
     @State private var anchor = CredentialWindowAnchor()
     @State var showsCreateWarning = false
     @State var showsMigrationConfirmation = false
     @State var showsTrash = false
+    /// Always the Vault tab when the page opens, unless a Settings search result or a deep link names another place.
+    @State private var tab = CredentialPageTab.vault
+    @State var list: CredentialListState
+    /// Which rows are selected and where the keyboard cursor is, for the credential list and the Trash.
+    @State var selection: CredentialSelection
     @State private var work: Task<Void, Never>?
     @State private var exportContext: CredentialExportContext?
+    /// The profile's autofill switches, Input History and the move of the cards and addresses saved on this Mac, which share the page
+    /// with the vault. `nil` in the page's tests, which see the vault alone.
+    private let context: BrowserProfileContext?
+    /// The Settings search result or deep link the page was opened for (`AutofillDestination`).
+    private let highlight: String?
 
-    init(profile: Profile) {
-        _model = State(initialValue: CredentialSettingsModel(profile: profile))
+    /// `openWebsite` opens an address in a new tab of the window that shows this page.
+    init(context: BrowserProfileContext, highlight: String?, openWebsite: @escaping @MainActor (URL) -> Void) {
+        let model = CredentialSettingsModel(profile: context.profile)
+        model.websiteOpener = openWebsite
+        self.init(model: model, context: context, highlight: highlight)
+    }
+
+    /// Test seam: a page over a model that already has its own manager, and the list state and selection a test can drive.
+    init(
+        model: CredentialSettingsModel, list: CredentialListState = CredentialListState(),
+        selection: CredentialSelection = CredentialSelection(), context: BrowserProfileContext? = nil, highlight: String? = nil
+    ) {
+        _model = State(initialValue: model)
+        _list = State(initialValue: list)
+        _selection = State(initialValue: selection)
+        self.context = context
+        self.highlight = highlight
     }
 
     var body: some View {
-        SettingsPageHeader(title: "Credentials")
+        // Kept by every state below. On the branching `Group` the modifier applied to each child of the current branch,
+        // and the weak anchor kept whichever view updated last, which could be one already removed from the window.
+        SettingsPageHeader(title: "Autofill", caption: "WSurf stores saved details on this Mac.")
+            .background(CredentialWindowAnchorView(anchor: anchor))
         scratchWarnings
         Group {
-            if let failClosed = model.failClosed {
-                failClosedContent(failClosed)
-            } else if !model.isAvailable {
+            if !model.isAvailable {
                 SettingsCard {
                     SettingsEmptyState(
                         symbol: "lock",
@@ -34,29 +65,58 @@ struct CredentialSettings: View {
                         caption: "Private Browsing and removed profiles don’t keep a credential vault."
                     )
                 }
-            } else if model.isLoaded {
-                unlockedContent
+                if let context {
+                    AutofillOptions(context: context)
+                }
             } else {
-                lockedContent
+                tabs
             }
         }
         .settingsAnchor("autofill.credentials")
-        .background(CredentialWindowAnchorView(anchor: anchor))
+        .onChange(of: highlight, initial: true) { _, anchor in
+            if let destination = AutofillDestination(anchor: anchor) {
+                open(destination)
+            }
+        }
+        // A queued system import is reviewed from the Vault tab. Showing it fetches nothing and unlocks nothing.
+        .onChange(of: model.pendingImportToken, initial: true) { _, token in
+            if token != nil {
+                open(.vault(.all))
+            }
+        }
         .task(id: model.authorizationEpoch) { await model.load() }
+        .task { await model.legacy.refresh() }
+        // Entries another Mac synced were written to the open vault: read it again, unless an editor or an import review is open.
+        .onChange(of: model.manager?.syncWrites) { Task { await model.reloadAfterSync() } }
+        .onChange(of: model.draft == nil && model.importReview == nil) { Task { await model.reloadIfSyncWaited() } }
         .onDisappear {
             work?.cancel()
             showsCreateWarning = false
             exportContext = nil
             model.cancelImport()
             model.close()
+            model.legacy.endSession()
         }
-        .sheet(isPresented: Binding(get: { model.draft != nil }, set: { if !$0 { model.cancelEditing() } })) {
+        .sheet(
+            isPresented: Binding(get: { model.draft != nil }, set: { if !$0 { model.cancelEditing() } }),
+            onDismiss: { selection.takeKeyboard() }
+        ) {
             CredentialEditorSheet(model: model)
         }
         .sheet(
             isPresented: Binding(get: { model.importReview != nil }, set: { if !$0 { model.cancelImport() } })
         ) {
             CredentialImportReviewSheet(model: model, run: run)
+        }
+        .sheet(
+            isPresented: Binding(get: { model.syncReview != nil }, set: { if !$0 { model.closeSyncReview() } })
+        ) {
+            VaultSyncReviewSheet(
+                conflicts: model.syncReview ?? [],
+                isBusy: model.isBusy,
+                resolve: { ids, keepLocal in Task { await model.resolveSync(ids, keepLocal: keepLocal) } },
+                done: { model.closeSyncReview() }
+            )
         }
         .sheet(item: $exportContext) { context in
             CredentialExportSheet(model: model, csv: context.csv) { selection in
@@ -76,24 +136,21 @@ struct CredentialSettings: View {
                 }
             }
         }
-        // The sheet's revision and epoch are only meaningful for the authorization it was opened under.
+        // The sheet's revision and epoch are only meaningful for the authorization it was opened under, and a search or filter
+        // belongs to the vault it was typed in.
         .onChange(of: model.authorizationEpoch) {
             exportContext = nil
             showsTrash = false
+            list.reset()
+            selection.reset()
+            model.legacy.endSession()
         }
-        .confirmationDialog(
-            "Remove Credential?",
-            isPresented: Binding(get: { model.pendingRemoval != nil }, set: { if !$0 { model.cancelRemoval() } }),
-            presenting: model.pendingRemoval
-        ) { pending in
-            // The captured value carries the revision and epoch it was presented at; the model rejects a stale one.
-            Button("Remove Credential", role: .destructive) {
-                run { _ = try await model.confirmRemoval(pending) }
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: { pending in
-            Text("Remove “\(pending.summary.title)” and everything saved with it, including passkeys and verification codes?")
+        .onChange(of: model.selectedVaultID) {
+            showsTrash = false
+            list.reset()
+            selection.reset()
         }
+        .legacyRemovalDialog(model: model, run: run)
         .confirmationDialog(
             "Remove Unlock Passkey?",
             isPresented: Binding(get: { model.pendingUnlockRemoval != nil && !model.isBusy }, set: { _ in }),
@@ -121,6 +178,7 @@ struct CredentialSettings: View {
         }
         .sheet(isPresented: $showsCreateWarning) {
             CredentialNewVaultSheet(
+                suggestedName: model.suggestedVaultName,
                 canUseNewPasskey: model.canCreateWithNewPasskey,
                 existingPasskeys: model.existingPasskeys
             ) { name, choice in
@@ -130,18 +188,128 @@ struct CredentialSettings: View {
                 showsCreateWarning = false
             }
         }
-        .sheet(isPresented: Binding(get: { model.versionsAccountID != nil }, set: { if !$0 { model.closeVersions() } })) {
-            CredentialVersionsSheet(model: model, run: run)
+    }
+
+    // MARK: Tabs
+
+    /// The tab bar with the vault picker beside it, then what the chosen tab shows. The transfer ending sits above both tabs, so it
+    /// is seen wherever the user is when an import or export finishes.
+    @ViewBuilder
+    private var tabs: some View {
+        HStack(spacing: 10) {
+            SegmentedControl(
+                items: [.init(value: .vault, label: "Vault"), .init(value: .settings, label: "Settings")],
+                selection: tab,
+                onSelect: { next in
+                    if next != .vault {
+                        leaveTrash()
+                    }
+                    tab = next
+                }
+            )
+            .frame(width: 260)
+            Spacer(minLength: 0)
+            CredentialVaultPicker(model: model, run: run)
+        }
+        if model.isLoaded {
+            transferEnding
+        }
+        switch tab {
+        case .vault:
+            vaultTab
+        case .settings:
+            if let context {
+                AutofillOptions(context: context)
+            }
+            vaultContent { settingsTab } locked: { lockedSettings }
+        }
+    }
+
+    /// The sections, then the vault's entries (or Input History).
+    @ViewBuilder
+    private var vaultTab: some View {
+        // Vaults other Macs synced, entries waiting for a choice and a removal from iCloud are told whatever the vault's state.
+        VaultSyncCard(model: model, withWindow: withWindow, showSettings: { open(.settings) })
+        // The import of the passwords saved before Credential Manager is on the Settings tab; a locked vault says so in its own card.
+        // The cards and addresses saved on this Mac move into the open vault from their own card.
+        if model.presentation == .content, !showsTrash, !list.showsInputHistory {
+            LegacyPasswordCard(state: model.legacy.state) { open(.settings) }
+            if context != nil {
+                AutofillMigrationCard(model: model)
+            }
+        }
+        if !showsTrash {
+            VaultSectionBar(list: list, showsCounts: model.presentation == .content, offersInputHistory: context != nil)
+        }
+        if list.showsInputHistory, let context {
+            InputHistorySettings(context: context, vaults: model.vaults, selectedVaultID: model.selectedVaultID)
+        } else {
+            vaultContent { credentialsTab } locked: { lockedCredentials }
+        }
+    }
+
+    /// What a tab shows of the vault for its state; only the branch shown is built. A store that refused to open shows only its paths
+    /// and a re-check, on both tabs, while the rest of Autofill stays usable.
+    @ViewBuilder
+    private func vaultContent<Content: View, Locked: View>(
+        @ViewBuilder content: () -> Content, @ViewBuilder locked: () -> Locked
+    ) -> some View {
+        if let failClosed = model.failClosed {
+            failClosedContent(failClosed)
+        } else {
+            switch model.presentation {
+            case .opening:
+                openingPlaceholder
+            case .content:
+                content()
+            case .locked:
+                locked()
+            }
+        }
+    }
+
+    /// Opens the tab and section a Settings search result, a deep link or a queued import names. Leaving the Trash deletes what was
+    /// marked there, as its Active switch does.
+    private func open(_ destination: AutofillDestination) {
+        if showsTrash {
+            leaveTrash()
+            selection.reset()
+            showsTrash = false
+        }
+        switch destination {
+        case .vault(let filter):
+            tab = .vault
+            list.showsInputHistory = false
+            list.filter = filter
+        case .inputHistory:
+            tab = .vault
+            list.showsInputHistory = true
+        case .settings:
+            tab = .settings
+        }
+    }
+
+    // MARK: Opening
+
+    /// Until the first load ends the vault may well be unlocked already, so this says nothing of a lock, offers no Unlock and lists no vault.
+    private var openingPlaceholder: some View {
+        SettingsCard {
+            VStack(spacing: 12) {
+                Spinner(size: 22)
+                Text("Opening…").font(Theme.Font.row)
+            }
+            .foregroundStyle(.secondary)
+            .padding(.vertical, 24)
+            .frame(maxWidth: .infinity, minHeight: 160)
         }
     }
 
     // MARK: Locked
 
+    /// A locked vault shows no content, so this tab holds only the way in. A profile with several vaults picks which one to open with
+    /// the picker beside the tabs.
     @ViewBuilder
-    private var lockedContent: some View {
-        if model.vaults.count > 1 {
-            vaultsSection
-        }
+    private var lockedCredentials: some View {
         SettingsCard {
             VStack(spacing: 12) {
                 if model.isBusy {
@@ -163,6 +331,7 @@ struct CredentialSettings: View {
                     Text(lockedCaption)
                         .font(Theme.Font.label)
                         .fixedSize(horizontal: false, vertical: true)
+                    legacyLockedHint
                     if let token = model.pendingImportToken {
                         Text("""
                             Unlock the profile “\(model.profile.name)” to review the credentials another app is \
@@ -195,8 +364,15 @@ struct CredentialSettings: View {
             .padding(.vertical, 24)
             .frame(maxWidth: .infinity, minHeight: 160)
         }
-        // The same entries as the unlocked page, visible but off, so it is clear why nothing can be imported or exported yet.
+    }
+
+    /// The vaults stay reachable, and the entries of the unlocked tab stay visible but off.
+    @ViewBuilder
+    private var lockedSettings: some View {
+        vaultsSection
+        // The same entries as the unlocked tab, visible but off, so it is clear why nothing can be imported or exported yet.
         SettingsSection(title: "Import & Export", symbol: "arrow.up.arrow.down", footnote: lockedTransferReason) {
+            AutofillImportRows(model: model) { showsCreateWarning = true }
             DetailRow(title: "Import passwords from a CSV file") {
                 Button("Choose File…") {}.buttonStyle(.bordered).disabled(true)
             }
@@ -247,14 +423,14 @@ struct CredentialSettings: View {
         case .none, .exportAgain:
             EmptyView()
         case .checkSavedCredentials:
-            Button("Check Saved Credentials") {
-                showsTrash = false
+            Button("Show Credentials") {
+                open(.vault(.all))
                 model.dismissTransferMessage()
             }
         }
     }
 
-    private func openExport(csv: Bool = false) {
+    func openExport(csv: Bool = false) {
         guard let epoch = model.authorizationEpoch else { return }
         exportContext = CredentialExportContext(epoch: epoch, csv: csv)
     }
@@ -302,72 +478,11 @@ struct CredentialSettings: View {
         return parts.joined(separator: " · ")
     }
 
-    // MARK: Unlocked
+    // MARK: Transfer ending
 
+    /// Above both tabs while the vault is open.
     @ViewBuilder
-    private var unlockedContent: some View {
-        vaultsSection
-        SettingsSection(
-            title: "Import & Export",
-            symbol: "arrow.up.arrow.down",
-            footnote: """
-                A CSV file holds passwords with their websites only, and isn’t encrypted: delete it once you have used it. \
-                Passkeys and verification codes can only be moved with Export… and the system’s credential exchange.
-                """
-        ) {
-            if let token = model.pendingImportToken {
-                DetailRow(
-                    verbatimTitle: String(localized: "Credentials from another app"),
-                    verbatimCaption: String(localized: """
-                        Sent to the profile “\(model.profile.name)”. Nothing is saved until you review and confirm. \
-                        Dismiss declines them; to import them later, send them again from the other app.
-                        """)
-                ) {
-                    HStack(spacing: 8) {
-                        Button("Review…") { run { await model.beginImport() } }
-                        Button("Dismiss") { model.discardPendingImport(token: token) }
-                    }
-                    .buttonStyle(.bordered)
-                    .disabled(model.isBusy)
-                }
-                RowSeparator()
-            }
-            DetailRow(title: "Import passwords from a CSV file") {
-                Button("Choose File…") { importCSV() }
-                    .buttonStyle(.bordered)
-                    .disabled(model.isBusy)
-            }
-            RowSeparator()
-            DetailRow(title: "Export to another app") {
-                Button("Export…") { openExport() }
-                    .buttonStyle(.bordered)
-                    .disabled(model.isBusy || model.summaries.isEmpty)
-            }
-            RowSeparator()
-            DetailRow(title: "Export passwords to a CSV file") {
-                Button("Export to CSV…") { openExport(csv: true) }
-                    .buttonStyle(.bordered)
-                    .disabled(model.isBusy || model.summaries.filter(CredentialCSVExport.isExportable).isEmpty)
-            }
-        }
-        if model.hasUnconfirmedPasskeys {
-            SettingsSection(
-                title: "Passkeys not confirmed with the website",
-                symbol: "exclamationmark.triangle",
-                footnote: """
-                    These passkeys were saved here, but WSurf could not confirm that the website received them. \
-                    Test sign-in on the website; remove any passkey that does not work. Dismiss only hides this \
-                    notice.
-                    """
-            ) {
-                ForEach(model.unconfirmedPasskeys) { item in
-                    DetailRow(verbatimTitle: String(localized: "\(item.userName) on \(item.rpID)")) { EmptyView() }
-                }
-                DetailRow(title: "Notice") {
-                    Button("Dismiss") { model.dismissUnconfirmedPasskeys() }.buttonStyle(.bordered)
-                }
-            }
-        }
+    private var transferEnding: some View {
         // One ending for a transfer, from the model: its text, the one next step it allows, and (after a saved import) what
         // became of each credential. Dismissing it removes all of it; nothing here repeats it.
         if let message = model.transferMessage {
@@ -383,45 +498,26 @@ struct CredentialSettings: View {
                     .buttonStyle(.bordered)
                 }
                 if message.receipt != nil, let results = model.lastImport?.results {
-                    ForEach(results) { result in
+                    // A real import is thousands of credentials: the first rows, and the count of the rest (the message has the totals).
+                    ForEach(results.prefix(Self.listedResults)) { result in
                         RowSeparator()
                         DetailRow(verbatimTitle: result.title, verbatimCaption: resultCaption(result)) { EmptyView() }
+                    }
+                    if results.count > Self.listedResults {
+                        RowSeparator()
+                        DetailRow(verbatimTitle: String(localized: "and \(results.count - Self.listedResults) more")) { EmptyView() }
                     }
                 }
             }
         }
-        if showsTrash {
-            trashSection
-        } else {
-            SettingsSection(
-                title: "Saved credentials",
-                symbol: "key",
-                footnote: "Passwords, passkeys and verification codes stay hidden until you reveal or copy them.",
-                accessory: {
-                    HStack(spacing: 10) {
-                        listSwitch
-                        ToolbarChip(symbol: "plus", label: "Add Credential") {
-                            run { try await model.beginEditing(accountID: nil) }
-                        }
-                        .disabled(model.isBusy)
-                        ToolbarChip(symbol: "lock", label: "Lock") { model.lock() }
-                    }
-                },
-                content: {
-                    if model.summaries.isEmpty {
-                        SettingsEmptyState(symbol: "key", title: "No saved credentials", caption: "Add a login, passkey or verification code to see it here.")
-                    }
-                    ForEach(model.summaries) { summary in
-                        CredentialRow(
-                            model: model, summary: summary, run: run,
-                            remove: { model.requestRemoval(accountID: summary.id) },
-                            versions: { run { try await model.loadVersions(accountID: summary.id) } }
-                        )
-                    }
-                    AutofillPageStatus(isBusy: model.isBusy, error: model.error, kind: .password)
-                }
-            )
-        }
+    }
+
+    // MARK: Settings tab
+
+    @ViewBuilder
+    private var settingsTab: some View {
+        AutofillPageStatus(isBusy: model.isBusy, error: model.error, kind: .password)
+        vaultsSection
         SettingsSection(
             title: "Unlock passkeys",
             symbol: "person.badge.key",
@@ -447,6 +543,36 @@ struct CredentialSettings: View {
                 }
             }
         )
+        statisticsSection
+        SettingsSection(
+            title: "Import & Export",
+            symbol: "arrow.up.arrow.down",
+            footnote: """
+                A CSV file holds passwords with their websites only, and isn’t encrypted: delete it once you have used it. \
+                Passkeys and verification codes can only be moved with Export… and the system’s credential exchange.
+                """
+        ) {
+            legacyImportRows
+            AutofillImportRows(model: model) { showsCreateWarning = true }
+            DetailRow(title: "Import passwords from a CSV file") {
+                Button("Choose File…") { importCSV() }
+                    .buttonStyle(.bordered)
+                    .disabled(model.isBusy)
+            }
+            RowSeparator()
+            DetailRow(title: "Export to another app") {
+                Button("Export…") { openExport() }
+                    .buttonStyle(.bordered)
+                    .disabled(model.isBusy || model.summaries.isEmpty)
+            }
+            RowSeparator()
+            DetailRow(title: "Export passwords to a CSV file") {
+                Button("Export to CSV…") { openExport(csv: true) }
+                    .buttonStyle(.bordered)
+                    .disabled(model.isBusy || !model.summaries.contains(where: CredentialCSVExport.isExportable))
+            }
+        }
+        saveSuggestionsCard
     }
 
     // MARK: Actions
@@ -479,12 +605,18 @@ struct CredentialSettings: View {
 
 // MARK: - Row
 
-private struct CredentialRow: View {
+struct CredentialRow: View {
     let model: CredentialSettingsModel
     let summary: CredentialSummary
+    /// Read here, row by row, so a change redraws only the rows that are built.
+    let selection: CredentialSelection
     let run: (@escaping () async throws -> Void) -> Void
-    let remove: () -> Void
-    let versions: () -> Void
+    /// Moves credentials to the Trash, without a dialog: this one, or the selection it is part of.
+    let trash: ([UUID]) -> Void
+    /// Merges credentials: this one with its suggestion or the ones the user selects next, or the selection it is part of.
+    let merge: ([UUID]) -> Void
+    let open: () -> Void
+    let history: () -> Void
 
     private var host: String {
         summary.origins.lazy.compactMap { URL(string: $0)?.host }.first ?? summary.title
@@ -505,29 +637,73 @@ private struct CredentialRow: View {
             parts.append(String(localized: "\(summary.passkeys.count) passkeys"))
         }
         if summary.hasTOTP { parts.append(String(localized: "Verification code")) }
+        if summary.hasNotes { parts.append(String(localized: "Notes")) }
+        parts += summary.itemTitles
+        if summary.fileCount == 1 {
+            parts.append(String(localized: "1 file"))
+        } else if summary.fileCount > 1 {
+            parts.append(String(localized: "\(summary.fileCount) files"))
+        }
         return parts.joined(separator: " · ")
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            SiteRow(host: host, summary: detail.isEmpty ? nil : detail) {
+            SiteRow(host: host, summary: detail.isEmpty ? nil : detail, caption: summary.dates.caption(style: .list)) {
                 HStack(spacing: 8) {
                     actions
-                    Button("Edit…") { run { try await model.beginEditing(accountID: summary.id) } }
+                    if let website = summary.website {
+                        Button {
+                            model.openWebsite(website)
+                        } label: {
+                            Image(systemName: "arrow.up.forward.square")
+                        }
+                        .help("Open Website in a New Tab")
+                        .accessibilityLabel("Open website of \(summary.title) in a new tab")
+                    }
+                    Button("Edit…", action: open)
                         .disabled(model.isBusy)
-                    Button("Remove", role: .destructive, action: remove)
+                    Button("Remove", role: .destructive) { trash([summary.id]) }
                         .disabled(model.isBusy)
+                        .help("Move to Trash")
+                        .accessibilityLabel("Move \(summary.title) to Trash")
                 }
                 .buttonStyle(.bordered).fixedSize()
             }
             revealed
         }
+        .credentialRowSelection(
+            selection, id: summary.id, title: summary.title, open: open, remove: { trash([summary.id]) }, removeName: "Move to Trash"
+        )
+        .accessibilityAction(named: "Open", open)
+        .accessibilityAction(named: "Open Website") { model.openWebsite(summary.website) }
+        // A view of its own: the selection state the menu reads redraws the menu, never this row (its detail, dates and buttons).
+        .contextMenu {
+            CredentialRowMenu(model: model, summary: summary, selection: selection, run: run, trash: trash, merge: merge, open: open)
+        }
     }
 
     private var actions: some View {
         Menu {
+            if summary.usernameIsConcealed || summary.username != nil {
+                Button("Copy Username") { run { try await model.copy(.username, of: .stored(summary.id)) } }
+            }
             if summary.hasPassword {
                 Button("Copy Password") { run { try await model.copyPassword(accountID: summary.id) } }
+            }
+            if !summary.origins.isEmpty {
+                Button("Copy Website") { run { try await model.copy(.website(0), of: .stored(summary.id)) } }
+            }
+            if summary.hasTOTP {
+                Button("Copy Verification Code") { run { try await model.copyTOTP(accountID: summary.id) } }
+            }
+            // A card's or an ID document's hidden value asks for Touch ID before it is copied.
+            ForEach(summary.hiddenItemFields, id: \.self) { reference in
+                Button("Copy \(reference.label)") {
+                    run { try await model.copy(.secureField(item: reference.item, field: reference.field), of: .stored(summary.id)) }
+                }
+            }
+            if summary.hasPassword {
                 if model.revealedPassword?.accountID == summary.id {
                     Button("Hide Password") { model.hideSecrets() }
                 } else {
@@ -542,14 +718,23 @@ private struct CredentialRow: View {
                 }
             }
             if summary.hasTOTP {
-                Button("Copy Verification Code") { run { try await model.copyTOTP(accountID: summary.id) } }
                 if model.shownTOTPAccountID == summary.id {
                     Button("Hide Verification Code") { model.hideSecrets() }
                 } else {
                     Button("Show Verification Code") { run { try await model.showTOTP(accountID: summary.id) } }
                 }
             }
-            Button("Earlier Versions…", action: versions)
+            if !summary.itemKinds.isEmpty {
+                if model.revealedItems?.accountID == summary.id {
+                    Button("Hide Details") { model.hideSecrets() }
+                } else {
+                    Button("Show Details") { run { try await model.revealSecureItems(accountID: summary.id) } }
+                }
+            }
+            Divider()
+            Button("History…", action: history)
+            Button("Merge…") { merge(selection.menuTargets(for: summary.id)) }
+                .disabled(model.isBusy)
         } label: {
             Image(systemName: "ellipsis.circle")
                 .accessibilityLabel("More actions for \(summary.title)")
@@ -565,6 +750,15 @@ private struct CredentialRow: View {
         }
         if let password = model.revealedPassword, password.accountID == summary.id {
             revealedLine("Password", value: password.value)
+        }
+        if let revealed = model.revealedItems, revealed.accountID == summary.id {
+            ForEach(revealed.items.indices, id: \.self) { index in
+                let item = revealed.items[index]
+                Text(verbatim: item.title).font(Theme.Font.label).fontWeight(.medium)
+                ForEach(item.fields.indices, id: \.self) { position in
+                    revealedItemLine(item, index: index, position: position)
+                }
+            }
         }
         if model.shownTOTPAccountID == summary.id {
             // Ticks only while this row shows a code, which only exists while the vault is unlocked.
@@ -587,6 +781,26 @@ private struct CredentialRow: View {
         }
     }
 
+    /// One value of a shown item. Copying it reads the vault again (and asks for Touch ID for a card's or a document's hidden value).
+    private func revealedItemLine(_ item: SecureItem, index: Int, position: Int) -> some View {
+        let field = item.fields[position]
+        let title = item.label(of: field)
+        return HStack(spacing: 8) {
+            Text(verbatim: title).foregroundStyle(.secondary)
+            Text(verbatim: field.value)
+                .font(.system(.body, design: .monospaced))
+                .lineLimit(3)
+                .textSelection(.enabled)
+                .privacySensitive()
+            Spacer(minLength: 0)
+            CredentialCopyButton(label: "Copy \(title)", extent: 18) {
+                run { try await model.copy(.secureField(item: index, field: position), of: .stored(summary.id)) }
+            }
+        }
+        .font(Theme.Font.label)
+        .accessibilityElement(children: .contain)
+    }
+
     private func revealedLine(_ title: LocalizedStringResource, value: String) -> some View {
         HStack(spacing: 8) {
             Text(title).foregroundStyle(.secondary)
@@ -601,215 +815,62 @@ private struct CredentialRow: View {
     }
 }
 
-// MARK: - Editor
+// MARK: - Row menu
 
-private struct CredentialEditorSheet: View {
+/// The right-click menu of one credential row (`CredentialSelection.menu(for:)` decides which entries, and on which credentials). It reads
+/// the row's selection state itself, so selecting rows redraws this menu and not the row that owns it.
+private struct CredentialRowMenu: View {
     let model: CredentialSettingsModel
-    @State private var totpInput = ""
-    @State private var totpError: String?
-    @State private var isSaving = false
-    @State private var saving: Task<Void, Never>?
-    @State private var pendingPasskeyRemoval: PasskeySummary?
+    let summary: CredentialSummary
+    let selection: CredentialSelection
+    let run: (@escaping () async throws -> Void) -> Void
+    let trash: ([UUID]) -> Void
+    let merge: ([UUID]) -> Void
+    let open: () -> Void
 
     var body: some View {
-        if let draft = model.draft {
-            VStack(alignment: .leading, spacing: 18) {
-                Group {
-                    if draft.isNew { Text("Add Credential") } else { Text("Edit Credential") }
-                }
-                .font(.headline)
-                Form {
-                    TextField("Name", text: optionalText(\.displayName))
-                    if draft.usernameIsConcealed {
-                        ConcealedUsernameField(username: text(\.username))
-                    } else {
-                        TextField("Username or email", text: text(\.username))
-                    }
-                    AutofillPasswordField(password: optionalText(\.password))
-                    Button("Generate Strong Password") {
-                        do {
-                            model.draft?.password = try SavedPassword.generate()
-                        } catch {
-                            model.error = String(localized: "Couldn’t generate a password.")
-                        }
-                    }
-                    LabeledContent("Websites (one HTTPS address per line)") {
-                        WebsiteListField(
-                            kind: .websites, label: "Websites (one HTTPS address per line)", lineLimit: 1...4, text: text(\.websites)
-                        )
-                    }
-                    LabeledContent("Other HTTPS origins (one per line)") {
-                        WebsiteListField(
-                            kind: .extraOrigins, label: "Other HTTPS origins (one per line)", lineLimit: 1...3, text: text(\.extraOrigins)
-                        )
-                    }
-                }
-                .textFieldStyle(.roundedBorder)
-                totp(draft)
-                passkeys(draft)
-                if let error = model.error {
-                    Text(verbatim: error).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                }
-                HStack {
-                    Spacer()
-                    Button("Cancel", role: .cancel) { model.error = nil; model.cancelEditing() }
-                        .keyboardShortcut(.cancelAction)
-                    Button("Save") {
-                        isSaving = true
-                        saving = Task {
-                            await model.attempt { _ = try await model.commitDraft() }
-                            isSaving = false
-                        }
-                    }
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(isSaving)
-                }
-            }
-            .padding(24)
-            .frame(width: 520)
-            .onDisappear { totpInput = ""; saving?.cancel() }
-            .confirmationDialog(
-                "Remove Passkey?",
-                isPresented: Binding(
-                    get: { pendingPasskeyRemoval != nil },
-                    set: { if !$0 { pendingPasskeyRemoval = nil } }
-                ),
-                presenting: pendingPasskeyRemoval
-            ) { passkey in
-                Button("Remove Passkey", role: .destructive) {
-                    model.draft?.removePasskey(passkey.id)
-                    pendingPasskeyRemoval = nil
-                }
-                Button("Cancel", role: .cancel) { pendingPasskeyRemoval = nil }
-            } message: { passkey in
-                Text("""
-                    Remove passkey \(passkey.id.uuidString) for \(passkey.rpID)?
-                    Only this local copy is removed.
-                    The website registration and any other exported copies remain. Save to apply.
-                    """)
-            }
-        }
+        ForEach(selection.menu(for: summary), id: \.self, content: menuItem)
     }
 
+    /// One entry of the menu.
     @ViewBuilder
-    private func totp(_ draft: CredentialDraft) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Verification code").font(Theme.Font.rowTitle)
-            if let generator = draft.totp {
-                HStack {
-                    Text(verbatim: [generator.issuer, generator.userName].compactMap { $0 }.joined(separator: " · "))
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    Button("Remove Verification Code", role: .destructive) { model.draft?.removeTOTP() }
-                }
-            } else {
-                HStack {
-                    SecureField("Setup key or otpauth:// link", text: $totpInput).textFieldStyle(.roundedBorder)
-                    Button("Set Up") {
-                        do {
-                            try model.draft?.setUpTOTP(totpInput)
-                            totpInput = ""
-                            totpError = nil
-                        } catch {
-                            totpError = String(localized: "Enter a valid setup key or otpauth:// link.")
-                        }
-                    }
-                    .disabled(totpInput.isEmpty)
-                }
-                if let totpError {
-                    Text(verbatim: totpError).foregroundStyle(.secondary)
+    private func menuItem(_ item: CredentialRowMenuItem) -> some View {
+        switch item {
+        case .openWebsite(let url):
+            Button("Open Website") { model.openWebsite(url) }
+        case .copyUsername:
+            Button("Copy Username") { run { try await model.copy(.username, of: .stored(summary.id)) } }
+        case .copyPassword:
+            Button("Copy Password") { run { try await model.copyPassword(accountID: summary.id) } }
+        case .edit:
+            Divider()
+            Button("Edit…", action: open).disabled(model.isBusy)
+        // The targets are read on click, so the menu costs the same however many credentials are selected.
+        case .merge(let ofSelection):
+            Group {
+                if ofSelection {
+                    Button("Merge Selected Credentials…") { merge(selection.menuTargets(for: summary.id)) }
+                } else {
+                    Button("Merge…") { merge([summary.id]) }
                 }
             }
-        }
-    }
-
-    @ViewBuilder
-    private func passkeys(_ draft: CredentialDraft) -> some View {
-        if !draft.passkeySummaries.isEmpty {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Passkeys").font(Theme.Font.rowTitle)
-                ForEach(draft.passkeySummaries) { passkey in
-                    HStack {
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text(verbatim: "\(passkey.rpID) · \(passkey.userName) · \(passkey.id.uuidString)")
-                            Text(verbatim: passkeyMetadata(passkey))
-                                .foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                        Button("Remove", role: .destructive) { pendingPasskeyRemoval = passkey }
-                            .accessibilityLabel("Remove passkey \(passkey.id.uuidString) for \(passkey.rpID)")
-                    }
+            .disabled(model.isBusy)
+        case .moveToTrash(let ofSelection):
+            Group {
+                if ofSelection {
+                    Button("Move Selected Credentials to Trash", role: .destructive) { trash(selection.menuTargets(for: summary.id)) }
+                } else {
+                    Button("Move to Trash", role: .destructive) { trash([summary.id]) }
                 }
             }
+            .disabled(model.isBusy)
+        case .select:
+            Divider()
+            Button("Select") { selection.beginSelecting(with: summary.id) }
+        case .deselect:
+            Divider()
+            Button("Deselect") { selection.toggle(summary.id) }
         }
-    }
-
-    private func passkeyMetadata(_ passkey: PasskeySummary) -> String {
-        let source: String
-        switch passkey.source {
-        case .some(.created):
-            source = String(localized: "Created in WSurf")
-        case .some(.imported):
-            source = String(localized: "Imported")
-        case nil:
-            source = String(localized: "Source unknown")
-        }
-        let created = passkey.createdAt.map { date in
-            let timestamp = date.formatted(date: .abbreviated, time: .shortened)
-            let relativeAge = date.formatted(.relative(presentation: .named))
-            return String(localized: "Created \(timestamp) (\(relativeAge))")
-        } ?? String(localized: "Creation date unknown")
-        let signed = passkey.lastSignedAt.map {
-            String(localized: "Last local signature \($0.formatted(date: .abbreviated, time: .shortened))")
-        } ?? String(localized: "No local signature recorded")
-        return [source, created, signed].joined(separator: " · ")
-    }
-
-    private func text(_ keyPath: WritableKeyPath<CredentialDraft, String>) -> Binding<String> {
-        Binding(get: { model.draft?[keyPath: keyPath] ?? "" }, set: { model.draft?[keyPath: keyPath] = $0 })
-    }
-
-    /// An emptied field means "absent", matching how the vault stores optional values.
-    private func optionalText(_ keyPath: WritableKeyPath<CredentialDraft, String?>) -> Binding<String> {
-        Binding(
-            get: { model.draft?[keyPath: keyPath] ?? "" },
-            set: { model.draft?[keyPath: keyPath] = $0.isEmpty ? nil : $0 }
-        )
-    }
-}
-
-private struct ConcealedUsernameField: View {
-    @Binding var username: String
-    @State private var isRevealed = false
-
-    private var toggleLabel: LocalizedStringKey { isRevealed ? "Hide username" : "Show username" }
-
-    var body: some View {
-        LabeledContent("Username") {
-            HStack(spacing: 6) {
-                Group {
-                    if isRevealed {
-                        TextField("Username", text: $username).autocorrectionDisabled()
-                    } else {
-                        SecureField("Username", text: $username)
-                    }
-                }
-                .labelsHidden()
-                .privacySensitive()
-                Button {
-                    isRevealed.toggle()
-                } label: {
-                    Image(systemName: isRevealed ? "eye.slash" : "eye")
-                        .frame(width: 24, height: 24)
-                        .contentShape(.rect)
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
-                .accessibilityLabel(toggleLabel)
-                .help(toggleLabel)
-            }
-        }
-        .onDisappear { isRevealed = false }
     }
 }
 

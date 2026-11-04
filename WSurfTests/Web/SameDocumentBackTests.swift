@@ -30,11 +30,19 @@ struct SameDocumentBackTests {
         return (tab, page, server)
     }
 
+    /// The push a click on GitHub makes, so with a user gesture: WebKit on macOS 27, for apps built with its SDK, hides entries a
+    /// script added without one from Back and Forward (AllBackForwardItemsWithoutUserGestureInvisibleToUI), and canGoForward
+    /// stays false.
+    private func pushDiscussion(on tab: BrowserTab) async throws {
+        _ = try await tab.page.evaluateJavaScript(
+            "history.pushState({}, '', '#discussion_r1')", in: nil, contentWorld: .page, userGesture: true)
+    }
+
     @Test func goingBackToAPushStateEntryEndsTheLoadingState() async throws {
         let (tab, page, server) = try await servedTab()
         _ = server
 
-        _ = try? await tab.page.evaluateJavaScript("history.pushState({}, '', '#discussion_r1')")
+        _ = try? await pushDiscussion(on: tab)
         #expect(await waitUntil { tab.canGoBack && tab.urlString.hasSuffix("#discussion_r1") })
 
         tab.goBack()
@@ -47,8 +55,8 @@ struct SameDocumentBackTests {
         let (tab, page, server) = try await servedTab()
         _ = server
 
-        _ = try? await tab.page.evaluateJavaScript("history.pushState({}, '', '#discussion_r1')")
-        #expect(await waitUntil { tab.canGoBack })
+        _ = try? await pushDiscussion(on: tab)
+        #expect(await waitUntil { tab.canGoBack && tab.urlString.hasSuffix("#discussion_r1") })
         tab.goBack()
         #expect(await waitUntil { tab.canGoForward && tab.urlString == page.absoluteString })
 

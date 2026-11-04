@@ -7,6 +7,7 @@ import GRDB
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 // Task 6: grants, listing/discovery and the operation lock of every database operation (the second half of `VaultStoreUnlockTests`,
 // split out to keep that file small). The shared plumbing (`unlockResult`, `secondVault`, ...) lives in VaultStoreUnlockTests.swift.

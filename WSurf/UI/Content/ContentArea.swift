@@ -11,6 +11,10 @@ struct ContentArea: View {
     let coordinator: AppCoordinator
     let settingsWorkspace: SettingsWorkspace
     let canvasTrailingInset: CGFloat
+    /// The Minimal window has no toolbar: the page starts at the theme's page spacing.
+    var isFullHeight = false
+    /// How far below the page's top edge the find bar sits; lower under a Minimal bar at the top.
+    var findBarTop: CGFloat = 10
 
     @State private var pull = PullToRefreshMonitor()
     @State private var pullState = PullState.idle
@@ -29,13 +33,16 @@ struct ContentArea: View {
     var body: some View {
         LoomPageCanvas(
             trailingInset: canvasTrailingInset,
-            showsPanelFill: showsPagePanelFill
+            showsPanelFill: showsPagePanelFill,
+            topInset: isFullHeight ? BrowserSettings.application.chromeShape.pageSpacing : LoomChrome.canvasTop
         ) {
             page
         }
         .onAppear {
             pull.pageProvider = { browser.activeTab?.page }
-            pull.isCovered = { coordinator.isPaletteOpen || coordinator.onboarding.isPresented }
+            pull.isCovered = {
+                coordinator.isPaletteOpen || coordinator.onboarding.isPresented || browser.activeTab?.reader.isActive == true
+            }
             pull.onChange = { state, animation in
                 if let animation {
                     withAnimation(animation) { pullState = state }
@@ -56,7 +63,7 @@ struct ContentArea: View {
     private var pullsAWebPage: Bool {
         guard !coordinator.isShowingSettings else { return false }
         guard let tab = browser.activeTab else { return false }
-        return tab.internalPage == nil && !showStartPage && browser.activeSplit == nil
+        return tab.internalPage == nil && !showStartPage && browser.activeSplit == nil && !tab.reader.isActive
     }
 
     private var landing: SplitDropPlan.Target? {
@@ -124,7 +131,7 @@ struct ContentArea: View {
                     FindBar(session: tab.find)
                 }
                 .id(tab.id)
-                .padding(.top, 10)
+                .padding(.top, findBarTop)
                 .padding(.trailing, 14)
                 .zIndex(5)
                 .transition(.move(edge: .top).combined(with: .opacity))
@@ -164,7 +171,13 @@ private struct KeptAliveTabs: View {
                 && tab.page !== media.model.picturePage
         }
         ForEach(kept) { tab in
-            WebViewRepresentable(page: tab.page, parksWhenIdle: true)
+            // A favorite with nothing going on stays loaded and in its window but, once it has waited a while, hidden, so its page
+            // runs no animation frames and paints nothing (`BrowserTab.reconsiderBackgroundHiding`).
+            WebViewRepresentable(
+                page: tab.page,
+                parksWhenIdle: true,
+                hidesPage: media.controlledTabID != tab.id && tab.hidesPageInBackground
+            )
                 .id(tab.id)
                 .opacity(0)
                 .allowsHitTesting(false)
@@ -189,6 +202,12 @@ private struct ActiveWebSurface: View {
                     Theme.windowBackground
                         .transition(.identity)
                 }
+            }
+            .overlay {
+                ReaderPresenter(tab: tab)
+            }
+            .onChange(of: tab.reader.isActive) { _, _ in
+                tab.find.pageChanged()
             }
             .overlay(alignment: .bottomLeading) {
                 LinkPreview(

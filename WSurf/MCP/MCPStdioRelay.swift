@@ -10,13 +10,16 @@ import Network
 
 actor MCPStdioRelay {
     private let socketPath: String
+    /// The client's pairing token. It goes only into the hello line on the socket.
+    private let hello: Data?
     private var clientName = "External Connection"
     private var backend: (client: MCP.Client, transport: LocalMCPTransport)?
     private var busy = false
     private var stopped = false
 
-    init(socketPath: String) {
+    init(socketPath: String, token: String? = nil) {
         self.socketPath = socketPath
+        hello = token.flatMap(MCPPairing.helloMessage)
     }
 
     func run(transport: any Transport) async throws {
@@ -25,7 +28,7 @@ actor MCPStdioRelay {
             capabilities: .init(tools: .init()), configuration: .strict
         )
         await server.withMethodHandler(ListTools.self) { _ in
-            ListTools.Result(tools: MCPToolCatalog.entries.map(\.tool))
+            ListTools.Result(tools: MCPToolCatalog.listed.map(\.tool))
         }
         await server.withMethodHandler(CallTool.self) { params in
             try await self.call(params)
@@ -57,7 +60,7 @@ actor MCPStdioRelay {
 
     private func call(_ params: CallTool.Parameters) async throws -> CallTool.Result {
         guard !stopped else { throw MCPError.connectionClosed }
-        guard let entry = MCPToolCatalog.entries.first(where: { $0.name == params.name }) else {
+        guard let entry = MCPToolCatalog.listed.first(where: { $0.name == params.name }) else {
             throw MCPError.invalidParams("Unknown tool.")
         }
         try entry.validate(params.arguments ?? [:])
@@ -74,7 +77,8 @@ actor MCPStdioRelay {
             let client = MCP.Client(name: clientName, version: "1.0.0")
             let transport = LocalMCPTransport(
                 connection: NWConnection(to: .unix(path: socketPath), using: .tcp),
-                onDisconnect: { await client.disconnect() }
+                onDisconnect: { await client.disconnect() },
+                hello: hello
             )
             backend = (client, transport)
             do {

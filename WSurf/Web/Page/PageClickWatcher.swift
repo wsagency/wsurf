@@ -15,8 +15,8 @@ final class PageClickWatcher {
 
     @MainActor
     func install(in page: BrowserPage, onClick: @escaping (CGPoint) -> Void) {
-        page.installScript(Self.script, in: .page, injectionTime: .atDocumentStart, forMainFrameOnly: true)
-        page.addScriptMessageHandler(name: Self.handlerName, in: .page) { [weak page] message in
+        page.installScript(Self.script, in: BrowserPage.servicesWorld, injectionTime: .atDocumentStart, forMainFrameOnly: true)
+        page.addScriptMessageHandler(name: Self.handlerName, in: BrowserPage.servicesWorld) { [weak page] message in
             guard let page,
                   let point = message.body as? [Double], point.count == 2 else { return }
             let zoom = page.pageZoom
@@ -31,7 +31,8 @@ final class PageClickWatcher {
 
     private static let script = """
     (function () {
-      if (window !== window.top) { return; }
+      if (window !== window.top || window.__wsurfClickWatch) { return; }
+      window.__wsurfClickWatch = true;
       document.addEventListener('mousedown', function (event) {
         try { globalThis.__wsurfSend?.('wsurfClick', [event.clientX, event.clientY]); } catch (_) {}
       }, true);

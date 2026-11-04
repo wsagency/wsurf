@@ -11,13 +11,18 @@ struct CommandPaletteContext {
     var historyCount = 0
     var tabCount = 0
     var hasActiveTab = false
+    var canReload = false
     var canGoBack = false
     var canGoForward = false
     var isLoading = false
     var isZoomed = false
+    var canInspect = false
+    var canScreenshot = false
     var isShowingPin = false
     var isAwayFromPin = false
     var canReopenClosedTab = false
+    var archivedCount = 0
+    var hasSpaces = false
     var canSplit = false
     var isSplit = false
     var canSwapPanes = false
@@ -29,6 +34,8 @@ struct CommandPaletteContext {
     var canShowLyrics = false
     var isFullScreen = false
     var canCheckForUpdates = false
+    var hasExternalConnections = false
+    var isMinimal = false
 }
 
 enum CommandPaletteAction: String, CaseIterable {
@@ -42,8 +49,11 @@ enum CommandPaletteAction: String, CaseIterable {
     case openStartPage
     case openLocation
     case privateBrowsing
+    case newSpace
     case unloadTab
+    case freeMemory
     case reopenTab
+    case showArchivedTabs
     case duplicateTab
     case togglePin
     case returnToPin
@@ -73,6 +83,8 @@ enum CommandPaletteAction: String, CaseIterable {
     case zoomIn
     case zoomOut
     case actualSize
+    case showWebInspector
+    case copyScreenshot
 
     case splitRight
     case splitDown
@@ -83,6 +95,7 @@ enum CommandPaletteAction: String, CaseIterable {
     case closeOtherPanes
 
     case toggleSidebar
+    case toggleWindowStyle
     case toggleActivity
     case toggleLyrics
     case toggleFullScreen
@@ -91,6 +104,7 @@ enum CommandPaletteAction: String, CaseIterable {
 
     case toggleSpeech
     case toggleListening
+    case stopExternalConnections
 
     case showHistory
     case showDownloads
@@ -249,7 +263,9 @@ enum CommandPaletteCatalog {
         let perform: (CommandPaletteAction) -> Void
 
         var tabs: [CommandPaletteCommand] {
-            let pinTitle: LocalizedStringResource = context.isShowingPin ? "Unpin Tab" : "Pin This Page"
+            let pinTitle: LocalizedStringResource = context.isAwayFromPin
+                ? "Update Pinned URL"
+                : (context.isShowingPin ? "Unpin Tab" : "Pin This Page")
             let indexedTabs = CommandPaletteAction.indexedTabs.enumerated().compactMap { index, action -> CommandPaletteCommand? in
                 let slot = index + 1
                 guard slot <= context.tabCount else { return nil }
@@ -290,9 +306,17 @@ enum CommandPaletteCatalog {
                     .privateBrowsing,
                     group: .tabs,
                     title: "New Private Window",
-                    symbol: "eyeglasses",
+                    symbol: "plus.square.fill",
                     shortcut: "⇧⌘N",
                     aliases: ["incognito", "private window"]
+                ),
+                make(
+                    .newSpace,
+                    group: .tabs,
+                    title: "New Space…",
+                    symbol: "rectangle.stack.badge.plus",
+                    aliases: ["space", "workspace", "add space"],
+                    isAvailable: context.hasSpaces
                 ),
                 make(
                     .reopenTab,
@@ -303,6 +327,15 @@ enum CommandPaletteCatalog {
                     aliases: ["restore", "undo close", "bring back"],
                     isAvailable: context.canReopenClosedTab,
                     isSuggested: true
+                ),
+                make(
+                    .showArchivedTabs,
+                    group: .tabs,
+                    title: "Show Archived Tabs",
+                    detail: "\(context.archivedCount) tabs",
+                    symbol: "archivebox",
+                    aliases: ["archive", "archived", "auto archived", "old tabs"],
+                    isAvailable: context.archivedCount > 0
                 ),
                 make(
                     .duplicateTab,
@@ -317,9 +350,16 @@ enum CommandPaletteCatalog {
                     group: .tabs,
                     title: "Unload Tab",
                     symbol: "moon.zzz",
-                    shortcut: "⌘W",
-                    aliases: ["close page", "sleep tab", "release memory"],
+                    aliases: ["close page", "sleep tab"],
                     isAvailable: context.hasActiveTab
+                ),
+                make(
+                    .freeMemory,
+                    group: .tabs,
+                    title: "Free Memory",
+                    detail: "unload every background tab",
+                    symbol: "memorychip",
+                    aliases: ["release memory", "unload all tabs", "sleep all tabs", "reclaim memory", "ram"]
                 ),
                 make(
                     .togglePin,
@@ -394,7 +434,7 @@ enum CommandPaletteCatalog {
                     symbol: "arrow.clockwise",
                     shortcut: "⌘R",
                     aliases: ["refresh"],
-                    isAvailable: context.hasActiveTab
+                    isAvailable: context.canReload
                 ),
                 make(
                     .hardReload,
@@ -404,7 +444,7 @@ enum CommandPaletteCatalog {
                     symbol: "arrow.2.circlepath",
                     shortcut: "⇧⌘R",
                     aliases: ["hard refresh", "empty cache"],
-                    isAvailable: context.hasActiveTab
+                    isAvailable: context.canReload
                 ),
                 make(
                     .stopLoading,
@@ -505,6 +545,23 @@ enum CommandPaletteCatalog {
                     aliases: ["reset zoom", "100%"],
                     isAvailable: context.isZoomed
                 ),
+                make(
+                    .showWebInspector,
+                    group: .page,
+                    title: "Show Web Inspector",
+                    symbol: "hammer",
+                    shortcut: "⌥⌘I",
+                    aliases: ["inspect element", "developer tools", "devtools", "console"],
+                    isAvailable: context.canInspect
+                ),
+                make(
+                    .copyScreenshot,
+                    group: .page,
+                    title: "Copy Screenshot",
+                    symbol: "camera.viewfinder",
+                    aliases: ["screenshot", "take screenshot", "capture page", "snapshot"],
+                    isAvailable: context.canScreenshot
+                ),
             ]
         }
 
@@ -575,7 +632,12 @@ enum CommandPaletteCatalog {
         }
 
         var view: [CommandPaletteCommand] {
-            let sidebarTitle: LocalizedStringResource = context.isSidebarVisible ? "Hide Sidebar" : "Show Sidebar"
+            let sidebarTitle: LocalizedStringResource = context.isMinimal
+                ? (context.isSidebarVisible ? "Hide Tabs" : "Show Tabs")
+                : (context.isSidebarVisible ? "Hide Sidebar" : "Show Sidebar")
+            let windowStyleTitle: LocalizedStringResource = context.isMinimal
+                ? "Use Standard Window Style"
+                : "Use Minimal Window Style"
             let activityTitle: LocalizedStringResource = context.isActivityVisible
                 ? "Hide Assistant"
                 : "Show Assistant"
@@ -591,6 +653,14 @@ enum CommandPaletteCatalog {
                     symbol: "sidebar.left",
                     shortcut: "⌃⌘S",
                     aliases: ["tabs list", "panel"]
+                ),
+                make(
+                    .toggleWindowStyle,
+                    group: .view,
+                    title: windowStyleTitle,
+                    symbol: "macwindow",
+                    shortcut: "⇧⌘M",
+                    aliases: ["minimal", "standard", "layout", "island", "floating bar", "full screen page"]
                 ),
                 make(
                     .toggleActivity,
@@ -655,6 +725,16 @@ enum CommandPaletteCatalog {
                     title: listenTitle,
                     symbol: context.isListening ? "mic.slash" : "mic",
                     aliases: ["microphone", "dictate", "talk", "voice input"]
+                ),
+                make(
+                    .stopExternalConnections,
+                    group: .assistant,
+                    title: "Stop External Connections",
+                    detail: "disconnect apps using this window",
+                    symbol: "hand.raised",
+                    shortcut: "⌥⌘.",
+                    aliases: ["stop agent", "kill switch", "disconnect", "revoke access", "mcp"],
+                    isAvailable: context.hasExternalConnections
                 ),
             ]
         }

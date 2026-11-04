@@ -3,6 +3,7 @@
 
 import AppKit
 import AuthenticationServices
+import WSurfVault
 
 /// The native question "which vault?" for an ambiguous or locked route. It shows names only for unlocked vaults; a locked vault
 /// is its ordinal. `nil` is a cancel: nothing is written and nothing is unlocked.
@@ -14,7 +15,7 @@ enum VaultChoicePrompt {
     static var answersForTesting: [UUID: @MainActor ([VaultListing]) async -> UUID?] = [:]
 
     static func present(
-        _ candidates: [VaultListing], reason: VaultChoiceReason, profileID: UUID, in anchor: ASPresentationAnchor
+        _ candidates: [VaultListing], reason: VaultChoiceReason, profileID: UUID, in anchor: @autoclosure () -> ASPresentationAnchor
     ) async -> UUID? {
         guard !candidates.isEmpty else { return nil }
         if let answer = answersForTesting[profileID] {
@@ -31,11 +32,10 @@ enum VaultChoicePrompt {
             String(localized: "The default vault is locked.")
         }
         for candidate in candidates {
-            let title = candidate.name ?? String(localized: "Vault \(candidate.ordinal) (locked)")
-            alert.addButton(withTitle: title)
+            alert.addButton(withTitle: candidate.label)
         }
         alert.addButton(withTitle: String(localized: "Cancel"))
-        guard case .response(let response) = await NativeSheet.present(alert, in: anchor, until: nil) else { return nil }
+        guard case .response(let response) = await NativeSheet.present(alert, in: anchor(), until: nil) else { return nil }
         let index = response.rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue
         return candidates.indices.contains(index) ? candidates[index].vaultID : nil
     }

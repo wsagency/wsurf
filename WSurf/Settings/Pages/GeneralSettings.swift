@@ -39,6 +39,40 @@ struct GeneralSettings: View {
                 SettingsToggle($settings.sleepsInactiveTabs)
             }
             .settingsAnchor("general.sleepTabs")
+
+            if settings.sleepsInactiveTabs {
+                RowSeparator()
+
+                SleepAfterRow(settings: settings)
+            }
+
+            RowSeparator()
+
+            DetailRow(
+                title: "Archive unused tabs",
+                caption: "Archived tabs stay searchable from ⌘K. The newest 30 are kept."
+            ) {
+                SettingsMenu(
+                    options: TabArchiveDelay.allCases.map { .init(value: $0, label: String(localized: $0.label)) },
+                    selection: $settings.archiveTabsAfter
+                )
+            }
+            .settingsAnchor("general.archiveTabs")
+
+            RowSeparator()
+
+            DetailRow(
+                title: "Free memory",
+                caption: """
+                Unloads background tabs now, in WebKit and Chromium. They reload when you open them; Chromium tabs \
+                restore their address but not Back/Forward history. Chromium’s helper processes stay until you quit WSurf.
+                """
+            ) {
+                SettingsButton(title: "Free Memory") {
+                    coordinator.freeMemory()
+                }
+            }
+            .settingsAnchor("general.freeMemory")
         }
 
         SettingsSection(title: "Default browser", symbol: "arrow.up.forward.app") {
@@ -75,7 +109,29 @@ struct GeneralSettings: View {
                 SettingsToggle($settings.showsLinkPreview)
             }
             .settingsAnchor("general.linkPreview")
+
+            RowSeparator()
+
+            DetailRow(
+                title: "Show full website address",
+                caption: "Show the whole address of the page in the address bar, not just the website name."
+            ) {
+                SettingsToggle($settings.showsFullAddress)
+            }
+            .settingsAnchor("general.fullAddress")
+
+            RowSeparator()
+
+            DetailRow(
+                title: "Mouse side buttons go back and forward",
+                caption: "The back and forward buttons on the side of a mouse move through the page’s history. Turn off to leave them to websites."
+            ) {
+                SettingsToggle($settings.sideButtonsNavigate)
+            }
+            .settingsAnchor("general.mouseSideButtons")
         }
+
+        CommandPaletteSettings(settings: settings)
 
         SettingsSection(title: "Media", symbol: "play.rectangle", footnote: mediaFootnote) {
             DetailRow(

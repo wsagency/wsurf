@@ -6,6 +6,7 @@ import Foundation
 import Testing
 
 @testable import WSurf
+@testable import WSurfVault
 
 // Task 7: plumbing for `VaultRevisionTests` (a store with an injected wall clock, readback of revision rows, fixture accounts).
 

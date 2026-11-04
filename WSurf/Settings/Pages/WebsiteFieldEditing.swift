@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 
 import Foundation
+import WSurfVault
 
 /// How a website field turns an editing action into text. Only a typed comma or Space after a complete, valid
 /// address becomes a newline. Every other text path inserts exactly what it receives, and nothing is normalized:

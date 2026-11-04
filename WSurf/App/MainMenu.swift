@@ -88,7 +88,7 @@ final class MainMenu: NSObject, NSMenuItemValidation {
 
     private func appMenu() -> NSMenu {
         let menu = NSMenu()
-        menu.addItem(chain("About WSurf", #selector(NSApplication.orderFrontStandardAboutPanel(_:))))
+        menu.addItem(command("About WSurf", #selector(showAbout)))
         menu.addItem(.separator())
         menu.addItem(command("Check for Updates…", #selector(checkForUpdates)))
         menu.addItem(command("Release Notes…", #selector(showReleaseNotes)))
@@ -119,11 +119,13 @@ final class MainMenu: NSObject, NSMenuItemValidation {
         menu.addItem(command("New Tab", #selector(newTab), key: "t"))
         menu.addItem(command("New Window", #selector(newWindow), key: "n"))
         menu.addItem(command("New Private Window", #selector(newPrivateWindow), key: "n", modifiers: [.command, .shift]))
+        menu.addItem(command("New Micro Window", #selector(newMicroWindow), key: "n", modifiers: [.command, .option]))
         menu.addItem(.separator())
         menu.addItem(command("Reopen Last Closed Tab", #selector(reopenClosedTab), key: "t", modifiers: [.command, .shift]))
         menu.addItem(command("Reopen Last Closed Window", #selector(reopenClosedWindow)))
         menu.addItem(.separator())
-        menu.addItem(command("Unload Tab", #selector(unloadTab), key: "w"))
+        menu.addItem(command("Close Tab", #selector(closeOrUnloadTab), key: "w"))
+        menu.addItem(command("Free Memory", #selector(freeMemory)))
         menu.addItem(.separator())
         menu.addItem(command("Pin This Page", #selector(pinPage), key: "d"))
         menu.addItem(command(
@@ -144,6 +146,8 @@ final class MainMenu: NSObject, NSMenuItemValidation {
             key: "w",
             modifiers: [.command, .shift]
         ))
+        menu.addItem(.separator())
+        menu.addItem(command("Save Page As…", #selector(savePage), key: "s"))
         menu.addItem(command("Print…", #selector(printPage), key: "p"))
         return menu
     }
@@ -183,11 +187,23 @@ final class MainMenu: NSObject, NSMenuItemValidation {
         menu.addItem(command("Reload Page", #selector(reload), key: "r"))
         menu.addItem(command("Reload Page from Origin", #selector(hardReload), key: "r", modifiers: [.command, .shift]))
         menu.addItem(command("Stop", #selector(stopLoading), key: "."))
+        menu.addItem(command(
+            "Stop External Connections",
+            #selector(stopExternalConnections),
+            key: ".",
+            modifiers: [.command, .option]
+        ))
         menu.addItem(.separator())
         menu.addItem(command("Actual Size", #selector(actualSize), key: "0"))
         menu.addItem(command("Zoom In", #selector(zoomIn), key: "+"))
         menu.addItem(hidden(command("Zoom In", #selector(zoomIn), key: "=")))
         menu.addItem(command("Zoom Out", #selector(zoomOut), key: "-"))
+        menu.addItem(.separator())
+        menu.addItem(command("Translate Page", #selector(toggleTranslation)))
+        menu.addItem(command("Show Reader", #selector(toggleReader), key: "r", modifiers: [.command, .option]))
+        menu.addItem(command("Read Aloud", #selector(toggleReadAloud), key: "p", modifiers: [.command, .option]))
+        menu.addItem(command("Stop Reading", #selector(stopReadAloud)))
+        menu.addItem(command("Watch This Page…", #selector(watchPage)))
         menu.addItem(.separator())
         menu.addItem(chain(
             "Enter Full Screen",
@@ -199,6 +215,9 @@ final class MainMenu: NSObject, NSMenuItemValidation {
         menu.addItem(submenu(splitViewMenu(), titled: "Split View"))
         menu.addItem(.separator())
         menu.addItem(command("Hide Sidebar", #selector(toggleSidebar), key: "s", modifiers: [.command, .control]))
+        menu.addItem(command("Use Minimal Window Style", #selector(toggleWindowStyle), key: "m", modifiers: [.command, .shift]))
+        menu.addItem(command("Move Bar to Top", #selector(moveMinimalBar)))
+        menu.addItem(command("Keep Sidebar Open", #selector(toggleMinimalSidebarPin)))
         menu.addItem(command(
             "Show Assistant",
             #selector(toggleAgentInspector),
@@ -206,9 +225,15 @@ final class MainMenu: NSObject, NSMenuItemValidation {
             modifiers: [.command, .option]
         ))
         menu.addItem(command("Show Lyrics", #selector(toggleLyrics), key: "y", modifiers: [.command, .option]))
+        menu.addItem(submenu(playerCornerMenu(), titled: "Move Player to Corner"))
+        // ⌃⌘M: ⌘M minimizes, ⇧⌘M is the window style and ⌥⌘M is the system's Minimize All; ⌃⌘M was free.
+        menu.addItem(command("Mute WSurf", #selector(toggleWSurfMute), key: "m", modifiers: [.command, .control]))
         menu.addItem(.separator())
         let developer = NSMenu()
+        developer.addItem(command("Show Web Inspector", #selector(showWebInspector), key: "i", modifiers: [.command, .option]))
         developer.addItem(command("Restart Page", #selector(restartPage)))
+        developer.addItem(.separator())
+        developer.addItem(command("Developer Mode for This Website", #selector(toggleDevMode(_:))))
         menu.addItem(submenu(developer, titled: "Developer"))
         return menu
     }
@@ -229,6 +254,17 @@ final class MainMenu: NSObject, NSMenuItemValidation {
         return menu
     }
 
+    /// The keyboard route to what dragging does: one item per corner, the current one checked.
+    private func playerCornerMenu() -> NSMenu {
+        let menu = NSMenu()
+        for corner in MediaPlayerCorner.allCases {
+            let item = command(corner.title, #selector(movePlayerToCorner(_:)))
+            item.representedObject = corner.rawValue
+            menu.addItem(item)
+        }
+        return menu
+    }
+
     private func historyMenu() -> NSMenu {
         let menu = NSMenu()
         menu.addItem(command("Back", #selector(goBack), key: "["))
@@ -245,6 +281,10 @@ final class MainMenu: NSObject, NSMenuItemValidation {
         let menu = NSMenu(title: "Window")
         menu.addItem(chain("Minimize", #selector(NSWindow.performMiniaturize(_:)), key: "m"))
         menu.addItem(chain("Zoom", #selector(NSWindow.performZoom(_:))))
+        menu.addItem(command("Float on Top", #selector(toggleFloatOnTop)))
+        menu.addItem(command(
+            "Move to Micro Window", #selector(moveToMicroWindow), key: "n", modifiers: [.command, .option, .shift]
+        ))
         menu.addItem(.separator())
         menu.addItem(command("Show Next Tab", #selector(nextTab), key: "]", modifiers: [.command, .shift]))
         menu.addItem(command("Show Previous Tab", #selector(previousTab), key: "[", modifiers: [.command, .shift]))
@@ -261,6 +301,10 @@ final class MainMenu: NSObject, NSMenuItemValidation {
             menu.items.last?.tag = slot - 1
         }
         menu.addItem(hidden(command("Show Last Tab", #selector(showLastTab), key: "9")))
+        for slot in SpaceShortcut.slots {
+            menu.addItem(hidden(command("Show Space \(slot)", #selector(showSpaceAtIndex(_:)), key: "\(slot)", modifiers: SpaceShortcut.modifiers)))
+            menu.items.last?.tag = slot - 1
+        }
         menu.addItem(.separator())
         menu.addItem(chain("Bring All to Front", #selector(NSApplication.arrangeInFront(_:))))
         return menu
@@ -268,22 +312,26 @@ final class MainMenu: NSObject, NSMenuItemValidation {
 
     // MARK: - Commands
 
+    @objc private func showAbout() {
+        BuildIdentity.showAboutPanel()
+    }
+
     @objc private func openSettings() {
-        coordinator.openSettings()
+        coordinator.mainWindowForCommands().openSettings()
     }
 
     @objc private func checkForUpdates() {
         (application?.updates ?? coordinator.updates).checkNow()
     }
     @objc private func showReleaseNotes() {
-        coordinator.showReleaseNotes()
+        coordinator.mainWindowForCommands().showReleaseNotes()
     }
 
     @objc private func openDownloads() {
-        coordinator.openSettings(.downloads)
+        coordinator.mainWindowForCommands().openSettings(.downloads)
     }
     @objc private func newTab() {
-        coordinator.requestNewTab()
+        coordinator.mainWindowForCommands().requestNewTab()
     }
     @objc private func newWindow() {
         if let coordinator = application?.activeCoordinator ?? fallbackCoordinator {
@@ -300,15 +348,36 @@ final class MainMenu: NSObject, NSMenuItemValidation {
         }
     }
 
+    @objc private func newMicroWindow() {
+        if let coordinator = application?.activeCoordinator ?? fallbackCoordinator {
+            coordinator.requestNewMicroWindow()
+        } else {
+            application?.newWindow(profile: ProfileStore.shared.current, kind: .micro).focusAddressBar()
+        }
+    }
+
     @objc private func reopenClosedWindow() {
         application?.reopenLastClosedWindow()
     }
-    @objc private func unloadTab() {
+    /// ⌘W: a Peek closes first; a pin, favorite or page in a pinned folder unloads; any other tab closes like its sidebar X.
+    /// In a micro window it closes the window, so Reopen Last Closed Window brings the page back as a micro window.
+    @objc private func closeOrUnloadTab() {
         if coordinator.closePeek() {
             return
         }
+        if coordinator.isMicro {
+            coordinator.closeWindow()
+            return
+        }
         guard let tab = coordinator.browser.activeTab else { return }
-        coordinator.unloadTab(tab)
+        if tab.isPinnedForProfile {
+            coordinator.unloadTab(tab)
+        } else {
+            coordinator.browser.close([.tab(tab.id)])
+        }
+    }
+    @objc private func freeMemory() {
+        coordinator.freeMemory()
     }
     @objc private func reopenClosedTab() {
         if let application, application.activeCoordinator == nil {
@@ -333,10 +402,10 @@ final class MainMenu: NSObject, NSMenuItemValidation {
         coordinator.browser.returnToPin(tab)
     }
     @objc private func openPalette() {
-        coordinator.togglePalette()
+        coordinator.mainWindowForCommands().togglePalette()
     }
     @objc private func showHistory() {
-        coordinator.showHistory()
+        coordinator.mainWindowForCommands().showHistory()
     }
     @objc private func reload() {
         coordinator.pageCommandTab?.reload()
@@ -344,8 +413,16 @@ final class MainMenu: NSObject, NSMenuItemValidation {
     @objc private func hardReload() {
         coordinator.pageCommandTab?.page.reloadFromOrigin()
     }
+    @objc private func showWebInspector() {
+        coordinator.pageCommandTab?.showWebInspector()
+    }
     @objc private func restartPage() {
         coordinator.pageCommandTab?.restartPage()
+    }
+    @objc private func toggleDevMode(_ sender: NSMenuItem) {
+        // The item named a website when it was validated; a page that moved on since is not the one the person chose.
+        guard let tab = coordinator.pageCommandTab, let host = sender.representedObject as? String else { return }
+        coordinator.setDevMode(!tab.usesDevMode, for: tab, named: host)
     }
     @objc private func stopLoading() {
         coordinator.pageCommandTab?.stopLoading()
@@ -359,11 +436,41 @@ final class MainMenu: NSObject, NSMenuItemValidation {
     @objc private func toggleSidebar() {
         coordinator.toggleSidebar()
     }
+    @objc private func toggleWindowStyle() {
+        coordinator.toggleWindowStyle()
+    }
+    @objc private func moveMinimalBar() {
+        coordinator.moveMinimalBar()
+    }
+    @objc private func toggleMinimalSidebarPin() {
+        coordinator.toggleMinimalSidebarPin()
+    }
     @objc private func toggleAgentInspector() {
         coordinator.toggleAgentInspector()
     }
+    @objc private func toggleFloatOnTop() {
+        coordinator.floatsOnTop.toggle()
+    }
+    /// Pops the page in front out into a micro window, or, in one, moves it back to the main window.
+    @objc private func moveToMicroWindow() {
+        if coordinator.isMicro {
+            coordinator.moveBackToMainWindow()
+        } else if let tab = coordinator.browser.activeTab {
+            coordinator.moveToMicroWindow(tab)
+        }
+    }
+    @objc private func movePlayerToCorner(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String, let corner = MediaPlayerCorner(rawValue: raw) else { return }
+        coordinator.movePlayer(to: corner)
+    }
+
     @objc private func toggleLyrics() {
         coordinator.toggleLyrics()
+    }
+
+    /// Silences every tab of every window, or gives each tab its own mute back.
+    @objc private func toggleWSurfMute() {
+        coordinator.toggleWSurfMute()
     }
 
     @objc private func splitRight() {
@@ -378,6 +485,10 @@ final class MainMenu: NSObject, NSMenuItemValidation {
     @objc private func swapPanes() {
         coordinator.swapSplitPanes()
     }
+    @objc private func stopExternalConnections() {
+        coordinator.stopExternalConnections()
+    }
+
     @objc private func toggleSplitAxis() {
         coordinator.toggleSplitAxis()
     }
@@ -416,6 +527,9 @@ final class MainMenu: NSObject, NSMenuItemValidation {
     @objc private func showLastTab() {
         coordinator.browser.activateLastTab()
     }
+    @objc private func showSpaceAtIndex(_ sender: NSMenuItem) {
+        coordinator.switchToSpace(at: sender.tag)
+    }
 
     @objc private func clearHistory() {
         coordinator.confirmClearHistory()
@@ -423,6 +537,10 @@ final class MainMenu: NSObject, NSMenuItemValidation {
 
     @objc private func printPage() {
         coordinator.printActivePage()
+    }
+
+    @objc private func savePage() {
+        coordinator.pageCommandTab?.savePage()
     }
 
     @objc private func actualSize() {
@@ -435,18 +553,53 @@ final class MainMenu: NSObject, NSMenuItemValidation {
         coordinator.pageCommandTab?.zoomOut()
     }
 
+    @objc private func toggleTranslation() {
+        guard let tab = coordinator.pageCommandTab else { return }
+        coordinator.toggleTranslation(tab)
+    }
+
+    @objc private func toggleReader() {
+        coordinator.toggleReader()
+    }
+
+    @objc private func toggleReadAloud() {
+        coordinator.toggleReadAloud()
+    }
+
+    @objc private func stopReadAloud() {
+        coordinator.stopReadAloud()
+    }
+
+    @objc private func watchPage() {
+        coordinator.watchCurrentPage()
+    }
+
     // MARK: - Validation
+
+    /// What a micro window has no use for: it holds one page, with no sidebar, tab list, side panel or window style.
+    private static let notInMicroWindows: Set<Selector> = [
+        #selector(nextTab), #selector(previousTab), #selector(switchToNextTab), #selector(switchToPreviousTab),
+        #selector(showTabAtIndex(_:)), #selector(showLastTab), #selector(showSpaceAtIndex(_:)),
+        #selector(splitRight), #selector(splitDown), #selector(focusOtherPane), #selector(swapPanes),
+        #selector(toggleSplitAxis), #selector(exitSplit), #selector(closeOtherPanes),
+        #selector(toggleSidebar), #selector(toggleWindowStyle), #selector(moveMinimalBar), #selector(toggleMinimalSidebarPin),
+        #selector(toggleAgentInspector), #selector(toggleLyrics), #selector(pinPage), #selector(returnToPin),
+    ]
+
+    /// What still works with no browser window open.
+    private static let withoutAWindow: Set<Selector> = [
+        #selector(newWindow), #selector(newTab), #selector(newPrivateWindow), #selector(newMicroWindow),
+        #selector(openSettings), #selector(checkForUpdates), #selector(reopenClosedTab), #selector(showAbout),
+    ]
 
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {  // swiftlint:disable:this cyclomatic_complexity
         if menuItem.action == #selector(reopenClosedWindow) {
             return application?.canReopenWindow == true
         }
         if let application, application.activeCoordinator == nil {
-            return [
-                #selector(newWindow), #selector(newTab), #selector(newPrivateWindow),
-                #selector(openSettings), #selector(checkForUpdates), #selector(reopenClosedTab),
-            ].contains(menuItem.action)
+            return menuItem.action.map(Self.withoutAWindow.contains) ?? false
         }
+        guard validateMicroItem(menuItem) != false else { return false }
         switch menuItem.action {
         case #selector(goBack):
             return coordinator.pageCommandTab?.canGoBack ?? false
@@ -457,17 +610,54 @@ final class MainMenu: NSObject, NSMenuItemValidation {
         case #selector(copyPageURL):
             guard let tab = coordinator.pageCommandTab else { return false }
             return coordinator.linkURL(for: tab) != nil
-        case #selector(reload), #selector(hardReload),
-             #selector(zoomIn), #selector(zoomOut), #selector(openFind), #selector(findNext),
-             #selector(findPrevious), #selector(printPage):
+        case #selector(reload), #selector(hardReload):
+            return coordinator.pageCommandTab?.canReload ?? false
+        case #selector(zoomIn), #selector(zoomOut), #selector(openFind), #selector(findNext),
+             #selector(findPrevious), #selector(printPage), #selector(savePage):
             return coordinator.pageCommandTab != nil
+        case #selector(showWebInspector), #selector(toggleDevMode(_:)):
+            return validateDeveloperItem(menuItem)
         case #selector(restartPage):
             guard let tab = coordinator.pageCommandTab else { return false }
             return tab.isMaterialised && !tab.isShowingSystemPage
-        case #selector(unloadTab):
-            return coordinator.browser.activeTab != nil
+        case #selector(toggleTranslation):
+            let tab = coordinator.pageCommandTab
+            let translationTitle: LocalizedStringResource = tab?.shownTranslation.isActive == true ? "Show Original" : "Translate Page"
+            menuItem.title = String(localized: translationTitle)
+            return tab?.canToggleTranslation ?? false
+        case #selector(toggleReader):
+            let readerTitle: LocalizedStringResource = coordinator.readerTab?.reader.isActive == true ? "Hide Reader" : "Show Reader"
+            menuItem.title = String(localized: readerTitle)
+            return coordinator.readerTab?.reader.isAvailable ?? false
+        case #selector(toggleReadAloud):
+            let reader = coordinator.readerTab?.reader
+            let readTitle: LocalizedStringResource = switch reader?.speaker?.state ?? .idle {
+            case .idle:
+                "Read Aloud"
+            case .playing:
+                "Pause Reading"
+            case .paused:
+                "Resume Reading"
+            }
+            menuItem.title = String(localized: readTitle)
+            return reader?.isActive ?? false
+        case #selector(stopReadAloud):
+            return coordinator.readerTab?.reader.isListening ?? false
+        case #selector(watchPage):
+            let watching = coordinator.watchMenuState
+            menuItem.isHidden = !watching.isShown
+            return watching.isEnabled
+        case #selector(closeOrUnloadTab):
+            let tab = coordinator.browser.activeTab
+            let closeTitle: LocalizedStringResource = tab?.isPinnedForProfile == true ? "Unload Tab" : "Close Tab"
+            menuItem.title = String(localized: closeTitle)
+            return tab != nil
+        case #selector(pinPage), #selector(returnToPin):
+            return validatePinItem(menuItem)
         case #selector(stopLoading):
             return coordinator.pageCommandTab?.isLoading ?? false
+        case #selector(stopExternalConnections):
+            return coordinator.hasExternalConnections
         case #selector(splitRight), #selector(splitDown):
             guard coordinator.browser.activeTab != nil else { return false }
             return !(coordinator.browser.activeSplit?.isFull ?? false)
@@ -488,24 +678,31 @@ final class MainMenu: NSObject, NSMenuItemValidation {
             return coordinator.browser.canReopenClosedTab
         case #selector(nextTab), #selector(previousTab), #selector(showLastTab),
              #selector(switchToNextTab), #selector(switchToPreviousTab):
-            return coordinator.browser.tabs.count > 1
+            return coordinator.browser.currentSpaceTabs.count > 1
         case #selector(showTabAtIndex(_:)):
-            return coordinator.browser.tabs.indices.contains(menuItem.tag)
+            return coordinator.browser.currentSpaceTabs.indices.contains(menuItem.tag)
+        case #selector(showSpaceAtIndex(_:)):
+            return coordinator.spaceEntries.indices.contains(menuItem.tag)
         case #selector(clearHistory):
             return coordinator.browser.history.count > 0
         case #selector(checkForUpdates):
             return coordinator.updates.canCheck
-        case #selector(toggleSidebar):
-            let sidebarTitle: LocalizedStringResource = coordinator.sidebar.isVisible
-                ? "Hide Sidebar" : "Show Sidebar"
-            menuItem.title = String(localized: sidebarTitle)
-            return true
+        case #selector(toggleSidebar), #selector(toggleWindowStyle), #selector(moveMinimalBar),
+             #selector(toggleMinimalSidebarPin):
+            return validateWindowStyleItem(menuItem)
         case #selector(toggleAgentInspector):
             let activityTitle: LocalizedStringResource = coordinator.sidePanel.isShowing(.activity)
                 ? "Hide Assistant"
                 : "Show Assistant"
             menuItem.title = String(localized: activityTitle)
             return true
+        case #selector(movePlayerToCorner(_:)):
+            menuItem.state = (menuItem.representedObject as? String) == coordinator.settings.mediaPlayerCorner.rawValue
+                ? .on
+                : .off
+            return coordinator.canMovePlayer
+        case #selector(toggleWSurfMute):
+            return validateMuteItem(menuItem)
         case #selector(toggleLyrics):
             let lyricsTitle: LocalizedStringResource = coordinator.sidePanel.isShowing(.lyrics)
                 ? "Hide Lyrics"
@@ -516,6 +713,88 @@ final class MainMenu: NSObject, NSMenuItemValidation {
         default:
             return true
         }
+    }
+
+    /// Mute WSurf names what it will do. It works in every window, a micro window and a private one included.
+    private func validateMuteItem(_ menuItem: NSMenuItem) -> Bool {
+        menuItem.title = AudioIndicator.help(isMuted: coordinator.isWSurfMuted)
+        return true
+    }
+
+    /// What a micro window changes: Float on Top, shown only there, Move to Micro Window and back, and the items it has no use
+    /// for. false refuses the item; anything else leaves it to `validateMenuItem`.
+    private func validateMicroItem(_ menuItem: NSMenuItem) -> Bool? {
+        if menuItem.action == #selector(toggleFloatOnTop) {
+            menuItem.isHidden = !coordinator.isMicro
+            menuItem.state = coordinator.floatsOnTop ? .on : .off
+            return coordinator.isMicro
+        }
+        if menuItem.action == #selector(moveToMicroWindow) {
+            let title: LocalizedStringResource = coordinator.isMicro ? "Move Back to Main Window" : "Move to Micro Window"
+            menuItem.title = String(localized: title)
+            return MicroWindowBadge.offer(for: coordinator, tab: coordinator.browser.activeTab) != nil
+        }
+        guard coordinator.isMicro, let action = menuItem.action, Self.notInMicroWindows.contains(action) else { return nil }
+        return false
+    }
+
+    /// ⌘D names what it will do: pin the page, update a wandering pin's page to the one on screen, or unpin a tab showing
+    /// its pinned page. Back to Pinned Page answers only while the pinned tab is away.
+    /// The two items of View > Developer that act on the page's website.
+    private func validateDeveloperItem(_ menuItem: NSMenuItem) -> Bool {
+        let tab = coordinator.pageCommandTab
+        if menuItem.action == #selector(showWebInspector) {
+            return tab?.canShowWebInspector ?? false
+        }
+        guard let tab, let host = DevMode.host(of: URL(string: tab.urlString)) else {
+            menuItem.title = String(localized: "Developer Mode for This Website")
+            menuItem.state = .off
+            menuItem.representedObject = nil
+            return false
+        }
+        menuItem.representedObject = host
+        menuItem.title = String(localized: "Developer Mode for “\(host)”")
+        menuItem.state = tab.usesDevMode ? .on : .off
+        return true
+    }
+
+    private func validatePinItem(_ menuItem: NSMenuItem) -> Bool {
+        let tab = coordinator.browser.activeTab
+        guard menuItem.action == #selector(pinPage) else { return tab?.isAwayFromPin == true }
+        let title: LocalizedStringResource = if tab?.isAwayFromPin == true {
+            "Update Pinned URL"
+        } else if tab?.isShowingPin == true {
+            "Unpin Tab"
+        } else {
+            "Pin This Page"
+        }
+        menuItem.title = String(localized: title)
+        return tab != nil
+    }
+
+    /// Hide Sidebar, which shows and hides the tab list in the Minimal window, the window style, the Minimal bar's edge and
+    /// keeping the Minimal tab list open.
+    private func validateWindowStyleItem(_ menuItem: NSMenuItem) -> Bool {
+        let isMinimal = coordinator.isMinimal
+        let title: LocalizedStringResource
+        switch menuItem.action {
+        case #selector(toggleWindowStyle):
+            title = isMinimal ? "Use Standard Window Style" : "Use Minimal Window Style"
+        case #selector(moveMinimalBar):
+            title = coordinator.settings.minimalBarEdge == .top ? "Move Bar to Bottom" : "Move Bar to Top"
+        case #selector(toggleMinimalSidebarPin):
+            title = "Keep Sidebar Open"
+            menuItem.state = coordinator.keepsMinimalSidebarOpen ? .on : .off
+        default:
+            if isMinimal {
+                title = coordinator.isMinimalTabListOpen || coordinator.keepsMinimalSidebarOpen ? "Hide Tabs" : "Show Tabs"
+            } else {
+                title = coordinator.sidebar.isVisible ? "Hide Sidebar" : "Show Sidebar"
+            }
+        }
+        menuItem.title = String(localized: title)
+        let isMinimalOnly = menuItem.action == #selector(moveMinimalBar) || menuItem.action == #selector(toggleMinimalSidebarPin)
+        return !isMinimalOnly || isMinimal
     }
 
     // MARK: - Building blocks
