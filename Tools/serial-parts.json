@@ -189,6 +189,7 @@
   [
    "AskAddressLayoutTests",
    "CertificateEvaluationTests",
+   "ChromiumCaptureDecodeTests",
    "ChromiumContextMenuTests",
    "ChromiumFindTests",
    "ColourChooserDismissalTests",

@@ -10,23 +10,34 @@ extension ChromiumPage {
     /// The view's current frame cropped to `rect` (view points; the whole view when `nil`) and scaled to `width` points. The crop
     /// is made here, not with a DevTools `clip`: for a clip Chromium emulates an offset viewport and resizes the view for one
     /// frame, and when the frame it copies predates them it returns that frame's top-left corner instead of `rect`.
+    /// The decode, crop and scale run off the main actor (`decodeCapture`): on main they cost 65-80 ms per capture of a
+    /// loaded page, and a tab switch takes three (the leaving tab's preview, the band colour twice).
     func capture(rect: CGRect?, width: CGFloat?) async throws -> NSImage {
         try await ensureReady()
         let response = try await command("Page.captureScreenshot", params: ["format": "png", "captureBeyondViewport": false])
         let area = rect ?? bounds
-        let failure = ChromiumError.protocolFailure(String(localized: "Chromium did not return a page image."))
-        guard let encoded = response["data"] as? String, let data = Data(base64Encoded: encoded),
-            let frame = NSBitmapImageRep(data: data)?.cgImage, bounds.width > 0, area.width > 0, area.height > 0
-        else { throw failure }
-        // Image pixels per view point: the display's scale factor, or an emulated device's.
-        let ratio = CGFloat(frame.width) / bounds.width
-        let pixels = CGRect(x: area.minX * ratio, y: area.minY * ratio, width: area.width * ratio, height: area.height * ratio)
-        guard let crop = frame.cropping(to: pixels.integral) else { throw failure }
+        guard let encoded = response["data"] as? String,
+            let image = await Self.decodeCapture(encoded, viewWidth: bounds.width, area: area, width: width)
+        else { throw ChromiumError.protocolFailure(String(localized: "Chromium did not return a page image.")) }
         let scale = (width ?? area.width) / area.width
-        let cropped = NSBitmapImageRep(cgImage: crop)
-        let image = NSImage(size: CGSize(width: area.width * scale, height: area.height * scale))
-        image.addRepresentation(scale == 1 ? cropped : PageScreenshotEncoding.scaled(cropped, by: Double(scale)) ?? cropped)
-        return image
+        return NSImage(cgImage: image, size: CGSize(width: area.width * scale, height: area.height * scale))
+    }
+
+    /// A base64 PNG of a view `viewWidth` points wide, cropped to `area` (view points) and scaled to `width` points. Scaling
+    /// draws the image, so the PNG is decoded here and nothing is left to decode on the main actor.
+    @concurrent
+    nonisolated static func decodeCapture(_ encoded: String, viewWidth: CGFloat, area: CGRect, width: CGFloat?) async -> CGImage? {
+        guard viewWidth > 0, area.width > 0, area.height > 0, let data = Data(base64Encoded: encoded),
+            let frame = NSBitmapImageRep(data: data)?.cgImage
+        else { return nil }
+        // Image pixels per view point: the display's scale factor, or an emulated device's.
+        let ratio = CGFloat(frame.width) / viewWidth
+        let pixels = CGRect(x: area.minX * ratio, y: area.minY * ratio, width: area.width * ratio, height: area.height * ratio)
+        guard let crop = frame.cropping(to: pixels.integral) else { return nil }
+        let scale = (width ?? area.width) / area.width
+        // ponytail: at a scale of 1 (only `DevModeBadge`, off the switch path) the crop is lazy and decodes where it is first drawn.
+        guard scale != 1 else { return crop }
+        return PageScreenshotEncoding.scaled(NSBitmapImageRep(cgImage: crop), by: Double(scale))?.cgImage ?? crop
     }
 
     /// The document area `area` (CSS pixels from the document's top-left corner), including the part below the viewport.
