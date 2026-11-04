@@ -450,6 +450,40 @@ nonisolated final class BrowserPerformanceTests: XCTestCase, @unchecked Sendable
         }
     }
 
+    /// Cmd-T over a 300-tab Standard window: the new-tab palette opens and is drawn, then closes and the window is drawn
+    /// again, five times.
+    func testOpeningTheNewTabPaletteInACrowdedWindow() {
+        MainActor.assumeIsolated {
+            let coordinator = AppCoordinator(browser: BrowserModel(database: .temporary()))
+            let browser = coordinator.browser
+            for index in 0..<300 {
+                browser.newTab(activate: false).urlString = "https://fixture-\(index).example/"
+            }
+            let host = NSHostingView(rootView: BrowserView(browser: browser, coordinator: coordinator, style: .standard))
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1_280, height: 800), styleMask: [.borderless], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false
+            window.contentView = host
+            host.layoutSubtreeIfNeeded()
+
+            measure(metrics: [XCTClockMetric(), XCTMemoryMetric()], options: .budgeted) {
+                for _ in 0..<5 {
+                    coordinator.requestNewTab()
+                    RunLoop.current.run(until: Date())
+                    host.layoutSubtreeIfNeeded()
+                    host.displayIfNeeded()
+                    coordinator.closePalette()
+                    RunLoop.current.run(until: Date())
+                    host.layoutSubtreeIfNeeded()
+                    host.displayIfNeeded()
+                }
+                XCTAssertFalse(coordinator.isPaletteOpen)
+            }
+            window.contentView = nil
+            window.close()
+            browser.cancelPendingSave()
+        }
+    }
+
     /// The Minimal bar with its tab list open over a 300-tab window. Each run builds and frees its own window.
     func testLayingOutTheMinimalShell() {
         MainActor.assumeIsolated {

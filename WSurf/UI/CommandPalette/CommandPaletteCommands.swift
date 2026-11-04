@@ -5,7 +5,7 @@
 
 import Foundation
 
-struct CommandPaletteContext {
+struct CommandPaletteContext: Equatable {
     var isSpeechMuted = false
     var isListening = false
     var historyCount = 0
@@ -153,7 +153,9 @@ struct CommandPaletteCommand {
     var aliases: [String] = []
     var isAvailable = true
     var isSuggested = false
-    let run: () -> Void
+    /// What `run` performs; the catalog binds `run` to the palette that shows the command.
+    var action: CommandPaletteAction?
+    var run: () -> Void
 }
 
 enum CommandMatch {
@@ -209,14 +211,40 @@ enum CommandMatch {
 }
 
 enum CommandPaletteCatalog {
+    /// The last list built, before its commands are bound to a palette. Building it looks up every title in the string
+    /// catalog, about 8 ms on a Cmd-T in a 300-tab window (perf audit 0.1.22, item 6), and it depends only on the context
+    /// and the language, which rarely change between two openings.
+    private static var lastBuilt: (context: CommandPaletteContext, locale: Locale, commands: [CommandPaletteCommand])?
+
     static func commands(
         context: CommandPaletteContext,
         perform: @escaping (CommandPaletteAction) -> Void
     ) -> [CommandPaletteCommand] {
-        let builder = Builder(context: context, perform: perform)
-        let all = builder.tabs + builder.page + builder.split + builder.view + builder.assistant + builder.library
-        return all.filter(\.isAvailable)
+        let locale = Locale.current
+        let built: [CommandPaletteCommand]
+        if let lastBuilt, lastBuilt.context == context, lastBuilt.locale == locale {
+            built = lastBuilt.commands
+        } else {
+            let builder = Builder(context: context)
+            let all = builder.tabs + builder.page + builder.split + builder.view + builder.assistant + builder.library
+            built = all.filter(\.isAvailable)
+            lastBuilt = (context, locale, built)
+            #if DEBUG
+            buildCount += 1
+            #endif
+        }
+        return built.map { command in
+            guard let action = command.action else { return command }
+            var bound = command
+            bound.run = { perform(action) }
+            return bound
+        }
     }
+
+    #if DEBUG
+    /// How many times the list was built rather than reused; tests read it.
+    static var buildCount = 0
+    #endif
 
     static func suggested(_ commands: [CommandPaletteCommand]) -> [CommandPaletteCommand] {
         commands.filter(\.isSuggested)
@@ -260,7 +288,6 @@ enum CommandPaletteCatalog {
 
     private struct Builder {
         let context: CommandPaletteContext
-        let perform: (CommandPaletteAction) -> Void
 
         var tabs: [CommandPaletteCommand] {
             let pinTitle: LocalizedStringResource = context.isAwayFromPin
@@ -837,7 +864,8 @@ enum CommandPaletteCatalog {
                 aliases: aliases,
                 isAvailable: isAvailable,
                 isSuggested: isSuggested,
-                run: { perform(action) }
+                action: action,
+                run: {}
             )
         }
     }

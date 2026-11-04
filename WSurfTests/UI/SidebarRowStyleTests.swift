@@ -134,6 +134,33 @@ struct SidebarRowStyleTests {
         #expect(model.rowStyle(ofSplitLedBy: left, isMarked: false, paletteOpen: true).emphasis == .resting)
     }
 
+    /// Opening the new-tab palette changes only the current row, so only that row may read the flag: in a long sidebar
+    /// every other row would otherwise redraw on each Cmd-T (perf audit 0.1.22, item 6).
+    @Test func onlyTheCurrentRowFollowsTheNewTabPalette() {
+        let coordinator = AppCoordinator(browser: makeModel())
+        let model = coordinator.browser
+        let other = model.newTab()
+        let current = model.newTab()
+        #expect(model.activeTab === current)
+
+        func follows(_ tab: BrowserTab) -> Bool {
+            let changed = ObservationFlag()
+            let before = withObservationTracking {
+                model.rowStyle(of: tab, isMarked: false, paletteOpen: coordinator.isNewTabPaletteOpen, increasedContrast: false)
+            } onChange: {
+                changed.value = true
+            }
+            coordinator.requestNewTab()
+            let during = model.rowStyle(of: tab, isMarked: false, paletteOpen: coordinator.isNewTabPaletteOpen, increasedContrast: false)
+            coordinator.closePalette()
+            #expect(changed.value || before == during, "a row that does not follow the flag must not need to")
+            return changed.value
+        }
+        #expect(follows(current))
+        #expect(!follows(other))
+        model.cancelPendingSave()
+    }
+
     // MARK: - Colors
 
     private func rgb(_ red: CGFloat, _ green: CGFloat, _ blue: CGFloat, alpha: CGFloat = 1) -> NSColor {
@@ -411,4 +438,8 @@ struct SidebarRowStyleTests {
         #expect(!style.marksCurrentTab)
         #expect(style.spokenStatus == nil)
     }
+}
+
+private nonisolated final class ObservationFlag: @unchecked Sendable {
+    var value = false
 }

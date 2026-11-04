@@ -239,6 +239,24 @@ check_average \
   '4457' \
   'Window style switching memory growth' \
   'kB'
+# Cmd-T over a 300-tab Standard window, five opens and closes, drawn each time (perf audit 0.1.22, item 6). Pro, Debug, load 25-75,
+# four six-sample runs each: before 1.406 / 1.456 / 0.689 / 1.364 s, after 0.960 / 0.966 / 1.033 / 1.052 s. One pass in most runs
+# stalls 2-3 s in the run loop on the shared Pro (both builds), so the means overlap; per-cycle medians, 35 cycles a run, went from
+# 95-102 ms to 66 ms to open and from 49-55 ms to 32 ms to close. Budget twice the after mean, against a gross regression; the win
+# itself is held by SidebarRowStyleTests/onlyTheCurrentRowFollowsTheNewTabPalette and
+# CommandPaletteRankingTests/anUnchangedContextReusesTheBuiltList.
+check_average \
+  'BrowserPerformanceTests/testOpeningTheNewTabPaletteInACrowdedWindow()' \
+  'com.apple.dt.XCTMetric_Clock.time.monotonic' \
+  '2.100' \
+  'Five Cmd-T opens and closes in a 300-tab window' \
+  's'
+check_average \
+  'BrowserPerformanceTests/testOpeningTheNewTabPaletteInACrowdedWindow()' \
+  'com.apple.dt.XCTMetric_Memory.physical' \
+  '4096' \
+  'Cmd-T palette memory growth' \
+  'kB'
 # Six-sample Pro baseline (Xcode 27.1, 0.1.7 targeted run): the Minimal bar with its tab list open over 300 tabs; time mean 1.1210 s,
 # memory median of samples 2-6 6144 kB.
 check_average \
