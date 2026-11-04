@@ -24,8 +24,20 @@ struct FolderInsetTests {
         case floating
         case everything
 
+        // Not "\(self)": with CustomStringConvertible that calls this property again and overflows the stack.
         var description: String {
-            "\(self)"
+            switch self {
+            case .plain:
+                "plain"
+            case .largestAndTinted:
+                "largestAndTinted"
+            case .pinned:
+                "pinned"
+            case .floating:
+                "floating"
+            case .everything:
+                "everything"
+            }
         }
     }
 
