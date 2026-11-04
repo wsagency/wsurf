@@ -316,7 +316,9 @@ struct ChromiumProfileDataTests {
         try #require(directories.allSatisfy { FileManager.default.fileExists(atPath: $0.path) })
 
         try await runtime.erase(profile: profile)
-        #expect(directories.allSatisfy { !FileManager.default.fileExists(atPath: $0.path) })
+        // WSurf's catalog goes at once. The Chromium profile can already be back here (CI run 41740294136): the write-back
+        // described below may land before this line, so its removal is checked after `removeErasedProfiles`.
+        #expect(!FileManager.default.fileExists(atPath: catalog.path))
         // Chromium writes a few files back while it lets the profile go; the mark taken at the erase removes them once CEF
         // has stopped (at quit or the next launch), which the call below stands in for after that write.
         let marker = catalog.deletingLastPathComponent().appendingPathComponent("Erased", isDirectory: true)
