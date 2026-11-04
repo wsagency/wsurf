@@ -14,9 +14,16 @@ fi
 version=$(/usr/bin/plutil -extract cef raw -o - "$package/CEF_VERSION.json")
 framework="$package/.cef/dist/${version}_macosarm64_minimal/Release/Chromium Embedded Framework.framework"
 if [[ ! -d "$framework" ]]; then
-    /usr/bin/xcrun swift package --package-path "$package" \
-        --allow-writing-to-package-directory --allow-network-connections all \
-        cef download --platform macosarm64 --flavor minimal
+    # Three tries: a hosted runner's DNS lookup can fail (curl exit 6, CI run 41750081081), which curl's own --retry does not
+    # retry. The download resumes a partial file and is checked against its SHA-1, so a retry costs time, never correctness.
+    for attempt in 1 2 3; do
+        /usr/bin/xcrun swift package --package-path "$package" \
+            --allow-writing-to-package-directory --allow-network-connections all \
+            cef download --platform macosarm64 --flavor minimal && break
+        [[ "$attempt" -lt 3 ]] || exit 1
+        echo "warning: CEF download attempt $attempt failed; retrying in 15s." >&2
+        sleep 15
+    done
 fi
 
 scratch="$DERIVED_FILE_DIR/ChromiumHelper"
