@@ -82,6 +82,26 @@ final class SettingsWorkspace {
     }
 }
 
+/// A window view's workspace, made the first time the view's body asks for it. `State(initialValue:)` is evaluated whenever the
+/// view's parent re-runs and its result thrown away after the first, and a workspace reads the Keychain (the assistant's provider
+/// availability), so a view that made one in `init` paid that on every re-run of its parent.
+@MainActor
+final class LazySettingsWorkspace {
+    private var made: SettingsWorkspace?
+
+    func workspace(for coordinator: AppCoordinator) -> SettingsWorkspace {
+        if let made {
+            return made
+        }
+        let workspace = SettingsWorkspace(coordinator: coordinator)
+        workspace.onRoute = { [weak coordinator] category in
+            coordinator?.routeSettings(to: category)
+        }
+        made = workspace
+        return workspace
+    }
+}
+
 extension AppCoordinator {
     /// Opens Settings at the page and sub-page of one `SettingsIndex` entry, such as "autofill.inputHistory". `SettingsView` takes
     /// `pendingSettingsAnchor`, so this works whether the Settings page is open already or is created by this call.

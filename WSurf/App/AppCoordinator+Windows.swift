@@ -159,9 +159,18 @@ extension AppCoordinator {
                 browser.context.favicons.schemeOverride = .dark
             }
         }
-        nativeWindow?.appearance = profiles.isPrivate
-            ? NSAppearance(named: .darkAqua) : settings.colorMode.nsAppearance
-        nativeWindow?.title = windowTitle
+        // Only what changed: this runs on every tab switch and title change, and AppKit redoes the title bar for every title and
+        // appearance it is given, the same one included.
+        if let nativeWindow {
+            let appearance = profiles.isPrivate ? NSAppearance(named: .darkAqua) : settings.colorMode.nsAppearance
+            if nativeWindow.appearance?.name != appearance?.name {
+                nativeWindow.appearance = appearance
+            }
+            let title = windowTitle
+            if nativeWindow.title != title {
+                nativeWindow.title = title
+            }
+        }
         reloadFaviconsIfSchemeChanged()
     }
 
