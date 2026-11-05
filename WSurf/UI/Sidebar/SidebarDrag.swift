@@ -389,6 +389,8 @@ struct SidebarRows: View {
     let context: SidebarRowContext
     /// The row that the pin line's seam follows.
     var seamAfter: SidebarItem?
+    /// Room under each row, part of its item rather than a gap the stack puts between items (see `WorkspaceList.rowStack`).
+    var gapBelow: CGFloat = 0
 
     private var shown: [SidebarItem] {
         Self.shown(items, in: context.browser)
@@ -419,6 +421,7 @@ struct SidebarRows: View {
                     SidebarSectionSeam()
                 }
             }
+            .padding(.bottom, gapBelow)
         }
     }
 
