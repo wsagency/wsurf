@@ -96,6 +96,7 @@ struct MediaSidebarCard: View {
     @Environment(\.sidebarStyle) private var sidebarStyle
     @Environment(\.sidebarWidth) private var sidebarWidth
     @Environment(\.sidebarIsFloating) private var sidebarIsFloating
+    @Environment(\.sidebarIsClipped) private var sidebarIsClipped
     @State private var showsControls = false
 
     @State private var controlsWidth: CGFloat = 0
@@ -120,9 +121,11 @@ struct MediaSidebarCard: View {
         sidebarStyle != .full
     }
 
-    /// The player moves while the video experiment is on. Without it the panel stays docked.
+    /// The player moves while the video experiment is on. Without it the panel stays docked, and so it does in a sidebar
+    /// clipped to its shape (the Minimal window's tab list): there a panel moved over the page is drawn nowhere, yet it
+    /// still takes the page's clicks and hover in its corner, because a clip does not limit hit testing.
     private var isMovable: Bool {
-        coordinator.settings.showsVideoInPlayer
+        coordinator.settings.showsVideoInPlayer && !sidebarIsClipped
     }
 
     private var corner: MediaPlayerCorner {

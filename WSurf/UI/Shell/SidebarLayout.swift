@@ -331,6 +331,9 @@ extension EnvironmentValues {
     @Entry var sidebarWidth: CGFloat = SidebarMetrics.defaultWidth
 
     @Entry var sidebarIsFloating: Bool = false
+
+    /// The sidebar is clipped to its own shape (the Minimal window's tab list), so nothing it draws past its edge is seen.
+    @Entry var sidebarIsClipped: Bool = false
 }
 
 struct LoomColumnResizeHandle: View {

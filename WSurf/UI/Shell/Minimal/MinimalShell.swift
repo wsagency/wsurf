@@ -142,6 +142,7 @@ struct MinimalShell: View {
             .environment(\.sidebarStyle, .full)
             .environment(\.sidebarWidth, width)
             .environment(\.sidebarIsFloating, true)
+            .environment(\.sidebarIsClipped, true)
             .clipShape(LoomChrome.canvasShape)
             .compositingGroup()
             // Beside the page the card needs no shadow to tell it apart from the page it floats over.
