@@ -22,6 +22,10 @@ Everything since 0.1.22 (build 22). None of the screens and prompts below has be
 - The top of a Chromium page now takes clicks under the window’s title bar, such as Google’s account menu at the top right. Before, a click there could move the window instead: the top 60 points of the page in a Minimal window, the top 22 in a standard one.
 - A Chromium tab whose page never confirms that it closed is let go after 5 seconds, instead of staying in memory until WSurf quits.
 
+### Media player
+
+- In a Minimal window, a media player set to a corner of the page no longer sits there invisible and takes the page’s clicks, such as at the top right. It stays in the tab list, where you can see and use it; a standard window still moves it to the corner.
+
 ### Speed
 
 - Opening WSurf with many tabs is quicker: the saved state of a background tab is read when you first show it, and saved icons load off the main thread.
