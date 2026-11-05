@@ -131,8 +131,8 @@ struct WorkspaceList<TopBar: View, BottomBar: View>: View {
         )
     }
 
-    /// How tall the rows are when every one is a plain tab row, worked out from the model; nil when there is a folder, a
-    /// split or the pin line.
+    /// How tall the rows are when every one is a plain tab row, each with the gap under it, worked out from the model;
+    /// nil when there is a folder, a split or the pin line.
     ///
     /// A lazy stack guesses the height of the rows it has not built from the ones it has, and that guess could change with
     /// every layout pass; each change resized the scroll view's document, which laid the stack out again. In the first
@@ -148,8 +148,7 @@ struct WorkspaceList<TopBar: View, BottomBar: View>: View {
             return browser.splits.splitLed(by: id) == nil
         }
         guard plain else { return nil }
-        return CGFloat(rows.count) * SidebarMetrics.rowHeight(settings: BrowserSettings.application)
-            + spacing * CGFloat(max(rows.count - 1, 0))
+        return CGFloat(rows.count) * (SidebarMetrics.rowHeight(settings: BrowserSettings.application) + spacing)
     }
 
     /// The rows and the room under them. A lazy stack builds the rows near the window; a plain one builds them all.
@@ -170,10 +169,13 @@ struct WorkspaceList<TopBar: View, BottomBar: View>: View {
             .animation(Theme.Motion.drift, value: bottomClearance)
         Group {
             if loadsLazily, let height = uniformHeight(of: sections, spacing: spacing) {
-                // The room stays out of this stack, so every item in it is a row of one height.
-                VStack(spacing: spacing) {
-                    LazyVStack(spacing: spacing) {
-                        rows
+                // Every item in this stack is a row and the gap under it, all one height: the room stays out, and the
+                // stack has no spacing of its own. The stack's guess does not always count its gaps the same way (one gap
+                // more or less, seen as 7879 pt for 7878 and as a row it jumped to placed 1 pt low on the CI runner's macOS);
+                // with no gaps there is nothing to miscount.
+                VStack(spacing: 0) {
+                    LazyVStack(spacing: 0) {
+                        SidebarRows(items: sections.loose, depth: 0, context: context, gapBelow: spacing)
                     }
                     .frame(height: height, alignment: .top)
                     room
