@@ -42,6 +42,8 @@ struct ProofOfWorkChallengeTests {
         let (tab, window) = open(url, in: engine)
         defer { window.close() }
         #expect(await settled(tab, at: url))
+        // The page loads before its view is in the window, so it starts hidden; WebKit tells it the window is shown a moment later.
+        #expect(await waitUntil { (try? await tab.page.evaluateJavaScript("document.visibilityState")) as? String == "visible" })
 
         let script = "[outerWidth, outerHeight, innerWidth, innerHeight, document.visibilityState, document.hidden].join(' ')"
         let reply = try await tab.page.evaluateJavaScript(script) as? String ?? ""
