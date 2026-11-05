@@ -5,6 +5,51 @@ This file preserves release notes inherited from the upstream
 describe upstream Linen releases, not releases published by WSurf. New WSurf
 release notes will be added above this provenance record.
 
+## 0.1.23 (build 23) — 2026-11-05
+
+Everything since 0.1.22 (build 22). None of the screens and prompts below has been checked by hand.
+
+### Tabs
+
+- When your Mac runs critically low on memory, WSurf now unloads the background tabs you used least recently even with Sleep inactive tabs off (the default). The three most recent tabs stay, and so does every protected tab: the one in front and its split panes, favorites, tabs with unsaved form input, playing media, camera, microphone or screen sharing, downloads, tabs the assistant or a connected app is using, private tabs and websites set to Keep this website loaded. An unloaded tab keeps its place in the sidebar and loads again when you show it; a WebKit tab comes back with its history, a Chromium tab with its address only.
+- With Sleep inactive tabs on, a tab now sleeps only after the full delay once it stops being protected, for example a paused video that played for an hour, an assistant run that ended or a favorite you unfavorited. Before, it could unload within a minute.
+- A tab showing a picture-in-picture video no longer sleeps, so the picture-in-picture window stays open while the video is paused.
+- A favorite you unload by hand now lets go of its page, in WebKit and Chromium tabs, instead of keeping it in memory.
+- Typing a new address or search, or going Back to a page of the other engine, no longer asks “Switch rendering engine?”: the page opens in its own engine. Changing a website’s engine from its site controls still asks when the tab has work to lose.
+
+### Chromium tabs
+
+- The top of a Chromium page now takes clicks under the window’s title bar, such as Google’s account menu at the top right. Before, a click there could move the window instead: the top 60 points of the page in a Minimal window, the top 22 in a standard one.
+- A Chromium tab whose page never confirms that it closed is let go after 5 seconds, instead of staying in memory until WSurf quits.
+
+### Speed
+
+- Opening WSurf with many tabs is quicker: the saved state of a background tab is read when you first show it, and saved icons load off the main thread.
+- Opening a window no longer reads the Keychain for the assistant’s providers; they are read when Settings opens.
+- Switching tabs does less work: the window is not rebuilt and its title is not set twice, and switching to or from a Chromium tab prepares its preview off the main thread.
+- A long sidebar scrolls more smoothly, comes to rest in the first window instead of laying itself out again and again in the background, and stays still while you drag a theme slider.
+- ⌘T in a window with many tabs no longer redraws every sidebar row or rebuilds the command list.
+- Address-bar and Command palette searches of three letters or more read your history in the background and keep each answer, so typing does not wait for them.
+
+### About
+
+- The copyright line in the About panel and Get Info no longer says the app is based on Linen. Linen is still credited in Settings › About › Acknowledgements.
+
+### Known issues
+
+- One- and two-letter address-bar queries search only the newest 3,000 pages; three letters and the History page search everything.
+- A page title that changed in the last 2 seconds may not be found by a search of three letters or more in the address bar or the Command palette until WSurf saves it.
+- Removing one website in Website data removes the cookies that exact host set; a cookie a website set for its whole domain (from www.example.com for example.com) stays until you clear everything. This was true before, but Chromium’s cookies now stay across a quit.
+- Clear Browsing Data does not reach Chromium’s own small records of the sites you visited (the sites it must open over HTTPS, its site-engagement scores); they go when you delete the profile.
+- WebKit tabs that both use the camera or microphone still take it from each other: showing another tab that uses them mutes the first for good, and WSurf has no button to resume it.
+- Taking back camera or microphone access from a Chromium tab that is using it stops the devices by closing and reopening the page, and shows “Could not change website device access”.
+- Back after an engine switch goes back one step only: Forward does not return to the other engine, and a Chromium page comes back by its address, not with its history.
+- Passkeys from Apple Passwords, from phones and from security keys do not work in either engine until Apple grants WSurf the browser passkey entitlement; WSurf’s own passkey sheet is all a website gets.
+- A script that must run before a page’s own code (the passkey script, the notification and location stand-ins, the development diagnostics hook) can run late on the first page of a Chromium pop-up, so that page may have done its first work before it.
+- A page in a background tab runs its timers more slowly after 10 seconds, so a page that counts, polls or refreshes itself from a timer can fall behind until you show it. Set the website to Keep this website loaded to leave it as it was.
+- A tab you switched to another engine from its site controls, and the other tabs of that website that keep their engine, go back to the website's setting after WSurf is quit and opened again.
+- The known issues of 0.1.14 are unchanged.
+
 ## 0.1.22 (build 22) — 2026-11-03
 
 Everything since 0.1.21 (build 21). None of the screens and prompts below has been checked by hand.
