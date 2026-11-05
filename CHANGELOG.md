@@ -5,9 +5,9 @@ This file preserves release notes inherited from the upstream
 describe upstream Linen releases, not releases published by WSurf. New WSurf
 release notes will be added above this provenance record.
 
-## 0.1.23 (build 23) — 2026-11-05
+## 0.1.24 (build 24) — 2026-11-05
 
-Everything since 0.1.22 (build 22). None of the screens and prompts below has been checked by hand.
+Everything since 0.1.22 (build 22); 0.1.23 (build 23) was built but never released. None of the screens and prompts below has been checked by hand.
 
 ### Tabs
 
