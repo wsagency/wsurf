@@ -288,7 +288,7 @@ nonisolated final class BrowserPerformanceTests: XCTestCase, @unchecked Sendable
         MainActor.assumeIsolated {
             let coordinator = AppCoordinator(browser: BrowserModel(database: .temporary()))
             let browser = coordinator.browser
-            let tabs = (0..<300).map { _ in browser.newTab(activate: false) }
+            let tabs = (0..<300).map { _ in Self.addBackgroundTab(to: browser) }
             // Every tenth row is marked, the way Select All would mark them: each wears a glass layer.
             for tab in tabs.enumerated() where tab.offset % 10 == 0 {
                 browser.sidebarSelection.toggle(.tab(tab.element.id))
@@ -322,6 +322,7 @@ nonisolated final class BrowserPerformanceTests: XCTestCase, @unchecked Sendable
                 host.displayIfNeeded()
                 window.close()
             }
+            Self.assertRowsStayUnloaded(browser)
             browser.cancelPendingSave()
         }
     }
@@ -358,7 +359,7 @@ nonisolated final class BrowserPerformanceTests: XCTestCase, @unchecked Sendable
             }
             let coordinator = AppCoordinator(browser: BrowserModel(database: .temporary()))
             let browser = coordinator.browser
-            let tabs = (0..<300).map { _ in browser.newTab(activate: false) }
+            let tabs = (0..<300).map { _ in Self.addBackgroundTab(to: browser) }
             for tab in tabs.enumerated() {
                 tab.element.urlString = "https://fixture-\(tab.offset).example/"
                 tab.element.isLoading = false
@@ -413,6 +414,7 @@ nonisolated final class BrowserPerformanceTests: XCTestCase, @unchecked Sendable
             }
             // Growth from run to run is retained memory; a single high sample that the next run gives back is not.
             print("Layout option sidebar footprint after each run (kB): \(footprints.map { $0 / 1_024 })")
+            Self.assertRowsStayUnloaded(browser)
             browser.cancelPendingSave()
         }
     }
@@ -424,7 +426,7 @@ nonisolated final class BrowserPerformanceTests: XCTestCase, @unchecked Sendable
             let coordinator = AppCoordinator(browser: BrowserModel(database: .temporary()))
             let browser = coordinator.browser
             for index in 0..<300 {
-                browser.newTab(activate: false).urlString = "https://fixture-\(index).example/"
+                Self.addBackgroundTab(to: browser, address: "https://fixture-\(index).example/")
             }
             let count = browser.tabs.count
             let host = NSHostingView(rootView: AnyView(BrowserView(browser: browser, coordinator: coordinator, style: .standard)))
@@ -446,6 +448,7 @@ nonisolated final class BrowserPerformanceTests: XCTestCase, @unchecked Sendable
             }
             window.contentView = nil
             window.close()
+            Self.assertRowsStayUnloaded(browser)
             browser.cancelPendingSave()
         }
     }
@@ -457,7 +460,7 @@ nonisolated final class BrowserPerformanceTests: XCTestCase, @unchecked Sendable
             let coordinator = AppCoordinator(browser: BrowserModel(database: .temporary()))
             let browser = coordinator.browser
             for index in 0..<300 {
-                browser.newTab(activate: false).urlString = "https://fixture-\(index).example/"
+                Self.addBackgroundTab(to: browser, address: "https://fixture-\(index).example/")
             }
             let host = NSHostingView(rootView: BrowserView(browser: browser, coordinator: coordinator, style: .standard))
             let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1_280, height: 800), styleMask: [.borderless], backing: .buffered, defer: false)
@@ -480,6 +483,7 @@ nonisolated final class BrowserPerformanceTests: XCTestCase, @unchecked Sendable
             }
             window.contentView = nil
             window.close()
+            Self.assertRowsStayUnloaded(browser)
             browser.cancelPendingSave()
         }
     }
@@ -490,7 +494,7 @@ nonisolated final class BrowserPerformanceTests: XCTestCase, @unchecked Sendable
             let coordinator = AppCoordinator(browser: BrowserModel(database: .temporary()))
             let browser = coordinator.browser
             for index in 0..<300 {
-                browser.newTab(activate: false).urlString = "https://fixture-\(index).example/"
+                Self.addBackgroundTab(to: browser, address: "https://fixture-\(index).example/")
             }
 
             // ponytail-merge: written before the robust gate; six runs so the memory gate drops the warm-up and judges five.
@@ -507,6 +511,7 @@ nonisolated final class BrowserPerformanceTests: XCTestCase, @unchecked Sendable
                     window.close()
                 }
             }
+            Self.assertRowsStayUnloaded(browser)
             browser.cancelPendingSave()
         }
     }
@@ -688,6 +693,34 @@ nonisolated final class BrowserPerformanceTests: XCTestCase, @unchecked Sendable
             window.close()
             rig.browser.cancelPendingSave()
         }
+    }
+
+    /// A background tab of a crowded window: a row like one `newTab(activate: false)` adds (unseen, a start page or the given
+    /// address), with no web view behind it, as the other tabs of a restored window have. `newTab` would open a live start
+    /// page in each, and the cases never close their tabs: 300 per case filled WebKit's limit of about 400 content
+    /// processes in the second crowded case, on the Pro as on the runner. On the hosted runner (macOS 27) each web view
+    /// made after that blocked about 15 s in WebKit's process pool setup, so Cmd-T's case spent its 2-minute allowance
+    /// building its fixture (CI 41971052830).
+    @MainActor
+    @discardableResult
+    private static func addBackgroundTab(to browser: BrowserModel, address: String? = nil) -> BrowserTab {
+        let tab = browser.makeTab(restoring: true)
+        if let address {
+            tab.urlString = address
+        } else {
+            tab.pageTitle = SystemPages.startTitle
+        }
+        tab.isUnseen = true
+        browser.insert(tab, after: nil)
+        return tab
+    }
+
+    /// Fails when drawing the window gave its background tabs pages. Only the tab on screen may have one: the window cases
+    /// draw it, so the Standard window cases make its page; the sidebar and Minimal shell cases make none.
+    @MainActor
+    private static func assertRowsStayUnloaded(_ browser: BrowserModel, file: StaticString = #filePath, line: UInt = #line) {
+        let loaded = browser.tabs.filter(\.isMaterialised).count
+        XCTAssertLessThanOrEqual(loaded, 1, "background tabs of the crowded window got web views", file: file, line: line)
     }
 
     /// The test host's physical footprint, the figure XCTMemoryMetric samples.
