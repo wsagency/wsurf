@@ -593,6 +593,7 @@ struct DevModePageTests {
         })
         #expect(tab.page.engine == engine)
         #expect(try await tab.page.callAsyncJavaScript(seed, in: nil, contentWorld: .page) as? Bool == true)
+        #expect(try await waitUntil { try await cookieDomains(tab).isSuperset(of: ["app.localhost", "other.localhost"]) })
         let before = try await cookieDomains(tab)
         #expect(before.isSuperset(of: ["app.localhost", "other.localhost"]), "\(before)")
 
@@ -615,6 +616,8 @@ struct DevModePageTests {
         defer { hide(window) }
         let confirmed = SitePermissions.origin(for: try address(server, host: "app.localhost"))
         #expect(try await tab.page.callAsyncJavaScript(seed, in: nil, contentWorld: .page) as? Bool == true)
+        // A cookie the page sets reaches the cookie store a moment after the script returns.
+        #expect(try await waitUntil { try await cookieDomains(tab).contains("app.localhost") }, "the page's own cookie is set")
         let before = try await cookieDomains(tab)
 
         tab.setDevMode(false)
