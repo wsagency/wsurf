@@ -18,8 +18,8 @@ import WebKit
 //
 // The numbers of the "resting sidebar" case are the main-thread CPU of the test host (`CLOCK_THREAD_CPUTIME_ID`); the idle,
 // memory and soak cases read `proc_pid_rusage` of the host, its children and the WebKit processes it is responsible for.
-private let benchEnabled = ProcessInfo.processInfo.environment["WSURF_PERF_BENCH"] == "1"
-private let soakEnabled = benchEnabled && ProcessInfo.processInfo.environment["WSURF_PERF_SOAK"] == "1"
+private nonisolated let benchEnabled = ProcessInfo.processInfo.environment["WSURF_PERF_BENCH"] == "1"
+private nonisolated let soakEnabled = benchEnabled && ProcessInfo.processInfo.environment["WSURF_PERF_SOAK"] == "1"
 
 @MainActor
 @Suite(.serialized)
@@ -153,7 +153,7 @@ struct ResourceBenchmarkTests {
         try await LiveWindowRig.with(engine: .webKit, routes: Self.plainRoutes) { rig in
             let browser = rig.browser
             var stages: [ResourceProbe.Stage] = []
-            func record(_ label: String) {
+            @MainActor func record(_ label: String) {
                 let stage = ResourceProbe.stage(label)
                 stages.append(stage)
                 stage.report("R3-memory")
@@ -204,7 +204,7 @@ struct ResourceBenchmarkTests {
     func memoryPerWindow() async throws {
         try await ResourceRig.with(name: "Memory per window") { rig in
             var stages = [ResourceProbe.Stage]()
-            func record(_ label: String) {
+            @MainActor func record(_ label: String) {
                 let stage = ResourceProbe.stage(label)
                 stages.append(stage)
                 stage.report("R4-memory")
@@ -346,7 +346,7 @@ struct ResourceBenchmarkTests {
             var live: [BrowserTab] = []
             var closed: [WeakTab] = []
             var series: [(minutes: Double, host: Double, family: Double)] = []
-            func record(_ label: String) {
+            @MainActor func record(_ label: String) {
                 let stage = ResourceProbe.stage(label)
                 let minutes = PerfProbe.ms(clock.now - began) / 60_000
                 series.append((minutes, stage.host, stage.total))

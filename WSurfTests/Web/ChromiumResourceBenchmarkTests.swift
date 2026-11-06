@@ -14,12 +14,12 @@ import Testing
 // and run alone, one run per sample: `-only-testing:WSurfTests/ChromiumResourceBenchmarkTests`, with
 // `-default-test-execution-time-allowance 600 -maximum-test-execution-time-allowance 900`. No getUserMedia, not even with fake
 // devices (they still prompt for the microphone).
-private let benchEnabled = ProcessInfo.processInfo.environment["WSURF_PERF_BENCH"] == "1"
+private nonisolated let benchEnabled = ProcessInfo.processInfo.environment["WSURF_PERF_BENCH"] == "1"
 
 @MainActor
 @Suite(.serialized)
 struct ChromiumResourceBenchmarkTests {
-    private static let prefix = "WSURF-ENGINE-BENCH"
+    private nonisolated static let prefix = "WSURF-ENGINE-BENCH"
 
     @Test(.enabled(if: benchEnabled), .timeLimit(.minutes(5)))
     func chromiumFamilyLifecycle() async throws {
@@ -28,7 +28,7 @@ struct ChromiumResourceBenchmarkTests {
             return
         }
         try await LiveWindowRig.with(engine: .chromium) { rig in
-            func record(_ label: String) {
+            @MainActor func record(_ label: String) {
                 let stage = ResourceProbe.stage(label)
                 print(String(
                     format: "%@ case=R8-lifecycle step=%@ hostMB=%.1f hostWakeups=%llu helperCount=%d helperMB=%.1f webKitWebContent=%d totalMB=%.1f procs=%d",
