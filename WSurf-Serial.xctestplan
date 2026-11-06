@@ -252,6 +252,7 @@
         "VaultTrashTests",
         "VaultUndoTests",
         "VaultUnlockRoutingTests",
+        "WebPagePerformanceTests",
         "WebsiteAuthenticatorTests",
         "YouTubeResolverTests"
       ],

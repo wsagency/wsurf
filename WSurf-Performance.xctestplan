@@ -44,7 +44,8 @@
         "ReaderPerformanceTests",
         "SidebarPerformanceTests",
         "ThemePerformanceTests",
-        "VaultScalePerformanceTests"
+        "VaultScalePerformanceTests",
+        "WebPagePerformanceTests"
       ],
       "target" : {
         "containerPath" : "container:WSurf.xcodeproj",

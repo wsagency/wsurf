@@ -15,7 +15,7 @@ nonisolated final class PageScriptPerformanceTests: XCTestCase, @unchecked Senda
     static let frames = 10
     static let loadsPerPass = 5
 
-    static func page(_ index: Int) -> String {
+    static func page(_ index: Int, frames: Int = frames) -> String {
         let rows = (0..<200).map { "<p>Paragraph \($0) of page \(index) with <a href='#\($0)'>a link</a> and some text.</p>" }.joined()
         let frame = "<iframe srcdoc=\"<p>ad frame</p><form><input type=text name=q></form>\" width=300 height=100></iframe>"
         return """
@@ -56,14 +56,14 @@ nonisolated final class PageScriptPerformanceTests: XCTestCase, @unchecked Senda
     }
 
     @MainActor
-    static func load(_ tab: BrowserTab, _ index: Int) {
-        tab.loadHTML(page(index), baseURL: URL(string: "https://load-\(index).example/"))
+    static func load(_ tab: BrowserTab, _ index: Int, frames: Int = frames) {
+        tab.loadHTML(page(index, frames: frames), baseURL: URL(string: "https://load-\(index).example/"))
         _ = spin { tab.isLoading || !tab.hasNoPageYet }
         XCTAssertTrue(spin { !tab.isLoading }, "page \(index) loaded")
     }
 
     @MainActor
-    static func bareMilliseconds() -> Double {
+    static func bareMilliseconds(frames: Int = frames) -> Double {
         // The pool's process pool and a non-persistent store, without a single script or handler.
         let configuration = WebViewPool.makeConfiguration()
         configuration.userContentController = WKUserContentController()
@@ -74,7 +74,7 @@ nonisolated final class PageScriptPerformanceTests: XCTestCase, @unchecked Senda
         var total = 0.0
         for index in 0..<(loadsPerPass * 3) {
             let started = ContinuousClock.now
-            bare.loadHTMLString(page(index), baseURL: URL(string: "https://bare-\(index).example/"))
+            bare.loadHTMLString(page(index, frames: frames), baseURL: URL(string: "https://bare-\(index).example/"))
             _ = spin { bare.isLoading }
             _ = spin { !bare.isLoading }
             if index >= loadsPerPass {
@@ -86,22 +86,34 @@ nonisolated final class PageScriptPerformanceTests: XCTestCase, @unchecked Senda
     }
 
     func testLoadingAPageWithTenFrames() {
+        loadPages(frames: Self.frames, bareLabel: "bare")
+    }
+
+    /// The same loop for a page with no iframe, the main frame alone: the 0.1.22 audit measured +3.5 ms per load there against
+    /// a bare `WKWebView`. Budgeted on the clock, like the ten-frame case, and prints the bare baseline for one frame.
+    func testLoadingAPageWithOneFrame() {
+        loadPages(frames: 0, bareLabel: "bare1")
+    }
+
+    private func loadPages(frames: Int, bareLabel: String) {
         MainActor.assumeIsolated {
-            print(String(format: "WSURF-PAGE-SCRIPTS bare meanMsPerLoad=%.2f", Self.bareMilliseconds()))
+            print(String(format: "WSURF-PAGE-SCRIPTS \(bareLabel) meanMsPerLoad=%.2f", Self.bareMilliseconds(frames: frames)))
             let tab = Self.makeTab()
             let window = Self.window(showing: tab.page.nativeView)
             var index = 0
-            Self.load(tab, index)
+            Self.load(tab, index, frames: frames)
             measure(metrics: [XCTClockMetric()], options: .budgeted) {
                 for _ in 0..<Self.loadsPerPass {
                     index += 1
-                    Self.load(tab, index)
+                    Self.load(tab, index, frames: frames)
                 }
             }
-            for script in tab.page.webKit?.configuration.userContentController.userScripts ?? [] {
-                let names = script.source.matches(of: /__wsurf[A-Za-z]+/).map { String($0.output) }.filter { $0 != "__wsurfSend" }
-                print("WSURF-PAGE-SCRIPTS script bytes=\(script.source.utf8.count) mainFrameOnly=\(script.isForMainFrameOnly) "
-                    + "first=\(names.first ?? String(script.source.prefix(40)).replacingOccurrences(of: "\n", with: " "))")
+            if frames == Self.frames {
+                for script in tab.page.webKit?.configuration.userContentController.userScripts ?? [] {
+                    let names = script.source.matches(of: /__wsurf[A-Za-z]+/).map { String($0.output) }.filter { $0 != "__wsurfSend" }
+                    print("WSURF-PAGE-SCRIPTS script bytes=\(script.source.utf8.count) mainFrameOnly=\(script.isForMainFrameOnly) "
+                        + "first=\(names.first ?? String(script.source.prefix(40)).replacingOccurrences(of: "\n", with: " "))")
+                }
             }
             window.contentView = nil
             window.close()
