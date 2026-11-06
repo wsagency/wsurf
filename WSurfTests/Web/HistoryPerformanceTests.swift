@@ -219,7 +219,7 @@ nonisolated final class HistoryPerformanceTests: XCTestCase, @unchecked Sendable
 
 /// A history like a long-used profile's, the same every time: addresses and titles of many sites, pages visited once or a few
 /// times, and most visits made by following a link from the one before.
-private enum HistoryPerformanceFixture {
+enum HistoryPerformanceFixture {
     private static let names = [
         "news", "shop", "mail", "docs", "github", "wiki", "video", "music", "maps", "travel", "store", "bank", "blog", "forum",
         "photo", "cloud", "sports", "weather", "recipe", "jobs", "learn", "course", "stack", "reddit", "amazon", "apple",
