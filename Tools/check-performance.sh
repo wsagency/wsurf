@@ -983,16 +983,16 @@ check_average \
 # two runs, mean of samples 2-6 in seconds. Budget twice the larger mean, three significant digits, up. Memory: the usual 4096 kB, since
 # the median of every case stayed under 2048 kB. The -O column is the optimised host (SWIFT_OPTIMIZATION_LEVEL=-O, no coverage).
 # case                                                  run 1    run 2    -O
-# OpeningASecondWindow                                  0.1206   0.1156   @O1
-# ClosingBackgroundTabsInACrowdedWindow                 0.2002   0.1961   @O2
-# ClosingTheFrontTabInACrowdedWindow                    0.1199   0.1187   @O3
-# OpeningSettingsInACrowdedWindow                       0.6173   0.6135   @O4
-# SwitchingSettingsPanesInACrowdedWindow                0.5817   0.5439   @O5
-# PreviewingBrightnessWithSettingsOpenInACrowdedWindow  1.4745   1.4661   @O6
-# TypingInTheCommandPaletteOfACrowdedWindow             0.1539   0.1802   @O7
-# TypingInTheStartPageAddressFieldOverALargeHistory     0.1231   0.1211   @O8
-# ScrollingASidebarWithFoldersPinsAndSplits             0.1407   0.1475   @O9
-# ShowingTheHistoryPageOfALargeHistory                  0.3290   0.3111   @O10
+# OpeningASecondWindow                                  0.1206   0.1156   0.1328
+# ClosingBackgroundTabsInACrowdedWindow                 0.2002   0.1961   0.1619
+# ClosingTheFrontTabInACrowdedWindow                    0.1199   0.1187   0.1002
+# OpeningSettingsInACrowdedWindow                       0.6173   0.6135   0.5925
+# SwitchingSettingsPanesInACrowdedWindow                0.5817   0.5439   0.5469
+# PreviewingBrightnessWithSettingsOpenInACrowdedWindow  1.4745   1.4661   1.3879
+# TypingInTheCommandPaletteOfACrowdedWindow             0.1539   0.1802   0.1331
+# TypingInTheStartPageAddressFieldOverALargeHistory     0.1231   0.1211   0.1168
+# ScrollingASidebarWithFoldersPinsAndSplits             0.1407   0.1475   0.1422
+# ShowingTheHistoryPageOfALargeHistory                  0.3290   0.3111   0.3213
 # Clock only, because a page's footprint swings by more than a budget could hold: the second window (makes a pooled WKWebView), the front
 # tab close (activating a neighbour can make its page) and Settings (a page of its own: -967 to 3260 kB a pass in the alone runs).
 check_average \
