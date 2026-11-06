@@ -30,7 +30,10 @@ struct ResourceBenchmarkTests {
     /// splits of 2 rows, `all` the three at once. 8 loaded WebKit pages sit after the rows. In a real window (not ordered in), at
     /// rest: main-thread CPU per 400 ms and the document height of the largest scroll view, which keeps changing while the
     /// sidebar's lazy stack re-estimates itself (0.1.22 audit); then 10 switches among the loaded pages.
-    @Test(.enabled(if: benchEnabled), .timeLimit(.minutes(5)), arguments: ["flat", "folders", "pins", "splits", "all"])
+    @Test(
+        .enabled(if: benchEnabled), .timeLimit(.minutes(5)),
+        arguments: ["flat", "folders", "pins", "splits", "all", "flat-noPages", "all-noPages"]
+    )
     func restingSidebarCPU(shape: String) async throws {
         // Two fresh windows per shape: whether the sidebar burns at rest differs between windows of one shape.
         for rep in 0..<2 {
@@ -38,7 +41,10 @@ struct ResourceBenchmarkTests {
         }
     }
 
-    private func restingWindow(shape: String, rep: Int) async throws {
+    private func restingWindow(shape fullShape: String, rep: Int) async throws {
+        // `-noPages` leaves out the 8 loaded pages: whether a burn at rest comes from the sidebar or from the pages.
+        let pageCount = fullShape.hasSuffix("-noPages") ? 0 : 8
+        let shape = fullShape.replacingOccurrences(of: "-noPages", with: "")
         try await ResourceRig.with(name: "Resting sidebar \(shape)") { rig in
             let coordinator = rig.newWindow()
             let browser = coordinator.browser
@@ -61,7 +67,7 @@ struct ResourceBenchmarkTests {
             }
             let viewsAfterShape = TabWebView.liveInstances.allObjects.count
             var loaded: [BrowserTab] = []
-            for index in 0..<8 {
+            for index in 0..<pageCount {
                 let tab = browser.newTab()
                 loaded.append(tab)
                 rig.track(tab)
@@ -69,7 +75,9 @@ struct ResourceBenchmarkTests {
                 Self.draw(coordinator)
                 #expect(await waitUntil(timeout: .seconds(60)) { !tab.hasNoPageYet && !tab.isLoading }, "page \(index) loaded")
             }
-            browser.activate(loaded[7])
+            if let last = loaded.last {
+                browser.activate(last)
+            }
             Self.draw(coordinator)
 
             try await Task.sleep(for: .seconds(3))
@@ -96,7 +104,7 @@ struct ResourceBenchmarkTests {
             let hostCPUPercent = (PerfProbe.usage(of: host).map { $0.cpuSeconds } ?? 0) - (usage0?.cpuSeconds ?? 0)
             let varies = (heights.max() ?? 0) - (heights.min() ?? 0)
             PerfProbe.report(
-                "R1-rest shape=\(shape) rep=\(rep)",
+                "R1-rest shape=\(fullShape) rep=\(rep)",
                 PerfProbe.summary(rest) + String(
                     format: " restShareOfCorePct=%.1f hostCpuPct=%.1f restPerWindowMs=%@ windowUpdatesPer400ms=%@ docHeights=%@ docHeightRange=%.2f tabs=%d liveViewsBefore=%d liveViewsAfterShape=%d",
                     (rest.reduce(0, +) / 4_000) * 100, hostCPUPercent / seconds * 100,
@@ -111,7 +119,7 @@ struct ResourceBenchmarkTests {
             var cpu: [Double] = []
             var after: [Double] = []
             let clock = ContinuousClock()
-            for step in 0..<10 {
+            for step in 0..<(loaded.isEmpty ? 0 : 10) {
                 let tab = loaded[step % 8]
                 guard tab !== browser.activeTab else { continue }
                 let cpu0 = PerfProbe.mainCPUms()
@@ -125,9 +133,9 @@ struct ResourceBenchmarkTests {
                 try await Task.sleep(for: .seconds(0.4))
                 after.append(PerfProbe.mainCPUms() - cpu1)
             }
-            PerfProbe.report("R1-switch shape=\(shape) rep=\(rep)", "wall: " + PerfProbe.summary(wall))
-            PerfProbe.report("R1-switch shape=\(shape) rep=\(rep)", "mainCpu: " + PerfProbe.summary(cpu))
-            PerfProbe.report("R1-switch shape=\(shape) rep=\(rep)", "after400msCpu: " + PerfProbe.summary(after))
+            PerfProbe.report("R1-switch shape=\(fullShape) rep=\(rep)", "wall: " + PerfProbe.summary(wall))
+            PerfProbe.report("R1-switch shape=\(fullShape) rep=\(rep)", "mainCpu: " + PerfProbe.summary(cpu))
+            PerfProbe.report("R1-switch shape=\(fullShape) rep=\(rep)", "after400msCpu: " + PerfProbe.summary(after))
         }
     }
 
