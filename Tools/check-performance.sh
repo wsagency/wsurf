@@ -766,6 +766,64 @@ check_average \
   'Five loads of an eleven-frame page with the page scripts' \
   's'
 
+# Page-load overhead with no iframe (the main frame alone): the same five-load pass as the ten-frame case. Six-sample Pro baseline
+# (2026-11-06, Debug gate configuration, whole Performance plan, two runs): mean 0.330 s and 0.332 s per pass (66 ms a load; a bare
+# web view in the same host 67-69 ms). Optimised host: @O1PS@. Budget: twice the mean. Clock only, like the ten-frame case.
+check_average \
+  'PageScriptPerformanceTests/testLoadingAPageWithOneFrame()' \
+  'com.apple.dt.XCTMetric_Clock.time.monotonic' \
+  '0.665' \
+  'Five loads of a one-frame page with the page scripts' \
+  's'
+
+# Pages in the app's own window (WebPagePerformanceTests): a profile of its own on the shared test data store, pages from a loopback
+# server, WebKit only. Clock only: a live page's footprint swings more than a budget can hold, as in testSwitchingLoadedTabsInAWindow.
+# Six-sample Pro baselines (2026-11-06, Debug gate configuration, whole Performance plan, two runs: mean 1 / mean 2). Budget: twice
+# the larger mean.
+#   new tab to loaded, one tab per pass, window ordered in  0.0819 / 0.0778 s   (-O: @O1P1@)   82 ms a tab
+check_average \
+  'WebPagePerformanceTests/testOpeningANewTabToFirstPaint()' \
+  'com.apple.dt.XCTMetric_Clock.time.monotonic' \
+  '0.164' \
+  'A new tab opened to its page loaded' \
+  's'
+#   16 switches among 8 loaded pages, 300 rows in 10 folders 0.3749 / 0.3764 s   (-O: @O1P2@)   23 ms a switch
+check_average \
+  'WebPagePerformanceTests/testSwitchingLoadedTabsInACrowdedWindowWithFolders()' \
+  'com.apple.dt.XCTMetric_Clock.time.monotonic' \
+  '0.753' \
+  'Sixteen switches among loaded pages in a window with folders' \
+  's'
+#   Find: open, count 518 matches, 10 steps                 0.0292 / 0.0279 s   (-O: @O1P3@)   2 ms a step
+check_average \
+  'WebPagePerformanceTests/testFindingInALongPage()' \
+  'com.apple.dt.XCTMetric_Clock.time.monotonic' \
+  '0.0584' \
+  'Find in a long page, open and ten steps' \
+  's'
+#   Zoom: 6 steps + reset, each applied by the page          0.0460 / 0.0459 s   (-O: @O1P4@)   7 ms a step
+check_average \
+  'WebPagePerformanceTests/testZoomingALongPage()' \
+  'com.apple.dt.XCTMetric_Clock.time.monotonic' \
+  '0.0920' \
+  'Six zoom steps of a long page' \
+  's'
+#   Reader open + close for a 200 KB article                0.0889 / 0.0817 s   (-O: @O1P5@)
+check_average \
+  'WebPagePerformanceTests/testShowingReaderForALongArticle()' \
+  'com.apple.dt.XCTMetric_Clock.time.monotonic' \
+  '0.178' \
+  'Reader opened and closed for a long article' \
+  's'
+#   20-page PDF opened to two drawn frames                  0.1189 / 0.0945 s   (-O: @O1P6@)   samples 0.086-0.196
+check_average \
+  'WebPagePerformanceTests/testOpeningAPDF()' \
+  'com.apple.dt.XCTMetric_Clock.time.monotonic' \
+  '0.238' \
+  'A 20-page PDF opened' \
+  's'
+
+
 # Large vault (20,000 credentials, 25,000 for the merge case). Five-sample Pro means in the app test host (2026-10-21):
 # edit 1.0926 s / -930.6 kB, whole-vault save 1.231078 s / 5292.04 kB, passkey merge targets 0.676352 s / -1821.9 kB,
 # merge choice in a full review 0.7291 s / -5665.6 kB. Budgets are twice the mean (memory at least 4096 kB).
