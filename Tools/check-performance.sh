@@ -978,3 +978,122 @@ check_average \
   '4096' \
   'Background address field query memory growth' \
   'kB'
+
+# Window and UI interaction cases (WindowPerformanceTests, 2026-11-06, perf/bench-window). Pro, Debug + coverage, whole Performance plan,
+# two runs, mean of samples 2-6 in seconds. Budget twice the larger mean, three significant digits, up. Memory: the usual 4096 kB, since
+# the median of every case stayed under 2048 kB. The -O column is the optimised host (SWIFT_OPTIMIZATION_LEVEL=-O, no coverage).
+# case                                                  run 1    run 2    -O
+# OpeningASecondWindow                                  0.1206   0.1156   @O1
+# ClosingBackgroundTabsInACrowdedWindow                 0.2002   0.1961   @O2
+# ClosingTheFrontTabInACrowdedWindow                    0.1199   0.1187   @O3
+# OpeningSettingsInACrowdedWindow                       0.6173   0.6135   @O4
+# SwitchingSettingsPanesInACrowdedWindow                0.5817   0.5439   @O5
+# PreviewingBrightnessWithSettingsOpenInACrowdedWindow  1.4745   1.4661   @O6
+# TypingInTheCommandPaletteOfACrowdedWindow             0.1539   0.1802   @O7
+# TypingInTheStartPageAddressFieldOverALargeHistory     0.1231   0.1211   @O8
+# ScrollingASidebarWithFoldersPinsAndSplits             0.1407   0.1475   @O9
+# ShowingTheHistoryPageOfALargeHistory                  0.3290   0.3111   @O10
+# Clock only, because a page's footprint swings by more than a budget could hold: the second window (makes a pooled WKWebView), the front
+# tab close (activating a neighbour can make its page) and Settings (a page of its own: -967 to 3260 kB a pass in the alone runs).
+check_average \
+  'WindowPerformanceTests/testOpeningASecondWindow()' \
+  'com.apple.dt.XCTMetric_Clock.time.monotonic' \
+  '0.242' \
+  'Opening a second window' \
+  's'
+check_average \
+  'WindowPerformanceTests/testClosingBackgroundTabsInACrowdedWindow()' \
+  'com.apple.dt.XCTMetric_Clock.time.monotonic' \
+  '0.401' \
+  'Ten background tab closes in a crowded window' \
+  's'
+check_average \
+  'WindowPerformanceTests/testClosingBackgroundTabsInACrowdedWindow()' \
+  'com.apple.dt.XCTMetric_Memory.physical' \
+  '4096' \
+  'Ten background tab closes in a crowded window memory growth' \
+  'kB'
+check_average \
+  'WindowPerformanceTests/testClosingTheFrontTabInACrowdedWindow()' \
+  'com.apple.dt.XCTMetric_Clock.time.monotonic' \
+  '0.240' \
+  'Five front tab closes in a crowded window' \
+  's'
+check_average \
+  'WindowPerformanceTests/testOpeningSettingsInACrowdedWindow()' \
+  'com.apple.dt.XCTMetric_Clock.time.monotonic' \
+  '1.24' \
+  'Three Settings opens and closes in a crowded window' \
+  's'
+check_average \
+  'WindowPerformanceTests/testSwitchingSettingsPanesInACrowdedWindow()' \
+  'com.apple.dt.XCTMetric_Clock.time.monotonic' \
+  '1.17' \
+  'Five Settings pane switches in a crowded window' \
+  's'
+check_average \
+  'WindowPerformanceTests/testSwitchingSettingsPanesInACrowdedWindow()' \
+  'com.apple.dt.XCTMetric_Memory.physical' \
+  '4096' \
+  'Five Settings pane switches in a crowded window memory growth' \
+  'kB'
+check_average \
+  'WindowPerformanceTests/testPreviewingBrightnessWithSettingsOpenInACrowdedWindow()' \
+  'com.apple.dt.XCTMetric_Clock.time.monotonic' \
+  '2.95' \
+  'Thirty brightness preview steps with Settings open' \
+  's'
+check_average \
+  'WindowPerformanceTests/testPreviewingBrightnessWithSettingsOpenInACrowdedWindow()' \
+  'com.apple.dt.XCTMetric_Memory.physical' \
+  '4096' \
+  'Thirty brightness preview steps with Settings open memory growth' \
+  'kB'
+check_average \
+  'WindowPerformanceTests/testTypingInTheCommandPaletteOfACrowdedWindow()' \
+  'com.apple.dt.XCTMetric_Clock.time.monotonic' \
+  '0.361' \
+  'Eleven palette keystrokes in a crowded window' \
+  's'
+check_average \
+  'WindowPerformanceTests/testTypingInTheCommandPaletteOfACrowdedWindow()' \
+  'com.apple.dt.XCTMetric_Memory.physical' \
+  '4096' \
+  'Eleven palette keystrokes in a crowded window memory growth' \
+  'kB'
+check_average \
+  'WindowPerformanceTests/testTypingInTheStartPageAddressFieldOverALargeHistory()' \
+  'com.apple.dt.XCTMetric_Clock.time.monotonic' \
+  '0.247' \
+  'Ten address field keystrokes over 50,000 pages' \
+  's'
+check_average \
+  'WindowPerformanceTests/testTypingInTheStartPageAddressFieldOverALargeHistory()' \
+  'com.apple.dt.XCTMetric_Memory.physical' \
+  '4096' \
+  'Ten address field keystrokes over 50,000 pages memory growth' \
+  'kB'
+check_average \
+  'WindowPerformanceTests/testScrollingASidebarWithFoldersPinsAndSplits()' \
+  'com.apple.dt.XCTMetric_Clock.time.monotonic' \
+  '0.296' \
+  'Thirty scroll steps over a sidebar with folders, pins and splits' \
+  's'
+check_average \
+  'WindowPerformanceTests/testScrollingASidebarWithFoldersPinsAndSplits()' \
+  'com.apple.dt.XCTMetric_Memory.physical' \
+  '4096' \
+  'Thirty scroll steps over a sidebar with folders, pins and splits memory growth' \
+  'kB'
+check_average \
+  'WindowPerformanceTests/testShowingTheHistoryPageOfALargeHistory()' \
+  'com.apple.dt.XCTMetric_Clock.time.monotonic' \
+  '0.659' \
+  'Three History page opens over 50,000 pages' \
+  's'
+check_average \
+  'WindowPerformanceTests/testShowingTheHistoryPageOfALargeHistory()' \
+  'com.apple.dt.XCTMetric_Memory.physical' \
+  '4096' \
+  'Three History page opens over 50,000 pages memory growth' \
+  'kB'
