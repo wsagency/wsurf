@@ -261,6 +261,48 @@ struct ResourceBenchmarkTests {
         }
     }
 
+    /// The question behind `LaunchPerformanceTests`' comment on AttributeGraph: does the host keep memory for every window it builds
+    /// and frees? Eight passes of build, draw, close and release of a window of 300 rows in 10 folders (`rows300`) or of a bare
+    /// window (`empty`), host footprint after each, once the window is gone and the run loop has settled.
+    @Test(.enabled(if: benchEnabled), .timeLimit(.minutes(5)), arguments: ["rows300", "empty"])
+    func retainedMemoryPerBuiltWindow(kind: String) async throws {
+        try await ResourceRig.with(name: "Retained \(kind)") { rig in
+            // One warm-up window, so that first-use allocations are not counted as growth.
+            var series: [Double] = []
+            for pass in 0..<9 {
+                let coordinator = rig.newWindow()
+                if kind == "rows300" {
+                    let browser = coordinator.browser
+                    let rows = (0..<300).map { PerfProbe.addBackgroundTab(to: browser, address: "https://fixture-\($0).example/") }
+                    for index in 0..<10 {
+                        browser.createFolder(named: "Folder \(index)", containing: Array(rows[index * 20..<(index + 1) * 20]))
+                    }
+                }
+                Self.draw(coordinator)
+                try await Task.sleep(for: .seconds(1))
+                let withWindow = ResourceProbe.stage("built").host
+                rig.close(coordinator)
+                try await Task.sleep(for: .seconds(2))
+                let after = ResourceProbe.stage("freed").host
+                if pass > 0 {
+                    series.append(after)
+                }
+                PerfProbe.report(
+                    "R4b-retained kind=\(kind) pass=\(pass)",
+                    String(format: "hostMBWithWindow=%.2f hostMBAfterClose=%.2f", withWindow, after)
+                )
+            }
+            let points = series.enumerated().map { (Double($0.offset), $0.element) }
+            PerfProbe.report(
+                "R4b-retained kind=\(kind)",
+                String(
+                    format: "hostMBGrowthPerPass=%.3f firstMB=%.2f lastMB=%.2f passes=%d",
+                    ResourceProbe.slope(points), series.first ?? 0, series.last ?? 0, series.count
+                )
+            )
+        }
+    }
+
     // MARK: - R5: critical memory pressure
 
     @Test(.enabled(if: benchEnabled), .timeLimit(.minutes(5)))
