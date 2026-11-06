@@ -32,6 +32,13 @@ struct ResourceBenchmarkTests {
     /// sidebar's lazy stack re-estimates itself (0.1.22 audit); then 10 switches among the loaded pages.
     @Test(.enabled(if: benchEnabled), .timeLimit(.minutes(5)), arguments: ["flat", "folders", "pins", "splits", "all"])
     func restingSidebarCPU(shape: String) async throws {
+        // Two fresh windows per shape: whether the sidebar burns at rest differs between windows of one shape.
+        for rep in 0..<2 {
+            try await restingWindow(shape: shape, rep: rep)
+        }
+    }
+
+    private func restingWindow(shape: String, rep: Int) async throws {
         try await ResourceRig.with(name: "Resting sidebar \(shape)") { rig in
             let coordinator = rig.newWindow()
             let browser = coordinator.browser
@@ -70,22 +77,31 @@ struct ResourceBenchmarkTests {
             let usage0 = PerfProbe.usage(of: host)
             let wall0 = ContinuousClock.now
             var rest: [Double] = []
+            var updatesPerWindow: [Int] = []
             var heights: [Double] = []
+            let counter = UpdateCounter()
+            let observer = NotificationCenter.default.addObserver(
+                forName: NSWindow.didUpdateNotification, object: coordinator.nativeWindow, queue: nil
+            ) { _ in counter.count += 1 }
+            defer { NotificationCenter.default.removeObserver(observer) }
             for _ in 0..<10 {
                 let cpu0 = PerfProbe.mainCPUms()
+                let updates0 = counter.count
                 try await Task.sleep(for: .seconds(0.4))
                 rest.append(PerfProbe.mainCPUms() - cpu0)
+                updatesPerWindow.append(counter.count - updates0)
                 heights.append(Self.largestDocumentHeight(in: coordinator))
             }
             let seconds = PerfProbe.ms(ContinuousClock.now - wall0) / 1_000
             let hostCPUPercent = (PerfProbe.usage(of: host).map { $0.cpuSeconds } ?? 0) - (usage0?.cpuSeconds ?? 0)
             let varies = (heights.max() ?? 0) - (heights.min() ?? 0)
             PerfProbe.report(
-                "R1-rest shape=\(shape)",
+                "R1-rest shape=\(shape) rep=\(rep)",
                 PerfProbe.summary(rest) + String(
-                    format: " restShareOfCorePct=%.1f hostCpuPct=%.1f restPerWindowMs=%@ docHeights=%@ docHeightRange=%.2f tabs=%d liveViewsBefore=%d liveViewsAfterShape=%d",
+                    format: " restShareOfCorePct=%.1f hostCpuPct=%.1f restPerWindowMs=%@ windowUpdatesPer400ms=%@ docHeights=%@ docHeightRange=%.2f tabs=%d liveViewsBefore=%d liveViewsAfterShape=%d",
                     (rest.reduce(0, +) / 4_000) * 100, hostCPUPercent / seconds * 100,
                     rest.map { String(format: "%.1f", $0) }.joined(separator: ","),
+                    updatesPerWindow.map(String.init).joined(separator: ","),
                     heights.map { String(format: "%.1f", $0) }.joined(separator: ","), varies,
                     browser.tabs.count, viewsBefore, viewsAfterShape
                 )
@@ -109,9 +125,9 @@ struct ResourceBenchmarkTests {
                 try await Task.sleep(for: .seconds(0.4))
                 after.append(PerfProbe.mainCPUms() - cpu1)
             }
-            PerfProbe.report("R1-switch shape=\(shape)", "wall: " + PerfProbe.summary(wall))
-            PerfProbe.report("R1-switch shape=\(shape)", "mainCpu: " + PerfProbe.summary(cpu))
-            PerfProbe.report("R1-switch shape=\(shape)", "after400msCpu: " + PerfProbe.summary(after))
+            PerfProbe.report("R1-switch shape=\(shape) rep=\(rep)", "wall: " + PerfProbe.summary(wall))
+            PerfProbe.report("R1-switch shape=\(shape) rep=\(rep)", "mainCpu: " + PerfProbe.summary(cpu))
+            PerfProbe.report("R1-switch shape=\(shape) rep=\(rep)", "after400msCpu: " + PerfProbe.summary(after))
         }
     }
 
@@ -305,7 +321,7 @@ struct ResourceBenchmarkTests {
                 coordinator.showBrowser(activate: false)
                 coordinator.nativeWindow?.orderFrontRegardless()
                 guard let tab = coordinator.browser.activeTab, tab.urlString == frontURL.absoluteString else {
-                    Issue.record("pass \(pass): the front tab is not the saved page")
+                    Issue.record("pass \(pass): the front tab is not the saved page: \(coordinator.browser.activeTab?.urlString ?? "nil"), tabs \(coordinator.browser.tabs.count)")
                     rig.closeForRestart(coordinator)
                     continue
                 }
@@ -404,6 +420,10 @@ struct ResourceBenchmarkTests {
     }
 
     // MARK: - Helpers
+
+    private final class UpdateCounter: @unchecked Sendable {
+        var count = 0
+    }
 
     private final class WeakTab {
         weak var tab: BrowserTab?
