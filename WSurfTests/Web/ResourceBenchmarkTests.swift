@@ -65,13 +65,13 @@ struct ResourceBenchmarkTests {
             browser.activate(loaded[7])
             Self.draw(coordinator)
 
-            try await Task.sleep(for: .seconds(2))
+            try await Task.sleep(for: .seconds(3))
             let host = getpid()
             let usage0 = PerfProbe.usage(of: host)
             let wall0 = ContinuousClock.now
             var rest: [Double] = []
             var heights: [Double] = []
-            for _ in 0..<5 {
+            for _ in 0..<10 {
                 let cpu0 = PerfProbe.mainCPUms()
                 try await Task.sleep(for: .seconds(0.4))
                 rest.append(PerfProbe.mainCPUms() - cpu0)
@@ -83,8 +83,9 @@ struct ResourceBenchmarkTests {
             PerfProbe.report(
                 "R1-rest shape=\(shape)",
                 PerfProbe.summary(rest) + String(
-                    format: " restShareOfCorePct=%.1f hostCpuPct=%.1f docHeights=%@ docHeightRange=%.2f tabs=%d liveViewsBefore=%d liveViewsAfterShape=%d",
-                    (rest.reduce(0, +) / 2_000) * 100, hostCPUPercent / seconds * 100,
+                    format: " restShareOfCorePct=%.1f hostCpuPct=%.1f restPerWindowMs=%@ docHeights=%@ docHeightRange=%.2f tabs=%d liveViewsBefore=%d liveViewsAfterShape=%d",
+                    (rest.reduce(0, +) / 4_000) * 100, hostCPUPercent / seconds * 100,
+                    rest.map { String(format: "%.1f", $0) }.joined(separator: ","),
                     heights.map { String(format: "%.1f", $0) }.joined(separator: ","), varies,
                     browser.tabs.count, viewsBefore, viewsAfterShape
                 )
