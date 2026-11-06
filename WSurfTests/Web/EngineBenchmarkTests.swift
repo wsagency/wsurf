@@ -145,6 +145,14 @@ struct EngineBenchmarkTests {
                 tabs.append(try await Self.open(rig, "/p\(index)", engine: .chromium).tab)
             }
             Self.draw(rig)
+            try await Task.sleep(for: .seconds(2))
+            var rest: [Double] = []
+            for _ in 0..<5 {
+                let before = PerfProbe.mainCPUms()
+                try await Task.sleep(for: .milliseconds(400))
+                rest.append(PerfProbe.mainCPUms() - before)
+            }
+            Self.report("E2-rest400msCpu", PerfProbe.summary(rest) + " note=four-loaded-chromium-tabs-no-switching")
             let result = try await Self.switching(rig, order: tabs, rounds: 3)
             Self.report("E2-switch-chromium-wall", PerfProbe.summary(result.wall))
             Self.report("E2-switch-chromium-mainCpu", PerfProbe.summary(result.cpu))
@@ -284,9 +292,17 @@ struct EngineBenchmarkTests {
                     let switched = await tab.switchEngine(to: target)
                     #expect(switched, "the engine changed to \(target)")
                     let loaded = await waitUntil(timeout: .seconds(60), tick: .milliseconds(5)) {
-                        tab.page.url == url && !tab.page.isLoading && (tab.page.chromium != nil) == (target == .chromium)
+                        Self.draw(rig)
+                        return tab.page.url == url && !tab.page.isLoading && (tab.page.chromium != nil) == (target == .chromium)
                     }
                     #expect(loaded, "the page loaded again in \(target)")
+                    if !loaded {
+                        Self.report(
+                            "E7-diagnostic",
+                            "target=\(target) url=\(String(describing: tab.page.url)) loading=\(tab.page.isLoading) "
+                                + "chromium=\(tab.page.chromium != nil) inWindow=\(tab.page.window != nil) active=\(rig.browser.activeTab === tab)")
+                        return
+                    }
                     Self.draw(rig)
                     let elapsed = PerfProbe.ms(Self.clock.now - began)
                     if target == .chromium {
