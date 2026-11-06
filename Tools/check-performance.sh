@@ -768,7 +768,7 @@ check_average \
 
 # Page-load overhead with no iframe (the main frame alone): the same five-load pass as the ten-frame case. Six-sample Pro baseline
 # (2026-11-06, Debug gate configuration, whole Performance plan, two runs): mean 0.330 s and 0.332 s per pass (66 ms a load; a bare
-# web view in the same host 67-69 ms). Optimised host: @O1PS@. Budget: twice the mean. Clock only, like the ten-frame case.
+# web view in the same host 67-69 ms). Optimised host: mean 0.341 s per pass. Budget: twice the mean. Clock only, like the ten-frame case.
 check_average \
   'PageScriptPerformanceTests/testLoadingAPageWithOneFrame()' \
   'com.apple.dt.XCTMetric_Clock.time.monotonic' \
@@ -780,42 +780,42 @@ check_average \
 # server, WebKit only. Clock only: a live page's footprint swings more than a budget can hold, as in testSwitchingLoadedTabsInAWindow.
 # Six-sample Pro baselines (2026-11-06, Debug gate configuration, whole Performance plan, two runs: mean 1 / mean 2). Budget: twice
 # the larger mean.
-#   new tab to loaded, one tab per pass, window ordered in  0.0819 / 0.0778 s   (-O: @O1P1@)   82 ms a tab
+#   new tab to loaded, one tab per pass, window ordered in  0.0819 / 0.0778 s   (-O: 0.0796 s)   82 ms a tab
 check_average \
   'WebPagePerformanceTests/testOpeningANewTabToFirstPaint()' \
   'com.apple.dt.XCTMetric_Clock.time.monotonic' \
   '0.164' \
   'A new tab opened to its page loaded' \
   's'
-#   16 switches among 8 loaded pages, 300 rows in 10 folders 0.3749 / 0.3764 s   (-O: @O1P2@)   23 ms a switch
+#   16 switches among 8 loaded pages, 300 rows in 10 folders 0.3749 / 0.3764 s   (-O: 0.3300 s)   23 ms a switch
 check_average \
   'WebPagePerformanceTests/testSwitchingLoadedTabsInACrowdedWindowWithFolders()' \
   'com.apple.dt.XCTMetric_Clock.time.monotonic' \
   '0.753' \
   'Sixteen switches among loaded pages in a window with folders' \
   's'
-#   Find: open, count 518 matches, 10 steps                 0.0292 / 0.0279 s   (-O: @O1P3@)   2 ms a step
+#   Find: open, count 518 matches, 10 steps                 0.0292 / 0.0279 s   (-O: 0.0325 s)   2 ms a step
 check_average \
   'WebPagePerformanceTests/testFindingInALongPage()' \
   'com.apple.dt.XCTMetric_Clock.time.monotonic' \
   '0.0584' \
   'Find in a long page, open and ten steps' \
   's'
-#   Zoom: 6 steps + reset, each applied by the page          0.0460 / 0.0459 s   (-O: @O1P4@)   7 ms a step
+#   Zoom: 6 steps + reset, each applied by the page          0.0460 / 0.0459 s   (-O: 0.0476 s)   7 ms a step
 check_average \
   'WebPagePerformanceTests/testZoomingALongPage()' \
   'com.apple.dt.XCTMetric_Clock.time.monotonic' \
   '0.0920' \
   'Six zoom steps of a long page' \
   's'
-#   Reader open + close for a 200 KB article                0.0889 / 0.0817 s   (-O: @O1P5@)
+#   Reader open + close for a 200 KB article                0.0889 / 0.0817 s   (-O: 0.0683 s)
 check_average \
   'WebPagePerformanceTests/testShowingReaderForALongArticle()' \
   'com.apple.dt.XCTMetric_Clock.time.monotonic' \
   '0.178' \
   'Reader opened and closed for a long article' \
   's'
-#   20-page PDF opened to two drawn frames                  0.1189 / 0.0945 s   (-O: @O1P6@)   samples 0.086-0.196
+#   20-page PDF opened to two drawn frames                  0.1189 / 0.0945 s   (-O: 0.0935 s)   samples 0.086-0.196
 check_average \
   'WebPagePerformanceTests/testOpeningAPDF()' \
   'com.apple.dt.XCTMetric_Clock.time.monotonic' \
