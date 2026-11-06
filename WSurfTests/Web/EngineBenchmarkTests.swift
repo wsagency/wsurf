@@ -288,6 +288,9 @@ struct EngineBenchmarkTests {
             var toWebKit: [Double] = []
             for _ in 0..<3 {
                 for target in [BrowserEngine.chromium, .webKit] {
+                    // The user's path: the site remembers the engine, and the tab no longer pins the one it was opened with.
+                    tab.sitePermissions.setEngine(target, for: SitePermissions.origin(for: url))
+                    tab.engineOverride = nil
                     let began = Self.clock.now
                     let switched = await tab.switchEngine(to: target)
                     #expect(switched, "the engine changed to \(target)")
