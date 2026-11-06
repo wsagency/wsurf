@@ -17,7 +17,7 @@ import Testing
 // never starts CEF for it. Each prints `WSURF-ENGINE-BENCH` lines. CEF cannot be started twice in one process, so the first-start case
 // needs a fresh host per sample: run it alone, once per sample. A page loads in Chromium only when its window is ordered in, which
 // `LiveWindowRig` does (without activating the app).
-private let benchEnabled = ProcessInfo.processInfo.environment["WSURF_PERF_BENCH"] == "1"
+private nonisolated let benchEnabled = ProcessInfo.processInfo.environment["WSURF_PERF_BENCH"] == "1"
 
 @MainActor
 @Suite(.serialized, .boundedWebViews)
