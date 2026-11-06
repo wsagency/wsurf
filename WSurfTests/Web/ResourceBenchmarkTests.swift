@@ -60,12 +60,12 @@ struct ResourceBenchmarkTests {
                 rig.track(tab)
                 tab.loadHTML(Self.page(index), baseURL: URL(string: "https://audit-\(index).example/"))
                 Self.draw(coordinator)
-                #expect(PerfProbe.spin { !tab.hasNoPageYet && !tab.isLoading }, "page \(index) loaded")
+                #expect(await waitUntil(timeout: .seconds(60)) { !tab.hasNoPageYet && !tab.isLoading }, "page \(index) loaded")
             }
             browser.activate(loaded[7])
             Self.draw(coordinator)
 
-            PerfProbe.idle(2)
+            try await Task.sleep(for: .seconds(2))
             let host = getpid()
             let usage0 = PerfProbe.usage(of: host)
             let wall0 = ContinuousClock.now
@@ -73,7 +73,7 @@ struct ResourceBenchmarkTests {
             var heights: [Double] = []
             for _ in 0..<5 {
                 let cpu0 = PerfProbe.mainCPUms()
-                PerfProbe.idle(0.4)
+                try await Task.sleep(for: .seconds(0.4))
                 rest.append(PerfProbe.mainCPUms() - cpu0)
                 heights.append(Self.largestDocumentHeight(in: coordinator))
             }
@@ -100,12 +100,12 @@ struct ResourceBenchmarkTests {
                 let cpu0 = PerfProbe.mainCPUms()
                 let started = clock.now
                 browser.activate(tab)
-                _ = PerfProbe.spin(timeout: 5) { tab.page.nativeView.window != nil }
+                _ = await waitUntil(timeout: .seconds(5)) { tab.page.nativeView.window != nil }
                 Self.draw(coordinator)
                 wall.append(PerfProbe.ms(clock.now - started))
                 let cpu1 = PerfProbe.mainCPUms()
                 cpu.append(cpu1 - cpu0)
-                PerfProbe.idle(0.4)
+                try await Task.sleep(for: .seconds(0.4))
                 after.append(PerfProbe.mainCPUms() - cpu1)
             }
             PerfProbe.report("R1-switch shape=\(shape)", "wall: " + PerfProbe.summary(wall))
@@ -215,7 +215,7 @@ struct ResourceBenchmarkTests {
                 let coordinator = rig.newWindow()
                 windows.append(coordinator)
                 Self.draw(coordinator)
-                PerfProbe.idle(1)
+                try await Task.sleep(for: .seconds(1))
                 record("\(index)-windows")
             }
             for coordinator in windows {
@@ -310,7 +310,7 @@ struct ResourceBenchmarkTests {
                 }
                 rig.track(tab)
                 tab.page.ignoresWindowOcclusion = true
-                let loaded = PerfProbe.spin(timeout: 60) { tab.page.url == frontURL && !tab.hasNoPageYet && !tab.isLoading }
+                let loaded = await waitUntil(timeout: .seconds(60)) { tab.page.url == frontURL && !tab.hasNoPageYet && !tab.isLoading }
                 let toLoad = PerfProbe.ms(clock.now - started)
                 let report = await PageDriver.readPerformance(in: tab.page)
                 if pass > 0 {
