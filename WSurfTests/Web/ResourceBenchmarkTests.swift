@@ -637,13 +637,17 @@ final class ResourceRig {
         coordinators.removeAll { $0 === coordinator }
     }
 
-    /// The same, after a terminate notification, so the window stays saved as open for the next pass.
+    /// The same, after a terminate notification, so the window stays saved as open for the next pass. The window is closed for
+    /// real (`windowDidClose`, which forgets its saved row) only when the rig finishes, as `LaunchPerformanceTests` does.
     func closeForRestart(_ coordinator: AppCoordinator) {
         notifications.post(name: NSApplication.willTerminateNotification, object: nil)
         for tab in coordinator.browser.tabs where tab.isMaterialised {
             tabs.append(tab)
         }
-        close(coordinator)
+        coordinator.browser.cancelPendingSave()
+        coordinator.nativeWindow?.contentView = nil
+        coordinator.nativeWindow?.close()
+        coordinator.releaseWindowHost()
     }
 
     private func finish() async {
