@@ -604,6 +604,8 @@ final class BrowserApplication {
 
     func prepareToTerminate() {
         isTerminating = true
+        // Chromium must not start while the app quits.
+        chromiumPrewarm?.cancel()
         // Every profile's vault, synchronously and before anything below can suspend. A cancelled termination leaves them
         // locked: unlocking again is one explicit user action, never an implicit one.
         CredentialManager.lockAll(reason: .termination)

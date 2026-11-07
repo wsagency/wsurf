@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 
 import AppKit
+import OSLog
 
 /// Starts Chromium before the first Chromium tab asks for it, when the session is going to use it, and only at a moment the
 /// person is not using the app.
@@ -16,11 +17,13 @@ import AppKit
 @MainActor
 final class ChromiumPrewarm {
     static let idleInterval: Duration = .seconds(2)
+    nonisolated static let log = Logger(subsystem: "io.wsagency.wsurf", category: "chromium")
 
     private let clock: any Clock<Duration>
     private let idleInterval: Duration
     private let usesChromium: @MainActor () -> Bool
     private let isStarted: @MainActor () -> Bool
+    private let isBusy: @MainActor () -> Bool
     private let start: @MainActor () -> Void
     private var wait: Task<Void, Never>?
     private var inputMonitor: Any?
@@ -32,12 +35,14 @@ final class ChromiumPrewarm {
         idleInterval: Duration = ChromiumPrewarm.idleInterval,
         usesChromium: @escaping @MainActor () -> Bool,
         isStarted: @escaping @MainActor () -> Bool,
+        isBusy: @escaping @MainActor () -> Bool = ChromiumPrewarm.isTrackingInput,
         start: @escaping @MainActor () -> Void
     ) {
         self.clock = clock
         self.idleInterval = idleInterval
         self.usesChromium = usesChromium
         self.isStarted = isStarted
+        self.isBusy = isBusy
         self.start = start
     }
 
@@ -96,8 +101,18 @@ final class ChromiumPrewarm {
         }
     }
 
+    /// A mouse button held down, or a modal tracking loop (a drag, a menu, a resize) running: the app is in use although no event
+    /// reached the local monitor.
+    static func isTrackingInput() -> Bool {
+        NSEvent.pressedMouseButtons != 0 || RunLoop.main.currentMode == .eventTracking
+    }
+
     private func idleElapsed() {
         guard !isFinished else { return }
+        if isBusy() {
+            restartWait()
+            return
+        }
         isFinished = true
         wait = nil
         removeInputMonitor()
@@ -108,7 +123,8 @@ final class ChromiumPrewarm {
     /// Whether the session will need Chromium: a site is set to it, or a tab of a window, a Chromium favourite among them,
     /// belongs to a site that runs in it. Reads the tabs' addresses and settings only; no page is built or loaded.
     static func sessionUsesChromium(models: [BrowserModel], permissions: [SitePermissions]) -> Bool {
-        permissions.contains { !$0.engineOrigins.isEmpty }
+        // A record is only a Chromium rule if the site still resolves to Chromium (a site kept WebKit-only has none).
+        permissions.contains { permission in permission.engineOrigins.contains { permission.engine(for: $0) == .chromium } }
             || models.contains { model in model.tabs.contains { model.engine(for: $0) == .chromium } }
     }
 }
@@ -120,12 +136,20 @@ extension BrowserApplication {
         guard !AppDatabase.isRunningTests, chromiumPrewarm == nil else { return }
         let prewarm = ChromiumPrewarm(
             usesChromium: { [weak self] in
-                guard let self else { return false }
+                // Never start Chromium while the app is quitting.
+                guard let self, !isTerminating else { return false }
                 let permissions = ProfileStore.shared.profiles.map { BrowserProfileContext.shared(for: $0).sitePermissions }
                 return ChromiumPrewarm.sessionUsesChromium(models: windows.filter { !$0.isClosed }.map(\.browser), permissions: permissions)
             },
             isStarted: { ChromiumRuntime.shared.isInitialized },
-            start: { try? ChromiumRuntime.shared.ensureInitialized() }
+            start: {
+                do {
+                    try ChromiumRuntime.shared.ensureInitialized()
+                } catch {
+                    // The first Chromium tab tries again and shows the error to the person.
+                    ChromiumPrewarm.log.error("early start failed: \(error.localizedDescription, privacy: .public)")
+                }
+            }
         )
         chromiumPrewarm = prewarm
         prewarm.watchInput()

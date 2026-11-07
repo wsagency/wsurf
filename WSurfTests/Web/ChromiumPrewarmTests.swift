@@ -34,17 +34,25 @@ struct ChromiumPrewarmTests {
         let clock = TestClock()
         private(set) var starts = 0
         var started = false
+        var busy = false
         private(set) var prewarm: ChromiumPrewarm!
 
         init(idle: Duration, usesChromium: @escaping @MainActor () -> Bool) {
             prewarm = ChromiumPrewarm(
                 clock: clock, idleInterval: idle, usesChromium: usesChromium,
                 isStarted: { [unowned self] in started },
+                isBusy: { [unowned self] in busy },
                 start: { [unowned self] in
                     starts += 1
                     started = true
                 })
         }
+    }
+
+    /// Lets what an advance of the clock resumed run: a task the clock released has had its turn once the main actor has been given up
+    /// a few times. A start that should not happen would have happened by then.
+    private func settle() async {
+        try? await Task.sleep(for: .milliseconds(100))
     }
 
     @Test func aSessionWithoutChromiumNeverStartsIt() async throws {
@@ -70,7 +78,9 @@ struct ChromiumPrewarmTests {
         rig.prewarm.arm()
         try #require(await waitUntil { rig.clock.pendingCount == 1 })
         rig.clock.advance(by: idle - .milliseconds(1))
-        #expect(rig.starts == 0, "not before the idle time has passed")
+        await settle()
+        #expect(rig.starts == 0 && !rig.prewarm.isFinished, "not before the idle time has passed")
+        #expect(rig.clock.pendingCount == 1, "and the wait is still there")
         rig.clock.advance(by: .milliseconds(1))
         try #require(await waitUntil { rig.starts == 1 })
     }
@@ -120,8 +130,10 @@ struct ChromiumPrewarmTests {
         try #require(await waitUntil { rig.clock.pendingCount == 1 })
         // 1.5 s after the key press is 3 s after arming: the first wait would have ended, the second has not.
         rig.clock.advance(by: .seconds(1.5))
+        await settle()
         #expect(rig.starts == 0)
         #expect(!rig.prewarm.isFinished)
+        #expect(rig.clock.pendingCount == 1, "the wait started again from the input")
         rig.clock.advance(by: .seconds(0.5))
         try #require(await waitUntil { rig.starts == 1 })
     }
@@ -145,6 +157,20 @@ struct ChromiumPrewarmTests {
         twice.prewarm.noteInput()
         twice.clock.advance(by: .seconds(10))
         #expect(twice.starts == 1, "one start per launch")
+    }
+
+    @Test func aMouseButtonHeldDownIsNotIdleTime() async throws {
+        let rig = Rig(idle: idle) { true }
+        rig.busy = true
+        rig.prewarm.arm()
+        try #require(await waitUntil { rig.clock.pendingCount == 1 })
+        rig.clock.advance(by: idle)
+        await settle()
+        #expect(rig.starts == 0 && !rig.prewarm.isFinished, "a drag in progress is use of the app")
+        try #require(await waitUntil { rig.clock.pendingCount == 1 }, "and the wait begins again")
+        rig.busy = false
+        rig.clock.advance(by: idle)
+        try #require(await waitUntil { rig.starts == 1 })
     }
 
     @Test func cancellingStopsTheWait() async throws {
