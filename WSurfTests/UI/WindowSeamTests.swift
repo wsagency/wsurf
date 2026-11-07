@@ -78,4 +78,41 @@ struct WindowSeamTests {
             #expect(red < 0.2, "point \(row) shows a light seam over the dark band: \(reds)")
         }
     }
+
+    /// A layout pass in between does not search the titlebar again.
+    @Test func theTitlebarIsSearchedOnceAcrossManyLayouts() {
+        let window = makeWindow()
+        defer { window.close() }
+        var guardian = TitlebarDecorationGuard()
+        #expect(guardian.hideIfNeeded(in: window))
+        for _ in 0..<100 {
+            window.contentView?.superview?.layoutSubtreeIfNeeded()
+            #expect(!guardian.hideIfNeeded(in: window))
+        }
+        #expect(guardian.passes == 1)
+    }
+
+    /// AppKit showing the decoration again, or a new style mask, brings the search back.
+    @Test func aShownDecorationOrANewStyleMaskIsHiddenAgain() throws {
+        let window = makeWindow()
+        defer { window.close() }
+        var guardian = TitlebarDecorationGuard()
+        guardian.hideIfNeeded(in: window)
+        let frameView = try #require(window.contentView?.superview)
+        let container = try #require(frameView.subviews.first { $0.className.hasSuffix("NSTitlebarContainerView") })
+        let decoration = try #require(container.subviews.first { $0.className.contains("TitlebarDecoration") })
+        #expect(decoration.isHidden)
+        decoration.isHidden = false
+        #expect(guardian.hideIfNeeded(in: window))
+        #expect(decoration.isHidden)
+        #expect(!guardian.hideIfNeeded(in: window))
+
+        window.styleMask.remove(.resizable)
+        #expect(guardian.hideIfNeeded(in: window))
+        #expect(!guardian.hideIfNeeded(in: window))
+
+        container.addSubview(NSView())
+        #expect(guardian.hideIfNeeded(in: window))
+        #expect(guardian.passes == 4)
+    }
 }

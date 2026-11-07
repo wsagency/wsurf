@@ -257,15 +257,25 @@ final class BrowserHost: NSObject, NSWindowDelegate {
     /// class name, and a rename would otherwise pass silently.
     @discardableResult
     static func hideTitlebarDecoration(of window: NSWindow) -> Bool {
-        guard let frameView = window.contentView?.superview else { return false }
-        var hidAny = false
-        for container in frameView.subviews where container.className.hasSuffix("NSTitlebarContainerView") {
-            for decoration in container.subviews where decoration.className.contains("TitlebarDecoration") {
-                decoration.isHidden = true
-                hidAny = true
+        let (_, decorations) = titlebarDecorations(of: window)
+        for decoration in decorations {
+            decoration.isHidden = true
+        }
+        return !decorations.isEmpty
+    }
+
+    /// The titlebar container and the decoration views in it, found by their private class names.
+    fileprivate static func titlebarDecorations(of window: NSWindow) -> (container: NSView?, decorations: [NSView]) {
+        guard let frameView = window.contentView?.superview else { return (nil, []) }
+        var container: NSView?
+        var found: [NSView] = []
+        for candidate in frameView.subviews where candidate.className.hasSuffix("NSTitlebarContainerView") {
+            for decoration in candidate.subviews where decoration.className.contains("TitlebarDecoration") {
+                container = candidate
+                found.append(decoration)
             }
         }
-        return hidAny
+        return (container, found)
     }
 
     private func roundContentCorners(of window: NSWindow) {
@@ -608,7 +618,63 @@ nonisolated enum BrowserWindowMetrics {
     }
 }
 
+/// Hides the titlebar decoration once, and again only when the window's titlebar changed: its style mask (full screen
+/// included), the views around it, or a decoration that was shown again. A layout pass in between only compares those,
+/// instead of walking the titlebar's subviews and building class names.
+@MainActor
+struct TitlebarDecorationGuard {
+    private weak var frameView: NSView?
+    private weak var container: NSView?
+    private var decorations: [WeakView] = []
+    private var frameSubviewCount = -1
+    private var containerSubviewCount = -1
+    private var styleMask: NSWindow.StyleMask = []
+    /// How many times the titlebar was searched. A test reads it.
+    private(set) var passes = 0
+
+    private struct WeakView {
+        weak var view: NSView?
+    }
+
+    /// Answers whether it searched the titlebar this time.
+    @discardableResult
+    mutating func hideIfNeeded(in window: NSWindow) -> Bool {
+        if isCurrent(for: window) { return false }
+        passes += 1
+        let (container, found) = BrowserHost.titlebarDecorations(of: window)
+        for decoration in found {
+            decoration.isHidden = true
+        }
+        guard !found.isEmpty else {
+            // Nothing hidden (the class names changed): look again next time rather than trust an empty cache.
+            decorations = []
+            self.container = nil
+            return true
+        }
+        frameView = window.contentView?.superview
+        self.container = container
+        decorations = found.map { WeakView(view: $0) }
+        frameSubviewCount = frameView?.subviews.count ?? -1
+        containerSubviewCount = container?.subviews.count ?? -1
+        styleMask = window.styleMask
+        return true
+    }
+
+    private func isCurrent(for window: NSWindow) -> Bool {
+        guard let container, let frameView, !decorations.isEmpty,
+              window.contentView?.superview === frameView,
+              container.superview === frameView,
+              window.styleMask == styleMask,
+              frameView.subviews.count == frameSubviewCount,
+              container.subviews.count == containerSubviewCount
+        else { return false }
+        return decorations.allSatisfy { $0.view?.isHidden == true }
+    }
+}
+
 private final class BrowserWindow: NSWindow {
+    private var decorationGuard = TitlebarDecorationGuard()
+
     /// The tab a mouse's side buttons move Back (3) and Forward (4), or nil when they are left to the page
     /// (`BrowserSettings.sideButtonsNavigate`). The window takes them before any view, so they work over the sidebar, the
     /// bars and either engine's page alike.
@@ -655,7 +721,7 @@ private final class BrowserWindow: NSWindow {
     private static let leadingInset: CGFloat = 14
 
     func alignWindowControls() {
-        BrowserHost.hideTitlebarDecoration(of: self)
+        decorationGuard.hideIfNeeded(in: self)
         guard !styleMask.contains(.fullScreen) else { return }
         guard let close = standardWindowButton(.closeButton) else { return }
         let dx = Self.leadingInset - close.frame.origin.x
