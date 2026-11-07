@@ -229,6 +229,11 @@ struct BrowserView: View {
         .onChange(of: ObjectIdentifier(browser.context)) { _, _ in
             settingsWorkspace.adoptProfile(coordinator: coordinator)
         }
+        // Before the other animations, so nearer the view: with Keep Sidebar Open the layout switch flips `pinsTabList` too, and the modifiers
+        // after it, including `pinsTabList`'s, must not give that change an animation of its own.
+        .animation(
+            BrowserSettings.application.skipsTransitions(reduceMotion: reduceMotion) ? nil : chromeMotion, value: isMinimal
+        )
         .modifier(TranslationDownloadHost(downloads: coordinator.translationDownloads))
         // Switches, sliders and progress bars, in the page chrome and in Settings, take the theme's accent. A theme
         // without one keeps the macOS accent color.
@@ -238,11 +243,6 @@ struct BrowserView: View {
         .environment(\.chromeIsLight, scheme == .light)
         .environment(\.chromeWash, .of(nil, isLight: scheme == .light))
         .environment(\.windowColorScheme, scheme)
-        // First, so nearest the view: with Keep Sidebar Open the layout switch flips `pinsTabList` too, and the modifiers
-        // below must not give that change an animation of its own.
-        .animation(
-            BrowserSettings.application.skipsTransitions(reduceMotion: reduceMotion) ? nil : chromeMotion, value: isMinimal
-        )
         .animation(chromeMotion, value: sidebar.isVisible)
         .animation(chromeMotion, value: pinsTabList)
         .animation(nil, value: sidebar.isPeeking)
