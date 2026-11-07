@@ -12,17 +12,19 @@ extension AppCoordinator {
         get {
             access(keyPath: \.linkModifiers)
             #if DEBUG
-            Self.linkModifierReads += 1
+            Self.linkModifierReads[ObjectIdentifier(self), default: 0] += 1
             #endif
             return heldModifiers
         }
         set {
+            guard newValue != heldModifiers else { return }
             withMutation(keyPath: \.linkModifiers) { heldModifiers = newValue }
         }
     }
 
     #if DEBUG
-    /// How many times `linkModifiers` was read, by any view or model. A test counts the reads over a press and a release.
-    static var linkModifierReads = 0
+    /// How many times `linkModifiers` was read, by any view or model, for each coordinator. A test counts the reads of its
+    /// own coordinator over a press and a release; another window's coordinator does not add to them.
+    static var linkModifierReads: [ObjectIdentifier: Int] = [:]
     #endif
 }

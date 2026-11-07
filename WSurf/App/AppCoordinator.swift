@@ -556,6 +556,7 @@ final class AppCoordinator {
         applyHoverShield()
     }
 
+    /// Written only through `linkModifiers`, which notifies the observers.
     @ObservationIgnored var heldModifiers: NSEvent.ModifierFlags = []
 
     func togglePin() {

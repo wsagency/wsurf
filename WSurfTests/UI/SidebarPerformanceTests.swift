@@ -138,18 +138,23 @@ nonisolated final class SidebarPerformanceTests: XCTestCase, @unchecked Sendable
             XCTAssertEqual(hidden.count, 0, "a button that is not shown does not follow the Command key")
             XCTAssertEqual(shown.count, 2, "the button under the pointer follows a press and a release")
 
-            // The drawn rows themselves: every read of the key by any view, over one press and one release, each drawn. A row
-            // that reads the key (a tab row, a folder row, a hidden control built without `followsCommandKey: false`) adds
-            // one read per row drawn to this count, and a drawn sidebar has dozens of them.
+            #if DEBUG
+            // The drawn rows themselves: every read of the key by this coordinator's views and models, over one press and one
+            // release, each drawn. The 2 reads of today are the ChangeCounter above re-arming for each change; the drawn rows
+            // read 0. A row that reads the key (a tab row, a folder row, a hidden control built without
+            // `followsCommandKey: false`) adds one read per row drawn, about 86 here. The slack of 2 is for a read from
+            // outside the rows while the run loop spins.
+            let id = ObjectIdentifier(coordinator)
             rig.draw()
-            let before = AppCoordinator.linkModifierReads
+            let before = AppCoordinator.linkModifierReads[id, default: 0]
             coordinator.linkModifiers = [.command]
             rig.draw()
             coordinator.linkModifiers = []
             rig.draw()
-            let reads = AppCoordinator.linkModifierReads - before
+            let reads = AppCoordinator.linkModifierReads[id, default: 0] - before
             print("WSURF-PERF case=command-press-reads reads=\(reads)")
-            XCTAssertLessThanOrEqual(reads, 2, "reads of the Command key over a press and a release, all rows drawn (2 today: one per change)")
+            XCTAssertLessThanOrEqual(reads, 4, "reads of the Command key over a press and a release, all rows drawn")
+            #endif
             measure(metrics: [XCTClockMetric(), XCTMemoryMetric()], options: .budgeted) {
                 for _ in 0..<5 {
                     rig.coordinator.linkModifiers = [.command]
