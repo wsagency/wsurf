@@ -18,6 +18,29 @@ struct AppDatabaseMigrationTests {
         return directory
     }
 
+    // MARK: - A temporary database (a private window's)
+
+    private static func schema(of database: AppDatabase) throws -> [String] {
+        try database.writer.read {
+            try String.fetchAll($0, sql: "SELECT type || ' ' || name FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY 1")
+        }
+    }
+
+    /// Each temporary database copies the migrated template: the same schema, its own rows, and migrations recorded.
+    @Test func eachTemporaryDatabaseIsACopyOfTheMigratedTemplate() throws {
+        #expect(AppDatabase.hasMigratedTemplate)
+        let first = AppDatabase.temporary()
+        let second = AppDatabase.temporary()
+        let schema = try Self.schema(of: first)
+        #expect(schema.count > 10)
+        #expect(try Self.schema(of: second) == schema)
+        #expect(try first.writer.read { try Int.fetchOne($0, sql: "SELECT COUNT(*) FROM grdb_migrations") } ?? 0 > 0)
+        try first.writer.write { try $0.execute(sql: "CREATE TABLE onlyInFirst (id INTEGER)") }
+        #expect(try Self.schema(of: second) == schema)
+        #expect(try Self.schema(of: AppDatabase.temporary()) == schema)
+        #expect(try first.writer.read { try Int.fetchOne($0, sql: "PRAGMA foreign_keys") } == 1)
+    }
+
     /// What the signed 0.1.10 build did not define, and every build since has.
     private static let columnsAddedSince010: [(table: String, name: String)] = [
         ("historyVisit", "trail"), ("sessionTab", "lastVisit"), ("sessionTab", "visitTrail"), ("sessionTab", "microTabID"),
