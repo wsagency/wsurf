@@ -20,7 +20,7 @@ extension BrowserTab {
         holdsPageColor = false
     }
 
-    func refreshPageColor(from page: BrowserPage) {
+    func refreshPageColor(from page: BrowserPage, onShow: Bool = false) {
         guard isShowingRealPage else {
             clearPageColor()
             return
@@ -30,7 +30,11 @@ extension BrowserTab {
             setPageColor(nil)
             return
         }
-        measureBandUnderBar()
+        if onShow {
+            measureBandOnShow()
+        } else {
+            measureBandUnderBar()
+        }
     }
 
     func measureBandUnderBar() {
@@ -46,10 +50,15 @@ extension BrowserTab {
         isMeasuringBand = true
         needsBandRemeasure = false
         let requestedURL = urlString
-        let bandFraction = Theme.topBarHeight / page.bounds.height
+        var bandFraction = Theme.topBarHeight / page.bounds.height
         let view = page
+        // Chromium renders only what it is asked for: the band, not the whole page to be cropped here.
+        let band = view.chromium == nil ? nil : CGRect(x: 0, y: 0, width: view.bounds.width, height: Theme.topBarHeight)
+        if band != nil {
+            bandFraction = 1
+        }
         Task { [weak self] in
-            let image = try? await view.capture(width: 48, afterScreenUpdates: true)
+            let image = try? await view.capture(rect: band, width: 48, afterScreenUpdates: true)
             guard let self else { return }
             isMeasuringBand = false
             let shouldRemeasure = needsBandRemeasure
@@ -64,13 +73,26 @@ extension BrowserTab {
                   let image,
                   let average = Self.averageOfTopBand(of: image, fraction: bandFraction)
             else { return }
+            bandMeasuredURL = requestedURL
             setPageColor(average)
         }
     }
 
+    /// The band measurement a tab coming to the front asks for. A Chromium tab whose colour was measured for this address keeps
+    /// it: the capture costs Chromium's UI-thread work on the main thread, and the page's own load, navigation and zoom
+    /// measure again (`measureBandUnderBar`). WebKit's snapshot is cheap and stays as it was.
+    func measureBandOnShow() {
+        guard !Self.keepsBandColour(isChromium: liveView?.chromium != nil, hasColour: pageColor != nil, measuredFor: bandMeasuredURL, now: urlString) else { return }
+        measureBandUnderBar()
+    }
+
+    static func keepsBandColour(isChromium: Bool, hasColour: Bool, measuredFor: String?, now: String) -> Bool {
+        isChromium && hasColour && measuredFor == now
+    }
+
     func webViewDidBecomeVisible() {
         refreshCanvas(from: page)
-        refreshPageColor(from: page)
+        refreshPageColor(from: page, onShow: true)
     }
 
     static func averageOfTopBand(of image: NSImage, fraction: CGFloat) -> NSColor? {

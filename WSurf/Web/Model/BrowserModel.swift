@@ -115,7 +115,7 @@ final class BrowserModel {
                 tabsByID[id]?.realizeDeferredSession()
             }
             markVisibleTabsSeen()
-            activeTab?.measureBandUnderBar()
+            activeTab?.measureBandOnShow()
             onActiveTabChanged?(activeTab, previous)
         }
     }

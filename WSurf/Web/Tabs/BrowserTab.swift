@@ -530,6 +530,8 @@ final class BrowserTab: Identifiable {
 
     var holdsPageColor = false
     var isMeasuringBand = false
+    /// The address the band colour was last measured for (`measureBandOnShow`).
+    @ObservationIgnored var bandMeasuredURL: String?
     var needsBandRemeasure = false
 
     // MARK: - Zoom
