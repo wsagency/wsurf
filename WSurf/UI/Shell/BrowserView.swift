@@ -238,11 +238,13 @@ struct BrowserView: View {
         .environment(\.chromeIsLight, scheme == .light)
         .environment(\.chromeWash, .of(nil, isLight: scheme == .light))
         .environment(\.windowColorScheme, scheme)
-        .animation(chromeMotion, value: sidebar.isVisible)
-        .animation(chromeMotion, value: pinsTabList)
+        // First, so nearest the view: with Keep Sidebar Open the layout switch flips `pinsTabList` too, and the modifiers
+        // below must not give that change an animation of its own.
         .animation(
             BrowserSettings.application.skipsTransitions(reduceMotion: reduceMotion) ? nil : chromeMotion, value: isMinimal
         )
+        .animation(chromeMotion, value: sidebar.isVisible)
+        .animation(chromeMotion, value: pinsTabList)
         .animation(nil, value: sidebar.isPeeking)
         .animation(chromeMotion, value: showsPanel)
         .animation(chromeMotion, value: panel.isExpanded)

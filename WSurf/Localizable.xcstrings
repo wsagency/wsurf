@@ -10068,6 +10068,9 @@
     "Redo Suggest Again" : {
       "comment" : "Edit menu: repeat Suggest Again on a dismissed merge suggestion."
     },
+    "Reduce motion is on in System Settings, so WSurf skips these animations." : {
+      "comment" : "Caption under the Fast transitions row in Settings › Appearance › Window, shown instead of its usual caption when the macOS accessibility setting Reduce motion is on. Use the macOS name of that setting. Sentence case."
+    },
     "Reduce transparency or increase contrast is on in System Settings, so WSurf uses Plain." : {
       "comment" : "Caption under the Material row in Settings › Appearance › Theme, shown instead of the Glass caption when a macOS accessibility setting (Reduce transparency or Increase contrast) is on. Use the macOS names of those settings. Plain is the “Plain” choice of the Material control. Sentence case."
     },
