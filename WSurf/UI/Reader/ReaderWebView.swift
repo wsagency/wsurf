@@ -42,6 +42,9 @@ struct ReaderWebView: NSViewRepresentable {
             coordinator.session?.presentedPage = nil
         }
         coordinator.webView?.navigationDelegate = nil
+        if let dataStore = coordinator.webView?.configuration.websiteDataStore {
+            ReaderViewSpare.refill(dataStore: dataStore)
+        }
         Task { await page.close() }
     }
 
@@ -62,14 +65,18 @@ enum ReaderViewSpare {
     private(set) static var current: WKWebView?
     private(set) static var refillTask: Task<Void, Never>?
 
+    /// The spare if it is for this data store, else a new view. It makes no spare: that waits for `refill`, called when a
+    /// Reader view goes away, so that two Reader views do not exist, and no 25 ms build lands, while someone reads.
     static func take(dataStore: WKWebsiteDataStore) -> WKWebView {
-        let view: WKWebView
         if let spare = current, spare.configuration.websiteDataStore === dataStore {
-            view = spare
             current = nil
-        } else {
-            view = ReaderPageController.makeWebView(dataStore: dataStore)
+            return spare
         }
+        return ReaderPageController.makeWebView(dataStore: dataStore)
+    }
+
+    /// Makes the next spare for `dataStore` after `refillDelay`, and drops it after `lifetime` unused.
+    static func refill(dataStore: WKWebsiteDataStore) {
         refillTask?.cancel()
         refillTask = Task {
             try? await Task.sleep(for: refillDelay)
@@ -79,7 +86,14 @@ enum ReaderViewSpare {
             guard !Task.isCancelled else { return }
             current = nil
         }
-        return view
+    }
+
+    /// Lets go of the spare and any pending refill. Both hold a data store, and WebKit will not remove one that is in
+    /// use: a profile's website data would stay on disk after the profile was deleted.
+    static func discard() {
+        refillTask?.cancel()
+        refillTask = nil
+        current = nil
     }
 }
 
