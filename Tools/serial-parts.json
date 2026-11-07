@@ -199,6 +199,7 @@
    "ChromiumCloseTimeoutTests",
    "ChromiumContextMenuTests",
    "ChromiumFindTests",
+   "ChromiumScrollWakeTests",
    "ColourChooserDismissalTests",
    "CrossSiteFramePasskeyTests",
    "FrameAudioTests",

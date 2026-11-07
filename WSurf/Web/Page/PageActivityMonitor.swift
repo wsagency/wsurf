@@ -230,3 +230,44 @@ nonisolated struct ScrollReturnMemory {
         return y
     }
 }
+
+/// Where a tab that went to sleep was scrolled to, for the wake to put it back. WebKit keeps the position in the interaction state
+/// it restores; for a page the tab loads again by its address (Chromium's, or a WebKit tab with no state) the tab keeps the offset
+/// itself and applies it once, after the load of that address finishes.
+nonisolated struct WakeScroll: Equatable {
+    private var offset: Double?
+    private var url: String?
+
+    var isArmed: Bool {
+        offset != nil
+    }
+
+    /// Remembers `offset` for `url`. A page at the top has nothing to restore.
+    mutating func arm(offset: Double, for url: String) {
+        guard offset > ScrollReturnMemory.topThreshold, !url.isEmpty else {
+            disarm()
+            return
+        }
+        self.offset = offset
+        self.url = url
+    }
+
+    mutating func disarm() {
+        offset = nil
+        url = nil
+    }
+
+    /// The offset to apply to a page whose load finished at `finishedAt`, once. A load of another web address ends the wait without
+    /// one; a start-up page or no address leaves it for the load that follows.
+    mutating func take(finishedAt finished: String?) -> Double? {
+        guard let offset, let url, let finished else { return nil }
+        if finished == url {
+            disarm()
+            return offset
+        }
+        if finished.hasPrefix("http://") || finished.hasPrefix("https://") {
+            disarm()
+        }
+        return nil
+    }
+}
