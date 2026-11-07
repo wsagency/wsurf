@@ -120,9 +120,23 @@ nonisolated final class SidebarPerformanceTests: XCTestCase, @unchecked Sendable
 
     /// The Command key pressed and released five times over the same sidebar, drawn after each. A row changes with the key only
     /// while it is hovered, so no other row needs to draw again.
+    ///
+    /// The case takes 0.3 ms, which is noise, so it has no time budget. What it holds is the count: a button that is not shown
+    /// does not read the key (so a press cannot draw its row), and the one under the pointer reads it, once per change.
     func testPressingCommandOverAThousandRowSidebar() {
         MainActor.assumeIsolated {
             let rig = Rig(pages: 1_000, folders: 25, everyRow: false)
+            let coordinator = rig.coordinator
+            let hidden = ChangeCounter {
+                _ = SidebarTabActionButton(tab: rig.first, coordinator: coordinator, followsCommandKey: false).body
+            }
+            let shown = ChangeCounter {
+                _ = SidebarTabActionButton(tab: rig.first, coordinator: coordinator, followsCommandKey: true).body
+            }
+            coordinator.linkModifiers = [.command]
+            coordinator.linkModifiers = []
+            XCTAssertEqual(hidden.count, 0, "a button that is not shown does not follow the Command key")
+            XCTAssertEqual(shown.count, 2, "the button under the pointer follows a press and a release")
             measure(metrics: [XCTClockMetric(), XCTMemoryMetric()], options: .budgeted) {
                 for _ in 0..<5 {
                     rig.coordinator.linkModifiers = [.command]
