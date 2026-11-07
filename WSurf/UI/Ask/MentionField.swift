@@ -86,6 +86,17 @@ final class MentionTextField: NSTextField {
         return super.performKeyEquivalent(with: event)
     }
 
+    /// Called when the field joins a window. A focus request made before that has no responder chain to go to
+    /// (`MentionField.Coordinator.syncFocus`).
+    var onMoveToWindow: (() -> Void)?
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window != nil {
+            onMoveToWindow?()
+        }
+    }
+
     override func becomeFirstResponder() -> Bool {
         allowsWritingTools = false
         allowsWritingToolsAffordance = false
@@ -299,7 +310,20 @@ struct MentionField: NSViewRepresentable {
             }
         }
 
+        /// What the last `syncFocus` asked for, to ask again when the field joins its window.
+        private var wantsFocus = false
+
         func syncFocus(_ isFocused: Bool, in field: NSTextField) {
+            wantsFocus = isFocused
+            // A field SwiftUI has made but not yet put in a window can be asked for focus (the palette sets it as it appears).
+            // The request below needs a window, and nothing asks again if none comes: the field would stay unfocused and
+            // typing would go nowhere. Ask again when it arrives.
+            if let field = field as? MentionTextField, field.onMoveToWindow == nil {
+                field.onMoveToWindow = { [weak self, weak field] in
+                    guard let self, let field else { return }
+                    syncFocus(wantsFocus, in: field)
+                }
+            }
             guard !isReportingFocus, holdsFocus(field) != isFocused, !isSyncingFocus else { return }
             isSyncingFocus = true
             DispatchQueue.main.async { [weak field] in
