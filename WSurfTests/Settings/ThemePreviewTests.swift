@@ -95,6 +95,56 @@ struct ThemePreviewTests {
         }
     }
 
+    /// What the window backdrop reads with Glass on (`windowBackdrop`, which `LoomChrome` draws from)
+    /// changes at most ceil(10 T) + 1 times in a drag of the opacity slider. The live read (`transparency`, which
+    /// `LoomChrome` used to read) changes on every step, which shows that the counter can see the difference.
+    @Test func draggingGlassOpacityReachesTheWindowBackdropAtMostTenTimesASecond() throws {
+        try withSettings { settings, _ in
+            settings.themeMaterial = .glass
+            var now = ContinuousClock.now
+            settings.themeApplyClock = { now }
+            let backdrop = ChangeCounter { _ = settings.windowBackdrop }
+            let live = ChangeCounter { _ = settings.transparency }
+            let steps = 60
+            let seconds = 3.0
+            settings.beginThemePreview()
+            for step in 1...steps {
+                now = now.advanced(by: .seconds(seconds / Double(steps)))
+                var adjustment = settings.themeAdjustment
+                adjustment.glassOpacity = 0.3 + Double(step) / 100
+                settings.previewThemeAdjustment(adjustment)
+                #expect(settings.transparency == adjustment.glassOpacity)
+            }
+            #expect(live.count >= steps)
+            #expect(backdrop.count > 1)
+            #expect(backdrop.count <= Int((seconds * 10).rounded(.up)) + 1)
+            settings.pendingThemeApply?.cancel()
+            settings.commitThemePreview()
+            #expect(abs(settings.resolvedTheme.adjustment.glassOpacity - 0.9) < 0.0001)
+        }
+    }
+
+    /// The readability note under an ink control compares the chosen ink with the drawn ink. Both follow the live
+    /// preview: the drawn one is not the window's throttled copy, so the note does not flicker during a drag.
+    @Test func theReadabilityNoteReadsTheLivePreviewNotTheThrottledWindow() throws {
+        try withSettings { settings, _ in
+            var now = ContinuousClock.now
+            settings.themeApplyClock = { now }
+            settings.beginThemePreview()
+            for step in 1...30 {
+                now = now.advanced(by: .milliseconds(10))
+                settings.previewThemeColors(scheme: .dark) { $0.sidebarText = SidebarTextStyle(colorRGB: UInt32(step) * 0x080808) }
+                let live = settings.liveResolvedVariant(.dark)
+                let expected = ResolvedTheme(settings.previewedTheme, adjustment: settings.themeAdjustment).dark
+                #expect(live.loadedInk == expected.loadedInk && live.unloadedInk == expected.unloadedInk, "step \(step)")
+            }
+            #expect(settings.resolvedTheme.dark.loadedInk != settings.liveResolvedVariant(.dark).loadedInk,
+                    "the window lags inside the interval; the note does not")
+            settings.commitThemePreview()
+            #expect(settings.resolvedTheme.dark.loadedInk == settings.liveResolvedVariant(.dark).loadedInk, "at rest they agree")
+        }
+    }
+
     @Test func theLastStepOfADragReachesTheWindowWithoutRelease() async throws {
         try await withSettingsAsync { settings, _ in
             settings.beginThemePreview()

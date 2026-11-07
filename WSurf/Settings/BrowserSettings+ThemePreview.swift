@@ -120,6 +120,23 @@ extension BrowserSettings {
         return globalSettings.themePreview?.applying(to: theme) ?? theme
     }
 
+    /// The variant as the controls show it right now: the live preview, not the one the window applied at most every
+    /// `themePreviewInterval`. A readability note compares the chosen ink with this, so it never disagrees with its own slider.
+    func liveResolvedVariant(_ scheme: ColorScheme) -> ResolvedVariant {
+        let theme = previewedTheme
+        return ResolvedVariant(
+            theme.variant(scheme), isDark: scheme == .dark,
+            brightness: themeAdjustment.brightness(scheme), ground: theme.drawnGround
+        )
+    }
+
+    /// What the window backdrop draws from: the ground, the material and the glass opacity of the applied theme. All
+    /// three come from `resolvedTheme`, so a drag moves them at most every `themePreviewInterval`.
+    var windowBackdrop: (ground: ThemeGround, material: ThemeMaterial, glassOpacity: Double) {
+        let theme = resolvedTheme
+        return (theme.ground, theme.adjustment.material, theme.adjustment.glassOpacity)
+    }
+
     func previewThemeColors(scheme: ColorScheme, _ edit: (inout ThemeVariant) -> Void) {
         guard !ThemeCatalog.isBuiltIn(selectedTheme.id) || userThemes.count < Self.userThemeLimit else { return }
         beginThemePreview()

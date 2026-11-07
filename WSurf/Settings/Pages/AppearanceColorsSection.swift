@@ -218,7 +218,7 @@ struct AppearanceColorsSection: View {
         drawn: (ResolvedVariant) -> Color?, role: ThemeContrast.Role? = nil
     ) -> some View {
         let style = colorBinding(keyPath)
-        let note = readabilityNote(style.wrappedValue, drawn: drawn(settings.resolvedTheme.variant(scheme)))
+        let note = readabilityNote(style.wrappedValue, drawn: drawn(settings.liveResolvedVariant(scheme)))
         return VStack(alignment: .trailing, spacing: 4) {
             inkRow(style: style, label: label, opacityLabel: opacityLabel)
             if let role, let shortfall = shortfall(role) {
