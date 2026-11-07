@@ -84,6 +84,42 @@ struct ChromiumCaptureDecodeTests {
         await capture.value
         #expect(probe.finished)
     }
+    /// A clip asks Chromium for a smaller image only when the image is wanted smaller than the area and the page is not zoomed.
+    @Test func aClipIsAskedForOnlyWhenTheImageIsSmallerAndTheZoomIsOne() {
+        let view = CGRect(x: 0, y: 0, width: 1200, height: 800)
+        let preview = ChromiumPage.captureClip(area: view, width: 480, density: 2, zoom: 1)
+        #expect(preview?.scale == 0.8)
+        #expect(preview?.pixelWidth == 960)
+        let band = ChromiumPage.captureClip(area: CGRect(x: 0, y: 0, width: 1200, height: 48), width: 48, density: 2, zoom: 1)
+        #expect(band?.scale == 0.08)
+        #expect(band?.pixelWidth == 96)
+        #expect(band?.parameters["height"] as? CGFloat == 48)
+        #expect(ChromiumPage.captureClip(area: view, width: nil, density: 2, zoom: 1) == nil, "full size")
+        #expect(ChromiumPage.captureClip(area: view, width: 1200, density: 2, zoom: 1) == nil, "not smaller")
+        #expect(ChromiumPage.captureClip(area: view, width: 480, density: 2, zoom: 1.2) == nil, "a zoomed page")
+        #expect(ChromiumPage.captureClip(area: .zero, width: 480, density: 2, zoom: 1) == nil)
+    }
+
+    /// An image of the clip's width is the area already scaled; any other is not the clip's image.
+    @Test func aClippedImageIsUsedAsItIsOnlyAtTheSizeAsked() async throws {
+        let area = CGRect(origin: .zero, size: Self.viewport)
+        let clipped = try #require(await ChromiumPage.decodeCapture(
+            Self.fixture, viewWidth: Self.viewport.width, area: area, width: 2400, clippedPixelWidth: 2400))
+        #expect(clipped.width == 2400 && clipped.height == 1600, "returned whole, without a crop or a scale")
+        #expect(await ChromiumPage.decodeCapture(
+            Self.fixture, viewWidth: Self.viewport.width, area: area, width: 480, clippedPixelWidth: 960) == nil)
+        let near = await ChromiumPage.decodeCapture(
+            Self.fixture, viewWidth: Self.viewport.width, area: area, width: 1200, clippedPixelWidth: 2401)
+        #expect(near?.width == 2400, "a pixel of rounding is allowed")
+    }
+
+    @Test func aChromiumTabKeepsItsBandColourForTheAddressItWasMeasuredFor() {
+        #expect(BrowserTab.keepsBandColour(isChromium: true, hasColour: true, measuredFor: "https://a.test/", now: "https://a.test/"))
+        #expect(!BrowserTab.keepsBandColour(isChromium: true, hasColour: true, measuredFor: "https://a.test/", now: "https://a.test/b"))
+        #expect(!BrowserTab.keepsBandColour(isChromium: true, hasColour: false, measuredFor: "https://a.test/", now: "https://a.test/"))
+        #expect(!BrowserTab.keepsBandColour(isChromium: true, hasColour: true, measuredFor: nil, now: "https://a.test/"))
+        #expect(!BrowserTab.keepsBandColour(isChromium: false, hasColour: true, measuredFor: "https://a.test/", now: "https://a.test/"))
+    }
 }
 
 @MainActor

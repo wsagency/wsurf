@@ -51,6 +51,61 @@ struct ChromiumPageTests {
         #expect(!ChromiumPage.hasOnlySecureContent(url: nil, isSecureConnection: true, certStatus: 0, contentStatus: 0))
     }
 
+    /// A capture asked for at a smaller size comes back from Chromium at that size and shows the region asked for: the top band of
+    /// a page of red above blue is red, the whole page at 480 pt has the proportions of the view, and a zoomed page is still right.
+    @Test(.boundedWebViews)
+    func aSmallerCaptureIsMadeByChromiumAtThatSize() async throws {
+        let html = "<!doctype html><body style='margin:0'><div style='height:60px;background:#ff0000'></div>"
+            + "<div style='height:2000px;background:#0000ff'></div></body>"
+        let server = try await HTTPFixtureServer.start(routes: ["/": .html(html)])
+        let url = try server.url("/")
+        try ChromiumRuntime.shared.ensureInitialized()
+        let context = BrowserProfileContext(profile: .privateBrowsing())
+        let native = ChromiumPage(context: context)
+        let page = BrowserPage(chromium: native)
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: .borderless, backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = page
+        window.orderBack(nil)
+        defer { window.contentView = nil; window.close() }
+        func colour(of image: NSImage, atFraction y: CGFloat) -> NSColor? {
+            guard let cg = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return nil }
+            return NSBitmapImageRep(cgImage: cg).colorAt(x: cg.width / 2, y: Int(CGFloat(cg.height) * y))?.usingColorSpace(.sRGB)
+        }
+        do {
+            page.load(URLRequest(url: url))
+            try #require(await waitUntil { page.url == url && !page.isLoading })
+            let band = try await page.capture(rect: CGRect(x: 0, y: 0, width: page.bounds.width, height: 48), width: 48)
+            #expect(band.size.width == 48)
+            #expect(abs(band.size.height - 48 * 48 / page.bounds.width) < 0.01)
+            let top = try #require(colour(of: band, atFraction: 0.5))
+            #expect(top.redComponent > 0.9 && top.blueComponent < 0.3, "the band is the red top of the page")
+            let preview = try await page.capture(width: 480)
+            #expect(preview.size.width == 480)
+            #expect(abs(preview.size.height - 480 * page.bounds.height / page.bounds.width) < 0.5)
+            // The page may not have painted its lower part when the first image is made: ask again until it has.
+            var lowerIsBlue = false
+            var latest = preview
+            for _ in 0..<40 where !lowerIsBlue {
+                latest = try await page.capture(width: 480)
+                lowerIsBlue = colour(of: latest, atFraction: 0.8).map { $0.blueComponent > 0.9 && $0.redComponent < 0.3 && $0.greenComponent < 0.4 } ?? false
+                if !lowerIsBlue {
+                    try await Task.sleep(for: .milliseconds(100))
+                }
+            }
+            #expect(lowerIsBlue, "the rest of the page is blue: \(String(describing: colour(of: latest, atFraction: 0.8)))")
+            page.pageZoom = 1.2
+            let zoomed = try await page.capture(rect: CGRect(x: 0, y: 0, width: page.bounds.width, height: 48), width: 48)
+            #expect(zoomed.size.width == 48)
+        } catch {
+            await page.close()
+            await context.endPrivateSession()
+            throw error
+        }
+        await page.close()
+        await context.endPrivateSession()
+    }
+
     /// A DevTools security cue reads the page again under that rule; it never makes an HTTP page secure.
     @Test(.boundedWebViews)
     func aSecurityCueNeverMakesAnInsecurePageSecure() async throws {
