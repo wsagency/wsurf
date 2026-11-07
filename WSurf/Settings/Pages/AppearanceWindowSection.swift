@@ -96,6 +96,15 @@ struct AppearanceWindowSection: View {
             .settingsAnchor("appearance.windowBorder")
 
             RowSeparator()
+            DetailRow(
+                title: "Fast transitions",
+                caption: "Skips the animations when switching layouts and opening Reader."
+            ) {
+                SettingsToggle($settings.fastTransitions)
+            }
+            .settingsAnchor("appearance.fastTransitions")
+
+            RowSeparator()
             AppearanceLayoutSection(settings: settings, part: .window)
         }
     }
