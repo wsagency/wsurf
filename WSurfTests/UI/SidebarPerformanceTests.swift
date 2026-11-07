@@ -137,6 +137,19 @@ nonisolated final class SidebarPerformanceTests: XCTestCase, @unchecked Sendable
             coordinator.linkModifiers = []
             XCTAssertEqual(hidden.count, 0, "a button that is not shown does not follow the Command key")
             XCTAssertEqual(shown.count, 2, "the button under the pointer follows a press and a release")
+
+            // The drawn rows themselves: every read of the key by any view, over one press and one release, each drawn. A row
+            // that reads the key (a tab row, a folder row, a hidden control built without `followsCommandKey: false`) adds
+            // one read per row drawn to this count, and a drawn sidebar has dozens of them.
+            rig.draw()
+            let before = AppCoordinator.linkModifierReads
+            coordinator.linkModifiers = [.command]
+            rig.draw()
+            coordinator.linkModifiers = []
+            rig.draw()
+            let reads = AppCoordinator.linkModifierReads - before
+            print("WSURF-PERF case=command-press-reads reads=\(reads)")
+            XCTAssertLessThanOrEqual(reads, 2, "reads of the Command key over a press and a release, all rows drawn (2 today: one per change)")
             measure(metrics: [XCTClockMetric(), XCTMemoryMetric()], options: .budgeted) {
                 for _ in 0..<5 {
                     rig.coordinator.linkModifiers = [.command]
