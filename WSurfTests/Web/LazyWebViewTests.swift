@@ -6,6 +6,7 @@
 import AppKit
 import Foundation
 import Testing
+import WebKit
 
 @testable import WSurf
 
@@ -159,5 +160,14 @@ struct LazyWebViewTests {
 
         #expect(toolkit.pageIdentifier(for: active.page) == active.id.uuidString)
         #expect(reopened.tabs.filter(\.isMaterialised).map(\.id) == [active.id])
+    }
+
+    /// A new web view's picture-in-picture flags come from feature objects found once, not from walking every WebKit feature.
+    @Test func pictureInPictureFeaturesAreFoundOnceForEveryNewView() {
+        let first = MediaCenter.cachedPiPFeatureCount
+        for _ in 0..<5 {
+            MediaCenter.enablePictureInPicture(on: WKPreferences())
+        }
+        #expect(MediaCenter.cachedPiPFeatureCount == first)
     }
 }
