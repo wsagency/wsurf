@@ -19,6 +19,37 @@ struct ThemePreviewTests {
         try test(BrowserSettings(defaults: defaults, appliesAppearanceGlobally: false), defaults)
     }
 
+    // MARK: - Fast transitions
+
+    @Test func fastTransitionsAreOffByDefaultAndPersist() throws {
+        try withSettings { settings, defaults in
+            #expect(!settings.fastTransitions)
+            settings.fastTransitions = true
+            #expect(BrowserSettings(defaults: defaults, appliesAppearanceGlobally: false).fastTransitions)
+            settings.resetWindowStyle()
+            #expect(!settings.fastTransitions)
+        }
+    }
+
+    /// The layout switch and Reader skip their animation when the setting is on or macOS Reduce Motion is.
+    @Test func theTransitionsRunWithoutAnimationForTheSettingOrReduceMotion() throws {
+        try withSettings { settings, _ in
+            #expect(!settings.skipsTransitions(reduceMotion: false))
+            #expect(settings.skipsTransitions(reduceMotion: true))
+            settings.fastTransitions = true
+            #expect(settings.skipsTransitions(reduceMotion: false))
+            #expect(settings.skipsTransitions(reduceMotion: true))
+        }
+    }
+
+    @Test func changingFastTransitionsIsObserved() throws {
+        try withSettings { settings, _ in
+            let changes = ChangeCounter { _ = settings.fastTransitions }
+            settings.fastTransitions = true
+            #expect(changes.count == 1)
+        }
+    }
+
     @Test func materialAndBrightnessPersistPerThemeAndVariant() throws {
         try withSettings { settings, defaults in
             settings.themeMaterial = .glass

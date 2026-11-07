@@ -240,7 +240,9 @@ struct BrowserView: View {
         .environment(\.windowColorScheme, scheme)
         .animation(chromeMotion, value: sidebar.isVisible)
         .animation(chromeMotion, value: pinsTabList)
-        .animation(reduceMotion ? nil : chromeMotion, value: isMinimal)
+        .animation(
+            BrowserSettings.application.skipsTransitions(reduceMotion: reduceMotion) ? nil : chromeMotion, value: isMinimal
+        )
         .animation(nil, value: sidebar.isPeeking)
         .animation(chromeMotion, value: showsPanel)
         .animation(chromeMotion, value: panel.isExpanded)
