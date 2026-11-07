@@ -119,7 +119,7 @@ struct AppDatabase: Sendable {
     }()
 
     /// Whether the template migrated, so that `temporary()` copies it. Tests read it.
-    nonisolated static var hasMigratedTemplate: Bool {
+    static var hasMigratedTemplate: Bool {
         migratedTemplate != nil
     }
 
