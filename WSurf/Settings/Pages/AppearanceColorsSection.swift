@@ -62,9 +62,10 @@ struct AppearanceColorsSection: View {
     }
 
     var body: some View {
-        let live = settings.liveResolvedVariant(scheme)
-        return SettingsCard {
+        SettingsCard {
             DisclosureGroup("Colors", isExpanded: $isExpanded) {
+                // Inside the content, so a collapsed card does not observe the live preview.
+                let live = settings.liveResolvedVariant(scheme)
                 caption(introduction)
                 caption(appearanceNote)
                 if let groundNote {

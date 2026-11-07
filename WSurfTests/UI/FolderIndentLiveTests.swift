@@ -111,6 +111,8 @@ struct FolderIndentLiveTests {
             adjustment.folderIndentLevel1 = 10
             adjustment.folderIndentLevel2 = 4
             settings.previewThemeAdjustment(adjustment)
+            // At once: the shape the rows read has the new steps before anything is drawn.
+            #expect(Array(settings.chromeShape.folderIndents.prefix(2)) == [10, 4])
             try await rig.settle(rounds: 10)
             try await expectSteps(rows, [10, 4], in: rig)
 
