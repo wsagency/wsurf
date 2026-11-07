@@ -183,24 +183,40 @@ struct ChromiumPrewarmTests {
         try #require(await waitUntil { rig.starts == 1 })
     }
 
-    /// A failed early start is the failure the next start reports, once, without another `cef_initialize`. A second one after a failed
-    /// one is not something a person's own start would have been the first to do.
+    private struct Failure: Error {}
+
+    /// A failed early start is the failure the next start reports, once, without another `cef_initialize` (the starter here).
+    /// This is the value `ChromiumRuntime` holds, so the case does not depend on whether another suite has started Chromium.
     @Test func aFailedEarlyStartIsReportedByTheNextStartWithoutTryingAgain() throws {
-        let runtime = ChromiumRuntime.shared
-        let real = runtime.initializeCEF
-        defer { runtime.initializeCEF = real }
-        struct Failure: Error {}
+        var failure = EarlyStartFailure()
         var calls = 0
-        runtime.initializeCEF = { _ in
-            calls += 1
-            throw Failure()
+        #expect(throws: Failure.self) {
+            try failure.attempt(early: true) {
+                calls += 1
+                throw Failure()
+            }
         }
-        runtime.startEarly()
         #expect(calls == 1)
-        #expect(throws: Failure.self) { try runtime.ensureInitialized() }
+        #expect(throws: Failure.self) { try failure.attempt(early: false) { calls += 1 } }
         #expect(calls == 1, "the tab shows the early failure and CEF is not started a second time")
-        #expect(throws: Failure.self) { try runtime.ensureInitialized() }
-        #expect(calls == 2, "the start after that tries, as it did before")
+        try failure.attempt(early: false) { calls += 1 }
+        #expect(calls == 2, "the start after that tries, as before")
+    }
+
+    @Test func aFailureOfAStartThePersonAskedForIsNotKept() throws {
+        var failure = EarlyStartFailure()
+        var calls = 0
+        #expect(throws: Failure.self) { try failure.attempt(early: false) { calls += 1; throw Failure() } }
+        try failure.attempt(early: false) { calls += 1 }
+        #expect(calls == 2, "as on main: the next start tries again")
+    }
+
+    @Test func anEarlyStartThatWorksLeavesNothingBehind() throws {
+        var failure = EarlyStartFailure()
+        var calls = 0
+        try failure.attempt(early: true) { calls += 1 }
+        try failure.attempt(early: false) { calls += 1 }
+        #expect(calls == 2)
     }
 
     @Test func cancellingStopsTheWait() async throws {

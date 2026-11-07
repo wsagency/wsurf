@@ -159,3 +159,26 @@ extension BrowserApplication {
         prewarm.arm()
     }
 }
+
+/// What the next start does after an early start failed. On main a failed `cef_initialize` keeps nothing and the next start calls it
+/// again; a second call after a failed one is not something to make before the person has seen the first error. So a start after a
+/// failed early start reports that failure, once, without calling `cef_initialize`, and the start after that tries as it always did.
+nonisolated struct EarlyStartFailure {
+    private var error: (any Error)?
+
+    /// Runs `initialize` for a start; `early` is whether it is the prewarm's.
+    mutating func attempt(early: Bool, _ initialize: () throws -> Void) throws {
+        if !early, let kept = error {
+            error = nil
+            throw kept
+        }
+        do {
+            try initialize()
+        } catch {
+            if early {
+                self.error = error
+            }
+            throw error
+        }
+    }
+}
