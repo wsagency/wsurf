@@ -45,6 +45,7 @@
         "SidebarPerformanceTests",
         "ThemePerformanceTests",
         "VaultScalePerformanceTests",
+        "WebPagePerformanceTests",
         "WindowPerformanceTests"
       ],
       "target" : {
