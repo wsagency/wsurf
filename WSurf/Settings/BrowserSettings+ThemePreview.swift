@@ -55,6 +55,14 @@ struct ThemeSidebarInk: Equatable {
     }
 }
 
+/// Everything `resolvedTheme` is built from.
+struct ThemeInputs: Equatable {
+    let themeID: String
+    let userThemes: [ThemeDefinition]
+    let adjustments: [String: ThemeAdjustment]
+    let preview: ThemePreview?
+}
+
 extension BrowserSettings {
     /// While a slider or colour well drags, the window takes a new preview at most this often. The gallery card
     /// reads `themePreview` itself and stays live.
@@ -63,6 +71,13 @@ extension BrowserSettings {
     func refreshTheme() {
         pendingThemeApply?.cancel()
         pendingThemeApply = nil
+        let inputs = ThemeInputs(
+            themeID: themeID, userThemes: userThemes, adjustments: themeAdjustments, preview: themePreview
+        )
+        if inputs == lastThemeInputs, themeCache != nil {
+            return
+        }
+        lastThemeInputs = inputs
         appliedThemePreview = themePreview
         themeRevision &+= 1
         themeCache = nil

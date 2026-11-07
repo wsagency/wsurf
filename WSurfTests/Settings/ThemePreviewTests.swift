@@ -145,6 +145,24 @@ struct ThemePreviewTests {
         }
     }
 
+    /// A refresh that finds the theme's inputs unchanged does not redraw the theme's readers in every window.
+    @Test func aRefreshThatChangesNothingDoesNotBumpTheRevision() throws {
+        try withSettings { settings, _ in
+            settings.refreshTheme()
+            let revisions = ChangeCounter { _ = settings.themeRevision }
+            settings.refreshTheme()
+            settings.refreshTheme()
+            #expect(revisions.count == 0)
+            settings.themeAdjustment = ThemeAdjustment(darkBrightness: 0.2)
+            #expect(revisions.count == 1)
+            settings.refreshTheme()
+            #expect(revisions.count == 1)
+            settings.themeID = "nord"
+            #expect(revisions.count == 2)
+            #expect(settings.resolvedTheme.id == "nord")
+        }
+    }
+
     @Test func theLastStepOfADragReachesTheWindowWithoutRelease() async throws {
         try await withSettingsAsync { settings, _ in
             settings.beginThemePreview()

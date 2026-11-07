@@ -56,6 +56,9 @@ final class BrowserSettings {
     /// Bumped by `refreshTheme()`: what the window's theme readers observe in place of `themePreview`.
     var themeRevision = 0
     @ObservationIgnored var themeApplyClock: () -> ContinuousClock.Instant = { .now }
+    /// What the last `refreshTheme()` resolved from. The same inputs resolve the same theme, so a refresh that finds
+    /// them unchanged does nothing: it would only redraw every theme reader in every window.
+    @ObservationIgnored var lastThemeInputs: ThemeInputs?
     @ObservationIgnored var lastThemeApply: ContinuousClock.Instant?
     @ObservationIgnored var pendingThemeApply: Task<Void, Never>?
     var sidebarInk = ThemeSidebarInk()
