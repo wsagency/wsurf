@@ -874,13 +874,29 @@ final class MediaCenter {
         enablePiPFeatureFlags(on: preferences)
     }
 
-    private static func enablePiPFeatureFlags(on preferences: WKPreferences) {
+    /// The WebKit feature objects that switch on picture in picture, found once. `_features` lists every WebKit feature
+    /// and each key is read through KVC, 4-5 ms for each new web view. Nil when the SPI is missing.
+    private static let pipFeatures: [AnyObject]? = {
         let featuresSelector = Selector(("_features"))
-        let setSelector = Selector(("_setEnabled:forFeature:"))
         guard (WKPreferences.self as AnyObject).responds(to: featuresSelector),
-              preferences.responds(to: setSelector),
               let result = (WKPreferences.self as AnyObject).perform(featuresSelector),
-              let features = result.takeUnretainedValue() as? [AnyObject],
+              let features = result.takeUnretainedValue() as? [AnyObject]
+        else { return nil }
+        return features.filter { feature in
+            let lowered = ((feature.value(forKey: "key") as? String) ?? "").lowercased()
+            return lowered.contains("pictureinpicture") || lowered.contains("presentationmode")
+        }
+    }()
+
+    /// How many feature objects the cache holds. Tests read it.
+    static var cachedPiPFeatureCount: Int {
+        pipFeatures?.count ?? 0
+    }
+
+    private static func enablePiPFeatureFlags(on preferences: WKPreferences) {
+        let setSelector = Selector(("_setEnabled:forFeature:"))
+        guard preferences.responds(to: setSelector),
+              let features = pipFeatures,
               let method = preferences.method(for: setSelector)
         else {
             Pipeline.log.notice("media: feature-flag SPI unavailable, native PiP off")
@@ -889,13 +905,7 @@ final class MediaCenter {
 
         typealias SetEnabled = @convention(c) (AnyObject, Selector, Bool, AnyObject) -> Void
         let setEnabled = unsafeBitCast(method, to: SetEnabled.self)
-
         for feature in features {
-            let key = (feature.value(forKey: "key") as? String) ?? ""
-            let lowered = key.lowercased()
-            guard lowered.contains("pictureinpicture") || lowered.contains("presentationmode") else {
-                continue
-            }
             setEnabled(preferences, setSelector, true, feature)
         }
     }
