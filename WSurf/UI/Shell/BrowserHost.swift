@@ -639,7 +639,9 @@ struct TitlebarDecorationGuard {
     /// Answers whether it searched the titlebar this time.
     @discardableResult
     mutating func hideIfNeeded(in window: NSWindow) -> Bool {
-        if isCurrent(for: window) { return false }
+        if isCurrent(for: window) {
+            return false
+        }
         passes += 1
         let (container, found) = BrowserHost.titlebarDecorations(of: window)
         for decoration in found {
