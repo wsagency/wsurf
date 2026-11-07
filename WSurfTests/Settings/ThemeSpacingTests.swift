@@ -21,7 +21,9 @@ struct ThemeSpacingTests {
         let name = AppDatabase.defaultsSuite("ThemeSpacingTests-\(UUID().uuidString)")
         let defaults = try #require(UserDefaults(suiteName: name))
         defer { defaults.removePersistentDomain(forName: name) }
-        try test(BrowserSettings(defaults: defaults, appliesAppearanceGlobally: false), defaults)
+        let settings = BrowserSettings(defaults: defaults, appliesAppearanceGlobally: false)
+        settings.previewsEveryStep()
+        try test(settings, defaults)
     }
 
     private func reopened(_ defaults: UserDefaults) -> BrowserSettings {
@@ -289,6 +291,8 @@ struct ThemeSpacingTests {
     @Test func everyRowReadsTheAppWideSpacing() throws {
         let settings = BrowserSettings.application
         try #require(settings.themePreview == nil, "must not replace a theme preview in progress")
+        let restoreClock = settings.previewsEveryStep()
+        defer { restoreClock() }
         settings.beginThemePreview()
         defer { settings.cancelThemePreview() }
         var adjustment = settings.themeAdjustment

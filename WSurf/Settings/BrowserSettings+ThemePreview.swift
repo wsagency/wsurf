@@ -63,7 +63,6 @@ extension BrowserSettings {
     func refreshTheme() {
         pendingThemeApply?.cancel()
         pendingThemeApply = nil
-        lastThemeApply = themeApplyClock()
         appliedThemePreview = themePreview
         themeRevision &+= 1
         themeCache = nil
@@ -101,6 +100,7 @@ extension BrowserSettings {
         let settings = globalSettings
         let now = settings.themeApplyClock()
         guard let last = settings.lastThemeApply, now - last < Self.themePreviewInterval else {
+            settings.lastThemeApply = now
             settings.refreshTheme()
             return
         }
@@ -110,6 +110,7 @@ extension BrowserSettings {
             try? await Task.sleep(for: wait)
             guard !Task.isCancelled, let settings else { return }
             settings.pendingThemeApply = nil
+            settings.lastThemeApply = settings.themeApplyClock()
             settings.refreshTheme()
         }
     }
@@ -136,6 +137,7 @@ extension BrowserSettings {
         let settings = globalSettings
         guard let preview = settings.themePreview else { return }
         settings.themePreview = nil
+        settings.lastThemeApply = nil
         if preview.themeID == selectedTheme.id {
             if let colors = preview.colors, let scheme = preview.scheme, colors != selectedTheme.variant(scheme) {
                 editColors(scheme: scheme) { $0 = colors }
@@ -149,6 +151,7 @@ extension BrowserSettings {
         let settings = globalSettings
         guard settings.themePreview != nil else { return }
         settings.themePreview = nil
+        settings.lastThemeApply = nil
         settings.refreshTheme()
     }
 }

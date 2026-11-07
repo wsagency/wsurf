@@ -16,7 +16,9 @@ struct ThemePreviewTests {
         let name = AppDatabase.defaultsSuite("ThemePreviewTests-\(UUID().uuidString)")
         let defaults = try #require(UserDefaults(suiteName: name))
         defer { defaults.removePersistentDomain(forName: name) }
-        try test(BrowserSettings(defaults: defaults, appliesAppearanceGlobally: false), defaults)
+        let settings = BrowserSettings(defaults: defaults, appliesAppearanceGlobally: false)
+        settings.previewsEveryStep()
+        try test(settings, defaults)
     }
 
     private func withSettingsAsync(_ test: (BrowserSettings, UserDefaults) async throws -> Void) async throws {
@@ -110,6 +112,8 @@ struct ThemePreviewTests {
 
     @Test func releasingADragAppliesAtOnceAndDropsThePendingStep() throws {
         try withSettings { settings, _ in
+            let now = ContinuousClock.now
+            settings.themeApplyClock = { now }
             settings.beginThemePreview()
             settings.previewThemeAdjustment(ThemeAdjustment(darkBrightness: 0.1))
             settings.previewThemeAdjustment(ThemeAdjustment(darkBrightness: 0.2))
