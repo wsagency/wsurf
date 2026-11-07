@@ -1,7 +1,9 @@
 {
  "skippedSuites": [
   "ChromiumLoadBenchmarkTests",
-  "EngineBenchmarkTests"
+  "ChromiumResourceBenchmarkTests",
+  "EngineBenchmarkTests",
+  "ResourceBenchmarkTests"
  ],
  "parts": [
   [
@@ -97,6 +99,7 @@
    "ChromiumPageTests",
    "ChromiumPreparationTests",
    "ChromiumProfileDataTests",
+   "ChromiumResourceBenchmarkTests",
    "ChromiumSiteCountTests",
    "CloseTabCommandTests",
    "CloudTabsTests",
@@ -183,6 +186,7 @@
    "MCPDefaultAccessTests",
    "PageDiagnosticsHookTests",
    "PageInkContrastTests",
+   "ResourceBenchmarkTests",
    "SettingsRoutingTests",
    "TabAssistantAccessCenterTests",
    "ThemeRadiusTests",
