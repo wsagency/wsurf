@@ -49,16 +49,13 @@ extension BrowserTab {
         }
         isMeasuringBand = true
         needsBandRemeasure = false
-        let requestedURL = urlString
-        var bandFraction = Theme.topBarHeight / page.bounds.height
+        let requested = BandKey(url: urlString, isDark: isDarkAppearance)
+        let requestedURL = requested.url
+        let bandFraction = Theme.topBarHeight / page.bounds.height
         let view = page
-        // Chromium renders only what it is asked for: the band, not the whole page to be cropped here.
-        let band = view.chromium == nil ? nil : CGRect(x: 0, y: 0, width: view.bounds.width, height: Theme.topBarHeight)
-        if band != nil {
-            bandFraction = 1
-        }
+        bandMeasureCount += 1
         Task { [weak self] in
-            let image = try? await view.capture(rect: band, width: 48, afterScreenUpdates: true)
+            let image = try? await view.capture(width: 48, afterScreenUpdates: true, fastEncoding: true)
             guard let self else { return }
             isMeasuringBand = false
             let shouldRemeasure = needsBandRemeasure
@@ -73,21 +70,69 @@ extension BrowserTab {
                   let image,
                   let average = Self.averageOfTopBand(of: image, fraction: bandFraction)
             else { return }
-            bandMeasuredURL = requestedURL
+            bandMeasuredKey = requested
             setPageColor(average)
         }
     }
 
-    /// The band measurement a tab coming to the front asks for. A Chromium tab whose colour was measured for this address keeps
-    /// it: the capture costs Chromium's UI-thread work on the main thread, and the page's own load, navigation and zoom
-    /// measure again (`measureBandUnderBar`). WebKit's snapshot is cheap and stays as it was.
-    func measureBandOnShow() {
-        guard !Self.keepsBandColour(isChromium: liveView?.chromium != nil, hasColour: pageColor != nil, measuredFor: bandMeasuredURL, now: urlString) else { return }
-        measureBandUnderBar()
+    // MARK: - Band colour of a Chromium tab that comes to the front
+
+    /// The address and light or dark mode a band colour was measured for.
+    struct BandKey: Equatable {
+        let url: String
+        let isDark: Bool
     }
 
-    static func keepsBandColour(isChromium: Bool, hasColour: Bool, measuredFor: String?, now: String) -> Bool {
-        isChromium && hasColour && measuredFor == now
+    /// How long a Chromium tab is in front before its band is looked at. Past the switch itself, so the capture (Chromium's UI-thread
+    /// half runs on the main thread, ~80 ms for a viewport) is not in the window of the switch or of the leaving tab's preview.
+    static let bandSettleDelay: Duration = .milliseconds(700)
+
+    var isDarkAppearance: Bool {
+        liveView?.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+    }
+
+    /// What a tab coming to the front asks of its band. WebKit measures as it always did. A Chromium tab takes no capture during the
+    /// switch: it shows the colour it has if that was measured for this address and this light or dark mode, the theme's own
+    /// otherwise, and looks at the band once, after the switch has settled (`scheduleBandRecheck`).
+    func measureBandOnShow() {
+        guard liveView?.chromium != nil else {
+            measureBandUnderBar()
+            return
+        }
+        if pageColor != nil, bandMeasuredKey != BandKey(url: urlString, isDark: isDarkAppearance) {
+            setPageColor(nil)
+        }
+        scheduleBandRecheck()
+    }
+
+    /// One look at the band after `bandSettleDelay`. A look that is already waiting is kept, unless `restart` moves it later: a
+    /// woken tab restarts it once the saved scroll offset has been asked for, so it never sees a page still at the top.
+    func scheduleBandRecheck(restart: Bool = false) {
+        if bandRecheck != nil, !restart {
+            return
+        }
+        bandRecheck?.cancel()
+        bandRecheck = Task { [weak self, bandClock] in
+            try? await bandClock.sleep(for: Self.bandSettleDelay)
+            guard !Task.isCancelled, let self else { return }
+            bandRecheck = nil
+            // Changes the band only when the colour differs (`setPageColor`).
+            measureBandUnderBar()
+        }
+    }
+
+    func cancelBandRecheck() {
+        bandRecheck?.cancel()
+        bandRecheck = nil
+    }
+
+    /// Light or dark mode reached the page: the band colour measured in the other mode no longer applies to a visible Chromium tab.
+    func appearanceDidChange() {
+        guard liveView?.chromium != nil, page.window != nil, isShowingRealPage else { return }
+        if pageColor != nil, bandMeasuredKey?.isDark != isDarkAppearance {
+            setPageColor(nil)
+        }
+        scheduleBandRecheck(restart: true)
     }
 
     func webViewDidBecomeVisible() {

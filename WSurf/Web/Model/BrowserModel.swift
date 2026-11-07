@@ -107,6 +107,7 @@ final class BrowserModel {
             if previous.map({ !isVisibleInSplit($0) }) ?? false {
                 PageColourChooser.shared.close(openedBy: previous?.liveView?.window)
                 previous?.refreshPreview()
+                previous?.cancelBandRecheck()
                 previous?.noteHoveredLink(nil)
             }
             activeTab?.realizeDeferredSession()

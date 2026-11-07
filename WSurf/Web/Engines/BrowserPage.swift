@@ -21,6 +21,13 @@ final class BrowserPage: NSView {
     var nativeView: NSView {
         self
     }
+    /// Told when light or dark mode reaches the page's view, for the tab to look at its page colour again.
+    var onEffectiveAppearanceChange: (() -> Void)?
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        onEffectiveAppearanceChange?()
+    }
     var topBarInset: CGFloat = 0 {
         didSet {
             guard topBarInset != oldValue else { return }
@@ -518,7 +525,10 @@ final class BrowserPage: NSView {
             body, arguments: arguments, in: frame, world: contentWorld, userGesture: userGesture)
     }
 
-    func capture(rect: CGRect? = nil, width: CGFloat? = nil, afterScreenUpdates: Bool = false) async throws -> NSImage {
+    /// `fastEncoding` is for Chromium's PNG encoder only (`ChromiumPage.capture`); WebKit's snapshot has no such choice.
+    func capture(
+        rect: CGRect? = nil, width: CGFloat? = nil, afterScreenUpdates: Bool = false, fastEncoding: Bool = false
+    ) async throws -> NSImage {
         guard !closed else { throw ChromiumError.closed }
         if let webKit {
             let configuration = WKSnapshotConfiguration()
@@ -542,7 +552,7 @@ final class BrowserPage: NSView {
             }
         }
         guard let chromium else { throw ChromiumError.closed }
-        return try await chromium.capture(rect: rect, width: width)
+        return try await chromium.capture(rect: rect, width: width, fastEncoding: fastEncoding)
     }
 
     func insertText(_ text: String) async throws {

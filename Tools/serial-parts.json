@@ -195,6 +195,7 @@
   [
    "AskAddressLayoutTests",
    "CertificateEvaluationTests",
+   "ChromiumBandRecheckTests",
    "ChromiumCaptureDecodeTests",
    "ChromiumCloseTimeoutTests",
    "ChromiumContextMenuTests",

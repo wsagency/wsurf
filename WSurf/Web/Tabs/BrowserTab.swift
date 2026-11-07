@@ -112,7 +112,7 @@ final class BrowserTab: Identifiable {
         guard isMaterialised, isShowingRealPage, !isDeferred, page.window != nil else { return }
         let view = page
         Task { [weak self] in
-            guard let image = try? await view.capture(width: 480) else { return }
+            guard let image = try? await view.capture(width: 480, fastEncoding: true) else { return }
             guard self?.liveView === view else { return }
             self?.preview = image
         }
@@ -493,6 +493,7 @@ final class BrowserTab: Identifiable {
         pendingNavigationTask?.cancel()
         coverHold?.cancel()
         backgroundHidingTask?.cancel()
+        bandRecheck?.cancel()
         onChromiumDownload = nil
         onChromiumDownloadProgress = nil
         hasActiveDownload = nil
@@ -530,9 +531,14 @@ final class BrowserTab: Identifiable {
 
     var holdsPageColor = false
     var isMeasuringBand = false
-    /// The address the band colour was last measured for (`measureBandOnShow`).
-    @ObservationIgnored var bandMeasuredURL: String?
     var needsBandRemeasure = false
+    /// What the band colour was measured for: the address and light or dark mode (`BandKey`).
+    @ObservationIgnored var bandMeasuredKey: BandKey?
+    /// The one look at a Chromium tab's band colour after it has come to the front (`scheduleBandRecheck`), and the clock that times it.
+    @ObservationIgnored var bandRecheck: Task<Void, Never>?
+    @ObservationIgnored var bandClock: any Clock<Duration> = ContinuousClock()
+    /// How many band captures this tab has started, for tests.
+    @ObservationIgnored var bandMeasureCount = 0
 
     // MARK: - Zoom
 

@@ -51,10 +51,11 @@ struct ChromiumPageTests {
         #expect(!ChromiumPage.hasOnlySecureContent(url: nil, isSecureConnection: true, certStatus: 0, contentStatus: 0))
     }
 
-    /// A capture asked for at a smaller size comes back from Chromium at that size and shows the region asked for: the top band of
-    /// a page of red above blue is red, the whole page at 480 pt has the proportions of the view, and a zoomed page is still right.
+    /// The fast PNG encoding the preview and the band colour ask for changes the file, not the picture: the same page captured both
+    /// ways gives the same pixels. The page is red above blue, and a cropped band is red.
+    /// (A page of two flat colours: no animation, nothing that paints between the two captures.)
     @Test(.boundedWebViews)
-    func aSmallerCaptureIsMadeByChromiumAtThatSize() async throws {
+    func fastEncodingGivesTheSamePixels() async throws {
         let html = "<!doctype html><body style='margin:0'><div style='height:60px;background:#ff0000'></div>"
             + "<div style='height:2000px;background:#0000ff'></div></body>"
         let server = try await HTTPFixtureServer.start(routes: ["/": .html(html)])
@@ -94,9 +95,16 @@ struct ChromiumPageTests {
                 }
             }
             #expect(lowerIsBlue, "the rest of the page is blue: \(String(describing: colour(of: latest, atFraction: 0.8)))")
-            page.pageZoom = 1.2
-            let zoomed = try await page.capture(rect: CGRect(x: 0, y: 0, width: page.bounds.width, height: 48), width: 48)
-            #expect(zoomed.size.width == 48)
+            let slow = try await page.capture(width: 480)
+            let fast = try await page.capture(width: 480, fastEncoding: true)
+            #expect(slow.size == fast.size)
+            func bytes(_ image: NSImage) -> [UInt8]? {
+                guard let cg = image.cgImage(forProposedRect: nil, context: nil, hints: nil),
+                    let data = NSBitmapImageRep(cgImage: cg).representation(using: .tiff, properties: [:])
+                else { return nil }
+                return [UInt8](data)
+            }
+            #expect(bytes(slow) != nil && bytes(slow) == bytes(fast), "the same pixels, whichever way the PNG was encoded")
         } catch {
             await page.close()
             await context.endPrivateSession()
