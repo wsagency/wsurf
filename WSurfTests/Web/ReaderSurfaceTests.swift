@@ -62,6 +62,30 @@ struct ReaderSurfaceTests {
         #expect(configuration.websiteDataStore === store)
     }
 
+    /// The second Reader opens with the view the first one made ahead, and that view has Reader's configuration.
+    @Test(.boundedWebViews) func theNextReaderTakesTheSpareViewMadeAfterTheFirst() async throws {
+        let store = WKWebsiteDataStore.nonPersistent()
+        let other = WKWebsiteDataStore.nonPersistent()
+        let savedDelay = ReaderViewSpare.refillDelay
+        ReaderViewSpare.refillDelay = .milliseconds(1)
+        defer {
+            ReaderViewSpare.refillDelay = savedDelay
+            _ = ReaderViewSpare.take(dataStore: store)
+            ReaderViewSpare.refillTask?.cancel()
+        }
+        let first = ReaderViewSpare.take(dataStore: store)
+        try await Task.sleep(for: .milliseconds(200))
+        let spare = try #require(ReaderViewSpare.current)
+        #expect(spare !== first)
+        #expect(!spare.configuration.defaultWebpagePreferences.allowsContentJavaScript)
+        #expect(spare.configuration.mediaTypesRequiringUserActionForPlayback == .all)
+        #expect(ReaderViewSpare.take(dataStore: store) === spare)
+        try await Task.sleep(for: .milliseconds(200))
+        let next = try #require(ReaderViewSpare.current)
+        let foreign = ReaderViewSpare.take(dataStore: other)
+        #expect(foreign !== next && foreign.configuration.websiteDataStore === other)
+    }
+
     /// A script that runs while the document loads would change its title before the load finishes.
     private var scripted: ReaderArticle {
         ReaderArticle(
