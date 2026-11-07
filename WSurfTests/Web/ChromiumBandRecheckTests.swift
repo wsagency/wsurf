@@ -64,21 +64,101 @@ struct ChromiumBandRecheckTests {
         }
     }
 
-    @Test func aChangeOfLightOrDarkLooksAgain() async throws {
+    @Test func aChangeOfLightOrDarkLooksAgainOnlyInTheTabOnScreen() async throws {
         try await LiveWindowRig.with(engine: .chromium) { rig in
             let clock = TestClock()
-            let (_, second) = try await twoTabs(rig, clock: clock)
+            let (first, second) = try await twoTabs(rig, clock: clock)
+            try #require(second.isInFront && !first.isInFront, "the second tab is in front; the first is on the shelf")
             let before = second.bandMeasureCount
-            // Light or dark mode reaches the page's view from the window or the app; setting it on the view is the same event for it.
-            let view = second.page
-            let wasDark = view.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-            defer { view.appearance = nil }
-            view.appearance = NSAppearance(named: wasDark ? .aqua : .darkAqua)
-            try #require(await waitUntil { clock.pendingCount == 1 }, "the visible Chromium tab waits to look at its band")
+            let parkedBefore = first.bandMeasureCount
+            // Light or dark mode reaches a page's view from the window or the app; setting it on the view is the same event for it.
+            let wasDark = second.page.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+            defer {
+                second.page.appearance = nil
+                first.page.appearance = nil
+            }
+            first.page.appearance = NSAppearance(named: wasDark ? .aqua : .darkAqua)
+            try? await Task.sleep(for: .milliseconds(200))
+            #expect(first.bandRecheck == nil && clock.pendingCount == 0, "a tab on the shelf waits for its next show")
+            second.page.appearance = NSAppearance(named: wasDark ? .aqua : .darkAqua)
+            try #require(await waitUntil { clock.pendingCount == 1 }, "the tab on screen waits to look at its band")
             #expect(second.bandMeasureCount == before, "and takes no capture in the change itself")
             clock.advance(by: BrowserTab.bandSettleDelay)
             try #require(await waitUntil { second.bandMeasureCount == before + 1 })
+            try? await Task.sleep(for: .milliseconds(200))
+            #expect(first.bandMeasureCount == parkedBefore, "and the tab on the shelf took none")
         }
+    }
+
+    @Test func aTabWithNoColourForItsModeKeepsItsColourAndCapturesOnceInTheSwitch() async throws {
+        try await LiveWindowRig.with(engine: .chromium) { rig in
+            let clock = TestClock()
+            let (first, second) = try await twoTabs(rig, clock: clock)
+            rig.browser.activate(second)
+            first.pageColor = .systemRed
+            first.bandMeasuredKey = BrowserTab.BandKey(url: first.urlString, isDark: !first.isDarkAppearance)
+            let before = first.bandMeasureCount
+            #expect(first.willCaptureBandOnShow)
+            rig.browser.activate(first)
+            #expect(first.pageColor != nil, "the colour it had is not replaced by the theme's while the capture runs")
+            try #require(await waitUntil { first.bandMeasureCount == before + 1 })
+            try? await Task.sleep(for: .milliseconds(200))
+            #expect(clock.pendingCount == 0, "a fresh capture takes the place of the look")
+            clock.advance(by: BrowserTab.bandSettleDelay * 2)
+            try? await Task.sleep(for: .milliseconds(200))
+            #expect(first.bandMeasureCount == before + 1, "one capture for the switch")
+        }
+    }
+
+    @Test func theLookOfAWokenTabIsRestartedWhenTheScrollIsAskedFor() async throws {
+        try await LiveWindowRig.with(engine: .chromium) { rig in
+            let clock = TestClock()
+            let (first, _) = try await twoTabs(rig, clock: clock)
+            let before = first.bandMeasureCount
+            first.scheduleBandRecheck()
+            try #require(await waitUntil { clock.pendingCount == 1 })
+            clock.advance(by: .milliseconds(600))
+            first.scheduleBandRecheck(restart: true)
+            try #require(await waitUntil { clock.pendingCount == 1 }, "the first wait was dropped, one new one waits")
+            clock.advance(by: .milliseconds(600))
+            try? await Task.sleep(for: .milliseconds(200))
+            #expect(first.bandMeasureCount == before, "1.2 s after the first call, 0.6 s after the restart: no capture yet")
+            clock.advance(by: .milliseconds(100))
+            try #require(await waitUntil { first.bandMeasureCount == before + 1 })
+        }
+    }
+
+    @Test func aWokenTabWaitsOutTheScrollScriptBeforeItsLook() {
+        #expect(BrowserTab.bandWakeDelay >= .milliseconds(1300), "the scroll script tries for up to 1.2 s")
+        #expect(BrowserTab.bandWakeDelay > BrowserTab.bandSettleDelay)
+    }
+
+    @Test func aColourIsCurrentOnlyForItsAddressAndMode() async throws {
+        try await LiveWindowRig.with(engine: .chromium) { rig in
+            let tab = try await rig.open("/still")
+            let dark = tab.isDarkAppearance
+            tab.pageColor = .systemBlue
+            tab.bandMeasuredKey = .init(url: tab.urlString, isDark: dark)
+            #expect(tab.holdsCurrentBandColour)
+            tab.bandMeasuredKey = .init(url: tab.urlString, isDark: !dark)
+            #expect(!tab.holdsCurrentBandColour, "measured in the other mode")
+            tab.bandMeasuredKey = .init(url: tab.urlString + "x", isDark: dark)
+            #expect(!tab.holdsCurrentBandColour, "measured for another address")
+            tab.bandMeasuredKey = nil
+            #expect(!tab.holdsCurrentBandColour)
+            tab.bandMeasuredKey = .init(url: tab.urlString, isDark: dark)
+            tab.pageColor = nil
+            #expect(!tab.holdsCurrentBandColour, "no colour")
+        }
+    }
+
+    @Test func aLeavingChromiumTabKeepsItsPreviewWhenAnotherCaptureIsInTheSwitch() {
+        // isChromium, hasPreview, arrivingCaptures, isMeasuringBand
+        #expect(BrowserTab.skipsPreview(isChromium: true, hasPreview: true, arrivingCaptures: true, isMeasuringBand: false))
+        #expect(BrowserTab.skipsPreview(isChromium: true, hasPreview: true, arrivingCaptures: false, isMeasuringBand: true))
+        #expect(!BrowserTab.skipsPreview(isChromium: true, hasPreview: true, arrivingCaptures: false, isMeasuringBand: false))
+        #expect(!BrowserTab.skipsPreview(isChromium: true, hasPreview: false, arrivingCaptures: true, isMeasuringBand: true), "no preview yet: take one")
+        #expect(!BrowserTab.skipsPreview(isChromium: false, hasPreview: true, arrivingCaptures: true, isMeasuringBand: true), "WebKit's snapshot is cheap")
     }
 
     @Test func aWokenTabLooksOnceAfterItsPageHasLoadedAndBeenScrolledBack() async throws {
@@ -99,6 +179,9 @@ struct ChromiumBandRecheckTests {
             try? await Task.sleep(for: .milliseconds(300))
             #expect(first.bandMeasureCount == before, "no capture at the load of a woken tab")
             clock.advance(by: BrowserTab.bandSettleDelay)
+            try? await Task.sleep(for: .milliseconds(200))
+            #expect(first.bandMeasureCount == before, "the settle delay is not enough for a woken tab")
+            clock.advance(by: BrowserTab.bandWakeDelay - BrowserTab.bandSettleDelay)
             try #require(await waitUntil { first.bandMeasureCount == before + 1 })
         }
     }

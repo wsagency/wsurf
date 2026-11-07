@@ -105,6 +105,12 @@ struct ChromiumPageTests {
                 return [UInt8](data)
             }
             #expect(bytes(slow) != nil && bytes(slow) == bytes(fast), "the same pixels, whichever way the PNG was encoded")
+            // The flag reaches Chromium: the encoded files differ, though the pixels do not.
+            let plain = try await native.command("Page.captureScreenshot", params: ["format": "png", "captureBeyondViewport": false])
+            let quick = try await native.command(
+                "Page.captureScreenshot", params: ["format": "png", "captureBeyondViewport": false, "optimizeForSpeed": true])
+            #expect((plain["data"] as? String)?.isEmpty == false && plain["data"] as? String != quick["data"] as? String,
+                    "optimizeForSpeed changes the PNG bytes")
         } catch {
             await page.close()
             await context.endPrivateSession()

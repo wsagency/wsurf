@@ -98,8 +98,12 @@ extension BrowserTab {
         // of a page scrolled past its header is not the band of its top.
         refreshPageColor(from: page, onShow: wasRestore && page.chromium != nil)
         restoreScrollOffsetIfNeeded()
-        if wasRestore, page.chromium != nil {
-            scheduleBandRecheck(restart: true)
+        if wasRestore {
+            if page.chromium != nil {
+                scheduleBandRecheck(restart: true, after: Self.bandWakeDelay)
+            } else {
+                bandWakePending = false
+            }
         }
         probeReader()
         offerTranslation()
@@ -119,6 +123,7 @@ extension BrowserTab {
             provisionalNavigation = nil
         }
         isRestoring = false
+        bandWakePending = false
         finishReclaim()
         releasePageColorHold()
         refreshPageColor(from: page)

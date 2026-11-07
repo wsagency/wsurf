@@ -454,6 +454,7 @@ final class BrowserTab: Identifiable {
         let url = URL(string: urlString)
         guard state != nil || url != nil else { return }
 
+        cancelBandRecheck()
         retire(outgoing)
         stoppedNavigation = false
         awaitsVisit = false
@@ -537,6 +538,8 @@ final class BrowserTab: Identifiable {
     /// The one look at a Chromium tab's band colour after it has come to the front (`scheduleBandRecheck`), and the clock that times it.
     @ObservationIgnored var bandRecheck: Task<Void, Never>?
     @ObservationIgnored var bandClock: any Clock<Duration> = ContinuousClock()
+    /// True from the start of a wake until its band look has run: the page is not at its saved place yet, so no capture is taken for it.
+    @ObservationIgnored var bandWakePending = false
     /// How many band captures this tab has started, for tests.
     @ObservationIgnored var bandMeasureCount = 0
 
@@ -667,6 +670,7 @@ final class BrowserTab: Identifiable {
         clearDeferredSession()
         invalidateSessionState()
         isRestoring = true
+        bandWakePending = true
         if let retirement {
             pendingNavigationTask?.cancel()
             pendingNavigationTask = Task { [weak self] in
