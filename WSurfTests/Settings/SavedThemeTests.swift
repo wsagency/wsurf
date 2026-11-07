@@ -16,7 +16,9 @@ struct SavedThemeTests {
         let name = AppDatabase.defaultsSuite("SavedThemeTests-\(UUID().uuidString)")
         let defaults = try #require(UserDefaults(suiteName: name))
         defer { defaults.removePersistentDomain(forName: name) }
-        try test(BrowserSettings(defaults: defaults, appliesAppearanceGlobally: false), defaults)
+        let settings = BrowserSettings(defaults: defaults, appliesAppearanceGlobally: false)
+        settings.previewsEveryStep()
+        try test(settings, defaults)
     }
 
     private func reopened(_ defaults: UserDefaults) -> BrowserSettings {

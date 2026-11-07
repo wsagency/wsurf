@@ -16,7 +16,16 @@ struct ThemePreviewTests {
         let name = AppDatabase.defaultsSuite("ThemePreviewTests-\(UUID().uuidString)")
         let defaults = try #require(UserDefaults(suiteName: name))
         defer { defaults.removePersistentDomain(forName: name) }
-        try test(BrowserSettings(defaults: defaults, appliesAppearanceGlobally: false), defaults)
+        let settings = BrowserSettings(defaults: defaults, appliesAppearanceGlobally: false)
+        settings.previewsEveryStep()
+        try test(settings, defaults)
+    }
+
+    private func withSettingsAsync(_ test: (BrowserSettings, UserDefaults) async throws -> Void) async throws {
+        let name = AppDatabase.defaultsSuite("ThemePreviewTests-\(UUID().uuidString)")
+        let defaults = try #require(UserDefaults(suiteName: name))
+        defer { defaults.removePersistentDomain(forName: name) }
+        try await test(BrowserSettings(defaults: defaults, appliesAppearanceGlobally: false), defaults)
     }
 
     @Test func materialAndBrightnessPersistPerThemeAndVariant() throws {
@@ -41,8 +50,12 @@ struct ThemePreviewTests {
     @Test func draggingBrightnessAndOpacityWritesOnlyOnCommit() throws {
         try withSettings { settings, defaults in
             let before = defaults.data(forKey: "appearance.themes.adjustments")
+            // A step every interval, so the window applies each one; the throttle has its own tests below.
+            var now = ContinuousClock.now
+            settings.themeApplyClock = { now }
             settings.beginThemePreview()
             for step in 1...30 {
+                now = now.advanced(by: BrowserSettings.themePreviewInterval)
                 settings.previewThemeAdjustment(ThemeAdjustment(
                     material: .glass, glassOpacity: Double(step) / 30, darkBrightness: Double(step) / 100
                 ))
@@ -54,6 +67,60 @@ struct ThemePreviewTests {
             #expect(reopened.themeMaterial == .glass && reopened.transparency == 1)
             #expect(reopened.themeAdjustment.darkBrightness == 0.3)
             #expect(settings.themePreview == nil && reopened.userThemes.isEmpty)
+        }
+    }
+
+    /// A drag of N steps over T seconds applies to the window at most ceil(10 T) + 1 times; the gallery card
+    /// (`previewedTheme`) follows every step, and the last value lands on release.
+    @Test func draggingAppliesToTheWindowAtMostTenTimesASecond() throws {
+        try withSettings { settings, _ in
+            var now = ContinuousClock.now
+            settings.themeApplyClock = { now }
+            let applies = ChangeCounter { _ = settings.themeRevision }
+            let steps = 60
+            let seconds = 3.0
+            settings.beginThemePreview()
+            for step in 1...steps {
+                now = now.advanced(by: .seconds(seconds / Double(steps)))
+                settings.previewThemeAdjustment(ThemeAdjustment(darkBrightness: Double(step) / 200))
+                #expect(settings.previewedTheme == settings.selectedTheme)
+                #expect(settings.themeAdjustment.darkBrightness == Double(step) / 200)
+            }
+            #expect(applies.count > 1)
+            #expect(applies.count <= Int((seconds * 10).rounded(.up)) + 1)
+            settings.pendingThemeApply?.cancel()
+            settings.commitThemePreview()
+            #expect(settings.resolvedTheme.adjustment.darkBrightness == 0.3)
+            #expect(settings.themeAdjustment.darkBrightness == 0.3)
+        }
+    }
+
+    @Test func theLastStepOfADragReachesTheWindowWithoutRelease() async throws {
+        try await withSettingsAsync { settings, _ in
+            settings.beginThemePreview()
+            settings.previewThemeAdjustment(ThemeAdjustment(darkBrightness: 0.1))
+            #expect(settings.resolvedTheme.adjustment.darkBrightness == 0.1)
+            settings.previewThemeAdjustment(ThemeAdjustment(darkBrightness: 0.2))
+            #expect(settings.resolvedTheme.adjustment.darkBrightness == 0.1, "within the interval the window keeps the last applied value")
+            let pending = try #require(settings.pendingThemeApply)
+            await pending.value
+            #expect(settings.resolvedTheme.adjustment.darkBrightness == 0.2)
+            settings.cancelThemePreview()
+            #expect(settings.resolvedTheme.adjustment == ThemeAdjustment())
+        }
+    }
+
+    @Test func releasingADragAppliesAtOnceAndDropsThePendingStep() throws {
+        try withSettings { settings, _ in
+            let now = ContinuousClock.now
+            settings.themeApplyClock = { now }
+            settings.beginThemePreview()
+            settings.previewThemeAdjustment(ThemeAdjustment(darkBrightness: 0.1))
+            settings.previewThemeAdjustment(ThemeAdjustment(darkBrightness: 0.2))
+            #expect(settings.pendingThemeApply != nil)
+            settings.commitThemePreview()
+            #expect(settings.pendingThemeApply == nil)
+            #expect(settings.resolvedTheme.adjustment.darkBrightness == 0.2)
         }
     }
 
@@ -263,12 +330,17 @@ struct ThemePreviewTests {
             expectInvalidation { root.themeAdjustments[saved.id] = adjustment }
             #expect(profile.resolvedTheme.adjustment == adjustment)
 
+            // The window applies a preview at most every interval; each step here comes a second after the last.
+            var now = ContinuousClock.now
+            root.themeApplyClock = { now }
             root.beginThemePreview()
             let persisted = root.themeAdjustments
             let preview = ThemeAdjustment(material: .glass, darkBrightness: 0.2)
+            now = now.advanced(by: .seconds(1))
             expectInvalidation { root.previewThemeAdjustment(preview) }
             #expect(profile.resolvedTheme.adjustment == preview)
             #expect(root.themeAdjustments == persisted)
+            now = now.advanced(by: .seconds(1))
             expectInvalidation { root.previewThemeColors(scheme: .dark) { $0.accent = 0x226688 } }
             #expect(profile.previewedTheme.dark.accent == 0x226688)
             #expect(profile.resolvedTheme.dark.accent.base == Color(hex: 0x226688))

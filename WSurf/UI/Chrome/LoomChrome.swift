@@ -212,7 +212,7 @@ struct LoomBackdrop: View {
     }
 
     var body: some View {
-        switch Self.kind(ground: settings.resolvedTheme.ground, material: settings.themeMaterial, fallsBack: fallsBack) {
+        switch Self.kind(ground: settings.resolvedTheme.ground, material: settings.resolvedTheme.adjustment.material, fallsBack: fallsBack) {
         case .solid:
             LoomSolidBackdrop(sampledPageColor: websiteTint, isFloating: isFloating)
         case .tinted:
