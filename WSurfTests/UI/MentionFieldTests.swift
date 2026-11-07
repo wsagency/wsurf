@@ -385,6 +385,22 @@ struct MentionFieldTests {
         }
     }
 
+    /// The palette sets its field focused as it appears, and SwiftUI can ask before the field is in a window. The request must
+    /// wait for the window instead of being dropped: in a loop of 60 openings it was lost 4 times, leaving the palette unfocused.
+    @Test func aFocusRequestMadeBeforeTheFieldHasAWindowIsKept() async throws {
+        let harness = harness()
+        harness.field.removeFromSuperview()
+        #expect(harness.field.window == nil)
+        harness.coordinator.syncFocus(true, in: harness.field)
+        // The request is made on the next turn of the run loop; the field joins its window after that.
+        try await Task.sleep(for: .milliseconds(50))
+        try #require(harness.field.currentEditor() == nil)
+
+        harness.window.contentView?.addSubview(harness.field)
+
+        #expect(await waitUntil { harness.field.currentEditor() != nil && harness.window.firstResponder === harness.field.currentEditor() })
+    }
+
     fileprivate func harness() -> Harness {
         Harness()
     }
