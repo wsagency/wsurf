@@ -99,7 +99,8 @@ extension BrowserTab {
         refreshPageColor(from: page, onShow: wasRestore && page.chromium != nil)
         restoreScrollOffsetIfNeeded()
         if wasRestore {
-            if page.chromium != nil {
+            // A woken tab that was left before its load finished does not look in the background; its next show decides.
+            if page.chromium != nil, isInFront {
                 scheduleBandRecheck(restart: true, after: Self.bandWakeDelay)
             } else {
                 bandWakePending = false

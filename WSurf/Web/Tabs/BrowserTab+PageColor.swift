@@ -37,9 +37,15 @@ extension BrowserTab {
         }
     }
 
+    /// Whether a band measurement would start now: the same conditions `measureBandUnderBar` needs. A tab that is still loading, not
+    /// yet presented, or without a window takes none.
+    var canMeasureBand: Bool {
+        guard !isClosed, isMaterialised, isShowingRealPage, hasPresentedContent, !holdsPageColor, let view = liveView else { return false }
+        return view.window != nil && view.bounds.height > 0
+    }
+
     func measureBandUnderBar() {
-        guard !isClosed, isMaterialised, isShowingRealPage, hasPresentedContent, !holdsPageColor, page.window != nil,
-              page.bounds.height > 0 else { return }
+        guard canMeasureBand else { return }
         guard !isMeasuringBand else {
             // The first presentation can still contain the old/blank frame.
             // Keep the didFinish request instead of dropping it behind that
@@ -103,7 +109,7 @@ extension BrowserTab {
     /// Whether coming to the front will make this tab take a band capture in the switch itself: a Chromium tab with no colour for its
     /// address and mode, that is not waking (a woken tab looks after its scroll is back) and is not already measuring.
     var willCaptureBandOnShow: Bool {
-        liveView?.chromium != nil && !isDeferred && !bandWakePending && !isMeasuringBand && !holdsCurrentBandColour
+        liveView?.chromium != nil && !isDeferred && !bandWakePending && !isMeasuringBand && !holdsCurrentBandColour && canMeasureBand
     }
 
     /// At most one Chromium capture per switch: the leaving tab keeps the preview it has when the arriving tab captures its band in the

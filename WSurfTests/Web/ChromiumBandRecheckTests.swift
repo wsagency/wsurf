@@ -90,6 +90,43 @@ struct ChromiumBandRecheckTests {
         }
     }
 
+    @Test func aTabThatIsStillLoadingDoesNotPromiseACaptureInTheSwitch() async throws {
+        try await LiveWindowRig.with(engine: .chromium) { rig in
+            let tab = try await rig.open("/still")
+            try #require(await waitUntil { !tab.isMeasuringBand && !tab.bandWakePending })
+            tab.cancelBandRecheck()
+            tab.pageColor = nil
+            tab.bandMeasuredKey = nil
+            try #require(tab.willCaptureBandOnShow && tab.canMeasureBand, "a settled tab with no colour will capture")
+            tab.holdsPageColor = true
+            #expect(!tab.canMeasureBand && !tab.willCaptureBandOnShow, "its page colour is held until the load ends")
+            tab.holdsPageColor = false
+            tab.hasPresentedContent = false
+            #expect(!tab.willCaptureBandOnShow, "and nothing is presented yet")
+            tab.hasPresentedContent = true
+            #expect(tab.willCaptureBandOnShow)
+            #expect(!BrowserTab.skipsPreview(isChromium: true, hasPreview: true, arrivingCaptures: false, isMeasuringBand: false))
+        }
+    }
+
+    @Test func aWokenTabLeftBeforeItsLoadFinishedTakesNoLookInTheBackground() async throws {
+        try await LiveWindowRig.with(engine: .chromium) { rig in
+            let clock = TestClock()
+            let (first, second) = try await twoTabs(rig, clock: clock)
+            try #require(second.isInFront && !first.isInFront)
+            // The load of a woken tab finishes while another tab is in front.
+            first.isRestoring = true
+            first.bandWakePending = true
+            first.navigationFinished(nil)
+            #expect(first.bandRecheck == nil && !first.bandWakePending, "no look waits for a tab that is not in front")
+            second.isRestoring = true
+            second.bandWakePending = true
+            second.navigationFinished(nil)
+            #expect(second.bandRecheck != nil, "the tab in front does")
+            second.cancelBandRecheck()
+        }
+    }
+
     @Test func aTabWithNoColourForItsModeKeepsItsColourAndCapturesOnceInTheSwitch() async throws {
         try await LiveWindowRig.with(engine: .chromium) { rig in
             let clock = TestClock()
