@@ -80,9 +80,31 @@ final class ChromiumRuntime {
             .appendingPathComponent(profileID.uuidString, isDirectory: true)
     }
 
+    /// How CEF is started; a test replaces it.
+    var initializeCEF: (CefConfiguration) throws -> Void = { try CefRuntime.shared.initialize(configuration: $0) }
+    /// The error of an early start (`startEarly`) that failed. The next `ensureInitialized` reports it instead of starting again: a
+    /// start the person asked for would have failed once and shown its error, and a second `cef_initialize` after a failed one is not
+    /// something to risk before that error has been seen. Reported once; the start after it tries as it always did.
+    private var earlyStartFailure: (any Error)?
+
+    /// Starts CEF ahead of the first Chromium tab (`ChromiumPrewarm`). A failure is kept for that tab to show.
+    func startEarly() {
+        do {
+            try ensureInitialized()
+        } catch {
+            earlyStartFailure = error
+            // The error text can hold the Chromium folder's path, which holds the user name.
+            Self.log.error("early start failed: \(error.localizedDescription, privacy: .private)")
+        }
+    }
+
     func ensureInitialized() throws {
         guard !hasShutdown else { throw ChromiumError.closed }
         guard !isInitialized else { return }
+        if let failure = earlyStartFailure {
+            earlyStartFailure = nil
+            throw failure
+        }
         try FileManager.default.createDirectory(at: rootDirectory, withIntermediateDirectories: true)
         // Foundation preserves /tmp aliases; CEF requires canonical filesystem paths.
         guard let canonical = realpath(rootDirectory.path, nil) else {
@@ -113,7 +135,7 @@ final class ChromiumRuntime {
         // The main thread waits here for the framework load, CEF's own start and the check of the two against each other. CefKit
         // does the three in one call, so there is one interval for them.
         try Pipeline.signposter.withIntervalSignpost("cef.initialize") {
-            try CefRuntime.shared.initialize(configuration: configuration)
+            try initializeCEF(configuration)
         }
         // Our native clients own their browser lifetimes, not CefKit's browser registry.
         CEFApplication.setTerminateHandler(nil)

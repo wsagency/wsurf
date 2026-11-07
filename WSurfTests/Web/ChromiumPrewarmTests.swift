@@ -159,7 +159,7 @@ struct ChromiumPrewarmTests {
         #expect(twice.starts == 1, "one start per launch")
     }
 
-    @Test func aMouseButtonHeldDownIsNotIdleTime() async throws {
+    @Test func aDragInProgressIsNotIdleTimeAndTheWaitStartsAgainWhenItEnds() async throws {
         let rig = Rig(idle: idle) { true }
         rig.busy = true
         rig.prewarm.arm()
@@ -167,10 +167,40 @@ struct ChromiumPrewarmTests {
         rig.clock.advance(by: idle)
         await settle()
         #expect(rig.starts == 0 && !rig.prewarm.isFinished, "a drag in progress is use of the app")
-        try #require(await waitUntil { rig.clock.pendingCount == 1 }, "and the wait begins again")
+        try #require(await waitUntil { rig.clock.pendingCount == 1 }, "and it is looked at again soon")
+        rig.clock.advance(by: .milliseconds(250))
+        await settle()
+        #expect(rig.starts == 0 && rig.clock.pendingCount == 1, "still busy: another look")
         rig.busy = false
-        rig.clock.advance(by: idle)
+        rig.clock.advance(by: .milliseconds(250))
+        await settle()
+        #expect(rig.starts == 0, "the drag ended, but Chromium does not start the instant it does")
+        try #require(await waitUntil { rig.clock.pendingCount == 1 }, "a fresh idle wait begins")
+        rig.clock.advance(by: idle - .milliseconds(1))
+        await settle()
+        #expect(rig.starts == 0 && rig.clock.pendingCount == 1)
+        rig.clock.advance(by: .milliseconds(1))
         try #require(await waitUntil { rig.starts == 1 })
+    }
+
+    /// A failed early start is the failure the next start reports, once, without another `cef_initialize`. A second one after a failed
+    /// one is not something a person's own start would have been the first to do.
+    @Test func aFailedEarlyStartIsReportedByTheNextStartWithoutTryingAgain() throws {
+        let runtime = ChromiumRuntime.shared
+        let real = runtime.initializeCEF
+        defer { runtime.initializeCEF = real }
+        struct Failure: Error {}
+        var calls = 0
+        runtime.initializeCEF = { _ in
+            calls += 1
+            throw Failure()
+        }
+        runtime.startEarly()
+        #expect(calls == 1)
+        #expect(throws: Failure.self) { try runtime.ensureInitialized() }
+        #expect(calls == 1, "the tab shows the early failure and CEF is not started a second time")
+        #expect(throws: Failure.self) { try runtime.ensureInitialized() }
+        #expect(calls == 2, "the start after that tries, as it did before")
     }
 
     @Test func cancellingStopsTheWait() async throws {

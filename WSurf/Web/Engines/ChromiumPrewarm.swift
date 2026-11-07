@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: BUSL-1.1
 
 import AppKit
-import OSLog
 
 /// Starts Chromium before the first Chromium tab asks for it, when the session is going to use it, and only at a moment the
 /// person is not using the app.
@@ -17,7 +16,6 @@ import OSLog
 @MainActor
 final class ChromiumPrewarm {
     static let idleInterval: Duration = .seconds(2)
-    nonisolated static let log = Logger(subsystem: "io.wsagency.wsurf", category: "chromium")
 
     private let clock: any Clock<Duration>
     private let idleInterval: Duration
@@ -88,17 +86,33 @@ final class ChromiumPrewarm {
         inputMonitor = nil
     }
 
+    private static let busyPoll: Duration = .milliseconds(250)
+
     private func restartWait() {
         wait?.cancel()
         wait = Task { [weak self, clock, idleInterval] in
             do {
-                try await clock.sleep(for: idleInterval)
+                while true {
+                    try await clock.sleep(for: idleInterval)
+                    guard !Task.isCancelled, let self else { return }
+                    if !isBusy() {
+                        idleElapsed()
+                        return
+                    }
+                    // In use without an event the monitor saw (a drag, a menu): look again soon, and count the idle time from
+                    // the moment it is over, so Chromium does not start the instant a drag ends.
+                    while await isBusyAfter(clock) {}
+                }
             } catch {
                 return
             }
-            guard !Task.isCancelled else { return }
-            self?.idleElapsed()
         }
+    }
+
+    /// Waits one poll of the clock, then answers whether the app is still busy.
+    private func isBusyAfter(_ clock: any Clock<Duration>) async -> Bool {
+        guard (try? await clock.sleep(for: Self.busyPoll)) != nil, !Task.isCancelled else { return false }
+        return isBusy()
     }
 
     /// A mouse button held down, or a modal tracking loop (a drag, a menu, a resize) running: the app is in use although no event
@@ -109,10 +123,6 @@ final class ChromiumPrewarm {
 
     private func idleElapsed() {
         guard !isFinished else { return }
-        if isBusy() {
-            restartWait()
-            return
-        }
         isFinished = true
         wait = nil
         removeInputMonitor()
@@ -142,14 +152,7 @@ extension BrowserApplication {
                 return ChromiumPrewarm.sessionUsesChromium(models: windows.filter { !$0.isClosed }.map(\.browser), permissions: permissions)
             },
             isStarted: { ChromiumRuntime.shared.isInitialized },
-            start: {
-                do {
-                    try ChromiumRuntime.shared.ensureInitialized()
-                } catch {
-                    // The first Chromium tab tries again and shows the error to the person.
-                    ChromiumPrewarm.log.error("early start failed: \(error.localizedDescription, privacy: .public)")
-                }
-            }
+            start: { ChromiumRuntime.shared.startEarly() }
         )
         chromiumPrewarm = prewarm
         prewarm.watchInput()
