@@ -56,7 +56,16 @@ struct ThemeSidebarInk: Equatable {
 }
 
 extension BrowserSettings {
+    /// While a slider or colour well drags, the window takes a new preview at most this often. The gallery card
+    /// reads `themePreview` itself and stays live.
+    static let themePreviewInterval = Duration.milliseconds(100)
+
     func refreshTheme() {
+        pendingThemeApply?.cancel()
+        pendingThemeApply = nil
+        lastThemeApply = themeApplyClock()
+        appliedThemePreview = themePreview
+        themeRevision &+= 1
         themeCache = nil
         let theme = resolvedTheme
         let ink = ThemeSidebarInk(theme)
@@ -83,7 +92,26 @@ extension BrowserSettings {
         preview.adjustment = adjustment.bounded()
         guard settings.themePreview != preview else { return }
         settings.themePreview = preview
-        settings.refreshTheme()
+        settings.applyThemePreviewSoon()
+    }
+
+    /// Applies the preview to the window now if the last apply is at least `themePreviewInterval` old; otherwise
+    /// once the interval is up, with whatever the preview is by then. The last value of a drag always lands.
+    func applyThemePreviewSoon() {
+        let settings = globalSettings
+        let now = settings.themeApplyClock()
+        guard let last = settings.lastThemeApply, now - last < Self.themePreviewInterval else {
+            settings.refreshTheme()
+            return
+        }
+        guard settings.pendingThemeApply == nil else { return }
+        let wait = Self.themePreviewInterval - (now - last)
+        settings.pendingThemeApply = Task { @MainActor [weak settings] in
+            try? await Task.sleep(for: wait)
+            guard !Task.isCancelled, let settings else { return }
+            settings.pendingThemeApply = nil
+            settings.refreshTheme()
+        }
     }
 
     var previewedTheme: ThemeDefinition {
@@ -101,7 +129,7 @@ extension BrowserSettings {
         preview.scheme = scheme
         guard globalSettings.themePreview != preview else { return }
         globalSettings.themePreview = preview
-        globalSettings.refreshTheme()
+        applyThemePreviewSoon()
     }
 
     func commitThemePreview() {

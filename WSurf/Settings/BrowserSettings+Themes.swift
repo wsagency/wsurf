@@ -103,7 +103,8 @@ extension BrowserSettings {
         let id = themeID
         let themes = userThemes
         let adjustments = themeAdjustments
-        let preview = settings.themePreview
+        _ = settings.themeRevision
+        let preview = settings.appliedThemePreview
         if let cached = settings.themeCache {
             return cached
         }
