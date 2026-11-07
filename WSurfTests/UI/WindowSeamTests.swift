@@ -84,10 +84,13 @@ struct WindowSeamTests {
         let window = makeWindow()
         defer { window.close() }
         var guardian = TitlebarDecorationGuard()
-        #expect(guardian.hideIfNeeded(in: window))
+        var ran = false
+        ran = guardian.hideIfNeeded(in: window)
+        #expect(ran)
         for _ in 0..<100 {
             window.contentView?.superview?.layoutSubtreeIfNeeded()
-            #expect(!guardian.hideIfNeeded(in: window))
+            ran = guardian.hideIfNeeded(in: window)
+            #expect(!ran)
         }
         #expect(guardian.passes == 1)
     }
@@ -97,22 +100,28 @@ struct WindowSeamTests {
         let window = makeWindow()
         defer { window.close() }
         var guardian = TitlebarDecorationGuard()
+        var ran = false
         guardian.hideIfNeeded(in: window)
         let frameView = try #require(window.contentView?.superview)
         let container = try #require(frameView.subviews.first { $0.className.hasSuffix("NSTitlebarContainerView") })
         let decoration = try #require(container.subviews.first { $0.className.contains("TitlebarDecoration") })
         #expect(decoration.isHidden)
         decoration.isHidden = false
-        #expect(guardian.hideIfNeeded(in: window))
+        ran = guardian.hideIfNeeded(in: window)
+        #expect(ran)
         #expect(decoration.isHidden)
-        #expect(!guardian.hideIfNeeded(in: window))
+        ran = guardian.hideIfNeeded(in: window)
+        #expect(!ran)
 
         window.styleMask.remove(.resizable)
-        #expect(guardian.hideIfNeeded(in: window))
-        #expect(!guardian.hideIfNeeded(in: window))
+        ran = guardian.hideIfNeeded(in: window)
+        #expect(ran)
+        ran = guardian.hideIfNeeded(in: window)
+        #expect(!ran)
 
         container.addSubview(NSView())
-        #expect(guardian.hideIfNeeded(in: window))
+        ran = guardian.hideIfNeeded(in: window)
+        #expect(ran)
         #expect(guardian.passes == 4)
     }
 }
