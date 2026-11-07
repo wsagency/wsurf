@@ -24,7 +24,7 @@ struct ReaderWebView: NSViewRepresentable {
     }
 
     func makeNSView(context: Context) -> BrowserPage {
-        let webView = ReaderPageController.makeWebView(dataStore: profile.dataStore)
+        let webView = ReaderViewSpare.take(dataStore: profile.dataStore)
         webView.navigationDelegate = context.coordinator
         context.coordinator.webView = webView
         let page = BrowserPage(webKit: webView, context: profile)
@@ -49,6 +49,37 @@ struct ReaderWebView: NSViewRepresentable {
         controller.session = session
         controller.onOpenLink = onOpenLink
         controller.show(article, appearance: .init(typeface: typeface, palette: palette, textSize: textSize))
+    }
+}
+
+/// One Reader view made ahead, so that the next Reader opens without building a web view (25 ms). It has Reader's own
+/// configuration, not a tab's: no content blocker, no extension scripts, no page JavaScript. Nothing is made until Reader has
+/// been used, and an unused spare is dropped after `lifetime`, which also releases a private window's data store.
+@MainActor
+enum ReaderViewSpare {
+    static var lifetime = Duration.seconds(60)
+    static var refillDelay = Duration.milliseconds(400)
+    private(set) static var current: WKWebView?
+    private(set) static var refillTask: Task<Void, Never>?
+
+    static func take(dataStore: WKWebsiteDataStore) -> WKWebView {
+        let view: WKWebView
+        if let spare = current, spare.configuration.websiteDataStore === dataStore {
+            view = spare
+            current = nil
+        } else {
+            view = ReaderPageController.makeWebView(dataStore: dataStore)
+        }
+        refillTask?.cancel()
+        refillTask = Task {
+            try? await Task.sleep(for: refillDelay)
+            guard !Task.isCancelled else { return }
+            current = ReaderPageController.makeWebView(dataStore: dataStore)
+            try? await Task.sleep(for: lifetime)
+            guard !Task.isCancelled else { return }
+            current = nil
+        }
+        return view
     }
 }
 
