@@ -530,30 +530,25 @@ check_average \
   '0.300' \
   '3,000-credential Credential Manager page layout' \
   's'
-# Typing in the Credential Manager search over 3,000 credentials (D5(b), plan 6.5). Pro, Debug + coverage, whole Performance plan, two
-# runs, mean of samples 2-6 plus the page's own layout: 3,000 to 111 rows ("site1" then "site29", none of the 111 on screen before)
-# 0.0323 / 0.0349 s; a keystroke that leaves every row ("us" then "use") 0.0208 / 0.0197 s. These are steady-state keystrokes on a page
-# that has already shown those rows. Before this change a first keystroke of the same kinds on a fresh page took 0.142 s and 0.056 s
-# (K3 and K1 of CredentialListPerformanceTests, a different harness, so not the same measurement). Budget twice the larger mean. The
-# page layout above (0.144 / 0.143 s) is as it was.
-check_average \
-  'CredentialListPerformanceTests/testNarrowingThreeThousandCredentialsToOneHundredAndEleven()' \
-  'com.apple.dt.XCTMetric_Clock.time.monotonic' \
-  '0.0698' \
-  'Credential Manager search narrowing 3,000 credentials to 111' \
-  's'
-check_average \
-  'CredentialListPerformanceTests/testATypedLetterThatKeepsEveryRowOfThreeThousandCredentials()' \
-  'com.apple.dt.XCTMetric_Clock.time.monotonic' \
-  '0.0417' \
-  'Credential Manager search keystroke that keeps all 3,000 rows' \
-  's'
 check_average \
   'CredentialListPerformanceTests/testLayingOutThreeThousandCredentials()' \
   'com.apple.dt.XCTMetric_Memory.physical' \
   '4096' \
   'Credential Manager page layout memory growth' \
   'kB'
+# Typing in the Credential Manager search over a vault of 3,000 credentials (D5(b), plan 6.5): from "site1" (1,111 rows) to "site29" (111
+# rows, none of them on screen before), steady state, the keystroke timed with the page's layout. Pro, Debug + coverage, whole Performance
+# plan, three runs: 0.0323 / 0.0349 / 0.0342 s, and 0.0374 s with the "..." as a pull-down button. Before this change a first keystroke of
+# the same kind on a fresh page took 0.142 s (K3 of CredentialListPerformanceTests, a different harness, so not the same measurement).
+# Budget twice the larger mean. The keystroke that keeps every row (about 0.02 s) has no budget: a mean of five passes with a 0.0417 s
+# budget fails on one stalled pass of 0.127 s, which this file records for other short cases; its test asserts instead that no row is
+# evaluated again.
+check_average \
+  'CredentialListPerformanceTests/testNarrowingASearchOfThreeThousandCredentialsToOneHundredAndEleven()' \
+  'com.apple.dt.XCTMetric_Clock.time.monotonic' \
+  '0.0748' \
+  'Credential Manager search narrowing 1,111 rows to 111 in a vault of 3,000' \
+  's'
 check_average \
   'BrowserPerformanceTests/testResolvingThemeColorsForACrowdedSidebar()' \
   'com.apple.dt.XCTMetric_Clock.time.monotonic' \

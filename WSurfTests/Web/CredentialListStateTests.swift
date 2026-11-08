@@ -110,4 +110,24 @@ struct CredentialListStateTests {
         list.refresh(all)
         #expect(list.rows(of: all).map(\.title) == ["alpha"])
     }
+
+    @Test func aLockLeavesNoSummariesInTheListAndAChipNarrowsNothing() throws {
+        let all = [try summary("alpha"), try summary("beta")]
+        let list = CredentialListState()
+        list.bySite = true
+        let told = Told()
+        list.didNarrow = { told.lists.append($0) }
+        list.refresh(all)
+        list.query = "alpha"
+        #expect(list.siteGroups != nil && !list.rowsByID.isEmpty)
+        let before = told.lists.count
+
+        // What the page does on a lock: reset. The chips stay visible, so a click can still come.
+        list.reset()
+        #expect(list.siteGroups == nil && list.rowsByID.isEmpty)
+        list.filter = .passkeys
+        #expect(told.lists.count == before, "nothing is narrowed over a locked vault")
+        #expect(list.rows(of: []).isEmpty)
+        #expect(list.siteGroups == nil && list.rowsByID.isEmpty)
+    }
 }

@@ -609,6 +609,17 @@ struct CredentialSettings: View {
 /// object, so a row is not given new closures (which would make it differ from what it drew last) every time the list is evaluated.
 @MainActor
 final class CredentialRowActions {
+    /// How many exist: the lifetime test's probe that a torn-down list leaves none behind.
+    nonisolated(unsafe) private(set) static var live = 0
+
+    init() {
+        Self.live += 1
+    }
+
+    deinit {
+        Self.live -= 1
+    }
+
     private(set) var run: (@escaping () async throws -> Void) -> Void = { _ in }
     /// Moves credentials to the Trash, without a dialog: this one, or the selection it is part of.
     private(set) var trash: ([UUID]) -> Void = { _ in }
@@ -617,6 +628,8 @@ final class CredentialRowActions {
     /// Opens the editor on a credential.
     private(set) var open: (UUID) -> Void = { _ in }
     private(set) var history: (UUID) -> Void = { _ in }
+    /// The Move to Trash in flight, if any (`CredentialListView` starts it).
+    var removal: Task<Void, Never>?
 
     func bind(
         run: @escaping (@escaping () async throws -> Void) -> Void, trash: @escaping ([UUID]) -> Void,
@@ -720,7 +733,7 @@ struct CredentialRow: View, Equatable {
         .accessibilityAction(named: "Open Website") { model.openWebsite(summary.website) }
         // A view of its own: the selection state the menu reads redraws the menu, never this row (its detail, dates and buttons).
         .contextMenu {
-            CredentialRowMenu(model: model, summary: summary, selection: selection, run: run, trash: trash, merge: actions.merge, open: open)
+            CredentialRowMenu(model: model, summary: summary, selection: selection, run: run, trash: trash, merge: { actions.merge($0) }, open: open)
         }
     }
 

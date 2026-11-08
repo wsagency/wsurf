@@ -200,6 +200,7 @@
    "ChromiumContextMenuTests",
    "ChromiumFindTests",
    "ColourChooserDismissalTests",
+   "CredentialListLifetimeTests",
    "CrossSiteFramePasskeyTests",
    "FrameAudioTests",
    "FrameStartScriptTests",

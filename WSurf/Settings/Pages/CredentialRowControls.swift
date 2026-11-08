@@ -7,11 +7,12 @@ import SwiftUI
 // The trailing controls of a credential row, drawn instead of built from AppKit controls. A list of thousands scrolls, and every row
 // that comes into view used to create a pop-up button and three bordered buttons, which was most of what a row cost to build (the
 // same reason the selection checkbox is drawn). These look the same as the system's bordered button and borderless menu; the menu
-// itself is built when it is clicked, not for every row.
+// itself is filled when it opens, not for every row.
 
 /// The system's bordered push button at the regular size, drawn: a flat rounded bezel, 24 pt high (22 pt for an icon alone).
 struct CredentialRowButtonStyle: ButtonStyle {
     @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.colorSchemeContrast) private var contrast
     /// An image with no title is 22 pt high; one with a title is 24.
     var iconOnly = false
 
@@ -24,6 +25,12 @@ struct CredentialRowButtonStyle: ButtonStyle {
             .background {
                 RoundedRectangle(cornerRadius: 7, style: .continuous)
                     .fill(Color(nsColor: .labelColor).opacity(configuration.isPressed ? 0.16 : 0.092))
+            }
+            // With Increase Contrast the system's bordered button is outlined; this outline is an approximation of it.
+            .overlay {
+                if contrast == .increased {
+                    RoundedRectangle(cornerRadius: 7, style: .continuous).strokeBorder(Color(nsColor: .labelColor).opacity(0.5), lineWidth: 1)
+                }
             }
             .opacity(isEnabled ? 1 : 0.47)
             // The hit area and the system's keyboard focus ring (Full Keyboard Access) follow the bezel.

@@ -110,6 +110,10 @@ final class CredentialListState {
         kind = .all
         matches = nil
         shown = []
+        // A lock keeps no copy of the vault's summaries here: until the next refresh there is nothing to narrow.
+        source = nil
+        siteGroups = nil
+        rowsByID = [:]
     }
 }
 
@@ -227,8 +231,6 @@ struct CredentialListView<Switcher: View>: View {
     let switcher: Switcher
     /// The merge suggestions and the merge sheet of this list.
     @State private var merge = CredentialMergeState()
-    /// The Move to Trash in flight. A second one waits until it is done, so a key held down never cancels a write half way.
-    @State private var removal: Task<Void, Never>?
     /// What the rows call, one object for all of them: the rows are not given new closures on every pass of this view, so a row whose
     /// credential has not changed is not drawn again.
     @State private var rowActions = CredentialRowActions()
@@ -315,16 +317,38 @@ struct CredentialListView<Switcher: View>: View {
         CredentialRow(model: model, summary: summary, selection: selection, actions: rowActions).equatable()
     }
 
+    /// What the rows call. The closures hold the objects they act on and never this view, which holds `rowActions`: a closure that kept
+    /// the view would keep the list, the page and the vault's summaries alive for as long as the app runs.
     private func bindActions() {
+        let model = model, selection = selection, merge = merge, run = run
         rowActions.bind(
-            run: run, trash: trash, merge: startMerge, open: open,
+            run: run,
+            trash: { [weak rowActions] ids in
+                if let rowActions {
+                    Self.trash(ids, model: model, selection: selection, actions: rowActions)
+                }
+            },
+            merge: { ids in Self.startMerge(ids, merge: merge, selection: selection) },
+            open: { id in Self.open(id, model: model, selection: selection, run: run) },
             history: { id in run { try await model.openHistory(accountID: id) } }
         )
     }
 
+    private func startMerge(_ ids: [UUID]) {
+        Self.startMerge(ids, merge: merge, selection: selection)
+    }
+
+    private func open(_ id: UUID) {
+        Self.open(id, model: model, selection: selection, run: run)
+    }
+
+    private func trash(_ ids: [UUID]) {
+        Self.trash(ids, model: model, selection: selection, actions: rowActions)
+    }
+
     /// Merge… from a row or the bar. Two or more credentials open the review. One opens its merge suggestion, else starts selection
     /// mode with it selected, so the others are picked in the list itself.
-    private func startMerge(_ ids: [UUID]) {
+    private static func startMerge(_ ids: [UUID], merge: CredentialMergeState, selection: CredentialSelection) {
         if ids.count > 1 {
             merge.route = .review(ids)
         } else if let id = ids.first {
@@ -337,18 +361,22 @@ struct CredentialListView<Switcher: View>: View {
     }
 
     /// Opens the editor on a credential; the cursor stays on its row for when the editor closes.
-    private func open(_ id: UUID) {
+    private static func open(
+        _ id: UUID, model: CredentialSettingsModel, selection: CredentialSelection,
+        run: (@escaping () async throws -> Void) -> Void
+    ) {
         selection.place(cursor: id)
         run { try await model.beginEditing(accountID: id) }
     }
 
-    /// Moves credentials to the Trash with no dialog. The cursor goes to the row that takes their place once the move has happened.
-    private func trash(_ ids: [UUID]) {
-        guard removal == nil, !model.isBusy, !ids.isEmpty else { return }
+    /// Moves credentials to the Trash with no dialog. The cursor goes to the row that takes their place once the move has happened. A
+    /// second one waits until the first is done (`actions.removal`), so a key held down never cancels a write half way.
+    private static func trash(_ ids: [UUID], model: CredentialSettingsModel, selection: CredentialSelection, actions: CredentialRowActions) {
+        guard actions.removal == nil, !model.isBusy, !ids.isEmpty else { return }
         let next = selection.cursorAfterRemoving(ids)
         let epoch = model.authorizationEpoch
-        removal = Task {
-            defer { removal = nil }
+        actions.removal = Task { [weak actions] in
+            defer { actions?.removal = nil }
             guard model.authorizationEpoch == epoch else { return }
             await model.attempt {
                 try await model.moveToTrash(ids: ids)
