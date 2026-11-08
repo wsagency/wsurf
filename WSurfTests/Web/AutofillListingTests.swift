@@ -58,19 +58,21 @@ struct AutofillListingTests {
         URL(filePath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
     }
 
-    /// The dropdown, Pick Credential… and the card and address rules name no whole-vault read; the first two hold no whole vault.
-    /// `VaultItemAutofill.saveWrite`, on the save path, still takes one, which is why that file keeps `StoreSnapshot`.
+    /// The dropdown, Pick Credential…, the card and address rules and the listing helpers name no whole-vault read, with or without
+    /// arguments (a store's `snapshot(vaultID:using:)` included); the first two hold no whole vault. On the save path,
+    /// `VaultItemAutofill.saveWrite` and `CredentialAccountSelection.commitSave` still take one, which is why those files keep
+    /// `StoreSnapshot`.
     @Test func theAutofillListingFilesNeverReadTheWholeVault() throws {
         let files = [
             ("WSurf/Web/Autofill/AutofillSuggestions.swift", true), ("WSurf/Web/Autofill/CredentialPicker.swift", true),
-            ("WSurf/Web/Autofill/VaultItemAutofill.swift", false),
+            ("WSurf/Web/Autofill/VaultItemAutofill.swift", false), ("WSurf/Web/Autofill/CredentialAutofill.swift", false),
         ]
         var scanned = 0
         for (path, holdsNoSnapshot) in files {
             let text = try String(contentsOf: repositoryRoot.appending(path: path), encoding: .utf8)
             #expect(text.count > 1_000, "\(path) was not read")
             scanned += 1
-            #expect(!text.contains(".snapshot()"), "\(path) reads the whole vault")
+            #expect(!text.contains("snapshot("), "\(path) reads the whole vault")
             if holdsNoSnapshot {
                 #expect(!text.contains("StoreSnapshot"), "\(path) holds a whole vault")
             }

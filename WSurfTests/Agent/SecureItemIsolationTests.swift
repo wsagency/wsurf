@@ -11,9 +11,12 @@ import Testing
 // as `InputHistoryIsolationTests`.
 struct SecureItemIsolationTests {
     private static let guarded = ["WSurf/MCP", "WSurf/Agent", "WSurf/Web/Assistant"]
+    /// The vault, its items and every way autofill reads them, the pick functions included: `managerFill` and `vaultItemFill`
+    /// return a closure that hands over a password, a code or a card, and `vaultItemSuggestions` lists a vault's cards or contacts.
     private static let needles = [
         "secureitem", "vaultitemautofill", "credentialmanager", "storesnapshot", "profilevaultstore", "paymentcardvault",
         "autofillvaults", "credentialaccount", "autofillvaultmigration", "autofillmigration", "autofillsaveindex",
+        "managerfill", "vaultitemfill", "vaultitemsuggestions", "autofilllogin", "autofillitems", "autofillcandidate",
     ]
 
     private var repositoryRoot: URL {

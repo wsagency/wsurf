@@ -83,9 +83,10 @@ struct AutofillSecretsTests {
         let contact = SecureItemFixtures.account(
             [SecureItemFixtures.name(), SecureItemFixtures.address(street: Self.street), SecureItemFixtures.custom()], name: "Home"
         )
-        let card = SecureItemFixtures.account(
-            [SecureItemFixtures.card(number: Self.cardNumber, code: Self.cardCode, name: "Grace Hopper")], name: "Wallet"
-        )
+        // The manager's store dates a card's expiry by the real clock, so this card ends far ahead of any day the suite runs.
+        var wallet = SecureItemFixtures.card(number: Self.cardNumber, code: Self.cardCode, name: "Grace Hopper")
+        wallet.fields[3].value = "2099-12"
+        let card = SecureItemFixtures.account([wallet], name: "Wallet")
         return [login, contact, card]
     }
 
@@ -267,8 +268,8 @@ struct AutofillSecretsTests {
             switch kind {
             case .card:
                 let isTheCard = delivered["number"] as? String == Self.cardNumber && delivered["securityCode"] as? String == Self.cardCode
-                    && delivered["cardholder"] as? String == "Grace Hopper" && delivered["month"] as? Int == 7
-                    && delivered["year"] as? Int == 2031
+                    && delivered["cardholder"] as? String == "Grace Hopper" && delivered["month"] as? Int == 12
+                    && delivered["year"] as? Int == 2099
                 #expect(isTheCard, "the pick did not deliver the card")
                 #expect(asked == 1, "a card fills only after Touch ID")
             default:
@@ -344,7 +345,7 @@ struct AutofillSecretsTests {
             let request = rig.request(.card)
             _ = await suggestions.vaultItemSuggestions(for: request, origin: Self.shop, presentation: suggestions.presentationID)
             let rowID = try #require(request.itemRows.keys.first)
-            let keptExpiry = request.itemRows[rowID]?.month == 7 && request.itemRows[rowID]?.year == 2031
+            let keptExpiry = request.itemRows[rowID]?.month == 12 && request.itemRows[rowID]?.year == 2099
             #expect(keptExpiry, "a card row does not keep the expiry it showed")
             // The row's card has ended by now, and the vault refuses the pick as stale: here a write stands in for the month end,
             // which only the store's calendar clock decides.
@@ -386,13 +387,24 @@ struct AutofillSecretsTests {
                     login = error
                 }
                 #expect(login as? CredentialVaultError == .unauthorized)
-                var grant: (any Error)?
+                var oldAccess: (any Error)?
                 do {
                     _ = try await vault.manager.store.snapshot(vaultID: vault.vaultID, using: access)
                 } catch {
-                    grant = error
+                    oldAccess = error
                 }
-                #expect(grant as? CredentialVaultError == .unauthorized, "the store still holds a grant")
+                #expect(oldAccess as? CredentialVaultError == .unauthorized, "the old access still reads the vault")
+                // The lock revokes the access at once and the store drops its grant in a task of its own after it
+                // (`CredentialManager.lock`), so the grant's end is waited for, for at most 5 s.
+                var grantDropped = false
+                for _ in 0..<250 {
+                    if await vault.manager.store.grants[vault.vaultID] == nil {
+                        grantDropped = true
+                        break
+                    }
+                    try await Task.sleep(for: .milliseconds(20))
+                }
+                #expect(grantDropped, "the store still holds the vault's grant after the lock")
                 var pick: (any Error)?
                 do {
                     _ = try await AutofillSuggestions.shared.managerFill(rowID, request: request, in: rig.page)

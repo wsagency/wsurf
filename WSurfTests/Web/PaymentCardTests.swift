@@ -26,6 +26,21 @@ struct PaymentCardTests {
         #expect(try PaymentCard(number: "6200000000000001").network == "UnionPay")
     }
 
+    /// The network at each prefix edge, as literal names: Mastercard 51-55 and 2221-2720, American Express 34 and Discover 65, and
+    /// none just outside them (50, 56, 2220, 2721). Every number passes the card check.
+    @Test func namesTheNetworkAtEachPrefixEdge() throws {
+        let none = String(localized: "Payment card")
+        let edges = [
+            ("5112345678901235", "Mastercard"), ("5212345678901234", "Mastercard"), ("5312345678901233", "Mastercard"),
+            ("5412345678901232", "Mastercard"), ("5512345678901231", "Mastercard"), ("2221123456789014", "Mastercard"),
+            ("2720123456789010", "Mastercard"), ("341234567890127", "American Express"), ("6512345678901239", "Discover"),
+            ("5012345678901236", none), ("5612345678901230", none), ("2220123456789015", none), ("2721123456789019", none),
+        ]
+        for (index, edge) in edges.enumerated() {
+            #expect(try PaymentCard(number: edge.0).network == edge.1, "edge \(index)")
+        }
+    }
+
     @Test func refusesInvalidExpiryAndExpiresAtTheEndOfTheMonth() throws {
         #expect(throws: PaymentCardError.self) { try PaymentCard(number: "4242424242424242", month: 0) }
         #expect(throws: PaymentCardError.self) { try PaymentCard(number: "4242424242424242", year: 30) }
