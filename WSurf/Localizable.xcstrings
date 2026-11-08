@@ -3075,6 +3075,9 @@
     "fastest · default" : {
       "comment" : "Short note beside one suggested model in the model pop-up menu, marking it as the quickest to answer and the one used unless another is picked. The middle dot separates the two words and should be kept. Lowercase, and the space is very tight."
     },
+    "Fast transitions" : {
+      "comment" : "Title of a setting in Settings › Appearance › Window, and its Settings search title. A switch that skips the animations when the window changes layout and when Reader opens. Sentence case, two words."
+    },
     "Feature flags" : {
 
     },
@@ -5852,6 +5855,9 @@
     },
     "Skip Setup" : {
       "comment" : "Secondary button on the onboarding screens; ends onboarding without granting anything. Title Case."
+    },
+    "Skips the animations when switching layouts and opening Reader." : {
+      "comment" : "Caption of the Fast transitions setting in Settings › Appearance › Window, and its Settings search summary. Layouts are the Standard and Minimal window styles. Reader is WSurf’s distraction-free reading view and keeps its name."
     },
     "Sleep inactive tabs" : {
       "comment" : "Title of the switch in Settings > General that lets WSurf release the pages of background tabs when the Mac runs short of memory or, with Sleep after, once they have been idle, and the same row in Settings search. Off by default. Sentence case; “Sleep” is a verb the browser does to the tabs."
@@ -10061,6 +10067,9 @@
     },
     "Redo Suggest Again" : {
       "comment" : "Edit menu: repeat Suggest Again on a dismissed merge suggestion."
+    },
+    "Reduce motion is on in System Settings, so WSurf skips these animations." : {
+      "comment" : "Caption under the Fast transitions row in Settings › Appearance › Window, shown instead of its usual caption when the macOS accessibility setting Reduce motion is on. Use the macOS name of that setting. Sentence case."
     },
     "Reduce transparency or increase contrast is on in System Settings, so WSurf uses Plain." : {
       "comment" : "Caption under the Material row in Settings › Appearance › Theme, shown instead of the Glass caption when a macOS accessibility setting (Reduce transparency or Increase contrast) is on. Use the macOS names of those settings. Plain is the “Plain” choice of the Material control. Sentence case."

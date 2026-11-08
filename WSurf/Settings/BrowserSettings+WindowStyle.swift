@@ -225,6 +225,22 @@ extension BrowserSettings {
         }
     }
 
+    /// Skips the animation when the window switches between Standard and Minimal and when Reader opens or closes. App-wide,
+    /// off by default. The system's Reduce Motion skips them as well: see `skipsTransitions(reduceMotion:)`.
+    var fastTransitions: Bool {
+        get { globalValue(\.fastTransitions, storage: storedFastTransitions) }
+        set {
+            setGlobal(\BrowserSettings.fastTransitions, storage: \BrowserSettings.storedFastTransitions,
+                      value: newValue, key: Key.fastTransitions)
+        }
+    }
+
+    /// Whether the layout switch and Reader run without animation: the setting is on, or macOS Reduce Motion is. A view
+    /// reads this in its body, so it follows both.
+    func skipsTransitions(reduceMotion: Bool) -> Bool {
+        fastTransitions || reduceMotion
+    }
+
     /// The line WSurf draws around every window. App-wide, None by default.
     var windowBorder: WindowBorder {
         get { globalValue(\.windowBorder, storage: storedWindowBorder) }
@@ -250,6 +266,7 @@ extension BrowserSettings {
         minimalBarHiding = .whileScrolling
         keepsMinimalSidebarOpen = false
         windowShadow = true
+        fastTransitions = false
         windowBorder = .none
         windowBorderColor = WindowBorder.defaultColor
     }

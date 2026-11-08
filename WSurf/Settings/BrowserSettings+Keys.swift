@@ -33,6 +33,7 @@ extension BrowserSettings {
         static let minimalBarAutoHide = "appearance.minimalBarAutoHide"
         static let minimalSidebarPinned = "appearance.minimalSidebarPinned"
         static let windowShadow = "appearance.windowShadow"
+        static let fastTransitions = "appearance.fastTransitions"
         static let windowBorder = "appearance.windowBorder"
         static let windowBorderColor = "appearance.windowBorderColor"
         static let sleepsInactiveTabs = "tabs.sleep"

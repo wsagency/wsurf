@@ -9,6 +9,13 @@ import SwiftUI
 /// part of a theme; the Layout disclosure at the end holds the theme's knobs for the page.
 struct AppearanceWindowSection: View {
     @Bindable var settings: BrowserSettings
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private var fastTransitionsCaption: LocalizedStringResource {
+        reduceMotion
+            ? "Reduce motion is on in System Settings, so WSurf skips these animations."
+            : "Skips the animations when switching layouts and opening Reader."
+    }
 
     private static let edges: [SegmentedControl<MinimalBarEdge>.Item] = MinimalBarEdge.allCases.map {
         .init(value: $0, label: $0.label)
@@ -94,6 +101,15 @@ struct AppearanceWindowSection: View {
                 }
             }
             .settingsAnchor("appearance.windowBorder")
+
+            RowSeparator()
+            DetailRow(
+                title: "Fast transitions",
+                caption: fastTransitionsCaption
+            ) {
+                SettingsToggle($settings.fastTransitions)
+            }
+            .settingsAnchor("appearance.fastTransitions")
 
             RowSeparator()
             AppearanceLayoutSection(settings: settings, part: .window)

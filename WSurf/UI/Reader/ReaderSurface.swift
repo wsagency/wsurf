@@ -58,10 +58,14 @@ struct ReaderPresenter: View {
         }
     }
 
+    private var skipsMotion: Bool {
+        BrowserSettings.application.skipsTransitions(reduceMotion: reduceMotion)
+    }
+
     private func raise() {
         guard let next = tab.reader.article else { return }
         article = next
-        guard !reduceMotion else {
+        guard !skipsMotion else {
             isRaised = true
             return
         }
@@ -75,7 +79,7 @@ struct ReaderPresenter: View {
 
     private func lower() {
         guard article != nil else { return }
-        guard !reduceMotion else {
+        guard !skipsMotion else {
             isRaised = false
             article = nil
             return
