@@ -112,7 +112,7 @@ final class BrowserTab: Identifiable {
         guard isMaterialised, isShowingRealPage, !isDeferred, page.window != nil else { return }
         let view = page
         Task { [weak self] in
-            guard let image = try? await view.capture(width: 480) else { return }
+            guard let image = try? await view.capture(width: 480, fastEncoding: true) else { return }
             guard self?.liveView === view else { return }
             self?.preview = image
         }
@@ -454,6 +454,7 @@ final class BrowserTab: Identifiable {
         let url = URL(string: urlString)
         guard state != nil || url != nil else { return }
 
+        cancelBandRecheck()
         // The wake loads the address again, and a page loaded that way opens at the top. WebKit's own state restores the
         // position and disarms this (`restoreDeferredState`).
         if let url, lastReportedScrollURL?.absoluteString == url.absoluteString {
@@ -501,6 +502,7 @@ final class BrowserTab: Identifiable {
         pendingNavigationTask?.cancel()
         coverHold?.cancel()
         backgroundHidingTask?.cancel()
+        bandRecheck?.cancel()
         onChromiumDownload = nil
         onChromiumDownloadProgress = nil
         hasActiveDownload = nil
@@ -539,6 +541,15 @@ final class BrowserTab: Identifiable {
     var holdsPageColor = false
     var isMeasuringBand = false
     var needsBandRemeasure = false
+    /// What the band colour was measured for: the address and light or dark mode (`BandKey`).
+    @ObservationIgnored var bandMeasuredKey: BandKey?
+    /// The one look at a Chromium tab's band colour after it has come to the front (`scheduleBandRecheck`), and the clock that times it.
+    @ObservationIgnored var bandRecheck: Task<Void, Never>?
+    @ObservationIgnored var bandClock: any Clock<Duration> = ContinuousClock()
+    /// True from the start of a wake until its band look has run: the page is not at its saved place yet, so no capture is taken for it.
+    @ObservationIgnored var bandWakePending = false
+    /// How many band captures this tab has started, for tests.
+    @ObservationIgnored var bandMeasureCount = 0
 
     // MARK: - Zoom
 
@@ -675,6 +686,7 @@ final class BrowserTab: Identifiable {
         clearDeferredSession()
         invalidateSessionState()
         isRestoring = true
+        bandWakePending = true
         if let retirement {
             pendingNavigationTask?.cancel()
             pendingNavigationTask = Task { [weak self] in

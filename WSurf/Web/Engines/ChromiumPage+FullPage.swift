@@ -12,9 +12,17 @@ extension ChromiumPage {
     /// frame, and when the frame it copies predates them it returns that frame's top-left corner instead of `rect`.
     /// The decode, crop and scale run off the main actor (`decodeCapture`): on main they cost 65-80 ms per capture of a
     /// loaded page, and a tab switch takes three (the leaving tab's preview, the band colour twice).
-    func capture(rect: CGRect?, width: CGFloat?) async throws -> NSImage {
+    ///
+    /// `fastEncoding` asks Chromium's PNG encoder to favour speed over size (`optimizeForSpeed`). PNG is lossless either way, so
+    /// the pixels are the same; only the bytes of the file differ. The preview and the band colour ask for it, a capture a person or
+    /// an agent asks for does not.
+    func capture(rect: CGRect?, width: CGFloat?, fastEncoding: Bool = false) async throws -> NSImage {
         try await ensureReady()
-        let response = try await command("Page.captureScreenshot", params: ["format": "png", "captureBeyondViewport": false])
+        var params: [String: Any] = ["format": "png", "captureBeyondViewport": false]
+        if fastEncoding {
+            params["optimizeForSpeed"] = true
+        }
+        let response = try await command("Page.captureScreenshot", params: params)
         let area = rect ?? bounds
         guard let encoded = response["data"] as? String,
             let image = await Self.decodeCapture(encoded, viewWidth: bounds.width, area: area, width: width)

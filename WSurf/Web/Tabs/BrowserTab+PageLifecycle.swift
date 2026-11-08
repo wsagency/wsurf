@@ -94,8 +94,18 @@ extension BrowserTab {
         }
         refreshFavicon()
         releasePageColorHold()
-        refreshPageColor(from: page)
+        // A woken Chromium tab looks at its band once the page has settled, after the scroll below has been put back: the band
+        // of a page scrolled past its header is not the band of its top.
+        refreshPageColor(from: page, onShow: wasRestore && page.chromium != nil)
         restoreScrollOffsetIfNeeded()
+        if wasRestore {
+            // A woken tab that was left before its load finished does not look in the background; its next show decides.
+            if page.chromium != nil, isInFront {
+                scheduleBandRecheck(restart: true, after: Self.bandWakeDelay)
+            } else {
+                bandWakePending = false
+            }
+        }
         probeReader()
         offerTranslation()
         onNavigationFinished?(wasRestore || isShowingError)
@@ -114,6 +124,7 @@ extension BrowserTab {
             provisionalNavigation = nil
         }
         isRestoring = false
+        bandWakePending = false
         finishReclaim()
         releasePageColorHold()
         refreshPageColor(from: page)
@@ -333,6 +344,10 @@ extension BrowserTab {
 
         context.webViewPool.configurePage?(view)
         PageActivityMonitor.shared.install(in: view) { [weak self] signal in self?.notePageActivity(signal) }
+        view.onEffectiveAppearanceChange = { [weak self, weak view] in
+            guard let self, let view, liveView === view else { return }
+            appearanceDidChange()
+        }
         ScrollPositionMonitor.shared.install(in: view) { [weak self] y, url in
             self?.lastReportedScrollY = y
             self?.lastReportedScrollURL = url
@@ -755,7 +770,8 @@ extension BrowserTab {
         coverHold = nil
         hasPresentedContent = true
         refreshCanvas(from: page)
-        refreshPageColor(from: page)
+        // A Chromium tab that has just been brought back or shown takes its band capture after it has settled.
+        refreshPageColor(from: page, onShow: true)
     }
 
     private var presentedFrameWouldFlash: Bool {

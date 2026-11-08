@@ -106,7 +106,13 @@ final class BrowserModel {
             noteFrontTabs()
             if previous.map({ !isVisibleInSplit($0) }) ?? false {
                 PageColourChooser.shared.close(openedBy: previous?.liveView?.window)
-                previous?.refreshPreview()
+                if let previous,
+                   !BrowserTab.skipsPreview(
+                    isChromium: previous.liveView?.chromium != nil, hasPreview: previous.preview != nil,
+                    arrivingCaptures: activeTab?.willCaptureBandOnShow ?? false, isMeasuringBand: previous.isMeasuringBand) {
+                    previous.refreshPreview()
+                }
+                previous?.cancelBandRecheck()
                 previous?.noteHoveredLink(nil)
             }
             activeTab?.realizeDeferredSession()
@@ -115,7 +121,7 @@ final class BrowserModel {
                 tabsByID[id]?.realizeDeferredSession()
             }
             markVisibleTabsSeen()
-            activeTab?.measureBandUnderBar()
+            activeTab?.measureBandOnShow()
             onActiveTabChanged?(activeTab, previous)
         }
     }
