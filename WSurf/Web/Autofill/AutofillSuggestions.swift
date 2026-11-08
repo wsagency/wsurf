@@ -434,8 +434,9 @@ final class AutofillSuggestions {
 
     /// The vault branch of a card or address fill, like `managerFill`: only the chosen row's values are read, here, under the unlock,
     /// revision and write generation its row was shown under (`autofillItems` with the row), a card asks for Touch ID, and the returned
-    /// closure delivers only if all of that and the request's native authority still hold at the engine's dispatch boundary.
-    private func vaultItemFill(_ id: UUID, request: Request, in page: BrowserPage) async throws -> @MainActor @Sendable () throws -> [String: Any] {
+    /// closure delivers only if all of that and the request's native authority still hold at the engine's dispatch boundary. Internal
+    /// so a test can pick a row without a key window.
+    func vaultItemFill(_ id: UUID, request: Request, in page: BrowserPage) async throws -> @MainActor @Sendable () throws -> [String: Any] {
         guard request.kind != .password, let row = request.itemRows[id], let manager = manager(for: request, vault: row.vaultID),
               let grant = request.grants[row.vaultID], let generation = manager.stableGeneration, !Self.isAgentControlled(page) else {
             throw ContactAutofillError.changedPage

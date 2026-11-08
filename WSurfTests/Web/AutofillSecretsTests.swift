@@ -209,6 +209,77 @@ struct AutofillSecretsTests {
         }
     }
 
+    /// A row listed as a sibling website's ("Check other logins") fills its login or code; the same credential not listed as one
+    /// fills nothing, since it is not saved for this website.
+    @Test(arguments: [CredentialAutofillField.password, .totp])
+    func aSiblingRowFillsOnlyAsASibling(field: CredentialAutofillField) async throws {
+        try await withVault { rig, vault, accounts, _ in
+            var sibling = VaultFixtures.account(username: "grace", password: "pw-sibling", origin: "https://www.shop.example")
+            sibling.totp = Self.generator
+            try await VaultManagerFixture.save(accounts + [sibling], in: vault)
+            let request = rig.request(.password, field: field)
+            let rowID = try await list(sibling, for: request, in: vault)
+
+            var refused: (any Error)?
+            do {
+                _ = try await AutofillSuggestions.shared.managerFill(rowID, request: request, in: rig.page)
+            } catch {
+                refused = error
+            }
+            #expect(refused as? ContactAutofillError == .changedPage, "a credential of another website filled as this website's")
+
+            request.siblingRows.insert(rowID)
+            let earlier = try TOTP.code(Self.generator, at: Date.now.timeIntervalSince1970).value
+            let filled = try await AutofillSuggestions.shared.managerFill(rowID, request: request, in: rig.page)
+            let delivered = try #require(try filled.prepare()["fields"] as? [String: Any])
+            let later = try TOTP.code(Self.generator, at: Date.now.timeIntervalSince1970).value
+            switch field {
+            case .password:
+                let isTheLogin = delivered["username"] as? String == "grace" && delivered["password"] as? String == "pw-sibling"
+                #expect(isTheLogin && delivered.count == 2, "the sibling pick did not deliver its login")
+            case .totp:
+                let code = delivered["code"] as? String
+                #expect((code == earlier || code == later) && delivered.count == 1, "the sibling pick did not deliver its code")
+            }
+        }
+    }
+
+    /// A card or address row fills that row's values, read only at the pick, and a card only after Touch ID (stubbed).
+    @Test(arguments: [AutofillSaveKind.card, .contact])
+    func aPickedCardOrAddressFillsThatRowsValues(kind: AutofillSaveKind) async throws {
+        try await withVault { rig, _, _, audit in
+            let suggestions = AutofillSuggestions.shared
+            let verify = suggestions.verifyUser
+            var asked = 0
+            suggestions.verifyUser = { _ in asked += 1 }
+            defer { suggestions.verifyUser = verify }
+            let request = rig.request(kind)
+            _ = await suggestions.vaultItemSuggestions(for: request, origin: Self.shop, presentation: suggestions.presentationID)
+            let rowID = try #require(request.itemRows.keys.first)
+
+            let prepare = try await suggestions.vaultItemFill(rowID, request: request, in: rig.page)
+            let delivered = try #require(try prepare()["fields"] as? [String: Any])
+
+            switch kind {
+            case .card:
+                let isTheCard = delivered["number"] as? String == Self.cardNumber && delivered["securityCode"] as? String == Self.cardCode
+                    && delivered["cardholder"] as? String == "Grace Hopper" && delivered["month"] as? Int == 7
+                    && delivered["year"] as? Int == 2031
+                #expect(isTheCard, "the pick did not deliver the card")
+                #expect(asked == 1, "a card fills only after Touch ID")
+            default:
+                let isTheContact = delivered["street-address"] as? String == Self.street && delivered["family-name"] as? String == "Lovelace"
+                    && delivered["address-level2"] as? String == "Testville" && delivered["country"] as? String == "HR"
+                #expect(isTheContact, "the pick did not deliver the contact")
+                #expect(asked == 0)
+            }
+            let itemKind: AutofillItemKind = kind == .card ? .cards : .contacts
+            #expect(audit.reads == [.items(itemKind, pick: false), .items(itemKind, pick: true)], "\(audit.reads)")
+            let leaks = Self.leaks(in: Self.kept(by: request), showing: kind == .contact ? [Self.street] : [])
+            #expect(leaks.isEmpty, "the request keeps the picked values: \(leaks)")
+        }
+    }
+
     // MARK: A4 A stale pick delivers nothing
 
     @Test func aWriteBetweenTheListAndThePickDeliversNothing() async throws {
@@ -224,6 +295,30 @@ struct AutofillSecretsTests {
             let refused = await failure { _ = try await AutofillSuggestions.shared.managerFill(rowID, request: request, in: rig.page) }
             #expect(refused as? ContactAutofillError == .changedPage, "the dropdown's pick of a changed vault is not refused as before")
             #expect(Array(audit.reads.dropFirst(before)) == [.login(.password)], "the pick read something else")
+        }
+    }
+
+    @Test(arguments: [AutofillSaveKind.card, .contact])
+    func aWriteBetweenTheRowsAndThePickOfACardOrAddressFillsNothing(kind: AutofillSaveKind) async throws {
+        try await withVault { rig, vault, accounts, _ in
+            let suggestions = AutofillSuggestions.shared
+            let verify = suggestions.verifyUser
+            var asked = 0
+            suggestions.verifyUser = { _ in asked += 1 }
+            defer { suggestions.verifyUser = verify }
+            let request = rig.request(kind)
+            _ = await suggestions.vaultItemSuggestions(for: request, origin: Self.shop, presentation: suggestions.presentationID)
+            let rowID = try #require(request.itemRows.keys.first)
+            try await VaultManagerFixture.save(accounts + [VaultFixtures.account(username: "grace", origin: Self.shop)], in: vault)
+
+            var refused: (any Error)?
+            do {
+                _ = try await suggestions.vaultItemFill(rowID, request: request, in: rig.page)
+            } catch {
+                refused = error
+            }
+            #expect(refused as? ContactAutofillError == .changedPage, "the pick of a changed vault is not refused as before")
+            #expect(asked == 0, "Touch ID was asked for a card that will not fill")
         }
     }
 
