@@ -25,8 +25,9 @@ struct CredentialRowButtonStyle: ButtonStyle {
                 RoundedRectangle(cornerRadius: 7, style: .continuous)
                     .fill(Color(nsColor: .labelColor).opacity(configuration.isPressed ? 0.16 : 0.092))
             }
-            .opacity(isEnabled ? 1 : 0.4)
-            .contentShape(.rect)
+            .opacity(isEnabled ? 1 : 0.47)
+            // The hit area and the system's keyboard focus ring (Full Keyboard Access) follow the bezel.
+            .contentShape([.interaction, .focusEffect], RoundedRectangle(cornerRadius: 7, style: .continuous))
     }
 }
 
@@ -126,48 +127,70 @@ enum CredentialRowMoreItem: Equatable {
     }
 }
 
-/// The "…" of a row: a drawn glyph and chevron that look like the borderless menu, and a menu made when it is clicked.
-struct CredentialRowMoreButton: View {
+/// The "…" of a row: a pull-down pop-up button, as the borderless `Menu` was (same role for VoiceOver, the menu anchored under it, the
+/// system focus ring), with an empty menu that is filled when it opens (`menuNeedsUpdate`), so a row that is never opened builds no entries.
+struct CredentialRowMoreButton: NSViewRepresentable {
     let model: CredentialSettingsModel
     let summary: CredentialSummary
     let selection: CredentialSelection
     let actions: CredentialRowActions
 
-    var body: some View {
-        Button(action: present) {
-            HStack(spacing: 1.5) {
-                Image(systemName: "ellipsis.circle")
-                Image(systemName: "chevron.down").font(.system(size: 8, weight: .heavy))
-            }
-            .padding(.trailing, 5)
-            .foregroundStyle(Color(nsColor: .labelColor))
-            .contentShape(.rect)
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("More actions for \(summary.title)")
+    func makeCoordinator() -> Coordinator {
+        Coordinator(self)
     }
 
-    /// The menu for what the model shows right now, built on the click.
-    private func menu() -> NSMenu {
-        let revealed = CredentialRowMoreItem.Revealed(
-            password: model.revealedPassword?.accountID == summary.id, username: model.revealedUsername?.accountID == summary.id,
-            code: model.shownTOTPAccountID == summary.id, details: model.revealedItems?.accountID == summary.id
-        )
-        let menu = NSMenu()
-        menu.autoenablesItems = false
-        for item in CredentialRowMoreItem.items(for: summary, revealed: revealed) {
-            if item == .divider {
-                menu.addItem(.separator())
-                continue
-            }
-            let entry = NSMenuItem(title: item.title, action: #selector(RowMenuAction.fire), keyEquivalent: "")
-            let action = RowMenuAction { perform(item) }
-            entry.target = action
-            entry.representedObject = action
-            entry.isEnabled = item != .merge || !model.isBusy
-            menu.addItem(entry)
+    func makeNSView(context: Context) -> NSPopUpButton {
+        let button = NSPopUpButton(frame: .zero, pullsDown: true)
+        button.isBordered = false
+        button.imagePosition = .imageOnly
+        let title = NSMenuItem()
+        title.image = NSImage(systemSymbolName: "ellipsis.circle", accessibilityDescription: nil)
+        button.menu?.addItem(title)
+        button.menu?.autoenablesItems = false
+        button.menu?.delegate = context.coordinator
+        button.setContentHuggingPriority(.required, for: .horizontal)
+        button.setContentHuggingPriority(.required, for: .vertical)
+        button.setAccessibilityLabel(String(localized: "More actions for \(summary.title)"))
+        return button
+    }
+
+    func updateNSView(_ button: NSPopUpButton, context: Context) {
+        context.coordinator.row = self
+        button.setAccessibilityLabel(String(localized: "More actions for \(summary.title)"))
+    }
+
+    @MainActor
+    final class Coordinator: NSObject, NSMenuDelegate {
+        var row: CredentialRowMoreButton
+
+        init(_ row: CredentialRowMoreButton) {
+            self.row = row
         }
-        return menu
+
+        /// The entries for what the model shows right now, made when the menu opens.
+        func menuNeedsUpdate(_ menu: NSMenu) {
+            while menu.numberOfItems > 1 {
+                menu.removeItem(at: 1)
+            }
+            let row = row
+            let revealed = CredentialRowMoreItem.Revealed(
+                password: row.model.revealedPassword?.accountID == row.summary.id,
+                username: row.model.revealedUsername?.accountID == row.summary.id,
+                code: row.model.shownTOTPAccountID == row.summary.id, details: row.model.revealedItems?.accountID == row.summary.id
+            )
+            for item in CredentialRowMoreItem.items(for: row.summary, revealed: revealed) {
+                if item == .divider {
+                    menu.addItem(.separator())
+                    continue
+                }
+                let entry = NSMenuItem(title: item.title, action: #selector(RowMenuAction.fire), keyEquivalent: "")
+                let action = RowMenuAction { row.perform(item) }
+                entry.target = action
+                entry.representedObject = action
+                entry.isEnabled = item != .merge || !row.model.isBusy
+                menu.addItem(entry)
+            }
+        }
     }
 
     func perform(_ item: CredentialRowMoreItem) {
@@ -201,13 +224,6 @@ struct CredentialRowMoreButton: View {
         case .divider:
             break
         }
-    }
-
-    private func present() {
-        guard let window = NSApp.keyWindow ?? NSApp.mainWindow, let content = window.contentView else { return }
-        let event = NSApp.currentEvent
-        let point = event?.window === window ? event?.locationInWindow : nil
-        menu().popUp(positioning: nil, at: content.convert(point ?? window.mouseLocationOutsideOfEventStream, from: nil), in: content)
     }
 }
 
