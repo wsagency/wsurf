@@ -177,13 +177,17 @@ public nonisolated struct AutofillContactValues: Equatable, Sendable {
     }
 
     /// An item a contact is made from: an address, a name, or custom fields that hold its email or organization.
-    static func isContactItem(_ item: SecureItem) -> Bool {
+    public static func isContactItem(_ item: SecureItem) -> Bool {
         item.kind == .address || item.kind == .personName
             || item.kind == .customFields && item.fields.contains { $0.field?.id == emailFieldID || $0.field?.id == organizationFieldID }
     }
 
+    /// The identifiers of `Locale.Region.isoRegions`, read once: that list is built anew on every access, and a contact is checked
+    /// against it twice, at every focus of an address field.
+    private static let isoRegionIdentifiers = Set(Locale.Region.isoRegions.map(\.identifier))
+
     private static func isRegion(_ code: String) -> Bool {
-        Locale.Region.isoRegions.contains { $0.identifier == code }
+        isoRegionIdentifiers.contains(code)
     }
 
     public var name: String {

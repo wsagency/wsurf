@@ -272,6 +272,18 @@ nonisolated final class VaultScalePerformanceTests: XCTestCase, @unchecked Senda
         }
     }
 
+    /// The candidates alone, the part of the projection every password field's focus runs (`autofillCandidates`), over the same
+    /// 20,000 in-memory credentials: each credential and its items' facts, with no row built. The case above also builds the card and
+    /// contact rows, which took most of its time, so a slower candidate projection would hide inside that budget.
+    func testProjectingTwentyThousandAutofillCandidates() throws {
+        let accounts = try Self.accountsWithItems()
+        MainActor.assumeIsolated {
+            measure(metrics: [XCTClockMetric(), XCTMemoryMetric()], options: measuredOptions()) {
+                XCTAssertEqual(accounts.map(AutofillCandidate.init).count, Self.count)
+            }
+        }
+    }
+
     // MARK: Edits
 
     /// One changed password, written with the per-account write the import and the bulk actions use. The read that finds the

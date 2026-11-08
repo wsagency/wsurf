@@ -508,6 +508,7 @@ struct VaultAutofillReadTests {
             #expect(await read(.cards, nil, item: 0, revision: revision) == invalid)  // a pick without its credential
             #expect(await read(.cards, Entries.loginID, item: nil, revision: revision) == invalid)
             #expect(await read(.contacts, Entries.contactID, item: 0, revision: nil) == invalid)
+            #expect(await read(.cards, Entries.loginID, item: nil, revision: nil) == invalid)  // a pick with neither an item nor a revision
             #expect(await read(.cards, nil, item: nil, revision: nil) == unauthorized)
             #expect(await read(.contacts, Entries.contactID, item: 0, revision: revision) == unauthorized)
         }
