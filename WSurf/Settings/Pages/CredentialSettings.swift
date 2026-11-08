@@ -605,18 +605,73 @@ struct CredentialSettings: View {
 
 // MARK: - Row
 
-struct CredentialRow: View {
+/// What a credential row calls, shared by every row of a list. The list refreshes the closures each pass; the rows keep the one
+/// object, so a row is not given new closures (which would make it differ from what it drew last) every time the list is evaluated.
+@MainActor
+final class CredentialRowActions {
+    /// How many exist: the lifetime test's probe that a torn-down list leaves none behind.
+    nonisolated(unsafe) private(set) static var live = 0
+
+    init() {
+        #if DEBUG
+        Self.live += 1
+        #endif
+    }
+
+    deinit {
+        #if DEBUG
+        Self.live -= 1
+        #endif
+    }
+
+    private(set) var run: (@escaping () async throws -> Void) -> Void = { _ in }
+    /// Moves credentials to the Trash, without a dialog: this one, or the selection it is part of.
+    private(set) var trash: ([UUID]) -> Void = { _ in }
+    /// Merges credentials: this one with its suggestion or the ones the user selects next, or the selection it is part of.
+    private(set) var merge: ([UUID]) -> Void = { _ in }
+    /// Opens the editor on a credential.
+    private(set) var open: (UUID) -> Void = { _ in }
+    private(set) var history: (UUID) -> Void = { _ in }
+    /// The Move to Trash in flight, if any (`CredentialListView` starts it).
+    var removal: Task<Void, Never>?
+
+    func bind(
+        run: @escaping (@escaping () async throws -> Void) -> Void, trash: @escaping ([UUID]) -> Void,
+        merge: @escaping ([UUID]) -> Void, open: @escaping (UUID) -> Void, history: @escaping (UUID) -> Void
+    ) {
+        self.run = run
+        self.trash = trash
+        self.merge = merge
+        self.open = open
+        self.history = history
+    }
+}
+
+struct CredentialRow: View, Equatable {
     let model: CredentialSettingsModel
     let summary: CredentialSummary
     /// Read here, row by row, so a change redraws only the rows that are built.
     let selection: CredentialSelection
-    let run: (@escaping () async throws -> Void) -> Void
-    /// Moves credentials to the Trash, without a dialog: this one, or the selection it is part of.
-    let trash: ([UUID]) -> Void
-    /// Merges credentials: this one with its suggestion or the ones the user selects next, or the selection it is part of.
-    let merge: ([UUID]) -> Void
-    let open: () -> Void
-    let history: () -> Void
+    let actions: CredentialRowActions
+
+    /// A row is the same while its credential and the objects it reads are. What it shows of the model (a revealed value, busy) it
+    /// reads itself, so a change there still redraws it. A summary's `==` leaves `dates` out, which the row shows.
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.summary == rhs.summary && lhs.summary.dates == rhs.summary.dates && lhs.model === rhs.model
+            && lhs.selection === rhs.selection && lhs.actions === rhs.actions
+    }
+
+    private func run(_ operation: @escaping () async throws -> Void) {
+        actions.run(operation)
+    }
+
+    private func open() {
+        actions.open(summary.id)
+    }
+
+    private func trash(_ ids: [UUID]) {
+        actions.trash(ids)
+    }
 
     private var host: String {
         summary.origins.lazy.compactMap { URL(string: $0)?.host }.first ?? summary.title
@@ -651,24 +706,27 @@ struct CredentialRow: View {
         VStack(alignment: .leading, spacing: 6) {
             SiteRow(host: host, summary: detail.isEmpty ? nil : detail, caption: summary.dates.caption(style: .list)) {
                 HStack(spacing: 8) {
-                    actions
+                    CredentialRowMoreButton(model: model, summary: summary, selection: selection, actions: actions)
                     if let website = summary.website {
                         Button {
                             model.openWebsite(website)
                         } label: {
                             Image(systemName: "arrow.up.forward.square")
                         }
+                        .buttonStyle(CredentialRowButtonStyle(iconOnly: true))
                         .help("Open Website in a New Tab")
                         .accessibilityLabel("Open website of \(summary.title) in a new tab")
                     }
                     Button("Edit…", action: open)
+                        .buttonStyle(CredentialRowButtonStyle())
                         .disabled(model.isBusy)
                     Button("Remove", role: .destructive) { trash([summary.id]) }
+                        .buttonStyle(CredentialRowButtonStyle())
                         .disabled(model.isBusy)
                         .help("Move to Trash")
                         .accessibilityLabel("Move \(summary.title) to Trash")
                 }
-                .buttonStyle(.bordered).fixedSize()
+                .fixedSize()
             }
             revealed
         }
@@ -679,68 +737,8 @@ struct CredentialRow: View {
         .accessibilityAction(named: "Open Website") { model.openWebsite(summary.website) }
         // A view of its own: the selection state the menu reads redraws the menu, never this row (its detail, dates and buttons).
         .contextMenu {
-            CredentialRowMenu(model: model, summary: summary, selection: selection, run: run, trash: trash, merge: merge, open: open)
+            CredentialRowMenu(model: model, summary: summary, selection: selection, run: run, trash: trash, merge: { actions.merge($0) }, open: open)
         }
-    }
-
-    private var actions: some View {
-        Menu {
-            if summary.usernameIsConcealed || summary.username != nil {
-                Button("Copy Username") { run { try await model.copy(.username, of: .stored(summary.id)) } }
-            }
-            if summary.hasPassword {
-                Button("Copy Password") { run { try await model.copyPassword(accountID: summary.id) } }
-            }
-            if !summary.origins.isEmpty {
-                Button("Copy Website") { run { try await model.copy(.website(0), of: .stored(summary.id)) } }
-            }
-            if summary.hasTOTP {
-                Button("Copy Verification Code") { run { try await model.copyTOTP(accountID: summary.id) } }
-            }
-            // A card's or an ID document's hidden value asks for Touch ID before it is copied.
-            ForEach(summary.hiddenItemFields, id: \.self) { reference in
-                Button("Copy \(reference.label)") {
-                    run { try await model.copy(.secureField(item: reference.item, field: reference.field), of: .stored(summary.id)) }
-                }
-            }
-            if summary.hasPassword {
-                if model.revealedPassword?.accountID == summary.id {
-                    Button("Hide Password") { model.hideSecrets() }
-                } else {
-                    Button("Show Password") { run { try await model.revealPassword(accountID: summary.id) } }
-                }
-            }
-            if summary.usernameIsConcealed {
-                if model.revealedUsername?.accountID == summary.id {
-                    Button("Hide Username") { model.hideSecrets() }
-                } else {
-                    Button("Show Username") { run { try await model.revealUsername(accountID: summary.id) } }
-                }
-            }
-            if summary.hasTOTP {
-                if model.shownTOTPAccountID == summary.id {
-                    Button("Hide Verification Code") { model.hideSecrets() }
-                } else {
-                    Button("Show Verification Code") { run { try await model.showTOTP(accountID: summary.id) } }
-                }
-            }
-            if !summary.itemKinds.isEmpty {
-                if model.revealedItems?.accountID == summary.id {
-                    Button("Hide Details") { model.hideSecrets() }
-                } else {
-                    Button("Show Details") { run { try await model.revealSecureItems(accountID: summary.id) } }
-                }
-            }
-            Divider()
-            Button("History…", action: history)
-            Button("Merge…") { merge(selection.menuTargets(for: summary.id)) }
-                .disabled(model.isBusy)
-        } label: {
-            Image(systemName: "ellipsis.circle")
-                .accessibilityLabel("More actions for \(summary.title)")
-        }
-        .menuStyle(.borderlessButton)
-        .fixedSize()
     }
 
     @ViewBuilder

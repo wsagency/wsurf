@@ -86,6 +86,7 @@
         "CredentialMergeForwardingTests",
         "CredentialMergeTests",
         "CredentialNumberedCopiesTests",
+        "CredentialRowMoreItemTests",
         "CredentialSecureItemSummaryTests",
         "CredentialSelectionModeTests",
         "CredentialSelectionTests",

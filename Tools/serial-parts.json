@@ -204,6 +204,7 @@
    "ChromiumPrewarmTests",
    "ChromiumScrollWakeTests",
    "ColourChooserDismissalTests",
+   "CredentialListLifetimeTests",
    "CrossSiteFramePasskeyTests",
    "FrameAudioTests",
    "FrameStartScriptTests",

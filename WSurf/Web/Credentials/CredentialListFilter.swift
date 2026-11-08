@@ -74,11 +74,25 @@ nonisolated enum CredentialListFilter: CaseIterable, Hashable, Sendable {
     /// The credentials of this kind whose title, username (unless concealed) or website holds `query`, in their order. An empty
     /// query matches every credential. One pass over the summaries' precomputed keys; never call it from a view body.
     static func visible(_ summaries: [CredentialSummary], query: String, filter: Self) -> [CredentialSummary] {
-        let needle = CredentialSummary.folded(query.trimmingCharacters(in: .whitespacesAndNewlines))
+        let needle = needle(query)
         if needle.isEmpty, filter == .all {
             return summaries
         }
         return summaries.filter { filter.includes($0) && (needle.isEmpty || $0.searchKey.contains(needle)) }
+    }
+
+    /// Where the credentials `visible` returns are in `summaries`: the same pass, as positions, which compare far more cheaply than
+    /// the summaries do.
+    static func visibleIndices(_ summaries: [CredentialSummary], query: String, filter: Self) -> [Int] {
+        let needle = needle(query)
+        if needle.isEmpty, filter == .all {
+            return Array(summaries.indices)
+        }
+        return summaries.indices.filter { filter.includes(summaries[$0]) && (needle.isEmpty || summaries[$0].searchKey.contains(needle)) }
+    }
+
+    private static func needle(_ query: String) -> String {
+        CredentialSummary.folded(query.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
     /// How many credentials each kind holds, in one pass. A kind nobody holds is 0.

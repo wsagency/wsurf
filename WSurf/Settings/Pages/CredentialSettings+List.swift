@@ -12,13 +12,34 @@ enum CredentialPageTab: Hashable {
     case settings
 }
 
-/// The search, the kind filter and the rows they leave. A task recomputes them when the search, the filter or the vault changes, from
-/// summaries whose search keys were built once with them; a view body only reads the result.
+/// The search, the kind filter and the rows they leave. A keystroke or a kind change narrows the rows in the same update that makes
+/// it (one pass of the view, not a stale one and a fresh one), from summaries whose search keys were built once with them; a task
+/// recomputes everything when the vault or its revision changes. A view body only reads the result.
 @MainActor
 @Observable
 final class CredentialListState {
-    var query = ""
-    var filter = CredentialListFilter.all
+    private var queryText = ""
+    private var kind = CredentialListFilter.all
+    /// What the search field holds. Setting it narrows the rows at once, from the summaries the last `refresh` was given.
+    var query: String {
+        get { queryText }
+        set {
+            guard newValue != queryText else { return }
+            queryText = newValue
+            narrow()
+        }
+    }
+
+    /// The kind the list shows. Setting it narrows the rows at once.
+    var filter: CredentialListFilter {
+        get { kind }
+        set {
+            guard newValue != kind else { return }
+            kind = newValue
+            narrow()
+        }
+    }
+
     /// The Vault tab's Input History section instead of the entries. It is the profile's, not a vault's, so `reset()` keeps it.
     var showsInputHistory = false
     /// "By Site": the rows under a heading per site. A way of looking, so it stays across vaults and unlocks.
@@ -26,47 +47,82 @@ final class CredentialListState {
     /// The rows by site while `bySite` is on, `nil` otherwise; `rowsByID` holds the rows they name.
     private(set) var siteGroups: [SiteGroup]?
     private(set) var rowsByID: [UUID: CredentialSummary] = [:]
-    /// How many credentials each kind holds; `nil` until the first refresh.
+    /// How many credentials each kind holds; `nil` until the first refresh. It depends on the vault, not on the search, so a keystroke
+    /// leaves it alone.
     private(set) var counts: [CredentialListFilter: Int]?
-    /// What the last refresh found, `nil` while nothing narrowed the list then. A keystroke shows the previous rows (or the whole
-    /// list) for the moment before its own refresh lands, never an empty list.
+    /// What the last narrowing found, `nil` while nothing narrowed the list then. Until the first `refresh` there are no summaries to
+    /// narrow, so the whole list shows.
     private var matches: [CredentialSummary]?
+    /// The summaries the last `refresh` was given, which a keystroke narrows.
+    @ObservationIgnored private var source: [CredentialSummary]?
+    /// The rows the list showed last, to tell a keystroke that changes them from one that does not.
+    @ObservationIgnored private var shown: [Int] = []
+    /// Told the ids of the rows the list shows, in order, each time they may have changed: the selection drops what left the list.
+    @ObservationIgnored var didNarrow: (([UUID]) -> Void)?
+    /// How many times the rows were narrowed: the performance tests' probe for the work behind a keystroke.
+    @ObservationIgnored private(set) var narrowCount = 0
 
     var isFiltering: Bool {
-        filter != .all || !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        kind != .all || !queryText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
-    /// What the list shows: every credential until a search or a kind narrows it, else what the last refresh found.
+    /// What the list shows: every credential until a search or a kind narrows it, else what the last narrowing found.
     func rows(of summaries: [CredentialSummary]) -> [CredentialSummary] {
         isFiltering ? matches ?? summaries : summaries
+    }
+
+    /// The ids of the rows in the order the list shows them, for the selection.
+    func visibleIDs(of summaries: [CredentialSummary]) -> [UUID] {
+        siteGroups?.flatMap(\.ids) ?? rows(of: summaries).map(\.id)
     }
 
     // ponytail: filtered on the main actor, one pass over precomputed keys (3,000 credentials take a few milliseconds);
     // move it to a detached task if a vault ever holds tens of thousands.
     func refresh(_ summaries: [CredentialSummary]) {
-        counts = CredentialListFilter.counts(summaries)
-        matches = isFiltering ? CredentialListFilter.visible(summaries, query: query, filter: filter) : nil
+        let kinds = CredentialListFilter.counts(summaries)
+        if kinds != counts {
+            counts = kinds
+        }
+        source = summaries
+        narrow(sourceChanged: true)
+    }
+
+    /// Finds the rows for the query and the kind. A keystroke that leaves the same rows changes nothing a view reads, so the list is
+    /// not evaluated for it: laying out 3,000 unchanged rows again was the larger part of such a keystroke.
+    private func narrow(sourceChanged: Bool = false) {
+        guard let summaries = source else { return }
+        narrowCount += 1
+        // Positions in `summaries`, which come from the same summaries in their order: the same positions are the same rows.
+        let found = CredentialListFilter.visibleIndices(summaries, query: queryText, filter: kind)
+        guard sourceChanged || found != shown else { return }
+        shown = found
+        let rows = found.map { summaries[$0] }
+        matches = isFiltering ? rows : nil
         // ponytail: grouped on the main actor too, one registrable-domain lookup per host; detach it with the filter if it shows.
-        let shown = bySite ? rows(of: summaries) : []
-        siteGroups = bySite ? CredentialSiteGroups.groups(shown) : nil
-        rowsByID = Dictionary(shown.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        siteGroups = bySite ? CredentialSiteGroups.groups(rows) : nil
+        rowsByID = bySite ? Dictionary(rows.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first }) : [:]
+        didNarrow?(visibleIDs(of: summaries))
     }
 
     /// Back to the whole list, for another vault or another unlock. Input History stays open: it belongs to no vault.
     func reset() {
-        query = ""
-        filter = .all
+        queryText = ""
+        kind = .all
         matches = nil
+        shown = []
+        // A lock keeps no copy of the vault's summaries here: until the next refresh there is nothing to narrow.
+        source = nil
+        siteGroups = nil
+        rowsByID = [:]
     }
 }
 
-/// What the list was last computed from; a change starts a new computation.
+/// What the list was last computed from; a change starts a new computation. The search and the kind are not part of it: they narrow
+/// the rows themselves (`CredentialListState.query`), so typing starts no task.
 private struct CredentialListKey: Equatable {
     let vault: UUID?
     let epoch: UInt64?
     let revision: UInt64
-    let query: String
-    let filter: CredentialListFilter
     let bySite: Bool
 }
 
@@ -175,14 +231,12 @@ struct CredentialListView<Switcher: View>: View {
     let switcher: Switcher
     /// The merge suggestions and the merge sheet of this list.
     @State private var merge = CredentialMergeState()
-    /// The Move to Trash in flight. A second one waits until it is done, so a key held down never cancels a write half way.
-    @State private var removal: Task<Void, Never>?
+    /// What the rows call, one object for all of them: the rows are not given new closures on every pass of this view, so a row whose
+    /// credential has not changed is not drawn again.
+    @State private var rowActions = CredentialRowActions()
 
     private var key: CredentialListKey {
-        CredentialListKey(
-            vault: model.selectedVaultID, epoch: model.authorizationEpoch, revision: model.revision, query: list.query, filter: list.filter,
-            bySite: list.bySite
-        )
+        CredentialListKey(vault: model.selectedVaultID, epoch: model.authorizationEpoch, revision: model.revision, bySite: list.bySite)
     }
 
     /// The vault's name; the page is about one vault at a time.
@@ -191,6 +245,9 @@ struct CredentialListView<Switcher: View>: View {
     }
 
     var body: some View {
+        // The rows call what this pass bound; a view body cannot discard a result with `_ =`.
+        // swiftlint:disable:next redundant_discardable_let
+        let _ = bindActions()
         VStack(alignment: .leading, spacing: 12) {
             toolbar
             AutofillPageStatus(isBusy: model.isBusy, error: model.error, kind: .password)
@@ -215,7 +272,7 @@ struct CredentialListView<Switcher: View>: View {
                 if let groups = list.siteGroups {
                     CredentialSiteGroupsList(groups: groups, rows: list.rowsByID, merge: merge, row: row)
                 } else {
-                    ForEach(rows, content: row)
+                    CredentialFlatRows(rows: rows, model: model, selection: selection, actions: rowActions)
                 }
             }
         }
@@ -226,8 +283,9 @@ struct CredentialListView<Switcher: View>: View {
             )
         }
         .task(id: key) {
+            // The list hands the selection the rows it shows each time it narrows them, a keystroke included.
+            list.didNarrow = { [selection] ids in selection.show(ids) }
             list.refresh(model.summaries)
-            selection.show(visibleIDs)
         }
         .task(id: CredentialMergeState.Key(model)) { await merge.refresh(model) }
         // A merge changes the vault while its sheet is open: what was selected has been merged, so the selection ends.
@@ -251,26 +309,46 @@ struct CredentialListView<Switcher: View>: View {
         return "\(usage.count) files use \(used) of this vault’s \(limit). Files are encrypted in the vault and open only while it is unlocked."
     }
 
-    /// The rows in the order the list shows them, for the selection.
-    private var visibleIDs: [UUID] {
-        list.siteGroups?.flatMap(\.ids) ?? list.rows(of: model.summaries).map(\.id)
-    }
-
     private var visibleCount: Int {
         list.siteGroups == nil ? list.rows(of: model.summaries).count : list.rowsByID.count
     }
 
     private func row(_ summary: CredentialSummary) -> some View {
-        CredentialRow(
-            model: model, summary: summary, selection: selection, run: run, trash: trash, merge: startMerge,
-            open: { open(summary.id) },
-            history: { run { try await model.openHistory(accountID: summary.id) } }
+        CredentialRow(model: model, summary: summary, selection: selection, actions: rowActions).equatable()
+    }
+
+    /// What the rows call. The closures hold the objects they act on and never this view, which holds `rowActions`: a closure that kept
+    /// the view would keep the list, the page and the vault's summaries alive for as long as the app runs.
+    private func bindActions() {
+        let model = model, selection = selection, merge = merge, run = run
+        rowActions.bind(
+            run: run,
+            trash: { [weak rowActions] ids in
+                if let rowActions {
+                    Self.trash(ids, model: model, selection: selection, actions: rowActions)
+                }
+            },
+            merge: { ids in Self.startMerge(ids, merge: merge, selection: selection) },
+            open: { id in Self.open(id, model: model, selection: selection, run: run) },
+            history: { id in run { try await model.openHistory(accountID: id) } }
         )
+    }
+
+    private func startMerge(_ ids: [UUID]) {
+        Self.startMerge(ids, merge: merge, selection: selection)
+    }
+
+    private func open(_ id: UUID) {
+        Self.open(id, model: model, selection: selection, run: run)
+    }
+
+    private func trash(_ ids: [UUID]) {
+        Self.trash(ids, model: model, selection: selection, actions: rowActions)
     }
 
     /// Merge… from a row or the bar. Two or more credentials open the review. One opens its merge suggestion, else starts selection
     /// mode with it selected, so the others are picked in the list itself.
-    private func startMerge(_ ids: [UUID]) {
+    private static func startMerge(_ ids: [UUID], merge: CredentialMergeState, selection: CredentialSelection) {
         if ids.count > 1 {
             merge.route = .review(ids)
         } else if let id = ids.first {
@@ -283,18 +361,22 @@ struct CredentialListView<Switcher: View>: View {
     }
 
     /// Opens the editor on a credential; the cursor stays on its row for when the editor closes.
-    private func open(_ id: UUID) {
+    private static func open(
+        _ id: UUID, model: CredentialSettingsModel, selection: CredentialSelection,
+        run: (@escaping () async throws -> Void) -> Void
+    ) {
         selection.place(cursor: id)
         run { try await model.beginEditing(accountID: id) }
     }
 
-    /// Moves credentials to the Trash with no dialog. The cursor goes to the row that takes their place once the move has happened.
-    private func trash(_ ids: [UUID]) {
-        guard removal == nil, !model.isBusy, !ids.isEmpty else { return }
+    /// Moves credentials to the Trash with no dialog. The cursor goes to the row that takes their place once the move has happened. A
+    /// second one waits until the first is done (`actions.removal`), so a key held down never cancels a write half way.
+    private static func trash(_ ids: [UUID], model: CredentialSettingsModel, selection: CredentialSelection, actions: CredentialRowActions) {
+        guard actions.removal == nil, !model.isBusy, !ids.isEmpty else { return }
         let next = selection.cursorAfterRemoving(ids)
         let epoch = model.authorizationEpoch
-        removal = Task {
-            defer { removal = nil }
+        actions.removal = Task { [weak actions] in
+            defer { actions?.removal = nil }
             guard model.authorizationEpoch == epoch else { return }
             await model.attempt {
                 try await model.moveToTrash(ids: ids)
@@ -410,6 +492,21 @@ struct CredentialListView<Switcher: View>: View {
     }
 }
 
+/// The flat list's rows, a view of its own with no closure among its inputs: SwiftUI compares what it is given and leaves it alone
+/// while it is the same, so a keystroke that keeps the rows does not evaluate 3,000 of them again.
+private struct CredentialFlatRows: View {
+    let rows: [CredentialSummary]
+    let model: CredentialSettingsModel
+    let selection: CredentialSelection
+    let actions: CredentialRowActions
+
+    var body: some View {
+        ForEach(rows) { summary in
+            CredentialRow(model: model, summary: summary, selection: selection, actions: actions).equatable()
+        }
+    }
+}
+
 /// The Vault tab's sections: the vault's entries by kind (`CredentialListFilter.chips`), then Input History. Shown whether the vault
 /// is open, locked or not created yet, so Input History stays reachable; the counts are shown only while it is open.
 struct VaultSectionBar: View {
@@ -418,7 +515,7 @@ struct VaultSectionBar: View {
     let showsCounts: Bool
     let offersInputHistory: Bool
 
-    /// Read here, not by the page, so a refresh of the counts (every keystroke of a search) redraws only this bar.
+    /// Read here, not by the page, so a change of the counts redraws only this bar.
     private var counts: [CredentialListFilter: Int]? {
         showsCounts ? list.counts : nil
     }
