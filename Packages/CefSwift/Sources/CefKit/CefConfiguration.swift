@@ -121,6 +121,11 @@ public struct CefConfiguration: Sendable {
     /// helper apps from the bundle layout by default).
     public var browserSubprocessPath: URL?
 
+    /// Explicit main bundle path (`main_bundle_path`). Needed only when the
+    /// browser process is not the top-level app, such as an XPC service
+    /// inside it (WSurf patch 3, the D4 spike).
+    public var mainBundlePath: URL?
+
     /// How Chromium encrypts cookies at rest — i.e. whether it creates the
     /// "Chromium Safe Storage" keychain item (and triggers the one-time
     /// macOS keychain ACL prompt). See ``CefSafeStoragePolicy``.

@@ -7,6 +7,14 @@ import Foundation
 extension ChromiumPage {
     /// `hasOnlySecureContent` of the visible navigation entry, by the rule below.
     func updateNativeSecurity() {
+        if let remote {
+            // D4 spike: the visible entry's SSL status as the service last sent it, under the same rule.
+            owner?.hasOnlySecureContent = remote.security.map {
+                Self.hasOnlySecureContent(url: $0.url, isSecureConnection: $0.secureConnection, certStatus: $0.certStatus,
+                                          contentStatus: $0.contentStatus)
+            } ?? false
+            return
+        }
         let secure = withHost { host -> Bool in
             guard let entry = host.pointee.get_visible_navigation_entry?(host) else { return false }
             defer { ChromiumInterop.release(UnsafeMutableRawPointer(entry)) }

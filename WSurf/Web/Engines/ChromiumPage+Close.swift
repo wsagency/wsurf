@@ -16,6 +16,8 @@ extension ChromiumPage {
         if timingOut {
             closeUnanswered(after: Self.closeTimeout)
         }
+        // D4 spike: the service closes the browser and answers with `browser.closed`.
+        remote?.send(CefRemote.Op.close)
         withHost { $0.pointee.close_browser?($0, 1) }
     }
 

@@ -23,6 +23,15 @@ final class ChromiumPage: NSView {
     private var raw: UnsafeMutablePointer<cef_browser_t>?
     private(set) var client: ChromiumClient?
     private(set) lazy var devTools = ChromiumDevTools(page: self)
+    /// D4 spike: the browser in the out-of-process service (OOP mode only), its remote layer and the cursor it asked for.
+    var remote: ChromiumRemoteBrowser?
+    var remoteLayer: CALayer?
+    var remoteCursor: NSCursor = .arrow
+    /// D4 spike: input state of the out-of-process page (`ChromiumPage+RemoteInput`).
+    var remoteInput = ChromiumRemoteInputState()
+    var isClosing: Bool {
+        closing
+    }
     private var preparation: Task<Void, Error>?
     private var pendingLoad: Task<Void, Never>?
     private var closeWaiters: [CheckedContinuation<Void, Never>] = []
@@ -130,12 +139,39 @@ final class ChromiumPage: NSView {
 
     override func becomeFirstResponder() -> Bool {
         guard !isClosed else { return false }
+        if let remote {
+            remote.send(CefRemote.Op.focus) { $0.set(CefRemote.Key.flag, true) }
+            return true
+        }
         withHost { $0.pointee.set_focus?($0, 1) }
         return true
     }
 
+    override func resignFirstResponder() -> Bool {
+        remote?.send(CefRemote.Op.focus) { $0.set(CefRemote.Key.flag, false) }
+        return super.resignFirstResponder()
+    }
+
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
+        if isRemote {
+            // D4 spike: the service makes the browser; nothing here waits for it.
+            if window != nil, remote == nil, !awaitsPopup, !closing, !isClosed {
+                do {
+                    try materializeRemote()
+                } catch {
+                    owner?.onNavigationFailed?(navigation, error)
+                }
+            }
+            if window != nil {
+                for waiter in attachmentWaiters {
+                    waiter.resume()
+                }
+                attachmentWaiters.removeAll()
+            }
+            updateRemoteGeometry()
+            return
+        }
         guard window != nil, raw == nil, !awaitsPopup, !closing, !isClosed else { return }
         do {
             defer {
@@ -154,10 +190,42 @@ final class ChromiumPage: NSView {
 
     override func layout() {
         super.layout()
+        if isRemote {
+            updateRemoteGeometry()
+            return
+        }
         nativeView?.frame = bounds
     }
 
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        if isRemote {
+            updateRemoteGeometry()
+        }
+    }
+
+    override func viewDidHide() {
+        super.viewDidHide()
+        updateRemoteVisibility()
+    }
+
+    override func viewDidUnhide() {
+        super.viewDidUnhide()
+        updateRemoteVisibility()
+    }
+
+    override func viewDidChangeBackingProperties() {
+        super.viewDidChangeBackingProperties()
+        if isRemote {
+            updateRemoteGeometry()
+        }
+    }
+
     func materialize() throws {
+        if isRemote {
+            try materializeRemote()
+            return
+        }
         guard !closing, !isClosed else { throw ChromiumError.closed }
         guard raw == nil else { return }
         guard window != nil else {
@@ -228,16 +296,52 @@ final class ChromiumPage: NSView {
         nativeView?.autoresizingMask = [.width, .height]
     }
 
+    /// D4 spike: takes the service's browser as `adopt` takes CEF's: the DevTools pipe, then the preparation every load waits for.
+    func adoptRemote(_ browser: ChromiumRemoteBrowser) throws {
+        browserID = Int32(truncatingIfNeeded: browser.id)
+        ChromiumRuntime.shared.register(self)
+        try devTools.attach(remote: browser)
+        preparation = Task { [weak self] in
+            guard let self else { throw ChromiumError.closed }
+            try await devTools.prepare(marksNewDocuments: false)
+            pageZoom = zoom
+        }
+    }
+
+    /// D4 spike: the service ended with this page's browser in it. The page keeps its address and is left with no browser, as
+    /// after a renderer crash; the tab's crash handling reloads it, which asks a new service for a new browser.
+    func resetAfterServiceEnd() {
+        guard remote != nil else { return }
+        remote = nil
+        pendingLoad?.cancel()
+        preparation?.cancel()
+        preparation = nil
+        devTools.close()
+        devTools = ChromiumDevTools(page: self)
+        startupEntry = .inHistory
+        initialDocument = true
+        hasAppliedInitialSettings = false
+        awaitingNativeNavigation = false
+        ChromiumRuntime.shared.unregister(self)
+        didTerminate()
+    }
+
     func ensureReady() async throws {
         guard !isClosed, !closing else { throw ChromiumError.closed }
-        if raw == nil, awaitsPopup {
-            await withCheckedContinuation { popupWaiters.append($0) }
-            guard !isClosed, !closing else { throw ChromiumError.closed }
-        }
-        if raw == nil {
-            try await ChromiumRuntime.shared.prepareContext(for: context)
-            guard !isClosed, !closing else { throw ChromiumError.closed }
-            try materialize()
+        if isRemote {
+            if remote == nil {
+                try materializeRemote()
+            }
+        } else {
+            if raw == nil, awaitsPopup {
+                await withCheckedContinuation { popupWaiters.append($0) }
+                guard !isClosed, !closing else { throw ChromiumError.closed }
+            }
+            if raw == nil {
+                try await ChromiumRuntime.shared.prepareContext(for: context)
+                guard !isClosed, !closing else { throw ChromiumError.closed }
+                try materialize()
+            }
         }
         guard let preparation else { throw ChromiumError.closed }
         try await preparation.value
@@ -258,11 +362,19 @@ final class ChromiumPage: NSView {
     /// The engine's own mute of the page: every frame and every kind of sound, a frame of another site (which no WSurf script
     /// reaches) and Web Audio included. It stays across navigations, like the tab's mute does.
     func setAudioMuted(_ muted: Bool) {
+        if let remote {
+            remote.isMuted = muted
+            remote.send(CefRemote.Op.mute) { $0.set(CefRemote.Key.flag, muted) }
+            return
+        }
         withHost { $0.pointee.set_audio_muted?($0, muted ? 1 : 0) }
     }
 
     var isAudioMuted: Bool {
-        withHost { ($0.pointee.is_audio_muted?($0) ?? 0) != 0 } ?? false
+        if let remote {
+            return remote.isMuted
+        }
+        return withHost { ($0.pointee.is_audio_muted?($0) ?? 0) != 0 } ?? false
     }
 
     func command(_ method: String, params: [String: Any] = [:]) async throws -> [String: Any] {
@@ -345,6 +457,15 @@ final class ChromiumPage: NSView {
     }
 
     private func loadNative(_ request: URLRequest) throws {
+        if let remote, let url = request.url {
+            // D4 spike: a plain GET only; requests with a body or headers are out of the spike's scope.
+            guard (request.httpMethod ?? "GET").uppercased() == "GET", request.httpBody == nil, request.httpBodyStream == nil,
+                  request.allHTTPHeaderFields?.isEmpty != false else {
+                throw ChromiumError.unavailable("Out-of-process Chromium (spike) loads GET requests only.")
+            }
+            remote.send(CefRemote.Op.load) { $0.set(CefRemote.Key.url, url.absoluteString) }
+            return
+        }
         guard let raw, let frame = raw.pointee.get_main_frame?(raw), let url = request.url else {
             throw ChromiumError.closed
         }
@@ -427,13 +548,14 @@ final class ChromiumPage: NSView {
 
     @discardableResult
     func reload(ignoreCache: Bool = false) -> PageNavigation? {
-        guard raw != nil, !isClosed, !closing else {
+        guard raw != nil || remote != nil, !isClosed, !closing else {
             return requestedURL.flatMap { load(URLRequest(url: $0)) }
         }
         let next = PageNavigation()
         navigation = next
         awaitingNativeNavigation = true
         navigationStarted = false
+        remote?.send(CefRemote.Op.reload) { $0.set(CefRemote.Key.flag, ignoreCache) }
         withBrowser { browser in
             if ignoreCache {
                 browser.pointee.reload_ignore_cache?(browser)
@@ -450,6 +572,7 @@ final class ChromiumPage: NSView {
         navigation = PageNavigation()
         awaitingNativeNavigation = true
         navigationStarted = false
+        remote?.send(CefRemote.Op.goBack)
         withBrowser { $0.pointee.go_back?($0) }
         return navigation
     }
@@ -460,6 +583,7 @@ final class ChromiumPage: NSView {
         navigation = PageNavigation()
         awaitingNativeNavigation = true
         navigationStarted = false
+        remote?.send(CefRemote.Op.goForward)
         withBrowser { $0.pointee.go_forward?($0) }
         return navigation
     }
@@ -481,6 +605,7 @@ final class ChromiumPage: NSView {
     func stopLoading() {
         pendingLoad?.cancel()
         client?.documentResponses.reset()
+        remote?.send(CefRemote.Op.stop)
         withBrowser { $0.pointee.stop_load?($0) }
     }
 
@@ -488,7 +613,9 @@ final class ChromiumPage: NSView {
         get { zoom }
         set {
             zoom = newValue
-            withHost { $0.pointee.set_zoom_level?($0, log(Double(newValue)) / log(1.2)) }
+            let level = log(Double(newValue)) / log(1.2)
+            remote?.send(CefRemote.Op.zoom) { $0.set(CefRemote.Key.value, level) }
+            withHost { $0.pointee.set_zoom_level?($0, level) }
         }
     }
 
@@ -514,6 +641,11 @@ final class ChromiumPage: NSView {
     }
 
     func selectAll() {
+        if let remote {
+            // D4 spike: the page itself is the responder; the service selects in the focused frame.
+            remote.send(CefRemote.Op.edit) { $0.set(CefRemote.Key.kind, "selectAll") }
+            return
+        }
         guard let responder = window?.firstResponder, responder !== self, ownsResponder(responder) else { return }
         responder.selectAll(nil)
     }
@@ -523,6 +655,16 @@ final class ChromiumPage: NSView {
     }
 
     func sendKeyEvent(_ event: NSEvent) -> Bool {
+        if remote != nil {
+            // D4 spike: the page is the first responder itself and forwards the key to the service.
+            guard window?.firstResponder === self else { return false }
+            if event.type == .keyUp {
+                keyUp(with: event)
+            } else {
+                keyDown(with: event)
+            }
+            return true
+        }
         guard let responder = window?.firstResponder, responder !== self, ownsResponder(responder) else { return false }
         if event.type == .keyUp {
             responder.keyUp(with: event)
@@ -548,6 +690,15 @@ final class ChromiumPage: NSView {
         }
         if modifiers.contains(.capsLock) {
             flags |= UInt32(EVENTFLAG_CAPS_LOCK_ON.rawValue)
+        }
+        if let remote {
+            let message = remote.message(CefRemote.Op.mouse)
+            message.set(CefRemote.Key.kind, "move")
+            message.set(CefRemote.Key.x, Double(point.x))
+            message.set(CefRemote.Key.y, Double(point.y))
+            message.set(CefRemote.Key.modifiers, Int64(flags))
+            remote.sendInput(message)
+            return
         }
         withHost { host in
             var event = cef_mouse_event_t(x: Int32(point.x.rounded()), y: Int32(point.y.rounded()), modifiers: flags)
@@ -661,6 +812,11 @@ final class ChromiumPage: NSView {
     }
     func didChangeTitle() {
         guard !closing, !isClosed else { return }
+        if let remote {
+            // D4 spike: the visible entry's title, which the service sends with its events.
+            owner?.title = remote.title
+            return
+        }
         // The display callback substitutes a URL for an untitled document.
         // The navigation entry retains its actual (possibly empty) title.
         owner?.title = withHost { host in
@@ -723,7 +879,7 @@ final class ChromiumPage: NSView {
     /// would drop real Back entries. Chromium refuses it while the first commit is still swapping renderers, which the DevTools
     /// session waits out; a refusal of another kind is retried here. A reset that does not land leaves the startup entry hidden from Back.
     private func dropStartupEntry() {
-        guard raw != nil, !closing, !isClosed else { return }
+        guard raw != nil || remote != nil, !closing, !isClosed else { return }
         Task { [weak self] in
             guard let self else { return }
             var outcome = StartupReset.refused
@@ -751,6 +907,18 @@ final class ChromiumPage: NSView {
     /// The history check runs in the same synchronous turn that sends the reset, and Chromium applies the reset while it is
     /// sent, so no entry can arrive in between. The test seam replaces only the command.
     private func resetNavigationHistory() async -> StartupReset {
+        if let remote, startupResetCommand == nil {
+            // D4 spike: rule 4 of the plan. The service checks the native history and sends the reset in one turn on its UI
+            // thread, where no entry can arrive in between.
+            switch await remote.collapseStartup() {
+            case CefRemote.CollapseOutcome.landed:
+                return .landed
+            case CefRemote.CollapseOutcome.skipped:
+                return .skipped
+            default:
+                return .refused
+            }
+        }
         do {
             if let startupResetCommand {
                 if let outcome = startupResetBlocker() {
@@ -797,6 +965,10 @@ final class ChromiumPage: NSView {
     /// Chromium's entry count, current index and first URL. The visitor runs before the call returns on the UI thread, so
     /// the answer is current in the same turn.
     private func nativeHistory() -> (count: Int, current: Int, first: String)? {
+        if let remote {
+            // D4 spike: the last history the service sent with an event (a synchronous read cannot cross the process).
+            return remote.history
+        }
         let reader = NavigationEntryReader()
         let visitor = ChromiumInterop.allocate(cef_navigation_entry_visitor_t.self, owner: reader)
         visitor.pointee.visit = { visitorSelf, entry, current, index, total in
@@ -828,7 +1000,7 @@ final class ChromiumPage: NSView {
     }
 
     private func refreshHistory() {
-        guard raw != nil, !closing, !isClosed else { return }
+        guard raw != nil || remote != nil, !closing, !isClosed else { return }
         Task { [weak self] in
             await self?.loadHistory()
         }
@@ -837,7 +1009,7 @@ final class ChromiumPage: NSView {
     /// Reads Chromium's history into `history`. False when the read fails.
     @discardableResult
     private func loadHistory() async -> Bool {
-        guard raw != nil, !closing, !isClosed, let response = try? await command("Page.getNavigationHistory"),
+        guard raw != nil || remote != nil, !closing, !isClosed, let response = try? await command("Page.getNavigationHistory"),
               let index = response["currentIndex"] as? Int,
               let entries = response["entries"] as? [[String: Any]] else { return false }
         let items = entries.enumerated().compactMap { position, entry -> (Int, PageHistoryItem)? in
@@ -858,7 +1030,7 @@ final class ChromiumPage: NSView {
     func close() async {
         guard !isClosed else { return }
         client?.documentResponses.reset()
-        if raw == nil {
+        if raw == nil && remote == nil {
             didClose()
             return
         }
@@ -894,6 +1066,9 @@ final class ChromiumPage: NSView {
             CefRuntime.shared.externalBrowserDidClose()
         }
         raw = nil
+        remote = nil
+        remoteLayer?.removeFromSuperlayer()
+        remoteLayer = nil
         ChromiumRuntime.shared.unregister(self)
         for waiter in attachmentWaiters {
             waiter.resume()

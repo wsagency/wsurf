@@ -44,6 +44,7 @@ final class MappedCefSettings {
         CefStringUtil.set(configuration.logFile?.path, into: &raw.log_file)
         CefStringUtil.set(frameworkDirectory?.path, into: &raw.framework_dir_path)
         CefStringUtil.set(configuration.browserSubprocessPath?.path, into: &raw.browser_subprocess_path)
+        CefStringUtil.set(configuration.mainBundlePath?.path, into: &raw.main_bundle_path)
     }
 
     /// Default per-app CEF data directory:
@@ -66,6 +67,7 @@ final class MappedCefSettings {
         ccef_string_clear(&raw.log_file)
         ccef_string_clear(&raw.framework_dir_path)
         ccef_string_clear(&raw.browser_subprocess_path)
+        ccef_string_clear(&raw.main_bundle_path)
     }
 }
 

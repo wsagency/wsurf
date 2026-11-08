@@ -8,6 +8,8 @@ let package = Package(
         .library(name: "CefKit", targets: ["CefKit"]),
         .library(name: "CefSwiftUI", targets: ["CefSwiftUI"]),
         .executable(name: "cef-helper", targets: ["cef-helper"]),
+        // D4 spike: the out-of-process Chromium service (assembled into an .xpc by WSurf's Tools/embed-chromium.sh).
+        .executable(name: "wsurf-chromium-service", targets: ["wsurf-chromium-service"]),
         .plugin(name: "CefPlugin", targets: ["CefPlugin"]),
     ],
     targets: [
@@ -43,6 +45,17 @@ let package = Package(
         .executableTarget(
             name: "cef-helper",
             dependencies: ["CefKit"]
+        ),
+        // D4 spike: CEF's browser process, windowless, in an XPC service. Swift 5 mode keeps the C callback code readable;
+        // everything in it runs on the service's main thread, which is CEF's UI thread.
+        .executableTarget(
+            name: "wsurf-chromium-service",
+            dependencies: ["CefKit", "CCef", "CCefAppKit"],
+            swiftSettings: [.swiftLanguageMode(.v5)],
+            linkerSettings: [
+                .linkedFramework("AppKit"), .linkedFramework("QuartzCore"), .linkedFramework("Metal"),
+                .linkedFramework("IOSurface"),
+            ]
         ),
         // `swift package cef <download|bundle|info|clean>`
         .plugin(

@@ -60,7 +60,8 @@ final class ChromiumRuntime {
     }
 
     var isInitialized: Bool {
-        CefRuntime.shared.isInitialized
+        // D4 spike: in OOP mode "started" means the service runs CEF (the pre-warm asks this).
+        ChromiumOOP.isEnabled ? ChromiumRemote.shared.isRunning : CefRuntime.shared.isInitialized
     }
 
     var hasLivePages: Bool {
@@ -86,6 +87,11 @@ final class ChromiumRuntime {
 
     /// Starts CEF ahead of the first Chromium tab (`ChromiumPrewarm`). A failure is kept for that tab to show.
     func startEarly() {
+        if ChromiumOOP.isEnabled {
+            // D4 spike: the pre-warm launches the service, which starts CEF there; WSurf's main thread sends one message.
+            ChromiumRemote.shared.connect()
+            return
+        }
         isStartingEarly = true
         defer { isStartingEarly = false }
         do {
@@ -96,9 +102,25 @@ final class ChromiumRuntime {
         }
     }
 
+    /// D4 spike: the root folder the service's CEF uses, made and canonical as `ensureInitialized` makes it, without CEF.
+    func prepareRootForService() -> URL {
+        try? FileManager.default.createDirectory(at: rootDirectory, withIntermediateDirectories: true)
+        if let canonical = realpath(rootDirectory.path, nil) {
+            rootDirectory = URL(filePath: String(cString: canonical), directoryHint: .isDirectory)
+            free(canonical)
+        }
+        removeErasedProfiles()
+        return rootDirectory
+    }
+
     func ensureInitialized() throws {
         guard !hasShutdown else { throw ChromiumError.closed }
         guard !isInitialized else { return }
+        #if DEBUG
+        // D4 spike: in OOP mode CEF must never load in WSurf. A path that still reaches here fails loudly instead of quietly
+        // loading CEF and spoiling the measurements.
+        precondition(!ChromiumOOP.isEnabled, "ChromiumRuntime.ensureInitialized reached in out-of-process mode")
+        #endif
         try FileManager.default.createDirectory(at: rootDirectory, withIntermediateDirectories: true)
         // Foundation preserves /tmp aliases; CEF requires canonical filesystem paths.
         guard let canonical = realpath(rootDirectory.path, nil) else {

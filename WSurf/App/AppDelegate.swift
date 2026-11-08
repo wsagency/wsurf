@@ -43,6 +43,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 AnimationProbe.runIfRequested(coordinator: coordinator)
                 AnimationProbe.runSplitProbeIfRequested(coordinator: coordinator)
                 StageRun.startIfRequested(coordinator: coordinator)
+                // D4 spike: functional checks of out-of-process Chromium (stage home under .wt/d4-spike only).
+                D4SpikeDriver.runIfRequested(coordinator: coordinator)
             }
             #endif
         }

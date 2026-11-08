@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 
 import CCef
+import CefKit
 import Foundation
 
 extension ChromiumPage {
@@ -56,7 +57,17 @@ extension ChromiumPage {
     }
 
     private func sendFind(_ text: String, forward: Bool, next: Bool) -> Bool {
-        withHost { host -> Bool in
+        if let remote {
+            // D4 spike: the search runs in the service; results come back as `find.result` events.
+            remote.send(CefRemote.Op.find) {
+                $0.set(CefRemote.Key.text, text)
+                $0.set(CefRemote.Key.forward, forward)
+                $0.set(CefRemote.Key.matchCase, false)
+                $0.set(CefRemote.Key.findNext, next)
+            }
+            return true
+        }
+        return withHost { host -> Bool in
             ChromiumInterop.withString(text) { native in
                 host.pointee.find?(host, native, forward ? 1 : 0, 0, next ? 1 : 0)
             }
@@ -67,6 +78,7 @@ extension ChromiumPage {
     /// Ends the search: the highlights go, and so does the selection on the active match, as WebKit's find leaves none.
     func stopFinding() {
         find.end()
+        remote?.send(CefRemote.Op.stopFinding) { $0.set(CefRemote.Key.flag, true) }
         withHost { $0.pointee.stop_finding?($0, 1) }
     }
 }

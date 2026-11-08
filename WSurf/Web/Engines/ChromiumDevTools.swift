@@ -9,6 +9,8 @@ import WebKit
 final class ChromiumDevTools {
     weak var page: ChromiumPage?
     private var host: UnsafeMutablePointer<cef_browser_host_t>?
+    /// D4 spike: the same pipe to a browser in the out-of-process service. Exactly one of `host` and `remote` is set.
+    private var remote: ChromiumRemoteBrowser?
     private var observer: UnsafeMutablePointer<cef_dev_tools_message_observer_t>?
     private var registration: UnsafeMutablePointer<cef_registration_t>?
     private var nextMessageID = 1
@@ -144,6 +146,42 @@ final class ChromiumDevTools {
         self.parent = parent
         self.sessionID = sessionID
         self.targetID = targetID
+    }
+
+    /// D4 spike: attaches to a browser in the out-of-process service. Its messages arrive through `receiveRemote`, split
+    /// the way CEF splits them in process (a cross-site session's message whole; the page's results and events parsed).
+    func attach(remote: ChromiumRemoteBrowser) throws {
+        guard !closed else { throw ChromiumError.closed }
+        guard host == nil, self.remote == nil else { return }
+        self.remote = remote
+    }
+
+    /// D4 spike: a DevTools event from the service, with its bytes still in the message.
+    func receiveRemote(_ message: CefRemoteMessage) {
+        switch message.op {
+        case CefRemote.Event.devToolsMessage:
+            message.withBytes(CefRemote.Key.data) { pointer, size in
+                guard let pointer else { return }
+                _ = receiveSessionMessage(pointer, size: size)
+            }
+        case CefRemote.Event.devToolsResult:
+            let id = Int(message.int(CefRemote.Key.identifier))
+            let success = message.bool(CefRemote.Key.success)
+            message.withBytes(CefRemote.Key.data) { pointer, size in
+                receiveResult(id: id, success: success, pointer: pointer, size: size)
+            }
+        case CefRemote.Event.devToolsEvent:
+            let name = message.string(CefRemote.Key.method)
+            message.withBytes(CefRemote.Key.data) { pointer, size in
+                receiveEvent(name: name, pointer: pointer, size: size)
+            }
+        case CefRemote.Event.devToolsDetached:
+            failAll(ChromiumError.unavailable("Chromium DevTools detached."))
+            forgetDocuments()
+            page?.owner?.invalidateCredentialContexts()
+        default:
+            break
+        }
     }
 
     func attach(to host: UnsafeMutablePointer<cef_browser_host_t>) throws {
@@ -285,7 +323,9 @@ final class ChromiumDevTools {
         prepareParameters: (@MainActor @Sendable () throws -> [String: Any])?
     ) async throws -> [String: Any] {
         guard !closed else { throw ChromiumError.closed }
-        guard let host else { throw ChromiumError.unavailable("Chromium DevTools is not attached.") }
+        let host = self.host
+        let remote = self.remote
+        guard host != nil || remote != nil else { throw ChromiumError.unavailable("Chromium DevTools is not attached.") }
         if prepareParameters == nil, !JSONSerialization.isValidJSONObject(baseParams) {
             throw ChromiumError.protocolFailure("DevTools parameters are not JSON serializable.")
         }
@@ -320,7 +360,7 @@ final class ChromiumDevTools {
                         throw ChromiumError.protocolFailure("DevTools parameters are not JSON serializable: \(error.localizedDescription)")
                     }
                     try dispatchCheck?()
-                    guard !closed, self.host == host else { throw ChromiumError.closed }
+                    guard !closed, self.host == host, self.remote === remote else { throw ChromiumError.closed }
                     commandObserver?(method, params)
                     pending[id] = PendingCommand(continuation: continuation, result: result)
                     pendingSessions[id] = session
@@ -329,8 +369,14 @@ final class ChromiumDevTools {
                         guard let self else { return }
                         self.finishFailure(id: id, error: ChromiumError.unavailable("Chromium DevTools command timed out."))
                     }
-                    let accepted = data.withUnsafeBytes { bytes in
-                        host.pointee.send_dev_tools_message?(host, bytes.baseAddress, data.count) ?? 0
+                    let accepted: Int32
+                    if let host {
+                        accepted = data.withUnsafeBytes { bytes in
+                            host.pointee.send_dev_tools_message?(host, bytes.baseAddress, data.count) ?? 0
+                        }
+                    } else {
+                        // D4 spike: queued to the service; it answers rejected commands itself.
+                        accepted = remote?.sendDevTools(data) == true ? 1 : 0
                     }
                     if accepted == 0 {
                         self.finishFailure(id: id, error: ChromiumError.unavailable("Chromium DevTools rejected the command."))
@@ -371,6 +417,7 @@ final class ChromiumDevTools {
             ChromiumInterop.release(UnsafeMutableRawPointer(host))
             self.host = nil
         }
+        remote = nil
         framesByID.removeAll()
         mainFrameAddress = nil
         contextsByUniqueID.removeAll()

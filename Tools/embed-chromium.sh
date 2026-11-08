@@ -29,9 +29,13 @@ fi
 scratch="$DERIVED_FILE_DIR/ChromiumHelper"
 /usr/bin/xcrun swift build --package-path "$package" --scratch-path "$scratch" \
     --configuration release --product cef-helper
+# D4 spike: the out-of-process Chromium service, from the same package and scratch.
+/usr/bin/xcrun swift build --package-path "$package" --scratch-path "$scratch" \
+    --configuration release --product wsurf-chromium-service
 bin=$(/usr/bin/xcrun swift build --package-path "$package" --scratch-path "$scratch" \
     --configuration release --show-bin-path)
 helper="$bin/cef-helper"
+service="$bin/wsurf-chromium-service"
 identity="${EXPANDED_CODE_SIGN_IDENTITY:--}"
 [[ -n "$identity" ]] || identity=-
 signOptions=(--options runtime --timestamp)
@@ -42,15 +46,18 @@ signOptions=(--options runtime --timestamp)
 # pak, and WSurf's own UI is English only. `en` is that fallback and must stay. Set but empty keeps every language.
 locales="${WSURF_CEF_LOCALES-en en_GB hr}"
 helperHash=$(/usr/bin/shasum -a 256 "$helper")
-fingerprint="$version|$identity|${helperHash%% *}|${signOptions[*]}|$PRODUCT_BUNDLE_IDENTIFIER|locales=${locales:-all}"
+serviceHash=$(/usr/bin/shasum -a 256 "$service")
+fingerprint="$version|$identity|${helperHash%% *}|${serviceHash%% *}|${signOptions[*]}|$PRODUCT_BUNDLE_IDENTIFIER|locales=${locales:-all}"
 contents="$TARGET_BUILD_DIR/$CONTENTS_FOLDER_PATH"
 frameworks="$contents/Frameworks"
 resources="$contents/Resources"
+xpc="$contents/XPCServices/WSurf Chromium.xpc"
 stamp="$DERIVED_FILE_DIR/ChromiumBundle.fingerprint"
 
 if [[ -f "$stamp" && "$(cat "$stamp")" == "$fingerprint" \
     && -d "$frameworks/Chromium Embedded Framework.framework" \
-    && -x "$frameworks/WSurf Helper (Renderer).app/Contents/MacOS/WSurf Helper (Renderer)" ]]; then
+    && -x "$frameworks/WSurf Helper (Renderer).app/Contents/MacOS/WSurf Helper (Renderer)" \
+    && -x "$xpc/Contents/MacOS/WSurf Chromium" ]]; then
     exit 0
 fi
 
@@ -103,4 +110,28 @@ PLIST
     printf APPL???? > "$bundle/Contents/PkgInfo"
     sign --entitlements "$SRCROOT/Tools/chromium-helper.entitlements" "$bundle"
 done
+
+# D4 spike: WSurf Chromium.xpc runs CEF's browser process, windowless, out of WSurf's process. No entitlements and no
+# privacy keys (the lead approves those); ad hoc, as the staged builds are. The bundle id carries the stage suffix.
+mkdir -p "$xpc/Contents/MacOS"
+cp -f "$service" "$xpc/Contents/MacOS/WSurf Chromium"
+cat > "$xpc/Contents/Info.plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>CFBundleExecutable</key><string>WSurf Chromium</string>
+<key>CFBundleIdentifier</key><string>${PRODUCT_BUNDLE_IDENTIFIER}.chromium</string>
+<key>CFBundleName</key><string>WSurf Chromium</string>
+<key>CFBundlePackageType</key><string>XPC!</string>
+<key>CFBundleShortVersionString</key><string>${MARKETING_VERSION}</string>
+<key>CFBundleVersion</key><string>${CURRENT_PROJECT_VERSION}</string>
+<key>LSMinimumSystemVersion</key><string>26.0</string>
+<key>XPCService</key><dict>
+<key>ServiceType</key><string>Application</string>
+<key>JoinExistingSession</key><true/>
+<key>RunLoopType</key><string>NSRunLoop</string>
+</dict>
+</dict></plist>
+PLIST
+sign "$xpc"
 printf '%s' "$fingerprint" > "$stamp"
