@@ -23,6 +23,8 @@ final class BrowserApplication {
     private var privateSessionCleanups: [UUID: Task<Void, Never>] = [:]
     let updates = UpdateController()
     private var isReady = false
+    /// The wait for an idle moment after launch, to start Chromium in a session that uses it (`ChromiumPrewarm`).
+    @ObservationIgnored var chromiumPrewarm: ChromiumPrewarm?
     /// While a launch opens its saved windows (`beginLaunchRestore` to the end of `continueLaunchRestore`). A window opened then
     /// draws before its assistant and voices are built (`AppCoordinator.configureEngines`).
     @ObservationIgnored private(set) var isLaunching = false
@@ -182,6 +184,7 @@ final class BrowserApplication {
         mcpServer.resume()
         // The front window has drawn. Chromium's framework is read into memory off the main thread, where Chromium was used.
         ChromiumRuntime.shared.prepareInBackground()
+        armChromiumPrewarm()
         // Every regular profile's watches, whether or not a window of it is open. Each waits a minute before its first reading.
         for profile in catalog.profiles {
             BrowserProfileContext.shared(for: profile).pageWatches?.resume()
@@ -601,6 +604,8 @@ final class BrowserApplication {
 
     func prepareToTerminate() {
         isTerminating = true
+        // Chromium must not start while the app quits.
+        chromiumPrewarm?.cancel()
         // Every profile's vault, synchronously and before anything below can suspend. A cancelled termination leaves them
         // locked: unlocking again is one explicit user action, never an implicit one.
         CredentialManager.lockAll(reason: .termination)

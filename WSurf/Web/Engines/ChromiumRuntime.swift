@@ -80,6 +80,22 @@ final class ChromiumRuntime {
             .appendingPathComponent(profileID.uuidString, isDirectory: true)
     }
 
+    /// The failure of an early start (`startEarly`), kept for the next start to report (`EarlyStartFailure`).
+    private var earlyStart = EarlyStartFailure()
+    private var isStartingEarly = false
+
+    /// Starts CEF ahead of the first Chromium tab (`ChromiumPrewarm`). A failure is kept for that tab to show.
+    func startEarly() {
+        isStartingEarly = true
+        defer { isStartingEarly = false }
+        do {
+            try ensureInitialized()
+        } catch {
+            // The error text can hold the Chromium folder's path, which holds the user name.
+            Self.log.error("early start failed: \(error.localizedDescription, privacy: .private)")
+        }
+    }
+
     func ensureInitialized() throws {
         guard !hasShutdown else { throw ChromiumError.closed }
         guard !isInitialized else { return }
@@ -113,7 +129,9 @@ final class ChromiumRuntime {
         // The main thread waits here for the framework load, CEF's own start and the check of the two against each other. CefKit
         // does the three in one call, so there is one interval for them.
         try Pipeline.signposter.withIntervalSignpost("cef.initialize") {
-            try CefRuntime.shared.initialize(configuration: configuration)
+            try earlyStart.attempt(early: isStartingEarly) {
+                try CefRuntime.shared.initialize(configuration: configuration)
+            }
         }
         // Our native clients own their browser lifetimes, not CefKit's browser registry.
         CEFApplication.setTerminateHandler(nil)
