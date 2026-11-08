@@ -185,6 +185,49 @@ nonisolated final class VaultScalePerformanceTests: XCTestCase, @unchecked Senda
         XCTAssertGreaterThan(given, Int64(7 * size), "freed 32 MB, the footprint gave back \(given / 1024) kB")
     }
 
+    // MARK: Autofill reads (D5)
+
+    /// Measures `read` of a fresh 20,000-credential vault through its store, under the manager's current access, as the memory it
+    /// retains; the free pages are returned just before the measurement starts and just before it stops, as in `measureWrite`.
+    @MainActor
+    func measureRead(_ read: @escaping @MainActor (ProfileVaultStore, UUID, VaultAccess) async throws -> Void) {
+        let fixture = Fixture()
+        finish { try await fixture.makeVault() }
+        guard let manager = fixture.vault?.manager else { return XCTFail("The 20,000-credential vault was not made.") }
+        measure(metrics: [XCTClockMetric(), XCTMemoryMetric()], options: measuredOptions(manual: true)) {
+            autoreleasepool {
+                Self.returnFreePages()
+                startMeasuring()
+                finish { try await read(manager.store, manager.vaultID, try manager.currentAccess()) }
+                Self.returnFreePages()
+                stopMeasuring()
+            }
+        }
+        finish { await fixture.cleanup() }
+    }
+
+    /// The verified read of all 20,000 credentials (`snapshot`), which every autofill list made before D5(a): the baseline of the case
+    /// below.
+    func testReadingTwentyThousandCredentials() {
+        MainActor.assumeIsolated {
+            measureRead { store, vaultID, access in
+                let snapshot = try await store.snapshot(vaultID: vaultID, using: access)
+                XCTAssertEqual(snapshot.accounts.count, Self.count)
+            }
+        }
+    }
+
+    /// What a password field's focus reads since D5(a): the same verified read, projected to candidates on the vault actor, so no
+    /// account leaves it. The projection adds little to the read (plan D5 §2.9, P1: at most 1.1 times the case above).
+    func testListingAutofillCandidatesAmongTwentyThousandCredentials() {
+        MainActor.assumeIsolated {
+            measureRead { store, vaultID, access in
+                let candidates = try await store.autofillCandidates(vaultID: vaultID, using: access)
+                XCTAssertEqual(candidates.candidates.count, Self.count)
+            }
+        }
+    }
+
     // MARK: Edits
 
     /// One changed password, written with the per-account write the import and the bulk actions use. The read that finds the

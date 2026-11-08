@@ -941,6 +941,34 @@ check_average \
   'Restore of one credential from the Trash among 20,000 memory growth' \
   'kB'
 
+# Autofill reads (D5(a)), 20,000 credentials: the verified read (`snapshot`), and the autofill candidates projected from it on the
+# vault actor (`autofillCandidates`). PROVISIONAL, from one run of the two cases alone (2026-11-08): read 0.5822 s, candidates
+# 0.6061 s (1.04 times the read; plan D5 P1: at most 1.1). Time budgets are twice the mean; memory at least 4096 kB.
+check_average \
+  'VaultScalePerformanceTests/testReadingTwentyThousandCredentials()' \
+  'com.apple.dt.XCTMetric_Clock.time.monotonic' \
+  '1.165' \
+  'Verified read of 20,000 credentials' \
+  's'
+check_average \
+  'VaultScalePerformanceTests/testReadingTwentyThousandCredentials()' \
+  'com.apple.dt.XCTMetric_Memory.physical' \
+  '4096' \
+  'Verified read of 20,000 credentials memory growth' \
+  'kB'
+check_average \
+  'VaultScalePerformanceTests/testListingAutofillCandidatesAmongTwentyThousandCredentials()' \
+  'com.apple.dt.XCTMetric_Clock.time.monotonic' \
+  '1.213' \
+  'Autofill candidates of 20,000 credentials' \
+  's'
+check_average \
+  'VaultScalePerformanceTests/testListingAutofillCandidatesAmongTwentyThousandCredentials()' \
+  'com.apple.dt.XCTMetric_Memory.physical' \
+  '4096' \
+  'Autofill candidates of 20,000 credentials memory growth' \
+  'kB'
+
 # History and database (HistoryPerformanceTests), six-sample means on the Pro (2026-10-27, Debug), seconds, before and after WI-3
 # (an index on historyVisit.fromVisit, the schema defined by migrations instead of on every open, one and two letter queries answered
 # from memory). Time budgets are twice the mean after, or a little more where the mean is a fraction of a millisecond; the old code

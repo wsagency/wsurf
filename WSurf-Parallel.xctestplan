@@ -198,6 +198,7 @@
         "VaultAccountModelTests",
         "VaultAccountSizeTests",
         "VaultAccountWriteTests",
+        "VaultAutofillReadTests",
         "VaultCommitTests",
         "VaultContentTests",
         "VaultDiffTests",
