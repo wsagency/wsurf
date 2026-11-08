@@ -117,18 +117,25 @@ public nonisolated enum AutofillItemKind: Sendable {
     case cards, contacts
 }
 
-/// The cards or contacts of one unlocked vault as a fill list shows them, read at `revision`. A list holds no card number, security
-/// code or contact value beyond a row's text. Only a pick (`ProfileVaultStore.autofillItems` with a credential and an item) adds
-/// `picked`, the one row's values; that is checked at run time, not by the type.
-public nonisolated struct AutofillItems: Sendable {
+/// The cards or contacts of one unlocked vault as a fill list shows them, read at `revision`
+/// (`ProfileVaultStore.autofillItems(vaultID:kind:using:)`). The type holds rows only, so no card number, security code or contact
+/// value beyond a row's text can reach a list: the compiler, not a test, keeps them out.
+public nonisolated struct AutofillItemRows: Sendable {
     public let vaultID: UUID
     public let revision: UInt64
     /// `.cards`: every card that can fill (its number passes the card check and it has not expired), in vault order.
     public let cards: [AutofillCardRow]
     /// `.contacts`: one row for each credential that holds a contact, in vault order.
     public let contacts: [AutofillContactRow]
-    /// A pick only: what the picked row fills with.
-    public let picked: AutofillItemValues?
+}
+
+/// One picked row and what it fills with
+/// (`ProfileVaultStore.autofillItems(vaultID:kind:accountID:item:expectedRevision:using:)`): the row as its list showed it and that
+/// row's values, exactly one card's or one contact's, read at the revision its list was read at. It prints and mirrors without
+/// them.
+public nonisolated enum AutofillItemPick: Sendable {
+    case card(AutofillCardRow, AutofillCardValues)
+    case contact(AutofillContactRow, AutofillContactValues)
 }
 
 /// A card as a fill row shows it: its network, last four digits, the name on it and its expiry. Never its number or security code.
@@ -170,12 +177,6 @@ public nonisolated struct AutofillContactRow: Equatable, Sendable {
     }
 }
 
-/// What one picked row fills with: a card's values, or a contact's.
-public nonisolated enum AutofillItemValues: Sendable {
-    case card(AutofillCardValues)
-    case contact(AutofillContactValues)
-}
-
 // A secret never prints, in a log line, a failed assertion or a dump: these describe and mirror without it.
 
 nonisolated extension AutofillLogin: CustomStringConvertible, CustomDebugStringConvertible, CustomReflectable {
@@ -206,13 +207,13 @@ nonisolated extension TOTPCodeSource: CustomStringConvertible, CustomDebugString
     }
 }
 
-nonisolated extension AutofillItemValues: CustomStringConvertible, CustomDebugStringConvertible, CustomReflectable {
+nonisolated extension AutofillItemPick: CustomStringConvertible, CustomDebugStringConvertible, CustomReflectable {
     public var description: String {
-        "AutofillItemValues"
+        "AutofillItemPick"
     }
 
     public var debugDescription: String {
-        "AutofillItemValues"
+        "AutofillItemPick"
     }
 
     public var customMirror: Mirror {
