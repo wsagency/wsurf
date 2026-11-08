@@ -166,7 +166,7 @@ public nonisolated struct AutofillContactRow: Equatable, Sendable {
         self.accountID = accountID
         self.item = item
         title = contact.title
-        detail = contact.detail
+        detail = contact.rowDetail
     }
 }
 

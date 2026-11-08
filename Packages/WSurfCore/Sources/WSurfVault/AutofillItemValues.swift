@@ -204,8 +204,8 @@ public nonisolated struct AutofillContactValues: Equatable, Sendable {
         [label, name, email, street, organization, phone].first { !$0.isEmpty }
     }
 
-    /// A row's second line: the email and the street on one line.
-    public var detail: String {
+    /// A fill row's second line: the email and the street, on one line. Not the contact's whole multi-line detail.
+    public var rowDetail: String {
         [email, street.replacingOccurrences(of: "\n", with: ", ")].filter { !$0.isEmpty }.joined(separator: " · ")
     }
 }

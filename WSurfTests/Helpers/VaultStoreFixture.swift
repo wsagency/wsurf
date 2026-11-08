@@ -521,10 +521,12 @@ nonisolated final class StoreTracker: @unchecked Sendable {
         env: VaultTestEnvironment,
         fileOps: StoreFileOps = .live,
         lockWait: Duration = StoreFormat.lockWait,
-        now: @escaping @Sendable () -> ContinuousClock.Instant = { ContinuousClock().now }
+        now: @escaping @Sendable () -> ContinuousClock.Instant = { ContinuousClock().now },
+        wall: @escaping @Sendable () -> Date = { Date() }
     ) -> ProfileVaultStore {
         let store = ProfileVaultStore(
-            profileID: env.profileID, directory: env.directory, defaults: env.defaults, fileOps: fileOps, lockWait: lockWait, now: now
+            profileID: env.profileID, directory: env.directory, defaults: env.defaults, fileOps: fileOps, lockWait: lockWait, now: now,
+            wall: wall
         )
         lock.withLock { stores.append(store) }
         return store
@@ -598,13 +600,15 @@ nonisolated extension VaultStoreFixture {
 
     // MARK: Store helpers
 
-    /// A store on this fixture's profile, directory and defaults, registered for closing by `with`.
+    /// A store on this fixture's profile, directory and defaults, registered for closing by `with`. `wall` is the calendar clock the
+    /// store dates things by (a card's expiry, for one).
     func makeStore(
         fileOps: StoreFileOps = .live,
         lockWait: Duration = StoreFormat.lockWait,
-        now: @escaping @Sendable () -> ContinuousClock.Instant = { ContinuousClock().now }
+        now: @escaping @Sendable () -> ContinuousClock.Instant = { ContinuousClock().now },
+        wall: @escaping @Sendable () -> Date = { Date() }
     ) -> ProfileVaultStore {
-        tracker.makeStore(env: env, fileOps: fileOps, lockWait: lockWait, now: now)
+        tracker.makeStore(env: env, fileOps: fileOps, lockWait: lockWait, now: now, wall: wall)
     }
 
     func beginAccess(lifetime: Duration = .seconds(300)) -> VaultAccess {
@@ -620,10 +624,10 @@ nonisolated extension VaultStoreFixture {
     }
 
     /// A fresh store unlocked on `vaultID` (default: vault A) through the public `unlockInitialized`.
-    func unlocked(vaultID: UUID? = nil) async throws -> (ProfileVaultStore, VaultAccess) {
+    func unlocked(vaultID: UUID? = nil, wall: @escaping @Sendable () -> Date = { Date() }) async throws -> (ProfileVaultStore, VaultAccess) {
         let target = vaultID ?? self.vaultID
         let unlocking = proof(for: target)
-        let store = makeStore()
+        let store = makeStore(wall: wall)
         let access = beginAccess()
         try await store.unlockInitialized(
             vaultID: target, credentialID: unlocking.credentialID, prf: unlocking.prf, access: access, verifying: nil, scratchWarning: nil

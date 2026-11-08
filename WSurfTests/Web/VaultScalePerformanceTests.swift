@@ -218,12 +218,56 @@ nonisolated final class VaultScalePerformanceTests: XCTestCase, @unchecked Senda
     }
 
     /// What a password field's focus reads since D5(a): the same verified read, projected to candidates on the vault actor, so no
-    /// account leaves it. The projection adds little to the read (plan D5 §2.9, P1: at most 1.1 times the case above).
+    /// account leaves it. The projection adds little to the read: plan D5 §2.9's P1 asks for at most 1.1 times the case above, which
+    /// was measured by hand when the budgets were set. The budgets themselves are absolute and gate gross regressions only.
     func testListingAutofillCandidatesAmongTwentyThousandCredentials() {
         MainActor.assumeIsolated {
             measureRead { store, vaultID, access in
                 let candidates = try await store.autofillCandidates(vaultID: vaultID, using: access)
                 XCTAssertEqual(candidates.candidates.count, Self.count)
+            }
+        }
+    }
+
+    /// The calendar date the projection case dates its cards by: mid-June 2030, before `SecureItemFixtures.card` ends (2031-07).
+    static let projectionDate = Date(timeIntervalSince1970: 1_907_755_200)
+
+    /// `storedAccounts()` with items: every tenth credential (from the fifth) also holds a card and a Wi-Fi network, and one card in
+    /// ten has ended; every tenth credential (from the third) holds a contact, a name and an address.
+    static func accountsWithItems() throws -> [CredentialAccount] {
+        try storedAccounts().enumerated().map { index, stored in
+            var account = stored
+            switch index % 10 {
+            case 5:
+                var card = SecureItemFixtures.card()
+                if index % 100 == 5 {
+                    card.fields[3].value = "2020-01"
+                }
+                account.secureItems = [card, SecureItemFixtures.wifi()]
+            case 3:
+                account.secureItems = [SecureItemFixtures.name(), SecureItemFixtures.address()]
+            default:
+                break
+            }
+            return account
+        }
+    }
+
+    /// The projection alone, without the read and with no I/O: what the vault actor makes of 20,000 decoded credentials for a
+    /// password field (`autofillCandidates`: each credential and its items' facts, a digit filter and a card check per card), a card
+    /// field (the card rows of `autofillItems`, through the store's own `cardRows`) and an address field (its contact rows,
+    /// `contactRow`). The read cases above hold it only inside a read of about 0.6 s; here a slower projection shows on its own.
+    func testProjectingTwentyThousandCredentialsForAutofill() throws {
+        let accounts = try Self.accountsWithItems()
+        let date = Self.projectionDate
+        MainActor.assumeIsolated {
+            measure(metrics: [XCTClockMetric(), XCTMemoryMetric()], options: measuredOptions()) {
+                let candidates = accounts.map(AutofillCandidate.init)
+                let cards = accounts.flatMap { ProfileVaultStore.cardRows(of: $0, now: date).map(\.row) }
+                let contacts = accounts.compactMap { ProfileVaultStore.contactRow(of: $0)?.row }
+                XCTAssertEqual(candidates.count, Self.count)
+                XCTAssertEqual(cards.count, 1_800)
+                XCTAssertEqual(contacts.count, 2_000)
             }
         }
     }
