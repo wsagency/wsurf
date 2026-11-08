@@ -168,12 +168,13 @@ struct AutofillSecretsTests {
             let itemKind: AutofillItemKind = kind == .card ? .cards : .contacts
             #expect(audit.reads == [.items(itemKind, pick: false)], "the focus read something else: \(audit.reads)")
             #expect(request.grants.keys.contains(vault.vaultID) && rows.count == 1 && request.itemRows.count == 1)
-            switch kind {
+            let shownAsBefore = switch kind {
             case .card:
-                #expect(rows.first?.title == "Visa •••• 5556" && rows.first?.detail == "Grace Hopper")
+                rows.first?.title == "Visa •••• 5556" && rows.first?.detail == "Grace Hopper"
             default:
-                #expect(rows.first?.title == "Home" && rows.first?.detail == Self.street)
+                rows.first?.title == "Home" && rows.first?.detail == Self.street
             }
+            #expect(shownAsBefore, "the row is not titled and detailed as before")
             let shown = kind == .contact ? [Self.street] : []
             let leaks = Self.leaks(in: [rows] + Self.kept(by: request), showing: shown)
             #expect(leaks.isEmpty, "the rows or the request hold a secret: \(leaks)")
@@ -201,11 +202,13 @@ struct AutofillSecretsTests {
                 #expect(filled.username == "ada")
             case .totp:
                 let code = delivered["code"] as? String
-                #expect((code == earlier || code == later) && delivered.count == 1, "the pick did not deliver the code")
+                let isTheCode = (code == earlier || code == later) && delivered.count == 1
+                #expect(isTheCode, "the pick did not deliver the code")
                 #expect(filled.username == nil)
             }
             #expect(audit.reads == [.candidates, .login(field == .totp ? .totp : .password)], "\(audit.reads)")
-            #expect(Self.leaks(in: Self.kept(by: request)).isEmpty, "the request keeps the picked secret")
+            let leaks = Self.leaks(in: Self.kept(by: request))
+            #expect(leaks.isEmpty, "the request keeps the picked secret: \(leaks)")
         }
     }
 
@@ -239,7 +242,8 @@ struct AutofillSecretsTests {
                 #expect(isTheLogin && delivered.count == 2, "the sibling pick did not deliver its login")
             case .totp:
                 let code = delivered["code"] as? String
-                #expect((code == earlier || code == later) && delivered.count == 1, "the sibling pick did not deliver its code")
+                let isTheCode = (code == earlier || code == later) && delivered.count == 1
+                #expect(isTheCode, "the sibling pick did not deliver its code")
             }
         }
     }
@@ -322,6 +326,43 @@ struct AutofillSecretsTests {
         }
     }
 
+    /// A card that ends between its row and the pick (review F3). The vault refuses that pick as stale, by its own calendar clock
+    /// (`VaultAutofillReadTests.aCardThatEndsAfterItsListIsStale` moves it across a month end); the panel then fails it as it did before
+    /// D5(a), with `PaymentCardError.noField`, from the expiry its row showed. Anything else stale, and any contact, is `changedPage`.
+    /// Both show the same "Couldn't Fill Saved Details" alert, and no Touch ID is asked.
+    @Test func aCardThatEndsBeforeItsPickFailsAsBefore() async throws {
+        let july = Date(timeIntervalSince1970: 1_941_883_200), august = Date(timeIntervalSince1970: 1_944_561_600)
+        #expect(Self.isNoField(VaultItemAutofill.stalePickError(month: 7, year: 2031, now: august)))
+        #expect(VaultItemAutofill.stalePickError(month: 7, year: 2031, now: july) as? ContactAutofillError == .changedPage)
+        #expect(VaultItemAutofill.stalePickError(month: nil, year: nil, now: august) as? ContactAutofillError == .changedPage)
+        try await withVault { rig, vault, accounts, _ in
+            let suggestions = AutofillSuggestions.shared
+            let verify = suggestions.verifyUser
+            var asked = 0
+            suggestions.verifyUser = { _ in asked += 1 }
+            defer { suggestions.verifyUser = verify }
+            let request = rig.request(.card)
+            _ = await suggestions.vaultItemSuggestions(for: request, origin: Self.shop, presentation: suggestions.presentationID)
+            let rowID = try #require(request.itemRows.keys.first)
+            let keptExpiry = request.itemRows[rowID]?.month == 7 && request.itemRows[rowID]?.year == 2031
+            #expect(keptExpiry, "a card row does not keep the expiry it showed")
+            // The row's card has ended by now, and the vault refuses the pick as stale: here a write stands in for the month end,
+            // which only the store's calendar clock decides.
+            request.itemRows[rowID]?.month = 12
+            request.itemRows[rowID]?.year = 2020
+            try await VaultManagerFixture.save(accounts + [VaultFixtures.account(username: "grace", origin: Self.shop)], in: vault)
+
+            var refused: (any Error)?
+            do {
+                _ = try await suggestions.vaultItemFill(rowID, request: request, in: rig.page)
+            } catch {
+                refused = error
+            }
+            #expect(Self.isNoField(refused), "a card that ended since its row fails otherwise than before D5(a)")
+            #expect(asked == 0, "Touch ID was asked for a card that will not fill")
+        }
+    }
+
     // MARK: A5 A lock still drops everything
 
     /// List, lock every vault as a screen lock does, then pick: the request's authority, the vault read and the store's grant are all
@@ -359,7 +400,8 @@ struct AutofillSecretsTests {
                     pick = error
                 }
                 #expect(pick as? ContactAutofillError == .changedPage)
-                #expect(Self.leaks(in: Self.kept(by: request)).isEmpty, "the request keeps a secret after the lock")
+                let leaks = Self.leaks(in: Self.kept(by: request))
+                #expect(leaks.isEmpty, "the request keeps a secret after the lock: \(leaks)")
             }
         }
     }
@@ -376,6 +418,12 @@ struct AutofillSecretsTests {
         let rowID = UUID()
         request.rows[rowID] = (vault.vaultID, account.id)
         return rowID
+    }
+
+    /// Whether `error` is `PaymentCardError.noField`, the panel's error for a card that cannot fill.
+    private static func isNoField(_ error: (any Error)?) -> Bool {
+        guard let error = error as? PaymentCardError, case .noField = error else { return false }
+        return true
     }
 
     private func failure(_ body: () async throws -> Void) async -> (any Error)? {

@@ -114,13 +114,15 @@ struct AutofillListingTests {
         for account in try Self.accounts() {
             let candidate = AutofillCandidate(account)
             for origin in [Self.site, "https://example.test", "https://other.test", "https://a.github.io"] {
-                #expect(CredentialAccountSelection.isSibling(candidate, of: origin) == CredentialAccountSelection.isSibling(account, of: origin))
-                #expect(CredentialAccountSelection.title(candidate, origin: origin) == CredentialAccountSelection.title(account, origin: origin))
+                // Compared as Bools first: a failed check would otherwise print the whole entry, its password included.
+                let sameSibling = CredentialAccountSelection.isSibling(candidate, of: origin) == CredentialAccountSelection.isSibling(account, of: origin)
+                #expect(sameSibling, "a candidate is a sibling otherwise than its entry")
+                let sameTitle = CredentialAccountSelection.title(candidate, origin: origin) == CredentialAccountSelection.title(account, origin: origin)
+                #expect(sameTitle, "a candidate is titled otherwise than its entry")
                 for anySite in [false, true] {
-                    #expect(
-                        CredentialAccountSelection.canAddWebsite(origin, to: candidate, anySite: anySite)
-                            == CredentialAccountSelection.canAddWebsite(origin, to: account, anySite: anySite)
-                    )
+                    let sameOffer = CredentialAccountSelection.canAddWebsite(origin, to: candidate, anySite: anySite)
+                        == CredentialAccountSelection.canAddWebsite(origin, to: account, anySite: anySite)
+                    #expect(sameOffer, "a candidate is offered a website otherwise than its entry")
                 }
             }
         }
@@ -162,16 +164,20 @@ struct AutofillListingTests {
         let bare = try CredentialAccountSelection.fillFields(
             AutofillLogin(Self.account("ada", password: nil), field: .password), field: .password, origin: Self.site, sibling: false, at: .now
         )
-        #expect(bare["username"] as? String == "ada" && bare.count == 1)
+        let usernameOnly = bare["username"] as? String == "ada" && bare.count == 1
+        #expect(usernameOnly, "a password pick without a password does not fill the username alone")
 
         let at = Date(timeIntervalSince1970: 59)
         let code = AutofillLogin(Self.account("grace", password: nil, totp: true), field: .totp)
-        #expect(try CredentialAccountSelection.fillFields(code, field: .totp, origin: Self.site, sibling: false, at: at)["code"] as? String == "94287082")
+        let isTheCode = try CredentialAccountSelection.fillFields(code, field: .totp, origin: Self.site, sibling: false, at: at)["code"] as? String == "94287082"
+        #expect(isTheCode, "a code pick does not fill RFC 6238's code")
         let sibling = AutofillLogin(Self.account("", password: nil, origins: ["https://example.test"], totp: true), field: .totp)
         #expect(throws: ContactAutofillError.noField) {
             _ = try CredentialAccountSelection.fillFields(sibling, field: .totp, origin: Self.site, sibling: false, at: at)
         }
-        #expect(try CredentialAccountSelection.fillFields(sibling, field: .totp, origin: Self.site, sibling: true, at: at)["code"] as? String == "94287082")
+        let isTheSiblingCode = try CredentialAccountSelection.fillFields(sibling, field: .totp, origin: Self.site, sibling: true, at: at)["code"] as? String
+            == "94287082"
+        #expect(isTheSiblingCode, "a sibling's code pick does not fill RFC 6238's code")
         let elsewhere = AutofillLogin(Self.account("carol", origins: ["https://other.test"], totp: true), field: .totp)
         #expect(throws: ContactAutofillError.noField) {
             _ = try CredentialAccountSelection.fillFields(elsewhere, field: .totp, origin: Self.site, sibling: true, at: at)

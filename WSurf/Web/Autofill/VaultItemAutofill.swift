@@ -9,15 +9,20 @@ import WSurfVault
 /// fill panel's rows, which the vault builds (`ProfileVaultStore.autofillItems`), and everything here read an item the same way. Pure:
 /// the caller reads the vault under its own lease and checks it again before anything reaches the page or the vault.
 nonisolated enum VaultItemAutofill {
-    /// The stable ids of a contact's email and organization, which an entry keeps as custom fields.
-    static let emailFieldID = AutofillContactValues.emailFieldID
-    static let organizationFieldID = AutofillContactValues.organizationFieldID
-
     /// One row the panel can show: the credential and item it comes from, and what fills. `value` stays in Swift until delivery.
     struct Offer<Value: Sendable>: Sendable {
         let accountID: UUID
         let item: Int
         let value: Value
+    }
+
+    /// What a card or address pick fails with when the vault refuses it as stale, as the panel failed it before D5(a). The panel read
+    /// the whole vault again at the pick: a write since the row was shown, or a row that is gone, failed as `changedPage`, and a card
+    /// that had ended since the row was shown as `PaymentCardError.noField`. The vault refuses all of them as `staleRevision`, so the
+    /// row's own expiry (`month`, `year`; none for a contact) tells the ended card apart. Both show the same "Couldn't Fill Saved
+    /// Details" alert, and neither counts as a cancellation.
+    static func stalePickError(month: Int?, year: Int?, now: Date = .now) -> any Error {
+        PaymentCardRules.isExpired(month: month, year: year, on: now) ? PaymentCardError.noField : ContactAutofillError.changedPage
     }
 
     /// Every card that can fill a form, in vault order: a number that passes the card check and an expiry not in the past. The
@@ -67,11 +72,12 @@ nonisolated enum VaultItemAutofill {
     }
 
     /// A new entry that holds `contact`: its name as a name item, its address and phone as an address item, and its email and
-    /// organization as custom fields with stable ids. Its label is the entry's name.
+    /// organization as custom fields with the vault's stable ids (`AutofillContactValues.emailFieldID`, `organizationFieldID`). Its
+    /// label is the entry's name.
     static func account(for contact: AutofillContact) -> CredentialAccount {
         let custom = [
-            (emailFieldID, String(localized: "Email"), CredentialEditableFieldType.email, contact.email),
-            (organizationFieldID, String(localized: "Organization"), CredentialEditableFieldType.string, contact.organization),
+            (AutofillContactValues.emailFieldID, String(localized: "Email"), CredentialEditableFieldType.email, contact.email),
+            (AutofillContactValues.organizationFieldID, String(localized: "Organization"), CredentialEditableFieldType.string, contact.organization),
         ].filter { !$0.3.isEmpty }.map { id, label, type, value in
             SecureItemField(name: "", value: value, field: CredentialEditableFieldMetadata(id: id, label: label, fieldType: type))
         }

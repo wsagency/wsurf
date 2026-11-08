@@ -45,11 +45,12 @@ final class AutofillSuggestions {
         var grants: [UUID: Grant] = [:]
         /// What the panel returns (a fresh id per row) -> the owning vault and its account. Two vaults may hold the same account id.
         var rows: [UUID: (vaultID: UUID, accountID: UUID)] = [:]
-        /// A card or address row of the credentials vault -> its vault, credential and item (`VaultItemAutofill`).
+        /// A card or address row of the credentials vault -> its vault, credential and item, and a card's expiry as the row showed it.
         struct ItemRow {
             let vaultID: UUID
             let accountID: UUID
             let item: Int
+            var month: Int?, year: Int?
         }
         var itemRows: [UUID: ItemRow] = [:]
         /// Rows that list an account of a sibling website (`CredentialAccountSelection.siblings`), not of the page's origin.
@@ -412,13 +413,13 @@ final class AutofillSuggestions {
             guard request.page.context === context, presentation == presentationID,
                   requests[ObjectIdentifier(request.page)] === request else { return [] }
             request.grants[manager.vaultID] = Request.Grant(epoch: epoch, revision: items.revision)
-            func row(accountID: UUID, item: Int) -> UUID {
+            func row(accountID: UUID, item: Int, month: Int? = nil, year: Int? = nil) -> UUID {
                 let rowID = UUID()
-                request.itemRows[rowID] = Request.ItemRow(vaultID: manager.vaultID, accountID: accountID, item: item)
+                request.itemRows[rowID] = Request.ItemRow(vaultID: manager.vaultID, accountID: accountID, item: item, month: month, year: year)
                 return rowID
             }
             for card in items.cards {
-                result.append(AutofillSuggestion(id: row(accountID: card.accountID, item: card.item), card: card))
+                result.append(AutofillSuggestion(id: row(accountID: card.accountID, item: card.item, month: card.month, year: card.year), card: card))
             }
             for contact in items.contacts {
                 result.append(AutofillSuggestion(id: row(accountID: contact.accountID, item: contact.item), contact: contact))
@@ -447,16 +448,15 @@ final class AutofillSuggestions {
                 kind: Self.itemKind(of: request), accountID: row.accountID, item: row.item, expectedRevision: grant.revision
             ).picked
         } catch CredentialVaultError.staleRevision {
-            // A write since the row was shown, or the row is gone: as before, the page changed.
-            throw ContactAutofillError.changedPage
+            // A write since the row was shown, a row that is gone, or a card that has ended since: each fails as before D5(a).
+            throw VaultItemAutofill.stalePickError(month: row.month, year: row.year)
         }
-        guard manager.authorizationEpoch == grant.epoch, manager.stableGeneration == generation, let picked else {
-            throw ContactAutofillError.changedPage
-        }
+        guard manager.authorizationEpoch == grant.epoch, manager.stableGeneration == generation, let picked else { throw ContactAutofillError.changedPage }
         let fields: [String: Any]
         switch picked {
         case .card(let values):
             guard let card = VaultItemAutofill.paymentCard(values), !card.isExpired() else { throw PaymentCardError.noField }
+            // Touch ID after the pick's read, as before D5(a): a row that is stale or has ended fails without asking for it.
             try await verifyUser(String(localized: "fill your saved payment card"))
             fields = ["number": card.number, "cardholder": card.cardholder, "securityCode": card.securityCode ?? "", "month": card.month ?? 0, "year": card.year ?? 0]
         case .contact(let values):
