@@ -50,6 +50,12 @@ final class CredentialSelection {
         selected.isEmpty
     }
 
+    /// How many rows have been built since this selection was made (one state per row, kept): the performance tests' probe for the
+    /// rows a keystroke or a scroll brings into view.
+    var builtRowCount: Int {
+        rows.count
+    }
+
     /// The selection as row `id` shows it. Read in the row's body: only a change to this row's state redraws it.
     func state(of id: UUID) -> CredentialRowState {
         if let state = rows[id] {

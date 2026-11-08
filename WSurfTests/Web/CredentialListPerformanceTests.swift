@@ -14,6 +14,9 @@ import XCTest
 // healthy build takes and far below what the page took when it built every row at once, so a regression to eager rows fails them.
 nonisolated final class CredentialListPerformanceTests: XCTestCase, @unchecked Sendable {
     private static let count = 3_000
+    /// The rows that carry `tag` in their name, and the word itself.
+    private static let taggedCount = 40
+    private static let tag = "zqxtag"
 
     // MARK: Fixtures
 
@@ -27,6 +30,10 @@ nonisolated final class CredentialListPerformanceTests: XCTestCase, @unchecked S
                 username: "user\(index)@example.test", password: "password-\(index)", origin: "https://\(host)", passkeys: passkeys
             )
             account.displayName = index % 2 == 0 ? "Site \(index)" : nil
+            if index < Self.taggedCount {
+                // The first rows, which are the ones on screen at the top, carry a word no other row has (K2).
+                account.displayName = "Site \(index) \(Self.tag)"
+            }
             if index % 5 == 0 {
                 account.totp = TOTPGenerator(
                     secret: Data("seed-\(index)".utf8), algorithm: .sha1, period: 30, digits: 6, issuer: "Example", userName: "user\(index)"
@@ -83,9 +90,9 @@ nonisolated final class CredentialListPerformanceTests: XCTestCase, @unchecked S
     }
 
     @MainActor
-    private static func mount(_ view: some View) -> (host: NSView, window: NSWindow) {
+    private static func mount(_ view: some View, height: CGFloat = 700) -> (host: NSView, window: NSWindow) {
         let host = NSHostingView(rootView: view)
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 760, height: 700), styleMask: [.borderless], backing: .buffered, defer: false)
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 760, height: height), styleMask: [.borderless], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         window.contentView = host
         return (host, window)
@@ -128,6 +135,228 @@ nonisolated final class CredentialListPerformanceTests: XCTestCase, @unchecked S
             }
         }
         return false
+    }
+
+    // MARK: Keystroke probes (plan 6.4, K1 to K5)
+
+    /// What one keystroke (or one scroll) cost: wall time to a settled page, rows whose state was made for the first time (rows that came
+    /// into view), recomputations of the matches, and changes the page's observed state went through (a body pass follows each).
+    private struct Cost: CustomStringConvertible {
+        var milliseconds: Double
+        /// Of which the assignment itself took (the narrowing), before the page was laid out.
+        var assignment = 0.0
+        var rowsBuilt: Int
+        var narrowings: Int
+        var invalidations: Int
+
+        var description: String {
+            String(
+                format: "%.1f ms (assigning %.1f), %d rows built, %d narrowings, %d invalidations", milliseconds, assignment, rowsBuilt,
+                narrowings, invalidations
+            )
+        }
+    }
+
+    @MainActor
+    private static func scrollView(in view: NSView) -> NSScrollView? {
+        if let scroll = view as? NSScrollView {
+            return scroll
+        }
+        return view.subviews.lazy.compactMap { scrollView(in: $0) }.first
+    }
+
+    @MainActor
+    private static func scroll(_ host: NSView, to offset: CGFloat) {
+        guard let scroll = scrollView(in: host) else { return }
+        scroll.contentView.scroll(to: NSPoint(x: 0, y: offset))
+        scroll.reflectScrolledClipView(scroll.contentView)
+        settle(host)
+    }
+
+    /// A page mounted fresh (so no row has a state yet), idle, with `before` typed and scrolled to `offset`; then `action` is timed.
+    @MainActor
+    private func measureKeystroke(
+        _ profile: Profile, _ vault: FixtureVault, height: CGFloat = 700, before: String = "", offset: CGFloat = 0,
+        expecting rows: Int? = nil, action: (CredentialListState, NSView) async -> Double
+    ) async throws -> Cost {
+        let model = try await loadedModel(profile, vault)
+        let list = CredentialListState()
+        let selection = CredentialSelection()
+        let (host, window) = Self.mount(Self.page(model, list: list, selection: selection), height: height)
+        defer { window.close() }
+        Self.settle(host)
+        _ = await waitUntil { list.counts != nil }
+        if !before.isEmpty {
+            list.query = before
+            _ = await waitUntil(tick: .milliseconds(2)) { list.narrowCount >= 2 }
+            Self.settle(host)
+        }
+        if offset > 0 {
+            Self.scroll(host, to: offset)
+        }
+        _ = await Self.waitUntilIdle()
+        let counter = ChangeCounter { _ = list.rows(of: model.summaries); _ = list.counts }
+        let built = selection.builtRowCount, narrowings = list.narrowCount
+        let started = ContinuousClock.now
+        let assignment = await action(list, host)
+        if let rows {
+            _ = await waitUntil(tick: .milliseconds(1)) { list.rows(of: model.summaries).count == rows }
+        }
+        Self.settle(host)
+        let elapsed = ContinuousClock.now - started
+        let ms = Double(elapsed.components.seconds) * 1_000 + Double(elapsed.components.attoseconds) / 1e15
+        return Cost(
+            milliseconds: ms, assignment: assignment, rowsBuilt: selection.builtRowCount - built, narrowings: list.narrowCount - narrowings,
+            invalidations: counter.count
+        )
+    }
+
+    /// Types `text`, then waits for the refresh it starts and for the page to settle.
+    @MainActor
+    private static func type(_ text: String, _ list: CredentialListState) async -> Double {
+        let before = list.narrowCount
+        let started = ContinuousClock.now
+        list.query = text
+        let assigned = ContinuousClock.now - started
+        _ = await waitUntil(tick: .milliseconds(1)) { list.narrowCount > before }
+        return Double(assigned.components.seconds) * 1_000 + Double(assigned.components.attoseconds) / 1e15
+    }
+
+    @MainActor
+    private func report(_ name: String, _ costs: [Cost]) {
+        let sorted = costs.map(\.milliseconds).sorted()
+        let median = sorted[sorted.count / 2]
+        print("[credential-list] \(name): median \(String(format: "%.1f", median)) ms of \(costs.count): \(costs.map(\.description).joined(separator: " | "))")
+    }
+
+    // MARK: Keystroke tests
+
+    /// K1: a keystroke that keeps every row. K2: a keystroke that removes 2,960 rows and keeps the 40 on screen.
+    @MainActor
+    func testKeystrokeThatKeepsTheRowsAndOneThatRemovesOffScreenRows() async throws {
+        try await withLargeVault { profile, vault in
+            var same: [Cost] = [], sameFromEmpty: [Cost] = [], offscreen: [Cost] = []
+            for _ in 0..<3 {
+                try await same.append(measureKeystroke(profile, vault, before: "us", expecting: Self.count) { list, _ in
+                    await Self.type("use", list)
+                })
+                try await sameFromEmpty.append(measureKeystroke(profile, vault, expecting: Self.count) { list, _ in
+                    await Self.type("user", list)
+                })
+                try await offscreen.append(
+                    measureKeystroke(profile, vault, before: "user", expecting: Self.taggedCount) { list, _ in
+                        await Self.type(Self.tag, list)
+                    })
+            }
+            // Deterministic: a keystroke that keeps the rows brings none into view and narrows once.
+            for cost in same + sameFromEmpty {
+                XCTAssertEqual(cost.rowsBuilt, 0)
+                XCTAssertEqual(cost.narrowings, 1)
+            }
+            XCTAssertTrue((same + sameFromEmpty + offscreen).allSatisfy { $0.narrowings == 1 })
+            report("K1 keystroke keeping all 3000 rows (us to use)", same)
+            report("K1b first keystroke keeping all 3000 rows ('' to user)", sameFromEmpty)
+            report("K2 mass removal keeping the 40 rows on screen (user to tag)", offscreen)
+        }
+    }
+
+    /// K3: a keystroke that replaces the rows on screen, at the top. K3': the same after scrolling to the middle. K4: K3 in a 1,400 pt
+    /// window. K5: scrolling one viewport with no search, which brings every row on screen into view.
+    @MainActor
+    func testKeystrokeThatBringsNewRowsIntoView() async throws {
+        try await withLargeVault { profile, vault in
+            var top: [Cost] = [], fromEmpty: [Cost] = [], middle: [Cost] = [], tall: [Cost] = [], scrolled: [Cost] = []
+            for _ in 0..<3 {
+                try await top.append(measureKeystroke(profile, vault, before: "site1", expecting: 111) { list, _ in
+                    await Self.type("site29", list)
+                })
+                try await fromEmpty.append(measureKeystroke(profile, vault, expecting: 111) { list, _ in
+                    await Self.type("site29", list)
+                })
+                try await middle.append(measureKeystroke(profile, vault, before: "site1", offset: 20_000, expecting: 111) { list, _ in
+                    await Self.type("site29", list)
+                })
+                try await tall.append(
+                    measureKeystroke(profile, vault, height: 1_400, before: "site1", expecting: 111) { list, _ in
+                        await Self.type("site29", list)
+                    })
+                try await scrolled.append(measureKeystroke(profile, vault) { _, host in
+                    Self.scroll(host, to: 700)
+                    return 0
+                })
+            }
+            XCTAssertTrue((top + fromEmpty + middle + tall + scrolled).allSatisfy { $0.narrowings <= 1 }, "a keystroke narrows once")
+            // The rows that come into view follow the window, not the vault (700 pt shows about 8, 1,400 pt about 25).
+            XCTAssertLessThan(try XCTUnwrap(top.map(\.rowsBuilt).max()), 20)
+            XCTAssertLessThan(try XCTUnwrap(tall.map(\.rowsBuilt).max()), 40)
+            report("K3 site1 to site29, top, 700 pt", top)
+            report("K3b '' to site29, top, 700 pt", fromEmpty)
+            report("K3' site1 to site29 after scrolling to 20000 pt", middle)
+            report("K4 site1 to site29, top, 1400 pt", tall)
+            report("K5 scroll one viewport, no search", scrolled)
+        }
+    }
+
+    // MARK: Budgeted keystrokes
+
+    /// Typing in the search field narrows the list in the same update as the keystroke, so what a keystroke costs is the narrowing,
+    /// the rows that come into view, and the page's layout. Here 3,000 credentials become the 111 that hold "site29". The page is
+    /// settled and idle first, each pass starts from "site1" (1,111 rows, so none of the 111 is on screen yet), and only the keystroke
+    /// is timed.
+    @MainActor
+    func testNarrowingThreeThousandCredentialsToOneHundredAndEleven() async throws {
+        try await withLargeVault { profile, vault in
+            let model = try await loadedModel(profile, vault)
+            let list = CredentialListState()
+            let (host, window) = Self.mount(Self.page(model, list: list))
+            Self.settle(host)
+            _ = await waitUntil { list.counts != nil }
+            _ = await Self.waitUntilIdle()
+            list.query = "site1"
+            Self.settle(host)
+
+            let options = XCTMeasureOptions.budgeted
+            options.invocationOptions = [.manuallyStart, .manuallyStop]
+            measure(metrics: [XCTClockMetric()], options: options) {
+                list.query = "site1"
+                Self.settle(host)
+                startMeasuring()
+                list.query = "site29"
+                Self.settle(host)
+                stopMeasuring()
+            }
+            XCTAssertEqual(list.rows(of: model.summaries).count, 111)
+            window.close()
+        }
+    }
+
+    /// A keystroke that leaves every row where it was ("use" after "us", both matching all 3,000): nothing new comes into view, so
+    /// the cost is the narrowing and the page's layout alone.
+    @MainActor
+    func testATypedLetterThatKeepsEveryRowOfThreeThousandCredentials() async throws {
+        try await withLargeVault { profile, vault in
+            let model = try await loadedModel(profile, vault)
+            let list = CredentialListState()
+            let (host, window) = Self.mount(Self.page(model, list: list))
+            Self.settle(host)
+            _ = await waitUntil { list.counts != nil }
+            _ = await Self.waitUntilIdle()
+            list.query = "us"
+            Self.settle(host)
+
+            let options = XCTMeasureOptions.budgeted
+            options.invocationOptions = [.manuallyStart, .manuallyStop]
+            measure(metrics: [XCTClockMetric()], options: options) {
+                list.query = "us"
+                Self.settle(host)
+                startMeasuring()
+                list.query = "use"
+                Self.settle(host)
+                stopMeasuring()
+            }
+            XCTAssertEqual(list.rows(of: model.summaries).count, Self.count)
+            window.close()
+        }
     }
 
     // MARK: Tests

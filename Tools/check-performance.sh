@@ -530,6 +530,23 @@ check_average \
   '0.300' \
   '3,000-credential Credential Manager page layout' \
   's'
+# Typing in the Credential Manager search over 3,000 credentials (D5(b), plan 6.5). Pro, Debug + coverage, whole Performance plan, two
+# runs, mean of samples 2-6 plus the page's own layout: 3,000 to 111 rows ("site1" then "site29", none of the 111 on screen before)
+# 0.0323 / 0.0349 s; a keystroke that leaves every row ("us" then "use") 0.0208 / 0.0197 s. The same keystrokes took 0.142 s and
+# 0.056 s before the row's controls were drawn, the keystroke narrowed in the same update and an unchanged row was left alone
+# (K3 and K1 of the same fixture, at load 14-32). Budget twice the larger mean. The page layout above (0.144 / 0.143 s) is as it was.
+check_average \
+  'CredentialListPerformanceTests/testNarrowingThreeThousandCredentialsToOneHundredAndEleven()' \
+  'com.apple.dt.XCTMetric_Clock.time.monotonic' \
+  '0.0697' \
+  'Credential Manager search narrowing 3,000 credentials to 111' \
+  's'
+check_average \
+  'CredentialListPerformanceTests/testATypedLetterThatKeepsEveryRowOfThreeThousandCredentials()' \
+  'com.apple.dt.XCTMetric_Clock.time.monotonic' \
+  '0.0417' \
+  'Credential Manager search keystroke that keeps all 3,000 rows' \
+  's'
 check_average \
   'CredentialListPerformanceTests/testLayingOutThreeThousandCredentials()' \
   'com.apple.dt.XCTMetric_Memory.physical' \
