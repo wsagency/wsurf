@@ -77,7 +77,8 @@ final class ChromiumRemote {
     /// Turns every browser's tree on or off as VoiceOver starts or stops.
     private func watchVoiceOver() {
         guard voiceOverObservation == nil else { return }
-        voiceOverObservation = NSWorkspace.shared.observe(\.isVoiceOverEnabled, options: [.new]) { _, _ in
+        // The change may come on any thread: the handler only hops to the main actor.
+        voiceOverObservation = NSWorkspace.shared.observe(\.isVoiceOverEnabled, options: [.new]) { @Sendable _, _ in
             Task { @MainActor in
                 let remote = ChromiumRemote.shared
                 let enabled = remote.wantsAccessibility

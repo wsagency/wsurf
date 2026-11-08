@@ -340,7 +340,7 @@ final class ChromiumAccessibilityMirror {
                 total += 1
             }
         }
-        let all = trees.values.flatMap(\.nodes.values)
+        let all = trees.values.flatMap { Array($0.nodes.values) }
         let headings = all.filter { $0.role == "heading" }.prefix(3).map { "'\($0.name)'@\(rectInView($0.key).integral)" }
         let links = all.filter { $0.role == "link" }.prefix(3).map { "'\($0.name)'@\(rectInView($0.key).integral)" }
         let root = rootKey.flatMap { node($0) }

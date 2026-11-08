@@ -308,7 +308,7 @@ enum D4SpikeDriver {
             }
             return nil
         }
-        let root = chromium.accessibilityChildren()?.first as Any
+        let root: Any = chromium.accessibilityChildren()?.first ?? NSNull()
         if let button = find(.button, in: root) {
             log("ax: press button '\(button.accessibilityTitle() ?? "")': \(button.accessibilityPerformPress())")
             try? await Task.sleep(for: .milliseconds(800))
