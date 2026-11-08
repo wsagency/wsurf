@@ -124,7 +124,7 @@ struct AutofillVaultMigrationTests {
         #expect(person.displayName == "Home")
         #expect(person.secureItems?.map(\.kind) == [.personName, .address, .customFields])
         let ids = person.secureItems?.last?.fields.compactMap(\.field?.id)
-        #expect(ids == [VaultItemAutofill.emailFieldID, VaultItemAutofill.organizationFieldID])
+        #expect(ids == [AutofillContactValues.emailFieldID, AutofillContactValues.organizationFieldID])
         let back = try #require(VaultItemAutofill.contact(of: person))
         #expect(AutofillSaveCandidate.contact(back).values == AutofillSaveCandidate.contact(contact).values && back.label == "Home")
         #expect(back.fields["email"] == "ada@example.test" && back.fields["organization"] == "Analytical Engines")

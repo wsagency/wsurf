@@ -4,14 +4,11 @@
 import Foundation
 import WSurfVault
 
-/// The cards and addresses of the credentials vault, as the fill panel offers them and the page receives them, and as a save offer or
-/// the move from the old Keychain lists writes them. Pure: the caller reads the vault under its own lease and checks it again before
-/// anything reaches the page or the vault.
+/// The cards and addresses of the credentials vault, as the page receives them, and as a save offer or the move from the old Keychain
+/// lists writes them. The rules that read a card or a contact are the vault's (`AutofillCardValues`, `AutofillContactValues`), so the
+/// fill panel's rows, which the vault builds (`ProfileVaultStore.autofillItems`), and everything here read an item the same way. Pure:
+/// the caller reads the vault under its own lease and checks it again before anything reaches the page or the vault.
 nonisolated enum VaultItemAutofill {
-    /// The stable ids of a contact's email and organization, which an entry keeps as custom fields.
-    static let emailFieldID = Data("email".utf8)
-    static let organizationFieldID = Data("organization".utf8)
-
     /// One row the panel can show: the credential and item it comes from, and what fills. `value` stays in Swift until delivery.
     struct Offer<Value: Sendable>: Sendable {
         let accountID: UUID
@@ -19,7 +16,17 @@ nonisolated enum VaultItemAutofill {
         let value: Value
     }
 
-    /// Every card that can fill a form, in vault order: a number that passes the card check and an expiry not in the past.
+    /// What a card or address pick fails with when the vault refuses it as stale, as the panel failed it before D5(a). The panel read
+    /// the whole vault again at the pick: a write since the row was shown, or a row that is gone, failed as `changedPage`, and a card
+    /// that had ended since the row was shown as `PaymentCardError.noField`. The vault refuses all of them as `staleRevision`, so the
+    /// row's own expiry (`month`, `year`; none for a contact) tells the ended card apart. Both show the same "Couldn't Fill Saved
+    /// Details" alert, and neither counts as a cancellation.
+    static func stalePickError(month: Int?, year: Int?, now: Date = .now) -> any Error {
+        PaymentCardRules.isExpired(month: month, year: year, on: now) ? PaymentCardError.noField : ContactAutofillError.changedPage
+    }
+
+    /// Every card that can fill a form, in vault order: a number that passes the card check and an expiry not in the past. The
+    /// whole-entry form of the vault's card rows, which the fill panel lists.
     static func cards(in accounts: [CredentialAccount], now: Date = .now) -> [Offer<PaymentCard>] {
         accounts.flatMap { account -> [Offer<PaymentCard>] in
             (account.secureItems ?? []).enumerated().compactMap { index, item -> Offer<PaymentCard>? in
@@ -30,61 +37,30 @@ nonisolated enum VaultItemAutofill {
     }
 
     /// One contact per credential that holds an address, a name, or a contact's email or organization: its first of each, combined.
+    /// The whole-entry form of the vault's contact rows.
     static func contacts(in accounts: [CredentialAccount]) -> [Offer<AutofillContact>] {
         accounts.compactMap { account -> Offer<AutofillContact>? in
-            guard let index = account.secureItems?.firstIndex(where: isContactItem), let contact = contact(of: account) else { return nil }
+            guard let index = account.secureItems?.firstIndex(where: AutofillContactValues.isContactItem), let contact = contact(of: account)
+            else { return nil }
             return Offer(accountID: account.id, item: index, value: contact)
         }
     }
 
-    private static func isContactItem(_ item: SecureItem) -> Bool {
-        item.kind == .address || item.kind == .personName
-            || item.kind == .customFields && item.fields.contains { $0.field?.id == emailFieldID || $0.field?.id == organizationFieldID }
+    /// The card an item fills with, or `nil` when it is not a card or its number fails the card check. A security code or an expiry
+    /// that does not read is left out rather than refusing the card (`AutofillCardValues`).
+    static func paymentCard(_ item: SecureItem) -> PaymentCard? {
+        AutofillCardValues(item).flatMap(paymentCard)
     }
 
-    /// The card an item fills with, or `nil` when it is not a card or its number fails the card check. A security code or an expiry
-    /// that does not read is left out rather than refusing the card.
-    static func paymentCard(_ item: SecureItem) -> PaymentCard? {
-        guard item.kind == .creditCard, let number = item.value("number") else { return nil }
-        var (year, month) = yearMonth(item.value("expiryDate"))
-        if !(month.map { (1...12).contains($0) } ?? true) || !(year.map { (2000...2199).contains($0) } ?? true) {
-            (year, month) = (nil, nil)
-        }
-        let code = item.value("verificationNumber")
-        let holder = item.value("fullName") ?? ""
-        let digits = number.filter(\.isNumber)
-        return (try? PaymentCard(number: digits, cardholder: holder, month: month, year: year, securityCode: code))
-            ?? (try? PaymentCard(number: digits, cardholder: holder, month: month, year: year))
+    /// A card the vault read for a pick, as the page receives it.
+    static func paymentCard(_ card: AutofillCardValues) -> PaymentCard? {
+        try? PaymentCard(number: card.number, cardholder: card.cardholder, month: card.month, year: card.year, securityCode: card.securityCode)
     }
 
     /// The first address, the first name and the contact email and organization of `account` as one contact, or `nil` when it has none
-    /// of them or the result is not valid.
+    /// of them or the result is not valid (`AutofillContactValues`).
     static func contact(of account: CredentialAccount) -> AutofillContact? {
-        let items = account.secureItems ?? []
-        let address = items.first { $0.kind == .address }
-        let name = items.first { $0.kind == .personName }
-        let custom = items.filter { $0.kind == .customFields }.flatMap(\.fields)
-        let email = custom.first { $0.field?.id == emailFieldID }?.value ?? ""
-        let organization = custom.first { $0.field?.id == organizationFieldID }?.value ?? ""
-        guard address != nil || name != nil || !email.isEmpty || !organization.isEmpty else { return nil }
-        func joined(_ item: SecureItem?, _ members: [String]) -> String {
-            members.compactMap { item?.value($0) }.filter { !$0.isEmpty }.joined(separator: " ")
-        }
-        var contact = AutofillContact()
-        contact.label = account.displayName ?? ""
-        contact.email = email
-        contact.organization = organization
-        contact.givenName = joined(name, ["given", "given2"])
-        contact.familyName = joined(name, ["surnamePrefix", "surname", "surname2"])
-        contact.street = address?.value("streetAddress") ?? ""
-        contact.city = address?.value("city") ?? ""
-        contact.region = address?.value("territory") ?? ""
-        contact.postalCode = address?.value("postalCode") ?? ""
-        contact.phone = address?.value("telephone") ?? ""
-        // A country that is not an ISO region code (the exporter may send a name) is left out rather than invalidating the contact.
-        let country = (address?.value("country") ?? "").uppercased()
-        contact.countryCode = Locale.Region.isoRegions.contains { $0.identifier == country } ? country : ""
-        return contact.isValid ? contact : nil
+        AutofillContactValues(of: account).map(AutofillContact.init)
     }
 
     // MARK: Into the vault
@@ -96,11 +72,12 @@ nonisolated enum VaultItemAutofill {
     }
 
     /// A new entry that holds `contact`: its name as a name item, its address and phone as an address item, and its email and
-    /// organization as custom fields with stable ids. Its label is the entry's name.
+    /// organization as custom fields with the vault's stable ids (`AutofillContactValues.emailFieldID`, `organizationFieldID`). Its
+    /// label is the entry's name.
     static func account(for contact: AutofillContact) -> CredentialAccount {
         let custom = [
-            (emailFieldID, String(localized: "Email"), CredentialEditableFieldType.email, contact.email),
-            (organizationFieldID, String(localized: "Organization"), CredentialEditableFieldType.string, contact.organization),
+            (AutofillContactValues.emailFieldID, String(localized: "Email"), CredentialEditableFieldType.email, contact.email),
+            (AutofillContactValues.organizationFieldID, String(localized: "Organization"), CredentialEditableFieldType.string, contact.organization),
         ].filter { !$0.3.isEmpty }.map { id, label, type, value in
             SecureItemField(name: "", value: value, field: CredentialEditableFieldMetadata(id: id, label: label, fieldType: type))
         }
@@ -217,10 +194,8 @@ nonisolated enum VaultItemAutofill {
         return account
     }
 
-    /// "YYYY-MM" (the Credential Exchange year-month) as numbers; either is nil when it does not read.
+    /// "YYYY-MM" (the Credential Exchange year-month) as numbers; either is nil when it does not read (`PaymentCardRules`).
     static func yearMonth(_ text: String?) -> (year: Int?, month: Int?) {
-        let parts = (text ?? "").split(separator: "-")
-        guard parts.count >= 2 else { return (nil, nil) }
-        return (Int(parts[0]), Int(parts[1]))
+        PaymentCardRules.yearMonth(text)
     }
 }

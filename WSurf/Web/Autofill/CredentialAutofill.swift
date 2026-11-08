@@ -17,6 +17,56 @@ nonisolated enum CredentialSaveOutcome: Equatable, Sendable {
     case saved, unchanged, needsReview
 }
 
+/// What listing code may read of a credential: who it is, where it belongs, which kinds of secret it holds and what its items are
+/// called. Never a secret, so a list made from it cannot read one, whether it is given the vault's `AutofillCandidate` (every autofill
+/// list since D5) or a whole `CredentialAccount` (the save path, which compares passwords elsewhere).
+nonisolated protocol AutofillListable {
+    var id: UUID { get }
+    var username: String { get }
+    /// The exporter marked the username hidden: Pick Credential… neither shows nor searches it.
+    var usernameIsConcealed: Bool { get }
+    var displayName: String? { get }
+    var origins: [String] { get }
+    var loginURLs: [URL] { get }
+    var hasPassword: Bool { get }
+    var hasTOTP: Bool { get }
+    var hasPasskey: Bool { get }
+    /// What each of its items is called (`SecureItem.title`): Pick Credential…'s title falls back to them and its search finds them.
+    var itemTitles: [String] { get }
+}
+
+nonisolated extension CredentialAccount: AutofillListable {
+    var usernameIsConcealed: Bool {
+        basicAuthenticationMetadata?.username?.fieldType == .concealedString
+    }
+
+    var hasPassword: Bool {
+        password != nil
+    }
+
+    var hasTOTP: Bool {
+        totp != nil
+    }
+
+    var hasPasskey: Bool {
+        !passkeys.isEmpty
+    }
+
+    var itemTitles: [String] {
+        (secureItems ?? []).map(\.title)
+    }
+}
+
+nonisolated extension AutofillCandidate: AutofillListable {
+    var hasPasskey: Bool {
+        passkeyCount > 0
+    }
+
+    var itemTitles: [String] {
+        items.map(\.title)
+    }
+}
+
 /// What the password dropdown opens with, decided before any secret is read.
 nonisolated enum CredentialDropdown: Equatable, Sendable {
     /// The default list: the accounts associated with the page's exact origin.
@@ -52,13 +102,13 @@ nonisolated enum CredentialAccountSelection {
     /// qualifies an account; a login URL or TOTP issuer never widens that. Usernames are compared exactly, so
     /// case-distinct and duplicate accounts stay separate choices; the case-insensitive prefix below only filters
     /// what is shown while the user types.
-    static func candidates(
-        in accounts: [CredentialAccount], origin: String, pageURL: URL?, entered: String?,
+    static func candidates<Account: AutofillListable>(
+        in accounts: [Account], origin: String, pageURL: URL?, entered: String?,
         field: CredentialAutofillField, pinned: UUID? = nil
-    ) -> [CredentialAccount] {
+    ) -> [Account] {
         let typed = entered.flatMap { $0.isEmpty ? nil : $0 }
         let path = pageURL.flatMap { CredentialAccount.origin(for: $0) == origin ? normalized($0.path) : nil }
-        func rank(_ account: CredentialAccount) -> Int {
+        func rank(_ account: Account) -> Int {
             let exact = typed != nil && account.username == typed
             let relevant = path.map { path in
                 account.loginURLs.contains { CredentialAccount.origin(for: $0) == origin && normalized($0.path) == path }
@@ -69,9 +119,9 @@ nonisolated enum CredentialAccountSelection {
             guard account.origins.contains(origin), pinned == nil || account.id == pinned else { return false }
             switch field {
             case .totp:
-                return account.totp != nil
+                return account.hasTOTP
             case .password:
-                guard account.password != nil || !account.username.isEmpty else { return false }
+                guard account.hasPassword || !account.username.isEmpty else { return false }
                 guard let typed, pinned == nil else { return true }
                 return account.username.range(of: typed, options: [.anchored, .caseInsensitive]) != nil
             }
@@ -99,14 +149,14 @@ nonisolated enum CredentialAccountSelection {
     /// such website: for a password field the ones with a login, for a code field the ones with a verification code. Public suffix
     /// rules decide the domain, so `a.github.io` and `b.github.io` (or a look-alike such as `paypa1.com` of `paypal.com`) are never
     /// siblings. Typing filters as in `candidates`. Only identity is used here: a chosen account's secret is read again at delivery.
-    static func siblings(
-        in accounts: [CredentialAccount], origin: String, entered: String?, field: CredentialAutofillField = .password
-    ) -> [(account: CredentialAccount, website: String)] {
+    static func siblings<Account: AutofillListable>(
+        in accounts: [Account], origin: String, entered: String?, field: CredentialAutofillField = .password
+    ) -> [(account: Account, website: String)] {
         guard let site = site(of: origin) else { return [] }
         let typed = entered.flatMap { $0.isEmpty ? nil : $0 }
         var sites = ImportDuplicates.Sites()
-        var result: [(account: CredentialAccount, website: String)] = []
-        for account in accounts where field == .totp ? account.totp != nil : account.password != nil || !account.username.isEmpty {
+        var result: [(account: Account, website: String)] = []
+        for account in accounts where field == .totp ? account.hasTOTP : account.hasPassword || !account.username.isEmpty {
             if let typed, account.username.range(of: typed, options: [.anchored, .caseInsensitive]) == nil {
                 continue
             }
@@ -126,7 +176,7 @@ nonisolated enum CredentialAccountSelection {
     }
 
     /// Whether `account`, chosen from the sibling list, still belongs there when its secret is read.
-    static func isSibling(_ account: CredentialAccount, of origin: String) -> Bool {
+    static func isSibling(_ account: some AutofillListable, of origin: String) -> Bool {
         guard let site = site(of: origin) else { return false }
         var sites = ImportDuplicates.Sites()
         return siblingWebsite(of: account, for: origin, site: site, sites: &sites) != nil
@@ -135,7 +185,7 @@ nonisolated enum CredentialAccountSelection {
     /// Whether `origin` may be added to `account`: an account of a sibling website (or, with `anySite`, one the person picked by hand
     /// for this page in Pick Credential…), not saved for `origin` yet, with room under `CredentialAccount.websiteLimit`. `origin` must
     /// be a normalized HTTPS origin. A full account is never made room in by dropping another website.
-    static func canAddWebsite(_ origin: String, to account: CredentialAccount, anySite: Bool = false) -> Bool {
+    static func canAddWebsite(_ origin: String, to account: some AutofillListable, anySite: Bool = false) -> Bool {
         guard account.origins.count < CredentialAccount.websiteLimit else { return false }
         guard anySite else { return isSibling(account, of: origin) }
         return !account.origins.contains(origin) && URL(string: origin).flatMap(CredentialAccount.origin(for:)) == origin
@@ -154,7 +204,7 @@ nonisolated enum CredentialAccountSelection {
     }
 
     private static func siblingWebsite(
-        of account: CredentialAccount, for origin: String, site: String, sites: inout ImportDuplicates.Sites
+        of account: some AutofillListable, for origin: String, site: String, sites: inout ImportDuplicates.Sites
     ) -> String? {
         guard !account.origins.contains(origin) else { return nil }
         for website in account.origins where website.hasPrefix("https://") && sites.site(ofOrigin: website) == site {
@@ -165,7 +215,7 @@ nonisolated enum CredentialAccountSelection {
 
     /// Native picker rows. Each row carries enough context to tell similar accounts apart.
     static func suggestions(
-        _ accounts: [CredentialAccount], origin: String, pageURL: URL?, entered: String?,
+        _ accounts: [some AutofillListable], origin: String, pageURL: URL?, entered: String?,
         field: CredentialAutofillField, pinned: UUID? = nil
     ) -> [AutofillSuggestion] {
         let rows = candidates(in: accounts, origin: origin, pageURL: pageURL, entered: entered, field: field, pinned: pinned)
@@ -213,8 +263,8 @@ nonisolated enum CredentialAccountSelection {
 
     /// The dropdown's default list over the unlocked vaults, in vault order (`label` names the vault when several are open): what
     /// `suggestions` offers in each, then `lastUsedFirst` over all of them, with `entered` as what the person typed.
-    static func listed(
-        in vaults: [(id: UUID, label: String?, accounts: [CredentialAccount])], origin: String, pageURL: URL?, entered: String?,
+    static func listed<Account: AutofillListable>(
+        in vaults: [(id: UUID, label: String?, accounts: [Account])], origin: String, pageURL: URL?, entered: String?,
         field: CredentialAutofillField, pinned: UUID? = nil, usedAt: (_ vault: UUID, _ account: UUID) -> Date?
     ) -> [Listed] {
         let typed = entered.flatMap { $0.isEmpty ? nil : $0 }
@@ -293,6 +343,32 @@ nonisolated enum CredentialAccountSelection {
         return try? TOTP.code(generator, at: date.timeIntervalSince1970).value
     }
 
+    /// The same for a picked credential (`AutofillLogin`): the code its source makes at `date`, under the same website rule. The seed
+    /// stays in the source.
+    static func totpCode(for login: AutofillLogin, origin: String, at date: Date, sibling: Bool = false) -> String? {
+        guard login.candidate.origins.contains(origin) || sibling && isSibling(login.candidate, of: origin) else { return nil }
+        return login.code?.code(at: date)
+    }
+
+    /// What a picked login fills in the dropdown, made at delivery: for a code field a fresh code (only for a credential of this
+    /// website, or of a sibling website the person chose from "Check other logins"); for a password field the username and, when
+    /// there is one, the password.
+    static func fillFields(
+        _ login: AutofillLogin, field: CredentialAutofillField, origin: String, sibling: Bool, at date: Date
+    ) throws -> [String: Any] {
+        switch field {
+        case .totp:
+            guard let code = totpCode(for: login, origin: origin, at: date, sibling: sibling) else { throw ContactAutofillError.noField }
+            return ["code": code]
+        case .password:
+            var fields: [String: Any] = ["username": login.candidate.username]
+            if let password = login.password {
+                fields["password"] = password
+            }
+            return fields
+        }
+    }
+
     /// Writes `login` into `snapshot`'s vault only for the account the user was shown (`offered`). Whatever the user
     /// typed, a different target (another stored username, a new username after an update was shown, an account that
     /// appeared since the offer) writes nothing and asks for a fresh review of that exact account instead.
@@ -317,7 +393,7 @@ nonisolated enum CredentialAccountSelection {
         path.isEmpty ? "/" : path
     }
 
-    static func title(_ account: CredentialAccount, origin: String) -> String {
+    static func title(_ account: some AutofillListable, origin: String) -> String {
         if !account.username.isEmpty {
             return account.username
         }
@@ -327,7 +403,7 @@ nonisolated enum CredentialAccountSelection {
         return origin
     }
 
-    private static func detail(_ account: CredentialAccount, origin: String, field: CredentialAutofillField) -> String {
+    private static func detail(_ account: some AutofillListable, origin: String, field: CredentialAutofillField) -> String {
         var parts: [String] = []
         if let name = account.displayName, !name.isEmpty, name != account.username {
             parts.append(name)
@@ -340,8 +416,8 @@ nonisolated enum CredentialAccountSelection {
         case .totp:
             parts.append(String(localized: "Verification code"))
         case .password:
-            if !account.passkeys.isEmpty { parts.append(String(localized: "Passkey")) }
-            if account.password == nil { parts.append(String(localized: "No saved password")) }
+            if account.hasPasskey { parts.append(String(localized: "Passkey")) }
+            if !account.hasPassword { parts.append(String(localized: "No saved password")) }
         }
         return parts.joined(separator: " · ")
     }

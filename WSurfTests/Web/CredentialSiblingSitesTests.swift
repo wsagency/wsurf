@@ -109,6 +109,30 @@ struct CredentialSiblingSitesTests {
         #expect(all.map { $0.account.id } == [ada.id, bob.id])
     }
 
+    /// The vault's candidates of the same accounts (what the dropdown lists since D5) give the same siblings, websites and verdicts as
+    /// the whole entries, for logins and codes alike.
+    @Test func candidatesGiveTheSameSiblingsAsTheirEntries() {
+        let accounts = [
+            account("ada", origins: ["https://www.example.test"]), account("bob", origins: ["https://other.test"]),
+            account("both", origins: ["https://www.example.test", Self.page]), account("", password: nil, origins: ["https://www.example.test"]),
+            codes(origins: ["https://example.test"]), codes(origins: ["https://paypa1.com"]), account("deep", origins: ["https://deep.a.github.io"]),
+            account("ada@example.test", origins: ["https://app.example.test"]),
+        ]
+        let candidates = accounts.map(AutofillCandidate.init)
+        for origin in [Self.page, "https://a.github.io", "https://login.paypal.com", "http://login.example.test"] {
+            for field in [CredentialAutofillField.password, .totp] {
+                for entered in [nil, "", "AD"] as [String?] {
+                    let whole = CredentialAccountSelection.siblings(in: accounts, origin: origin, entered: entered, field: field)
+                    let listed = CredentialAccountSelection.siblings(in: candidates, origin: origin, entered: entered, field: field)
+                    #expect(listed.map { "\($0.account.id) \($0.website)" } == whole.map { "\($0.account.id) \($0.website)" })
+                }
+            }
+            for (account, candidate) in zip(accounts, candidates) {
+                #expect(CredentialAccountSelection.isSibling(candidate, of: origin) == CredentialAccountSelection.isSibling(account, of: origin))
+            }
+        }
+    }
+
     @Test func theSiblingRowAppearsOnlyWhenTheExactListIsEmpty() {
         #expect(CredentialDropdown.plan(exact: 1, siblings: 3, origin: Self.page, field: .password) == .accounts)
         #expect(CredentialDropdown.plan(exact: 0, siblings: 3, origin: Self.page, field: .password) == .siblings(site: "example.test"))

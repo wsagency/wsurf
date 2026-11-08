@@ -80,13 +80,28 @@ struct CredentialAccountSelectionTests {
         TOTPGenerator(secret: Self.rfcSeed, algorithm: .sha1, period: 30, digits: 8, issuer: "login.example", userName: "ada")
     }
 
+    /// The accounts offered, in order. The vault's candidates of the same accounts (what the dropdown lists since D5) must offer the
+    /// same ones, and give them the same rows.
     private func ids(
         _ accounts: [CredentialAccount], entered: String? = nil, pageURL: URL? = nil,
-        field: CredentialAutofillField = .password, pinned: UUID? = nil
+        field: CredentialAutofillField = .password, pinned: UUID? = nil, sourceLocation: SourceLocation = #_sourceLocation
     ) -> [UUID] {
-        CredentialAccountSelection.candidates(
+        let whole = CredentialAccountSelection.candidates(
             in: accounts, origin: Self.origin, pageURL: pageURL, entered: entered, field: field, pinned: pinned
         ).map(\.id)
+        let candidates = accounts.map(AutofillCandidate.init)
+        let listed = CredentialAccountSelection.candidates(
+            in: candidates, origin: Self.origin, pageURL: pageURL, entered: entered, field: field, pinned: pinned
+        ).map(\.id)
+        #expect(listed == whole, "candidates offer other accounts", sourceLocation: sourceLocation)
+        let rows = { (rows: [AutofillSuggestion]) in rows.map { "\($0.id) \($0.title) \($0.detail)" } }
+        let sameRows = rows(CredentialAccountSelection.suggestions(
+            candidates, origin: Self.origin, pageURL: pageURL, entered: entered, field: field, pinned: pinned
+        )) == rows(CredentialAccountSelection.suggestions(
+            accounts, origin: Self.origin, pageURL: pageURL, entered: entered, field: field, pinned: pinned
+        ))
+        #expect(sameRows, "candidates give other rows", sourceLocation: sourceLocation)
+        return whole
     }
 
     // MARK: - Choosing

@@ -93,16 +93,10 @@ nonisolated extension SecureItemKind {
 
 nonisolated extension SecureItem {
     /// What a row and a fill suggestion call the item. A card shows its network and last four digits, and nothing else of the
-    /// number; every other kind shows only its label, never a value.
+    /// number; every other kind shows only its label, never a value. The vault's fact for the item (`AutofillItemFact`) says the
+    /// same, so an autofill list names an item it never read exactly as this does.
     var title: String {
-        if kind == .customFields, let label, !label.isEmpty {
-            return label
-        }
-        guard kind == .creditCard, let number = value("number") else { return kind.label }
-        let digits = number.filter(\.isNumber)
-        guard digits.count >= 4 else { return kind.label }
-        let network = (try? PaymentCard(number: digits))?.network ?? kind.label
-        return "\(network) •••• \(digits.suffix(4))"
+        AutofillItemFact(self).title
     }
 
     /// What one value is called: a custom field's own label, else the member's.
@@ -122,6 +116,18 @@ nonisolated extension SecureItem {
             SecureItemField(name: $0.name, value: "", field: CredentialEditableFieldMetadata(id: nil, label: nil, fieldType: $0.type))
         }
         return SecureItem(kind: kind, fields: fields)
+    }
+}
+
+nonisolated extension AutofillItemFact {
+    /// What a row calls the item: a custom group's own title; a card's network (a payment card when the number fails the card check
+    /// or names no known network) and its last four digits; else the kind.
+    var title: String {
+        if let customTitle {
+            return customTitle
+        }
+        guard let cardLastFour else { return kind.label }
+        return "\(cardNetwork?.name ?? SecureItemKind.creditCard.label) •••• \(cardLastFour)"
     }
 }
 

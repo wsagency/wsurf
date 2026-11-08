@@ -55,6 +55,7 @@
         "AssistantTabClosingSettingsTests",
         "AudioModelTests",
         "AuthChallengeTests",
+        "AutofillListingTests",
         "AutofillPolicyDeliveryTests",
         "AutomaticAttachmentTests",
         "BenchAdapterTests",

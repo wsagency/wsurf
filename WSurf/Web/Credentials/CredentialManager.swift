@@ -572,8 +572,45 @@ final class CredentialManager {
 
     // MARK: - Vault access
 
+    /// The whole vault, every secret included. Autofill never reads it (`autofillCandidates`, `autofillLogin`, `autofillItems`).
     func snapshot() async throws -> StoreSnapshot {
-        try await reading { access in try await store.snapshot(vaultID: vaultID, using: access) }
+        try await reading { access in
+            Self.noteRead(.snapshot, profile: profile.id)
+            return try await store.snapshot(vaultID: vaultID, using: access)
+        }
+    }
+
+    /// What an autofill list may know of each credential, never a secret (`ProfileVaultStore.autofillCandidates`), with the revision
+    /// a pick must still find. Read like `snapshot`: under the current lease, and discarded if a lock lands while it is in flight.
+    func autofillCandidates() async throws -> AutofillCandidates {
+        try await reading { access in
+            Self.noteRead(.candidates, profile: profile.id)
+            return try await store.autofillCandidates(vaultID: vaultID, using: access)
+        }
+    }
+
+    /// The one secret a pick fills with: the credential's password, or the source of its code, at `expectedRevision`, the revision
+    /// its list was read at (`ProfileVaultStore.autofillLogin`).
+    func autofillLogin(accountID: UUID, field: AutofillLoginField, expectedRevision: UInt64) async throws -> AutofillLogin {
+        try await reading { access in
+            Self.noteRead(.login(field), profile: profile.id)
+            return try await store.autofillLogin(
+                vaultID: vaultID, accountID: accountID, field: field, expectedRevision: expectedRevision, using: access
+            )
+        }
+    }
+
+    /// The card or contact rows of the vault; for a row (its credential and item) and its list's revision, that row's values only
+    /// (`ProfileVaultStore.autofillItems`).
+    func autofillItems(
+        kind: AutofillItemKind, accountID: UUID? = nil, item: Int? = nil, expectedRevision: UInt64? = nil
+    ) async throws -> AutofillItems {
+        try await reading { access in
+            Self.noteRead(.items(kind, pick: accountID != nil), profile: profile.id)
+            return try await store.autofillItems(
+                vaultID: vaultID, kind: kind, accountID: accountID, item: item, expectedRevision: expectedRevision, using: access
+            )
+        }
     }
 
     /// `authorizedEpoch` is the lease the caller's decision was made under. It is compared with the current access in the
