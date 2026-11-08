@@ -4,6 +4,7 @@
 // Linen portions: Apache-2.0; WSurf modifications: BUSL-1.1. See NOTICE.
 
 import Foundation
+import WSurfVault
 
 nonisolated struct AutofillSuggestion: Codable, Identifiable, Sendable {
     let id: UUID
@@ -30,11 +31,28 @@ nonisolated struct AutofillSuggestion: Codable, Identifiable, Sendable {
         case .contact(let contact):
             id = contact.id
             title = contact.title
-            detail = [contact.email, contact.street.replacingOccurrences(of: "\n", with: ", ")]
-                .filter { !$0.isEmpty }.joined(separator: " · ")
+            detail = AutofillContactValues(contact).rowDetail
             origin = nil
             month = nil; year = nil
         }
+    }
+
+    /// A card row of the vault (`AutofillCardRow`) as `.card` shows a card: its network and last four digits, and the name on it.
+    init(id: UUID, card row: AutofillCardRow) {
+        self.id = id
+        title = "\(row.network?.name ?? String(localized: "Payment card")) •••• \(row.lastFour)"
+        detail = row.cardholder
+        origin = nil
+        month = row.month; year = row.year
+    }
+
+    /// A contact row of the vault (`AutofillContactRow`) as `.contact` shows a contact.
+    init(id: UUID, contact row: AutofillContactRow) {
+        self.id = id
+        title = row.title ?? String(localized: "Contact")
+        detail = row.detail
+        origin = nil
+        month = nil; year = nil
     }
 
     var isExpired: Bool {

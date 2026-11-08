@@ -5,6 +5,7 @@
 
 import Contacts
 import Foundation
+import WSurfVault
 
 nonisolated struct AutofillContact: Codable, Identifiable, Equatable, Sendable {
     var id = UUID()
@@ -24,8 +25,9 @@ nonisolated struct AutofillContact: Codable, Identifiable, Equatable, Sendable {
         [givenName, familyName].filter { !$0.isEmpty }.joined(separator: " ")
     }
 
+    /// The vault's rule (`AutofillContactValues.title`), so a contact the vault lists as a row is named as this one is.
     var title: String {
-        [label, name, email, street, organization, phone].first { !$0.isEmpty } ?? String(localized: "Contact")
+        AutofillContactValues(self).title ?? String(localized: "Contact")
     }
 
     var detail: String {
@@ -33,11 +35,10 @@ nonisolated struct AutofillContact: Codable, Identifiable, Equatable, Sendable {
             .filter { !$0.isEmpty }.joined(separator: "\n")
     }
 
+    /// The vault's rule (`AutofillContactValues.isValid`): no value over 500 characters, a value besides the label, and an ISO
+    /// country or none.
     var isValid: Bool {
-        let values = [label, givenName, familyName, organization, email, phone, street, city, region, postalCode, countryCode]
-        return values.allSatisfy { $0.count <= 500 }
-            && values.dropFirst().contains { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-            && (countryCode.isEmpty || Locale.Region.isoRegions.contains { $0.identifier == countryCode })
+        AutofillContactValues(self).isValid
     }
 
     var fields: [String: String] {
@@ -53,6 +54,21 @@ nonisolated struct AutofillContact: Codable, Identifiable, Equatable, Sendable {
     }
 
     init() {}
+
+    /// A contact the vault read for a pick (`AutofillContactValues`), with a fresh id.
+    init(_ values: AutofillContactValues) {
+        label = values.label
+        givenName = values.givenName
+        familyName = values.familyName
+        organization = values.organization
+        email = values.email
+        phone = values.phone
+        street = values.street
+        city = values.city
+        region = values.region
+        postalCode = values.postalCode
+        countryCode = values.countryCode
+    }
 
     init(contact: CNContact) {
         if contact.isKeyAvailable(CNContactGivenNameKey) {
@@ -81,5 +97,16 @@ nonisolated struct AutofillContact: Codable, Identifiable, Equatable, Sendable {
         region = address.state
         postalCode = address.postalCode
         countryCode = address.isoCountryCode.uppercased()
+    }
+}
+
+nonisolated extension AutofillContactValues {
+    /// `contact`'s values, for the vault's rules (title, row detail, validity).
+    init(_ contact: AutofillContact) {
+        self.init(
+            label: contact.label, givenName: contact.givenName, familyName: contact.familyName, organization: contact.organization,
+            email: contact.email, phone: contact.phone, street: contact.street, city: contact.city, region: contact.region,
+            postalCode: contact.postalCode, countryCode: contact.countryCode
+        )
     }
 }

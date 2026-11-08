@@ -4,6 +4,7 @@
 // Linen portions: Apache-2.0; WSurf modifications: BUSL-1.1. See NOTICE.
 
 import Foundation
+import WSurfVault
 
 nonisolated struct PaymentCard: Codable, Identifiable, Sendable, Equatable {
     var id: UUID
@@ -21,8 +22,7 @@ nonisolated struct PaymentCard: Codable, Identifiable, Sendable, Equatable {
         else { throw PaymentCardError.invalidExpiry }
         let code = securityCode?.trimmingCharacters(in: .whitespacesAndNewlines)
         if let code, !code.isEmpty {
-            guard (3...4).contains(code.utf8.count), code.utf8.allSatisfy({ (48...57).contains($0) })
-            else { throw PaymentCardError.invalidSecurityCode }
+            guard PaymentCardRules.isValidSecurityCode(code) else { throw PaymentCardError.invalidSecurityCode }
         }
         self.securityCode = code?.isEmpty == false ? code : nil
         id = UUID()
@@ -36,34 +36,18 @@ nonisolated struct PaymentCard: Codable, Identifiable, Sendable, Equatable {
         Summary(id: id, network: network, lastFour: String(number.suffix(4)), month: month, year: year)
     }
 
+    /// The network the number names (`CardNetwork`, the vault's rule), else a plain payment card.
     var network: String {
-        if number.hasPrefix("4") { return "Visa" }
-        if number.hasPrefix("34") || number.hasPrefix("37") { return "American Express" }
-        if let prefix = Int(number.prefix(2)), (51...55).contains(prefix) { return "Mastercard" }
-        if let prefix = Int(number.prefix(4)), (2221...2720).contains(prefix) { return "Mastercard" }
-        if number.hasPrefix("6011") || number.hasPrefix("65") { return "Discover" }
-        if number.hasPrefix("35") { return "JCB" }
-        if number.hasPrefix("62") { return "UnionPay" }
-        return String(localized: "Payment card")
+        CardNetwork(number: number)?.name ?? String(localized: "Payment card")
     }
 
     func isExpired(on date: Date = .now) -> Bool {
-        guard let month, let year else { return false }
-        let parts = Calendar(identifier: .gregorian).dateComponents([.year, .month], from: date)
-        guard let currentYear = parts.year, let currentMonth = parts.month else { return false }
-        return year < currentYear || (year == currentYear && month < currentMonth)
+        PaymentCardRules.isExpired(month: month, year: year, on: date)
     }
 
+    /// The card check, which the vault owns (`PaymentCardRules`), so a card is valid here exactly when the vault lists it.
     static func isValidNumber(_ number: String) -> Bool {
-        let digits = Array(number.utf8)
-        guard (13...19).contains(digits.count), digits.allSatisfy({ (48...57).contains($0) }),
-              digits.contains(where: { $0 != 48 }) else { return false }
-        if number.hasPrefix("62") { return true }
-        let sum = digits.reversed().enumerated().reduce(0) { total, item in
-            let digit = Int(item.element - 48) * (item.offset.isMultiple(of: 2) ? 1 : 2)
-            return total + (digit > 9 ? digit - 9 : digit)
-        }
-        return sum.isMultiple(of: 10)
+        PaymentCardRules.isValidNumber(number)
     }
 
     static func merging(_ incoming: [Self], into existing: [Self], preservingMissingSecurityCodes: Bool = false) -> [Self] {
@@ -92,6 +76,26 @@ nonisolated struct PaymentCard: Codable, Identifiable, Sendable, Equatable {
 
         var label: String {
             "\(network) •••• \(lastFour)"
+        }
+    }
+}
+
+nonisolated extension CardNetwork {
+    /// What a row and a card's summary call the network.
+    var name: String {
+        switch self {
+        case .visa:
+            "Visa"
+        case .americanExpress:
+            "American Express"
+        case .mastercard:
+            "Mastercard"
+        case .discover:
+            "Discover"
+        case .jcb:
+            "JCB"
+        case .unionPay:
+            "UnionPay"
         }
     }
 }

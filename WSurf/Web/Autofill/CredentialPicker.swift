@@ -9,8 +9,9 @@ import WSurfVault
 ///
 /// - The field is the one the frame's own script saw a trusted contextmenu event on (`noteContext`), in the frame the engine says
 ///   the event came from. The fill goes to that frame only, to that field and its partner only (`__wsurfPasswords.pickFill`).
-/// - The picker lists titles and websites only. A secret is read after the choice, under the unlock and revision it was listed
-///   under, and the code or password is made at the engine's dispatch boundary, as `AutofillSuggestions` does.
+/// - The picker lists titles and websites only, from the vault's candidates, which hold no secret. The chosen credential's one secret
+///   is read after the choice, under the unlock and revision it was listed under, and the code or password is made at the engine's
+///   dispatch boundary, as `AutofillSuggestions` does.
 /// - It is never offered in a private window, while password autofill is off, on a page that is not a secure HTTPS page, or in a tab
 ///   an agent or a connected app controls (`isOffered`, checked again before every step).
 /// - A credential used on a website it is not saved for is offered that website afterwards (`AutofillSaveSession.offerWebsite`,
@@ -235,8 +236,8 @@ final class CredentialPicker {
         return (answer as? String).flatMap(Field.init(rawValue:))
     }
 
-    /// Every unlocked vault of the profile, in ordinal order, each under its own unlock. A locked vault is never read. A profile with
-    /// no vault (or a store that cannot be read) lists nothing, and the sheet says so.
+    /// Every unlocked vault of the profile, in ordinal order, each under its own unlock, as candidates: no secret is read to list.
+    /// A locked vault is never read. A profile with no vault (or a store that cannot be read) lists nothing, and the sheet says so.
     private func read(for target: Target) async -> Reading? {
         let profile = target.context.profile
         guard !profile.isPrivate else { return nil }
@@ -246,18 +247,18 @@ final class CredentialPicker {
         var reading = Reading()
         for vault in listing.sorted(by: { $0.ordinal < $1.ordinal }) {
             guard let manager = unlocked.first(where: { $0.vaultID == vault.vaultID }), let epoch = manager.authorizationEpoch,
-                  let snapshot = try? await manager.snapshot(), manager.authorizationEpoch == epoch else {
+                  let candidates = try? await manager.autofillCandidates(), manager.authorizationEpoch == epoch else {
                 reading.hasLockedVault = true
                 continue
             }
-            reading.grants[vault.vaultID] = (epoch, snapshot.revision)
+            reading.grants[vault.vaultID] = (epoch, candidates.revision)
             let uses = try? await manager.importMemoryKey()
             var used: [UUID: Date] = [:]
-            for account in snapshot.accounts where account.origins.contains(target.origin) {
-                used[account.id] = lastUsed.date(uses, account: account.id, origin: target.origin)
+            for candidate in candidates.candidates where candidate.origins.contains(target.origin) {
+                used[candidate.id] = lastUsed.date(uses, account: candidate.id, origin: target.origin)
             }
             reading.rows += Self.rows(
-                snapshot.accounts, vaultID: vault.vaultID, origin: target.origin, vault: listing.count > 1 ? vault.label : nil, used: used
+                candidates.candidates, vaultID: vault.vaultID, origin: target.origin, vault: listing.count > 1 ? vault.label : nil, used: used
             )
         }
         reading.rows = Self.ordered(reading.rows, for: target.field)
@@ -275,18 +276,32 @@ final class CredentialPicker {
         )
     }
 
-    /// The chosen credential is read again under the unlock and revision it was listed under, and delivered into the right-clicked
-    /// field's frame only. The password, username or fresh code exists only in the closure the engine runs at its dispatch boundary.
+    /// The chosen credential's one secret for the row (its password, or the source of its code) is read under the unlock and revision
+    /// it was listed under (`autofillLogin`), and delivered into the right-clicked field's frame only. The password, username or fresh
+    /// code exists only in the closure the engine runs at its dispatch boundary.
     private func fill(
         _ id: UUID, reading: Reading, target: Target, in page: BrowserPage, isCurrent: @escaping @MainActor @Sendable () -> Bool
     ) async -> Outcome {
         let context = target.context
         guard let row = reading.rows.first(where: { $0.id == id }), let grant = reading.grants[row.vaultID],
               let manager = Self.manager(of: context, vaultID: row.vaultID, epoch: grant.epoch),
-              let generation = manager.stableGeneration, let snapshot = try? await manager.snapshot() else { return .failed(.noField) }
+              let generation = manager.stableGeneration else { return .failed(.noField) }
+        let picked: AutofillLogin?
+        do {
+            picked = try await manager.autofillLogin(
+                accountID: row.accountID, field: row.fill == .code ? .totp : .password, expectedRevision: grant.revision
+            )
+        } catch CredentialVaultError.staleRevision {
+            // A write since the list, or the credential is gone: decided after the page is checked, as before.
+            picked = nil
+        } catch {
+            return .failed(.noField)
+        }
         guard isCurrent() else { return .nothing }
-        guard manager.authorizationEpoch == grant.epoch, manager.stableGeneration == generation, snapshot.revision == grant.revision,
-              let account = snapshot.accounts.first(where: { $0.id == row.accountID }) else { return .failed(.noField) }
+        guard manager.authorizationEpoch == grant.epoch, manager.stableGeneration == generation, let login = picked else {
+            return .failed(.noField)
+        }
+        let account = login.candidate
         guard await field(of: target, in: page) != nil else { return isCurrent() ? .failed(.noField) : .nothing }
         guard isCurrent() else { return .nothing }
         let fill = row.fill, vaultID = row.vaultID, epoch = grant.epoch
@@ -297,13 +312,11 @@ final class CredentialPicker {
             var fields: [String: Any]
             switch fill {
             case .code:
-                guard let generator = account.totp, let code = try? TOTP.code(generator, at: Date.now.timeIntervalSince1970).value else {
-                    throw ContactAutofillError.noField
-                }
+                guard let code = login.code?.code(at: .now) else { throw ContactAutofillError.noField }
                 fields = ["code": code]
             case .login:
                 fields = ["username": account.username]
-                if let password = account.password {
+                if let password = login.password {
                     fields["password"] = password
                 }
             }
@@ -391,27 +404,28 @@ final class CredentialPicker {
     }
 
     /// A login row for every credential with a username or a password, a code row for every one with a verification code. Cards,
-    /// addresses and identities are not offered here. `used` dates only a credential saved for `origin`.
+    /// addresses and identities are not offered here. `used` dates only a credential saved for `origin`. Titles and search keys follow
+    /// the Credential Manager's rule (`CredentialSummary.naming`), item titles included, from what a list may read of a credential.
     nonisolated static func rows(
-        _ accounts: [CredentialAccount], vaultID: UUID, origin: String, vault: String?, used: [UUID: Date] = [:]
+        _ accounts: [some AutofillListable], vaultID: UUID, origin: String, vault: String?, used: [UUID: Date] = [:]
     ) -> [Row] {
         accounts.flatMap { account -> [Row] in
-            let summary = CredentialSummary(account)
+            let named = CredentialSummary.naming(account)
             let matches = account.origins.contains(origin) || CredentialAccountSelection.isSibling(account, of: origin)
             let website = account.origins.lazy.compactMap(WebsiteLookalike.displayHost(of:)).first
             func row(_ fill: Row.Fill, _ first: String?) -> Row {
-                let parts = [first, website, vault].compactMap { $0 }.filter { !$0.isEmpty && $0 != summary.title }
+                let parts = [first, website, vault].compactMap { $0 }.filter { !$0.isEmpty && $0 != named.title }
                 return Row(
-                    id: UUID(), vaultID: vaultID, accountID: account.id, fill: fill, title: summary.title,
-                    detail: parts.joined(separator: " · "), matchesSite: matches, searchKey: summary.searchKey,
+                    id: UUID(), vaultID: vaultID, accountID: account.id, fill: fill, title: named.title,
+                    detail: parts.joined(separator: " · "), matchesSite: matches, searchKey: named.searchKey,
                     lastUsed: account.origins.contains(origin) ? used[account.id] : nil
                 )
             }
             var rows: [Row] = []
-            if account.password != nil || !account.username.isEmpty {
-                rows.append(row(.login, summary.username))
+            if account.hasPassword || !account.username.isEmpty {
+                rows.append(row(.login, named.username))
             }
-            if account.totp != nil {
+            if account.hasTOTP {
                 rows.append(row(.code, String(localized: "Verification code")))
             }
             return rows

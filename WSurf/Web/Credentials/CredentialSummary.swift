@@ -89,8 +89,23 @@ nonisolated struct CredentialSummary: Identifiable, Equatable, Sendable {
             ?? account.passkeys.first.flatMap { URL(string: "https://\($0.rpID)") }
         dates = CredentialDates(account)
         let title = Self.title(displayName: account.displayName, origins: account.origins, username: visibleUsername, items: itemTitles)
-        let hosts = account.origins.compactMap { URL(string: $0)?.host }
-        searchKey = Self.folded(([title] + [visibleUsername].compactMap { $0 } + hosts + itemTitles).joined(separator: "\n"))
+        searchKey = Self.searchKey(title: title, username: visibleUsername, origins: account.origins, items: itemTitles)
+    }
+
+    /// The username as a row shows it (none when concealed or empty), the title and the search key of what a list may read of a
+    /// credential (`AutofillListable`), by this summary's rules: Pick Credential… names a vault candidate exactly as the Credential
+    /// Manager names the whole entry.
+    static func naming(_ credential: some AutofillListable) -> (username: String?, title: String, searchKey: String) {
+        let username = credential.usernameIsConcealed || credential.username.isEmpty ? nil : credential.username
+        let items = credential.itemTitles
+        let title = title(displayName: credential.displayName, origins: credential.origins, username: username, items: items)
+        return (username, title, searchKey(title: title, username: username, origins: credential.origins, items: items))
+    }
+
+    /// What a search looks in: the title, the username (unless concealed), every website's host and every item's title, folded.
+    private static func searchKey(title: String, username: String?, origins: [String], items: [String]) -> String {
+        let hosts = origins.compactMap { URL(string: $0)?.host }
+        return folded(([title] + [username].compactMap { $0 } + hosts + items).joined(separator: "\n"))
     }
 
     /// Case and accents do not matter to a search: the key and the query both go through this.
