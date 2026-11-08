@@ -217,6 +217,10 @@ final class BrowserPage: NSView {
         if let webKit {
             return window?.makeFirstResponder(webKit) == true
         }
+        if let chromium, chromium.remote != nil {
+            // D4 spike: the out-of-process page is the text input client itself, like a web view.
+            return window?.makeFirstResponder(chromium) == true
+        }
         return chromium?.becomeFirstResponder() == true
     }
 

@@ -56,6 +56,13 @@ final class OnboardingModel {
     }
 
     func beginIfNeeded() {
+        #if DEBUG
+        // D4 spike: the driver's stage homes skip onboarding without writing any defaults.
+        if StageMode.isActive, ProcessInfo.processInfo.environment["WSURF_D4_DRIVER"] != nil,
+           StageMode.home?.path.contains("/.wt/d4-spike/build/stage/") == true {
+            return
+        }
+        #endif
         guard !defaults.bool(forKey: Self.completedKey), step == nil else { return }
         step = .welcome
     }

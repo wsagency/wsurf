@@ -141,6 +141,8 @@ public enum CefRemote {
         public static let imeFinish = "ime.finish"
         public static let imeCancel = "ime.cancel"
         public static let edit = "edit"
+        /// Turns CEF's accessibility tree on or off for a browser (windowless: tree-only mode, updates as events).
+        public static let accessibility = "ax.enable"
         /// DEBUG: the service ends itself at once, as a crash would (the day 8-9 kill test). Nothing outside signals it.
         public static let debugAbort = "debug.abort"
         /// DEBUG: the service answers with its timing statistics. Has a reply.
@@ -178,6 +180,10 @@ public enum CefRemote {
         public static let takeFocus = "focus.take"
         public static let gotFocus = "focus.got"
         public static let popupBlocked = "popup.blocked"
+        /// CEF's accessibility tree update (`on_accessibility_tree_change`), as JSON bytes.
+        public static let accessibilityTree = "ax.tree"
+        /// CEF's accessibility location update (`on_accessibility_location_change`), as JSON bytes.
+        public static let accessibilityLocation = "ax.location"
     }
 
     public enum CollapseOutcome {

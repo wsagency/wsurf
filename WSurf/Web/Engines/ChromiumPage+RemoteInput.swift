@@ -29,6 +29,7 @@ struct ChromiumRemoteInputState {
     var selectedText = ""
     var selectedRange = NSRange(location: NSNotFound, length: 0)
     var contextMenuOpen = false
+    var visibilityUpdatePending = false
 }
 
 extension ChromiumPage {
@@ -85,7 +86,8 @@ extension ChromiumPage {
         message.set(CefRemote.Key.clickCount, Int64(max(1, event.type == .scrollWheel ? 1 : event.clickCount)))
         message.set(CefRemote.Key.deltaX, Double(deltaX))
         message.set(CefRemote.Key.deltaY, Double(deltaY))
-        message.set(CefRemote.Key.timestamp, event.timestamp)
+        // K4's input leg starts when WSurf sends (the delay before AppKit delivers the event is the same in process).
+        message.set(CefRemote.Key.timestamp, ProcessInfo.processInfo.systemUptime)
         remote.sendInput(message)
     }
 
@@ -262,7 +264,8 @@ extension ChromiumPage {
             message.set(CefRemote.Key.unmodifiedCharacter, Int64(event.charactersIgnoringModifiers?.utf16.first ?? 0))
             message.set(CefRemote.Key.character, Int64(character ?? event.characters?.utf16.first ?? 0))
         }
-        message.set(CefRemote.Key.timestamp, event.timestamp)
+        // K4's input leg starts when WSurf sends (the delay before AppKit delivers the event is the same in process).
+        message.set(CefRemote.Key.timestamp, ProcessInfo.processInfo.systemUptime)
         remote.sendInput(message)
     }
 
@@ -354,7 +357,11 @@ extension ChromiumPage {
     }
 
     override func selectAll(_ sender: Any?) {
-        guard remote != nil else { return super.selectAll(sender) }
+        // NSResponder only declares this (an optional key-binding method): in process, pass it along instead of to super.
+        guard remote != nil else {
+            _ = nextResponder?.tryToPerform(#selector(NSResponder.selectAll(_:)), with: sender)
+            return
+        }
         remoteEdit("selectAll")
     }
 

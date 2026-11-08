@@ -66,6 +66,28 @@ final class ChromiumRemote {
         browsers.count
     }
 
+    /// CEF's accessibility tree costs work in the renderer, the service and here: it is on only while VoiceOver runs (or for
+    /// the spike's own checks, `WSURF_OOP_AX=1`).
+    var wantsAccessibility: Bool {
+        NSWorkspace.shared.isVoiceOverEnabled || ChromiumOOP.environment("WSURF_OOP_AX") == "1"
+    }
+
+    private var voiceOverObservation: NSKeyValueObservation?
+
+    /// Turns every browser's tree on or off as VoiceOver starts or stops.
+    private func watchVoiceOver() {
+        guard voiceOverObservation == nil else { return }
+        voiceOverObservation = NSWorkspace.shared.observe(\.isVoiceOverEnabled, options: [.new]) { _, _ in
+            Task { @MainActor in
+                let remote = ChromiumRemote.shared
+                let enabled = remote.wantsAccessibility
+                for browser in remote.browsers.values {
+                    browser.send(CefRemote.Op.accessibility) { $0.set(CefRemote.Key.flag, enabled) }
+                }
+            }
+        }
+    }
+
     /// Launches the service (if it is not running) and starts CEF there. Costs WSurf's main thread one message.
     func connect() {
         if control == nil {
@@ -202,6 +224,7 @@ final class ChromiumRemote {
     }
 
     func makeBrowser(for page: ChromiumPage) -> ChromiumRemoteBrowser {
+        watchVoiceOver()
         let browser = ChromiumRemoteBrowser(id: nextBrowserID, page: page)
         nextBrowserID += 1
         browsers[browser.id] = browser

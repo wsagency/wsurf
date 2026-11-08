@@ -40,14 +40,14 @@ enum D4SpikeDriver {
             exit(3)
         }
         Task { @MainActor in
+            // The app is not brought forward: the person may be using this Mac.
             try? await Task.sleep(for: .seconds(1.5))
-            NSApp.activate(ignoringOtherApps: true)
-            coordinator.nativeWindow?.makeKeyAndOrderFront(nil)
             switch script {
             case "day1": await day1()
             case "frames": await frames()
             case "input": await input()
             case "kill": await kill()
+            case "ax": await accessibility()
             default: log("unknown script \(script)")
             }
             log("driver \(script): done")
@@ -200,6 +200,59 @@ enum D4SpikeDriver {
         let reloaded = await waitLoaded(tab, timeout: 30)
         log("tab reloaded \(reloaded), new service \(ChromiumRemote.shared.servicePID), url \(tab.liveView?.url?.absoluteString ?? "nil")")
         captureWindow("kill-recovered")
+        browser.close(tab)
+        try? await Task.sleep(for: .seconds(1))
+    }
+
+    /// Day 8-9: CEF's tree reaches WSurf's mirror (run with `WSURF_OOP_AX=1`; VoiceOver is the owner's pass). Press on a
+    /// button and on a link goes back to the page as a click.
+    private static func accessibility() async {
+        var browser: BrowserModel { coordinator.browser }
+        let tab = browser.newTab(url: url("ax.html"), engine: .chromium)
+        _ = await waitLoaded(tab, timeout: 60)
+        try? await Task.sleep(for: .seconds(2))
+        guard let page = tab.liveView, let chromium = page.chromium else {
+            log("ax: no page")
+            return
+        }
+        guard let mirror = chromium.accessibilityMirror else {
+            log("ax: no mirror (wantsAccessibility \(ChromiumRemote.shared.wantsAccessibility))")
+            return
+        }
+        log("ax: \(mirror.summary())")
+        func describe(_ element: Any, depth: Int) -> [String] {
+            guard depth < 8, let element = element as? NSAccessibilityElement else { return [] }
+            let line = String(repeating: "  ", count: depth) + "\(element.accessibilityRole()?.rawValue ?? "?") title '\(element.accessibilityTitle() ?? "")' value '\(String(describing: element.accessibilityValue() ?? ""))' frame \(element.accessibilityFrame().integral)"
+            return [line] + (element.accessibilityChildren() ?? []).flatMap { describe($0, depth: depth + 1) }
+        }
+        let tree = (chromium.accessibilityChildren() ?? []).flatMap { describe($0, depth: 0) }
+        log("ax: tree as VoiceOver sees it (\(tree.count) elements):\n" + tree.prefix(40).joined(separator: "\n"))
+        func find(_ role: NSAccessibility.Role, in element: Any) -> ChromiumAccessibilityElement? {
+            guard let element = element as? ChromiumAccessibilityElement else { return nil }
+            if element.accessibilityRole() == role { return element }
+            for child in element.accessibilityChildren() ?? [] {
+                if let found = find(role, in: child) { return found }
+            }
+            return nil
+        }
+        let root = chromium.accessibilityChildren()?.first as Any
+        if let button = find(.button, in: root) {
+            log("ax: press button '\(button.accessibilityTitle() ?? "")': \(button.accessibilityPerformPress())")
+            try? await Task.sleep(for: .milliseconds(800))
+            let title = try? await page.evaluateJavaScript("document.title")
+            log("ax: document.title after Press: \(String(describing: title))")
+        } else {
+            log("ax: no button in the mirror")
+        }
+        if let link = find(.link, in: root) {
+            log("ax: press link '\(link.accessibilityTitle() ?? "")' url \(link.accessibilityURL()?.absoluteString ?? "nil"): \(link.accessibilityPerformPress())")
+            try? await Task.sleep(for: .seconds(2))
+            log("ax: url after Press: \(tab.liveView?.url?.absoluteString ?? "nil")")
+        } else {
+            log("ax: no link in the mirror")
+        }
+        log("ax: after navigation: \(chromium.accessibilityMirror?.summary() ?? "no mirror")")
+        captureWindow("ax-after")
         browser.close(tab)
         try? await Task.sleep(for: .seconds(1))
     }

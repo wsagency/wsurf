@@ -38,6 +38,15 @@ The Git history keeps an unmodified copy as its own commit (`chore(deps): vendor
 - **Why.** WSurf owns its browser lifetimes (`ChromiumPage`, `ChromiumClient`) and does not use the registry. Without the count the pump cannot tell an idle runtime from a busy one.
 - **Re-applying.** Three small edits in `registerBrowser`, `unregisterBrowser` and the two new methods next to them.
 
+### 3. D4 spike only (branch `spike/chromium-oop`, never merged): CEF in an XPC service
+
+- **What.**
+  - `Sources/CefKit/CefConfiguration.swift` and `CefRuntime.swift`: new `mainBundlePath` (CEF's `main_bundle_path`), cleared with the other settings strings.
+  - `Sources/CefKit/CefRemoteProtocol.swift` (new): the message vocabulary that WSurf and the service share, and `CefCursorType.fromRemote(_:)`.
+  - `Sources/wsurf-chromium-service/` (new executable target `wsurf-chromium-service`): the XPC service's executable. `Tools/embed-chromium.sh` builds it and assembles `Contents/XPCServices/WSurf Chromium.xpc`.
+- **Why.** CEF in an `.xpc` bundle must be told where WSurf's main bundle, framework and helper are (`framework_dir_path`, `browser_subprocess_path`, `main_bundle_path`); upstream sets only the first two.
+- **Re-applying.** Not applicable while it is a spike. If phase 2 adopts it, patch 3 gets a real entry.
+
 ### Outside the package
 
 - `WSurf/Web/Engines/ChromiumPage.swift`: one call to `externalBrowserDidOpen()` after the browser is created and registered (`materialize()`), one call to `externalBrowserDidClose()` where `didClose()` releases the browser.

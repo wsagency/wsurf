@@ -34,7 +34,33 @@ extension ChromiumPage {
         }
         browser.sentHidden = visibility.hidden
         browser.sentParked = visibility.parked
+        if ChromiumRemote.shared.wantsAccessibility {
+            browser.send(CefRemote.Op.accessibility) { $0.set(CefRemote.Key.flag, true) }
+        }
         try adoptRemote(browser)
+    }
+
+    /// A click at `point` (view points, top-left origin), as VoiceOver's Press on an element of the mirror.
+    func remoteClick(at point: CGPoint) {
+        guard let remote else { return }
+        for kind in ["move", "down", "up"] {
+            let message = remote.message(CefRemote.Op.mouse)
+            message.set(CefRemote.Key.kind, kind)
+            message.set(CefRemote.Key.x, Double(point.x))
+            message.set(CefRemote.Key.y, Double(point.y))
+            message.set(CefRemote.Key.button, Int64(0))
+            message.set(CefRemote.Key.clickCount, Int64(1))
+            remote.sendInput(message)
+        }
+    }
+
+    override func accessibilityChildren() -> [Any]? {
+        guard remote != nil else { return super.accessibilityChildren() }
+        return accessibilityMirror?.rootElement.map { [$0] } ?? []
+    }
+
+    override func isAccessibilityElement() -> Bool {
+        remote != nil ? false : super.isAccessibilityElement()
     }
 
     /// Geometry for the service: the view's size in points, the scale, the screen and the view's top-left on it.
@@ -109,7 +135,21 @@ extension ChromiumPage {
         return (hidden, !hidden && parked)
     }
 
+    /// Coalesced to the end of the turn: a switch takes a page out of its window and puts it back (or on the shelf) in one
+    /// turn, and only where it ends up is the service's business. A `was_hidden` flap would make the renderer hide and redraw.
     func updateRemoteVisibility() {
+        guard remote != nil, !isClosed, !remoteInput.visibilityUpdatePending else { return }
+        remoteInput.visibilityUpdatePending = true
+        RunLoop.main.perform(inModes: [.common]) { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                remoteInput.visibilityUpdatePending = false
+                sendRemoteVisibility()
+            }
+        }
+    }
+
+    private func sendRemoteVisibility() {
         guard let remote, !isClosed else { return }
         let visibility = remoteVisibility()
         guard visibility.hidden != remote.sentHidden || visibility.parked != remote.sentParked else { return }
@@ -160,6 +200,13 @@ extension ChromiumPage {
         case CefRemote.Event.findResult:
             find.receive(identifier: Int(message.int(CefRemote.Key.identifier)), count: Int(message.int(CefRemote.Key.count)),
                          active: Int(message.int(CefRemote.Key.active)), isFinal: message.bool(CefRemote.Key.final))
+        case CefRemote.Event.accessibilityTree:
+            if accessibilityMirror == nil {
+                accessibilityMirror = ChromiumAccessibilityMirror(page: self)
+            }
+            accessibilityMirror?.applyTree(message.data(CefRemote.Key.data))
+        case CefRemote.Event.accessibilityLocation:
+            accessibilityMirror?.applyLocations(message.data(CefRemote.Key.data))
         case CefRemote.Event.popupBlocked:
             ChromiumOOP.log.notice("spike: pop-up or new-tab link refused (out of scope)")
         default:

@@ -24,6 +24,7 @@ final class RemoteBrowser {
     private var focusPointer: UnsafeMutablePointer<cef_focus_handler_t>?
     private var contextMenuPointer: UnsafeMutablePointer<cef_context_menu_handler_t>?
     private var findPointer: UnsafeMutablePointer<cef_find_handler_t>?
+    private var accessibilityPointer: UnsafeMutablePointer<cef_accessibility_handler_t>?
     private var observerPointer: UnsafeMutablePointer<cef_dev_tools_message_observer_t>?
     private var registration: UnsafeMutablePointer<cef_registration_t>?
     private var contextMenuCallback: UnsafeMutablePointer<cef_run_context_menu_callback_t>?
@@ -143,6 +144,7 @@ final class RemoteBrowser {
             renderPointer.map(UnsafeMutableRawPointer.init), keyboardPointer.map(UnsafeMutableRawPointer.init),
             focusPointer.map(UnsafeMutableRawPointer.init), contextMenuPointer.map(UnsafeMutableRawPointer.init),
             findPointer.map(UnsafeMutableRawPointer.init), observerPointer.map(UnsafeMutableRawPointer.init),
+            accessibilityPointer.map(UnsafeMutableRawPointer.init),
             clientPointer.map(UnsafeMutableRawPointer.init),
         ] {
             Native.release(pointer)
@@ -156,6 +158,7 @@ final class RemoteBrowser {
         focusPointer = nil
         contextMenuPointer = nil
         findPointer = nil
+        accessibilityPointer = nil
         observerPointer = nil
         clientPointer = nil
         ServiceHost.shared.send(CefRemoteMessage(CefRemote.Event.browserClosed, browser: id))
@@ -269,6 +272,10 @@ final class RemoteBrowser {
             ime(message)
         case CefRemote.Op.edit:
             edit(message.string(CefRemote.Key.kind))
+        case CefRemote.Op.accessibility:
+            let enabled = message.bool(CefRemote.Key.flag)
+            withHost { $0.pointee.set_accessibility_state?($0, enabled ? STATE_ENABLED : STATE_DISABLED) }
+            note("browser \(id): accessibility \(enabled ? "on" : "off")")
         default:
             note("browser \(id): unknown op \(message.op)")
         }
@@ -1073,6 +1080,13 @@ final class RemoteBrowser {
                 owner.send(message)
             }
         }
+        render.pointee.get_accessibility_handler = { handlerSelf in
+            guard let owner = RemoteBrowser.owner(handlerSelf) else { return nil }
+            let address = MainActor.assumeIsolated { owner.accessibilityHandler().map { Int(bitPattern: $0) } ?? 0 }
+            guard let pointer = UnsafeMutablePointer<cef_accessibility_handler_t>(bitPattern: address) else { return nil }
+            Native.retain(UnsafeMutableRawPointer(pointer))
+            return pointer
+        }
         render.pointee.start_dragging = { _, browser, dragData, _, _, _ in
             Native.release(browser.map(UnsafeMutableRawPointer.init))
             Native.release(dragData.map(UnsafeMutableRawPointer.init))
@@ -1171,6 +1185,34 @@ final class RemoteBrowser {
             Native.release(frame.map(UnsafeMutableRawPointer.init))
         }
         contextMenuPointer = menu
+    }
+
+    /// The accessibility handler, made on first use: CEF asks for it only once accessibility is on.
+    private func accessibilityHandler() -> UnsafeMutablePointer<cef_accessibility_handler_t>? {
+        if let accessibilityPointer {
+            return accessibilityPointer
+        }
+        let handler = Native.allocate(cef_accessibility_handler_t.self, owner: self)
+        handler.pointee.on_accessibility_tree_change = { handlerSelf, value in
+            defer { Native.release(value.map(UnsafeMutableRawPointer.init)) }
+            guard let owner = RemoteBrowser.owner(handlerSelf) else { return }
+            let data = AccessibilityJSON.data(value)
+            MainActor.assumeIsolated { owner.sendAccessibility(CefRemote.Event.accessibilityTree, data) }
+        }
+        handler.pointee.on_accessibility_location_change = { handlerSelf, value in
+            defer { Native.release(value.map(UnsafeMutableRawPointer.init)) }
+            guard let owner = RemoteBrowser.owner(handlerSelf) else { return }
+            let data = AccessibilityJSON.data(value)
+            MainActor.assumeIsolated { owner.sendAccessibility(CefRemote.Event.accessibilityLocation, data) }
+        }
+        accessibilityPointer = handler
+        return handler
+    }
+
+    private func sendAccessibility(_ name: String, _ data: Data) {
+        let message = event(name)
+        message.set(CefRemote.Key.data, data: data)
+        send(message)
     }
 
     private func makeFindHandler() {
