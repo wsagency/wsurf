@@ -538,7 +538,8 @@ check_average \
   'kB'
 # Typing in the Credential Manager search over a vault of 3,000 credentials (D5(b), plan 6.5): from "site1" (1,111 rows) to "site29" (111
 # rows, none of them on screen before), steady state, the keystroke timed with the page's layout. Pro, Debug + coverage, whole Performance
-# plan, three runs: 0.0323 / 0.0349 / 0.0342 s, and 0.0374 s with the "..." as a pull-down button. Before this change a first keystroke of
+# plan, runs: 0.0323 / 0.0349 / 0.0342 s with the "..." drawn, then 0.0374 / 0.0349 / 0.0376 s with it as a pull-down button (load 5 to 43,
+# which does not move it). Before this change a first keystroke of
 # the same kind on a fresh page took 0.142 s (K3 of CredentialListPerformanceTests, a different harness, so not the same measurement).
 # Budget twice the larger mean. The keystroke that keeps every row (about 0.02 s) has no budget: a mean of five passes with a 0.0417 s
 # budget fails on one stalled pass of 0.127 s, which this file records for other short cases; its test asserts instead that no row is

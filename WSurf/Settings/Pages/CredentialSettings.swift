@@ -613,11 +613,15 @@ final class CredentialRowActions {
     nonisolated(unsafe) private(set) static var live = 0
 
     init() {
+        #if DEBUG
         Self.live += 1
+        #endif
     }
 
     deinit {
+        #if DEBUG
         Self.live -= 1
+        #endif
     }
 
     private(set) var run: (@escaping () async throws -> Void) -> Void = { _ in }

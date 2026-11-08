@@ -291,6 +291,7 @@ nonisolated final class CredentialListPerformanceTests: XCTestCase, @unchecked S
             }
             XCTAssertTrue((top + fromEmpty + middle + tall + scrolled).allSatisfy { $0.narrowings <= 1 }, "a keystroke narrows once")
             // The rows that come into view follow the window, not the vault (700 pt shows about 8, 1,400 pt about 25).
+            XCTAssertGreaterThan(try XCTUnwrap(top.map(\.rowReads).min()), 0, "the counter counts: rows that come into view are evaluated")
             XCTAssertLessThan(try XCTUnwrap(top.map(\.rowsBuilt).max()), 20)
             XCTAssertLessThan(try XCTUnwrap(tall.map(\.rowsBuilt).max()), 40)
             report("K3 site1 to site29, top, 700 pt", top)
@@ -335,8 +336,8 @@ nonisolated final class CredentialListPerformanceTests: XCTestCase, @unchecked S
     }
 
     /// A keystroke that leaves every row where it was ("use" after "us", both matching all 3,000): nothing new comes into view, so
-    /// the cost is the narrowing and the page's layout alone. It has no budget in `Tools/check-performance.sh` (a mean of five passes is too thin for a keystroke of
-    /// 20 ms); the assertion that no row is evaluated again guards what makes it cheap.
+    /// the cost is the narrowing and the page's layout alone. It has no budget in `Tools/check-performance.sh` (a mean of five passes is
+    /// too thin for a keystroke of 20 ms); the assertion that no row is evaluated again guards what makes it cheap.
     @MainActor
     func testATypedLetterThatKeepsEveryRowOfThreeThousandCredentials() async throws {
         try await withLargeVault { profile, vault in

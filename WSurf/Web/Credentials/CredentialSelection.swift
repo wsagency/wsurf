@@ -15,10 +15,11 @@ final class CredentialRowState {
 
 /// Which rows of the credential list, or of the Trash, are selected, and where the keyboard cursor is. Pure state, shared by both lists.
 ///
-/// The list tells it the rows it shows (`show`) whenever they change: each refresh, and each keystroke that changes them. A cursor move or a toggle is O(1) plus the row states it changes; a
-/// range (`extend`), select all and clear also update every row state handed out (one per row that was built). Rows read their own
-/// `CredentialRowState` and the two flags `showsCheckboxes` and `hasSeveralSelected`, which change only when they flip. A row the list
-/// stops showing (a search, a filter, a removal) leaves the selection, so an action never acts on rows you cannot see.
+/// The list tells it the rows it shows (`show`) whenever they change: each refresh, and each keystroke that changes them. A cursor
+/// move or a toggle is O(1) plus the row states it changes; a range (`extend`), select all and clear also update every row state
+/// handed out (one per row that was built). Rows read their own `CredentialRowState` and the two flags `showsCheckboxes` and
+/// `hasSeveralSelected`, which change only when they flip. A row the list stops showing (a search, a filter, a removal) leaves the
+/// selection, so an action never acts on rows you cannot see.
 @MainActor
 @Observable
 final class CredentialSelection {
@@ -58,11 +59,13 @@ final class CredentialSelection {
 
     /// How many times a row asked for its state, which it does each time its body runs: the performance tests' probe that a keystroke
     /// leaves the rows it keeps alone.
-    @ObservationIgnored private(set) var stateReadCount = 0
+    @ObservationIgnored private(set) var stateReadCount = 0  // counted in DEBUG builds only
 
     /// The selection as row `id` shows it. Read in the row's body: only a change to this row's state redraws it.
     func state(of id: UUID) -> CredentialRowState {
+        #if DEBUG
         stateReadCount += 1
+        #endif
         if let state = rows[id] {
             return state
         }

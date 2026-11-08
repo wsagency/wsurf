@@ -174,6 +174,15 @@ struct CredentialRowMoreButton: NSViewRepresentable {
             self.row = row
         }
 
+        /// A key equivalent is never one of this menu's: answering without filling the menu keeps AppKit from opening every row's menu
+        /// when it looks for one.
+        func menuHasKeyEquivalent(
+            _ menu: NSMenu, for event: NSEvent, target: AutoreleasingUnsafeMutablePointer<AnyObject?>?,
+            action: UnsafeMutablePointer<Selector?>?
+        ) -> Bool {
+            false
+        }
+
         /// The entries for what the model shows right now, made when the menu opens.
         func menuNeedsUpdate(_ menu: NSMenu) {
             while menu.numberOfItems > 1 {
