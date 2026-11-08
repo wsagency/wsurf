@@ -102,8 +102,25 @@ struct AppDatabase: Sendable {
     private static func memoryWriter() -> any DatabaseWriter {
         // swiftlint:disable:next force_try
         let queue = try! DatabaseQueue(configuration: configuration)
+        // Every migration ran for each private window, on main (25 ms). They run once, into a template that each
+        // new database copies with SQLite's backup.
+        if let template = migratedTemplate, (try? template.backup(to: queue)) != nil {
+            return queue
+        }
         try? migrator.migrate(queue)
         return queue
+    }
+
+    /// An in-memory database with every migration applied, or nil when they failed. Never handed out.
+    private static let migratedTemplate: DatabaseQueue? = {
+        guard let queue = try? DatabaseQueue(configuration: configuration),
+              (try? migrator.migrate(queue)) != nil else { return nil }
+        return queue
+    }()
+
+    /// Whether the template migrated, so that `temporary()` copies it. Tests read it.
+    static var hasMigratedTemplate: Bool {
+        migratedTemplate != nil
     }
 
     private static var configuration: Configuration {
