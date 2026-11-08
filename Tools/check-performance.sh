@@ -942,12 +942,13 @@ check_average \
   'kB'
 
 # Autofill reads (D5(a)), 20,000 credentials: the verified read (`snapshot`), and the autofill candidates projected from it on the
-# vault actor (`autofillCandidates`). PROVISIONAL, from one run of the two cases alone (2026-11-08): read 0.5822 s, candidates
-# 0.6061 s (1.04 times the read; plan D5 P1: at most 1.1). Time budgets are twice the mean; memory at least 4096 kB.
+# vault actor (`autofillCandidates`). Pro, Debug + coverage, whole WSurf-Rest run, two runs (2026-11-08), time means (s) run1 / run2:
+# read 0.608231 / 0.600344, candidates 0.622744 / 0.628505, so candidates take 1.024 / 1.047 times the read (plan D5 P1: at most
+# 1.1). Memory medians 0 / 0 kB. No -O run. Time budgets are twice the larger mean; memory at least 4096 kB.
 check_average \
   'VaultScalePerformanceTests/testReadingTwentyThousandCredentials()' \
   'com.apple.dt.XCTMetric_Clock.time.monotonic' \
-  '1.165' \
+  '1.22' \
   'Verified read of 20,000 credentials' \
   's'
 check_average \
@@ -959,7 +960,7 @@ check_average \
 check_average \
   'VaultScalePerformanceTests/testListingAutofillCandidatesAmongTwentyThousandCredentials()' \
   'com.apple.dt.XCTMetric_Clock.time.monotonic' \
-  '1.213' \
+  '1.26' \
   'Autofill candidates of 20,000 credentials' \
   's'
 check_average \
