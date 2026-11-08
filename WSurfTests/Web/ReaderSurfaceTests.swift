@@ -62,6 +62,65 @@ struct ReaderSurfaceTests {
         #expect(configuration.websiteDataStore === store)
     }
 
+    /// A Reader view makes no spare while it is open; the spare comes after one goes away, and the next Reader takes it.
+    @Test(.boundedWebViews) func theNextReaderTakesTheSpareMadeWhenTheLastOneWentAway() async throws {
+        let store = WKWebsiteDataStore.nonPersistent()
+        let other = WKWebsiteDataStore.nonPersistent()
+        let savedDelay = ReaderViewSpare.refillDelay
+        ReaderViewSpare.refillDelay = .milliseconds(1)
+        ReaderViewSpare.discard()
+        defer {
+            ReaderViewSpare.refillDelay = savedDelay
+            ReaderViewSpare.discard()
+        }
+        let first = ReaderViewSpare.take(dataStore: store)
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(ReaderViewSpare.current == nil, "no spare while a Reader view is open")
+        ReaderViewSpare.refill(dataStore: store)
+        try #require(await waitUntil { ReaderViewSpare.current != nil })
+        let spare = try #require(ReaderViewSpare.current)
+        #expect(spare !== first)
+        #expect(!spare.configuration.defaultWebpagePreferences.allowsContentJavaScript)
+        #expect(spare.configuration.mediaTypesRequiringUserActionForPlayback == .all)
+        let foreign = ReaderViewSpare.take(dataStore: other)
+        #expect(foreign !== spare && foreign.configuration.websiteDataStore === other)
+        #expect(ReaderViewSpare.current === spare, "another data store leaves the spare alone")
+        #expect(ReaderViewSpare.take(dataStore: store) === spare)
+        #expect(ReaderViewSpare.current == nil)
+    }
+
+    /// Deleting a profile lets go of the spare and a pending refill, which hold the profile's data store.
+    @Test(.boundedWebViews) func deletingAProfileDropsTheSpareAndAPendingRefill() async throws {
+        let catalog = ProfileStore.shared
+        let previous = catalog.current
+        let profile = catalog.add(name: "Reader spare")
+        defer { catalog.markCurrent(previous) }
+        let store = WKWebsiteDataStore.nonPersistent()
+        let savedDelay = ReaderViewSpare.refillDelay
+        ReaderViewSpare.refillDelay = .milliseconds(1)
+        ReaderViewSpare.discard()
+        defer {
+            ReaderViewSpare.refillDelay = savedDelay
+            ReaderViewSpare.discard()
+        }
+        // Another suite deleting a profile at the same time also discards the spare, so make it again if it is gone.
+        var attempts = 0
+        while ReaderViewSpare.current == nil, attempts < 20 {
+            attempts += 1
+            ReaderViewSpare.refill(dataStore: store)
+            _ = await waitUntil(timeout: .seconds(2)) { ReaderViewSpare.current != nil }
+        }
+        try #require(ReaderViewSpare.current != nil)
+
+        ReaderViewSpare.refillDelay = .seconds(30)
+        ReaderViewSpare.refill(dataStore: store)
+        #expect(ReaderViewSpare.refillTask != nil)
+        await catalog.remove(profile)
+
+        #expect(ReaderViewSpare.current == nil)
+        #expect(ReaderViewSpare.refillTask == nil)
+    }
+
     /// A script that runs while the document loads would change its title before the load finishes.
     private var scripted: ReaderArticle {
         ReaderArticle(

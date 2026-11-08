@@ -191,6 +191,7 @@ final class ProfileStore {
         BrowserProfileContext.forget(profile.id)
         SpaceStore.forget(profile.id)
         save()
+        ReaderViewSpare.discard()
         await Profile.erase(profile)
     }
 

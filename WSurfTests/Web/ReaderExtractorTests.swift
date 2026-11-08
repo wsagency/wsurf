@@ -193,6 +193,17 @@ struct ReaderExtractorTests {
         #expect(ReaderArticle(json: "") == nil)
     }
 
+    /// The scan counts what splitting at white space counted, for ASCII, no-break spaces, line separators and CJK.
+    @Test func theWordScanMatchesSplittingAtWhiteSpace() {
+        let samples = [
+            "", " ", "one", "  one   two\tthree\nfour\r\nfive ", "no\u{00A0}break\u{2028}sep\u{3000}ideographic",
+            "日本語 の テキスト", "emoji 👨‍👩‍👧 family  e\u{301}acute", "a\u{0B}b\u{0C}c",
+        ]
+        for sample in samples {
+            #expect(ReaderArticle.words(in: sample) == sample.split(whereSeparator: \.isWhitespace).count, "\(sample.debugDescription)")
+        }
+    }
+
     @Test func aDriverWithoutAPageAnswersNothing() async {
         let driver = ReaderDriver.page { nil }
 
