@@ -208,7 +208,7 @@ struct TabSleepScheduleTests {
             rig.browser.activate(tab)
             _ = await tab.waitForPendingNavigation()
             try #require(await waitUntil(timeout: .seconds(60)) { await rig.marker(of: tab) == "loaded" })
-            func scrollY() async -> Double {
+            @MainActor func scrollY() async -> Double {
                 (try? await tab.page.evaluateJavaScript("window.scrollY")) as? Double ?? 0
             }
             if engine == .webKit {
