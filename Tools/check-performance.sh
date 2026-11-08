@@ -943,8 +943,10 @@ check_average \
 
 # Autofill reads (D5(a)), 20,000 credentials: the verified read (`snapshot`), and the autofill candidates projected from it on the
 # vault actor (`autofillCandidates`). Pro, Debug + coverage, whole WSurf-Rest run, two runs (2026-11-08), time means (s) run1 / run2:
-# read 0.608231 / 0.600344, candidates 0.622744 / 0.628505, so candidates take 1.024 / 1.047 times the read (plan D5 P1: at most
-# 1.1). Memory medians 0 / 0 kB. No -O run. Time budgets are twice the larger mean; memory at least 4096 kB.
+# read 0.608231 / 0.600344, candidates 0.622744 / 0.628505, so candidates took 1.024 / 1.047 times the read. Plan D5 P1 asks for at
+# most 1.1: that ratio was measured by hand on these runs and is not gated here. The budgets are absolute, twice the larger mean, so
+# they catch a gross regression only; the projection itself is held by the next block. Memory medians 0 / 0 kB. No -O run. Memory
+# budgets at least 4096 kB.
 check_average \
   'VaultScalePerformanceTests/testReadingTwentyThousandCredentials()' \
   'com.apple.dt.XCTMetric_Clock.time.monotonic' \
@@ -968,6 +970,23 @@ check_average \
   'com.apple.dt.XCTMetric_Memory.physical' \
   '4096' \
   'Autofill candidates of 20,000 credentials memory growth' \
+  'kB'
+
+# The same projection without the read or any I/O (testProjectingTwentyThousandCredentialsForAutofill): candidates (with their
+# items' facts), card rows and contact rows of 20,000 in-memory credentials, 2,000 of them with a card (200 ended) and 2,000 with a
+# contact, through the store's own cardRows and contactRow. Pro, Debug + coverage, whole WSurf-Rest run, two runs (2026-11-08,
+# 6d86be46): time means 0.172575 / 0.172673 s, memory medians 0 / 0 kB. Time budget twice the larger mean; memory 4096 kB.
+check_average \
+  'VaultScalePerformanceTests/testProjectingTwentyThousandCredentialsForAutofill()' \
+  'com.apple.dt.XCTMetric_Clock.time.monotonic' \
+  '0.346' \
+  'Autofill projection of 20,000 in-memory credentials' \
+  's'
+check_average \
+  'VaultScalePerformanceTests/testProjectingTwentyThousandCredentialsForAutofill()' \
+  'com.apple.dt.XCTMetric_Memory.physical' \
+  '4096' \
+  'Autofill projection of 20,000 in-memory credentials memory growth' \
   'kB'
 
 # History and database (HistoryPerformanceTests), six-sample means on the Pro (2026-10-27, Debug), seconds, before and after WI-3
