@@ -16,7 +16,9 @@ struct ThemeColorControlsTests {
         let name = AppDatabase.defaultsSuite("ThemeColorControlsTests-\(UUID().uuidString)")
         let defaults = try #require(UserDefaults(suiteName: name))
         defer { defaults.removePersistentDomain(forName: name) }
-        try test(BrowserSettings(defaults: defaults, appliesAppearanceGlobally: false))
+        let settings = BrowserSettings(defaults: defaults, appliesAppearanceGlobally: false)
+        settings.previewsEveryStep()
+        try test(settings)
     }
 
     private func rgb(_ color: Color, _ scheme: ColorScheme) -> NSColor {
@@ -184,6 +186,8 @@ struct ThemeColorControlsTests {
     @Test func aRowsNewTabDotTakesTheThemesAccent() throws {
         let settings = BrowserSettings.application
         try #require(settings.themePreview == nil, "must not replace a theme preview in progress")
+        let restoreClock = settings.previewsEveryStep()
+        defer { restoreClock() }
         settings.beginThemePreview()
         defer { settings.cancelThemePreview() }
         let unseen = SidebarRowStyle.resolve(

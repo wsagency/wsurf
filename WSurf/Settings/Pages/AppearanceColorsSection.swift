@@ -64,6 +64,8 @@ struct AppearanceColorsSection: View {
     var body: some View {
         SettingsCard {
             DisclosureGroup("Colors", isExpanded: $isExpanded) {
+                // Inside the content, so a collapsed card does not observe the live preview.
+                let live = settings.liveResolvedVariant(scheme)
                 caption(introduction)
                 caption(appearanceNote)
                 if let groundNote {
@@ -95,6 +97,7 @@ struct AppearanceColorsSection: View {
                 RowSeparator()
                 DetailRow(title: "Secondary text", caption: "The titles of tabs that are asleep (unloaded), dimmer than primary text.") {
                     inkControls(
+                        live: live,
                         \.unloadedText, label: "Secondary text", opacityLabel: "Secondary text opacity",
                         drawn: { $0.unloadedInk }, role: .secondary
                     )
@@ -120,6 +123,7 @@ struct AppearanceColorsSection: View {
                 RowSeparator()
                 DetailRow(title: "Tab text", caption: "The title of tabs and folders that are loaded.") {
                     inkControls(
+                        live: live,
                         \.sidebarText, label: "Tab text", opacityLabel: "Tab text opacity",
                         drawn: { $0.loadedInk }
                     )
@@ -127,13 +131,14 @@ struct AppearanceColorsSection: View {
                 RowSeparator()
                 DetailRow(title: "Icons", caption: "The icons on the toolbar and on controls.") {
                     inkControls(
+                        live: live,
                         \.icons, label: "Icons", opacityLabel: "Icons opacity",
                         drawn: { $0.controlInk }
                     )
                 }
                 RowSeparator()
                 DetailRow(title: "URL text", caption: "The address in the toolbar.") {
-                    inkControls(\.url, label: "URL text", opacityLabel: "URL text opacity", drawn: { _ in nil })
+                    inkControls(live: live, \.url, label: "URL text", opacityLabel: "URL text opacity", drawn: { _ in nil })
                 }
                 RowSeparator()
                 DetailRow(
@@ -213,12 +218,13 @@ struct AppearanceColorsSection: View {
     }
 
     private func inkControls(
+        live: ResolvedVariant,
         _ keyPath: WritableKeyPath<ThemeVariant, SidebarTextStyle>,
         label: LocalizedStringResource, opacityLabel: LocalizedStringResource,
         drawn: (ResolvedVariant) -> Color?, role: ThemeContrast.Role? = nil
     ) -> some View {
         let style = colorBinding(keyPath)
-        let note = readabilityNote(style.wrappedValue, drawn: drawn(settings.resolvedTheme.variant(scheme)))
+        let note = readabilityNote(style.wrappedValue, drawn: drawn(live))
         return VStack(alignment: .trailing, spacing: 4) {
             inkRow(style: style, label: label, opacityLabel: opacityLabel)
             if let role, let shortfall = shortfall(role) {

@@ -55,8 +55,31 @@ struct ThemeSidebarInk: Equatable {
     }
 }
 
+/// Everything `resolvedTheme` is built from.
+struct ThemeInputs: Equatable {
+    let themeID: String
+    let userThemes: [ThemeDefinition]
+    let adjustments: [String: ThemeAdjustment]
+    let preview: ThemePreview?
+}
+
 extension BrowserSettings {
+    /// While a slider or colour well drags, the window takes a new preview at most this often. The gallery card
+    /// reads `themePreview` itself and stays live.
+    static let themePreviewInterval = Duration.milliseconds(100)
+
     func refreshTheme() {
+        pendingThemeApply?.cancel()
+        pendingThemeApply = nil
+        let inputs = ThemeInputs(
+            themeID: themeID, userThemes: userThemes, adjustments: themeAdjustments, preview: themePreview
+        )
+        if inputs == lastThemeInputs, themeCache != nil {
+            return
+        }
+        lastThemeInputs = inputs
+        appliedThemePreview = themePreview
+        themeRevision &+= 1
         themeCache = nil
         let theme = resolvedTheme
         let ink = ThemeSidebarInk(theme)
@@ -83,12 +106,50 @@ extension BrowserSettings {
         preview.adjustment = adjustment.bounded()
         guard settings.themePreview != preview else { return }
         settings.themePreview = preview
-        settings.refreshTheme()
+        settings.applyThemePreviewSoon()
+    }
+
+    /// Applies the preview to the window now if the last apply is at least `themePreviewInterval` old; otherwise
+    /// once the interval is up, with whatever the preview is by then. The last value of a drag always lands.
+    func applyThemePreviewSoon() {
+        let settings = globalSettings
+        let now = settings.themeApplyClock()
+        guard let last = settings.lastThemeApply, now - last < Self.themePreviewInterval else {
+            settings.lastThemeApply = now
+            settings.refreshTheme()
+            return
+        }
+        guard settings.pendingThemeApply == nil else { return }
+        let wait = Self.themePreviewInterval - (now - last)
+        settings.pendingThemeApply = Task { @MainActor [weak settings] in
+            try? await Task.sleep(for: wait)
+            guard !Task.isCancelled, let settings else { return }
+            settings.pendingThemeApply = nil
+            settings.lastThemeApply = settings.themeApplyClock()
+            settings.refreshTheme()
+        }
     }
 
     var previewedTheme: ThemeDefinition {
         let theme = selectedTheme
         return globalSettings.themePreview?.applying(to: theme) ?? theme
+    }
+
+    /// The variant as the controls show it right now: the live preview, not the one the window applied at most every
+    /// `themePreviewInterval`. A readability note compares the chosen ink with this, so it never disagrees with its own slider.
+    func liveResolvedVariant(_ scheme: ColorScheme) -> ResolvedVariant {
+        let theme = previewedTheme
+        return ResolvedVariant(
+            theme.variant(scheme), isDark: scheme == .dark,
+            brightness: themeAdjustment.brightness(scheme), ground: theme.drawnGround
+        )
+    }
+
+    /// What the window backdrop draws from: the ground, the material and the glass opacity of the applied theme. All
+    /// three come from `resolvedTheme`, so a drag moves them at most every `themePreviewInterval`.
+    var windowBackdrop: (ground: ThemeGround, material: ThemeMaterial, glassOpacity: Double) {
+        let theme = resolvedTheme
+        return (theme.ground, theme.adjustment.material, theme.adjustment.glassOpacity)
     }
 
     func previewThemeColors(scheme: ColorScheme, _ edit: (inout ThemeVariant) -> Void) {
@@ -101,13 +162,14 @@ extension BrowserSettings {
         preview.scheme = scheme
         guard globalSettings.themePreview != preview else { return }
         globalSettings.themePreview = preview
-        globalSettings.refreshTheme()
+        applyThemePreviewSoon()
     }
 
     func commitThemePreview() {
         let settings = globalSettings
         guard let preview = settings.themePreview else { return }
         settings.themePreview = nil
+        settings.lastThemeApply = nil
         if preview.themeID == selectedTheme.id {
             if let colors = preview.colors, let scheme = preview.scheme, colors != selectedTheme.variant(scheme) {
                 editColors(scheme: scheme) { $0 = colors }
@@ -121,6 +183,7 @@ extension BrowserSettings {
         let settings = globalSettings
         guard settings.themePreview != nil else { return }
         settings.themePreview = nil
+        settings.lastThemeApply = nil
         settings.refreshTheme()
     }
 }

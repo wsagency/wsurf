@@ -36,7 +36,26 @@ struct FolderIndentLiveTests {
 
     /// Each row's start from the one before: the tab in the outer folder is one Level 1 step in from it, the inner folder
     /// that and its own outline, and the tab in the inner folder one Level 2 step in from it.
-    private func expectSteps(_ rows: Rows, _ steps: [Double], in rig: SidebarDriveRig) throws {
+    private func stepsMatch(_ rows: Rows, _ steps: [Double], in rig: SidebarDriveRig) -> Bool {
+        let outline = FolderSection.outlineInset
+        guard let outer = try? start(of: .folder(rows.outer.id), in: rig),
+              let tab = try? start(of: .tab(rows.tab.id), in: rig),
+              let inner = try? start(of: .folder(rows.inner.id), in: rig),
+              let deepTab = try? start(of: .tab(rows.deepTab.id), in: rig)
+        else { return false }
+        return abs(tab - outer - steps[0]) < 0.01 && abs(inner - tab - outline) < 0.01 && abs(deepTab - inner - steps[1]) < 0.01
+    }
+
+    /// Waits for the rows to reach the steps (a loaded machine draws them late; a fixed number of rounds was not enough), then
+    /// asserts them, so a real mismatch still fails with the measured distances.
+    private func expectSteps(_ rows: Rows, _ steps: [Double], in rig: SidebarDriveRig) async throws {
+        _ = await waitUntil {
+            if stepsMatch(rows, steps, in: rig) {
+                return true
+            }
+            try? await rig.settle(rounds: 1)
+            return false
+        }
         let outline = FolderSection.outlineInset
         let outer = try start(of: .folder(rows.outer.id), in: rig)
         let tab = try start(of: .tab(rows.tab.id), in: rig)
@@ -69,13 +88,13 @@ struct FolderIndentLiveTests {
             defer { rig.close() }
             let rows = build(in: rig)
             try await rig.settle(rounds: 10)
-            try expectSteps(rows, [0, 0], in: rig)
+            try await expectSteps(rows, [0, 0], in: rig)
 
             BrowserSettings.application.themeAdjustment = ThemeAdjustment(
                 folderIndentLevel1: 8, folderIndentLevel2: 12, folderIndentLevel3: 16
             )
             try await rig.settle(rounds: 10)
-            try expectSteps(rows, [8, 12], in: rig)
+            try await expectSteps(rows, [8, 12], in: rig)
         }
     }
 
@@ -92,12 +111,14 @@ struct FolderIndentLiveTests {
             adjustment.folderIndentLevel1 = 10
             adjustment.folderIndentLevel2 = 4
             settings.previewThemeAdjustment(adjustment)
+            // At once: the shape the rows read has the new steps before anything is drawn.
+            #expect(Array(settings.chromeShape.folderIndents.prefix(2)) == [10, 4])
             try await rig.settle(rounds: 10)
-            try expectSteps(rows, [10, 4], in: rig)
+            try await expectSteps(rows, [10, 4], in: rig)
 
             settings.commitThemePreview()
             try await rig.settle(rounds: 10)
-            try expectSteps(rows, [10, 4], in: rig)
+            try await expectSteps(rows, [10, 4], in: rig)
         }
     }
 
@@ -111,7 +132,7 @@ struct FolderIndentLiveTests {
             defer { rig.close() }
             let rows = build(in: rig)
             try await rig.settle(rounds: 10)
-            try expectSteps(rows, [6, 14], in: rig)
+            try await expectSteps(rows, [6, 14], in: rig)
         }
     }
 
@@ -124,12 +145,12 @@ struct FolderIndentLiveTests {
             let rows = build(in: rig)
             settings.themeAdjustment = ThemeAdjustment(folderIndentLevel1: 8, folderIndentLevel2: 4, folderIndentLevel3: 4)
             try await rig.settle(rounds: 10)
-            try expectSteps(rows, [8, 4], in: rig)
+            try await expectSteps(rows, [8, 4], in: rig)
 
             let copy = try #require(settings.saveTheme(named: "Indented"))
             #expect(settings.themeID == copy.id)
             try await rig.settle(rounds: 10)
-            try expectSteps(rows, [8, 4], in: rig)
+            try await expectSteps(rows, [8, 4], in: rig)
         }
     }
 }
