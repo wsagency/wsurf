@@ -430,8 +430,8 @@ nonisolated final class CredentialListPerformanceTests: XCTestCase, @unchecked S
         }
     }
 
-    /// Typing in the search field narrows a 3,000-credential list: the page finds the matches from the keys built with the summaries and
-    /// lays out only the rows it shows. The search is applied by the page's own task, not by the test.
+    /// Typing in the search field narrows a 3,000-credential list: the list finds the matches from the keys built with the summaries, in
+    /// the update that sets the query, and the page lays out only the rows it shows.
     @MainActor
     func testSearchingThreeThousandCredentialsUpdatesQuickly() async throws {
         try await withLargeVault { profile, vault in

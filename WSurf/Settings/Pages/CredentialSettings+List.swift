@@ -487,7 +487,7 @@ struct VaultSectionBar: View {
     let showsCounts: Bool
     let offersInputHistory: Bool
 
-    /// Read here, not by the page, so a refresh of the counts (every keystroke of a search) redraws only this bar.
+    /// Read here, not by the page, so a change of the counts redraws only this bar.
     private var counts: [CredentialListFilter: Int]? {
         showsCounts ? list.counts : nil
     }
