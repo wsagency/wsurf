@@ -241,7 +241,12 @@ struct SidebarLazyRowsTests {
         try await rig.scroll(to: 40)
         let moved = try #require(rig.frame(of: item))
         #expect(moved.minY != row.minY, "the list scrolled")
-        #expect(rig.coordinator.tabPreview.shown?.anchor == moved, "the card's anchor is where the row is now")
+        let after = rig.coordinator.tabPreview.shown
+        #expect(
+            after?.subject.id == tabs[4].id,
+            "the card is still the tab's (card of \(String(describing: after?.subject.id)), pointer at \(NSEvent.mouseLocation))"
+        )
+        #expect(after?.anchor == moved, "the card's anchor is where the row is now")
     }
 
     // MARK: Only the current tab is current

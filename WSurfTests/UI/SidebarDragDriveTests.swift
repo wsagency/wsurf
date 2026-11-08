@@ -47,7 +47,30 @@ final class SidebarDriveRig {
         window = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         window.contentView = host
+        keepClearOfThePointer()
         window.makeKeyAndOrderFront(nil)
+    }
+
+    /// The rig is a real window, by default at the screen's bottom left corner. A person's pointer resting over it
+    /// hovers whichever row scrolls under it and raises that row's preview card, in place of the one the test showed.
+    /// `ignoresMouseEvents` does not prevent that (the hover comes from the window's tracking areas), so the window sits
+    /// in a corner the pointer is not near. The tests drive rows with the model and with events they build and send to
+    /// the window themselves.
+    func keepClearOfThePointer() {
+        guard let screen = NSScreen.screens.first else { return }
+        let pointer = NSEvent.mouseLocation
+        let frame = window.frame
+        let corners = [
+            CGPoint(x: screen.frame.minX, y: screen.frame.minY),
+            CGPoint(x: screen.frame.maxX - frame.width, y: screen.frame.minY),
+        ]
+        for corner in corners {
+            let candidate = CGRect(origin: corner, size: frame.size).insetBy(dx: -20, dy: -20)
+            if !candidate.contains(pointer) {
+                window.setFrameOrigin(corner)
+                return
+            }
+        }
     }
 
     /// Sets the knobs of the Standard theme, which the rig draws with, until `close()`.
