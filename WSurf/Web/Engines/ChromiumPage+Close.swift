@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 
 import CCef
+import CefKit
 import Foundation
 import os
 

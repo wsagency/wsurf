@@ -205,7 +205,56 @@ enum D4SpikeDriver {
         let value = try? await page.evaluateJavaScript("JSON.stringify({value: document.querySelector('input').value, keys: window.__keys || []})")
         log("input: after typing \(String(describing: value)); first responder is page \(window.firstResponder === chromium)")
         captureWindow("input-typed")
+        // The cursor comes back from CEF as an event: over the field it is the I-beam.
+        if let move = NSEvent.mouseEvent(with: .mouseMoved, location: inWindow, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                         windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 0, pressure: 0) {
+            chromium.mouseMoved(with: move)
+        }
+        try? await Task.sleep(for: .milliseconds(400))
+        log("input: cursor over the field is the I-beam \(chromium.remoteCursor == NSCursor.iBeam)")
+        // A WSurf shortcut while the page has focus: Cmd-T opens the new-tab palette.
+        if let commandT = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .command, timestamp: ProcessInfo.processInfo.systemUptime,
+                                           windowNumber: window.windowNumber, context: nil, characters: "t", charactersIgnoringModifiers: "t",
+                                           isARepeat: false, keyCode: 17) {
+            NSApp.sendEvent(commandT)
+        }
+        try? await Task.sleep(for: .milliseconds(500))
+        log("input: Cmd-T with the page focused opened the palette \(coordinator.isPaletteOpen)")
+        coordinator.closePalette()
+        try? await Task.sleep(for: .milliseconds(300))
         await serviceStatistics()
+        browser.close(tab)
+        try? await Task.sleep(for: .seconds(1))
+        await scroll()
+    }
+
+    /// Wheel events reach the page: ten 40-point steps down on a long article. The event is made in process from a CGEvent
+    /// (never posted) and handed to the page view.
+    private static func scroll() async {
+        var browser: BrowserModel { coordinator.browser }
+        let tab = browser.newTab(url: url("article.html"), engine: .chromium)
+        _ = await waitLoaded(tab, timeout: 60)
+        try? await Task.sleep(for: .seconds(1))
+        guard let page = tab.liveView, let chromium = page.chromium, chromium.window != nil else {
+            log("scroll: no page")
+            return
+        }
+        let before = try? await page.evaluateJavaScript("window.scrollY")
+        // NSEvent(cgEvent:) has no window, so its locationInWindow is the screen point: aim it at the page's centre.
+        let target = chromium.convert(CGPoint(x: chromium.bounds.midX, y: chromium.bounds.midY), to: nil)
+        let screenHeight = NSScreen.screens.first?.frame.height ?? 0
+        for _ in 0..<10 {
+            guard let wheel = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1, wheel1: -40, wheel2: 0, wheel3: 0) else { continue }
+            wheel.location = CGPoint(x: target.x, y: screenHeight - target.y)
+            if let event = NSEvent(cgEvent: wheel) {
+                chromium.scrollWheel(with: event)
+            }
+            try? await Task.sleep(for: .milliseconds(16))
+        }
+        try? await Task.sleep(for: .milliseconds(600))
+        let after = try? await page.evaluateJavaScript("window.scrollY")
+        log("scroll: window.scrollY before \(String(describing: before)), after ten wheel steps \(String(describing: after))")
+        captureWindow("scroll-after")
         browser.close(tab)
         try? await Task.sleep(for: .seconds(1))
     }

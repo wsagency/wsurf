@@ -8,6 +8,7 @@
 import AppKit
 import CefKit
 import QuartzCore
+import os
 
 extension ChromiumPage {
     var isRemote: Bool {
@@ -143,8 +144,8 @@ extension ChromiumPage {
         RunLoop.main.perform(inModes: [.common]) { [weak self] in
             MainActor.assumeIsolated {
                 guard let self else { return }
-                remoteInput.visibilityUpdatePending = false
-                sendRemoteVisibility()
+                self.remoteInput.visibilityUpdatePending = false
+                self.sendRemoteVisibility()
             }
         }
     }

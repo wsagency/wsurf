@@ -337,27 +337,23 @@ extension ChromiumPage {
         remote?.send(CefRemote.Op.edit) { $0.set(CefRemote.Key.kind, kind) }
     }
 
-    @objc func copy(_ sender: Any?) { remoteEdit("copy") }
-    @objc func cut(_ sender: Any?) { remoteEdit("cut") }
-    @objc func paste(_ sender: Any?) { remoteEdit("paste") }
-    @objc func pasteAsPlainText(_ sender: Any?) { remoteEdit("pasteAndMatchStyle") }
-    @objc func delete(_ sender: Any?) { remoteEdit("delete") }
-    @objc func undo(_ sender: Any?) {
-        // In process the app's own undo (Undo Close Tab) must still reach it through the chain.
+    /// In process these actions are not this view's: they go on along the chain as before (the app's own Undo Close Tab,
+    /// for one).
+    private func edit(_ kind: String, _ action: Selector, _ sender: Any?) {
         guard remote != nil else {
-            _ = nextResponder?.tryToPerform(#selector(undo(_:)), with: sender)
+            _ = nextResponder?.tryToPerform(action, with: sender)
             return
         }
-        remoteEdit("undo")
+        remoteEdit(kind)
     }
 
-    @objc func redo(_ sender: Any?) {
-        guard remote != nil else {
-            _ = nextResponder?.tryToPerform(#selector(redo(_:)), with: sender)
-            return
-        }
-        remoteEdit("redo")
-    }
+    @objc func copy(_ sender: Any?) { edit("copy", #selector(copy(_:)), sender) }
+    @objc func cut(_ sender: Any?) { edit("cut", #selector(cut(_:)), sender) }
+    @objc func paste(_ sender: Any?) { edit("paste", #selector(paste(_:)), sender) }
+    @objc func pasteAsPlainText(_ sender: Any?) { edit("pasteAndMatchStyle", #selector(pasteAsPlainText(_:)), sender) }
+    @objc func delete(_ sender: Any?) { edit("delete", #selector(delete(_:)), sender) }
+    @objc func undo(_ sender: Any?) { edit("undo", #selector(undo(_:)), sender) }
+    @objc func redo(_ sender: Any?) { edit("redo", #selector(redo(_:)), sender) }
 
     override func selectAll(_ sender: Any?) {
         // NSResponder only declares this (an optional key-binding method): in process, pass it along instead of to super.
@@ -496,11 +492,20 @@ extension ChromiumPage: @preconcurrency NSTextInputClient {
     /// the last caret the service reported. Never a wait on the service.
     func firstRect(forCharacterRange range: NSRange, actualRange: NSRangePointer?) -> NSRect {
         guard let window else { return .zero }
-        if let first = remoteInput.compositionBounds.first {
-            remoteInput.caretRect = first
+        // The asked character's own box, as native Chromium answers (the input method puts its window below it). The bounds
+        // are indexed from the composition's start; past its end, the caret after the last character.
+        let bounds = remoteInput.compositionBounds
+        let index = range.location == NSNotFound ? 0 : range.location
+        let caret: CGRect = if index < bounds.count {
+            bounds[index]
+        } else if let last = bounds.last {
+            CGRect(x: last.maxX, y: last.minY, width: 1, height: last.height)
+        } else {
+            remoteInput.caretRect ?? CGRect(x: 4, y: 4, width: 1, height: 16)
         }
-        let caret = remoteInput.caretRect ?? CGRect(x: 4, y: 4, width: 1, height: 16)
-        let rect = NSRect(x: caret.minX, y: caret.maxY, width: max(caret.width, 1), height: max(caret.height, 1))
+        actualRange?.pointee = NSRange(location: index, length: index < bounds.count ? min(range.length, bounds.count - index) : 0)
+        let rect = NSRect(x: caret.minX, y: caret.minY, width: max(caret.width, 1), height: max(caret.height, 1))
+        // The view is flipped: `convert` turns the top-left rectangle into window coordinates.
         return window.convertToScreen(convert(rect, to: nil))
     }
 
