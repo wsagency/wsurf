@@ -227,10 +227,11 @@ check_average \
   'kB'
 # Six-sample Pro baseline (Xcode 27.1, 0.1.7 targeted run): ten Standard/Minimal window style switches in a 300-tab window; time mean
 # 1.1497 s, memory median of samples 2-6 2228.224 kB.
+# D1 re-base (perf/w1-budgets, 2026-11-07): was 2.300 s; twice the larger of two whole-plan gate means (0.1146 / 0.1158 s, perf/bench-window).
 check_average \
   'BrowserPerformanceTests/testSwitchingWindowStyles()' \
   'com.apple.dt.XCTMetric_Clock.time.monotonic' \
-  '2.300' \
+  '0.232' \
   'Ten window style switches in a 300-tab window' \
   's'
 check_average \
@@ -259,10 +260,11 @@ check_average \
   'kB'
 # Six-sample Pro baseline (Xcode 27.1, 0.1.7 targeted run): the Minimal bar with its tab list open over 300 tabs; time mean 1.1210 s,
 # memory median of samples 2-6 6144 kB.
+# D1 re-base (perf/w1-budgets, 2026-11-07): was 2.242 s; twice the larger of two whole-plan gate means (0.0836 / 0.0802 s, perf/bench-window).
 check_average \
   'BrowserPerformanceTests/testLayingOutTheMinimalShell()' \
   'com.apple.dt.XCTMetric_Clock.time.monotonic' \
-  '2.242' \
+  '0.167' \
   'Minimal shell layout with its tab list open' \
   's'
 check_average \
@@ -297,10 +299,11 @@ check_average \
   '4096' \
   'Archive search memory growth' \
   'kB'
+# D1 re-base (perf/w1-budgets, 2026-11-07): was 0.010 s; twice the larger of two whole-plan gate means (0.0009 / 0.0009 s, perf/bench-window).
 check_average \
   'BrowserPerformanceTests/testCommandPaletteHistoryRanking()' \
   'com.apple.dt.XCTMetric_Clock.time.monotonic' \
-  '0.010' \
+  '0.0018' \
   '500-entry palette query' \
   's'
 check_average \
@@ -309,10 +312,11 @@ check_average \
   '4096' \
   'Palette query memory growth' \
   'kB'
+# D1 re-base (perf/w1-budgets, 2026-11-07): was 0.020 s; twice the larger of two whole-plan gate means (0.0024 / 0.0023 s, perf/bench-window).
 check_average \
   'BrowserPerformanceTests/testCommandPaletteResultProjection()' \
   'com.apple.dt.XCTMetric_Clock.time.monotonic' \
-  '0.020' \
+  '0.0048' \
   '500-history, 100-tab palette projection' \
   's'
 check_average \
@@ -321,10 +325,11 @@ check_average \
   '4096' \
   'Full palette projection memory growth' \
   'kB'
+# D1 re-base (perf/w1-budgets, 2026-11-07): was 0.015 s; twice the larger of two whole-plan gate means (0.0011 / 0.0010 s, perf/bench-window).
 check_average \
   'BrowserPerformanceTests/testStartPageFrequentSiteProjection()' \
   'com.apple.dt.XCTMetric_Clock.time.monotonic' \
-  '0.015' \
+  '0.0022' \
   '400-visit start page projection' \
   's'
 check_average \
@@ -333,10 +338,11 @@ check_average \
   '4096' \
   'Start page projection memory growth' \
   'kB'
+# D1 re-base (perf/w1-budgets, 2026-11-07): was 0.010 s; twice the larger of two whole-plan gate means (0.0011 / 0.0010 s, perf/bench-window).
 check_average \
   'BrowserPerformanceTests/testAskSurfaceResultProjection()' \
   'com.apple.dt.XCTMetric_Clock.time.monotonic' \
-  '0.010' \
+  '0.0022' \
   '500-entry ask surface projection' \
   's'
 check_average \
@@ -456,12 +462,8 @@ check_average \
   '4096' \
   'Background tab churn memory growth' \
   'kB'
-check_average \
-  'SidebarPerformanceTests/testPressingCommandOverAThousandRowSidebar()' \
-  'com.apple.dt.XCTMetric_Clock.time.monotonic' \
-  '0.060' \
-  'Command pressed and released five times over a sidebar of 1,000 tabs' \
-  's'
+# D1 (perf/w1-budgets, 2026-11-07): the time budget (0.060 s) is gone. The case takes 0.3 ms, which is noise; what it guards is how much work
+# a press does, and SidebarPerformanceTests/testPressingCommandOverAThousandRowSidebar now counts that.
 check_average \
   'SidebarPerformanceTests/testPressingCommandOverAThousandRowSidebar()' \
   'com.apple.dt.XCTMetric_Memory.physical' \
@@ -469,10 +471,11 @@ check_average \
   'Command key memory growth' \
   'kB'
 # A row dragged in place in 30 steps over 1,000 tabs: 0.3302 s (before 4.9937 s).
+# D1 re-base (perf/w1-budgets, 2026-11-07): was 0.660 s; twice the larger of two whole-plan gate means (0.0460 / 0.0479 s, perf/bench-window).
 check_average \
   'SidebarPerformanceTests/testDraggingARowInPlaceOverAThousandRowSidebar()' \
   'com.apple.dt.XCTMetric_Clock.time.monotonic' \
-  '0.660' \
+  '0.0958' \
   'Thirty drag steps over a sidebar of 1,000 tabs' \
   's'
 check_average \
@@ -714,10 +717,11 @@ check_average \
 # the Pro under a load average of 150 to 400, seconds. Before (read, decode, encode and rewrite the catalog file per navigation): 0.0771. After
 # (a lookup in the kept catalog): 0.00087 and 0.00095 in two runs. The budget is about ten times the mean after, since a case this short is
 # mostly scheduler noise on a shared runner, and about an eighth of the old cost.
+# D1 re-base (perf/w1-budgets, 2026-11-07): was 0.010 s; twice the larger of two whole-plan gate means (0.0008 / 0.0008 s, perf/bench-window).
 check_average \
   'ListPerformanceTests/testRecordingChromiumFramesAmongTwoThousandSites()' \
   'com.apple.dt.XCTMetric_Clock.time.monotonic' \
-  '0.010' \
+  '0.0016' \
   '20 Chromium frame navigations recorded among 2,000 sites' \
   's'
 check_average \
@@ -742,12 +746,8 @@ check_average \
   'kB'
 
 # Five-sample Pro baseline in the app test host: 0.107897 s for one pass over twenty due watches (0.0028 s in a bare XCTest bundle).
-check_average \
-  'PageWatchPerformanceTests/testSchedulingTwentyDueWatches()' \
-  'com.apple.dt.XCTMetric_Clock.time.monotonic' \
-  '0.220' \
-  'One pass over twenty due page watches' \
-  's'
+# D1 (perf/w1-budgets, 2026-11-07): the time budget (0.220 s) is gone. The pass takes 2.3 ms, which is noise; the test now counts the work
+# one pass does (reads, judgements, notifications, changes to the list).
 check_average \
   'PageWatchPerformanceTests/testSchedulingTwentyDueWatches()' \
   'com.apple.dt.XCTMetric_Memory.physical' \

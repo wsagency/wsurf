@@ -556,7 +556,8 @@ final class AppCoordinator {
         applyHoverShield()
     }
 
-    var linkModifiers: NSEvent.ModifierFlags = []
+    /// Written only through `linkModifiers`, which notifies the observers.
+    @ObservationIgnored var heldModifiers: NSEvent.ModifierFlags = []
 
     func togglePin() {
         guard let tab = browser.activeTab else { return }

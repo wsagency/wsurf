@@ -120,9 +120,41 @@ nonisolated final class SidebarPerformanceTests: XCTestCase, @unchecked Sendable
 
     /// The Command key pressed and released five times over the same sidebar, drawn after each. A row changes with the key only
     /// while it is hovered, so no other row needs to draw again.
+    ///
+    /// The case takes 0.3 ms, which is noise, so it has no time budget. What it holds is the count: a button that is not shown
+    /// does not read the key (so a press cannot draw its row), and the one under the pointer reads it, once per change.
     func testPressingCommandOverAThousandRowSidebar() {
         MainActor.assumeIsolated {
             let rig = Rig(pages: 1_000, folders: 25, everyRow: false)
+            let coordinator = rig.coordinator
+            let hidden = ChangeCounter {
+                _ = SidebarTabActionButton(tab: rig.first, coordinator: coordinator, followsCommandKey: false).body
+            }
+            let shown = ChangeCounter {
+                _ = SidebarTabActionButton(tab: rig.first, coordinator: coordinator, followsCommandKey: true).body
+            }
+            coordinator.linkModifiers = [.command]
+            coordinator.linkModifiers = []
+            XCTAssertEqual(hidden.count, 0, "a button that is not shown does not follow the Command key")
+            XCTAssertEqual(shown.count, 2, "the button under the pointer follows a press and a release")
+
+            #if DEBUG
+            // The drawn rows themselves: every read of the key by this coordinator's views and models, over one press and one
+            // release, each drawn. The 2 reads of today are the ChangeCounter above re-arming for each change; the drawn rows
+            // read 0. A row that reads the key (a tab row, a folder row, a hidden control built without
+            // `followsCommandKey: false`) adds one read per row drawn, about 86 here. The slack of 2 is for a read from
+            // outside the rows while the run loop spins.
+            let id = ObjectIdentifier(coordinator)
+            rig.draw()
+            let before = AppCoordinator.linkModifierReads[id, default: 0]
+            coordinator.linkModifiers = [.command]
+            rig.draw()
+            coordinator.linkModifiers = []
+            rig.draw()
+            let reads = AppCoordinator.linkModifierReads[id, default: 0] - before
+            print("WSURF-PERF case=command-press-reads reads=\(reads)")
+            XCTAssertLessThanOrEqual(reads, 4, "reads of the Command key over a press and a release, all rows drawn")
+            #endif
             measure(metrics: [XCTClockMetric(), XCTMemoryMetric()], options: .budgeted) {
                 for _ in 0..<5 {
                     rig.coordinator.linkModifiers = [.command]
