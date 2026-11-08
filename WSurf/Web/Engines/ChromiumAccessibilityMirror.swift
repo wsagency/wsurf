@@ -14,7 +14,7 @@ import CefKit
 
 @MainActor
 final class ChromiumAccessibilityMirror {
-    struct Key: Hashable {
+    nonisolated struct Key: Hashable, Sendable {
         let tree: String
         let id: Int
     }
@@ -351,10 +351,10 @@ final class ChromiumAccessibilityMirror {
     }
 }
 
-/// One node of the mirror as VoiceOver sees it. NSAccessibilityElement is not main-actor isolated, so the overrides are
-/// nonisolated; AppKit asks for accessibility on the main thread, where they read the mirror.
-@MainActor
-final class ChromiumAccessibilityElement: NSAccessibilityElement {
+/// One node of the mirror as VoiceOver sees it. NSAccessibilityElement is not main-actor isolated, so neither is this
+/// class (its initializers and overrides must match); AppKit asks for accessibility on the main thread, where the overrides
+/// read the mirror.
+nonisolated final class ChromiumAccessibilityElement: NSAccessibilityElement, @unchecked Sendable {
     private weak var mirror: ChromiumAccessibilityMirror?
     let key: ChromiumAccessibilityMirror.Key
 
@@ -364,23 +364,23 @@ final class ChromiumAccessibilityElement: NSAccessibilityElement {
         super.init()
     }
 
-    private var node: ChromiumAccessibilityMirror.Node? {
+    @MainActor private var node: ChromiumAccessibilityMirror.Node? {
         mirror?.node(key)
     }
 
-    private var isRoot: Bool {
+    @MainActor private var isRoot: Bool {
         mirror?.rootKey == key
     }
 
-    nonisolated override func isAccessibilityElement() -> Bool {
+    override func isAccessibilityElement() -> Bool {
         MainActor.assumeIsolated { node != nil }
     }
 
-    nonisolated override func accessibilityRole() -> NSAccessibility.Role? {
+    override func accessibilityRole() -> NSAccessibility.Role? {
         MainActor.assumeIsolated { role?.rawValue }.map { NSAccessibility.Role(rawValue: $0) }
     }
 
-    private var role: NSAccessibility.Role? {
+    @MainActor private var role: NSAccessibility.Role? {
         if isRoot {
             // An AXWebArea makes VoiceOver ask for text markers, which the prototype does not have.
             return ChromiumOOP.environment("WSURF_OOP_AX_ROOT") == "webArea" ? NSAccessibility.Role("AXWebArea") : .group
@@ -403,7 +403,7 @@ final class ChromiumAccessibilityElement: NSAccessibilityElement {
         }
     }
 
-    nonisolated override func accessibilityRoleDescription() -> String? {
+    override func accessibilityRoleDescription() -> String? {
         let own: String? = MainActor.assumeIsolated {
             if isRoot {
                 return "web content"
@@ -413,7 +413,7 @@ final class ChromiumAccessibilityElement: NSAccessibilityElement {
         return own ?? super.accessibilityRoleDescription()
     }
 
-    nonisolated override func accessibilityTitle() -> String? {
+    override func accessibilityTitle() -> String? {
         MainActor.assumeIsolated {
             guard let node else { return nil }
             if isRoot {
@@ -423,14 +423,14 @@ final class ChromiumAccessibilityElement: NSAccessibilityElement {
         }
     }
 
-    nonisolated override func accessibilityLabel() -> String? {
+    override func accessibilityLabel() -> String? {
         MainActor.assumeIsolated {
             guard let node, !node.detail.isEmpty else { return nil }
             return node.detail
         }
     }
 
-    nonisolated override func accessibilityValue() -> Any? {
+    override func accessibilityValue() -> Any? {
         let value: (any Sendable)? = MainActor.assumeIsolated {
             guard let node else { return nil }
             switch node.role {
@@ -443,11 +443,11 @@ final class ChromiumAccessibilityElement: NSAccessibilityElement {
         return value
     }
 
-    nonisolated override func accessibilityURL() -> URL? {
+    override func accessibilityURL() -> URL? {
         MainActor.assumeIsolated { node.flatMap { URL(string: $0.url) } }
     }
 
-    nonisolated override func accessibilityChildren() -> [Any]? {
+    override func accessibilityChildren() -> [Any]? {
         let children: [ChromiumAccessibilityElement]? = MainActor.assumeIsolated {
             guard let mirror else { return nil }
             return mirror.visibleChildren(of: key).compactMap { mirror.element(for: $0) }
@@ -455,7 +455,7 @@ final class ChromiumAccessibilityElement: NSAccessibilityElement {
         return children
     }
 
-    nonisolated override func accessibilityParent() -> Any? {
+    override func accessibilityParent() -> Any? {
         let parent: (element: ChromiumAccessibilityElement?, page: ChromiumPage?) = MainActor.assumeIsolated {
             guard let mirror, let page = mirror.page else { return (nil, nil) }
             if !isRoot, let key = mirror.visibleParent(of: key), let element = mirror.element(for: key) {
@@ -469,7 +469,7 @@ final class ChromiumAccessibilityElement: NSAccessibilityElement {
         return parent.page
     }
 
-    nonisolated override func accessibilityFrame() -> NSRect {
+    override func accessibilityFrame() -> NSRect {
         MainActor.assumeIsolated {
             guard let mirror, let page = mirror.page, let window = page.window else { return .zero }
             let rect = mirror.rectInView(key)
@@ -477,7 +477,7 @@ final class ChromiumAccessibilityElement: NSAccessibilityElement {
         }
     }
 
-    nonisolated override func accessibilityPerformPress() -> Bool {
+    override func accessibilityPerformPress() -> Bool {
         MainActor.assumeIsolated {
             guard let mirror, let page = mirror.page else { return false }
             let rect = mirror.rectInView(key)
