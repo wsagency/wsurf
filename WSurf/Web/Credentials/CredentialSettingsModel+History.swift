@@ -61,14 +61,32 @@ extension CredentialSettingsModel {
     }
 
     /// Unmasks the passwords, notes and items History shows. The current unlock is the authority, as for every other Show: the vault
-    /// is read under it first. An earlier version that held a card or an identity document also asks for Touch ID.
+    /// is read under it. A password, the draft's own included, needs the editor's one prompt (`+PasswordPrivacy`); a version that held
+    /// a card or an identity document asks every time, whether or not the editor was verified. Both are one prompt, asked before the
+    /// read, and an answer to either counts as the editor's.
     func revealHistorySecrets() async throws {
         guard let live, let history = live.history else { throw CredentialVaultError.invalidData }
-        let (epoch, _) = try await authorizedSnapshot(epoch: live.epoch)
-        if let sensitive = history.versions.first(where: Self.holdsSensitiveItems) {
-            try await verifySensitiveItems(of: sensitive.account)
+        let editor = live.editor
+        let holdsPasswords = history.versions.contains { $0.account.password != nil } || live.draft?.password?.isEmpty == false
+        let asksForPasswords = holdsPasswords && !live.editorIsVerified
+        let asksForItems = history.versions.contains(where: Self.holdsSensitiveItems)
+        if asksForItems || asksForPasswords {
+            let reason = if asksForItems && asksForPasswords {
+                String(localized: "show saved passwords, cards and documents")
+            } else if asksForItems {
+                String(localized: "show saved cards, documents and hidden fields")
+            } else {
+                String(localized: "show or copy a saved password or verification code")
+            }
+            guard try await verifyOwner(reason) == live.epoch else { throw CredentialVaultError.unauthorized }
+            try markVerified(editor, epoch: live.epoch)
         }
-        try update(epoch) { $0.history?.revealsSecrets = true }
+        let (epoch, _) = try await authorizedSnapshot(epoch: live.epoch)
+        try update(epoch) {
+            guard $0.editor == editor else { return }
+            $0.history?.revealsSecrets = true
+        }
+        guard self.live?.editor == editor else { throw CredentialVaultError.unauthorized }
     }
 
     private static func holdsSensitiveItems(_ version: CredentialVersion) -> Bool {

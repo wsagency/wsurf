@@ -57,8 +57,9 @@ final class CredentialSettingsModel {
     /// How long a copy confirmation stays, and how long one that offers Undo does; seams so a test does not wait for the real time.
     @ObservationIgnored private let noticeDuration: Duration
     @ObservationIgnored private let undoNoticeDuration: Duration
-    /// Fresh device-owner authentication (Touch ID or the Mac password) before a card's or an ID document's hidden values are shown,
-    /// copied or opened in the editor. Returns only on success. A seam so a test decides the answer; internal for the extensions.
+    /// Fresh device-owner authentication (Touch ID or the Mac password) before a saved password or verification code is shown or
+    /// copied (`+PasswordPrivacy`), and before a card's or an ID document's hidden values are shown, copied or opened in the editor.
+    /// Returns only on success. A seam so a test decides the answer; internal for the extensions.
     @ObservationIgnored let verifyUser: @MainActor (String) async throws -> Void
     /// Opens an address in a new tab of the window that shows this page (`openWebsite`); `nil` where there is none, such as a test.
     @ObservationIgnored var websiteOpener: (@MainActor (URL) -> Void)?
@@ -111,7 +112,7 @@ final class CredentialSettingsModel {
         noticeDuration: Duration = .seconds(1.6),
         undoNoticeDuration: Duration = .seconds(4),
         openingDuration: Duration = .seconds(2),
-        verifyUser: @escaping @MainActor (String) async throws -> Void = { try await NativeWebAuthnInteraction().verifyUser(reason: $0, until: nil) }
+        verifyUser: @escaping @MainActor (String) async throws -> Void = CredentialSettingsModel.systemVerifier
     ) {
         self.profile = profile
         self.verifyUser = verifyUser
@@ -492,12 +493,13 @@ final class CredentialSettingsModel {
     func beginEditing(accountID: UUID?, template: CredentialTemplate = .login) async throws {
         let (epoch, snapshot) = try await authorizedSnapshot()
         var existing: CredentialAccount?
+        var asked = false
         if let accountID {
             guard let account = snapshot.accounts.first(where: { $0.id == accountID }) else {
                 throw CredentialVaultError.invalidData
             }
             existing = account
-            try await verifySensitiveItems(of: account)
+            asked = try await verifySensitiveItems(of: account)
         }
         var draft = CredentialDraft(editing: existing, revision: snapshot.revision)
         if existing == nil {
@@ -506,6 +508,10 @@ final class CredentialSettingsModel {
         try update(epoch) {
             $0.refresh(snapshot)
             $0.draft = draft
+            // The prompt that opened a card's editor is also that editor's one prompt for its password and code (`+PasswordPrivacy`).
+            if asked {
+                $0.verifiedEditor = $0.editor
+            }
         }
     }
 
@@ -553,8 +559,10 @@ final class CredentialSettingsModel {
 
     // MARK: Reveal and copy
 
+    /// Asks for Touch ID first, every time, then reads (`+PasswordPrivacy`).
     func revealPassword(accountID: UUID) async throws {
-        let (epoch, snapshot) = try await authorizedSnapshot()
+        let epoch = try await verifyOwner(String(localized: "show a saved password"))
+        let (_, snapshot) = try await authorizedSnapshot(epoch: epoch)
         guard let password = snapshot.accounts.first(where: { $0.id == accountID })?.password else {
             throw CredentialVaultError.invalidData
         }
@@ -569,8 +577,10 @@ final class CredentialSettingsModel {
         try update(epoch) { $0.revealedUsername = RevealedUsername(accountID: accountID, value: account.username) }
     }
 
+    /// Asks for Touch ID first, every time, then reads (`+PasswordPrivacy`).
     func showTOTP(accountID: UUID) async throws {
-        let (epoch, snapshot) = try await authorizedSnapshot()
+        let epoch = try await verifyOwner(String(localized: "show a verification code"))
+        let (_, snapshot) = try await authorizedSnapshot(epoch: epoch)
         guard let generator = snapshot.accounts.first(where: { $0.id == accountID })?.totp else {
             throw CredentialVaultError.invalidData
         }

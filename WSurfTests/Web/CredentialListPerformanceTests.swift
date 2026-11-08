@@ -61,7 +61,8 @@ nonisolated final class CredentialListPerformanceTests: XCTestCase, @unchecked S
 
     @MainActor
     private func loadedModel(_ profile: Profile, _ vault: FixtureVault) async throws -> CredentialSettingsModel {
-        let model = CredentialSettingsModel(profile: profile, manager: vault.manager)
+        // Touch ID answers yes at once: Show Password asks for it first.
+        let model = CredentialSettingsModel(profile: profile, manager: vault.manager, verifyUser: { _ in })
         await model.load()
         XCTAssertEqual(model.summaries.count, Self.count)
         return model

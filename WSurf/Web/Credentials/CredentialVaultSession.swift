@@ -27,8 +27,18 @@ struct CredentialVaultSession {
             if history?.accountID != draft?.accountID || history?.revision != draft?.revision {
                 history = nil
             }
+            // Opening, closing or replacing the editor starts a new one, which the user has not authenticated for. An edit does not.
+            if draft == nil || oldValue == nil || draft?.accountID != oldValue?.accountID || draft?.revision != oldValue?.revision {
+                editor = UUID()
+            }
         }
     }
+    /// The open editor. A new one starts whenever the editor opens, closes, or moves to another credential or revision.
+    private(set) var editor = UUID()
+    /// The editor whose stored password and verification code the user authenticated for (Touch ID or the Mac password). It asks
+    /// once per editor, and its History shares that answer. Set by `CredentialSettingsModel.markVerified`, and by `beginEditing` when
+    /// the card prompt opened the editor.
+    var verifiedEditor: UUID?
     /// The open credential's earlier values and versions (secrets included), masked until shown; see `HistoryState`.
     var history: HistoryState?
     var pendingUnlockRemoval: PendingUnlockRemoval?
@@ -57,6 +67,13 @@ struct CredentialVaultSession {
         stampsRevision = snapshot.revision
         summaries = snapshot.accounts.map(CredentialSummary.init)
         blockedSiteCount = snapshot.blockedPasswordOrigins.count
+    }
+
+    /// Whether the open editor may show and copy its password and verification code. A new credential holds only what was typed
+    /// in it, so it never asks; a stored one asks once per editor.
+    var editorIsVerified: Bool {
+        guard let draft else { return false }
+        return draft.isNew || verifiedEditor == editor
     }
 
     /// Ends the marks on `ids` (all of them for `nil`) and the steps that held them.

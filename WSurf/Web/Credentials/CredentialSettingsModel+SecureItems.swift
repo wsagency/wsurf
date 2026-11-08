@@ -21,10 +21,12 @@ extension CredentialSettingsModel {
     }
 
     /// Asks for Touch ID or the Mac password when `account` holds a sensitive item (`SecureItem.isSensitive`); returns at once otherwise. Throws
-    /// when the person cancels or fails, and nothing is then shown, copied or opened.
-    func verifySensitiveItems(of account: CredentialAccount) async throws {
-        guard account.secureItems?.contains(where: \.isSensitive) == true else { return }
+    /// when the person cancels or fails, and nothing is then shown, copied or opened. Returns whether it asked.
+    @discardableResult
+    func verifySensitiveItems(of account: CredentialAccount) async throws -> Bool {
+        guard account.secureItems?.contains(where: \.isSensitive) == true else { return false }
         try await verifyUser(String(localized: "show saved cards, documents and hidden fields"))
         try Task.checkCancellation()
+        return true
     }
 }

@@ -8673,6 +8673,12 @@
     "copy a saved card, document or hidden field" : {
       "comment" : "Reason shown in the Touch ID or password prompt when the user copies a hidden value of a saved card or ID document. It completes a system sentence like “WSurf is trying to …”, so it is a lowercase verb phrase with no period."
     },
+    "copy a saved password" : {
+      "comment" : "Reason shown in the Touch ID or password prompt when the user copies a saved password from the credential list on the Credentials page in Settings. It completes a system sentence like “WSurf is trying to …”, so it is a lowercase verb phrase with no period."
+    },
+    "copy a verification code" : {
+      "comment" : "Reason shown in the Touch ID or password prompt when the user copies the current verification code (one-time code) of a saved credential from the credential list on the Credentials page in Settings. It completes a system sentence like “WSurf is trying to …”, so it is a lowercase verb phrase with no period."
+    },
     "Copy current website %@" : {
       "comment" : "Tooltip and VoiceOver label of the copy icon beside a website that only the current credential has, in the History panel. %@ is the website address and should not be translated. A verb phrase."
     },
@@ -9051,6 +9057,15 @@
     "export saved cards, documents and hidden fields" : {
       "comment" : "Reason shown in the Touch ID or password prompt before saved cards, ID documents or hidden fields are exported. It completes a system sentence like “WSurf is trying to …”, so it is a lowercase verb phrase with no period."
     },
+    "export saved passwords" : {
+      "comment" : "Reason shown in the Touch ID or password prompt before Export to CSV… writes saved passwords to a file, on the Credentials page in Settings. It completes a system sentence like “WSurf is trying to …”, so it is a lowercase verb phrase with no period."
+    },
+    "export saved passwords and verification codes" : {
+      "comment" : "Reason shown in the Touch ID or password prompt before an export hands saved passwords or verification code setups to another app, on the Credentials page in Settings. It completes a system sentence like “WSurf is trying to …”, so it is a lowercase verb phrase with no period."
+    },
+    "export saved passwords, cards and documents" : {
+      "comment" : "Reason shown in the Touch ID or password prompt before an export hands saved passwords or verification codes, and a saved card or ID document, to another app, on the Credentials page in Settings. It completes a system sentence like “WSurf is trying to …”, so it is a lowercase verb phrase with no period."
+    },
     "Export to another app" : {
       "comment" : "Row title in the Import & Export section; its button is Export…, which hands credentials (passwords, passkeys, verification codes) to another app through the system’s credential exchange. Sentence case."
     },
@@ -9136,7 +9151,7 @@
       "comment" : "Filter chip in the import review sheet, with a count after it: items with a part that WSurf does not import. Sentence case."
     },
     "Hidden" : {
-      "comment" : "In Input History’s Save as Credential sheet: VoiceOver label of the masked password dots. Also the name of a custom field type in the credential editor menu (Text, Hidden, Date, Number, Email): its value is concealed like a password. An adjective."
+      "comment" : "In Input History’s Save as Credential sheet: VoiceOver label of the masked password dots. Also the name of a custom field type in the credential editor menu (Text, Hidden, Date, Number, Email): its value is concealed like a password. An adjective. Also the VoiceOver label of the masked verification code in the credential editor, before Show Code."
     },
     "Hidden network" : {
       "comment" : "Row label, shown beside the value, of a field of an item in the credential editor of Settings › Credentials. Sentence case. On a Wi-Fi network item: a yes/no value saying the network does not broadcast its name. Noun phrase, not a command."
@@ -10416,6 +10431,18 @@
     "show saved cards, documents and hidden fields" : {
       "comment" : "Reason shown in the Touch ID or password prompt before the user reveals saved cards, ID documents or hidden fields of a credential. It completes a system sentence like “WSurf is trying to …”, so it is a lowercase verb phrase with no period."
     },
+    "show a saved password" : {
+      "comment" : "Reason shown in the Touch ID or password prompt when the user chooses Show Password for a saved credential on the Credentials page in Settings (its row menu or the merge sheet). It completes a system sentence like “WSurf is trying to …”, so it is a lowercase verb phrase with no period."
+    },
+    "show a verification code" : {
+      "comment" : "Reason shown in the Touch ID or password prompt when the user chooses Show Verification Code for a saved credential on the Credentials page in Settings. It completes a system sentence like “WSurf is trying to …”, so it is a lowercase verb phrase with no period."
+    },
+    "show or copy a saved password or verification code" : {
+      "comment" : "Reason shown in the Touch ID or password prompt the first time the user shows or copies the password or verification code in the editor of a saved credential, or shows the secrets of its History; that editor then does not ask again. It completes a system sentence like “WSurf is trying to …”, so it is a lowercase verb phrase with no period."
+    },
+    "show saved passwords, cards and documents" : {
+      "comment" : "Reason shown in the Touch ID or password prompt when the user shows the secrets of a credential’s History that holds both passwords and a saved card or ID document. It completes a system sentence like “WSurf is trying to …”, so it is a lowercase verb phrase with no period."
+    },
     "Show Secrets" : {
       "comment" : "Button at the top right of the History panel that unmasks the passwords, notes and card details of the versions shown; it can ask for Touch ID first. Title Case, a command. Alternates with “Hide Secrets”."
     },
@@ -10430,6 +10457,9 @@
     },
     "Show Verification Code" : {
       "comment" : "Item of the “…” menu of a credential row that holds a verification code (a one-time code): shows the current code on the row, with a countdown. Counterpart of Hide Verification Code. Verb phrase, Title Case."
+    },
+    "Show Code" : {
+      "comment" : "Button in the Verification code section of the credential editor, beside the masked code of a saved credential: asks for Touch ID or the Mac password once for that editor, then shows the code. Title Case, a verb phrase."
     },
     "Showing %lld of %lld" : {
       "comment" : "Caption of the More in Trash row. The first %lld is how many removed items are listed now; the second is how many items are in Trash in total."

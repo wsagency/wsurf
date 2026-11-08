@@ -95,7 +95,7 @@ struct CredentialExportReviewTests {
             let gone = account("gone")
             let renamed = account("renamed")
             try await f.seed([gone, renamed])
-            let model = CredentialSettingsModel(profile: f.profile, exchange: f.coordinator, manager: f.manager)
+            let model = CredentialSettingsModel(profile: f.profile, exchange: f.coordinator, manager: f.manager, verifyUser: { _ in })
             await model.load()
             let epoch = try #require(f.manager.authorizationEpoch)
             let shown = model.summaries
@@ -132,7 +132,7 @@ struct CredentialExportReviewTests {
         try await base.withFixture { f in
             let login = account("login", password: "before")
             try await f.seed([login])
-            let model = CredentialSettingsModel(profile: f.profile, exchange: f.coordinator, manager: f.manager)
+            let model = CredentialSettingsModel(profile: f.profile, exchange: f.coordinator, manager: f.manager, verifyUser: { _ in })
             await model.load()
             let epoch = try #require(f.manager.authorizationEpoch)
             let shown = model.summaries
@@ -171,7 +171,7 @@ struct CredentialExportReviewTests {
             let chosen = account("chosen", password: "one")
             let other = account("other", password: "two")
             try await f.seed([chosen, other])
-            let model = CredentialSettingsModel(profile: f.profile, exchange: f.coordinator, manager: f.manager)
+            let model = CredentialSettingsModel(profile: f.profile, exchange: f.coordinator, manager: f.manager, verifyUser: { _ in })
             await model.load()
             let epoch = try #require(f.manager.authorizationEpoch)
             let shown = model.summaries
@@ -319,6 +319,100 @@ struct CredentialExportReviewTests {
             refuses.withLock { $0 = false }
             let verified = await model.exportCredentials(selection: items(card), epoch: epoch, in: NSWindow())
             #expect(verified == .transferred && prompts.withLock { $0 } == 2 && sends.withLock { $0 } == 2)
+        }
+    }
+
+    /// Stands in for Touch ID: records each reason, and refuses while `refuses` is set.
+    @MainActor
+    private final class Prompts {
+        var reasons: [String] = []
+        var refuses = true
+    }
+
+    private func promptingModel(_ f: CredentialExchangeCoordinatorTests.Fixture, _ prompts: Prompts) -> CredentialSettingsModel {
+        CredentialSettingsModel(profile: f.profile, exchange: f.coordinator, manager: f.manager, verifyUser: { reason in
+            prompts.reasons.append(reason)
+            if prompts.refuses {
+                throw WebsiteAuthenticatorError.notAllowed
+            }
+        })
+    }
+
+    @Test func exportingAPasswordOrACodeAsksOnceBeforeTheSystemSheetAndALoginWithoutOneDoesNot() async throws {
+        try await base.withFixture { f in
+            let login = account("login", password: "export-secret")
+            let usernameOnly = account("username only", password: nil)
+            var coded = account("coded", password: nil)
+            coded.totp = TOTPGenerator(
+                secret: Data("12345678901234567890".utf8), algorithm: .sha1, period: 30, digits: 8, issuer: "Example", userName: "ada"
+            )
+            var cardAndLogin = account("card and login", password: "card-export-secret")
+            cardAndLogin.secureItems = [SecureItemFixtures.card()]
+            try await f.seed([login, usernameOnly, coded, cardAndLogin])
+            let prompts = Prompts()
+            let model = promptingModel(f, prompts)
+            await model.load()
+            let epoch = try #require(f.manager.authorizationEpoch)
+            let sends = Mutex(0)
+            f.coordinator.requestSystemExport = { _ in
+                CredentialExchangeCoordinator.SystemExport(format: .v1, send: { _ in sends.withLock { $0 += 1 } })
+            }
+            func export(_ selection: CredentialExportSelection) async -> CredentialExportOutcome? {
+                await model.exportCredentials(selection: [selection], epoch: epoch, in: NSWindow())
+            }
+
+            // A login without a password sends no secret and asks for nothing.
+            #expect(await export(CredentialExportSelection(accountID: usernameOnly.id, password: true, passkeyIDs: [], totp: false)) == .transferred)
+            #expect(prompts.reasons.isEmpty && sends.withLock { $0 } == 1)
+
+            // A refused prompt opens no system sheet and sends nothing.
+            let withPassword = CredentialExportSelection(accountID: login.id, password: true, passkeyIDs: [], totp: false)
+            #expect(await export(withPassword) == nil)
+            #expect(sends.withLock { $0 } == 1)
+            #expect(model.error == String(localized: "Authentication didn’t finish. Nothing was exported."))
+
+            prompts.refuses = false
+            #expect(await export(withPassword) == .transferred)
+            #expect(await export(CredentialExportSelection(accountID: coded.id, password: false, passkeyIDs: [], totp: true)) == .transferred)
+            // A card and a password ask once, together.
+            let both = CredentialExportSelection(accountID: cardAndLogin.id, password: true, passkeyIDs: [], totp: false, secureItems: true)
+            #expect(await export(both) == .transferred)
+            let secrets = String(localized: "export saved passwords and verification codes")
+            #expect(prompts.reasons == [secrets, secrets, secrets, String(localized: "export saved passwords, cards and documents")])
+            #expect(sends.withLock { $0 } == 4)
+        }
+    }
+
+    @Test func aCSVFileOfPasswordsAsksFirstAndARefusalWritesNoFile() async throws {
+        try await base.withFixture { f in
+            let login = account("csv login", password: "csv-secret")
+            let usernameOnly = account("csv username", password: nil)
+            try await f.seed([login, usernameOnly])
+            let prompts = Prompts()
+            let model = promptingModel(f, prompts)
+            await model.load()
+            let epoch = try #require(f.manager.authorizationEpoch)
+            let directory = FileManager.default.temporaryDirectory.appending(path: "csv-privacy-\(UUID().uuidString)")
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: directory) }
+            func csv(_ account: CredentialAccount) -> [CredentialExportSelection] {
+                [CredentialExportSelection(allOf: CredentialSummary(account), csv: true)]
+            }
+
+            // A login without a password asks for nothing, and makes no file: a CSV file holds passwords only.
+            #expect(await model.exportCSV(selection: csv(usernameOnly), epoch: epoch, to: directory.appending(path: "usernames.csv")) == false)
+            #expect(prompts.reasons.isEmpty)
+
+            let file = directory.appending(path: "passwords.csv")
+            #expect(await model.exportCSV(selection: csv(login), epoch: epoch, to: file) == false)
+            #expect(!FileManager.default.fileExists(atPath: file.path))
+            #expect(model.error == String(localized: "Authentication didn’t finish. Nothing was exported."))
+
+            prompts.refuses = false
+            #expect(await model.exportCSV(selection: csv(login), epoch: epoch, to: file))
+            #expect(try String(contentsOf: file, encoding: .utf8).contains("csv-secret"))
+            let reason = String(localized: "export saved passwords")
+            #expect(prompts.reasons == [reason, reason])
         }
     }
 }
