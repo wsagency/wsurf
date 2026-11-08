@@ -454,6 +454,14 @@ final class BrowserTab: Identifiable {
         let url = URL(string: urlString)
         guard state != nil || url != nil else { return }
 
+        // The wake loads the address again, and a page loaded that way opens at the top. WebKit's own state restores the
+        // position and disarms this (`restoreDeferredState`).
+        if let url, lastReportedScrollURL?.absoluteString == url.absoluteString {
+            rememberScrollOffset()
+            wakeScroll.arm(offset: lastReportedScrollY, for: url.absoluteString)
+        } else {
+            wakeScroll.disarm()
+        }
         retire(outgoing)
         stoppedNavigation = false
         awaitsVisit = false
@@ -566,6 +574,8 @@ final class BrowserTab: Identifiable {
     var lastReportedScrollY: Double = 0
     var lastReportedScrollURL: URL?
     private var scrollReturns = ScrollReturnMemory()
+    /// Set when the tab sleeps, used once by the load that wakes it (`restoreScrollOffsetIfNeeded`).
+    @ObservationIgnored var wakeScroll = WakeScroll()
 
     func rememberScrollOffset() {
         scrollReturns.remember(lastReportedScrollY, leaving: lastReportedScrollURL?.absoluteString)
@@ -580,6 +590,12 @@ final class BrowserTab: Identifiable {
     }
 
     func restoreScrollOffsetIfNeeded() {
+        if let stored = wakeScroll.take(finishedAt: page.url?.absoluteString) {
+            lastReportedScrollY = stored
+            lastReportedScrollURL = page.url
+            page.evaluateJavaScript(Self.restoreScrollScript(to: stored), completionHandler: nil)
+            return
+        }
         guard pendingTransition == .backForward,
               let stored = scrollReturns.offset(returningTo: page.url?.absoluteString)
         else { return }
@@ -677,6 +693,7 @@ final class BrowserTab: Identifiable {
             urlString = url.absoluteString
         }
         if let state, BrowserPage.canRestore(state, using: preferredEngine(for: url)) {
+            wakeScroll.disarm()
             page.interactionState = state
             return nil
         }

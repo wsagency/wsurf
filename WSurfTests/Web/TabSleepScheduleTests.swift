@@ -190,7 +190,8 @@ struct TabSleepScheduleTests {
         }
     }
 
-    /// WebKit's saved state brings the scroll position back; Chromium restores the address only (Settings says so).
+    /// WebKit's saved state brings the scroll position back; a Chromium tab loads its address again and puts the offset it kept back
+    /// once that load has finished (`WakeScroll`).
     @Test(arguments: [BrowserEngine.webKit, .chromium])
     func scrollPositionAfterReactivation(engine: BrowserEngine) async throws {
         try await LiveWindowRig.with(engine: engine, routes: Self.routes) { rig in
@@ -207,13 +208,20 @@ struct TabSleepScheduleTests {
             rig.browser.activate(tab)
             _ = await tab.waitForPendingNavigation()
             try #require(await waitUntil(timeout: .seconds(60)) { await rig.marker(of: tab) == "loaded" })
-            let restored = await waitUntil(timeout: .seconds(5)) {
-                ((try? await tab.page.evaluateJavaScript("window.scrollY")) as? Double ?? 0) >= 1400
+            @MainActor func scrollY() async -> Double {
+                (try? await tab.page.evaluateJavaScript("window.scrollY")) as? Double ?? 0
             }
             if engine == .webKit {
+                let restored = await waitUntil(timeout: .seconds(5)) { await scrollY() >= 1400 }
                 #expect(restored, "WebKit restores the scroll position")
             } else {
-                #expect(!restored, "Chromium restores the address only")
+                // The same tolerance as ChromiumScrollWakeTests: within 2 points of where the tab was.
+                var latest = 0.0
+                let restored = await waitUntil(timeout: .seconds(5)) {
+                    latest = await scrollY()
+                    return abs(latest - 1500) < 2
+                }
+                #expect(restored, "Chromium puts the kept offset back after the load (scrollY is \(latest))")
             }
         }
     }

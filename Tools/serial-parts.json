@@ -200,6 +200,7 @@
    "ChromiumContextMenuTests",
    "ChromiumFindTests",
    "ChromiumPrewarmTests",
+   "ChromiumScrollWakeTests",
    "ColourChooserDismissalTests",
    "CrossSiteFramePasskeyTests",
    "FrameAudioTests",
