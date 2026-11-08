@@ -29,6 +29,20 @@ enum D4SpikeDriver {
         base = environment["WSURF_D4_FIXTURE"] ?? base
         output = home.appendingPathComponent("d4", isDirectory: true)
         try? FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+        if script == "manual" {
+            // The owner's checks (IME, VoiceOver, camera prompt): open the fixtures, then leave the app to the person.
+            log("driver manual: start, pid \(getpid()), OOP \(ChromiumOOP.isEnabled)")
+            Task { @MainActor in
+                try? await Task.sleep(for: .seconds(1.5))
+                let pages = (environment["WSURF_D4_PAGES"] ?? "ime.html,ax.html").split(separator: ",").map(String.init)
+                for page in pages {
+                    let target = page.hasPrefix("https://") ? URL(string: page)! : url(page)
+                    _ = coordinator.browser.newTab(url: target, engine: .chromium)
+                }
+                log("driver manual: opened \(pages)")
+            }
+            return
+        }
         let deadline = Double(environment["WSURF_D4_DEADLINE"] ?? "") ?? 240
         log("driver \(script): start, pid \(getpid()), OOP \(ChromiumOOP.isEnabled), deadline \(Int(deadline)) s")
         DispatchQueue.global().asyncAfter(deadline: .now() + deadline) {
@@ -121,6 +135,16 @@ enum D4SpikeDriver {
             log("switch \(number) to \(number.isMultiple(of: 2) ? "red" : "blue"): main CPU 400 ms \(String(format: "%.1f", mainThreadCPU() - cpu)) ms, longest gap \(Int(watch.stop())) ms")
             try? await Task.sleep(for: .milliseconds(300))
             captureWindow("frames-switch-\(number)")
+        }
+        // Glass over the page: the command palette's glass must sample the page under it (red, then blue).
+        for (name, tab) in [("red", red), ("blue", blue)] {
+            browser.activate(tab)
+            try? await Task.sleep(for: .milliseconds(500))
+            coordinator.openPalette()
+            try? await Task.sleep(for: .milliseconds(900))
+            captureWindow("frames-glass-\(name)")
+            coordinator.closePalette()
+            try? await Task.sleep(for: .milliseconds(300))
         }
         let animated = browser.newTab(url: url("animated.html"), engine: .chromium)
         _ = await waitLoaded(animated, timeout: 60)

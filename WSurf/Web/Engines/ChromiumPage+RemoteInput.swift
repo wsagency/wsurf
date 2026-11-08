@@ -45,6 +45,9 @@ extension ChromiumPage {
             if let first = remoteInput.compositionBounds.first {
                 remoteInput.caretRect = first
             }
+            // The bounds arrive a moment after `setMarkedText`, which the input method may already have asked `firstRect`
+            // about: tell it to ask again, so the candidate window follows the composition.
+            inputContext?.invalidateCharacterCoordinates()
         case CefRemote.Event.textSelection:
             remoteInput.selectedText = message.string(CefRemote.Key.text)
             let from = Int(message.int(CefRemote.Key.rangeFrom))
