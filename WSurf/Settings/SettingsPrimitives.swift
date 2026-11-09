@@ -14,6 +14,9 @@ nonisolated private struct SettingsScrollProxyKey: EnvironmentKey {
 
 extension EnvironmentValues {
     @Entry var settingsDescriptionLineLimit: Int?
+    /// The title of the `DetailRow` a control sits in. A control whose own label is hidden (a switch, a pop-up button, a radio group)
+    /// takes it as its accessibility label, so VoiceOver names it instead of saying only "switch, off".
+    @Entry var settingsRowTitle: String?
     /// True inside a long list and on its site rows: a control takes a flat wash and outline in place of a glass layer of its own,
     /// which a few hundred rows cannot afford.
     @Entry var settingsSurfaceIsFlat = false
@@ -321,6 +324,8 @@ struct DetailRow<Content: View>: View {
     }
 
     private var title: Text?
+    /// The title as plain text, for the controls' accessibility labels (`settingsRowTitle`).
+    private var spokenTitle: String?
     private var caption: Text?
     var layout: Layout = .trailing
     var isMuted = false
@@ -341,6 +346,7 @@ struct DetailRow<Content: View>: View {
         @ViewBuilder content: () -> Content
     ) {
         self.title = title.map(Text.init)
+        spokenTitle = title.map { String(localized: $0) }
         self.caption = caption.map(Text.init)
         self.layout = layout
         self.controlWidth = controlWidth
@@ -355,6 +361,7 @@ struct DetailRow<Content: View>: View {
         @ViewBuilder content: () -> Content
     ) {
         self.title = Text(title)
+        spokenTitle = String(localized: title)
         caption = Text(attributedCaption)
         self.isMuted = isMuted
         self.layout = layout
@@ -369,6 +376,7 @@ struct DetailRow<Content: View>: View {
         @ViewBuilder content: () -> Content
     ) {
         self.title = Text(verbatim: verbatimTitle)
+        spokenTitle = verbatimTitle
         self.caption = verbatimCaption.map { Text(verbatim: $0) }
         self.layout = layout
         self.controlWidth = controlWidth
@@ -395,6 +403,7 @@ struct DetailRow<Content: View>: View {
             }
         }
         .padding(.vertical, SettingsMetrics.rowPaddingV)
+        .environment(\.settingsRowTitle, spokenTitle)
     }
 
     @ViewBuilder
@@ -726,20 +735,37 @@ struct MenuChrome<Content: View>: View {
 
 struct SettingsToggle: View {
     @Binding var isOn: Bool
+    @Environment(\.settingsRowTitle) private var rowTitle
 
     init(_ isOn: Binding<Bool>) {
         _isOn = isOn
     }
 
     var body: some View {
-        Toggle("", isOn: $isOn)
+        // The row's title is the toggle's own label, hidden from the eye but kept for VoiceOver: an empty label leaves the switch nameless.
+        Toggle(rowTitle ?? "", isOn: $isOn)
             .toggleStyle(.switch)
             .controlSize(.small)
             .labelsHidden()
+            .rowAccessibilityLabel(rowTitle)
+    }
+}
+
+extension View {
+    /// Names a control by the title of the row it sits in (`settingsRowTitle`); a control outside a titled row keeps what it has.
+    @ViewBuilder
+    func rowAccessibilityLabel(_ title: String?) -> some View {
+        if let title, !title.isEmpty {
+            accessibilityLabel(title)
+        } else {
+            self
+        }
     }
 }
 
 struct SettingsMenu<Value: Hashable>: View {
+    @Environment(\.settingsRowTitle) private var rowTitle
+
     struct Option: Identifiable {
         let value: Value
         let label: String
@@ -795,11 +821,15 @@ struct SettingsMenu<Value: Hashable>: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
             }
+            // The title says what the menu is for and the chosen option is its value, instead of the option alone as its name.
+            .rowAccessibilityLabel(rowTitle)
+            .accessibilityValue(Text(verbatim: current?.label ?? ""))
         }
         .menuStyle(.button)
         .menuIndicator(.hidden)
         .buttonStyle(.plain)
         .fixedSize(horizontal: false, vertical: true)
+        .rowAccessibilityLabel(rowTitle)
     }
 }
 

@@ -14,6 +14,13 @@ struct SettingsSearchTests {
         #expect(Set(ids).count == ids.count)
     }
 
+    /// `general.sleepAfter` is the anchor of a row that exists only while Sleep is on, so no search entry may point at it: a hit would
+    /// scroll to nothing. Every way to look for that row finds the always-shown Sleep toggle instead.
+    @Test func searchingForTheSleepTimerLandsOnARowThatIsAlwaysThere() {
+        #expect(!SettingsIndex.all.contains { $0.targetAnchor == "general.sleepAfter" })
+        #expect(SettingsIndex.search("sleep after").contains { $0.targetAnchor == "general.sleepTabs" })
+    }
+
     @Test func anEmptyQueryHasNoResults() {
         #expect(SettingsIndex.search("   ").isEmpty)
     }

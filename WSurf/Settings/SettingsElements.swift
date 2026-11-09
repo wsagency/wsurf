@@ -6,6 +6,8 @@
 import SwiftUI
 
 struct OptionList<Value: Hashable>: View {
+    @Environment(\.settingsRowTitle) private var rowTitle
+
     struct Option: Identifiable {
         let value: Value
         let label: LocalizedStringResource
@@ -35,6 +37,7 @@ struct OptionList<Value: Hashable>: View {
         }
         .labelsHidden()
         .pickerStyle(.radioGroup)
+        .rowAccessibilityLabel(rowTitle)
         .controlSize(.small)
         .padding(.horizontal, SettingsMetrics.pickerHorizontalInset)
         .padding(.vertical, SettingsMetrics.pickerVerticalInset)
