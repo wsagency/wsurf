@@ -51,6 +51,12 @@ public nonisolated enum PaymentCardRules {
         (3...4).contains(code.utf8.count) && code.utf8.allSatisfy { (48...57).contains($0) }
     }
 
+    /// The name on a card as its row shows it and its pick fills it: trimmed, cut to 200 characters and trimmed again, so a cut that
+    /// ends in a space shows as `PaymentCard`, which trims it once more, fills it. Reading it again changes nothing.
+    static func cardholder(_ name: String) -> String {
+        String(name.trimmingCharacters(in: .whitespacesAndNewlines).prefix(200)).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     /// "YYYY-MM" (the Credential Exchange year-month) as numbers; either is nil when it does not read.
     public static func yearMonth(_ text: String?) -> (year: Int?, month: Int?) {
         let parts = (text ?? "").split(separator: "-")
@@ -89,7 +95,7 @@ public nonisolated struct AutofillCardValues: Equatable, Sendable {
         }
         let code = item.value("verificationNumber")?.trimmingCharacters(in: .whitespacesAndNewlines)
         self.number = number
-        cardholder = String((item.value("fullName") ?? "").trimmingCharacters(in: .whitespacesAndNewlines).prefix(200))
+        cardholder = PaymentCardRules.cardholder(item.value("fullName") ?? "")
         self.month = month
         self.year = year
         securityCode = code.flatMap { !$0.isEmpty && PaymentCardRules.isValidSecurityCode($0) ? $0 : nil }

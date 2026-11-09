@@ -194,6 +194,8 @@ struct AutofillListingTests {
         let items = [
             SecureItemFixtures.card(), SecureItemFixtures.card(number: "378282246310005", name: "Grace"),
             SecureItemFixtures.card(number: "6200000000000005", name: ""),
+            // A name over 200 characters whose cut ends in a space (#76 N5).
+            SecureItemFixtures.card(number: "4242424242424242", name: String(repeating: "A", count: 199) + " Byron"),
         ]
         for item in items {
             let values = try #require(AutofillCardValues(item))
