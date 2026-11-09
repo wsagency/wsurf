@@ -763,6 +763,18 @@ extension View {
     }
 }
 
+extension View {
+    /// `rowAccessibilityLabel` for a control that also has a value to say; outside a titled row the control keeps what it has.
+    @ViewBuilder
+    func rowAccessibility(title: String?, value: String) -> some View {
+        if let title, !title.isEmpty {
+            accessibilityLabel(title).accessibilityValue(Text(verbatim: value))
+        } else {
+            self
+        }
+    }
+}
+
 struct SettingsMenu<Value: Hashable>: View {
     @Environment(\.settingsRowTitle) private var rowTitle
 
@@ -821,15 +833,13 @@ struct SettingsMenu<Value: Hashable>: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
             }
-            // The title says what the menu is for and the chosen option is its value, instead of the option alone as its name.
-            .rowAccessibilityLabel(rowTitle)
-            .accessibilityValue(Text(verbatim: current?.label ?? ""))
         }
         .menuStyle(.button)
         .menuIndicator(.hidden)
         .buttonStyle(.plain)
         .fixedSize(horizontal: false, vertical: true)
-        .rowAccessibilityLabel(rowTitle)
+        // In a row the title says what the menu is for and the chosen option is its value, instead of the option alone as its name.
+        .rowAccessibility(title: rowTitle, value: current?.label ?? String(localized: placeholder))
     }
 }
 

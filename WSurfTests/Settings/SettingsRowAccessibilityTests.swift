@@ -9,7 +9,7 @@ import Testing
 
 /// A settings control whose own label is hidden (a switch, a pop-up menu, a radio group) is named by the title of its row, so VoiceOver
 /// says "Sleep inactive tabs, switch, off" and not just "switch, off". `DetailRow` hands its title to the controls inside it through
-/// the environment (`settingsRowTitle`); `SettingsToggle`, `SettingsMenu` and `OptionList` read it as their accessibility label.
+/// the environment (`settingsRowTitle`); `SettingsToggle` and `SettingsMenu` read it as their accessibility label; an `OptionList` is given its own title.
 ///
 /// This suite proves the first half: the title reaches a control for every way of giving a row its title, and a control outside a
 /// titled row reads none. That the control then speaks it rests on SwiftUI's documented behaviour (a `labelsHidden` label stays the

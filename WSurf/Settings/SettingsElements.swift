@@ -6,8 +6,6 @@
 import SwiftUI
 
 struct OptionList<Value: Hashable>: View {
-    @Environment(\.settingsRowTitle) private var rowTitle
-
     struct Option: Identifiable {
         let value: Value
         let label: LocalizedStringResource
@@ -18,6 +16,8 @@ struct OptionList<Value: Hashable>: View {
         }
     }
 
+    /// The group's name for VoiceOver: the picker's own label, hidden from the eye.
+    var title: LocalizedStringResource?
     let options: [Option]
     let selection: Value
     let onSelect: (Value) -> Void
@@ -33,11 +33,14 @@ struct OptionList<Value: Hashable>: View {
                     .tag(option.value)
             }
         } label: {
-            EmptyView()
+            if let title {
+                Text(title)
+            } else {
+                EmptyView()
+            }
         }
         .labelsHidden()
         .pickerStyle(.radioGroup)
-        .rowAccessibilityLabel(rowTitle)
         .controlSize(.small)
         .padding(.horizontal, SettingsMetrics.pickerHorizontalInset)
         .padding(.vertical, SettingsMetrics.pickerVerticalInset)

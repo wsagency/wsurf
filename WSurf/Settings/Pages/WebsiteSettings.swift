@@ -95,6 +95,7 @@ struct WebsiteSettings: View {
 
         SettingsSection(title: "Autoplay", symbol: "play.rectangle") {
             OptionList(
+                title: "Autoplay",
                 options: AutoplayPolicy.allCases.map {
                     .init(value: $0, label: $0.label, caption: $0.caption)
                 },
@@ -217,6 +218,7 @@ private struct PermissionDetailPage: View {
 
         SettingsSection(title: "Other websites", symbol: permission.symbol) {
             OptionList(
+                title: "Other websites",
                 options: [
                     .init(value: PermissionPolicy.ask, label: PermissionPolicy.ask.label,
                           caption: "Every website asks the first time."),
