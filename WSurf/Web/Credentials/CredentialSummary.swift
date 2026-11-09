@@ -58,6 +58,9 @@ nonisolated struct CredentialSummary: Identifiable, Equatable, Sendable {
     /// What a search looks in, built once here so a keystroke never rebuilds it: the title, the username (unless concealed) and
     /// every website's host, folded so a search ignores case and accents. Never a password, note, code seed or passkey key.
     let searchKey: String
+    /// Whether its saved password is weak or reused, as the vault's password health report flags it (S4); `nil` until the report for
+    /// the revision shown arrives, and when there is nothing to flag. Flags only, never the password.
+    var health: PasswordHealthFinding?
 
     init(_ account: CredentialAccount) {
         id = account.id
@@ -125,7 +128,7 @@ nonisolated struct CredentialSummary: Identifiable, Equatable, Sendable {
               lhs.hasLogin == rhs.hasLogin, lhs.hasTOTP == rhs.hasTOTP, lhs.hasNotes == rhs.hasNotes,
               lhs.itemKinds == rhs.itemKinds, lhs.itemTitles == rhs.itemTitles, lhs.hasSensitiveItems == rhs.hasSensitiveItems,
               lhs.hiddenItemFields == rhs.hiddenItemFields, lhs.sensitiveItems == rhs.sensitiveItems, lhs.website == rhs.website,
-              lhs.fileCount == rhs.fileCount, lhs.fileBytes == rhs.fileBytes else { return false }
+              lhs.fileCount == rhs.fileCount, lhs.fileBytes == rhs.fileBytes, lhs.health == rhs.health else { return false }
         return lhs.passkeys == rhs.passkeys
     }
 

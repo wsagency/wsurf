@@ -63,6 +63,11 @@ final class CredentialSettingsModel {
     /// copied (`+PasswordPrivacy`), and before a card's or an ID document's hidden values are shown, copied or opened in the editor.
     /// Returns only on success. A seam so a test decides the answer; internal for the extensions.
     @ObservationIgnored let verifyUser: @MainActor (String) async throws -> Void
+    /// How long the page waits once a revision settles before it reads the password health report (`+Health`); `nil` reads none.
+    @ObservationIgnored let healthDelay: Duration?
+    /// The vault, epoch and revision the last report was asked for, and the task asking: a newer revision cancels it.
+    @ObservationIgnored var healthKey: HealthKey?
+    @ObservationIgnored var healthTask: Task<Void, Never>?
     /// Opens an address in a new tab of the window that shows this page (`openWebsite`); `nil` where there is none, such as a test.
     @ObservationIgnored var websiteOpener: (@MainActor (URL) -> Void)?
     /// Where decrypted copies of vault files go for Quick Look and Open With; a seam so a test keeps them in its own folder.
@@ -115,7 +120,8 @@ final class CredentialSettingsModel {
         undoNoticeDuration: Duration = .seconds(4),
         openingDuration: Duration = .seconds(2),
         verifyUser: @escaping @MainActor (String) async throws -> Void = CredentialSettingsModel.systemVerifier,
-        clock: any Clock<Duration> = ContinuousClock()
+        clock: any Clock<Duration> = ContinuousClock(),
+        healthDelay: Duration? = CredentialSettingsModel.defaultHealthDelay
     ) {
         self.profile = profile
         self.verifyUser = verifyUser
@@ -125,6 +131,7 @@ final class CredentialSettingsModel {
         self.noticeDuration = noticeDuration
         self.undoNoticeDuration = undoNoticeDuration
         self.openingDuration = openingDuration
+        self.healthDelay = healthDelay
         self.native = native
         legacy = LegacyPasswordImport(profile: profile)
         if profile.isPrivate {
@@ -348,6 +355,9 @@ final class CredentialSettingsModel {
             session = CredentialVaultSession(epoch: epoch, snapshot: snapshot)
             error = nil
             vaultExists = true
+            // A new session holds no health flags yet, whatever the last one held.
+            healthKey = nil
+            scheduleHealthIfNeeded()
         } catch {
             guard !Task.isCancelled, manager.authorizationEpoch == epoch else { return }
             session = nil
@@ -877,6 +887,7 @@ final class CredentialSettingsModel {
     func update(_ epoch: UInt64, _ change: (inout CredentialVaultSession) -> Void) throws {
         guard session?.epoch == epoch, manager?.authorizationEpoch == epoch else { throw CredentialVaultError.unauthorized }
         change(&session!)
+        scheduleHealthIfNeeded()
     }
 
     /// Nothing throws once the vault has committed: the receipt reflects what is on disk, and a lock that

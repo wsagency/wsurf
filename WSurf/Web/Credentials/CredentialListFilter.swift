@@ -24,12 +24,16 @@ nonisolated enum CredentialListFilter: CaseIterable, Hashable, Sendable {
     case otherItems
     /// Entries with attached files. Its chip shows while one does.
     case files
+    /// Logins whose saved password the vault's health report finds weak (S4). Its chip shows while one is.
+    case weak
+    /// Logins whose saved password is also saved for another website (S4). Its chip shows while one is.
+    case reused
 
     /// A narrower kind whose chip is shown only while some entry holds one. The sections (Logins, Identities, Cards, Addresses,
     /// Contacts, Notes) and Passkeys and Codes are always there.
     var hidesWhenEmpty: Bool {
         switch self {
-        case .documents, .otherItems, .files:
+        case .documents, .otherItems, .files, .weak, .reused:
             true
         case .all, .logins, .passkeys, .codes, .identities, .cards, .addresses, .contacts, .notes:
             false
@@ -68,6 +72,10 @@ nonisolated enum CredentialListFilter: CaseIterable, Hashable, Sendable {
             summary.itemKinds.contains { $0 == .wifi || $0 == .apiKey || $0 == .sshKey || $0 == .customFields }
         case .files:
             summary.fileCount > 0
+        case .weak:
+            summary.health?.weaknesses.isEmpty == false
+        case .reused:
+            summary.health?.reuse != nil
         }
     }
 

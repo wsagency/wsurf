@@ -3429,6 +3429,9 @@
     "It is removed from every profile, along with its settings and data." : {
       "comment" : "Message in the dialog that confirms removing an extension, warning that the removal is not limited to the profile the person is in. Full sentence."
     },
+    "it is shorter than 8 characters" : {
+      "comment" : "A reason in the note “The saved password is weak: %@.” in the credential editor. A lowercase clause with no period; it can be joined with other reasons into a list."
+    },
     "Its %lld pages of history are removed, along with the start page tiles. Other profiles are not affected." : {
       "comment" : "Message in the dialog that confirms clearing one profile’s history. %lld is the number of pages in that profile’s history.",
       "extractionState" : "stale",
@@ -3945,6 +3948,9 @@
     },
     "most capable" : {
       "comment" : "Short note beside one suggested model in the model pop-up menu, marking it as the strongest of the group. Lowercase, and the space is very tight."
+    },
+    "most of it is a pattern, such as 123456 or qwerty" : {
+      "comment" : "A reason in the note “The saved password is weak: %@.” in the credential editor: at least half of the password repeats a short chunk or runs along the alphabet, the digits or a keyboard row. 123456 and qwerty are examples; keep them as they are. A lowercase clause with no period; it can be joined with other reasons into a list."
     },
     "Move" : {
       "comment" : "Label in the gap a dragged sidebar row will drop into, saying the drop only changes where the row sits in the list. Imperative verb, one word. Very tight space — a sidebar row is a few characters wide."
@@ -5184,6 +5190,9 @@
     "Return to the previous page." : {
       "comment" : "Caption for the Go Back tool in assistant settings."
     },
+    "Reused" : {
+      "comment" : "Filter chip in the Vault tab of Settings › Credentials, with a count after it: logins whose saved password is also saved for another website. Shown only while one is. Also the small orange badge on the row of such a login. An adjective; one word, tight."
+    },
     "Reveal content by hovering over a control." : {
 
     },
@@ -6364,6 +6373,12 @@
     },
     "The same on every Mac that can open this vault. It isn’t the key." : {
       "comment" : "Caption of the Key check row."
+    },
+    "The same password is saved for %lld other websites." : {
+      "comment" : "Note under the sign-in fields of the credential editor in Settings › Credentials. %lld is how many other websites, two or more, the same password is saved for. A full sentence; “Also saved in %@.” can follow it."
+    },
+    "The same password is saved for one other website." : {
+      "comment" : "Note under the sign-in fields of the credential editor in Settings › Credentials, when the credential’s saved password is also saved for exactly one other website. A full sentence; “Also saved in %@.” can follow it."
     },
     "The server accepted the connection but never replied." : {
       "comment" : "Explanation on the error page shown when a website timed out, below the headline."
@@ -7649,6 +7664,12 @@
     "Watching %@." : {
       "comment" : "Notice in the window after a page watch started. %@ is the website, for example shop.example."
     },
+    "Weak" : {
+      "comment" : "Filter chip in the Vault tab of Settings › Credentials, with a count after it: logins whose saved password is weak. Shown only while one is. Also the small orange badge on the row of such a login. An adjective; one word, tight."
+    },
+    "Weak password" : {
+      "comment" : "VoiceOver label of the orange Weak badge on a login’s row in Settings › Credentials: its saved password is weak. A noun phrase."
+    },
     "The page already shows that, so no watch was set." : {
       "comment" : "Notice when a page watch was not started because the page already shows what the person waits for."
     },
@@ -8327,6 +8348,9 @@
     },
     "Also kept" : {
       "comment" : "Sub-heading in the merge sheet over lines counting what the merge keeps in addition: passkeys, notes, items and passwords in History. Sentence case."
+    },
+    "Also saved in %@." : {
+      "comment" : "Follows the reuse note in the credential editor in Settings › Credentials. %@ is a list of the names of the other credentials that save the same password, joined in the system’s list format: at most three names, then “%lld more”. A full sentence."
     },
     "An address" : {
       "comment" : "Name of a kind of item in a credential transfer. It begins the sentence “%@ isn’t supported yet, so it wasn’t imported.” in the import review sheet, so it keeps its article (A/An) and Sentence case. A postal address item."
@@ -9360,6 +9384,9 @@
     "It can’t be undone, and you’ll confirm with an unlock passkey." : {
       "comment" : "Sentence in the Delete Permanently? dialog message, after the one saying what is deleted. The unlock passkey is the passkey that unlocks the vault; it is asked for again to authorize the deletion."
     },
+    "it contains the username or the website’s name" : {
+      "comment" : "A reason in the note “The saved password is weak: %@.” in the credential editor: the password holds the credential’s username or the name of its website. A lowercase clause with no period; it can be joined with other reasons into a list."
+    },
     "It has more than %lld cards and other items. Only the first %lld were imported." : {
       "comment" : "Note in the import review sheet (Settings › Credentials), shown after the item’s title and a colon, under the item’s row or in the “Not imported” list: an item held more cards and other items (addresses, IDs, custom fields…) than WSurf keeps. Both %lld are the same number: the maximum number per item. “It” is the item named before the colon. Full sentences."
     },
@@ -9374,6 +9401,9 @@
     },
     "It has nothing WSurf can store yet, so it wasn’t imported." : {
       "comment" : "Note in the import review sheet (Settings › Credentials), shown after the item’s title and a colon, under the item’s row or in the “Not imported” list: the whole item was skipped because it held nothing WSurf can store. “It” is the item named before the colon. Full sentence."
+    },
+    "it is only digits, or letters of one case" : {
+      "comment" : "A reason in the note “The saved password is weak: %@.” in the credential editor: the password, under 12 characters, is all digits, all lowercase or all uppercase letters. A lowercase clause with no period; it can be joined with other reasons into a list."
     },
     "it was cancelled" : {
       "comment" : "Reason clause inserted as %@ into “The import ended because %@, and nothing was saved. …”. Lowercase fragment with no period; it must read correctly after “because”."
@@ -9971,6 +10001,9 @@
     },
     "password" : {
       "comment" : "Lowercase noun with two uses: inserted into “Copy this version’s %@” and “Copy the current %@” in the History panel; and one item in a “ · ” separated list of what an existing saved login holds, in the account menu of the passkey-creation prompt."
+    },
+    "Password also saved for another website" : {
+      "comment" : "VoiceOver label of the orange Reused badge on a login’s row in Settings › Credentials: the same password is saved for a credential of another website. Sentence case, no period."
     },
     "Password changed" : {
       "comment" : "Line in the “Changed in WSurf (kept)” list of the import review sheet: the password was changed in WSurf after an earlier import, and the change is kept. A date can follow after “ · ”. The password itself is never shown."
@@ -10811,6 +10844,9 @@
     },
     "The saved logins changed. Nothing was changed. Try again." : {
       "comment" : "Result message in the Save as Credential sheet (opened from an Input History entry): the saved logins changed in the meantime, so the login was not saved. Three short sentences; Try again is an instruction."
+    },
+    "The saved password is weak: %@." : {
+      "comment" : "Note under the sign-in fields of the credential editor in Settings › Credentials. %@ is a list of one or more reasons, joined in the system’s list format (“…, … and …”), each a lowercase clause such as “it is shorter than 8 characters”. A full sentence."
     },
     "The setup key moves to Trash when you save." : {
       "comment" : "Message of the “Remove Verification Code?” dialog in the credential editor. The setup key is the secret that makes the verification codes. Trash is the vault’s Trash. Sentence."

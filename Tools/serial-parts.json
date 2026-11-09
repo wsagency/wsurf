@@ -124,6 +124,7 @@
    "CredentialMergeSuggestionsTests",
    "CredentialNotTheSameTests",
    "CredentialOpenWebsiteTests",
+   "CredentialPasswordHealthPageTests",
    "CredentialPasswordPrivacyTests",
    "CredentialPickerScriptTests",
    "CredentialPickerTests",
