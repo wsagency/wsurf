@@ -202,70 +202,78 @@ struct MicroShellTests {
 
     // MARK: - The reveal
 
-    private func eventually(_ condition: @MainActor () -> Bool) async -> Bool {
-        await waitUntil(timeout: .seconds(5), condition)
+    /// The reveal runs on a clock the case moves, so the moments below are exact and no machine load can stretch one.
+    private func eventually(_ clock: TestClock, _ condition: @MainActor () -> Bool) async -> Bool {
+        await clock.run(upTo: .seconds(5), until: condition)
     }
 
     @Test func aNewSiteShowsTheAddressForAMomentAndThenGoesAway() async {
-        let reveal = MicroReveal(hideDelay: .milliseconds(40), hostFlash: .milliseconds(400))
+        let clock = TestClock()
+        let reveal = MicroReveal(hideDelay: .milliseconds(40), hostFlash: .milliseconds(400), clock: clock)
         #expect(!reveal.isRevealed)
 
         reveal.siteChanged()
         #expect(reveal.isRevealed && reveal.isFlashing)
-        try? await Task.sleep(for: .milliseconds(150))
+        await clock.run(for: .milliseconds(350))
         #expect(reveal.isRevealed, "still inside the moment the address is owed")
 
-        #expect(await eventually { !reveal.isRevealed })
+        #expect(await eventually(clock) { !reveal.isRevealed })
         #expect(!reveal.isFlashing)
         #expect(MicroShell.hostFlash == .seconds(2), "the owner-visible moment")
     }
 
     @Test func everySiteChangeShowsTheAddressAgain() async {
-        let reveal = MicroReveal(hideDelay: .milliseconds(40), hostFlash: .milliseconds(250))
+        let clock = TestClock()
+        let reveal = MicroReveal(hideDelay: .milliseconds(40), hostFlash: .milliseconds(250), clock: clock)
         for _ in 0..<2 {
             reveal.siteChanged()
             #expect(reveal.isRevealed)
-            #expect(await eventually { !reveal.isRevealed })
+            #expect(await eventually(clock) { !reveal.isRevealed })
         }
     }
 
     @Test func aPageThatChangesSiteAgainKeepsTheAddressUpForAnotherMoment() async {
-        let reveal = MicroReveal(hideDelay: .milliseconds(40), hostFlash: .milliseconds(300))
+        let clock = TestClock()
+        let reveal = MicroReveal(hideDelay: .milliseconds(40), hostFlash: .milliseconds(300), clock: clock)
         reveal.siteChanged()
-        try? await Task.sleep(for: .milliseconds(200))
+        await clock.run(for: .milliseconds(200))
         reveal.siteChanged()
-        try? await Task.sleep(for: .milliseconds(200))
+        await clock.run(for: .milliseconds(200))
         #expect(reveal.isRevealed, "the second change restarted the moment")
-        #expect(await eventually { !reveal.isRevealed })
+        #expect(await eventually(clock) { !reveal.isRevealed })
     }
 
     @Test func thePointerAtTheTopKeepsTheBarUntilItLeavesAndTheDelayPasses() async {
-        let reveal = MicroReveal(hideDelay: .milliseconds(120), hostFlash: .milliseconds(100))
+        let clock = TestClock()
+        let reveal = MicroReveal(hideDelay: .milliseconds(120), hostFlash: .milliseconds(100), clock: clock)
 
         reveal.pointer(inZone: true)
         #expect(reveal.isRevealed)
-        try? await Task.sleep(for: .milliseconds(300))
+        await clock.run(for: .milliseconds(300))
         #expect(reveal.isRevealed, "while the pointer is there it stays")
 
         reveal.pointer(inZone: false)
         #expect(reveal.isRevealed, "it does not vanish under the pointer the instant it leaves")
-        #expect(await eventually { !reveal.isRevealed })
+        await clock.run(for: .milliseconds(100))
+        #expect(reveal.isRevealed, "and not before the delay has passed")
+        #expect(await eventually(clock) { !reveal.isRevealed })
     }
 
     @Test func aPromptHoldsTheBarWhateverThePointerDoes() async {
         var asking = true
-        let reveal = MicroReveal(hideDelay: .milliseconds(40), hostFlash: .milliseconds(60), keeps: { asking })
+        let clock = TestClock()
+        let reveal = MicroReveal(hideDelay: .milliseconds(40), hostFlash: .milliseconds(60), keeps: { asking }, clock: clock)
 
         reveal.update()
         #expect(reveal.isRevealed)
         reveal.pointer(inZone: false)
         reveal.siteChanged()
-        try? await Task.sleep(for: .milliseconds(400))
+        await clock.run(for: .milliseconds(400))
         #expect(reveal.isRevealed, "a prompt, a save offer or a question is never left to a page's own drawing")
 
         // What ends it is not always something SwiftUI watches (the address losing the keyboard): the bar looks again by itself.
         asking = false
-        #expect(await eventually { !reveal.isRevealed })
+        #expect(await eventually(clock) { !reveal.isRevealed })
     }
 
     @Test func aWindowWithNoPageStartsWithItsBarDown() {

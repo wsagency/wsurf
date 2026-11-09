@@ -61,7 +61,7 @@ struct MicroPromptTests {
         #expect(rig.reveal.isRevealed, "the bar is down as the prompt appears")
         #expect(rig.micro.hasPendingPagePrompt, "the one flag says a page is asking")
         #expect(MicroShell.host(of: rig.tab.urlString) != nil, "and the bar has the page's site to show")
-        try? await Task.sleep(for: .milliseconds(300))
+        try? await Task.sleep(for: .milliseconds(100))
         #expect(rig.reveal.isRevealed, "and it stays down until the prompt is gone")
         dismiss()
         try #require(await waitUntil { !rig.reveal.isRevealed }, "the bar goes up again once the prompt is closed")
@@ -90,15 +90,19 @@ struct MicroPromptTests {
 
     @Test func aRealJavaScriptAlertShowsTheSite() async throws {
         let server = try await HTTPFixtureServer.start(routes: [
-            "/": .html("<title>Alert</title><script>setTimeout(function () { alert('Your session has expired') }, 1_500)</script>"),
+            "/": .html("<title>Alert</title><p>Nothing yet.</p>"),
         ])
         try await withHiddenBar { rig in
             rig.tab.load(try server.url("/"))
             let page = rig.tab.page
             try #require(await waitUntil { page.window === rig.window }, "the page is in the micro window")
+            // Loaded first: the bar is already up out of the way, so "hidden" alone would hold before the new site's moment began.
+            try #require(await waitUntil { page.title == "Alert" && !page.isLoading }, "the page has loaded")
             try #require(await waitUntil { !rig.reveal.isRevealed }, "the new site's moment is over")
             #expect(rig.window.attachedSheet == nil)
 
+            // The page raises its alert when the bar has gone up, not on a timer that has to be longer than that takes.
+            _ = try await page.evaluateJavaScript("setTimeout(function () { alert('Your session has expired') }, 0); true")
             try await expectBarHolds(rig, opened: { rig.window.attachedSheet != nil }, dismiss: { endSheet(of: rig.window) })
         }
         withExtendedLifetime(server) {}
@@ -181,7 +185,7 @@ struct MicroPromptTests {
             let dialog = Task { await PageDialogs.present(alert, in: otherWindow) }
             try #require(await waitUntil { otherWindow.attachedSheet != nil })
 
-            try? await Task.sleep(for: .milliseconds(200))
+            try? await Task.sleep(for: .milliseconds(100))
             #expect(rig.reveal.openPrompts == 0, "the other window's sheet is not this window's prompt")
             #expect(!rig.reveal.isRevealed, "and it does not bring this window's bar down")
 
@@ -248,7 +252,7 @@ struct MicroPromptTests {
             panel.orderFront(nil)
             rig.reveal.pointer(inZone: false)
 
-            try? await Task.sleep(for: .milliseconds(300))
+            try? await Task.sleep(for: .milliseconds(100))
             #expect(rig.reveal.isRevealed, "the pointer left, and the panel still hangs from the window")
             rig.window.removeChildWindow(panel)
             panel.orderOut(nil)

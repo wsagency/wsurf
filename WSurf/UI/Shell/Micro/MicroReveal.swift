@@ -13,7 +13,7 @@ import Observation
 /// reaches the person, and when a popover is up. Observation says, before it changes, when a permission prompt or a save offer
 /// is about to, and afterwards when the page or anything else that keeps the bar changes. So the bar comes down as the prompt
 /// appears even when it is up out of the way, and what it cannot tell holds the bar rather than missing it. Durations are
-/// inputs so a test does not wait seconds.
+/// inputs so a test does not wait seconds, and so is the clock they run on, so a test can say how much time has passed.
 ///
 /// The Minimal window's bar uses the same model with `restsRevealed`, and `hiding` says how it goes. While scrolling, the bar
 /// is shown until the page scrolls down, and scrolling up, a new page or a new site brings it back to rest. Under a timed
@@ -50,8 +50,11 @@ final class MicroReveal {
     @ObservationIgnored private var lastHost: String?
     @ObservationIgnored private var lastToken = 0
     @ObservationIgnored private var lastHiding: MinimalBarHiding
-    /// Nothing has held the bar since this moment, while a timed choice counts.
-    @ObservationIgnored private var idleSince: ContinuousClock.Instant?
+    /// Nothing has held the bar since this moment (time on `clock` since this model was made), while a timed choice counts.
+    @ObservationIgnored private var idleSince: Duration?
+    @ObservationIgnored private let clock: any Clock<Duration>
+    /// Time on `clock` since this model was made.
+    @ObservationIgnored private let elapsed: () -> Duration
     @ObservationIgnored private var wasHeld = false
     @ObservationIgnored private var popovers: Set<ObjectIdentifier> = []
     @ObservationIgnored private var tokens: [any NSObjectProtocol] = []
@@ -72,8 +75,11 @@ final class MicroReveal {
         host: @escaping () -> String? = { nil },
         focusToken: @escaping () -> Int = { 0 },
         pending: @escaping () -> Bool = { false },
-        keeps: @escaping () -> Bool = { false }
+        keeps: @escaping () -> Bool = { false },
+        clock: any Clock<Duration> = ContinuousClock()
     ) {
+        self.clock = clock
+        elapsed = Self.stopwatch(on: clock)
         self.hideDelay = hideDelay
         self.hostFlash = hostFlash
         self.restsRevealed = restsRevealed
@@ -86,6 +92,15 @@ final class MicroReveal {
         self.focusToken = focusToken
         self.pending = pending
         self.keeps = keeps
+    }
+
+    /// A reading of `clock` as the time since now, whatever its instants are.
+    private static func stopwatch(on clock: any Clock<Duration>) -> () -> Duration {
+        func start<C: Clock>(_ clock: C) -> () -> Duration where C.Duration == Duration {
+            let origin = clock.now
+            return { origin.duration(to: clock.now) }
+        }
+        return start(clock)
     }
 
     private var holds: Bool {
@@ -308,7 +323,7 @@ final class MicroReveal {
         flash?.cancel()
         flash = Task { [weak self] in
             guard let self else { return }
-            try? await Task.sleep(for: hostFlash)
+            try? await clock.sleep(for: hostFlash)
             guard !Task.isCancelled else { return }
             isFlashing = false
             flash = nil
@@ -335,7 +350,7 @@ final class MicroReveal {
         guard idle == nil else { return }
         idle = Task { [weak self] in
             while let self, !Task.isCancelled, let left = idleLeft, left > .zero {
-                try? await Task.sleep(for: min(left, hideDelay))
+                try? await clock.sleep(for: min(left, hideDelay))
                 guard !Task.isCancelled else { return }
                 stampIdle()
             }
@@ -354,14 +369,14 @@ final class MicroReveal {
     private func stampIdle() {
         let held = holdsApart
         if held || wasHeld || idleSince == nil {
-            idleSince = ContinuousClock.now
+            idleSince = elapsed()
         }
         wasHeld = held
     }
 
     private var idleLeft: Duration? {
         guard let since = idleSince, let delay = idleDelay(hiding()) else { return nil }
-        return delay - (ContinuousClock.now - since)
+        return delay - (elapsed() - since)
     }
 
     private func hide() {
@@ -376,7 +391,7 @@ final class MicroReveal {
         check?.cancel()
         check = Task { [weak self] in
             guard let self else { return }
-            try? await Task.sleep(for: hideDelay)
+            try? await clock.sleep(for: hideDelay)
             guard !Task.isCancelled else { return }
             check = nil
             if restsHere {
