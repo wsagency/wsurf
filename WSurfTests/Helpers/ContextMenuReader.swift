@@ -12,7 +12,7 @@ import Foundation
 /// A watchdog cancels a menu the reader never reaches, and reports it, so that case cannot pass unseen.
 enum ContextMenuReader {
     /// What a reader did, touched only on the main thread.
-    private final class Outcome: @unchecked Sendable {
+    private nonisolated final class Outcome: @unchecked Sendable {
         var index: Int?
         var ended: NSObjectProtocol?
     }
@@ -26,6 +26,8 @@ enum ContextMenuReader {
         read: @escaping @MainActor ([String], [String], Bool) -> Void, finished: @escaping @MainActor (Bool) -> Void
     ) {
         let outcome = Outcome()
+        // The timer and the observer callbacks run on the main run loop, the only place these two are touched.
+        nonisolated(unsafe) let menu = menu
         let watchdog = WatchdogFlag()
         outcome.ended = NotificationCenter.default.addObserver(forName: NSMenu.didEndTrackingNotification, object: menu, queue: nil) { _ in
             if let token = outcome.ended {
@@ -39,7 +41,7 @@ enum ContextMenuReader {
             }
         }
         // Whatever the test does, the menu does not stay: a menu that stays holds the whole test run.
-        let guardTimer = Timer(timeInterval: 8, repeats: false) { _ in
+        nonisolated(unsafe) let guardTimer = Timer(timeInterval: 8, repeats: false) { _ in
             MainActor.assumeIsolated {
                 watchdog.fired = true
                 menu.cancelTracking()
@@ -59,7 +61,7 @@ enum ContextMenuReader {
         RunLoop.main.add(reader, forMode: .common)
     }
 
-    private final class WatchdogFlag: @unchecked Sendable {
+    private nonisolated final class WatchdogFlag: @unchecked Sendable {
         var fired = false
     }
 }
