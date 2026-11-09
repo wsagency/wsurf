@@ -57,7 +57,8 @@ stamp="$DERIVED_FILE_DIR/ChromiumBundle.fingerprint"
 if [[ -f "$stamp" && "$(cat "$stamp")" == "$fingerprint" \
     && -d "$frameworks/Chromium Embedded Framework.framework" \
     && -x "$frameworks/WSurf Helper (Renderer).app/Contents/MacOS/WSurf Helper (Renderer)" \
-    && -x "$xpc/Contents/MacOS/WSurf Chromium" ]]; then
+    && -x "$xpc/Contents/MacOS/WSurf Chromium" \
+    && -x "$xpc/Contents/Frameworks/WSurf Helper (Renderer).app/Contents/MacOS/WSurf Helper (Renderer)" ]]; then
     exit 0
 fi
 
@@ -109,6 +110,16 @@ for suffix in '' ' (Alerts)' ' (GPU)' ' (Plugin)' ' (Renderer)'; do
 PLIST
     printf APPL???? > "$bundle/Contents/PkgInfo"
     sign --entitlements "$SRCROOT/Tools/chromium-helper.entitlements" "$bundle"
+done
+
+# D4 spike: Chromium's sandbox lets a child read only inside its browser process's main bundle (BUNDLE_PATH), which for the
+# service is the .xpc: a helper launched by the service could not load the framework from WSurf.app/Contents/Frameworks
+# ("file system sandbox blocked open()", exit 125). So the service gets its own signed copies of the framework and the
+# helpers in Contents/Frameworks; WSurf's in-process path keeps using the ones above.
+mkdir -p "$xpc/Contents/Frameworks"
+for item in "Chromium Embedded Framework.framework" "WSurf Helper.app" "WSurf Helper (Alerts).app" "WSurf Helper (GPU).app" \
+            "WSurf Helper (Plugin).app" "WSurf Helper (Renderer).app"; do
+    /usr/bin/ditto "$frameworks/$item" "$xpc/Contents/Frameworks/$item"
 done
 
 # D4 spike: WSurf Chromium.xpc runs CEF's browser process, windowless, out of WSurf's process. No entitlements and no

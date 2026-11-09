@@ -136,7 +136,9 @@ final class ServiceHost {
     private func startCEF(_ message: CefRemoteMessage) throws {
         guard !CefRuntime.shared.isInitialized else { return }
         let started = Clock.nowNanoseconds
-        let app = appBundle
+        // The framework and the helpers are the service's own copies (`Tools/embed-chromium.sh`): Chromium's sandbox lets a
+        // child read only inside the browser process's main bundle, which here is the .xpc.
+        let app = Bundle.main.bundleURL
         let frameworks = app.appendingPathComponent("Contents/Frameworks", isDirectory: true)
         var configuration = CefConfiguration()
         configuration.noSandbox = false
