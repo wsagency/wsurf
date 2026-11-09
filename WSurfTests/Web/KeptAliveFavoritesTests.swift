@@ -35,7 +35,7 @@ struct KeptAliveFavoritesTests {
             let reported = await rig.state(of: favorite) ?? "nothing"
             #expect(hidden, "\(engine): the favorite behind it reports \(reported)")
             let ran = await rig.frames(of: favorite, whileFramesOf: front)
-            #expect(ran.map { $0 <= 2 } == true, "\(engine): the hidden favorite ran \(ran.map { "\($0)" } ?? "no") frames while the front tab ran 20")
+            #expect(ran.map { $0 <= 1 } == true, "\(engine): the hidden favorite ran \(ran.map { "\($0)" } ?? "no") frames while the front tab ran 20")
 
             #expect(favorite.isMaterialised && !favorite.isDeferred, "it stays loaded")
             #expect(favorite.page.window != nil, "and in its window")
@@ -69,7 +69,7 @@ struct KeptAliveFavoritesTests {
             let reported = await rig.state(of: favorite) ?? "nothing"
             #expect(hidden, "\(engine): when the wait ends it reports \(reported)")
             let ran = await rig.frames(of: favorite, whileFramesOf: front)
-            #expect(ran.map { $0 <= 2 } == true, "\(engine): the hidden favorite ran \(ran.map { "\($0)" } ?? "no") frames while the front tab ran 20")
+            #expect(ran.map { $0 <= 1 } == true, "\(engine): the hidden favorite ran \(ran.map { "\($0)" } ?? "no") frames while the front tab ran 20")
         }
     }
 
@@ -95,7 +95,7 @@ struct KeptAliveFavoritesTests {
             let reported = await rig.state(of: favorite) ?? "nothing"
             #expect(hidden, "\(engine): it reports \(reported)")
             let ran = await rig.frames(of: favorite, whileFramesOf: front)
-            #expect(ran.map { $0 <= 2 } == true, "\(engine): it ran \(ran.map { "\($0)" } ?? "no") frames while the front tab ran 20")
+            #expect(ran.map { $0 <= 1 } == true, "\(engine): it ran \(ran.map { "\($0)" } ?? "no") frames while the front tab ran 20")
 
             rig.browser.activate(favorite)
             #expect(await waitUntil { await rig.isAnimating(favorite) }, "\(engine): shown, it animates")
