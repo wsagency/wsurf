@@ -86,8 +86,18 @@ final class ServiceLog {
         lock.lock()
         defer { lock.unlock() }
         guard handle == nil, !path.isEmpty else { return }
-        FileManager.default.createFile(atPath: path, contents: nil)
+        // Appended, not truncated: a service relaunched after a crash keeps the earlier instance's lines.
+        if !FileManager.default.fileExists(atPath: path) {
+            FileManager.default.createFile(atPath: path, contents: nil)
+        }
         handle = FileHandle(forWritingAtPath: path)
+        // launchd gives the service no stderr; the CEF helpers inherit it and report their start-up failures there.
+        let errors = URL(filePath: path).deletingLastPathComponent().appendingPathComponent("chromium-stderr.log").path
+        let descriptor = Darwin.open(errors, O_WRONLY | O_CREAT | O_APPEND, 0o644)
+        if descriptor >= 0 {
+            dup2(descriptor, STDERR_FILENO)
+            close(descriptor)
+        }
         handle?.seekToEndOfFile()
         for line in pending {
             handle?.write(Data(line.utf8))
