@@ -300,6 +300,7 @@
    "PDFSavingTests",
    "SidebarListHeightTests",
    "TabSleepScheduleTests",
+   "TabSleepSparesTests",
    "TabSwitchWorkTests"
   ],
   [

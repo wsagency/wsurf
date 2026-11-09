@@ -5868,8 +5868,20 @@
     "Sleep after" : {
       "comment" : "Title of the row in Settings > General, shown under Sleep inactive tabs, that chooses how long a background tab may sit out of view before it unloads. Sentence case; Sleep is a verb."
     },
-    "Background tabs unload after they have been out of view this long, and reload when you open them. Favorites and tabs that play audio, use a camera or microphone, hold unsaved form input or are downloading stay loaded. Unloaded Chromium tabs restore only their URL." : {
-      "comment" : "Caption of the Sleep after row in Settings > General. Explains the idle delay and which tabs are never unloaded. Chromium is a browser engine name and stays untranslated."
+    "Background tabs unload after they have been out of view this long, and reload when you open them. Tabs that play audio, use a camera or microphone, hold unsaved form input or are downloading stay loaded, and so do the Favorites and pinned tabs the options below keep awake. This covers WebKit and Chromium tabs; Chromium tabs restore their address and scroll position, not Back/Forward history." : {
+      "comment" : "Caption of the Sleep after row in Settings > General. Explains the idle delay, which tabs are never unloaded, and what a woken Chromium tab restores. WebKit and Chromium are browser engine names and stay untranslated."
+    },
+    "Favorites never sleep" : {
+      "comment" : "Title of the switch in Settings > General, shown under Sleep inactive tabs, that keeps Favorites loaded when other tabs sleep. On by default. Sentence case; Sleep is a verb the browser does to the tabs, and the same row in Settings search."
+    },
+    "Favorites stay loaded when tabs sleep, when you choose Free Memory and when memory runs low. A sleeping tab sends no notifications." : {
+      "comment" : "Caption of the Favorites never sleep row in Settings > General, and its description in Settings search. Says what keeps Favorites loaded and that a tab that is asleep cannot send notifications. Free Memory is the name of a button."
+    },
+    "Pinned tabs never sleep" : {
+      "comment" : "Title of the switch in Settings > General, shown under Sleep inactive tabs, that keeps pinned tabs loaded when other tabs sleep. Off by default. Sentence case; Sleep is a verb the browser does to the tabs, and the same row in Settings search."
+    },
+    "Pinned tabs stay loaded when tabs sleep, when you choose Free Memory and when memory runs low. A sleeping tab sends no notifications." : {
+      "comment" : "Caption of the Pinned tabs never sleep row in Settings > General, and its description in Settings search. Says what keeps pinned tabs loaded and that a tab that is asleep cannot send notifications. Free Memory is the name of a button."
     },
     "Tint Icons as Folder" : {
       "comment" : "Item in the context menu of a sidebar folder, checked while on: draws the icons of the tabs inside the folder in the folder's color instead of their own colors. Off by default. Title Case, next to Size."

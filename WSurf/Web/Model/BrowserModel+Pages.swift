@@ -18,7 +18,7 @@ extension BrowserModel {
         let spared = Set([activeTabID].compactMap { $0 } + recentlyActive.prefix(keep))
         var discarded = 0
         for tab in tabs where !spared.contains(tab.id)
-            && !tab.isFavorite
+            && !sleepSpares(tab)
             && cutoff.map({ tab.lastForegroundAt <= $0 }) ?? true
             && tab.canDiscardWebContent
             && protectionReason(for: tab) == nil {
@@ -26,6 +26,13 @@ extension BrowserModel {
             discarded += 1
         }
         return discarded
+    }
+
+    /// A Favorite or pinned tab the user asked to keep loaded (Settings › General › Tabs). It is spared by every automatic
+    /// unload: the idle sweep, memory pressure and Free Memory.
+    func sleepSpares(_ tab: BrowserTab) -> Bool {
+        let settings = context.settings
+        return (settings.sleepSparesFavorites && tab.isFavorite) || (settings.sleepSparesPinned && tab.isPinnedForProfile)
     }
 
     /// Drops `tab`'s page. A pinned tab that has wandered from its pinned page comes back on that page the next time it
@@ -66,7 +73,7 @@ extension BrowserModel {
         // A tab kept loaded (playing, downloading, held by the assistant, a favorite...) is not idle: its idle time starts when
         // that ends, so it gets the whole limit after it, not just the time to the next tick.
         // ponytail: seen per tick, so idle time starts up to one tick interval (at most 60 s) early.
-        for tab in tabs where tab.isFavorite || protectionReason(for: tab) != nil {
+        for tab in tabs where sleepSpares(tab) || protectionReason(for: tab) != nil {
             tab.lastForegroundAt = now
         }
         let discarded = discardBackgroundTabs(idleSince: now - limit)

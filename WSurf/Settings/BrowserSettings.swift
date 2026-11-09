@@ -76,6 +76,8 @@ final class BrowserSettings {
     @ObservationIgnored var storedShowsLyrics: Bool?
     @ObservationIgnored var storedSleepsInactiveTabs: Bool?
     @ObservationIgnored var storedSleepAfterMinutes: Int?
+    @ObservationIgnored var storedSleepSparesFavorites: Bool?
+    @ObservationIgnored var storedSleepSparesPinned: Bool?
     @ObservationIgnored var storedArchiveTabsAfter: TabArchiveDelay?
     @ObservationIgnored var storedShowsLinkPreview: Bool?
     @ObservationIgnored var storedPeeksAtLinks: Bool?
@@ -549,6 +551,8 @@ final class BrowserSettings {
             storedRefractsTabColor = object(Key.tabColorRefraction) as? Bool ?? true
             storedSleepsInactiveTabs = object(Key.sleepsInactiveTabs) as? Bool ?? false
             storedSleepAfterMinutes = Self.clampedSleepMinutes(finiteNumber(Key.sleepAfterMinutes) ?? 0)
+            storedSleepSparesFavorites = object(Key.sleepSparesFavorites) as? Bool ?? true
+            storedSleepSparesPinned = object(Key.sleepSparesPinned) as? Bool ?? false
             storedArchiveTabsAfter = string(Key.archiveTabsAfter).flatMap(TabArchiveDelay.init(rawValue:)) ?? .never
             storedShowsLinkPreview = object(Key.linkPreview) as? Bool ?? true
             storedPeeksAtLinks = object(Key.linkPeek) as? Bool ?? true
