@@ -193,13 +193,14 @@ private nonisolated func title(of fact: AutofillItemFact) -> String {
 }
 
 private nonisolated enum Refusal: CaseIterable, Sendable {
-    case locked, revoked, expired, unknownVault, tamperedRow
+    case locked, revoked, expired, unknownVault, tamperedHead
 }
 
 /// A store's clock that, once armed, counts the store's reads of it and revokes the access it was armed with at the third, as
-/// `CredentialManager.lock` revokes an access at once and locks the store after. The verified read reads the clock twice (its check
-/// before the operation lock and its check under it), so the third read is the check a method makes after the read. The instant it
-/// returns is always inside the access's deadline, so a refusal here is the revocation's, never the deadline's.
+/// `CredentialManager.lock` revokes an access at once and locks the store after. The verified read, and a pick's read of its own row
+/// (`pickedAccount`), read the clock twice (a check before the operation lock and one under it), so the third read is the check a
+/// method makes after the read. The instant it returns is always inside the access's deadline, so a refusal here is the revocation's,
+/// never the deadline's.
 private nonisolated final class ArmedClock: Sendable {
     private let state = Mutex<(access: VaultAccess?, reads: Int)>((nil, 0))
 
@@ -368,7 +369,8 @@ struct VaultAutofillReadTests {
 
     /// Every read, list or pick, refuses exactly as the verified read does: a locked vault and a revoked access are `unauthorized`, a
     /// lease past its deadline `expired`, a vault the access holds no grant on `unauthorized` (the read never reaches the file), and a
-    /// row changed on disk `integrityFailure`. Nothing is returned.
+    /// head changed on disk `integrityFailure`. Nothing is returned. A changed row fails a pick only when it is the picked row; the
+    /// tamper cases of both reads are in `VaultPickReadTests`.
     @Test(arguments: Refusal.allCases)
     private func everyReadRefusesWhatTheVerifiedReadRefuses(_ refusal: Refusal) async throws {
         try await VaultStoreFixture.with(accounts: try Entries.all()) { f in
@@ -387,13 +389,10 @@ struct VaultAutofillReadTests {
                 clock.advance(by: .seconds(301))
             case .unknownVault:
                 vaultID = UUID()
-            case .tamperedRow:
-                let row = try f.storedRecord(f.vaultID, Entries.contactID)
+            case .tamperedHead:
                 try f.mutate { db in
-                    try db.execute(
-                        sql: "UPDATE record SET sealed = ? WHERE vaultID = ? AND recordID = ?",
-                        arguments: [VaultStoreFixture.flipped(row.sealed), f.vaultID.lowerText, Entries.contactID.lowerText]
-                    )
+                    guard let stored = try StoreTables.head(db, vaultID: f.vaultID) else { throw CredentialStoreError.malformed }
+                    try StoreTables.putHead(db, vaultID: f.vaultID, revision: stored.revision, sealed: VaultStoreFixture.flipped(stored.sealed))
                 }
             }
             let expected = name(await failure { _ = try await store.snapshot(vaultID: vaultID, using: access) })
@@ -428,7 +427,7 @@ struct VaultAutofillReadTests {
                 #expect(expected == name(CredentialVaultError.unauthorized))
             case .expired:
                 #expect(expected == name(CredentialVaultError.expired))
-            case .tamperedRow:
+            case .tamperedHead:
                 #expect(expected.contains("integrityFailure"))
             }
         }
