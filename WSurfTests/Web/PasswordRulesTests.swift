@@ -40,9 +40,14 @@ struct PasswordRulesTests {
         let expected = PasswordRules.normalized(PasswordRules.upper + Array("!?".utf8) + PasswordRules.digit)
         #expect(rules.allowedCharacters == expected)
 
+        // Apple's reference parser: `required: upper` alone allows upper and nothing else; ascii-printable only when neither is named.
         let onlyRequired = PasswordRules(parsing: "required: [é]; required: lower")
-        #expect(onlyRequired.allowedCharacters == PasswordRules.asciiPrintable)
+        #expect(onlyRequired.allowedCharacters == PasswordRules.lower)
         #expect(onlyRequired.requiredSets.first == [])
+        #expect(PasswordRules(parsing: "required: upper").allowedCharacters == PasswordRules.upper)
+        let lettersAndDigits = PasswordRules(parsing: "required: lower; required: upper; required: digit")
+        #expect(lettersAndDigits.allowedCharacters == PasswordRules.normalized(PasswordRules.lower + PasswordRules.upper + PasswordRules.digit))
+        #expect(PasswordRules(parsing: "required: upper; allowed: digit").allowedCharacters == PasswordRules.normalized(PasswordRules.upper + PasswordRules.digit))
 
         let explicitlyEmpty = PasswordRules(parsing: "allowed: []")
         #expect(explicitlyEmpty.allowedCharacters.isEmpty)
@@ -62,7 +67,9 @@ struct PasswordRulesTests {
     @Test
     func customSetsKeepTheirHyphenAndBracket() {
         #expect(text(PasswordRules(parsing: "allowed: [-abc]").allowedCharacters) == "-abc")
-        #expect(text(PasswordRules(parsing: "allowed: [abc-]").allowedCharacters) == "-abc")
+        // Apple counts a `-` only as the first character of a set; any other is dropped.
+        #expect(text(PasswordRules(parsing: "allowed: [abc-]").allowedCharacters) == "abc")
+        #expect(text(PasswordRules(parsing: "allowed: [a-z0-9]").allowedCharacters) == "09az")
         #expect(text(PasswordRules(parsing: "allowed: [abc]]").allowedCharacters) == "]abc")
         #expect(text(PasswordRules(parsing: "allowed: []abc]").allowedCharacters) == "]abc")
         #expect(text(PasswordRules(parsing: "allowed: [a;b,c]; maxlength: 9").allowedCharacters) == ",;abc")
@@ -124,6 +131,11 @@ struct PasswordRulesTests {
         let over = exactly + " "
         #expect(PasswordRules(parsing: over).isEmpty)
         #expect(PasswordRules(parsing: String(repeating: "required: upper;", count: 100)).isEmpty)
+        // The cap counts bytes: a short string of combining marks is long to parse.
+        let marks = "a" + String(repeating: "\u{0301}", count: 600)
+        #expect(marks.count == 1)
+        #expect(PasswordRules(parsing: "maxlength: 9; " + marks).maxLength == nil)
+        #expect(PasswordRules(parsing: "maxlength: 9; ").maxLength == 9)
     }
 
     @Test
@@ -148,22 +160,5 @@ struct PasswordRulesTests {
             }
             _ = PasswordRules(parsing: String(decoding: raw, as: UTF8.self))
         }
-    }
-}
-
-/// A deterministic random source for tests (SplitMix64).
-struct SplitMix64: RandomNumberGenerator {
-    private var state: UInt64
-
-    init(seed: UInt64) {
-        state = seed
-    }
-
-    mutating func next() -> UInt64 {
-        state &+= 0x9E37_79B9_7F4A_7C15
-        var mixed = state
-        mixed = (mixed ^ (mixed >> 30)) &* 0xBF58_476D_1CE4_E5B9
-        mixed = (mixed ^ (mixed >> 27)) &* 0x94D0_49BB_1331_11EB
-        return mixed ^ (mixed >> 31)
     }
 }

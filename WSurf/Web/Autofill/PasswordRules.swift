@@ -7,26 +7,34 @@ import Foundation
 ///
 /// Properties are `required`, `allowed`, `minlength`, `maxlength`, `max-consecutive` and, newer, `max-repeating` and `max-sequential`.
 /// Character classes are `upper`, `lower`, `digit`, `special`, `ascii-printable`, `unicode` and custom `[...]` sets. The rules combine as
-/// Apple's parser combines them: `allowed` sets are joined, each `required` set is its own rule and is also allowed, no `allowed`
-/// means ascii-printable, `minlength` takes the largest value and `maxlength` the smallest.
+/// Apple's reference parser combines them: `allowed` sets are joined, each `required` set is its own rule and is also allowed (so
+/// `required: upper` alone allows only upper), ascii-printable is allowed only when there is neither an `allowed` nor a `required` set,
+/// `minlength` takes the largest value and `maxlength` the smallest.
 ///
-/// Two deliberate differences from Apple's parser:
+/// Deliberate differences from Apple's parser:
 /// - An unknown or broken property, or an unknown class inside a list, is skipped on its own. Apple drops the whole string, and with
 ///   it a `maxlength`, which is the dangerous loss: a value set by script is not cut to `maxlength`.
 /// - WSurf never produces a space or a non-ASCII character, even when the site allows one. Every set is reduced to the ASCII
 ///   characters 33...126, and `unicode` reads as ascii-printable.
+/// - `special` is a subset of Apple's class (which also has `/` and `\`): a password never gets a character the site disallows.
+///   Property names are case-insensitive (Apple's are not), which only keeps a rule Apple would drop.
 ///
-/// `max-repeating` limits how often any one character may occur in the password; `max-sequential` limits the longest run of
-/// neighbouring code points, ascending or descending (`abc`, `321`); `max-consecutive` limits the longest run of one identical character.
+/// As in Apple's parser, a `-` in a custom set counts only as its first character; any other is dropped.
+///
+/// `max-consecutive`, `max-repeating` and `max-sequential` have no published definition: Apple's parser reads them and its tests call
+/// them run-length rules. WSurf reads `max-consecutive` as the longest run of one identical character, `max-sequential` as the longest
+/// run of neighbouring code points, ascending or descending (`abc`, `321`), and `max-repeating` as how often any one character may
+/// occur in the whole password, the strictest reading, so a password that meets it meets a per-run reading too.
 nonisolated struct PasswordRules: Equatable, Sendable {
-    /// Input longer than this (in characters) is ignored as a whole: the rules are empty.
+    /// Input longer than this (in UTF-8 bytes, which bounds the parse work however the text is built) is ignored as a whole: the rules are empty.
     static let maximumInputLength = 1_000
 
     static let asciiPrintable: [UInt8] = Array(33...126)
     static let upper: [UInt8] = Array(65...90)
     static let lower: [UInt8] = Array(97...122)
     static let digit: [UInt8] = Array(48...57)
-    /// Apple's `special` class (`-~!@#$%^&*_+=`|(){}[:;"'<>,.? ]`) without its space.
+    /// Apple's documented `special` list (`-~!@#$%^&*_+=`|(){}[:;"'<>,.? ]`) without its space. The reference parser's class also has
+    /// `/` and `\`; this subset never produces a character a site's `special` would not allow.
     static let special: [UInt8] = Array("-~!@#$%^&*_+=`|(){}[:;\"'<>,.?]".utf8)
 
     /// Each `allowed` set, in order. Empty when the rules name none.
@@ -44,17 +52,17 @@ nonisolated struct PasswordRules: Equatable, Sendable {
         self == PasswordRules()
     }
 
-    /// Every character a password may hold, ascending and without repeats: the `allowed` sets joined (ascii-printable when there are
-    /// none) and the `required` sets.
+    /// Every character a password may hold, ascending and without repeats: the `allowed` sets and the `required` sets joined, or
+    /// ascii-printable when the rules name neither.
     var allowedCharacters: [UInt8] {
-        let base = allowedSets.isEmpty ? Self.asciiPrintable : allowedSets.flatMap { $0 }
-        return Self.normalized(base + requiredSets.flatMap { $0 })
+        let sets = allowedSets + requiredSets
+        return sets.isEmpty ? Self.asciiPrintable : Self.normalized(sets.flatMap { $0 })
     }
 
     init() {}
 
     init(parsing text: String) {
-        guard text.count <= Self.maximumInputLength else { return }
+        guard text.utf8.count <= Self.maximumInputLength else { return }
         let characters = Array(text)
         var index = 0
         while index < characters.count {
@@ -158,7 +166,10 @@ nonisolated struct PasswordRules: Equatable, Sendable {
                     }
                     return (values, min(index + 1, characters.count))
                 }
-                values.append(.custom(normalized(characters[(index + 1)..<close].flatMap { $0.utf8 })))
+                // A `-` counts only as the first character of the set; Apple drops any other.
+                let content = Array(characters[(index + 1)..<close].flatMap { $0.utf8 })
+                let hyphen = UInt8(ascii: "-")
+                values.append(.custom(normalized(content.enumerated().filter { $0.offset == 0 || $0.element != hyphen }.map(\.element))))
                 index = close + 1
             } else {
                 let wordStart = index

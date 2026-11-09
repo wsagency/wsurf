@@ -15,21 +15,25 @@ nonisolated enum PasswordFormat: String, CaseIterable, Sendable {
     case websiteRules
 }
 
-/// The field's own `minlength` and `maxlength`. Where they conflict with the website's rules, these win.
+/// The field's own `minlength` and `maxlength`. Where they conflict with the website's rules, these win. A negative value counts as
+/// absent: the DOM reports -1 for an attribute the field does not have.
 nonisolated struct PasswordFieldLimits: Equatable, Sendable {
     var minLength: Int?
     var maxLength: Int?
 
-    init(minLength: Int? = nil, maxLength: Int? = nil) {
-        self.minLength = minLength
-        self.maxLength = maxLength
+    /// The limits that are real: a negative one is the DOM's "none".
+    fileprivate var bounds: (low: Int?, high: Int?) {
+        (minLength.flatMap { $0 >= 0 ? $0 : nil }, maxLength.flatMap { $0 >= 0 ? $0 : nil })
     }
 }
 
-/// Makes passwords. The random source is a parameter: the app passes `SystemRandomNumberGenerator` (a CSPRNG, `arc4random_buf`),
-/// tests pass a seeded or a counting one, and no other randomness is used. Every draw goes through the standard library's
-/// `randomElement(using:)`, which is unbiased for any alphabet size, and a rule is met by drawing again, not by repairing a
-/// candidate, so a password is uniform over those that meet the rules.
+/// Makes passwords. The app's entry point draws from `SystemRandomNumberGenerator` (a CSPRNG, `arc4random_buf`) and takes no other
+/// source: the overload that accepts one exists in Debug builds only, for tests, so a Release build cannot compile an app call that
+/// injects a source. No other randomness is used. Every pick is `Int.random(in:using:)` or `randomElement(using:)`, the standard
+/// library's unbiased draw for any alphabet size, and a rule is met by drawing again, not by repairing a candidate. A draw from the
+/// allowed set (the fixed formats and Website's Rules after the default format fails) is therefore uniform over the passwords that
+/// meet the rules. The default format is not exactly uniform (its capital's position is weighted toward the first letters), and
+/// Website's Rules tries it first when it meets the rules.
 ///
 /// It never produces a space or a non-ASCII character, and it returns nil when the rules cannot be met: an empty allowed set, a
 /// minimum above the maximum, required sets that do not fit, or the tries run out.
@@ -44,7 +48,10 @@ nonisolated enum PasswordGenerator {
     /// Candidates of the default format tried against website rules before the draw from the allowed set.
     private static let defaultFormatTries = 20
 
-    private static let lookAlikes = Set("01loI".utf8)
+    /// Characters that read alike in many typefaces. O joins the plan's `0 1 l o I`: it is the classic pair of 0.
+    private static let lookAlikes = Set("01loIO".utf8)
+    /// A pool that would drop below this many symbols without its look-alikes keeps them: a small allowed set stays itself.
+    private static let smallestReducedPool = 16
     private static let easyLetters = Array("abcdefghijkmnpqrstuvwxyz".utf8)
     private static let easyDigits = Array("23456789".utf8)
     private static let easyAlphabet = easyLetters + easyDigits
@@ -59,14 +66,27 @@ nonisolated enum PasswordGenerator {
         field: PasswordFieldLimits = PasswordFieldLimits()
     ) -> GeneratedPassword? {
         var generator = SystemRandomNumberGenerator()
-        return generate(format, length: length, rules: rules, field: field, using: &generator)
+        return make(format, length: length, rules: rules, field: field, using: &generator)
     }
 
+    #if DEBUG
+    /// Tests only: the same with a seeded or counting source.
     static func generate<Source: RandomNumberGenerator>(
         _ format: PasswordFormat,
         length: Int = defaultLength,
         rules: PasswordRules = PasswordRules(),
         field: PasswordFieldLimits = PasswordFieldLimits(),
+        using generator: inout Source
+    ) -> GeneratedPassword? {
+        make(format, length: length, rules: rules, field: field, using: &generator)
+    }
+    #endif
+
+    private static func make<Source: RandomNumberGenerator>(
+        _ format: PasswordFormat,
+        length: Int,
+        rules: PasswordRules,
+        field: PasswordFieldLimits,
         using generator: inout Source
     ) -> GeneratedPassword? {
         guard let bounds = lengthBounds(for: format, rules: rules, field: field) else { return nil }
@@ -85,26 +105,29 @@ nonisolated enum PasswordGenerator {
         return characters.map(GeneratedPassword.init)
     }
 
-    /// The lengths a password may have. Only `.websiteRules` reads the website's rules; every format keeps the field's own limits.
-    /// A rules bound that conflicts with the field's is dropped, so the field wins; rules that conflict on their own give nil. Nil when no length fits.
+    /// The lengths a password may have. Every format keeps the field's own limits and the website's length limits, because a site
+    /// that cuts a value to its `maxlength` would otherwise store a different password than the vault. A rules bound that conflicts
+    /// with the field's is dropped, so the field wins. Rules that conflict on their own (a minimum above the maximum, or above what
+    /// the generator makes) give nil for `.websiteRules`, and are ignored by the formats that ignore the rules' characters. Nil when
+    /// no length fits.
     static func lengthBounds(for format: PasswordFormat, rules: PasswordRules, field: PasswordFieldLimits) -> ClosedRange<Int>? {
-        var low = field.minLength
-        var high = field.maxLength
-        if format == .websiteRules {
-            let absolute = absoluteLengthRange
-            let rulesLow = rules.minLength ?? absolute.lowerBound
-            let rulesHigh = rules.maxLength ?? absolute.upperBound
-            // Rules that cannot be met on their own (a minimum above the maximum, or above what the generator makes) give nothing.
-            guard rulesLow <= rulesHigh, rulesLow <= absolute.upperBound else { return nil }
-            let mergedLow = max(rulesLow, field.minLength ?? absolute.lowerBound)
-            let mergedHigh = min(rulesHigh, field.maxLength ?? absolute.upperBound)
+        let absolute = absoluteLengthRange
+        var low = field.bounds.low
+        var high = field.bounds.high
+        let rulesLow = rules.minLength ?? absolute.lowerBound
+        let rulesHigh = rules.maxLength ?? absolute.upperBound
+        if rulesLow <= rulesHigh, rulesLow <= absolute.upperBound {
+            let mergedLow = max(rulesLow, low ?? absolute.lowerBound)
+            let mergedHigh = min(rulesHigh, high ?? absolute.upperBound)
             if mergedLow <= mergedHigh {
                 low = mergedLow
                 high = mergedHigh
             }
+        } else if format == .websiteRules {
+            return nil
         }
-        let lower = max(low ?? absoluteLengthRange.lowerBound, absoluteLengthRange.lowerBound)
-        let upper = min(high ?? absoluteLengthRange.upperBound, absoluteLengthRange.upperBound)
+        let lower = max(low ?? absolute.lowerBound, absolute.lowerBound)
+        let upper = min(high ?? absolute.upperBound, absolute.upperBound)
         return lower <= upper ? lower...upper : nil
     }
 
@@ -172,21 +195,32 @@ nonisolated enum PasswordGenerator {
                 return candidate
             }
         }
-        var pool = allowed.filter { !lookAlikes.contains($0) }
-        for set in rules.requiredSets where set.allSatisfy(lookAlikes.contains) {
-            pool += set
+        // Without look-alikes while the pool stays large; a small allowed set (`digit`, `[0o1lIa]`) is used whole.
+        let reduced = allowed.filter { !lookAlikes.contains($0) }
+        if reduced.count >= smallestReducedPool {
+            var pool = reduced
+            for set in rules.requiredSets where set.allSatisfy(lookAlikes.contains) {
+                pool += set
+            }
+            if let password = draw(count, from: PasswordRules.normalized(pool), limit: rules.maxRepeating, using: &generator, accepting: matcher.accepts) {
+                return password
+            }
         }
-        pool = PasswordRules.normalized(pool.isEmpty ? allowed : pool)
-        return draw(count, from: pool, using: &generator, accepting: matcher.accepts)
+        return draw(count, from: allowed, limit: rules.maxRepeating, using: &generator, accepting: matcher.accepts)
     }
 
     private static func draw<Source: RandomNumberGenerator>(
         _ count: Int,
         from pool: [UInt8],
+        limit maxRepeating: Int? = nil,
         using generator: inout Source,
         accepting accepts: ([UInt8]) -> Bool
     ) -> [UInt8]? {
         guard !pool.isEmpty else { return nil }
+        // Too few symbols for the length when none may occur more than `maxRepeating` times: no candidate can pass.
+        if let maxRepeating, pool.count * maxRepeating < count {
+            return nil
+        }
         for _ in 0..<maximumTries {
             let candidate = (0..<count).map { _ in pool[Int.random(in: 0..<pool.count, using: &generator)] }
             if accepts(candidate) {

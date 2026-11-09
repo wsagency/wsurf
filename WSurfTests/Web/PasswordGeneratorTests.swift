@@ -59,7 +59,8 @@ struct PasswordGeneratorTests {
             #expect(groups.count == max(1, (length + 1) / 7))
             #expect(groups.allSatisfy { !$0.isEmpty })
         }
-        #expect(make(.easyToType, length: 1, seed: 1) == nil || make(.easyToType, length: 1, seed: 1)?.count == 1)
+        // One character cannot hold the digit and the capital the format needs.
+        #expect(make(.easyToType, length: 1, seed: 1) == nil)
     }
 
     // MARK: U3
@@ -141,16 +142,16 @@ struct PasswordGeneratorTests {
         let dash = Set([UInt8(ascii: "-")])
         let corpus: [CorpusEntry] = [
             CorpusEntry("required: lower; required: upper; required: digit; required: [-]; minlength: 8; maxlength: 20",
-                        printable, [lower, upper, digit, dash], 8...20),
+                        lower.union(upper).union(digit).union(dash), [lower, upper, digit, dash], 8...20),
             CorpusEntry("allowed: lower, digit; maxlength: 12", lower.union(digit), [], 1...12),
             CorpusEntry("required: upper; required: lower; required: digit; required: special; max-consecutive: 2; minlength: 10; maxlength: 16",
-                        printable, [upper, lower, digit, special], 10...16, consecutive: 2),
+                        upper.union(lower).union(digit).union(special), [upper, lower, digit, special], 10...16, consecutive: 2),
             CorpusEntry("allowed: [abcdefghij]; max-repeating: 3; minlength: 12", Set("abcdefghij".utf8), [], 12...20, repeating: 3),
             CorpusEntry("required: digit; allowed: lower; minlength: 6; maxlength: 6", lower.union(digit), [digit], 6...6),
             CorpusEntry("required: [!@#]; required: upper; allowed: lower, digit; max-sequential: 2",
                         lower.union(digit).union(upper).union(Set("!@#".utf8)), [Set("!@#".utf8), upper], 1...20, sequential: 2),
             CorpusEntry("required: upper; required: lower; required: digit; required: [-_]; maxlength: 8",
-                        printable, [upper, lower, digit, Set("-_".utf8)], 1...8),
+                        upper.union(lower).union(digit).union(Set("-_".utf8)), [upper, lower, digit, Set("-_".utf8)], 1...8),
             CorpusEntry("minlength: 30; allowed: ascii-printable; max-consecutive: 1", printable, [], 30...30, consecutive: 1),
             CorpusEntry("required: [0]; allowed: lower", lower.union([UInt8(ascii: "0")]), [Set([UInt8(ascii: "0")])], 1...20),
             CorpusEntry("", printable, [], 20...20),
@@ -280,6 +281,75 @@ struct PasswordGeneratorTests {
         #expect(chiSquare(easy) < 61.10)
     }
 
+    // MARK: Review fixes
+
+    @Test func requiredWithoutAllowedAllowsOnlyTheRequiredClasses() throws {
+        // "Letters and digits only", as written on real sites: never a hyphen or a symbol.
+        for seed in 0..<1_000 as Range<UInt64> {
+            let password = try #require(make(.websiteRules, "minlength: 8; maxlength: 25; required: lower; required: upper; required: digit", seed: seed))
+            #expect(password.allSatisfy { PasswordRules.lower.contains($0) || PasswordRules.upper.contains($0) || PasswordRules.digit.contains($0) })
+            let symbolsOnly = try #require(make(.websiteRules, "required: [!#$%&()*,.:<>?@^{|}]", seed: seed))
+            #expect(symbolsOnly.allSatisfy { Array("!#$%&()*,.:<>?@^{|}".utf8).contains($0) })
+        }
+    }
+
+    @Test func aNegativeFieldLimitIsAnAbsentOne() throws {
+        let absent = PasswordFieldLimits(minLength: -1, maxLength: -1)
+        for format in PasswordFormat.allCases {
+            #expect(try #require(make(format, field: absent, seed: 8)).count == 20)
+        }
+    }
+
+    @Test func aSmallAllowedSetKeepsItsLookAlikes() throws {
+        var seen = Set<UInt8>()
+        for seed in 0..<50 as Range<UInt64> {
+            seen.formUnion(try #require(make(.websiteRules, "allowed: [0o1lIa]", seed: seed)))
+        }
+        #expect(seen == Set("0o1lIa".utf8))
+        var digits = Set<UInt8>()
+        for seed in 0..<200 as Range<UInt64> {
+            digits.formUnion(try #require(make(.websiteRules, "allowed: digit", seed: seed)))
+        }
+        #expect(digits == Set(PasswordRules.digit))
+        // Any permutation of the ten digits meets this, though two of them are look-alikes.
+        let permutation = try #require(make(.websiteRules, "allowed: digit; minlength: 10; maxlength: 10; max-repeating: 1", seed: 3))
+        #expect(Set(permutation) == Set(PasswordRules.digit))
+    }
+
+    @Test func everyFormatKeepsTheWebsitesMaxlength() throws {
+        for format in PasswordFormat.allCases {
+            #expect(try #require(make(format, "maxlength: 16", seed: 6)).count == 16)
+            #expect(try #require(make(format, "maxlength: 16", field: PasswordFieldLimits(maxLength: 10), seed: 6)).count == 10)
+        }
+        // A website's rules that contradict themselves are ignored by the formats that ignore its characters.
+        #expect(make(.easyToType, "minlength: 40; maxlength: 10", seed: 6)?.count == 20)
+        #expect(make(.websiteRules, "minlength: 40; maxlength: 10", seed: 6) == nil)
+    }
+
+    @Test func requiredCharactersLandAnywhere() throws {
+        // A repair such as "put the digit first when none was drawn" would pile the digits up at the start. 19 degrees of freedom:
+        // 43.82 is the 0.1 % point.
+        var digitsAt = [Int](repeating: 0, count: 20)
+        for seed in 0..<6_000 as Range<UInt64> {
+            let password = try #require(make(.withSymbols, seed: 2_000_000 + seed))
+            for (index, byte) in password.enumerated() where PasswordRules.digit.contains(byte) {
+                digitsAt[index] += 1
+            }
+        }
+        #expect(chiSquare(digitsAt) < 43.82)
+
+        // The capital of the default format over its 18 drawn slots (the hyphens are not slots): the draws are exchangeable, so every
+        // slot is as likely. 17 degrees of freedom: 40.79 is the 0.1 % point.
+        var capitalAt = [Int](repeating: 0, count: 18)
+        for seed in 0..<6_000 as Range<UInt64> {
+            let password = try #require(make(.easyToType, seed: 3_000_000 + seed))
+            let slots = password.filter { $0 != UInt8(ascii: "-") }
+            capitalAt[try #require(slots.firstIndex { PasswordRules.upper.contains($0) })] += 1
+        }
+        #expect(capitalAt.allSatisfy { $0 > 0 })
+        #expect(chiSquare(capitalAt) < 40.79, "the capital's slot is skewed: \(capitalAt)")
+    }
+
     // MARK: U6
 
     @Test
@@ -319,7 +389,12 @@ struct PasswordGeneratorTests {
         #expect(password.description == "GeneratedPassword")
         #expect(Mirror(reflecting: password).children.isEmpty)
 
-        // A Logger interpolation reads `description`, so even a public one carries only the type name.
+        // A Logger interpolation takes a CustomStringConvertible and reads `description`: the generic call below has the same constraint,
+        // so what it returns is what a public interpolation would log. The Logger line proves the type still compiles there.
+        func logged<Value: CustomStringConvertible>(_ value: Value) -> String {
+            value.description
+        }
+        #expect(logged(password) == "GeneratedPassword")
         Logger(subsystem: "app.wsurf.tests", category: "password-generator").debug("\(password, privacy: .public)")
     }
 }
