@@ -58,14 +58,14 @@ struct BackgroundTabHidingTests {
             let background = try await rig.open("/page")
             try #require(await waitUntil { await rig.isAnimating(background) }, "in front the tab is visible and animates")
 
-            let front = try await rig.open("/still")
+            let front = try await rig.open("/page")
             try #require(rig.browser.activeTab === front)
             #expect(await waitUntil { await rig.state(of: front) == "visible" }, "the tab in front is visible")
             let hidden = await waitUntil(timeout: .seconds(10)) { await rig.state(of: background) == "hidden" }
             let reported = await rig.state(of: background) ?? "nothing"
             #expect(hidden, "\(engine): the tab behind it reports \(reported)")
-            let ran = await rig.framesInASecond(of: background)
-            #expect(ran >= 0 && ran <= 2, "\(engine): the hidden tab ran \(ran) frames in a second")
+            let ran = await rig.frames(of: background, whileFramesOf: front)
+            #expect(ran.map { (0.0...1.0).contains($0) } == true, "\(engine): the hidden tab ran \(ran.map { "\($0)" } ?? "no") frames while the front tab ran 20")
 
             #expect(background.page.isParked, "it waits on the shelf")
             #expect(background.isMaterialised && !background.isDeferred, "it stays loaded")
@@ -96,11 +96,11 @@ struct BackgroundTabHidingTests {
                 rig.browser.activate(first)
                 #expect(await waitUntil { await rig.isAnimating(first) }, "\(engine), round \(round): back in front it animates")
                 rig.browser.activate(front)
-                for _ in 0..<5 {
-                    try await Task.sleep(for: .milliseconds(200))
-                    let reported = await rig.state(of: first)
-                    #expect(reported == "visible", "\(engine), round \(round): left behind, within the wait, it reports \(reported ?? "nothing")")
-                }
+                // The wait is registered on the manual clock once the switch away has been processed, and nothing advances that
+                // clock here, so no hide can have run: one read of the state after that is the whole negative.
+                try #require(await waitUntil { clock.pendingCount == 1 }, "\(engine), round \(round): the wait is running")
+                let reported = await rig.state(of: first)
+                #expect(reported == "visible", "\(engine), round \(round): left behind, within the wait, it reports \(reported ?? "nothing")")
                 #expect(await rig.isAnimating(first), "\(engine), round \(round): and it is still drawing")
             }
             #expect(await rig.marker(of: first) == "loaded", "it did not reload")
@@ -113,7 +113,7 @@ struct BackgroundTabHidingTests {
         try await LiveWindowRig.with(engine: engine) { rig in
             let clock = TestClock()
             let background = try await rig.open("/page", grace: .seconds(10), clock: clock)
-            let front = try await rig.open("/still")
+            let front = try await rig.open("/page")
             try #require(rig.browser.activeTab === front)
             try #require(await waitUntil { clock.pendingCount == 1 }, "the wait is running")
             #expect(await rig.isAnimating(background), "\(engine): within the wait it is visible and animates")
@@ -125,8 +125,8 @@ struct BackgroundTabHidingTests {
             let hidden = await waitUntil(timeout: .seconds(10)) { await rig.state(of: background) == "hidden" }
             let reported = await rig.state(of: background) ?? "nothing"
             #expect(hidden, "\(engine): when the wait ends it reports \(reported)")
-            let ran = await rig.framesInASecond(of: background)
-            #expect(ran >= 0 && ran <= 2, "\(engine): the hidden tab ran \(ran) frames in a second")
+            let ran = await rig.frames(of: background, whileFramesOf: front)
+            #expect(ran.map { (0.0...1.0).contains($0) } == true, "\(engine): the hidden tab ran \(ran.map { "\($0)" } ?? "no") frames while the front tab ran 20")
             #expect(await rig.marker(of: background) == "loaded", "it did not reload")
         }
     }
@@ -238,10 +238,20 @@ struct BackgroundTabHidingTests {
             try await rig.startPlaying(background)
             try #require(await waitUntil { background.isPlayingAudio }, "the page plays")
 
+            // A silent tab leaves the front after the one that plays did, and goes through the same hide path. Once it reports
+            // `hidden` that path has run, so what it would have done to the tab that plays has been done.
+            let silent = try await rig.open("/page")
             let front = try await rig.open("/still")
             try #require(rig.browser.activeTab === front)
-            try await Task.sleep(for: .seconds(2))
+            try #require(
+                await waitUntil(timeout: .seconds(10)) { await rig.state(of: silent) == "hidden" },
+                "\(engine): the hide path ran for the silent tab"
+            )
 
+            // A tab that plays is kept shown (it is protected from hiding), and it draws: a hidden page still loads and plays, so
+            // the player alone would not tell the difference.
+            #expect(await rig.state(of: background) == "visible", "\(engine): the tab that plays is not hidden")
+            #expect(await waitUntil { await rig.isAnimating(background) }, "\(engine): and it still draws")
             #expect(background.isPlayingAudio, "\(engine): the tab is still heard")
             #expect(rig.app.audibleTabs(for: rig.coordinator).contains { $0.tab === background })
             #expect(await rig.isPlaying(background) == true, "\(engine): its player was not paused")
@@ -265,7 +275,7 @@ struct BackgroundTabHidingTests {
             let shown = await waitUntil(timeout: .seconds(10)) { await rig.state(of: background) == "visible" }
             let reported = await rig.state(of: background) ?? "nothing"
             #expect(shown, "\(engine): the tab that plays reports \(reported)")
-            try await Task.sleep(for: .seconds(1))
+            #expect(await waitUntil { await rig.isAnimating(background) }, "\(engine): shown, it draws again")
             #expect(await rig.isPlaying(background) == true, "\(engine): its player was not paused")
             #expect(background.isPlayingAudio)
         }

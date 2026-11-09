@@ -28,14 +28,14 @@ struct KeptAliveFavoritesTests {
             rig.browser.activate(favorite)
             try #require(await waitUntil { await rig.isAnimating(favorite) }, "in front the favorite is visible and animates")
 
-            let front = try await rig.open("/still")
+            let front = try await rig.open("/page")
             try #require(rig.browser.activeTab === front)
             #expect(await waitUntil { await rig.state(of: front) == "visible" }, "the tab in front is visible")
             let hidden = await waitUntil(timeout: .seconds(10)) { await rig.state(of: favorite) == "hidden" }
             let reported = await rig.state(of: favorite) ?? "nothing"
             #expect(hidden, "\(engine): the favorite behind it reports \(reported)")
-            let ran = await rig.framesInASecond(of: favorite)
-            #expect(ran >= 0 && ran <= 2, "\(engine): the hidden favorite ran \(ran) frames in a second")
+            let ran = await rig.frames(of: favorite, whileFramesOf: front)
+            #expect(ran.map { (0.0...1.0).contains($0) } == true, "\(engine): the hidden favorite ran \(ran.map { "\($0)" } ?? "no") frames while the front tab ran 20")
 
             #expect(favorite.isMaterialised && !favorite.isDeferred, "it stays loaded")
             #expect(favorite.page.window != nil, "and in its window")
@@ -59,7 +59,7 @@ struct KeptAliveFavoritesTests {
             rig.browser.activate(favorite)
             try #require(await waitUntil { await rig.isAnimating(favorite) })
 
-            let front = try await rig.open("/still")
+            let front = try await rig.open("/page")
             try #require(rig.browser.activeTab === front)
             try #require(await waitUntil { clock.pendingCount == 1 }, "the wait is running")
             #expect(await rig.isAnimating(favorite), "\(engine): within the wait the favorite is visible and animates")
@@ -68,8 +68,8 @@ struct KeptAliveFavoritesTests {
             let hidden = await waitUntil(timeout: .seconds(10)) { await rig.state(of: favorite) == "hidden" }
             let reported = await rig.state(of: favorite) ?? "nothing"
             #expect(hidden, "\(engine): when the wait ends it reports \(reported)")
-            let ran = await rig.framesInASecond(of: favorite)
-            #expect(ran >= 0 && ran <= 2, "\(engine): the hidden favorite ran \(ran) frames in a second")
+            let ran = await rig.frames(of: favorite, whileFramesOf: front)
+            #expect(ran.map { (0.0...1.0).contains($0) } == true, "\(engine): the hidden favorite ran \(ran.map { "\($0)" } ?? "no") frames while the front tab ran 20")
         }
     }
 
@@ -78,7 +78,7 @@ struct KeptAliveFavoritesTests {
     @Test(arguments: [BrowserEngine.webKit, .chromium])
     func aFavoriteThatOpensBehindTheTabInFrontLoadsHidden(engine: BrowserEngine) async throws {
         try await LiveWindowRig.with(engine: engine) { rig in
-            let front = try await rig.open("/still")
+            let front = try await rig.open("/page")
             let url = try rig.server.url("/page")
             let favorite = rig.browser.newTab(url: url, activate: false, engine: engine)
             favorite.page.ignoresWindowOcclusion = true
@@ -94,8 +94,8 @@ struct KeptAliveFavoritesTests {
             let hidden = await waitUntil(timeout: .seconds(10)) { await rig.state(of: favorite) == "hidden" }
             let reported = await rig.state(of: favorite) ?? "nothing"
             #expect(hidden, "\(engine): it reports \(reported)")
-            let ran = await rig.framesInASecond(of: favorite)
-            #expect(ran >= 0 && ran <= 2, "\(engine): it ran \(ran) frames in a second")
+            let ran = await rig.frames(of: favorite, whileFramesOf: front)
+            #expect(ran.map { (0.0...1.0).contains($0) } == true, "\(engine): it ran \(ran.map { "\($0)" } ?? "no") frames while the front tab ran 20")
 
             rig.browser.activate(favorite)
             #expect(await waitUntil { await rig.isAnimating(favorite) }, "\(engine): shown, it animates")
@@ -139,10 +139,20 @@ struct KeptAliveFavoritesTests {
             rig.browser.addFavorite(favorite)
             try #require(favorite.isFavorite)
 
+            // A silent tab leaves the front after the favorite did and goes through the same hide path: once it reports `hidden`
+            // that path has run, so what it would have done to the favorite has been done.
+            let silent = try await rig.open("/page")
             let front = try await rig.open("/still")
             try #require(rig.browser.activeTab === front)
-            try await Task.sleep(for: .seconds(2))
+            try #require(
+                await waitUntil(timeout: .seconds(10)) { await rig.state(of: silent) == "hidden" },
+                "\(engine): the hide path ran for the silent tab"
+            )
 
+            // A favorite that plays is kept shown, and it draws: a hidden page still loads and plays, so the player alone would not
+            // tell the difference.
+            #expect(await rig.state(of: favorite) == "visible", "\(engine): the favorite that plays is not hidden")
+            #expect(await waitUntil { await rig.isAnimating(favorite) }, "\(engine): and it still draws")
             #expect(favorite.isPlayingAudio, "\(engine): the favorite is still heard")
             #expect(rig.app.audibleTabs(for: rig.coordinator).contains { $0.tab === favorite })
             #expect(await rig.isPlaying(favorite) == true, "\(engine): its player was not paused")
@@ -167,7 +177,7 @@ struct KeptAliveFavoritesTests {
             let shown = await waitUntil(timeout: .seconds(10)) { await rig.state(of: favorite) == "visible" }
             let reported = await rig.state(of: favorite) ?? "nothing"
             #expect(shown, "\(engine): the favorite that plays reports \(reported)")
-            try await Task.sleep(for: .seconds(1))
+            #expect(await waitUntil { await rig.isAnimating(favorite) }, "\(engine): shown, it draws again")
             #expect(await rig.isPlaying(favorite) == true, "\(engine): its player was not paused")
             #expect(favorite.isPlayingAudio)
         }
