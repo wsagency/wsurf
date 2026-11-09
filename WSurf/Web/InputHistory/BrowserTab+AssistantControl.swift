@@ -28,12 +28,14 @@ extension BrowserTab {
     }
 
     /// Control started: no offer of the tab stays on screen, and nothing staged before it is offered afterwards. Offers come back with
-    /// the next focus once control ends.
+    /// the next focus once control ends. A Pick Credential… or Generate Password… sheet of the tab closes as a Cancel, so a generated
+    /// password is never on screen while an agent works in the tab; other tabs' sheets stay.
     func agentControlChanged() {
         guard isAgentControlled else { return }
         autofillSave.clear()
         if let liveView {
             AutofillSuggestions.shared.dismiss(in: liveView)
+            CredentialPickerSheet.dismiss(page: liveView)
         }
     }
 }

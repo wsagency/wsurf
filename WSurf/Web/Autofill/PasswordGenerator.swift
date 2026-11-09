@@ -43,8 +43,15 @@ nonisolated enum PasswordGenerator {
     static let lengthRange = 12...64
     /// What the generator accepts at all, whatever a website asks for.
     static let absoluteLengthRange = 1...128
-    /// How many candidates one request may draw before it gives up.
+    /// How many candidates one request may draw before it gives up. Whole-candidate rejection can run out of tries for rules that
+    /// could be met, with a small pool, a long length and max-consecutive 1 (24 one-case letters at 128 characters, digits at 32 or
+    /// more): the sheet then says it cannot make a password that meets the website's rules, and another format still works.
     static let maximumTries = 10_000
+    /// Easy to Type has no hyphen below this many characters, which makes it the weakest format there (8 characters: about 40 bits,
+    /// against about 46 for Letters and Digits), so the sheet starts with Letters and Digits for a field that allows fewer.
+    static let easyToTypeShortest = 13
+    /// The sheet notes a password estimated below this many bits (`estimatedBits`): the field's limits made it short.
+    static let weakBits = 60.0
     /// Candidates of the default format tried against website rules before the draw from the allowed set.
     private static let defaultFormatTries = 20
 
@@ -211,6 +218,28 @@ nonisolated enum PasswordGenerator {
             }
         }
         return draw(count, from: allowed, using: &generator, accepting: matcher.accepts)
+    }
+
+    /// About how many bits a password of `format` at `count` characters has: the alphabet of its draw, before the rules that make it
+    /// draw again (which take away a little). Website's Rules may give the default format when that meets the rules, so its estimate is
+    /// the smaller of that and the allowed set's.
+    static func estimatedBits(_ format: PasswordFormat, count: Int, rules: PasswordRules = PasswordRules()) -> Double {
+        func bits(_ symbols: Int, _ length: Int) -> Double {
+            symbols > 1 && length > 0 ? Double(length) * log2(Double(symbols)) : 0
+        }
+        let easy = bits(easyAlphabet.count, count - (max(1, (count + 1) / 7) - 1))
+        switch format {
+        case .easyToType:
+            return easy
+        case .lettersAndDigits:
+            return bits(easyLetters.count + upperLetters.count + easyDigits.count, count)
+        case .withSymbols:
+            return bits(easyLetters.count + upperLetters.count + easyDigits.count + symbols.count, count)
+        case .websiteRules:
+            let allowed = rules.allowedCharacters
+            let reduced = allowed.filter { !lookAlikes.contains($0) }.count
+            return min(easy, bits(reduced >= smallestReducedPool ? reduced : allowed.count, count))
+        }
     }
 
     private static func draw<Source: RandomNumberGenerator>(

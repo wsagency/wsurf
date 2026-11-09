@@ -16,6 +16,8 @@ nonisolated enum AutofillDiagnostics {
         case offerDroppedNotLive, offerDroppedAmbiguous, offerDroppedBlocked, offerDroppedDismissed, offerDroppedUnchanged
         case attemptExpired, completionBlockedByField, stageDroppedUnknownDocument
         case captureAbandonedByLink, captureUnsafeAction
+        // Generate Password…: its sheet opened, it refused the field, the new login was saved, the password was filled.
+        case generatorShown, generatorRefused, generatorSaved, generatorFilled
     }
 
     private static let log = Logger(subsystem: "io.wsagency.wsurf", category: "autofill")

@@ -126,19 +126,19 @@ nonisolated enum PasswordAutofillScript {
         if (count && home?.isConnected) home.focus({preventScroll:true});
         return count;
       });
+      // The page's own listeners run while each field is filled, and may move, hide or swap the next one: a later field takes its
+      // value only while it is still a field of the form it was chosen in, on this address, and that form still submits to this
+      // site. The caches are dropped first, since the page's changes are not yet observed.
+      const still = (el,root,url) => {
+        forms.invalidate();
+        return location.href === url && el.isConnected && pickable(el) && forms.scope(el) === root &&
+          forms.safe(forms.group(el)?.root);
+      };
       // How many fields took a value; -1 when a password or a code would go to a form that sends it to another site, so nothing was
       // filled.
       const pickFill = (token,url,login) => {
         if (!picked(token,url)) return 0;
         const target = pick.target;
-        // The page's own listeners run while each field is filled, and may move, hide or swap the next one: a later field takes its
-        // value only while it is still a field of the form it was chosen in, on this address, and that form still submits to this
-        // site. The caches are dropped first, since the page's changes are not yet observed.
-        const still = (el,root) => {
-          forms.invalidate();
-          return location.href === url && el.isConnected && pickable(el) && forms.scope(el) === root &&
-            forms.safe(forms.group(el)?.root);
-        };
         if (typeof login?.code === 'string') {
           if (!forms.safe(forms.group(target)?.root)) return -1;
           const list = boxes(target, login.code.length);
@@ -148,7 +148,7 @@ nonisolated enum PasswordAutofillScript {
           return fillAll(target, () => {
             let count = 0;
             for (const [index, el] of list.entries()) {
-              if (!still(el, root)) break;
+              if (!still(el, root, url)) break;
               count += put(el, login.code.slice(index * size, (index + 1) * size));
             }
             return count;
@@ -172,9 +172,70 @@ nonisolated enum PasswordAutofillScript {
         return fillAll(target, () => {
           let count = 0;
           if (username && typeof login?.username === 'string' && login.username) count += put(username, login.username);
-          if (password && hasPassword && still(password, group?.root)) count += put(password, login.password);
+          if (password && hasPassword && still(password, group?.root, url)) count += put(password, login.password);
           return count;
         });
+      };
+      // Generate Password…: the fields of the right-clicked field's form a new password goes into. Its password fields, in order,
+      // without the current one: a field that declares current-password, one labelled current, old or existing, and, of three
+      // fields none of which says what it is, the first, as the save script reads a new password at submit. The right-clicked field
+      // is a current one of a change form when the form has a new one and this is not it. Exactly two new fields, next to each
+      // other, one of them the right-clicked field, are the field and its confirmation; any other form fills the right-clicked
+      // field alone.
+      const oldPassword = /\b(current|old|existing)\b/;
+      const generation = target => {
+        const group = forms.group(target), passwords = group?.passwords || [];
+        let fresh = passwords.filter(field => !field.tokens.includes('current-password') && !oldPassword.test(forms.hint(field.element)));
+        if (passwords.length === 3 && fresh.length === 3 && !passwords.some(field => field.kind === 'new-password')) {
+          fresh = passwords.slice(1);
+        }
+        const isFresh = fresh.some(field => field.element === target);
+        if (!isFresh && fresh.length && passwords.some(field => field.element === target)) return {group,current:true,partner:null};
+        let partner = null;
+        if (isFresh && fresh.length === 2 && passwords.indexOf(fresh[1]) === passwords.indexOf(fresh[0]) + 1) {
+          partner = fresh.find(field => field.element !== target)?.element || null;
+        }
+        return {group,current:false,partner};
+      };
+      // The username the form shows for the new password, by the save script's rule: the account field before the first password,
+      // a hidden autocomplete="username" field included.
+      const shownUsername = group => {
+        const fields = group?.fields || [], passwords = group?.passwords || [], users = group?.usernames || [];
+        const first = fields.indexOf(passwords[0]);
+        const value = (users.filter(field => fields.indexOf(field) < first).pop() || users[0])?.element.value;
+        return typeof value === 'string' && value.length <= 500 ? value : '';
+      };
+      const limits = el => ({minLength:el.minLength,maxLength:el.maxLength});
+      // What native needs before it makes a password, and nothing it sends in: whether the right-clicked field takes a new one, the
+      // form's safety, the field's passwordrules (dropped above 1,000 characters, as native ignores longer rules), its length limits
+      // and its confirmation's, and the username the form shows.
+      const generateTarget = (token,url) => {
+        if (!picked(token,url)) return null;
+        const target = pick.target;
+        if (!secret(target)) return {password:false};
+        const found = generation(target);
+        if (found.current) return {password:true,current:true};
+        const rules = Element.prototype.getAttribute.call(target,'passwordrules') || '';
+        return {password:true,current:false,safe:forms.safe(found.group?.root),rules:rules.length <= 1000 ? rules : '',
+          field:limits(target),partner:found.partner ? limits(found.partner) : null,username:shownUsername(found.group)};
+      };
+      // The generated password into the right-clicked field and its confirmation, once per right-click: how many fields took it (-1
+      // when the form sends what it gets to another site, so nothing was filled) and the username the form shows.
+      const generateFill = (token,url,password) => {
+        if (!picked(token,url) || typeof password !== 'string' || !password || password.length > 4096) return {count:0};
+        const target = pick.target;
+        if (!secret(target)) return {count:0};
+        const found = generation(target);
+        if (found.current) return {count:0};
+        if (!forms.safe(found.group?.root)) return {count:-1};
+        const username = shownUsername(found.group), root = forms.scope(target);
+        pick.token = null;
+        const count = fillAll(target, () => {
+          let count = put(target, password);
+          if (found.partner && still(found.partner, root, url)) count += put(found.partner, password);
+          return count;
+        });
+        return {count,username};
       };
       globalThis.__wsurfPasswords = {
         setEnabled(value) {
@@ -188,6 +249,8 @@ nonisolated enum PasswordAutofillScript {
         eligible,
         pickTarget(token,url) { return picked(token,url) ? pickKind(pick.target) : null; },
         pickFill,
+        generateTarget,
+        generateFill,
         bounds(token,url) { return eligible(token,url) ? suggestions.geometry(state.target) : null; },
         fill(token,url,login) {
           if (!eligible(token,url)) return 0;
