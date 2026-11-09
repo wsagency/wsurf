@@ -963,7 +963,7 @@ extension PageInteractionTests {
             if let chromium = view.chromium {
                 try #require(await waitUntil { chromium.startupEntry == .dropped || chromium.startupEntry == .kept })
             }
-            func settles() async -> Bool {
+            @MainActor func settles() async -> Bool {
                 await waitUntil(timeout: .seconds(5)) { !view.isLoading }
             }
             _ = try await view.evaluateJavaScript("history.pushState({}, '', '#x'); 0", in: nil, contentWorld: .page, userGesture: true)
