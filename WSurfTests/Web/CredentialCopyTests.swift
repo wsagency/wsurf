@@ -28,9 +28,10 @@ struct CredentialCopyTests {
             let profile = Profile(id: UUID(), name: "Copy", symbol: "key", color: .blue)
             vault = try #require(try await VaultManagerFixture.make(profile: profile, vaults: [.locked]).vaults.first)
             self.profile = profile
+            // Touch ID answers yes at once here; CredentialPasswordPrivacyTests checks when a copy asks.
             model = CredentialSettingsModel(
                 profile: profile, pasteboard: pasteboard, manager: vault.manager, noticeDuration: noticeDuration,
-                undoNoticeDuration: undoNoticeDuration
+                undoNoticeDuration: undoNoticeDuration, verifyUser: { _ in }
             )
         }
 

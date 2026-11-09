@@ -124,6 +124,7 @@
    "CredentialMergeSuggestionsTests",
    "CredentialNotTheSameTests",
    "CredentialOpenWebsiteTests",
+   "CredentialPasswordPrivacyTests",
    "CredentialPickerScriptTests",
    "CredentialPickerTests",
    "CredentialSecureItemPrivacyTests",
@@ -187,6 +188,7 @@
    "MCPDefaultAccessTests",
    "PageDiagnosticsHookTests",
    "PageInkContrastTests",
+   "PasswordHealthTests",
    "ResourceBenchmarkTests",
    "SettingsRoutingTests",
    "TabAssistantAccessCenterTests",
@@ -298,6 +300,7 @@
    "PDFSavingTests",
    "SidebarListHeightTests",
    "TabSleepScheduleTests",
+   "TabSleepSparesTests",
    "TabSwitchWorkTests"
   ],
   [

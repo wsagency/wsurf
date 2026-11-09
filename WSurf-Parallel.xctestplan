@@ -148,6 +148,8 @@
         "PageViewportTests",
         "PageWatchCenterTests",
         "PasskeyVaultUnlockGuardTests",
+        "PasswordGeneratorTests",
+        "PasswordRulesTests",
         "PermissionBadgeTests",
         "ProfileAppearanceTests",
         "ProfileFactsTests",

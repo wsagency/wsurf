@@ -5,7 +5,8 @@ import AuthenticationServices
 import Foundation
 import WSurfVault
 
-/// Sending the selection to another app, or writing it as a CSV file. Both prove the selection against the vault first.
+/// Sending the selection to another app, or writing it as a CSV file. Both prove the selection against the vault first, and both ask
+/// for Touch ID once before a passkey, a password, a code, a card or an identity document leaves the vault (`+PasswordPrivacy`).
 extension CredentialSettingsModel {
     /// `epoch` is the one the selection was made at; a lock, a re-unlock or a change to a selected account since the page
     /// read it rejects it. A cancel before any data was passed is `.cancelled` and leaves no status; every other result is recorded.
@@ -19,11 +20,10 @@ extension CredentialSettingsModel {
         var outcome: CredentialExportOutcome?
         let sent = await perform(describe: { Self.exportMessage(for: $0) }) {
             let stamps = try await self.exportStamps(epoch: epoch)
-            // A card's or an ID document's values leave the vault only after Touch ID, asked before the system's sheet. The summaries
-            // are the ones the stamps vouch for: an account that changed since is refused by the export itself.
-            if CredentialExportSelection.sendsSensitiveItems(selection, in: self.summaries) {
-                try await self.verifyUser(String(localized: "export saved cards, documents and hidden fields"))
-                try Task.checkCancellation()
+            // Asked before the system's sheet. The summaries are the ones the stamps vouch for: an account that changed since is
+            // refused by the export itself.
+            if let reason = Self.exportReason(selection, in: self.summaries) {
+                guard try await self.verifyOwner(reason) == epoch else { throw CredentialVaultError.unauthorized }
             }
             outcome = try await self.exchange.exportCredentials(
                 selection: selection, expectedStamps: stamps, epoch: epoch, from: $0, in: anchor()
@@ -46,8 +46,14 @@ extension CredentialSettingsModel {
         let vault = manager?.vaultID
         ownMessage = nil
         var rows: Int?
-        let saved = await perform {
+        let saved = await perform(describe: { Self.exportMessage(for: $0) }) {
             let stamps = try await self.exportStamps(epoch: epoch)
+            // A file of passwords asks first, like an export to another app; a CSV file carries no code, card or document.
+            if CredentialExportSelection.sendsPasswordsOrCodes(selection, in: self.summaries) {
+                guard try await self.verifyOwner(String(localized: "export saved passwords")) == epoch else {
+                    throw CredentialVaultError.unauthorized
+                }
+            }
             rows = try await self.exchange.exportCSV(selection: selection, expectedStamps: stamps, epoch: epoch, from: $0, to: url)
         }
         if !saved, ownMessage?.message.kind == .exportSelectionChanged {

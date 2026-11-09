@@ -20,6 +20,8 @@ struct CredentialEditorSheet: View {
     @State private var confirmsDiscard = false
     /// Set while History is being read, so a second click can't start another read.
     @State private var isOpeningHistory = false
+    /// Set while the editor's one Touch ID prompt is up (Show Code), so a second click can't ask again.
+    @State private var isVerifying = false
     @State private var openingHistory: Task<Void, Never>?
     /// Open when the credential already has other origins, so nothing saved is hidden.
     @State private var showsOtherOrigins: Bool
@@ -193,6 +195,17 @@ struct CredentialEditorSheet: View {
         Task { await model.attempt { try await model.copy(part, of: .draft) } }
     }
 
+    /// The editor's one prompt before a stored credential's password or code shows (`CredentialSettingsModel.verifyEditor`). Whether
+    /// it may show; a refusal shows in the footer.
+    private func verifySecrets() async -> Bool {
+        var verified = false
+        await model.attempt {
+            try await model.verifyEditor()
+            verified = true
+        }
+        return verified
+    }
+
     private func copyableField(
         _ title: LocalizedStringKey, text: Binding<String>, part: CredentialCopyPart, copyLabel: LocalizedStringKey
     ) -> some View {
@@ -273,7 +286,10 @@ struct CredentialEditorSheet: View {
                 } else {
                     copyableField("Username or email", text: text(\.username), part: .username, copyLabel: "Copy Username")
                 }
-                AutofillPasswordField(password: optionalText(\.password)) { copy(.password) }
+                AutofillPasswordField(
+                    password: optionalText(\.password), copy: { copy(.password) }, reveal: { await verifySecrets() },
+                    mayReveal: model.editorIsVerified
+                )
                 Button("Generate Password") {
                     do {
                         model.draft?.password = try SavedPassword.generate()
@@ -334,20 +350,40 @@ struct CredentialEditorSheet: View {
                     Button("Remove…", role: .destructive) { confirmsTOTPRemoval = true }
                         .accessibilityLabel("Remove verification code")
                 }
-                // Ticks only while the editor shows a code, which only exists while the vault is unlocked.
-                TimelineView(.periodic(from: .now, by: 1)) { context in
-                    if let code = try? TOTP.code(generator, at: context.date.timeIntervalSince1970) {
-                        HStack(spacing: 8) {
-                            Text(verbatim: code.value)
-                                .font(.system(.title3, design: .monospaced))
-                                .privacySensitive()
-                            CredentialCopyButton(label: "Copy Verification Code") { copy(.code) }
-                            Spacer(minLength: 8)
-                            Text("Expires in \(Int(code.remainingSeconds.rounded(.up))) s")
-                                .font(Theme.Font.label)
-                                .foregroundStyle(.secondary)
+                if model.editorIsVerified {
+                    // Ticks only while the editor shows a code, which only exists while the vault is unlocked.
+                    TimelineView(.periodic(from: .now, by: 1)) { context in
+                        if let code = try? TOTP.code(generator, at: context.date.timeIntervalSince1970) {
+                            HStack(spacing: 8) {
+                                Text(verbatim: code.value)
+                                    .font(.system(.title3, design: .monospaced))
+                                    .privacySensitive()
+                                CredentialCopyButton(label: "Copy Verification Code") { copy(.code) }
+                                Spacer(minLength: 8)
+                                Text("Expires in \(Int(code.remainingSeconds.rounded(.up))) s")
+                                    .font(Theme.Font.label)
+                                    .foregroundStyle(.secondary)
+                            }
+                            .accessibilityElement(children: .combine)
                         }
-                        .accessibilityElement(children: .combine)
+                    }
+                } else {
+                    // A stored credential's code shows after the editor's one prompt, like its password.
+                    HStack(spacing: 8) {
+                        Text(verbatim: String(repeating: "•", count: Int(generator.digits)))
+                            .font(.system(.title3, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                            .accessibilityLabel("Hidden")
+                        Button("Show Code") {
+                            isVerifying = true
+                            Task {
+                                _ = await verifySecrets()
+                                isVerifying = false
+                            }
+                        }
+                        .disabled(isVerifying)
+                        CredentialCopyButton(label: "Copy Verification Code") { copy(.code) }
+                        Spacer(minLength: 8)
                     }
                 }
             } else {

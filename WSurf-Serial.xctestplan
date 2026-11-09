@@ -155,6 +155,8 @@
         "PageWatchCenterTests",
         "PageWatchPerformanceTests",
         "PasskeyVaultUnlockGuardTests",
+        "PasswordGeneratorTests",
+        "PasswordRulesTests",
         "PermissionBadgeTests",
         "ProfileAppearanceTests",
         "ProfileFactsTests",

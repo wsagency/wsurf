@@ -49,6 +49,26 @@ struct GeneralSettings: View {
             RowSeparator()
 
             DetailRow(
+                title: "Favorites never sleep",
+                caption: "Favorites stay loaded when tabs sleep, when you choose Free Memory and when memory runs low. A sleeping tab sends no notifications."
+            ) {
+                SettingsToggle($settings.sleepSparesFavorites)
+            }
+            .settingsAnchor("general.sleepFavorites")
+
+            RowSeparator()
+
+            DetailRow(
+                title: "Pinned tabs never sleep",
+                caption: "Pinned tabs stay loaded when tabs sleep, when you choose Free Memory and when memory runs low. A sleeping tab sends no notifications."
+            ) {
+                SettingsToggle($settings.sleepSparesPinned)
+            }
+            .settingsAnchor("general.sleepPinned")
+
+            RowSeparator()
+
+            DetailRow(
                 title: "Archive unused tabs",
                 caption: "Archived tabs stay searchable from ⌘K. The newest 30 are kept."
             ) {

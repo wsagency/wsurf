@@ -406,9 +406,11 @@ struct VaultAutofillReadTests {
                 }
             }
             let expected = name(await failure { _ = try await store.snapshot(vaultID: vaultID, using: access) })
-            // Each read with whether it reads the contact's row: the lists read every row, a pick its own row only.
+            // Each read with whether it reads the contact's row: the lists and the password health report read every row, a pick
+            // its own row only.
             let reads: [(String, Bool, () async throws -> Void)] = [
                 ("candidates", true, { _ = try await store.autofillCandidates(vaultID: vaultID, using: access) }),
+                ("password health", true, { _ = try await store.passwordHealth(vaultID: vaultID, using: access) }),
                 ("password", false, {
                     _ = try await store.autofillLogin(
                         vaultID: vaultID, accountID: Entries.loginID, field: .password, expectedRevision: revision, using: access
@@ -456,6 +458,7 @@ struct VaultAutofillReadTests {
     @Test func aRevocationDuringTheReadLeavesTheReadWithNothing() async throws {
         let reads: [(String, ArmedRead)] = [
             ("candidates", { store, vaultID, access, _ in _ = try await store.autofillCandidates(vaultID: vaultID, using: access) }),
+            ("password health", { store, vaultID, access, _ in _ = try await store.passwordHealth(vaultID: vaultID, using: access) }),
             ("password", { store, vaultID, access, revision in
                 _ = try await store.autofillLogin(
                     vaultID: vaultID, accountID: Entries.loginID, field: .password, expectedRevision: revision, using: access

@@ -318,6 +318,49 @@ nonisolated final class VaultScalePerformanceTests: XCTestCase, @unchecked Senda
         }
     }
 
+    // MARK: Password health (S4a)
+
+    /// The password health report of the 20,000-credential vault through its store: the verified read, then every password compared
+    /// and checked against the weak rules on the vault actor. A page asks for it once per settled revision, off the main actor. The
+    /// stored passwords all differ and none is weak, so the report is empty; every one is still compared and checked.
+    func testCheckingThePasswordHealthOfTwentyThousandCredentials() {
+        MainActor.assumeIsolated {
+            measureRead { store, vaultID, access in
+                let health = try await store.passwordHealth(vaultID: vaultID, using: access)
+                XCTAssertTrue(health.findings.isEmpty)
+            }
+        }
+    }
+
+    /// The comparison and the rules alone, over the same 20,000 credentials in memory: what the report adds to the verified read.
+    func testCheckingThePasswordHealthOfTwentyThousandInMemoryCredentials() throws {
+        let accounts = try Self.storedAccounts()
+        MainActor.assumeIsolated {
+            measure(metrics: [XCTClockMetric(), XCTMemoryMetric()], options: measuredOptions()) {
+                XCTAssertTrue(PasswordHealth.report(vaultID: UUID(), revision: 1, accounts: accounts).findings.isEmpty)
+            }
+        }
+    }
+
+    /// Heavy reuse: 20,000 logins on 20,000 websites sharing four passwords, 5,000 logins each, so every login is listed with 4,999
+    /// other websites. The grouping must stay linear in the logins of one password, and the report must keep a count per login, never
+    /// the other websites: each pass keeps its report, so the memory metric is the report's own size. The stored fixture's passwords
+    /// all differ and never form a group.
+    func testCheckingThePasswordHealthOfTwentyThousandCredentialsSharingFourPasswords() {
+        let accounts = (0..<Self.count).map { index in
+            VaultFixtures.account(username: "shared\(index)", password: "Kx9!vQ2#mW7p-\(index % 4)", origin: "https://site\(index).com")
+        }
+        MainActor.assumeIsolated {
+            var kept: [PasswordHealthReport] = []
+            measure(metrics: [XCTClockMetric(), XCTMemoryMetric()], options: measuredOptions()) {
+                kept.append(PasswordHealth.report(vaultID: UUID(), revision: 1, accounts: accounts))
+            }
+            let findings = kept.first?.findings ?? [:]
+            XCTAssertEqual(findings.count, Self.count)
+            XCTAssertTrue(findings.values.allSatisfy { $0.reuse?.otherSites == Self.count / 4 - 1 && $0.weaknesses.isEmpty })
+        }
+    }
+
     // MARK: Edits
 
     /// One changed password, written with the per-account write the import and the bulk actions use. The read that finds the

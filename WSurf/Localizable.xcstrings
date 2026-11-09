@@ -5868,8 +5868,20 @@
     "Sleep after" : {
       "comment" : "Title of the row in Settings > General, shown under Sleep inactive tabs, that chooses how long a background tab may sit out of view before it unloads. Sentence case; Sleep is a verb."
     },
-    "Background tabs unload after they have been out of view this long, and reload when you open them. Favorites and tabs that play audio, use a camera or microphone, hold unsaved form input or are downloading stay loaded. Unloaded Chromium tabs restore only their URL." : {
-      "comment" : "Caption of the Sleep after row in Settings > General. Explains the idle delay and which tabs are never unloaded. Chromium is a browser engine name and stays untranslated."
+    "Background tabs unload after they have been out of view this long, and reload when you open them. Tabs that play audio, use a camera or microphone, hold unsaved form input or are downloading stay loaded, and so do the Favorites and pinned tabs the options below keep awake. This covers WebKit and Chromium tabs; Chromium tabs restore their address and scroll position, not Back/Forward history." : {
+      "comment" : "Caption of the Sleep after row in Settings > General. Explains the idle delay, which tabs are never unloaded, and what a woken Chromium tab restores. WebKit and Chromium are browser engine names and stay untranslated."
+    },
+    "Favorites never sleep" : {
+      "comment" : "Title of the switch in Settings > General, shown under Sleep inactive tabs, that keeps Favorites loaded when other tabs sleep. On by default. Sentence case; Sleep is a verb the browser does to the tabs, and the same row in Settings search."
+    },
+    "Favorites stay loaded when tabs sleep, when you choose Free Memory and when memory runs low. A sleeping tab sends no notifications." : {
+      "comment" : "Caption of the Favorites never sleep row in Settings > General, and its description in Settings search. Says what keeps Favorites loaded and that a tab that is asleep cannot send notifications. Free Memory is the name of a button."
+    },
+    "Pinned tabs never sleep" : {
+      "comment" : "Title of the switch in Settings > General, shown under Sleep inactive tabs, that keeps pinned tabs loaded when other tabs sleep. Off by default. Sentence case; Sleep is a verb the browser does to the tabs, and the same row in Settings search."
+    },
+    "Pinned tabs stay loaded when tabs sleep, when you choose Free Memory and when memory runs low. A sleeping tab sends no notifications." : {
+      "comment" : "Caption of the Pinned tabs never sleep row in Settings > General, and its description in Settings search. Says what keeps pinned tabs loaded and that a tab that is asleep cannot send notifications. Free Memory is the name of a button."
     },
     "Tint Icons as Folder" : {
       "comment" : "Item in the context menu of a sidebar folder, checked while on: draws the icons of the tabs inside the folder in the folder's color instead of their own colors. Off by default. Title Case, next to Size."
@@ -8673,6 +8685,12 @@
     "copy a saved card, document or hidden field" : {
       "comment" : "Reason shown in the Touch ID or password prompt when the user copies a hidden value of a saved card or ID document. It completes a system sentence like “WSurf is trying to …”, so it is a lowercase verb phrase with no period."
     },
+    "copy a saved password" : {
+      "comment" : "Reason shown in the Touch ID or password prompt when the user copies a saved password from the credential list on the Credentials page in Settings. It completes a system sentence like “WSurf is trying to …”, so it is a lowercase verb phrase with no period."
+    },
+    "copy a verification code" : {
+      "comment" : "Reason shown in the Touch ID or password prompt when the user copies the current verification code (one-time code) of a saved credential from the credential list on the Credentials page in Settings. It completes a system sentence like “WSurf is trying to …”, so it is a lowercase verb phrase with no period."
+    },
     "Copy current website %@" : {
       "comment" : "Tooltip and VoiceOver label of the copy icon beside a website that only the current credential has, in the History panel. %@ is the website address and should not be translated. A verb phrase."
     },
@@ -9051,6 +9069,27 @@
     "export saved cards, documents and hidden fields" : {
       "comment" : "Reason shown in the Touch ID or password prompt before saved cards, ID documents or hidden fields are exported. It completes a system sentence like “WSurf is trying to …”, so it is a lowercase verb phrase with no period."
     },
+    "export saved passkeys" : {
+      "comment" : "Reason shown in the Touch ID or password prompt before an export hands saved passkeys (their private keys) to another app, on the Credentials page in Settings. It completes a system sentence like “WSurf is trying to …”, so it is a lowercase verb phrase with no period."
+    },
+    "export saved passkeys, cards and documents" : {
+      "comment" : "Reason shown in the Touch ID or password prompt before an export hands saved passkeys (their private keys) and a saved card or ID document to another app, on the Credentials page in Settings. It completes a system sentence like “WSurf is trying to …”, so it is a lowercase verb phrase with no period."
+    },
+    "export saved passkeys, passwords and verification codes" : {
+      "comment" : "Reason shown in the Touch ID or password prompt before an export hands saved passkeys (their private keys) and saved passwords or verification code setups to another app, on the Credentials page in Settings. It completes a system sentence like “WSurf is trying to …”, so it is a lowercase verb phrase with no period."
+    },
+    "export saved passkeys, passwords, cards and documents" : {
+      "comment" : "Reason shown in the Touch ID or password prompt before an export hands saved passkeys (their private keys), saved passwords or verification codes, and a saved card or ID document to another app, on the Credentials page in Settings. It completes a system sentence like “WSurf is trying to …”, so it is a lowercase verb phrase with no period."
+    },
+    "export saved passwords" : {
+      "comment" : "Reason shown in the Touch ID or password prompt before Export to CSV… writes saved passwords to a file, on the Credentials page in Settings. It completes a system sentence like “WSurf is trying to …”, so it is a lowercase verb phrase with no period."
+    },
+    "export saved passwords and verification codes" : {
+      "comment" : "Reason shown in the Touch ID or password prompt before an export hands saved passwords or verification code setups to another app, on the Credentials page in Settings. It completes a system sentence like “WSurf is trying to …”, so it is a lowercase verb phrase with no period."
+    },
+    "export saved passwords, cards and documents" : {
+      "comment" : "Reason shown in the Touch ID or password prompt before an export hands saved passwords or verification codes, and a saved card or ID document, to another app, on the Credentials page in Settings. It completes a system sentence like “WSurf is trying to …”, so it is a lowercase verb phrase with no period."
+    },
     "Export to another app" : {
       "comment" : "Row title in the Import & Export section; its button is Export…, which hands credentials (passwords, passkeys, verification codes) to another app through the system’s credential exchange. Sentence case."
     },
@@ -9136,7 +9175,7 @@
       "comment" : "Filter chip in the import review sheet, with a count after it: items with a part that WSurf does not import. Sentence case."
     },
     "Hidden" : {
-      "comment" : "In Input History’s Save as Credential sheet: VoiceOver label of the masked password dots. Also the name of a custom field type in the credential editor menu (Text, Hidden, Date, Number, Email): its value is concealed like a password. An adjective."
+      "comment" : "In Input History’s Save as Credential sheet: VoiceOver label of the masked password dots. Also the name of a custom field type in the credential editor menu (Text, Hidden, Date, Number, Email): its value is concealed like a password. An adjective. Also the VoiceOver label of the masked verification code in the credential editor, before Show Code."
     },
     "Hidden network" : {
       "comment" : "Row label, shown beside the value, of a field of an item in the credential editor of Settings › Credentials. Sentence case. On a Wi-Fi network item: a yes/no value saying the network does not broadcast its name. Noun phrase, not a command."
@@ -10416,6 +10455,18 @@
     "show saved cards, documents and hidden fields" : {
       "comment" : "Reason shown in the Touch ID or password prompt before the user reveals saved cards, ID documents or hidden fields of a credential. It completes a system sentence like “WSurf is trying to …”, so it is a lowercase verb phrase with no period."
     },
+    "show a saved password" : {
+      "comment" : "Reason shown in the Touch ID or password prompt when the user chooses Show Password for a saved credential on the Credentials page in Settings (its row menu or the merge sheet). It completes a system sentence like “WSurf is trying to …”, so it is a lowercase verb phrase with no period."
+    },
+    "show a verification code" : {
+      "comment" : "Reason shown in the Touch ID or password prompt when the user chooses Show Verification Code for a saved credential on the Credentials page in Settings. It completes a system sentence like “WSurf is trying to …”, so it is a lowercase verb phrase with no period."
+    },
+    "show or copy a saved password or verification code" : {
+      "comment" : "Reason shown in the Touch ID or password prompt the first time the user shows or copies the password or verification code in the editor of a saved credential, or shows the secrets of its History; that editor then does not ask again. It completes a system sentence like “WSurf is trying to …”, so it is a lowercase verb phrase with no period."
+    },
+    "show saved passwords, cards and documents" : {
+      "comment" : "Reason shown in the Touch ID or password prompt when the user opens the editor of a saved credential that holds a card or ID document, or shows the secrets of a credential’s History that holds one before that editor has asked: the same answer then also shows and copies the credential’s passwords and verification code. It completes a system sentence like “WSurf is trying to …”, so it is a lowercase verb phrase with no period."
+    },
     "Show Secrets" : {
       "comment" : "Button at the top right of the History panel that unmasks the passwords, notes and card details of the versions shown; it can ask for Touch ID first. Title Case, a command. Alternates with “Hide Secrets”."
     },
@@ -10430,6 +10481,9 @@
     },
     "Show Verification Code" : {
       "comment" : "Item of the “…” menu of a credential row that holds a verification code (a one-time code): shows the current code on the row, with a countdown. Counterpart of Hide Verification Code. Verb phrase, Title Case."
+    },
+    "Show Code" : {
+      "comment" : "Button in the Verification code section of the credential editor, beside the masked code of a saved credential: asks for Touch ID or the Mac password once for that editor, then shows the code. Title Case, a verb phrase."
     },
     "Showing %lld of %lld" : {
       "comment" : "Caption of the More in Trash row. The first %lld is how many removed items are listed now; the second is how many items are in Trash in total."
@@ -10865,6 +10919,9 @@
     },
     "This contact has no details autofill can use." : {
       "comment" : "Error text under the Import rows in Settings › Autofill (Vault tab) when the single contact picked has no usable details. Singular; the plural counterpart is “These contacts have no details autofill can use.” Sentence case."
+    },
+    "This credential changed while the list was open. Try again." : {
+      "comment" : "Error on the Credentials page in Settings when Show Details or a copy found a card or ID document that the list did not hold when it was read, so nothing was shown or copied without Touch ID. The page has already read the vault again; trying again asks for Touch ID first. Full sentences."
     },
     "This file couldn’t be decrypted. It may be damaged. Nothing was saved or opened." : {
       "comment" : "Error text at the bottom of the credential editor in Settings › Credentials, when an attached file’s encrypted copy doesn’t open or isn’t the file that was added, for example while previewing it or saving a copy. “Decrypted” means unlocked from its encrypted form. Full sentences."
