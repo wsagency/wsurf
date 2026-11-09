@@ -852,7 +852,8 @@ struct ExtensionStandInWebKitTests {
         let probed = await waitUntil(timeout: .seconds(20)) { !delegate.events.isEmpty }
         try #require(probed)
         guard delegate.events[0] == "connect:probe.sidepanel.missing" else {
-            return // A WebKit that has the side panel natively no longer needs this stand-in; the control proves nothing.
+            Issue.record("WebKit now has chrome.sidePanel: retire the stand-in and this control")
+            return
         }
         try await Task.sleep(for: .seconds(2))
         #expect(!delegate.events.contains("connect:com.example.started"))

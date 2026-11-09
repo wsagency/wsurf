@@ -95,10 +95,10 @@ struct MCPDiagnosticsFidelityTests {
         _ rig: Rig, _ tool: String, _ arguments: [String: Value] = [:], until matches: ([String: Value]) -> Bool
     ) async throws -> [[String: Value]] {
         var all: [[String: Value]] = []
-        _ = try await waitUntil {
+        try #require(await waitUntil {
             all = records(try await call(rig, tool, arguments))
             return all.contains(where: matches)
-        }
+        }, "no record of \(tool) matched; \(all.count) read")
         return all
     }
 
@@ -327,10 +327,15 @@ struct MCPDiagnosticsFidelityTests {
         defer { close(rig) }
         try await start(rig)
         rig.tab.page.load(URLRequest(url: try rig.server.url("/burst")))
-        let console = try await read(rig, "readConsole", ["limit": 100]) { $0["text"]?.stringValue == "burst-done" }
-        let result = try await call(rig, "readConsole", ["limit": 100])
         // The page logged 301 messages before anything could attach: the newest 128 are delivered, the other 173 are counted.
-        #expect(result.structuredContent?.objectValue?["lostEarly"]?.intValue == 173, "\(console.count) read")
+        // A read without a cursor starts at the oldest retained record, so "burst-done" (the 128th) is beyond a limit of 100:
+        // wait for the full first page and the count instead.
+        var result = try await call(rig, "readConsole", ["limit": 100])
+        try #require(await waitUntil {
+            result = try await call(rig, "readConsole", ["limit": 100])
+            return records(result).count == 100 && result.structuredContent?.objectValue?["lostEarly"]?.intValue == 173
+        }, "the burst's first 100 records and its 173 lost were never reported: \(records(result).count) read")
+        #expect(result.structuredContent?.objectValue?["lostEarly"]?.intValue == 173)
         let first = try #require(records(result).first)
         #expect(text(first, "text") == "burst 173")
     }

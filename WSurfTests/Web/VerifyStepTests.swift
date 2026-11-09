@@ -440,10 +440,8 @@ struct VerifyStepTests {
             _ = try #require(await rig.nextResult(after: 1), "the clicked request ended")
             #expect(read().last == true, "\(read())")
 
-            try await Task.sleep(for: .seconds(6))
             try await rig.tell("{ ask: 'get' }")
             _ = try #require(await rig.nextResult(after: 2), "the script-started request ended")
-            print("VERIFY activation engine=\(engine) after evaluateJavaScript: \(read())")
         }
     }
 

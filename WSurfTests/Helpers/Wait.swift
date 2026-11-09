@@ -12,10 +12,16 @@ import Foundation
 /// the same job as the tests, and a count that passes on a quiet Mac runs out
 /// there. This returns as soon as the condition holds, which makes a generous
 /// timeout free on a quiet machine.
+///
+/// A wait that runs out never fails the test by itself (negative waits expire on purpose), but it prints one
+/// `WAIT-EXPIRED <file>:<line> after <timeout>` line, so a wait whose result is discarded and always runs to its
+/// deadline shows up in the run's output instead of silently costing its whole timeout.
 @MainActor
 func waitUntil(
     timeout: Duration = .seconds(25),
     tick: Duration = .milliseconds(20),
+    file: StaticString = #fileID,
+    line: UInt = #line,
     _ condition: () async throws -> Bool
 ) async rethrows -> Bool {
     let deadline = ContinuousClock.now + timeout
@@ -31,5 +37,9 @@ func waitUntil(
         }
     }
     guard !Task.isCancelled else { return false }
-    return try await condition()
+    if try await condition() {
+        return true
+    }
+    print("WAIT-EXPIRED \(file):\(line) after \(timeout)")
+    return false
 }
