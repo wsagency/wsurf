@@ -90,7 +90,8 @@ struct AutofillSecretsTests {
         return [login, contact, card]
     }
 
-    /// The fixture's one unlocked vault holding `entries()`, a page rig, and an audit of every vault read made from here on.
+    /// The fixture's one unlocked vault holding `entries()`, a page rig, and an audit of every vault read made from here on. The rig's
+    /// page has no document to ask, so the page check after a card's Touch ID prompt keeps its native part (`requireAuthority`).
     private func withVault(
         _ body: (Rig, FixtureVault, [CredentialAccount], VaultReadAudit) async throws -> Void
     ) async throws {
@@ -100,7 +101,12 @@ struct AutofillSecretsTests {
             let audit = VaultReadAudit()
             CredentialManager.readAuditsForTesting[profile.id] = audit
             let rig = Rig(context: BrowserProfileContext(profile: profile))
-            defer { CredentialManager.readAuditsForTesting[profile.id] = nil }
+            let suggestions = AutofillSuggestions.shared, validate = suggestions.validateAfterPrompt
+            suggestions.validateAfterPrompt = { request, page in try suggestions.requireAuthority(request, in: page) }
+            defer {
+                CredentialManager.readAuditsForTesting[profile.id] = nil
+                suggestions.validateAfterPrompt = validate
+            }
             do {
                 try await body(rig, vaults[0], accounts, audit)
             } catch {
@@ -367,14 +373,25 @@ struct AutofillSecretsTests {
 
     // MARK: Touch ID before a card is read (owner decision Q4)
 
-    /// A card pick asks for Touch ID before it reads the card: at the prompt the vault has given the list and nothing else, and the one
-    /// card is read after the prompt passes.
+    /// A card pick asks for Touch ID before it reads the card: at the prompt the vault has given the list and nothing else. After the
+    /// prompt passes, the page is asked again, once, still before the read, and only then is the one card read.
     @Test func aCardPickAsksForTouchIDBeforeItReadsTheCard() async throws {
         try await withVault { rig, _, _, audit in
             let suggestions = AutofillSuggestions.shared
             let verify = suggestions.verifyUser
             var readsAtPrompt: [VaultReadAudit.Read]?
-            suggestions.verifyUser = { _ in readsAtPrompt = audit.reads }
+            var readsAtPageCheck: [VaultReadAudit.Read]?
+            var steps: [String] = []
+            suggestions.verifyUser = { _ in
+                readsAtPrompt = audit.reads
+                steps.append("prompt")
+            }
+            // `withVault` puts the app's own page check back.
+            suggestions.validateAfterPrompt = { asked, page in
+                readsAtPageCheck = audit.reads
+                steps.append("page")
+                try suggestions.requireAuthority(asked, in: page)
+            }
             defer { suggestions.verifyUser = verify }
             let request = rig.request(.card)
             _ = await suggestions.vaultItemSuggestions(for: request, origin: Self.shop, presentation: suggestions.presentationID)
@@ -384,6 +401,8 @@ struct AutofillSecretsTests {
             let delivered = try #require(try prepare()["fields"] as? [String: Any])
 
             #expect(readsAtPrompt == [.items(.cards, pick: false)], "the card was read before Touch ID, or Touch ID was not asked")
+            #expect(steps == ["prompt", "page"], "the page was not asked again once, after Touch ID")
+            #expect(readsAtPageCheck == [.items(.cards, pick: false)], "the card was read before the page was asked again")
             #expect(audit.reads == [.items(.cards, pick: false), .items(.cards, pick: true)], "\(audit.reads)")
             let isTheCard = delivered["number"] as? String == Self.cardNumber && delivered["securityCode"] as? String == Self.cardCode
             #expect(isTheCard, "the pick did not deliver the card after Touch ID")
@@ -444,14 +463,20 @@ struct AutofillSecretsTests {
         }
     }
 
-    /// What can change while the Touch ID prompt is open: another field of the page asks (its request replaces this one), the vault
-    /// locks and unlocks again (a new unlock of the same manager), or a write lands.
+    /// What can change while the Touch ID prompt is open:
+    /// - another field of the page asks, and its request replaces this one;
+    /// - the page's document or field changes, which the page's answer to `validate` reports (stubbed here: the rig has no document);
+    /// - the vault locks (a lease that ends takes the same path: no unlock has the grant's epoch any more);
+    /// - the vault locks and unlocks again (a new unlock of the same manager);
+    /// - a write lands.
     enum PromptChange: CaseIterable, Sendable {
-        case anotherField, relock, write
+        case anotherField, anotherDocument, lock, relock, write
     }
 
     /// The prompt can stay open for any time, so what it waited through is checked again before the card is read (review L1): the
     /// pick fails with `changedPage`, and no vault read follows the prompt, so no card number or security code reaches the main actor.
+    /// `changedPage` is not a cancellation, so the panel says "Couldn't Fill Saved Details". After a lock that is as before D5(a),
+    /// when the card was read before the prompt and the lock failed the fill at delivery; only a prompt the person cancels is silent.
     @Test(arguments: PromptChange.allCases)
     func aChangeDuringTouchIDReadsNoCard(_ change: PromptChange) async throws {
         try await withVault { rig, vault, accounts, audit in
@@ -462,10 +487,20 @@ struct AutofillSecretsTests {
             _ = await suggestions.vaultItemSuggestions(for: request, origin: Self.shop, presentation: suggestions.presentationID)
             let rowID = try #require(request.itemRows.keys.first)
             var readsAfterPrompt: Int?
+            var documentChanged = false
+            // `withVault` puts the app's own page check back.
+            suggestions.validateAfterPrompt = { asked, page in
+                guard !documentChanged else { throw ContactAutofillError.changedPage }
+                try suggestions.requireAuthority(asked, in: page)
+            }
             suggestions.verifyUser = { _ in
                 switch change {
                 case .anotherField:
                     _ = rig.request(.card)
+                case .anotherDocument:
+                    documentChanged = true
+                case .lock:
+                    vault.manager.lock(reason: .manual)
                 case .relock:
                     vault.manager.lock(reason: .manual)
                     try await VaultManagerFixture.unlock(vault)
@@ -482,6 +517,7 @@ struct AutofillSecretsTests {
                 refused = error
             }
             #expect(refused as? ContactAutofillError == .changedPage, "a pick the prompt outlived fails otherwise")
+            #expect(refused.map(AutofillSuggestions.isUserCancellation) == false, "a pick the prompt outlived would show no alert")
             let atPrompt = try #require(readsAfterPrompt, "Touch ID was not asked")
             #expect(audit.reads.count == atPrompt, "the vault was read after the prompt: \(audit.reads.dropFirst(atPrompt))")
             let leaks = Self.leaks(in: Self.kept(by: request))

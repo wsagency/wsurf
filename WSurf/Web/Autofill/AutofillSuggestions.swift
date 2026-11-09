@@ -110,6 +110,9 @@ final class AutofillSuggestions {
     /// Fresh device-owner authentication before a card from the credentials vault fills a page, as a card saved in Keychain asks for
     /// it. Returns only on success. A seam so a test decides the answer.
     var verifyUser: @MainActor (String) async throws -> Void = { try await NativeWebAuthnInteraction().verifyUser(reason: $0, until: nil) }
+    /// The page check after a card's Touch ID prompt: `validate`, one round trip asking the page for the request's frame, document
+    /// and field. A seam so a test that picks on a page without a document keeps the check's native part.
+    var validateAfterPrompt: @MainActor (Request, BrowserPage) async throws -> Void = { try await AutofillSuggestions.shared.validate($0, in: $1) }
 
     private init() {}
 
@@ -444,8 +447,12 @@ final class AutofillSuggestions {
         }
         if request.kind == .card {
             try await verifyUser(String(localized: "fill your saved payment card"))
-            // The prompt can stay open for any time. What it waited through (a lock and unlock, a write, another field or page) is
-            // checked again before the card is read, so no card reaches this actor for a pick that can no longer be delivered.
+            // The prompt can stay open for any time. Before the card is read, the page is asked again for the request's frame,
+            // document and field (one round trip), then, with no suspension before the read takes its lease, the unlock, the write
+            // generation and the request's native authority are checked. Not covered: a change during the store read, or a frame or
+            // document change after that round trip. The card then reaches this actor, and the checks after the read and at
+            // delivery drop it before any of it reaches the page.
+            try await validateAfterPrompt(request, page)
             guard self.manager(for: request, vault: row.vaultID) === manager, manager.stableGeneration == generation else {
                 throw ContactAutofillError.changedPage
             }
