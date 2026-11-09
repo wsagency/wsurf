@@ -271,7 +271,11 @@ final class RemoteBrowser {
         case CefRemote.Op.imeSetComposition, CefRemote.Op.imeCommit, CefRemote.Op.imeFinish, CefRemote.Op.imeCancel:
             ime(message)
         case CefRemote.Op.edit:
-            edit(message.string(CefRemote.Key.kind))
+            if message.string(CefRemote.Key.kind) == "pasteText" {
+                pasteText(message.string(CefRemote.Key.text))
+            } else {
+                edit(message.string(CefRemote.Key.kind))
+            }
         case CefRemote.Op.accessibility:
             let enabled = message.bool(CefRemote.Key.flag)
             withHost { $0.pointee.set_accessibility_state?($0, enabled ? STATE_ENABLED : STATE_DISABLED) }
@@ -673,6 +677,17 @@ final class RemoteBrowser {
             host.pointee.ime_cancel_composition?(host)
         }
         recordInput(message)
+    }
+
+    /// WSurf read the pasteboard (`WSURF_OOP_PASTE=host`): insert its text at the caret, as an input method commits text.
+    private func pasteText(_ text: String) {
+        guard !text.isEmpty, let host = hostReference() else { return }
+        defer { Native.release(UnsafeMutableRawPointer(host)) }
+        var noReplacement = cef_range_t(from: UInt32.max, to: UInt32.max)
+        Native.withString(text) { native in
+            host.pointee.ime_commit_text?(host, native, &noReplacement, 0)
+        }
+        note("browser \(id): pasted \(text.utf16.count) units that WSurf read")
     }
 
     private func edit(_ kind: String) {

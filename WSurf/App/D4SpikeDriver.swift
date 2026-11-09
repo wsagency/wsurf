@@ -322,6 +322,17 @@ enum D4SpikeDriver {
                 "(e => e.value !== undefined ? e.value : e.textContent)(document.querySelector('\(selector)')) + ' | ' + document.getElementById('log').textContent")
             log("ime \(name): marked \(marked); firstRect before \(before.integral), during \(during.integral) (field centre at \(Int(point[0])),\(Int(point[1])) in the page, the marked text's first character at \(caret.integral) in the page); value after commit and cancel: \(String(describing: value))")
         }
+        // WSurf-side paste (`WSURF_OOP_PASTE=host`), the service's half only: the text goes as WSurf sends it after reading
+        // the pasteboard. The general pasteboard is the person's: agents neither read nor write it.
+        if let remote = chromium.remote {
+            let message = remote.message(CefRemote.Op.edit)
+            message.set(CefRemote.Key.kind, "pasteText")
+            message.set(CefRemote.Key.text, " pasted")
+            remote.sendInput(message)
+            try? await Task.sleep(for: .milliseconds(400))
+            let value = try? await page.evaluateJavaScript("document.querySelector('#t').value")
+            log("ime: WSurf-side paste into the textarea (service half): value \(String(describing: value))")
+        }
         captureWindow("ime-after")
         browser.close(tab)
         try? await Task.sleep(for: .seconds(1))

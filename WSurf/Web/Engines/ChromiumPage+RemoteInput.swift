@@ -349,8 +349,23 @@ extension ChromiumPage {
 
     @objc func copy(_ sender: Any?) { edit("copy", #selector(copy(_:)), sender) }
     @objc func cut(_ sender: Any?) { edit("cut", #selector(cut(_:)), sender) }
-    @objc func paste(_ sender: Any?) { edit("paste", #selector(paste(_:)), sender) }
-    @objc func pasteAsPlainText(_ sender: Any?) { edit("pasteAndMatchStyle", #selector(pasteAsPlainText(_:)), sender) }
+    @objc func paste(_ sender: Any?) { pasteRemote("paste", #selector(paste(_:)), sender) }
+    @objc func pasteAsPlainText(_ sender: Any?) { pasteRemote("pasteAndMatchStyle", #selector(pasteAsPlainText(_:)), sender) }
+
+    /// K10's fallback, DEBUG only (`WSURF_OOP_PASTE=host`): WSurf reads the pasteboard itself, on the person's own paste
+    /// command, and the service inserts the text, so the service never reads the pasteboard. Plain text only: the page's
+    /// `paste` event and rich formats (HTML, images, files) are phase 3.
+    private func pasteRemote(_ kind: String, _ action: Selector, _ sender: Any?) {
+        if let remote, ChromiumOOP.environment("WSURF_OOP_PASTE") == "host" {
+            guard let text = NSPasteboard.general.string(forType: .string), !text.isEmpty else { return }
+            let message = remote.message(CefRemote.Op.edit)
+            message.set(CefRemote.Key.kind, "pasteText")
+            message.set(CefRemote.Key.text, text)
+            remote.sendInput(message)
+            return
+        }
+        edit(kind, action, sender)
+    }
     @objc func delete(_ sender: Any?) { edit("delete", #selector(delete(_:)), sender) }
     @objc func undo(_ sender: Any?) { edit("undo", #selector(undo(_:)), sender) }
     @objc func redo(_ sender: Any?) { edit("redo", #selector(redo(_:)), sender) }
