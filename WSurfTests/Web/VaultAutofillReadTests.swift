@@ -107,7 +107,7 @@ private nonisolated enum Leak {
     static func isSecretCarrying(_ value: Any) -> Bool {
         value is CredentialAccount || value is TOTPGenerator || value is TOTPCodeSource || value is WebsitePasskey || value is SecureItem
             || value is SecureItemField || value is CredentialNote || value is CredentialAttachment || value is Data
-            || value is AutofillCardValues || value is AutofillContactValues || value is AutofillItemValues
+            || value is AutofillCardValues || value is AutofillContactValues || value is AutofillItemPick
     }
 
     /// Every stored value under `value` (URLs and UUIDs are leaves), with its path.
@@ -293,8 +293,12 @@ struct VaultAutofillReadTests {
             let contact = try await store.autofillItems(
                 vaultID: f.vaultID, kind: .contacts, accountID: Entries.contactID, item: 0, expectedRevision: revision, using: access
             )
-            let holdsEach = login.password != nil && code.code != nil && card.picked != nil && contact.picked != nil
-            #expect(holdsEach, "a pick holds no value")
+            var isACardAndAContact = false
+            if case (.card, .contact) = (card, contact) {
+                isACardAndAContact = true
+            }
+            let holdsEach = login.password != nil && code.code != nil && isACardAndAContact
+            #expect(holdsEach, "a pick holds no value, or another kind's")
 
             let loginRedacted = "\(login)" == "AutofillLogin" && String(reflecting: login) == "AutofillLogin"
                 && Mirror(reflecting: login).children.map(\.label) == ["candidate"]
@@ -307,22 +311,21 @@ struct VaultAutofillReadTests {
             let seedMirrored = !Leak.paths(in: code, texts: []).isEmpty
             #expect(!seedMirrored, "a code pick mirrors its seed")
 
-            let values: [Any] = [card.picked as Any, contact.picked as Any]
-            let valuesMirrorNothing = values.allSatisfy { value in
-                Mirror(reflecting: value).children.allSatisfy { Mirror(reflecting: $0.value).children.isEmpty }
+            let picksRedacted = [card, contact].allSatisfy { pick in
+                Mirror(reflecting: pick).children.isEmpty && "\(pick)" == "AutofillItemPick" && String(reflecting: pick) == "AutofillItemPick"
             }
-            #expect(valuesMirrorNothing, "a pick's values mirror a field")
-            if case .card(let values)? = card.picked {
+            #expect(picksRedacted, "a card or contact pick prints or mirrors a field")
+            if case .card(_, let values) = card {
                 let cardRedacted = Mirror(reflecting: values).children.isEmpty && "\(values)" == "AutofillCardValues"
                 #expect(cardRedacted, "a card's values print or mirror a field")
             }
-            if case .contact(let values)? = contact.picked {
+            if case .contact(_, let values) = contact {
                 let contactRedacted = Mirror(reflecting: values).children.isEmpty && "\(values)" == "AutofillContactValues"
                 #expect(contactRedacted, "a contact's values print or mirror a field")
             }
             let numberPrinted = Leak.prints(card, [Sentinel.cardNumber])
             #expect(!numberPrinted, "a card pick prints its number")
-            // The pick's row shows the street (its detail); the name, city and phone exist only in the values, which never print.
+            // The name, city and phone exist only in the values, which never print.
             let valuePrinted = Leak.prints(contact, ["Lovelace", "Testville", "+385"])
             #expect(!valuePrinted, "a contact pick prints a value its row does not show")
             let codeHidden = Leak.textPaths(in: card, texts: Sentinel.codes).isEmpty
@@ -489,31 +492,6 @@ struct VaultAutofillReadTests {
         return (outcome, reads)
     }
 
-    /// A list takes no item or revision and a pick needs both: anything else is `invalidData`, refused before the vault is read. So an
-    /// access the read refuses still gets `invalidData` for it, while a well-formed list or pick with that access is `unauthorized`.
-    @Test func aMalformedItemReadIsRefusedBeforeTheRead() async throws {
-        try await withVault(try Entries.all()) { f, store, access in
-            let revision = try await store.autofillCandidates(vaultID: f.vaultID, using: access).revision
-            access.revoke()
-            func read(_ kind: AutofillItemKind, _ accountID: UUID?, item: Int?, revision: UInt64?) async -> String {
-                name(await failure {
-                    _ = try await store.autofillItems(
-                        vaultID: f.vaultID, kind: kind, accountID: accountID, item: item, expectedRevision: revision, using: access
-                    )
-                })
-            }
-            let invalid = name(CredentialVaultError.invalidData), unauthorized = name(CredentialVaultError.unauthorized)
-            #expect(await read(.cards, nil, item: 0, revision: nil) == invalid)  // a list with an item
-            #expect(await read(.contacts, nil, item: nil, revision: revision) == invalid)  // a list with a revision
-            #expect(await read(.cards, nil, item: 0, revision: revision) == invalid)  // a pick without its credential
-            #expect(await read(.cards, Entries.loginID, item: nil, revision: revision) == invalid)
-            #expect(await read(.contacts, Entries.contactID, item: 0, revision: nil) == invalid)
-            #expect(await read(.cards, Entries.loginID, item: nil, revision: nil) == invalid)  // a pick with neither an item nor a revision
-            #expect(await read(.cards, nil, item: nil, revision: nil) == unauthorized)
-            #expect(await read(.contacts, Entries.contactID, item: 0, revision: revision) == unauthorized)
-        }
-    }
-
     // MARK: V3 Pick of a login or a code
 
     @Test func aPasswordPickHoldsItsCandidateAndPasswordAndNoCode() async throws {
@@ -608,8 +586,9 @@ struct VaultAutofillReadTests {
         let items = SecureItemFixtures.account([expired, invalid, SecureItemFixtures.address()], name: "Old cards")
         try await withVault(try Entries.all() + [items]) { f, store, access in
             let cards = try await store.autofillItems(vaultID: f.vaultID, kind: .cards, using: access)
-            let rowsOnly = cards.picked == nil && cards.contacts.isEmpty
-            #expect(rowsOnly, "a card list holds a pick or contacts")
+            // A list's type has no field a value could reach (owner decision Q3): its rows and the revision they were read at.
+            #expect(Mirror(reflecting: cards).children.map(\.label) == ["vaultID", "revision", "cards", "contacts"])
+            #expect(cards.contacts.isEmpty, "a card list holds contacts")
             #expect(cards.cards.map(\.accountID) == [Entries.loginID, Entries.loginID])
             #expect(cards.cards.map(\.item) == [0, 4])
             #expect(cards.cards.map(\.network) == [.visa, .mastercard])
@@ -630,8 +609,7 @@ struct VaultAutofillReadTests {
         let nameless = SecureItemFixtures.account([SecureItem(kind: .address, fields: [SecureItemFixtures.field("city", "Testville")])], name: nil)
         try await withVault(try Entries.all() + [nameless]) { f, store, access in
             let contacts = try await store.autofillItems(vaultID: f.vaultID, kind: .contacts, using: access)
-            let rowsOnly = contacts.picked == nil && contacts.cards.isEmpty
-            #expect(rowsOnly, "a contact list holds a pick or cards")
+            #expect(contacts.cards.isEmpty, "a contact list holds cards")
             #expect(contacts.contacts.map(\.accountID) == [Entries.contactID, nameless.id])
             #expect(contacts.contacts.map(\.item) == [0, 0])
             #expect(contacts.contacts.first?.title == "Home")
@@ -656,16 +634,16 @@ struct VaultAutofillReadTests {
             let picked = try await store.autofillItems(
                 vaultID: f.vaultID, kind: .cards, accountID: second.accountID, item: second.item, expectedRevision: list.revision, using: access
             )
-            let thatRow = picked.cards == [second] && picked.contacts.isEmpty
-            #expect(thatRow, "a card pick holds another row")
-            guard case .card(let card)? = picked.picked else {
+            guard case .card(let pickedRow, let card) = picked else {
                 Issue.record("a card pick holds no card")
                 return
             }
+            let thatRow = pickedRow == second
+            #expect(thatRow, "a card pick holds another row")
             let isThatCard = card.number == Sentinel.otherCardNumber && card.securityCode == Sentinel.otherCardCode
                 && card.cardholder == "Grace Hopper" && card.month == 7 && card.year == 2031
             #expect(isThatCard, "a card pick does not hold the picked card's values")
-            let numberPrinted = Leak.prints(picked.cards, [Sentinel.cardNumber, Sentinel.otherCardNumber])
+            let numberPrinted = Leak.prints(pickedRow, [Sentinel.cardNumber, Sentinel.otherCardNumber])
             #expect(!numberPrinted, "a card pick's row prints a number")
 
             let contacts = try await store.autofillItems(vaultID: f.vaultID, kind: .contacts, using: access)
@@ -673,38 +651,36 @@ struct VaultAutofillReadTests {
             let contact = try await store.autofillItems(
                 vaultID: f.vaultID, kind: .contacts, accountID: row.accountID, item: row.item, expectedRevision: contacts.revision, using: access
             )
-            let thatContactRow = contact.contacts == [row] && contact.cards.isEmpty
-            #expect(thatContactRow, "a contact pick holds another row")
-            guard case .contact(let values)? = contact.picked else {
+            guard case .contact(let pickedContactRow, let values) = contact else {
                 Issue.record("a contact pick holds no contact")
                 return
             }
+            let thatContactRow = pickedContactRow == row
+            #expect(thatContactRow, "a contact pick holds another row")
             let isThatContact = AutofillContactValues(of: Entries.contact()) == values
             #expect(isThatContact, "a contact pick does not hold the contact's values")
         }
     }
 
-    /// A pick names a row its list showed, at the list's revision: another revision, credential or item is `staleRevision`, a card that
-    /// is not one or a contact item that is not the row's too, and a pick without an item or a revision is `invalidData`.
+    /// A pick names a row its list showed, at the list's revision: another revision, credential or item is `staleRevision`, and so is a
+    /// card that is not one or a contact item that is not the row's. A pick without an item or a revision cannot be written (Q3).
     @Test func aPickMustNameARowAtTheListedRevision() async throws {
         try await withVault(try Entries.all()) { f, store, access in
             let revision = try await store.autofillCandidates(vaultID: f.vaultID, using: access).revision
-            func pick(_ kind: AutofillItemKind, _ accountID: UUID, item: Int?, revision: UInt64?) async -> String {
+            func pick(_ kind: AutofillItemKind, _ accountID: UUID, item: Int, revision: UInt64) async -> String {
                 name(await failure {
                     _ = try await store.autofillItems(
                         vaultID: f.vaultID, kind: kind, accountID: accountID, item: item, expectedRevision: revision, using: access
                     )
                 })
             }
-            let stale = name(CredentialVaultError.staleRevision), invalid = name(CredentialVaultError.invalidData)
+            let stale = name(CredentialVaultError.staleRevision)
             #expect(await pick(.cards, Entries.loginID, item: 0, revision: revision &+ 1) == stale)
             #expect(await pick(.cards, UUID(), item: 0, revision: revision) == stale)
             #expect(await pick(.cards, Entries.loginID, item: 1, revision: revision) == stale)  // a Wi-Fi network
             #expect(await pick(.cards, Entries.loginID, item: 9, revision: revision) == stale)
             #expect(await pick(.contacts, Entries.contactID, item: 1, revision: revision) == stale)
             #expect(await pick(.contacts, Entries.loginID, item: 0, revision: revision) == stale)  // holds no contact
-            #expect(await pick(.cards, Entries.loginID, item: nil, revision: revision) == invalid)
-            #expect(await pick(.cards, Entries.loginID, item: 0, revision: nil) == invalid)
             #expect(await pick(.cards, Entries.loginID, item: 0, revision: revision) == "none")
         }
     }
@@ -723,7 +699,10 @@ struct VaultAutofillReadTests {
             let picked = try await store.autofillItems(
                 vaultID: f.vaultID, kind: .cards, accountID: cards.id, item: 0, expectedRevision: july.revision, using: access
             )
-            let sameRow = picked.cards == july.cards
+            var sameRow = false
+            if case .card(let row, _) = picked {
+                sameRow = [row] == july.cards
+            }
             #expect(sameRow, "a pick of a card that ends this month holds another row")
 
             wall.move(to: Date(timeIntervalSince1970: 1_944_561_600))  // mid-August 2031

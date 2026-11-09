@@ -34,53 +34,49 @@ extension ProfileVaultStore {
         return login
     }
 
-    /// The cards or contacts of an unlocked vault as rows (`AutofillItems`): a card's network, last four digits, name and expiry, a
-    /// contact's title and detail, and no other value or kind of item. A pick names a row, by its credential and item, and the
-    /// revision its list was read at: the result then holds that row and its values (`picked`), the one card or the contact, and
-    /// nothing else. A pick of a row that is no longer there (a card that has expired since included), or any write since
-    /// `expectedRevision`, is `staleRevision`. A list takes no item or revision and a pick needs both: anything else is `invalidData`,
-    /// before the vault is read.
-    public func autofillItems(
-        vaultID: UUID, kind: AutofillItemKind, accountID: UUID? = nil, item: Int? = nil, expectedRevision: UInt64? = nil,
-        using access: VaultAccess
-    ) async throws -> AutofillItems {
-        guard accountID == nil ? item == nil && expectedRevision == nil : item != nil && expectedRevision != nil else {
-            throw CredentialVaultError.invalidData
-        }
+    /// The cards or contacts of an unlocked vault as rows (`AutofillItemRows`): a card's network, last four digits, name and expiry,
+    /// a contact's title and detail, and no other value or kind of item. The type holds rows only, so no value can reach a list.
+    public func autofillItems(vaultID: UUID, kind: AutofillItemKind, using access: VaultAccess) async throws -> AutofillItemRows {
         let snapshot = try await snapshot(vaultID: vaultID, using: access)
         let now = wall()
-        guard let accountID, let item, let expectedRevision else {
-            var cards: [AutofillCardRow] = []
-            var contacts: [AutofillContactRow] = []
-            for account in snapshot.accounts {
-                switch kind {
-                case .cards:
-                    cards += Self.cardRows(of: account, now: now).map(\.row)
-                case .contacts:
-                    if let contact = Self.contactRow(of: account) {
-                        contacts.append(contact.row)
-                    }
+        var cards: [AutofillCardRow] = []
+        var contacts: [AutofillContactRow] = []
+        for account in snapshot.accounts {
+            switch kind {
+            case .cards:
+                cards += Self.cardRows(of: account, now: now).map(\.row)
+            case .contacts:
+                if let contact = Self.contactRow(of: account) {
+                    contacts.append(contact.row)
                 }
             }
-            let rows = AutofillItems(vaultID: vaultID, revision: snapshot.revision, cards: cards, contacts: contacts, picked: nil)
-            _ = try authorizedGrant(vaultID, access)
-            return rows
         }
+        let rows = AutofillItemRows(vaultID: vaultID, revision: snapshot.revision, cards: cards, contacts: contacts)
+        _ = try authorizedGrant(vaultID, access)
+        return rows
+    }
+
+    /// One row a list showed, named by its credential and item and the revision its list was read at, with that row's values
+    /// (`AutofillItemPick`): the one card or the contact, and nothing else. A row that is no longer there (a card that has expired
+    /// since included), or any write since `expectedRevision`, is `staleRevision`.
+    public func autofillItems(
+        vaultID: UUID, kind: AutofillItemKind, accountID: UUID, item: Int, expectedRevision: UInt64, using access: VaultAccess
+    ) async throws -> AutofillItemPick {
+        let snapshot = try await snapshot(vaultID: vaultID, using: access)
+        let now = wall()
         guard snapshot.revision == expectedRevision, let account = snapshot.accounts.first(where: { $0.id == accountID }) else {
             throw CredentialVaultError.staleRevision
         }
-        let picked: AutofillItems
+        let picked: AutofillItemPick
         switch kind {
         case .cards:
             guard let card = Self.cardRows(of: account, now: now).first(where: { $0.row.item == item }) else {
                 throw CredentialVaultError.staleRevision
             }
-            picked = AutofillItems(vaultID: vaultID, revision: snapshot.revision, cards: [card.row], contacts: [], picked: .card(card.values))
+            picked = .card(card.row, card.values)
         case .contacts:
             guard let contact = Self.contactRow(of: account), contact.row.item == item else { throw CredentialVaultError.staleRevision }
-            picked = AutofillItems(
-                vaultID: vaultID, revision: snapshot.revision, cards: [], contacts: [contact.row], picked: .contact(contact.values)
-            )
+            picked = .contact(contact.row, contact.values)
         }
         _ = try authorizedGrant(vaultID, access)
         return picked

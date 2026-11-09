@@ -600,13 +600,19 @@ final class CredentialManager {
         }
     }
 
-    /// The card or contact rows of the vault; for a row (its credential and item) and its list's revision, that row's values only
-    /// (`ProfileVaultStore.autofillItems`).
-    func autofillItems(
-        kind: AutofillItemKind, accountID: UUID? = nil, item: Int? = nil, expectedRevision: UInt64? = nil
-    ) async throws -> AutofillItems {
+    /// The card or contact rows of the vault, which hold no value (`ProfileVaultStore.autofillItems(vaultID:kind:using:)`).
+    func autofillItems(kind: AutofillItemKind) async throws -> AutofillItemRows {
         try await reading { access in
-            Self.noteRead(.items(kind, pick: accountID != nil), profile: profile.id)
+            Self.noteRead(.items(kind, pick: false), profile: profile.id)
+            return try await store.autofillItems(vaultID: vaultID, kind: kind, using: access)
+        }
+    }
+
+    /// One row's values, the row named by its credential and item, at `expectedRevision`, the revision its list was read at
+    /// (`ProfileVaultStore.autofillItems(vaultID:kind:accountID:item:expectedRevision:using:)`).
+    func autofillItems(kind: AutofillItemKind, accountID: UUID, item: Int, expectedRevision: UInt64) async throws -> AutofillItemPick {
+        try await reading { access in
+            Self.noteRead(.items(kind, pick: true), profile: profile.id)
             return try await store.autofillItems(
                 vaultID: vaultID, kind: kind, accountID: accountID, item: item, expectedRevision: expectedRevision, using: access
             )

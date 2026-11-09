@@ -323,14 +323,15 @@ struct AutofillSecretsTests {
                 refused = error
             }
             #expect(refused as? ContactAutofillError == .changedPage, "the pick of a changed vault is not refused as before")
-            #expect(asked == 0, "Touch ID was asked for a card that will not fill")
+            // A card asks for Touch ID before its read, so before its row is found stale (owner decision Q4); an address never asks.
+            #expect(asked == (kind == .card ? 1 : 0), "Touch ID was asked otherwise than once for a card and never for an address")
         }
     }
 
     /// A card that ends between its row and the pick (review F3). The vault refuses that pick as stale, by its own calendar clock
     /// (`VaultAutofillReadTests.aCardThatEndsAfterItsListIsStale` moves it across a month end); the panel then fails it as it did before
     /// D5(a), with `PaymentCardError.noField`, from the expiry its row showed. Anything else stale, and any contact, is `changedPage`.
-    /// Both show the same "Couldn't Fill Saved Details" alert, and no Touch ID is asked.
+    /// Both show the same "Couldn't Fill Saved Details" alert. Touch ID is asked first, as for every card pick (owner decision Q4).
     @Test func aCardThatEndsBeforeItsPickFailsAsBefore() async throws {
         let july = Date(timeIntervalSince1970: 1_941_883_200), august = Date(timeIntervalSince1970: 1_944_561_600)
         #expect(Self.isNoField(VaultItemAutofill.stalePickError(month: 7, year: 2031, now: august)))
@@ -360,7 +361,131 @@ struct AutofillSecretsTests {
                 refused = error
             }
             #expect(Self.isNoField(refused), "a card that ended since its row fails otherwise than before D5(a)")
-            #expect(asked == 0, "Touch ID was asked for a card that will not fill")
+            #expect(asked == 1, "Touch ID was not asked before the card's read")
+        }
+    }
+
+    // MARK: Touch ID before a card is read (owner decision Q4)
+
+    /// A card pick asks for Touch ID before it reads the card: at the prompt the vault has given the list and nothing else, and the one
+    /// card is read after the prompt passes.
+    @Test func aCardPickAsksForTouchIDBeforeItReadsTheCard() async throws {
+        try await withVault { rig, _, _, audit in
+            let suggestions = AutofillSuggestions.shared
+            let verify = suggestions.verifyUser
+            var readsAtPrompt: [VaultReadAudit.Read]?
+            suggestions.verifyUser = { _ in readsAtPrompt = audit.reads }
+            defer { suggestions.verifyUser = verify }
+            let request = rig.request(.card)
+            _ = await suggestions.vaultItemSuggestions(for: request, origin: Self.shop, presentation: suggestions.presentationID)
+            let rowID = try #require(request.itemRows.keys.first)
+
+            let prepare = try await suggestions.vaultItemFill(rowID, request: request, in: rig.page)
+            let delivered = try #require(try prepare()["fields"] as? [String: Any])
+
+            #expect(readsAtPrompt == [.items(.cards, pick: false)], "the card was read before Touch ID, or Touch ID was not asked")
+            #expect(audit.reads == [.items(.cards, pick: false), .items(.cards, pick: true)], "\(audit.reads)")
+            let isTheCard = delivered["number"] as? String == Self.cardNumber && delivered["securityCode"] as? String == Self.cardCode
+            #expect(isTheCard, "the pick did not deliver the card after Touch ID")
+        }
+    }
+
+    /// A Touch ID prompt the person cancels, or that fails, reads nothing: the pick throws the prompt's own error, which shows no
+    /// alert, the audit shows the list read only, and the request keeps no value.
+    @Test func aCancelledTouchIDReadsNoCard() async throws {
+        try await withVault { rig, _, _, audit in
+            let suggestions = AutofillSuggestions.shared
+            let verify = suggestions.verifyUser
+            suggestions.verifyUser = { _ in throw WebsiteAuthenticatorError.notAllowed }
+            defer { suggestions.verifyUser = verify }
+            let request = rig.request(.card)
+            _ = await suggestions.vaultItemSuggestions(for: request, origin: Self.shop, presentation: suggestions.presentationID)
+            let rowID = try #require(request.itemRows.keys.first)
+
+            var refused: (any Error)?
+            do {
+                _ = try await suggestions.vaultItemFill(rowID, request: request, in: rig.page)
+            } catch {
+                refused = error
+            }
+            #expect(Self.isNotAllowed(refused), "a cancelled prompt failed with another error")
+            #expect(refused.map(AutofillSuggestions.isUserCancellation) == true, "a cancelled prompt would show the alert")
+            #expect(audit.reads == [.items(.cards, pick: false)], "a cancelled prompt read the card: \(audit.reads)")
+            let leaks = Self.leaks(in: Self.kept(by: request))
+            #expect(leaks.isEmpty, "the request keeps a value after a cancelled prompt: \(leaks)")
+        }
+    }
+
+    /// A card row that is stale at the pick asks for Touch ID first and only then fails (owner decision Q4's accepted consequence),
+    /// with `changedPage`. That is not a cancellation, so the panel shows "Couldn't Fill Saved Details", as it did for a stale row.
+    @Test func aStaleCardPickAsksFirstThenFailsWithTheAlert() async throws {
+        try await withVault { rig, vault, accounts, audit in
+            let suggestions = AutofillSuggestions.shared
+            let verify = suggestions.verifyUser
+            defer { suggestions.verifyUser = verify }
+            let request = rig.request(.card)
+            _ = await suggestions.vaultItemSuggestions(for: request, origin: Self.shop, presentation: suggestions.presentationID)
+            let rowID = try #require(request.itemRows.keys.first)
+            try await VaultManagerFixture.save(accounts + [VaultFixtures.account(username: "grace", origin: Self.shop)], in: vault)
+            let before = audit.reads.count
+            var readsAtPrompt: Int?
+            suggestions.verifyUser = { _ in readsAtPrompt = audit.reads.count }
+
+            var refused: (any Error)?
+            do {
+                _ = try await suggestions.vaultItemFill(rowID, request: request, in: rig.page)
+            } catch {
+                refused = error
+            }
+            #expect(readsAtPrompt == before, "Touch ID was not asked, or not before the pick's read")
+            #expect(refused as? ContactAutofillError == .changedPage, "a stale card pick fails otherwise than before")
+            #expect(refused.map(AutofillSuggestions.isUserCancellation) == false, "a stale card pick would show no alert")
+            #expect(Array(audit.reads.dropFirst(before)) == [.items(.cards, pick: true)], "the pick read something else")
+        }
+    }
+
+    /// What can change while the Touch ID prompt is open: another field of the page asks (its request replaces this one), the vault
+    /// locks and unlocks again (a new unlock of the same manager), or a write lands.
+    enum PromptChange: CaseIterable, Sendable {
+        case anotherField, relock, write
+    }
+
+    /// The prompt can stay open for any time, so what it waited through is checked again before the card is read (review L1): the
+    /// pick fails with `changedPage`, and no vault read follows the prompt, so no card number or security code reaches the main actor.
+    @Test(arguments: PromptChange.allCases)
+    func aChangeDuringTouchIDReadsNoCard(_ change: PromptChange) async throws {
+        try await withVault { rig, vault, accounts, audit in
+            let suggestions = AutofillSuggestions.shared
+            let verify = suggestions.verifyUser
+            defer { suggestions.verifyUser = verify }
+            let request = rig.request(.card)
+            _ = await suggestions.vaultItemSuggestions(for: request, origin: Self.shop, presentation: suggestions.presentationID)
+            let rowID = try #require(request.itemRows.keys.first)
+            var readsAfterPrompt: Int?
+            suggestions.verifyUser = { _ in
+                switch change {
+                case .anotherField:
+                    _ = rig.request(.card)
+                case .relock:
+                    vault.manager.lock(reason: .manual)
+                    try await VaultManagerFixture.unlock(vault)
+                case .write:
+                    try await VaultManagerFixture.save(accounts + [VaultFixtures.account(username: "grace", origin: Self.shop)], in: vault)
+                }
+                readsAfterPrompt = audit.reads.count
+            }
+
+            var refused: (any Error)?
+            do {
+                _ = try await suggestions.vaultItemFill(rowID, request: request, in: rig.page)
+            } catch {
+                refused = error
+            }
+            #expect(refused as? ContactAutofillError == .changedPage, "a pick the prompt outlived fails otherwise")
+            let atPrompt = try #require(readsAfterPrompt, "Touch ID was not asked")
+            #expect(audit.reads.count == atPrompt, "the vault was read after the prompt: \(audit.reads.dropFirst(atPrompt))")
+            let leaks = Self.leaks(in: Self.kept(by: request))
+            #expect(leaks.isEmpty, "the request keeps a value after the prompt: \(leaks)")
         }
     }
 
@@ -430,6 +555,12 @@ struct AutofillSecretsTests {
         let rowID = UUID()
         request.rows[rowID] = (vault.vaultID, account.id)
         return rowID
+    }
+
+    /// Whether `error` is `WebsiteAuthenticatorError.notAllowed`, what a cancelled or failed Touch ID prompt throws.
+    private static func isNotAllowed(_ error: (any Error)?) -> Bool {
+        guard let error = error as? WebsiteAuthenticatorError, case .notAllowed = error else { return false }
+        return true
     }
 
     /// Whether `error` is `PaymentCardError.noField`, the panel's error for a card that cannot fill.

@@ -433,33 +433,40 @@ final class AutofillSuggestions {
         request.kind == .card ? .cards : .contacts
     }
 
-    /// The vault branch of a card or address fill, like `managerFill`: only the chosen row's values are read, here, under the unlock,
-    /// revision and write generation its row was shown under (`autofillItems` with the row), a card asks for Touch ID, and the returned
-    /// closure delivers only if all of that and the request's native authority still hold at the engine's dispatch boundary. Internal
-    /// so a test can pick a row without a key window.
+    /// The vault branch of a card or address fill, like `managerFill`. A card asks for Touch ID first and nothing is read unless it
+    /// passes, so a stale row asks, then fails with the same alert (owner decision Q4). Then only the chosen row's values are read,
+    /// under the unlock, revision and write generation its row was shown under, and the returned closure delivers only if all of that
+    /// and the request's native authority still hold at the engine's dispatch boundary. Internal so a test can pick without a window.
     func vaultItemFill(_ id: UUID, request: Request, in page: BrowserPage) async throws -> @MainActor @Sendable () throws -> [String: Any] {
         guard request.kind != .password, let row = request.itemRows[id], let manager = manager(for: request, vault: row.vaultID),
               let grant = request.grants[row.vaultID], let generation = manager.stableGeneration, !Self.isAgentControlled(page) else {
             throw ContactAutofillError.changedPage
         }
-        let picked: AutofillItemValues?
+        if request.kind == .card {
+            try await verifyUser(String(localized: "fill your saved payment card"))
+            // The prompt can stay open for any time. What it waited through (a lock and unlock, a write, another field or page) is
+            // checked again before the card is read, so no card reaches this actor for a pick that can no longer be delivered.
+            guard self.manager(for: request, vault: row.vaultID) === manager, manager.stableGeneration == generation else {
+                throw ContactAutofillError.changedPage
+            }
+            try requireAuthority(request, in: page)
+        }
+        let picked: AutofillItemPick
         do {
             picked = try await manager.autofillItems(
                 kind: Self.itemKind(of: request), accountID: row.accountID, item: row.item, expectedRevision: grant.revision
-            ).picked
+            )
         } catch CredentialVaultError.staleRevision {
             // A write since the row was shown, a row that is gone, or a card that has ended since: each fails as before D5(a).
             throw VaultItemAutofill.stalePickError(month: row.month, year: row.year)
         }
-        guard manager.authorizationEpoch == grant.epoch, manager.stableGeneration == generation, let picked else { throw ContactAutofillError.changedPage }
+        guard manager.authorizationEpoch == grant.epoch, manager.stableGeneration == generation else { throw ContactAutofillError.changedPage }
         let fields: [String: Any]
         switch picked {
-        case .card(let values):
+        case .card(_, let values):
             guard let card = VaultItemAutofill.paymentCard(values), !card.isExpired() else { throw PaymentCardError.noField }
-            // Touch ID after the pick's read, as before D5(a): a row that is stale or has ended fails without asking for it.
-            try await verifyUser(String(localized: "fill your saved payment card"))
             fields = ["number": card.number, "cardholder": card.cardholder, "securityCode": card.securityCode ?? "", "month": card.month ?? 0, "year": card.year ?? 0]
-        case .contact(let values):
+        case .contact(_, let values):
             fields = AutofillContact(values).fields
         }
         nonisolated(unsafe) let values = fields
@@ -960,8 +967,8 @@ final class AutofillSuggestions {
 }
 
 extension AutofillSuggestions {
-    /// A prompt the user dismissed or failed is not an error worth a second alert.
-    private static func isUserCancellation(_ error: any Error) -> Bool {
+    /// A prompt the user dismissed or failed is not an error worth a second alert; every other fill error shows one. Internal for tests.
+    static func isUserCancellation(_ error: any Error) -> Bool {
         switch error {
         case AutofillVaultError.keychain(let status), PaymentCardError.keychain(let status):
             status == errSecUserCanceled || status == errSecAuthFailed
@@ -970,31 +977,5 @@ extension AutofillSuggestions {
         default:
             false
         }
-    }
-
-    /// Whether the profile has vaults and every one of them is locked. The dropdown then offers to unlock and reads nothing.
-    static func allVaultsLocked(of profile: Profile) async -> Bool {
-        guard !profile.isPrivate, let store = try? CredentialManager.store(for: profile), await store.openState().isProvisional,
-              let listing = try? await store.listing(), !listing.isEmpty else { return false }
-        let unlocked = Set(CredentialManager.unlockedManagers(for: profile).map(\.vaultID))
-        return !listing.contains { unlocked.contains($0.vaultID) }
-    }
-
-    /// What a card or address field is offered from the credentials vault, decided before anything is read: nothing in a tab the
-    /// assistant or a connected app controls (so no agent can have one filled into a page it reads), one row that only unlocks while
-    /// every vault of the profile is locked, and otherwise the unlocked vaults' cards or addresses.
-    nonisolated enum VaultItemRows: Equatable {
-        case none, unlock, items
-    }
-
-    nonisolated static func vaultItemRows(kind: AutofillSaveKind, underAssistantControl: Bool, allVaultsLocked: Bool) -> VaultItemRows {
-        guard kind != .password, !underAssistantControl else { return .none }
-        return allVaultsLocked ? .unlock : .items
-    }
-
-    /// After a fill from "Check other logins", a login or a verification code alike, the page's website is offered to that credential
-    /// ("Add Website"), so the next time it is an exact match. Nothing else offers it here.
-    nonisolated static func offersWebsiteAfterFill(kind: AutofillSaveKind, fromSiblingRow: Bool) -> Bool {
-        kind == .password && fromSiblingRow
     }
 }

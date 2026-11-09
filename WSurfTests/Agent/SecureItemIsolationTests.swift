@@ -17,6 +17,7 @@ struct SecureItemIsolationTests {
         "secureitem", "vaultitemautofill", "credentialmanager", "storesnapshot", "profilevaultstore", "paymentcardvault",
         "autofillvaults", "credentialaccount", "autofillvaultmigration", "autofillmigration", "autofillsaveindex",
         "managerfill", "vaultitemfill", "vaultitemsuggestions", "autofilllogin", "autofillitems", "autofillcandidate",
+        "autofillitempick", "autofillitemrows",
     ]
 
     private var repositoryRoot: URL {
