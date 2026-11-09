@@ -115,7 +115,8 @@ struct TabSleepScheduleTests {
             stale.lastForegroundAt = .now - .seconds(61)
             fresh.lastForegroundAt = .now - .seconds(30)
             clock.advance(by: .seconds(14))
-            try? await Task.sleep(for: .milliseconds(200))
+            // A tick can only run once the clock releases its sleep: it is still waiting, so none has.
+            #expect(clock.pendingCount == 1, "the tick is still waiting")
             #expect(!stale.isDeferred, "no tick before a quarter of the delay")
             clock.advance(by: .seconds(1))
             #expect(await waitUntil { stale.isDeferred }, "past the delay at the tick")
@@ -126,9 +127,10 @@ struct TabSleepScheduleTests {
             try #require(await waitUntil { clock.pendingCount == 1 })
             fresh.lastForegroundAt = .now - .seconds(90)
             clock.advance(by: .seconds(30))
-            try? await Task.sleep(for: .milliseconds(200))
+            // The advance released the sleep, so nothing is pending until the tick has run and the timer waits again.
+            #expect(clock.pendingCount == 0, "the advance released the sleep")
+            try #require(await waitUntil { clock.pendingCount == 1 }, "the tick ran and the timer is waiting again")
             #expect(!fresh.isDeferred, "90 s is inside the new delay")
-            try #require(await waitUntil { clock.pendingCount == 1 })
             fresh.lastForegroundAt = .now - .seconds(121)
             clock.advance(by: .seconds(30))
             #expect(await waitUntil { fresh.isDeferred }, "past the new delay")
@@ -200,9 +202,15 @@ struct TabSleepScheduleTests {
             try #require(await waitUntil {
                 ((try? await tab.page.evaluateJavaScript("window.scrollY")) as? Double ?? 0) >= 1400
             })
+            if engine == .chromium {
+                // The wake keeps the offset the page last reported to the app, which a script reports after a short debounce
+                // (`BrowserTab.swift`, the arm at unload): without it the unload arms nothing.
+                try #require(await waitUntil { tab.lastReportedScrollY >= 1400 }, "the page's scroll report reached the tab")
+            }
             _ = try await rig.open("/still")
             rig.coordinator.unloadTab(tab)
             try #require(tab.isDeferred)
+            let armedAtUnload = tab.wakeScroll.isArmed
             await tab.waitForRetirement()
 
             rig.browser.activate(tab)
@@ -216,12 +224,25 @@ struct TabSleepScheduleTests {
                 #expect(restored, "WebKit restores the scroll position")
             } else {
                 // The same tolerance as ChromiumScrollWakeTests: within 2 points of where the tab was.
+                // The wake hands the kept offset out once, when the load of the tab's address finishes (`WakeScroll.take`): wait for
+                // that, so a failure below says which half went wrong.
+                let taken = await waitUntil(timeout: .seconds(5)) { !tab.wakeScroll.isArmed }
                 var latest = 0.0
                 let restored = await waitUntil(timeout: .seconds(5)) {
                     latest = await scrollY()
                     return abs(latest - 1500) < 2
                 }
-                #expect(restored, "Chromium puts the kept offset back after the load (scrollY is \(latest))")
+                let cause = switch (taken, tab.wakeScroll.appliedCount) {
+                case _ where !armedAtUnload:
+                    "the unload armed nothing: the page's scroll report had not reached the tab"
+                case (false, _):
+                    "the offset was never taken: the load of the address did not finish for the tab"
+                case (true, 0):
+                    "the offset was cleared without being taken: another load finished first (a test race)"
+                case (true, _):
+                    "the offset was taken and applied but the page did not scroll (a product or CEF race)"
+                }
+                #expect(restored, "Chromium puts the kept offset back after the load (scrollY is \(latest)): \(cause)")
             }
         }
     }

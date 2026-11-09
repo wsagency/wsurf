@@ -566,7 +566,7 @@ struct MediaScriptTests {
     @Test func aPageWithNothingToPlayYetStillTakesTheMute() async throws {
         let (webView, _) = await player(hasVideo: false)
         _ = try await webView.evaluateJavaScript("\(post("wsurf-mute:1")); true")
-        try await Task.sleep(for: .milliseconds(150))
+        try await webView.finishPendingPageMessages()
 
         _ = try await webView.evaluateJavaScript("document.body.append(document.createElement('audio')); true")
 
@@ -601,7 +601,7 @@ struct MediaScriptTests {
     @Test func aPlayerStartedWhileMutedIsSilencedByItsPlayEvent() async throws {
         let (webView, _) = await player(hasVideo: false)
         _ = try await webView.evaluateJavaScript("\(post("wsurf-mute:1")); true")
-        try await Task.sleep(for: .milliseconds(150))
+        try await webView.finishPendingPageMessages()
 
         let silenced = try await webView.evaluateJavaScript("""
         const song = document.createElement('audio'); document.body.append(song);

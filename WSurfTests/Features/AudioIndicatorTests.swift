@@ -247,10 +247,19 @@ struct AudioIndicatorTests {
             let main = app.newWindow(profile: profile, show: false)
             let tab = main.browser.newTab(adopting: WKWebView())
             let page = tab.page
+            // A mute goes out from a task of its own on the main actor, which a yield lets run: the tasks queued earlier run first, and
+            // the cases that expect a mute (which would not see one a hop late) are the control for those that expect none.
+            @MainActor func lettingQueuedTasksRun() async {
+                for _ in 0..<3 {
+                    await Task.yield()
+                }
+            }
             @MainActor func asked() async -> Bool {
+                await lettingQueuedTasksRun()
                 let before = page.evaluations
                 main.media.receiveScriptMessage("hello", from: page, isMainFrame: true)
-                return await waitUntil(timeout: .milliseconds(500)) { page.evaluations > before }
+                await lettingQueuedTasksRun()
+                return page.evaluations > before
             }
 
             #expect(await !asked(), "nothing owed: the page is left alone")
@@ -265,12 +274,10 @@ struct AudioIndicatorTests {
             tab.isPlayingAudio = true
             app.silenceIfMuted(tab, in: main)
             main.toggleMute(tab: tab)
-            try await Task.sleep(for: .milliseconds(300))
             #expect(!tab.isMuted)
             #expect(await !asked(), "the person unmuted it on its own while WSurf was muted: it stays as they chose")
 
             app.unmuteAll()
-            try await Task.sleep(for: .milliseconds(300))
             #expect(await !asked())
             finish(app)
             await tab.waitForRetirement()

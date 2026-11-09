@@ -258,7 +258,8 @@ struct FrameAudioTests {
             let page = tab.page
             main.media.receiveScriptMessage("audio:1", from: page, isMainFrame: true)
             main.media.receiveScriptMessage("frames:moved", from: page, isMainFrame: false)
-            try await Task.sleep(for: MediaCenter.refreshWindow + .milliseconds(200))
+            // `refreshFrames` returns at once for a page with no playing frame, so no refresh is waiting to drop anything.
+            #expect(MediaCenter.pageAudio.object(forKey: page)?.refresh == nil, "no refresh began")
             #expect(tab.isPlayingAudio, "the page's own document plays on")
             #expect(main.media.audio(of: page).unconfirmed.isEmpty)
         }

@@ -803,12 +803,16 @@ struct ExtensionStandInWebKitTests {
     chrome.privacy.services.passwordSavingEnabled && chrome.privacy.services.passwordSavingEnabled.get({});
     chrome.storage.managed.get(null).then(policy => { self.policyKeys = Object.keys(policy).length; });
     // Calls that try to reach the app through a stand-in. None may arrive.
-    chrome.sidePanel.open({ tabId: 1 }).catch(() => {});
-    chrome.bookmarks.create({ title: "x", url: "https://example.com/" }).catch(() => {});
-    chrome.management.setEnabled("someone-else", true).catch(() => {});
-    chrome.tabGroups.update(1, { title: "x" }).catch(() => {});
+    const calls = [
+      chrome.sidePanel.open({ tabId: 1 }).catch(() => {}),
+      chrome.bookmarks.create({ title: "x", url: "https://example.com/" }).catch(() => {}),
+      chrome.management.setEnabled("someone-else", true).catch(() => {}),
+      chrome.tabGroups.update(1, { title: "x" }).catch(() => {}),
+    ];
     // The extension's other features still run: this one reaches WSurf, which the test observes.
     chrome.runtime.connectNative("com.example.started");
+    // Once every stand-in call has settled, a last connection through the same route: anything a call sent to WSurf came first.
+    Promise.allSettled(calls).then(() => chrome.runtime.connectNative("com.example.done"));
     """
 
     private let workerManifest: [String: Any] = [
@@ -827,10 +831,9 @@ struct ExtensionStandInWebKitTests {
         defer { try? controller.unload(context) }
 
         try await context.loadBackgroundContent()
-        let reached = await waitUntil(timeout: .seconds(20)) { !delegate.events.isEmpty }
+        let reached = await waitUntil(timeout: .seconds(20)) { delegate.events.contains("connect:com.example.done") }
         #expect(reached, "the worker never got past the APIs WebKit lacks")
-        try await Task.sleep(for: .seconds(1))
-        #expect(delegate.events == ["connect:com.example.started"], "a stand-in call must not reach WSurf")
+        #expect(delegate.events == ["connect:com.example.started", "connect:com.example.done"], "a stand-in call must not reach WSurf")
         #expect(context.errors.isEmpty, "\(context.errors.map(\.localizedDescription))")
     }
 
