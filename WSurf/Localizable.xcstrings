@@ -9057,6 +9057,18 @@
     "export saved cards, documents and hidden fields" : {
       "comment" : "Reason shown in the Touch ID or password prompt before saved cards, ID documents or hidden fields are exported. It completes a system sentence like “WSurf is trying to …”, so it is a lowercase verb phrase with no period."
     },
+    "export saved passkeys" : {
+      "comment" : "Reason shown in the Touch ID or password prompt before an export hands saved passkeys (their private keys) to another app, on the Credentials page in Settings. It completes a system sentence like “WSurf is trying to …”, so it is a lowercase verb phrase with no period."
+    },
+    "export saved passkeys, cards and documents" : {
+      "comment" : "Reason shown in the Touch ID or password prompt before an export hands saved passkeys (their private keys) and a saved card or ID document to another app, on the Credentials page in Settings. It completes a system sentence like “WSurf is trying to …”, so it is a lowercase verb phrase with no period."
+    },
+    "export saved passkeys, passwords and verification codes" : {
+      "comment" : "Reason shown in the Touch ID or password prompt before an export hands saved passkeys (their private keys) and saved passwords or verification code setups to another app, on the Credentials page in Settings. It completes a system sentence like “WSurf is trying to …”, so it is a lowercase verb phrase with no period."
+    },
+    "export saved passkeys, passwords, cards and documents" : {
+      "comment" : "Reason shown in the Touch ID or password prompt before an export hands saved passkeys (their private keys), saved passwords or verification codes, and a saved card or ID document to another app, on the Credentials page in Settings. It completes a system sentence like “WSurf is trying to …”, so it is a lowercase verb phrase with no period."
+    },
     "export saved passwords" : {
       "comment" : "Reason shown in the Touch ID or password prompt before Export to CSV… writes saved passwords to a file, on the Credentials page in Settings. It completes a system sentence like “WSurf is trying to …”, so it is a lowercase verb phrase with no period."
     },

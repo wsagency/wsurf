@@ -6,7 +6,7 @@ import Foundation
 import WSurfVault
 
 /// Sending the selection to another app, or writing it as a CSV file. Both prove the selection against the vault first, and both ask
-/// for Touch ID once before a password, a code, a card or an identity document leaves the vault (`+PasswordPrivacy`).
+/// for Touch ID once before a passkey, a password, a code, a card or an identity document leaves the vault (`+PasswordPrivacy`).
 extension CredentialSettingsModel {
     /// `epoch` is the one the selection was made at; a lock, a re-unlock or a change to a selected account since the page
     /// read it rejects it. A cancel before any data was passed is `.cancelled` and leaves no status; every other result is recorded.

@@ -58,11 +58,24 @@ extension CredentialSettingsModel {
         guard live?.verifiedEditor == editor else { throw CredentialVaultError.unauthorized }
     }
 
-    /// The prompt an export asks before anything leaves the vault, `nil` when it sends no password, code, card or identity
-    /// document. `summaries` are the ones the export's stamps vouch for: an account that changed since is refused by the export.
+    /// The one prompt an export asks before anything leaves the vault, naming what leaves; `nil` when it sends no passkey, password,
+    /// code, card or identity document. `summaries` are the ones the export's stamps vouch for: an account that changed since is
+    /// refused by the export.
     static func exportReason(_ selection: [CredentialExportSelection], in summaries: [CredentialSummary]) -> String? {
         let items = CredentialExportSelection.sendsSensitiveItems(selection, in: summaries)
         let secrets = CredentialExportSelection.sendsPasswordsOrCodes(selection, in: summaries)
+        if CredentialExportSelection.sendsPasskeys(selection, in: summaries) {
+            switch (secrets, items) {
+            case (true, true):
+                return String(localized: "export saved passkeys, passwords, cards and documents")
+            case (true, false):
+                return String(localized: "export saved passkeys, passwords and verification codes")
+            case (false, true):
+                return String(localized: "export saved passkeys, cards and documents")
+            case (false, false):
+                return String(localized: "export saved passkeys")
+            }
+        }
         if items, secrets {
             return String(localized: "export saved passwords, cards and documents")
         }
@@ -77,6 +90,16 @@ extension CredentialSettingsModel {
 }
 
 nonisolated extension CredentialExportSelection {
+    /// Whether `selection` sends a passkey that `summaries` still hold: its private key leaves the vault, which needs Touch ID
+    /// first. A passkey the summary no longer holds is not asked for; the export refuses an account that changed since its stamp.
+    static func sendsPasskeys(_ selection: [CredentialExportSelection], in summaries: [CredentialSummary]) -> Bool {
+        let byID = Dictionary(summaries.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        return selection.contains { chosen in
+            guard !chosen.passkeyIDs.isEmpty, let summary = byID[chosen.accountID] else { return false }
+            return summary.passkeys.contains { chosen.passkeyIDs.contains($0.id) }
+        }
+    }
+
     /// Whether `selection` sends a saved password or a verification code setup of `summaries`, which needs Touch ID first. A login
     /// with a username and no password sends no secret.
     static func sendsPasswordsOrCodes(_ selection: [CredentialExportSelection], in summaries: [CredentialSummary]) -> Bool {

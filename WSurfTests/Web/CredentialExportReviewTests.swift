@@ -415,4 +415,60 @@ struct CredentialExportReviewTests {
             #expect(prompts.reasons == [reason, reason])
         }
     }
+
+    /// A passkey's private key leaving the vault asks like a password: once, before the system's sheet. A refusal opens no sheet, so
+    /// nothing is read for the export and nothing is sent.
+    @Test func exportingAPasskeyAsksOnceBeforeTheSystemSheet() async throws {
+        try await base.withFixture { f in
+            let passkey = try base.passkey(9)
+            let holder = base.account(username: "", password: nil, passkeys: [passkey])
+            try await f.seed([holder])
+            let prompts = Prompts()
+            let model = promptingModel(f, prompts)
+            await model.load()
+            let epoch = try #require(f.manager.authorizationEpoch)
+            let requests = Mutex(0)
+            let sends = Mutex(0)
+            f.coordinator.requestSystemExport = { _ in
+                requests.withLock { $0 += 1 }
+                return CredentialExchangeCoordinator.SystemExport(format: .v1, send: { _ in sends.withLock { $0 += 1 } })
+            }
+            let onlyThePasskey = [CredentialExportSelection(accountID: holder.id, password: false, passkeyIDs: [passkey.id], totp: false)]
+
+            #expect(await model.exportCredentials(selection: onlyThePasskey, epoch: epoch, in: NSWindow()) == nil)
+            #expect(requests.withLock { $0 } == 0 && sends.withLock { $0 } == 0, "a refusal opens no sheet and reads nothing for it")
+            #expect(model.error == String(localized: "Authentication didn’t finish. Nothing was exported."))
+
+            prompts.refuses = false
+            #expect(await model.exportCredentials(selection: onlyThePasskey, epoch: epoch, in: NSWindow()) == .transferred)
+            let reason = String(localized: "export saved passkeys")
+            #expect(prompts.reasons == [reason, reason])
+            #expect(requests.withLock { $0 } == 1 && sends.withLock { $0 } == 1)
+        }
+    }
+
+    /// The one prompt names what leaves. A passkey that the summaries the stamps vouch for no longer hold (it vanished since the
+    /// stamp) is not asked for.
+    @Test func theExportPromptNamesPasskeysOnlyWhileTheSummaryHoldsThem() throws {
+        let passkey = try base.passkey(10)
+        var holder = base.account(username: "ada", password: "passkey-holder-secret", passkeys: [passkey])
+        holder.secureItems = [SecureItemFixtures.card()]
+        func reason(password: Bool = false, passkeys: Set<UUID> = [], items: Bool = false, of account: CredentialAccount) -> String? {
+            let chosen = CredentialExportSelection(accountID: holder.id, password: password, passkeyIDs: passkeys, totp: false, secureItems: items)
+            return CredentialSettingsModel.exportReason([chosen], in: [CredentialSummary(account)])
+        }
+        let ids: Set<UUID> = [passkey.id]
+        #expect(reason(passkeys: ids, of: holder) == String(localized: "export saved passkeys"))
+        #expect(reason(password: true, passkeys: ids, of: holder) == String(localized: "export saved passkeys, passwords and verification codes"))
+        #expect(reason(passkeys: ids, items: true, of: holder) == String(localized: "export saved passkeys, cards and documents"))
+        #expect(
+            reason(password: true, passkeys: ids, items: true, of: holder)
+                == String(localized: "export saved passkeys, passwords, cards and documents")
+        )
+
+        var vanished = holder
+        vanished.passkeys = []
+        #expect(reason(passkeys: ids, of: vanished) == nil)
+        #expect(reason(password: true, passkeys: ids, of: vanished) == String(localized: "export saved passwords and verification codes"))
+    }
 }
