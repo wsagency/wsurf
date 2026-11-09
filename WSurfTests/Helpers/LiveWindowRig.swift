@@ -169,8 +169,8 @@ struct LiveWindowRig {
         return false
     }
 
-    /// Frames the page ran in a second, once it has been hidden for a moment. Callers have already waited for `hidden`, so the lead
-    /// only lets a frame that was in flight finish.
+    /// Frames the page ran in a second after a 100 ms lead. For a page that animates in front; a hidden page is measured with
+    /// `frames(of:whileFramesOf:)`, because an engine draws a page for a moment after it reports `hidden`.
     func framesInASecond(of tab: BrowserTab) async -> Double {
         try? await Task.sleep(for: .milliseconds(100))
         let first = await frames(of: tab)
