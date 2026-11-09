@@ -138,9 +138,12 @@ enum D4SpikeDriver {
     /// Day 2-3: frames at the display rate, resize, switching between two Chromium tabs, the band over the page.
     private static func frames() async {
         var browser: BrowserModel { coordinator.browser }
-        let red = browser.newTab(url: url("color.html?c=d0021b"), engine: .chromium)
+        // WSURF_D4_ENGINE=webkit: the same switches between two WebKit tabs, the floor of WSurf's own switch (K1 context).
+        let engine: BrowserEngine = ProcessInfo.processInfo.environment["WSURF_D4_ENGINE"] == "webkit" ? .webKit : .chromium
+        log("frames: engine \(engine)")
+        let red = browser.newTab(url: url("color.html?c=d0021b"), engine: engine)
         _ = await waitLoaded(red, timeout: 60)
-        let blue = browser.newTab(url: url("color.html?c=1e5bd7"), engine: .chromium)
+        let blue = browser.newTab(url: url("color.html?c=1e5bd7"), engine: engine)
         _ = await waitLoaded(blue, timeout: 60)
         try? await Task.sleep(for: .seconds(1))
         captureWindow("frames-blue")

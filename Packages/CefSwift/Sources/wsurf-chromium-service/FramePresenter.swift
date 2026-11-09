@@ -116,7 +116,17 @@ final class FramePresenter {
         CATransaction.flush()
     }
 
+    /// Popup frames since the popup was last shown: accelerated, CPU.
+    private var popupAcceleratedFrames = 0
+    private var popupCPUFrames = 0
+
     func setPopup(visible: Bool) {
+        if visible, !popupVisible {
+            popupAcceleratedFrames = 0
+            popupCPUFrames = 0
+        } else if !visible, popupVisible {
+            note("popup closed after \(popupAcceleratedFrames) accelerated and \(popupCPUFrames) CPU frames")
+        }
         popupVisible = visible
         if !visible {
             popupRect = .zero
@@ -147,6 +157,9 @@ final class FramePresenter {
     /// `entry`: mach nanoseconds when CEF's callback was entered.
     func present(surface source: IOSurfaceRef, element: Element, entry: UInt64) {
         acceleratedFrames += 1
+        if element == .popup {
+            popupAcceleratedFrames += 1
+        }
         guard !hidden else { return }
         guard !parked else {
             droppedParked += 1
@@ -179,6 +192,9 @@ final class FramePresenter {
     /// The CPU path (`on_paint`): BGRA rows, top-left origin.
     func present(pixels: UnsafeRawPointer, width: Int, height: Int, element: Element, entry: UInt64) {
         cpuFrames += 1
+        if element == .popup {
+            popupCPUFrames += 1
+        }
         guard !hidden else { return }
         guard !parked else {
             droppedParked += 1

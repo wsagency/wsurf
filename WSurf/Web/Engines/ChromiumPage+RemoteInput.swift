@@ -494,6 +494,7 @@ extension ChromiumPage: @preconcurrency NSTextInputClient {
     func unmarkText() {
         remoteInput.hasMarkedText = false
         remoteInput.markedText = ""
+        remoteInput.markedRange = NSRange(location: NSNotFound, length: 0)
         if remoteInput.handlingKeyDown {
             remoteInput.unmarkTextCalled = true
         } else if let remote {

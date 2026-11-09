@@ -61,10 +61,10 @@ nonisolated final class RemoteFrameSinks: @unchecked Sendable {
     func set(_ layer: CALayer?, for browser: Int64) {
         lock.lock()
         defer { lock.unlock() }
-        layers[browser] = layer
-        if layer == nil {
-            popups[browser] = nil
+        if layers[browser] !== layer, let old = popups.removeValue(forKey: browser) {
+            old.removeFromSuperlayer()
         }
+        layers[browser] = layer
     }
 
     /// The page's popup layer, made on first use. Call with the lock held.
@@ -98,6 +98,12 @@ nonisolated final class RemoteFrameSinks: @unchecked Sendable {
         framesShown += 1
         lock.unlock()
         if message.bool(CefRemote.Key.flag) {
+            lock.lock()
+            popupFrames += 1
+            if popup != nil {
+                popupFramesShown += 1
+            }
+            lock.unlock()
             guard let popup else { return }
             CATransaction.begin()
             CATransaction.setDisableActions(true)
@@ -149,12 +155,20 @@ nonisolated final class RemoteFrameSinks: @unchecked Sendable {
         lock.unlock()
     }
 
-    /// DEBUG driver: the popup events seen, oldest first.
+    /// DEBUG driver: the popup events seen, oldest first, then the popup frames received and shown, and each popup layer.
     private var popupLog: [String] = []
+    private var popupFrames = 0
+    private var popupFramesShown = 0
     func popupReport() -> [String] {
         lock.lock()
         defer { lock.unlock() }
-        return popupLog
+        var lines = popupLog
+        lines.append("popup frames received \(popupFrames), shown \(popupFramesShown)")
+        for (browser, popup) in popups {
+            let attached = popup.superlayer != nil && popup.superlayer === layers[browser]
+            lines.append("browser \(browser) popup layer: hidden \(popup.isHidden), frame \(popup.frame.integral), contents \(popup.contents != nil), on the page layer \(attached)")
+        }
+        return lines
     }
 
     /// Percentiles of the output leg since the last reset.
