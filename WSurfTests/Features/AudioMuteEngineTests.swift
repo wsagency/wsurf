@@ -120,12 +120,22 @@ struct AudioMuteEngineTests {
     @Test(arguments: [BrowserEngine.webKit, .chromium])
     func aPageWithNothingToPlayYetStartsMutedWhenItHasSomething(engine: BrowserEngine) async throws {
         try await withPage(engine: engine, path: "/empty", title: "Empty") { rig in
+            // Record the app's own mute message as the page receives it (it is posted to the page, whichever engine, once the page
+            // can take it), so the player below is certainly made after the page was told.
+            try await run(rig.page, """
+                window.__mutes = [];
+                addEventListener('message', (event) => {
+                    if (typeof event.data === 'string' && event.data.indexOf('wsurf-mute:') === 0) { window.__mutes.push(event.data); }
+                });
+                true
+                """)
             rig.app.muteAll()
             #expect(!rig.tab.isMuted, "nothing plays, so the tab carries no mark")
             // The page learns of the mute before it has a player: the message is not dropped for want of one.
-            // The mute message is posted from a task of its own: let it start, then the page's messages are all delivered.
-            await Task.yield()
-            try await rig.page.finishPendingPageMessages()
+            try #require(
+                await waitUntil { (await read(rig.page, "window.__mutes") as? [String])?.contains("wsurf-mute:1") == true },
+                "the page was told of the mute"
+            )
             try await run(rig.page, "const song = new Audio(); song.id = 'song'; document.body.append(song); true")
             #expect(await waitUntil { await read(rig.page, "document.getElementById('song').muted") as? Bool == true })
 

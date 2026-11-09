@@ -8,21 +8,24 @@ import WebKit
 
 @testable import WSurf
 
+/// Resolves once a message posted to the page now has been delivered, which is after every message posted to it before.
+private let pendingMessagesScript = """
+await new Promise(resolve => {
+    const done = event => {
+        if (event.source !== window || event.data !== marker) return;
+        window.removeEventListener('message', done);
+        resolve();
+    };
+    window.addEventListener('message', done);
+    window.postMessage(marker, '*');
+});
+return true;
+"""
+
 extension BrowserPage {
     func finishPendingPageMessages() async throws {
         _ = try await callAsyncJavaScript(
-            """
-            await new Promise(resolve => {
-                const done = event => {
-                    if (event.source !== window || event.data !== marker) return;
-                    window.removeEventListener('message', done);
-                    resolve();
-                };
-                window.addEventListener('message', done);
-                window.postMessage(marker, '*');
-            });
-            return true;
-            """,
+            pendingMessagesScript,
             arguments: ["marker": UUID().uuidString],
             in: nil,
             contentWorld: .page
@@ -35,18 +38,7 @@ extension WKWebView {
     /// delivered, which is after every message posted to the page before it.
     func finishPendingPageMessages() async throws {
         _ = try await callAsyncJavaScript(
-            """
-            await new Promise(resolve => {
-                const done = event => {
-                    if (event.source !== window || event.data !== marker) return;
-                    window.removeEventListener('message', done);
-                    resolve();
-                };
-                window.addEventListener('message', done);
-                window.postMessage(marker, '*');
-            });
-            return true;
-            """,
+            pendingMessagesScript,
             arguments: ["marker": UUID().uuidString],
             in: nil,
             contentWorld: .page

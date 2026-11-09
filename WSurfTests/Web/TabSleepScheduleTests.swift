@@ -127,7 +127,8 @@ struct TabSleepScheduleTests {
             try #require(await waitUntil { clock.pendingCount == 1 })
             fresh.lastForegroundAt = .now - .seconds(90)
             clock.advance(by: .seconds(30))
-            // The advance released the sleep (nothing pending); the tick ran and the timer waits for the next one again.
+            // The advance released the sleep, so nothing is pending until the tick has run and the timer waits again.
+            #expect(clock.pendingCount == 0, "the advance released the sleep")
             try #require(await waitUntil { clock.pendingCount == 1 }, "the tick ran and the timer is waiting again")
             #expect(!fresh.isDeferred, "90 s is inside the new delay")
             fresh.lastForegroundAt = .now - .seconds(121)

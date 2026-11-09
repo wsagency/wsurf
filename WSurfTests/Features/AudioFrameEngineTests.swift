@@ -298,8 +298,11 @@ struct AudioFrameEngineTests {
     private func addSong(to rig: Rig) async throws {
         try await run(rig.page, "const song = new Audio(); song.id = 'main'; document.body.append(song); true")
         // The script binds it a moment after it is made.
-        // (Not a wait on `__wsurfBound`: the script keeps it in a world of its own, which the page's evaluations do not see.)
-        try await Task.sleep(for: .milliseconds(500))
+        // The script keeps its flag on the element in a world of its own, not the page's.
+        try #require(await waitUntil {
+            let script = "document.getElementById('main').__wsurfBound === true"
+            return (try? await rig.page.evaluateJavaScript(script, in: nil, contentWorld: BrowserPage.servicesWorld)) as? Bool == true
+        }, "the script bound the player")
     }
 
     private func isMuted(_ rig: Rig) async -> Bool? {
