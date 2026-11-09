@@ -88,6 +88,21 @@ public nonisolated struct PasskeyRoutes: Sendable {
     public let passkeys: [PasskeyRoute]
 }
 
+/// What saving a password needs to know of one unlocked vault (`ProfileVaultStore.passwordMatches`): its credentials as a list sees
+/// them, read at `revision`, and which of those with the submitted username hold exactly its password. Ids only: never a stored
+/// password.
+public nonisolated struct AutofillPasswordMatches: Sendable {
+    public let vaultID: UUID
+    public let revision: UInt64
+    /// The vault's credentials as `autofillCandidates` lists them.
+    public let accounts: [AutofillCandidate]
+    /// The websites the person excluded from password save offers ("Never for This Site").
+    public let blockedPasswordOrigins: Set<String>
+    /// The credentials with the username asked about whose password equals the one asked about (`String` equality, as the save offer
+    /// compared before).
+    public let samePassword: Set<UUID>
+}
+
 /// What a pick fills: a password field (the username and its password) or a verification-code field.
 public nonisolated enum AutofillLoginField: Sendable {
     case password, totp

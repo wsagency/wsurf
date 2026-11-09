@@ -432,6 +432,9 @@ struct VaultAutofillReadTests {
                     )
                 }),
                 ("passkey routes", true, { _ = try await store.passkeyRoutes(vaultID: vaultID, using: access) }),
+                ("password matches", true, {
+                    _ = try await store.passwordMatches(vaultID: vaultID, username: "ada", password: "typed", using: access)
+                }),
             ]
             for (label, readsTheContactRow, read) in reads {
                 let outcome = name(await failure(read))
@@ -483,6 +486,9 @@ struct VaultAutofillReadTests {
                 )
             }),
             ("passkey routes", { store, vaultID, access, _ in _ = try await store.passkeyRoutes(vaultID: vaultID, using: access) }),
+            ("password matches", { store, vaultID, access, _ in
+                _ = try await store.passwordMatches(vaultID: vaultID, username: "ada", password: "typed", using: access)
+            }),
         ]
         try await VaultStoreFixture.with(accounts: try Entries.all()) { f in
             let control = try await armed(f) { store, vaultID, access, _ in _ = try await store.snapshot(vaultID: vaultID, using: access) }

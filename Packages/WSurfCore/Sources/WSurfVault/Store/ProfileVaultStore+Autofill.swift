@@ -38,6 +38,28 @@ extension ProfileVaultStore {
         return routes
     }
 
+    /// The vault's candidates, as `autofillCandidates` reads them, and which of the credentials named `username` hold exactly
+    /// `password`: what a password save compares, without a stored password leaving the store. Every save compares the password of
+    /// a credential with the submitted username only, so the answer names no other credential that holds the password. It still
+    /// answers "does this login exist?" for any username and password it is given, so only the two save paths call it: the save
+    /// offer (`AutofillSaveCoordinator`) and the Input History save (`InputHistoryCredentialSave`). `AutofillListingTests` counts
+    /// every reference to it in the app's and the packages' sources, and `SecureItemIsolationTests` keeps it from agent and MCP code.
+    public func passwordMatches(
+        vaultID: UUID, username: String, password: String, using access: VaultAccess
+    ) async throws -> AutofillPasswordMatches {
+        let snapshot = try await snapshot(vaultID: vaultID, using: access)
+        // `String` equality, so canonically equal spellings match, as the whole-credential `savePlan` compares
+        // (`CredentialAccountSelection`) and as the canonical cases of `VaultMatchReadTests` and `AutofillListingTests` expect. Change
+        // all three together: if only this one changed, a save offer would say `.update` where `commitSave` plans `.unchanged`.
+        let same = snapshot.accounts.lazy.filter { $0.username == username && $0.password == password }.map(\.id)
+        let matches = AutofillPasswordMatches(
+            vaultID: vaultID, revision: snapshot.revision, accounts: snapshot.accounts.map(AutofillCandidate.init),
+            blockedPasswordOrigins: snapshot.blockedPasswordOrigins, samePassword: Set(same)
+        )
+        _ = try authorizedGrant(vaultID, access)
+        return matches
+    }
+
     /// The picked credential's candidate and `field`'s secret only: its password, or the source of its code. Only its row is read
     /// (`pickedAccount`). A credential that is no longer there, or any write since `expectedRevision` (the revision its list was read
     /// at), is `staleRevision`.
