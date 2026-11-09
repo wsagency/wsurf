@@ -37,6 +37,8 @@ final class BrowserApplication {
     private var focusOrder: [UUID] = []
     private let defaults: UserDefaults
     /// Whether this copy of the app owns the saved session: a second copy's windows say so in a notice. Only a test says otherwise.
+    /// Only that notice reads it; what is saved still follows `AppDatabase.ownsSession`, so `true` in a test gives a first copy's
+    /// windows, not a saved session.
     let ownsSession: Bool
     private static let lastWindowKey = "browser.lastFocusedWindow"
     /// Profile and window of the last regular window the user closed, kept until another regular window opens.

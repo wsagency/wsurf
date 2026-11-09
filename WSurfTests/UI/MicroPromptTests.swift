@@ -118,10 +118,12 @@ struct MicroPromptTests {
         let profile = catalog.add(name: "Micro session notice")
         var failure: (any Error)?
         do {
+            // The second copy's pass builds the app with the default, so a default of `true` would fail here.
+            try #require(!AppDatabase.ownsSession, "the test host never owns the session, so the default is a second copy's")
             for ownsSession in [true, false] {
-                let app = BrowserApplication(
-                    defaults: InMemoryUserDefaults(inheriting: .standard), notifications: NotificationCenter(), ownsSession: ownsSession
-                )
+                let app = ownsSession
+                    ? BrowserApplication(defaults: InMemoryUserDefaults(inheriting: .standard), notifications: NotificationCenter(), ownsSession: true)
+                    : BrowserApplication(defaults: InMemoryUserDefaults(inheriting: .standard), notifications: NotificationCenter())
                 let micro = app.newWindow(profile: profile, show: false, kind: .micro)
                 let reveal = micro.microReveal
                 reveal.hideDelay = .milliseconds(30)
