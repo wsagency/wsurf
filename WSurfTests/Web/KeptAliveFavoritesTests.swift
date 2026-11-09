@@ -35,7 +35,7 @@ struct KeptAliveFavoritesTests {
             let reported = await rig.state(of: favorite) ?? "nothing"
             #expect(hidden, "\(engine): the favorite behind it reports \(reported)")
             let ran = await rig.frames(of: favorite, whileFramesOf: front)
-            #expect(ran.map { $0 <= 1 } == true, "\(engine): the hidden favorite ran \(ran.map { "\($0)" } ?? "no") frames while the front tab ran 20")
+            #expect(ran.map { (0.0...1.0).contains($0) } == true, "\(engine): the hidden favorite ran \(ran.map { "\($0)" } ?? "no") frames while the front tab ran 20")
 
             #expect(favorite.isMaterialised && !favorite.isDeferred, "it stays loaded")
             #expect(favorite.page.window != nil, "and in its window")
@@ -69,7 +69,7 @@ struct KeptAliveFavoritesTests {
             let reported = await rig.state(of: favorite) ?? "nothing"
             #expect(hidden, "\(engine): when the wait ends it reports \(reported)")
             let ran = await rig.frames(of: favorite, whileFramesOf: front)
-            #expect(ran.map { $0 <= 1 } == true, "\(engine): the hidden favorite ran \(ran.map { "\($0)" } ?? "no") frames while the front tab ran 20")
+            #expect(ran.map { (0.0...1.0).contains($0) } == true, "\(engine): the hidden favorite ran \(ran.map { "\($0)" } ?? "no") frames while the front tab ran 20")
         }
     }
 
@@ -95,7 +95,7 @@ struct KeptAliveFavoritesTests {
             let reported = await rig.state(of: favorite) ?? "nothing"
             #expect(hidden, "\(engine): it reports \(reported)")
             let ran = await rig.frames(of: favorite, whileFramesOf: front)
-            #expect(ran.map { $0 <= 1 } == true, "\(engine): it ran \(ran.map { "\($0)" } ?? "no") frames while the front tab ran 20")
+            #expect(ran.map { (0.0...1.0).contains($0) } == true, "\(engine): it ran \(ran.map { "\($0)" } ?? "no") frames while the front tab ran 20")
 
             rig.browser.activate(favorite)
             #expect(await waitUntil { await rig.isAnimating(favorite) }, "\(engine): shown, it animates")
@@ -149,6 +149,10 @@ struct KeptAliveFavoritesTests {
                 "\(engine): the hide path ran for the silent tab"
             )
 
+            // A favorite that plays is kept shown, and it draws: a hidden page still loads and plays, so the player alone would not
+            // tell the difference.
+            #expect(await rig.state(of: favorite) == "visible", "\(engine): the favorite that plays is not hidden")
+            #expect(await waitUntil { await rig.isAnimating(favorite) }, "\(engine): and it still draws")
             #expect(favorite.isPlayingAudio, "\(engine): the favorite is still heard")
             #expect(rig.app.audibleTabs(for: rig.coordinator).contains { $0.tab === favorite })
             #expect(await rig.isPlaying(favorite) == true, "\(engine): its player was not paused")
