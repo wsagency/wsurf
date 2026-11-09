@@ -283,10 +283,11 @@ struct MicroShellTests {
     }
 
     @Test func theAddressCommandBringsTheBarDownBeforeTheFieldHasTheKeyboard() async {
-        let reveal = MicroReveal(hideDelay: .milliseconds(40), hostFlash: .milliseconds(60))
+        let clock = TestClock()
+        let reveal = MicroReveal(hideDelay: .milliseconds(40), hostFlash: .milliseconds(60), clock: clock)
         reveal.show()
         #expect(reveal.isRevealed)
-        #expect(await eventually { !reveal.isRevealed }, "and a command that came to nothing does not leave it there")
+        #expect(await eventually(clock) { !reveal.isRevealed }, "and a command that came to nothing does not leave it there")
     }
 
     // MARK: - What counts as another site
