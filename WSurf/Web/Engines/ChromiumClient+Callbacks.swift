@@ -16,7 +16,12 @@ extension ChromiumClient {
         var document: URL?
         var isMainFrame = false
         if let frame, frame.pointee.is_valid?(frame) == 1 {
-            document = URL(string: ChromiumInterop.takeString(frame.pointee.get_url?(frame)))
+            let address = ChromiumInterop.takeString(frame.pointee.get_url?(frame))
+            // An address Foundation cannot read is not a missing one.
+            if !address.isEmpty, URL(string: address) == nil {
+                return true
+            }
+            document = URL(string: address)
             isMainFrame = frame.pointee.is_main?(frame) == 1
         }
         return fileScope.refuses(url, requestedBy: document, isMainFrame: isMainFrame)
@@ -409,6 +414,8 @@ extension ChromiumClient {
             MainActor.assumeIsolated {
                 client.advanceDocument(frame)
                 if frame.pointee.is_main?(frame) == 1 {
+                    // The document has committed and the frame reports its address now.
+                    client.fileScope.mainFrameCommitted(URL(string: ChromiumInterop.takeString(frame.pointee.get_url?(frame))))
                     client.endMainFrameRequest()
                     client.page?.didStartLoad()
                 }

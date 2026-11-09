@@ -109,7 +109,8 @@ nonisolated final class ChromiumFileScope: @unchecked Sendable {
     /// Whether the main frame has navigated to an address before the current one. Such a frame has run a document, and what it
     /// reports is that document's address, never the initial blank page's.
     private var hasNavigatedBefore = false
-    /// True from the first real main-frame navigation, if it is to a file, until the frame has reported that file's document.
+    /// True from the first real main-frame navigation, if it is to a file, until the main frame commits (`mainFrameCommitted`) or
+    /// reports that file's document in a request.
     private var pendingFirstCommit = false
     /// Whether this page was made by `window.open()`: its blank document belongs to a script of its opener.
     private var isOpenerCreated = false
@@ -118,6 +119,16 @@ nonisolated final class ChromiumFileScope: @unchecked Sendable {
     func markOpenerCreated() {
         lock.lock()
         isOpenerCreated = true
+        lock.unlock()
+    }
+
+    /// The main frame committed a document, reported at `url`. From now on it reports that document's address, so a blank or
+    /// missing address is never the first navigation's file again. The start-up `about:blank` committing, even after that
+    /// navigation began, changes nothing.
+    func mainFrameCommitted(_ url: URL?) {
+        guard url?.absoluteString != "about:blank" else { return }
+        lock.lock()
+        pendingFirstCommit = false
         lock.unlock()
     }
 
