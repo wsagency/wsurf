@@ -80,6 +80,16 @@ FIXTURE: list[tuple[str, bool | str | None]] = [
     ("✔ Test run with 4 tests in 1 suite passed after 0.412 seconds.", True),
     ("✔ Test run with 1924 tests in 182 suites passed after 625.646 seconds.", True),
     ("Test Case '-[WSurfTests.X testY]' failed (0.010 seconds).", True),
+    # -quiet quirk: exit code 0 is not an error, the block (error line plus the step line) is dropped; other codes are kept.
+    ("error: the following command failed with exit code 0 but produced no further output", False),
+    ("SwiftCompile normal arm64 /p/A.swift (in target 'WSurf' from project 'WSurf')", False),
+    ("/p/A.swift:5:1: warning: a real warning right after the quirk block", True),
+    ("error: the following command failed with exit code 1 but produced no further output", True),
+    ("SwiftCompile normal arm64 /p/B.swift (in target 'WSurf' from project 'WSurf')", True),
+    ("error: the following command failed with exit code 0 but produced further output of its own", True),
+    ("/p/C.swift:7:3: error: a real compiler error", True),
+    ("error: a real error line", True),
+    ("SwiftCompile normal arm64 /p/D.swift (in target 'WSurf' from project 'WSurf')", True),  # a step line without the quirk before it
     ("A.swift:12: error: -[WSurfTests.X testY] : XCTAssertTrue failed", True),
     ("\t Executed 94 tests, with 1 failure (0 unexpected) in 359.349 (359.386) seconds", True),
     # A result that lands in the middle of a host line (stdout and the os_log mirror share one pipe) must survive.

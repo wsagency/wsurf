@@ -71,6 +71,10 @@ CONTINUATION = re.compile(r"^(?:\t\"|\}$|Invalidation reason: |\), NS|    \"Loca
 STARTED = re.compile(r"^◇ ((?:Test|Suite) .*?) started\.?\s*$")
 PASSED = re.compile(r"^✔ (Test (?!run with)(?:case )?.*?) passed after ([\d.]+) seconds?")
 RESULT = re.compile(r"^[✔✘] ((?:Test|Suite) .*?) (?:passed|failed|with \d+ test cases? (?:passed|failed)|recorded)\b")
+# What -quiet makes xcodebuild print for a compile step that exited 0 with no output: a false "error:" line and the
+# "SwiftCompile ... (in target ...)" line naming the step. Exactly exit code 0; any other code is a real error and passes.
+QUIRK_ERROR = re.compile(r"^error: the following command failed with exit code 0 but produced no further output$")
+QUIRK_STEP = re.compile(r"^[A-Z]\w+ .*\(in target '.*' from project '.*'\)$")
 CASE_COUNT = re.compile(r" with \d+ test cases?$")
 COUNTER_SECONDS = 30.0
 
@@ -83,6 +87,7 @@ class ConsoleFilter:
         self.dropped = 0
         self.counted = -1  # the count the last counter line showed
         self.in_dropped_record = False
+        self.after_quirk = False
         self.started: dict[str, str] = {}  # test key -> its "started" line, for tests with no result yet
         self.last_counter = time.monotonic()
 
@@ -100,6 +105,14 @@ class ConsoleFilter:
             text = text[marker.start():].lstrip("\u200b")
             line = text + "\n"
         in_record, self.in_dropped_record = self.in_dropped_record, False
+        after_quirk, self.after_quirk = self.after_quirk, False
+        if QUIRK_ERROR.match(text):
+            self.dropped += 1
+            self.after_quirk = True
+            return out
+        if after_quirk and QUIRK_STEP.match(text):
+            self.dropped += 1
+            return out
         host = HOST_LOG.match(text)
         if host:
             if not KEEP_HOST.search(text):
