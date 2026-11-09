@@ -15,6 +15,8 @@ struct SecureItemIsolationTests {
     /// return a closure that hands over a password, a code or a card, and `vaultItemSuggestions` lists a vault's cards or contacts.
     /// The password health report (`passwordHealth`) says which saved passwords are weak or reused.
     private static let needles = [
+        // The passkey routes (`passkeyRoutes`, `PasskeyRoute`): which relying parties and credential IDs each vault holds.
+        "passkeyroute", "passkeyroutes",
         "secureitem", "vaultitemautofill", "credentialmanager", "storesnapshot", "profilevaultstore", "paymentcardvault",
         "autofillvaults", "credentialaccount", "autofillvaultmigration", "autofillmigration", "autofillsaveindex",
         "managerfill", "vaultitemfill", "vaultitemsuggestions", "autofilllogin", "autofillitems", "autofillcandidate",

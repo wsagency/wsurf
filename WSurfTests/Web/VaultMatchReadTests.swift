@@ -44,4 +44,32 @@ struct VaultMatchReadTests {
             #expect(Mirror(reflecting: first).children.map(\.label) == ["rpID", "algorithm", "credentialID"])
         }
     }
+
+    /// The route asks a vault's passkey routes the ceremony's own question (`WebsiteAuthenticator.canAssert`). For every relying party
+    /// and allow list below, the routes hold a passkey for the request exactly when the ceremony would offer one from the whole
+    /// credentials: the same relying party only (a parent or another case is another one), ES256 only, an allowed ID or any.
+    @Test func theRouteAndTheCeremonyMeetTheSamePasskeys() async throws {
+        try await VaultStoreFixture.with(accounts: try Self.passkeyAccounts()) { f in
+            let (store, access) = try await f.unlocked()
+            let routes = try await store.passkeyRoutes(vaultID: f.vaultID, using: access).passkeys
+            let accounts = try await store.snapshot(vaultID: f.vaultID, using: access).accounts
+            let allowLists: [[Data]] = [[]] + (Self.ids + [Data(repeating: 9, count: 32)]).map { [$0] } + [Self.ids]
+            var offeredCount = 0
+            for rpID in ["login.example.test", "other.example.test", "example.test", "Login.example.test"] {
+                for allowed in allowLists {
+                    let routed = routes.contains {
+                        WebsiteAuthenticator.canAssert(
+                            passkeyRPID: $0.rpID, algorithm: $0.algorithm, credentialID: $0.credentialID, rpID: rpID, allowed: allowed
+                        )
+                    }
+                    let offered = !WebsiteAuthenticator.assertionCandidates(accounts, rpID: rpID, allowed: allowed).isEmpty
+                    #expect(routed == offered, "\(rpID), allowing \(allowed.count) IDs")
+                    offeredCount += offered ? 1 : 0
+                }
+            }
+            // Both answers occur: login.example.test with any list but the EdDSA passkey's, the unknown ID's or the other party's
+            // ID (3 of 6), and other.example.test with the empty list, its own ID or all of them (3 of 6).
+            #expect(offeredCount == 6)
+        }
+    }
 }
