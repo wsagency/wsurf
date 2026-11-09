@@ -11,9 +11,9 @@ struct HealthKey: Equatable {
     let revision: UInt64
 }
 
-/// The vault, unlock and revision Show Password Health's prompt covers. The revision moves on only with this page's own writes that
-/// change nothing health reads of the credentials they keep (`CredentialSettingsModel.save`, `remove`); any other revision ends the
-/// grant.
+/// The vault, unlock and revision Show Password Health's prompt covers. The revision moves on only with this page's own writes
+/// through `CredentialSettingsModel.write`: a save that changes nothing health reads of the credential (`PasswordHealth.sameInputs`),
+/// and `remove(accountID:)`, which only tests call. Any other revision ends the grant, the Trash's moves (`moveToTrash`) included.
 struct HealthGrant: Equatable {
     let vaultID: UUID
     let epoch: UInt64
@@ -26,13 +26,13 @@ struct HealthGrant: Equatable {
 /// Nothing of it is read or shown until Show Password Health passes Touch ID (`verifyOwner`). The flags are derived from the
 /// passwords: without the prompt, saving a guessed password and watching "Reused" appear would tell which login holds it, and
 /// saving a guessed username or website name and watching "Weak" appear would tell what the password holds. So the prompt covers
-/// one vault, one unlock and the revision shown, and moves on only with this page's own writes that change none of the passwords,
-/// usernames, websites and login addresses of the credentials they keep (`PasswordHealth.sameInputs`), such as a rename or a
-/// removal (`HealthGrant`). A save that changes one of them or adds a credential ends it, so does an import, and so does any
-/// revision the page did not write: autofill's save on submit, another window, sync. After the prompt, the page asks once per
-/// settled revision: a write while a request waits cancels it and asks again for the newer revision. The report is made in the
-/// vault, so only flags reach the page. A lock drops them with the session, and the next unlock asks again. Reading the vault does
-/// not extend its unlock (`CredentialAutoLock`).
+/// one vault, one unlock and the revision shown, and moves on only with this page's own saves that change none of the password,
+/// username, websites and login addresses of the credential (`PasswordHealth.sameInputs`), such as a rename (`HealthGrant`). A save
+/// that changes one of them or adds a credential ends it, and so does every other revision: an import, a move to the Trash, a
+/// merge, an undo, and autofill's save on submit, another window or sync. After the prompt, the page asks once per settled
+/// revision: a write while a request waits cancels it and asks again for the newer revision. The report is made in the vault, so
+/// only flags reach the page. A lock drops them with the session, and the next unlock asks again. Reading the vault does not extend
+/// its unlock (`CredentialAutoLock`).
 extension CredentialSettingsModel {
     /// Whether password health is shown: Show Password Health's prompt covers the vault, unlock and revision shown.
     var showsHealth: Bool {
@@ -61,7 +61,7 @@ extension CredentialSettingsModel {
     /// Asks for a report while health is shown and the vault shown is at a revision none was asked for, after `delay` (by default
     /// `healthDelay`). Called whenever the session changes.
     func scheduleHealthIfNeeded(after delay: Duration? = nil) {
-        // A revision of the granted vault and unlock that this page did not write ends the grant.
+        // A revision of the granted vault and unlock that the grant was not carried to (`carryHealthGrant`) ends it.
         if let grant = healthGrant, let live, let manager, grant.vaultID == manager.vaultID, grant.epoch == live.epoch,
            grant.revision != live.revision {
             endHealthGrant()
@@ -87,7 +87,7 @@ extension CredentialSettingsModel {
 
     /// Ends Show Password Health's grant: the flags go at once, nothing more is read, and the next Show Password Health asks again.
     /// Called when this page saves a change to what health reads of a credential or adds one, and when it imports, so each guess
-    /// saved here costs a prompt to check, and when the page meets a revision it did not write.
+    /// saved here costs a prompt to check, and when the page meets any other revision the grant was not carried to.
     func endHealthGrant() {
         healthGrant = nil
         cancelHealthRead()
@@ -96,9 +96,10 @@ extension CredentialSettingsModel {
         }
     }
 
-    /// Moves the grant on with a write this page made itself from the revision it covers, so a rename or a removal keeps it. A save
-    /// that changes what health reads of a credential or adds one, and an import, ended it before they were made (`save`,
-    /// `commitImport`).
+    /// Moves the grant on with a write this page made through `write` from the revision it covers: a save that changes nothing health
+    /// reads of the credential, such as a rename (any other save ended the grant before it was made), and `remove(accountID:)`, which
+    /// only tests call; a removal adds nothing the report reads. The page's own deletes go to the Trash outside `write`
+    /// (`moveToTrash`), so their revision ends the grant, as an import's and a merge's do.
     func carryHealthGrant(from expected: UInt64, to written: UInt64) {
         guard var grant = healthGrant, grant.revision == expected else { return }
         grant.revision = written

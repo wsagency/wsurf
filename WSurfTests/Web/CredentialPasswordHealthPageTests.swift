@@ -377,6 +377,51 @@ struct CredentialPasswordHealthPageTests {
         }
     }
 
+    /// Adding a login is a guess as well: a new login saved with a guessed password would show "Reused" on every login whose password
+    /// it matches. Adding a credential ends the grant, whatever it holds, and the match shows only after a second prompt.
+    @Test func addingALoginEndsTheGrant() async throws {
+        try await withFixture { f in
+            let all = accounts()
+            try await VaultManagerFixture.save(all, in: f.vault)
+            await f.model.load()
+            try await f.model.revealHealth()
+            #expect(await waitUntil { f.model.healthRevision == f.model.revision })
+            #expect(f.model.summaries.first { $0.id == all[3].id }?.health == nil, "the strong password is not flagged")
+            let reads = f.healthReads
+
+            // A guess: the strong password, saved on a new login for another website.
+            _ = try await f.model.save(login("Zt4$pL8@nR2w", at: "https://example.info"), expectedRevision: f.model.revision)
+            #expect(!f.model.showsHealth && f.model.healthGrant == nil && flagged(f.model.summaries).isEmpty)
+            try await Task.sleep(for: .milliseconds(50))
+            #expect(f.healthReads == reads, "nothing is read for the guess")
+
+            try await f.model.revealHealth()
+            #expect(f.prompts.reasons == [Self.reason, Self.reason])
+            #expect(await waitUntil { f.model.healthRevision == f.model.revision })
+            #expect(f.model.summaries.first { $0.id == all[3].id }?.health?.reuse != nil, "the match shows only after a second prompt")
+        }
+    }
+
+    /// A save that changes only what the report does not read keeps the grant: a new title and a note, read again for the new
+    /// revision without a prompt.
+    @Test func aTitleAndANoteKeepTheGrant() async throws {
+        try await withFixture { f in
+            var all = accounts()
+            try await VaultManagerFixture.save(all, in: f.vault)
+            await f.model.load()
+            try await f.model.revealHealth()
+            #expect(await waitUntil { f.model.healthRevision == f.model.revision })
+
+            all[3].displayName = "Renamed"
+            all[3].notes = [CredentialNote(text: "Shared with the team")]
+            _ = try await f.model.save(all[3], expectedRevision: f.model.revision)
+            #expect(f.model.showsHealth, "a title and a note keep the grant")
+            #expect(await waitUntil { f.model.healthRevision == f.model.revision })
+            #expect(f.healthReads == 2 && f.prompts.reasons.count == 1)
+            #expect(Set(flagged(f.model.summaries)) == [all[0].id, all[1].id, all[2].id])
+        }
+    }
+
     /// A username is a guess as well: "Weak" (`personal`) flags a password that holds 4 or more characters of the username, so saving
     /// usernames and watching the flag would read the password a few characters at a time. Saving a changed username ends the grant
     /// like a password.

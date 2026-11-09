@@ -106,14 +106,28 @@ public nonisolated enum PasswordHealth {
 
     /// Whether `report` would read the same of `saved` as of `stored`, the credential it replaces. `report` reads a credential's id,
     /// password, username and websites (`origins`, which hold its login addresses' origins), and nothing else; the login addresses
-    /// are compared too, as editing them edits the websites. A new credential (`stored` is `nil`) counts as a change. A page that
-    /// shows findings under one Touch ID prompt carries that prompt only across its own saves where this holds
-    /// (`CredentialSettingsModel.save`): a password, username or website saved as a guess would show whether the password is another
-    /// website's too (`reuse`) or holds the guess (`personal`).
+    /// are compared too, as editing them edits the websites. Text is compared byte for byte, as the rules read it: a username typed
+    /// again in another Unicode normalization form is the same `String`, but not the same bytes. A new credential (`stored` is `nil`)
+    /// counts as a change. A page that shows findings under one Touch ID prompt carries that prompt only across its own saves where
+    /// this holds (`CredentialSettingsModel.save`): a password, username or website saved as a guess would show whether the password
+    /// is another website's too (`reuse`) or holds the guess (`personal`).
     public static func sameInputs(_ stored: CredentialAccount?, _ saved: CredentialAccount) -> Bool {
         guard let stored else { return false }
-        return stored.id == saved.id && stored.password == saved.password && stored.username == saved.username
-            && stored.origins == saved.origins && stored.loginURLs == saved.loginURLs
+        return stored.id == saved.id && sameBytes(stored.password, saved.password) && sameBytes(stored.username, saved.username)
+            && stored.origins.count == saved.origins.count && zip(stored.origins, saved.origins).allSatisfy { sameBytes($0, $1) }
+            && stored.loginURLs == saved.loginURLs
+    }
+
+    /// Whether two texts hold the same UTF-8 bytes; `nil` is the same only as `nil`.
+    private static func sameBytes(_ first: String?, _ second: String?) -> Bool {
+        switch (first, second) {
+        case (nil, nil):
+            true
+        case let (first?, second?):
+            first.utf8.elementsEqual(second.utf8)
+        default:
+            false
+        }
     }
 
     /// The lowercased hosts of a credential's websites: its origins, which hold its login addresses' origins too

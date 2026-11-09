@@ -215,6 +215,21 @@ struct PasswordHealthTests {
         }
     }
 
+    /// The rules read bytes, so a username or password typed again in the other Unicode normalization form is a change, though
+    /// Swift's `==` calls the two texts the same.
+    @Test func textInAnotherNormalizationFormIsAChange() {
+        let composed = "Zo\u{EB}"
+        let decomposed = "Zoe\u{308}"
+        #expect(composed == decomposed && !composed.utf8.elementsEqual(decomposed.utf8), "the same text in two forms")
+        let stored = login("Kx9!vQ2#mW7p-\(composed)", at: ["https://example.com"], username: composed)
+        var username = stored
+        username.username = decomposed
+        #expect(!PasswordHealth.sameInputs(stored, username), "username")
+        var password = stored
+        password.password = "Kx9!vQ2#mW7p-\(decomposed)"
+        #expect(!PasswordHealth.sameInputs(stored, password), "password")
+    }
+
     // MARK: - Through the vault
 
     /// The manager's read: the vault's live credentials at its revision, as flags, read once as `.health`. A locked vault returns
