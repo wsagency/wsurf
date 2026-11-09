@@ -592,7 +592,9 @@ struct FileAccessScopeTests {
         var info = cef_window_info_t()
         let hosted = try #require(popup.hostPopup(id: 1, opener: opener, in: &info))
         defer { ChromiumInterop.release(UnsafeMutableRawPointer(hosted)) }
-        let gate = try #require(popup.client?.fileScope)
+        let client = try #require(popup.client)
+        defer { client.close() }
+        let gate = client.fileScope
 
         gate.mainFrameNavigation(to: site.page)
         for unsettled in [nil, URL(string: "about:blank")] {

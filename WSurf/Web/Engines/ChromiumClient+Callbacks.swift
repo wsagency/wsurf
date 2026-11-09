@@ -439,6 +439,8 @@ extension ChromiumClient {
                     client.advanceDocument(frame)
                 }
                 if frame.pointee.is_main?(frame) == 1 {
+                    // A failed navigation shows an error page, never the blank page the exception waits for.
+                    client.fileScope.mainFrameCommitted(URL(string: ChromiumClient.string(failedURL)))
                     client.endMainFrameRequest()
                     client.page?.didFailLoad(code: Int(code.rawValue),
                                             text: ChromiumClient.string(text), url: ChromiumClient.string(failedURL))
