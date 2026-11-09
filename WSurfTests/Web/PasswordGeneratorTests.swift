@@ -10,7 +10,7 @@ import Testing
 /// U2-U6: the default format, every format against a corpus of rule sets, the length bounds, the random source, and the redacted value.
 @Suite
 struct PasswordGeneratorTests {
-    private static let lookAlikes = Set("01loI".utf8)
+    private static let lookAlikes = Set("01loIO".utf8)
 
     private func make(
         _ format: PasswordFormat,
@@ -214,6 +214,10 @@ struct PasswordGeneratorTests {
         // The field wins wherever it and the rules conflict, also when the rules cannot be met on their own.
         #expect(make(.websiteRules, "minlength: 200", field: PasswordFieldLimits(maxLength: 16), seed: 1)?.count == 16)
         #expect(make(.websiteRules, "minlength: 30", field: PasswordFieldLimits(maxLength: 16), seed: 1)?.count == 16)
+        // Rules that contradict themselves fall back on the field's maxlength only, not on a minlength alone.
+        #expect(make(.websiteRules, "minlength: 40; maxlength: 10", field: PasswordFieldLimits(maxLength: 14), seed: 1)?.count == 14)
+        #expect(make(.websiteRules, "minlength: 40; maxlength: 10", field: PasswordFieldLimits(minLength: 5), seed: 1) == nil)
+        #expect(make(.websiteRules, "minlength: 200", field: PasswordFieldLimits(minLength: 5), seed: 1) == nil)
         #expect(make(.websiteRules, "required: upper; required: lower; required: digit; required: special; maxlength: 3", seed: 1) == nil)
         #expect(make(.websiteRules, "allowed: [a]; max-repeating: 2; minlength: 20", seed: 1) == nil)
         #expect(make(.websiteRules, "required: [a]; required: [b]; maxlength: 1", seed: 1) == nil)

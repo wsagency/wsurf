@@ -7,7 +7,7 @@ import Foundation
 nonisolated enum PasswordFormat: String, CaseIterable, Sendable {
     /// `xxxxxx-xxxxxx-xxxxxx`: 32 symbols (a-z without `l` and `o`, 2-9), a digit, one capital, hyphens between groups.
     case easyToType
-    /// Letters (without `l`, `o`, `I`) and digits 2-9; at least one lowercase, one uppercase and one digit.
+    /// Letters (without `l`, `o`, `I`, `O`) and digits 2-9; at least one lowercase, one uppercase and one digit.
     case lettersAndDigits
     /// As letters and digits, plus `- _ . ! @ # $ % * + = ?`; at least one of each class.
     case withSymbols
@@ -32,7 +32,7 @@ nonisolated struct PasswordFieldLimits: Equatable, Sendable {
 /// injects a source. No other randomness is used. Every pick is `Int.random(in:using:)` or `randomElement(using:)`, the standard
 /// library's unbiased draw for any alphabet size, and a rule is met by drawing again, not by repairing a candidate. A draw from the
 /// allowed set (the fixed formats and Website's Rules after the default format fails) is therefore uniform over the passwords that
-/// meet the rules. The default format is not exactly uniform (its capital's position is weighted toward the first letters), and
+/// meet the rules. The default format is not exactly uniform (its capital is picked among the draw's letters, so a password with fewer of them is slightly more likely), and
 /// Website's Rules tries it first when it meets the rules.
 ///
 /// It never produces a space or a non-ASCII character, and it returns nil when the rules cannot be met: an empty allowed set, a
@@ -110,8 +110,8 @@ nonisolated enum PasswordGenerator {
     /// The lengths a password may have. Every format keeps the field's own limits and the website's length limits, because a site
     /// that cuts a value to its `maxlength` would otherwise store a different password than the vault. A rules bound that conflicts
     /// with the field's is dropped, so the field wins. Rules that conflict on their own (a minimum above the maximum, or above what
-    /// the generator makes) leave the field's limits alone; with none, `.websiteRules` gives nil and the other formats ignore the rules'
-    /// bounds. Nil when no length fits.
+    /// the generator makes) leave the field's limits alone: `.websiteRules` then needs the field's maxlength and gives nil without one,
+    /// and the other formats ignore the rules' bounds. Nil when no length fits.
     static func lengthBounds(for format: PasswordFormat, rules: PasswordRules, field: PasswordFieldLimits) -> ClosedRange<Int>? {
         let absolute = absoluteLengthRange
         var low = field.bounds.low
@@ -125,9 +125,9 @@ nonisolated enum PasswordGenerator {
                 low = mergedLow
                 high = mergedHigh
             }
-        } else if format == .websiteRules, low == nil, high == nil {
-            // Rules that cannot be met on their own and no field limit to fall back on. With one, the field wins, as it does
-            // wherever the two conflict.
+        } else if format == .websiteRules, high == nil {
+            // Rules that cannot be met on their own. Only the field's maxlength, the limit the browser enforces, is a bound to fall
+            // back on: with it, the field wins, as it does wherever the two conflict. Without it there is nothing to generate for.
             return nil
         }
         let lower = max(low ?? absolute.lowerBound, absolute.lowerBound)

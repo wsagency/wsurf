@@ -23,7 +23,9 @@ import Foundation
 ///
 /// The run limits follow Apple's reference parser (apple/password-manager-resources, pull request 1255): `max-repeating` is the longest
 /// run of one identical character in a row, `max-sequential` the longest run of neighbouring code points, ascending or descending
-/// (`abc`, `321`), and `max-consecutive`, now deprecated, is an alias for both, so it limits each kind of run.
+/// (`abc`, `321`), and `max-consecutive`, now deprecated, is an alias for both, so it limits each kind of run. WSurf counts any
+/// neighbouring code points as a sequence (`9:` and `Z[` too, not only letters or digits), which is stricter than that reading and so
+/// safe: a password that meets it meets the narrower one.
 nonisolated struct PasswordRules: Equatable, Sendable {
     /// Input longer than this (in UTF-8 bytes, which bounds the parse work however the text is built) is ignored as a whole: the rules are empty.
     static let maximumInputLength = 1_000
