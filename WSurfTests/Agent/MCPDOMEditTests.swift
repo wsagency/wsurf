@@ -10,7 +10,7 @@ import Testing
 /// `editDOM` and the full form of `inspectElement`: what an app may change and read in the page, and what it may not. Cases that
 /// depend on the engine run on WebKit and on the embedded Chromium.
 @MainActor
-@Suite(.serialized, .boundedWebViews)
+@Suite(.serialized, .boundedWebViews, .noAnnouncePause)
 struct MCPDOMEditTests {
     static let page = """
         <!doctype html><title>Editing</title>

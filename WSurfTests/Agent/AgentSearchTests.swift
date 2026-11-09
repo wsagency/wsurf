@@ -10,6 +10,7 @@ import WebKit
 @testable import WSurf
 
 @MainActor
+@Suite(.noAnnouncePause)
 struct AgentSearchTests {
     @Test func searchBatchesQueriesFiltersDomainsAndCachesWithinATask() async {
         var requested: [String] = []

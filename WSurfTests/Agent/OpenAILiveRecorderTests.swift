@@ -61,7 +61,7 @@ struct OpenAILiveRecorderTests {
         let recorder = OpenAILiveRecorder()
         let transport = OpenAILiveTransport(base: OpenAITransportFixture([]), recorder: recorder)
         await #expect(throws: OpenAIFailure.self) {
-            _ = try await OpenAIAPI(transport: transport).createResponse([:]) { _ in }
+            _ = try await OpenAIAPI(transport: transport, retryDelay: .zero).createResponse([:]) { _ in }
         }
         #expect(recorder.snapshot.count == 2)
         #expect(recorder.snapshot.allSatisfy { $0["status"] == "failed" })

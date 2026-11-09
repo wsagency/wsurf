@@ -11,7 +11,7 @@ import Testing
 /// A connection works in a shared tab the person is not looking at. The page stays in its window out of sight, it renders
 /// and answers there, and the person's selected tab and keyboard focus stay where they were.
 @MainActor
-@Suite(.serialized)
+@Suite(.serialized, .noAnnouncePause)
 struct MCPBackgroundTabTests {
     private static let page = """
         <!doctype html><title>Background</title><meta name="viewport" content="width=device-width">

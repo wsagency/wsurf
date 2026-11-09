@@ -214,7 +214,7 @@ struct TabAssistantAccessCenterTests {
 }
 
 @MainActor
-@Suite(.boundedWebViews)
+@Suite(.boundedWebViews, .noAnnouncePause)
 struct AgentToolkitAccessTests {
     private func makeToolkit(policy: AssistantAccessPolicy) async -> AgentToolkit {
         let browser = BrowserModel(database: .temporary())

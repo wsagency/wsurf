@@ -75,7 +75,7 @@ struct AccountAccessActionTests {
 /// The click confirmation on a live page: the account-access question comes from the page driver, so it holds under
 /// every access level, including an Allow Control default.
 @MainActor
-@Suite(.serialized, .boundedWebViews)
+@Suite(.serialized, .boundedWebViews, .noAnnouncePause)
 struct AccountAccessConsentTests {
     private func loadedWebView(_ body: String) async -> BrowserPage {
         let configuration = interactiveWebViewConfiguration()

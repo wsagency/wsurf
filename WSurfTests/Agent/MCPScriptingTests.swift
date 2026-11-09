@@ -10,7 +10,7 @@ import Testing
 /// `evaluateScript`: who may run a script, what comes back, how long it may take, and what the user is told. Each case that
 /// depends on the engine runs on WebKit and on the embedded Chromium.
 @MainActor
-@Suite(.serialized, .boundedWebViews)
+@Suite(.serialized, .boundedWebViews, .noAnnouncePause)
 struct MCPScriptingTests {
     static let password = "Hunter2-user-pw"
     static let card = "4111 1111 1111 1111"

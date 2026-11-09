@@ -12,7 +12,7 @@ import Testing
 
 /// A full-page capture needs development access until the pixels leave.
 @MainActor
-@Suite(.boundedWebViews)
+@Suite(.boundedWebViews, .noAnnouncePause)
 struct MCPFullPageAccessTests {
     private typealias Rig = MCPFeedbackRig
 

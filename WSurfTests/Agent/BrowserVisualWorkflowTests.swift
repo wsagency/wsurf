@@ -10,7 +10,7 @@ import WebKit
 @testable import WSurf
 
 @MainActor
-@Suite(.serialized, .boundedWebViews)
+@Suite(.serialized, .boundedWebViews, .noAnnouncePause)
 struct BrowserVisualWorkflowTests {
     @Test func visualToolsClickAndReturnANewScreenshot() async throws {
         let fixture = try await ComputerWorkflowFixture()

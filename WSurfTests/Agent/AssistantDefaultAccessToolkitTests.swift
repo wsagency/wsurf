@@ -10,7 +10,7 @@ import WebKit
 
 /// The default through the real toolkit and a live page: what the assistant does on a website with no record.
 @MainActor
-@Suite(.boundedWebViews)
+@Suite(.boundedWebViews, .noAnnouncePause)
 struct AssistantDefaultAccessToolkitTests {
     private static let plainPage = """
         <!doctype html><title>Plain</title><p>Plain page text</p>

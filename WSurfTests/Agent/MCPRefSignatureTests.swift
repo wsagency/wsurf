@@ -12,7 +12,7 @@ import Testing
 
 /// A ref keeps the control the client last saw listed.
 @MainActor
-@Suite(.boundedWebViews)
+@Suite(.boundedWebViews, .noAnnouncePause)
 struct MCPRefSignatureTests {
     private typealias Rig = MCPFeedbackRig
 

@@ -12,7 +12,7 @@ import Testing
 
 /// What an action reports, how big the reply is, and how long the page is waited for, through the MCP session on both engines.
 @MainActor
-@Suite(.boundedWebViews)
+@Suite(.boundedWebViews, .noAnnouncePause)
 struct MCPActionFeedbackTests {
     private typealias Rig = MCPFeedbackRig
 

@@ -13,7 +13,7 @@ import Testing
 @testable import WSurf
 
 @MainActor
-@Suite(.serialized)
+@Suite(.serialized, .noAnnouncePause)
 struct MCPTransportTests {
     private final class RetainedWindows {
         var values: [ObjectIdentifier: NSWindow] = [:]

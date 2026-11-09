@@ -13,6 +13,7 @@ import WebKit
 
 /// `readAccessibility` and `readPerformance` through the MCP session, on both engines.
 @MainActor
+@Suite(.noAnnouncePause)
 struct MCPInspectionToolsTests {
     private static let pixel = Data(base64Encoded: "R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7") ?? Data()
 

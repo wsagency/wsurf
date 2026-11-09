@@ -12,7 +12,7 @@ import WebKit
 /// Test credentials in the Developer tier: where they can be typed, what is refused everywhere else, and that nothing the
 /// connection is told afterwards repeats one. Sessions use an in-memory trust store and a real page served on 127.0.0.1.
 @MainActor
-@Suite(.serialized, .boundedWebViews)
+@Suite(.serialized, .boundedWebViews, .noAnnouncePause)
 struct MCPSecretTypingTests {
     private static let password = "Zx9-test-Pa$$word!"
     /// Longer than 30 characters, so a control row that cuts its value still shows a prefix of it.

@@ -13,7 +13,7 @@ import WebKit
 /// A secret typed by a real MCP client over the Unix socket: the reply that reaches it, and what each way a connection ends
 /// leaves behind. The server uses in-memory trust storage and a temporary socket directory.
 @MainActor
-@Suite(.serialized, .boundedWebViews)
+@Suite(.serialized, .boundedWebViews, .noAnnouncePause)
 struct MCPSecretConnectionTests {
     private static let password = "Zx9-wire-Pa$$word!"
 
