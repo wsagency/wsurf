@@ -27,7 +27,8 @@ struct CredentialPasswordPrivacyTests {
         static let copyCode = String(localized: "copy a verification code")
         static let editor = String(localized: "show or copy a saved password or verification code")
         static let items = String(localized: "show saved cards, documents and hidden fields")
-        static let historyWithItems = String(localized: "show saved passwords, cards and documents")
+        /// A card's prompt that is also the editor's one prompt.
+        static let itemsAndPasswords = String(localized: "show saved passwords, cards and documents")
     }
 
     /// Stands in for Touch ID: records each reason, fails when told to, and runs `whileAsking` once, as if while the prompt is up.
@@ -180,7 +181,7 @@ struct CredentialPasswordPrivacyTests {
         }
     }
 
-    /// A value changed while the prompt is up is the one that is copied: nothing was read before the answer.
+    /// A value changed while the prompt is up is the one that is shown or copied: nothing was read before the answer.
     @Test func theVaultIsReadOnlyAfterTheAnswer() async throws {
         try await withFixture { f in
             let stored = login(password: "before-the-prompt", totp: generator)
@@ -191,6 +192,11 @@ struct CredentialPasswordPrivacyTests {
             try await f.model.copyPassword(accountID: stored.id)
             #expect(f.text == "after-the-prompt")
 
+            changed.password = "shown-after-the-prompt"
+            f.verifier.whileAsking = { [changed] in try await VaultManagerFixture.save([changed], in: f.vault) }
+            try await f.model.revealPassword(accountID: stored.id)
+            #expect(f.model.revealedPassword?.value == "shown-after-the-prompt")
+
             var other = generator
             other.secret = Data("ABCDEFGHIJKLMNOPQRST".utf8)
             changed.totp = other
@@ -199,7 +205,16 @@ struct CredentialPasswordPrivacyTests {
             let newCode = try TOTP.code(other, at: 59).value
             #expect(newCode != "94287082")
             #expect(f.text == newCode)
-            #expect(f.verifier.calls == 2)
+
+            var third = generator
+            third.secret = Data("QRSTUVWXYZABCDEFGHIJ".utf8)
+            changed.totp = third
+            f.verifier.whileAsking = { [changed] in try await VaultManagerFixture.save([changed], in: f.vault) }
+            try await f.model.showTOTP(accountID: stored.id)
+            let shownCode = try TOTP.code(third, at: 59).value
+            #expect(shownCode != newCode)
+            #expect(f.model.totpCode(now: 59)?.value == shownCode)
+            #expect(f.verifier.calls == 4)
         }
     }
 
@@ -358,6 +373,25 @@ struct CredentialPasswordPrivacyTests {
         }
     }
 
+    /// An answer recorded for an editor that was verified and then replaced verifies nothing: the editor open now was never asked.
+    @Test func anAnswerForAReplacedEditorIsNotTheOpenEditors() async throws {
+        try await withFixture { f in
+            let stored = login(password: "verified-then-replaced")
+            try await f.seed([stored])
+            try await f.model.beginEditing(accountID: stored.id)
+            try await f.model.verifyEditor()
+            let replaced = try #require(f.model.live?.editor)
+            let epoch = try #require(f.manager.authorizationEpoch)
+            f.model.cancelEditing()
+            try await f.model.beginEditing(accountID: stored.id)
+            #expect(!f.model.editorIsVerified)
+
+            #expect(throws: CredentialVaultError.unauthorized) { try f.model.markVerified(replaced, epoch: epoch) }
+            #expect(!f.model.editorIsVerified)
+            #expect(f.verifier.calls == 1)
+        }
+    }
+
     /// The prompt that opened a card's editor is that editor's one prompt for its password and code as well.
     @Test func theEditorOfACardAsksOnceForItsCardsAndItsPassword() async throws {
         try await withFixture { f in
@@ -366,7 +400,7 @@ struct CredentialPasswordPrivacyTests {
             try await f.seed([stored])
 
             try await f.model.beginEditing(accountID: stored.id)
-            #expect(f.verifier.reasons == [Reason.items])
+            #expect(f.verifier.reasons == [Reason.itemsAndPasswords], "the card's prompt names the password it also shows")
             #expect(f.model.editorIsVerified)
             try await f.model.copy(.password, of: .draft)
             #expect(f.text == "card-login-secret")
@@ -439,14 +473,50 @@ struct CredentialPasswordPrivacyTests {
             #expect(f.verifier.calls == 0, "the stored credential holds no card, so the editor opened without a prompt")
 
             try await f.model.revealHistorySecrets()
-            #expect(f.verifier.reasons == [Reason.historyWithItems])
+            #expect(f.verifier.reasons == [Reason.itemsAndPasswords])
             #expect(f.model.editorIsVerified)
             try await f.model.copy(.password, of: .draft)
             #expect(f.verifier.calls == 1)
 
             f.model.hideHistorySecrets()
             try await f.model.revealHistorySecrets()
-            #expect(f.verifier.reasons == [Reason.historyWithItems, Reason.items])
+            #expect(f.verifier.reasons == [Reason.itemsAndPasswords, Reason.items])
+        }
+    }
+
+    /// A password replaced long ago (here: saved under the earlier username, then cleared) comes back on an older page of History.
+    /// Show Secrets on the newer pages, which held no password, asked nothing; the older password stays masked, and the next Show
+    /// Secrets asks the editor's one prompt.
+    @Test func anOlderPasswordLoadedLaterStaysMaskedUntilTheEditorAsks() async throws {
+        try await withFixture { f in
+            let id = UUID()
+            var account = login(id: id, password: "older-page-secret")
+            try await VaultManagerFixture.unlock(f.vault)
+            try await VaultManagerFixture.save([account], in: f.vault)
+            account.username = "ada-renamed"
+            try await VaultManagerFixture.save([account], in: f.vault)
+            account.password = nil
+            try await VaultManagerFixture.save([account], in: f.vault)
+            for index in 0..<55 {
+                account.displayName = "Renamed \(index)"
+                try await VaultManagerFixture.save([account], in: f.vault)
+            }
+            await f.model.load()
+
+            try await f.model.openHistory(accountID: id)
+            let newest = try #require(f.model.history)
+            #expect(newest.next != nil, "the oldest values are on a later page")
+            #expect(!newest.versions.contains { $0.account.password != nil }, "the first page holds no password")
+            try await f.model.revealHistorySecrets()
+            #expect(f.verifier.calls == 0 && f.model.history?.revealsSecrets == true)
+
+            try await f.model.loadOlderVersions()
+            #expect(f.model.history?.versions.contains { $0.account.password == "older-page-secret" } == true)
+            #expect(f.model.history?.revealsSecrets == false && !f.model.historyShowsPasswords)
+
+            try await f.model.revealHistorySecrets()
+            #expect(f.verifier.reasons == [Reason.editor])
+            #expect(f.model.historyShowsPasswords)
         }
     }
 }

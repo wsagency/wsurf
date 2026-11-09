@@ -13,8 +13,9 @@ extension RecordSubject {
 
 /// A credential's earlier versions beside the editor. Read-only: "Use This" and "Add" copy a value into the draft, and nothing is
 /// stored until the user chooses Save, which keeps the value it replaces as a new earlier version. Passwords and notes stay masked
-/// until "Show Secrets"; a verification code's setup key is never shown. Every value shown has a copy button that puts it on the
-/// clipboard (the model reads it under the current unlock, masked or not); non-secret text can also be selected and copied.
+/// until "Show Secrets", and passwords also until the editor has answered its one Touch ID prompt; a verification code's setup key
+/// is never shown. Every value shown has a copy button that puts it on the clipboard (the model reads it under the current unlock,
+/// masked or not); non-secret text can also be selected and copied.
 struct CredentialHistoryPanel: View {
     let model: CredentialSettingsModel
     @State private var work: Task<Void, Never>?
@@ -32,7 +33,7 @@ struct CredentialHistoryPanel: View {
                     header(state)
                     if let version = state.shown {
                         ScrollView {
-                            fields(version, draft: draft, reveals: state.revealsSecrets)
+                            fields(version, draft: draft, reveals: state.revealsSecrets, showsPasswords: model.historyShowsPasswords)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                         }
                     }
@@ -103,13 +104,13 @@ struct CredentialHistoryPanel: View {
     // MARK: Fields
 
     @ViewBuilder
-    private func fields(_ version: CredentialVersion, draft: CredentialDraft, reveals: Bool) -> some View {
+    private func fields(_ version: CredentialVersion, draft: CredentialDraft, reveals: Bool, showsPasswords: Bool) -> some View {
         let from = version.account
         let currentLabel = draft.changesNothing ? String(localized: "Current") : String(localized: "Current — not saved")
         LazyVStack(alignment: .leading, spacing: 0) {
             nameRow(from, draft, currentLabel)
             RowSeparator()
-            loginRow(from, draft, currentLabel, reveals: reveals)
+            loginRow(from, draft, currentLabel, reveals: reveals, showsPasswords: showsPasswords)
             RowSeparator()
             websitesRow(from, draft)
             RowSeparator()
@@ -154,7 +155,10 @@ struct CredentialHistoryPanel: View {
         }
     }
 
-    private func loginRow(_ from: CredentialAccount, _ draft: CredentialDraft, _ currentLabel: String, reveals: Bool) -> some View {
+    /// `showsPasswords` is `CredentialSettingsModel.historyShowsPasswords`; the concealed username follows Show Secrets alone.
+    private func loginRow(
+        _ from: CredentialAccount, _ draft: CredentialDraft, _ currentLabel: String, reveals: Bool, showsPasswords: Bool
+    ) -> some View {
         let hidesUsername = draft.usernameIsConcealed && !reveals
         return VersionFieldRow(
             title: "Login", differs: from.username != draft.username || from.password != draft.password, use: { use(.login) }
@@ -166,8 +170,9 @@ struct CredentialHistoryPanel: View {
                     copyThis: copier(.username, current: false), copyCurrent: copier(.username, current: true)
                 )
                 VersionValues(
-                    caption: "Password", this: secret(from.password ?? "", hides: !reveals), current: secret(draft.password ?? "", hides: !reveals),
-                    currentLabel: currentLabel, isMasked: !reveals, copyName: "password",
+                    caption: "Password", this: secret(from.password ?? "", hides: !showsPasswords),
+                    current: secret(draft.password ?? "", hides: !showsPasswords), currentLabel: currentLabel, isMasked: !showsPasswords,
+                    copyName: "password",
                     copyThis: copier(.password, current: false), copyCurrent: copier(.password, current: true)
                 )
             }

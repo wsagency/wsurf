@@ -499,7 +499,8 @@ final class CredentialSettingsModel {
                 throw CredentialVaultError.invalidData
             }
             existing = account
-            asked = try await verifySensitiveItems(of: account)
+            // This answer is also the editor's one prompt for its password and code, so it names them.
+            asked = try await verifySensitiveItems(of: account, reason: String(localized: "show saved passwords, cards and documents"))
         }
         var draft = CredentialDraft(editing: existing, revision: snapshot.revision)
         if existing == nil {

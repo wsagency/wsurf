@@ -26,11 +26,13 @@ struct CredentialSecureItemPrivacyTests {
     private static let networkPart = CredentialCopyPart.secureField(item: 0, field: 0)
     private static let passphrasePart = CredentialCopyPart.secureField(item: 0, field: 2)
 
-    /// Stands in for Touch ID: counts how often the model asks, and fails when told to.
+    /// Stands in for Touch ID: counts how often the model asks, fails when told to, and runs `whileAsking` once, as if while the
+    /// prompt is up.
     @MainActor
     private final class Verifier {
         private(set) var reasons: [String] = []
         var failure: (any Error)?
+        var whileAsking: (@MainActor () async throws -> Void)?
 
         var calls: Int {
             reasons.count
@@ -38,6 +40,10 @@ struct CredentialSecureItemPrivacyTests {
 
         func verify(_ reason: String) async throws {
             reasons.append(reason)
+            if let action = whileAsking {
+                whileAsking = nil
+                try await action()
+            }
             if let failure {
                 throw failure
             }
@@ -171,6 +177,38 @@ struct CredentialSecureItemPrivacyTests {
             f.verifier.failure = nil
             try await f.model.revealSecureItems(accountID: stored.id)
             #expect(f.model.revealedItems?.accountID == stored.id)
+        }
+    }
+
+    /// The card shown is the one stored when the prompt was answered: Show Details reads the vault only after the answer.
+    @Test func showingACardReadsTheVaultOnlyAfterTheAnswer() async throws {
+        try await withFixture { f in
+            let stored = cardAccount()
+            try await f.seed([stored])
+            var renamed = stored
+            renamed.secureItems = [SecureItemFixtures.card(name: "Renamed Holder")]
+            f.verifier.whileAsking = { [renamed] in try await VaultManagerFixture.save([renamed], in: f.vault) }
+
+            try await f.model.revealSecureItems(accountID: stored.id)
+            #expect(f.verifier.calls == 1)
+            #expect(f.model.revealedItems?.items.first?.value("fullName") == "Renamed Holder")
+        }
+    }
+
+    /// A card that arrived after the list was read is not shown without its prompt: the list catches up, and the next Show asks.
+    @Test func aCardAddedSinceTheListWasReadIsNotShownUnasked() async throws {
+        try await withFixture { f in
+            let id = UUID()
+            try await f.seed([wifiAccount(id: id)])
+            try await VaultManagerFixture.save([cardAccount(id: id)], in: f.vault)
+
+            await #expect(throws: CredentialVaultError.staleRevision) { try await f.model.revealSecureItems(accountID: id) }
+            #expect(f.verifier.calls == 0 && f.model.revealedItems == nil)
+            #expect(f.model.summaries.first { $0.id == id }?.hasSensitiveItems == true)
+
+            try await f.model.revealSecureItems(accountID: id)
+            #expect(f.verifier.calls == 1)
+            #expect(f.model.revealedItems?.items.first?.value("number") == SecureItemFixtures.cardNumber)
         }
     }
 

@@ -49,13 +49,14 @@ extension CredentialSettingsModel {
     }
 
     /// Records a prompt the user answered for `editor`. Throws when `editor` is no longer the open one, so nothing is shown for it.
+    /// An editor that was verified and then replaced still names itself in `verifiedEditor`, so that alone proves nothing.
     func markVerified(_ editor: UUID, epoch: UInt64) throws {
         try update(epoch) { session in
             if session.editor == editor, session.draft != nil {
                 session.verifiedEditor = editor
             }
         }
-        guard live?.verifiedEditor == editor else { throw CredentialVaultError.unauthorized }
+        guard let live, live.editor == editor, live.verifiedEditor == editor else { throw CredentialVaultError.unauthorized }
     }
 
     /// The one prompt an export asks before anything leaves the vault, naming what leaves; `nil` when it sends no passkey, password,

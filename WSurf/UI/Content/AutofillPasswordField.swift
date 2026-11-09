@@ -12,6 +12,9 @@ struct AutofillPasswordField: View {
     /// Asked before the field shows what it holds (the Credential Manager's editor asks for Touch ID); `false` keeps it masked. Hiding
     /// never asks. The save review leaves it out: what it shows was just typed on the page.
     var reveal: (() async -> Bool)?
+    /// Whether the field may show what it holds at all; `false` keeps it masked whatever was clicked before. The editor passes
+    /// whether it has answered its one prompt, which a replaced editor has not, though the field's own state stays.
+    var mayReveal = true
     @State private var isRevealed = false
     /// Set while `reveal` is asked, so a second click starts no second prompt.
     @State private var isAsking = false
@@ -23,11 +26,15 @@ struct AutofillPasswordField: View {
         case hidden, revealed
     }
 
+    private var shows: Bool {
+        isRevealed && mayReveal
+    }
+
     var body: some View {
         LabeledContent("Password") {
             HStack(spacing: 6) {
                 Group {
-                    if isRevealed {
+                    if shows {
                         TextField("Password", text: $password)
                             .autocorrectionDisabled()
                             .focused($focusedField, equals: .revealed)
@@ -39,15 +46,15 @@ struct AutofillPasswordField: View {
                 .labelsHidden()
                 .privacySensitive()
                 Button(action: toggle) {
-                    Image(systemName: isRevealed ? "eye.slash" : "eye")
+                    Image(systemName: shows ? "eye.slash" : "eye")
                         .frame(width: 24, height: 24)
                         .contentShape(.rect)
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(.secondary)
                 .disabled(isAsking)
-                .accessibilityLabel(isRevealed ? "Hide password" : "Show password")
-                .help(isRevealed ? "Hide password" : "Show password")
+                .accessibilityLabel(shows ? "Hide password" : "Show password")
+                .help(shows ? "Hide password" : "Show password")
                 if let copy {
                     CredentialCopyButton(label: "Copy Password", action: copy).disabled(password.isEmpty)
                 }
@@ -61,8 +68,8 @@ struct AutofillPasswordField: View {
     }
 
     private func toggle() {
-        guard !isRevealed, let reveal else {
-            show(!isRevealed)
+        guard !shows, let reveal else {
+            show(!shows)
             return
         }
         isAsking = true

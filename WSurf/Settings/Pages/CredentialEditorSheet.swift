@@ -286,7 +286,10 @@ struct CredentialEditorSheet: View {
                 } else {
                     copyableField("Username or email", text: text(\.username), part: .username, copyLabel: "Copy Username")
                 }
-                AutofillPasswordField(password: optionalText(\.password), copy: { copy(.password) }, reveal: { await verifySecrets() })
+                AutofillPasswordField(
+                    password: optionalText(\.password), copy: { copy(.password) }, reveal: { await verifySecrets() },
+                    mayReveal: model.editorIsVerified
+                )
                 Button("Generate Password") {
                     do {
                         model.draft?.password = try SavedPassword.generate()

@@ -41,17 +41,25 @@ extension CredentialSettingsModel {
         let values = state.values + page.items.filter { !known.contains($0.item.id) }
         let versions = try await Self.versions(current: current, revisions: values)
         // Values shown unmasked were shown under a Touch ID check of what was loaded then; an older card or document loaded now is
-        // masked again until it is shown with its own check.
+        // masked again until it is shown with its own check. So is an older password while the editor has not answered its prompt
+        // (a password replaced or saved under another username stays in History): Show Secrets is offered again, and asks.
         let addsSensitive = versions.contains { Self.holdsSensitiveItems($0) } && !state.versions.contains { Self.holdsSensitiveItems($0) }
-        try update(live.epoch) {
-            guard $0.history?.accountID == state.accountID, $0.history?.next == after else { return }
-            $0.history?.values = values
-            $0.history?.next = page.next
-            $0.history?.versions = versions
-            if addsSensitive {
-                $0.history?.revealsSecrets = false
+        let holdsPasswords = versions.contains { $0.account.password != nil }
+        try update(live.epoch) { session in
+            guard session.history?.accountID == state.accountID, session.history?.next == after else { return }
+            session.history?.values = values
+            session.history?.next = page.next
+            session.history?.versions = versions
+            if addsSensitive || (holdsPasswords && !session.editorIsVerified) {
+                session.history?.revealsSecrets = false
             }
         }
+    }
+
+    /// Whether History shows passwords as they are: after Show Secrets, and only while the editor has answered its one prompt
+    /// (`+PasswordPrivacy`). Notes, items and a concealed username follow Show Secrets alone.
+    var historyShowsPasswords: Bool {
+        history?.revealsSecrets == true && editorIsVerified
     }
 
     /// Shows `id` (a version's `id`, `nil` for the current one) against the draft. An id History does not list changes nothing.
@@ -63,7 +71,8 @@ extension CredentialSettingsModel {
     /// Unmasks the passwords, notes and items History shows. The current unlock is the authority, as for every other Show: the vault
     /// is read under it. A password, the draft's own included, needs the editor's one prompt (`+PasswordPrivacy`); a version that held
     /// a card or an identity document asks every time, whether or not the editor was verified. Both are one prompt, asked before the
-    /// read, and an answer to either counts as the editor's.
+    /// read, and an answer to either counts as the editor's, so a card's prompt to an editor not yet verified names passwords too.
+    /// Passwords show only while the editor is verified (`historyShowsPasswords`).
     func revealHistorySecrets() async throws {
         guard let live, let history = live.history else { throw CredentialVaultError.invalidData }
         let editor = live.editor
@@ -71,7 +80,7 @@ extension CredentialSettingsModel {
         let asksForPasswords = holdsPasswords && !live.editorIsVerified
         let asksForItems = history.versions.contains(where: Self.holdsSensitiveItems)
         if asksForItems || asksForPasswords {
-            let reason = if asksForItems && asksForPasswords {
+            let reason = if asksForItems && !live.editorIsVerified {
                 String(localized: "show saved passwords, cards and documents")
             } else if asksForItems {
                 String(localized: "show saved cards, documents and hidden fields")

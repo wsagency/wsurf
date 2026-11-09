@@ -10453,7 +10453,7 @@
       "comment" : "Reason shown in the Touch ID or password prompt the first time the user shows or copies the password or verification code in the editor of a saved credential, or shows the secrets of its History; that editor then does not ask again. It completes a system sentence like “WSurf is trying to …”, so it is a lowercase verb phrase with no period."
     },
     "show saved passwords, cards and documents" : {
-      "comment" : "Reason shown in the Touch ID or password prompt when the user shows the secrets of a credential’s History that holds both passwords and a saved card or ID document. It completes a system sentence like “WSurf is trying to …”, so it is a lowercase verb phrase with no period."
+      "comment" : "Reason shown in the Touch ID or password prompt when the user opens the editor of a saved credential that holds a card or ID document, or shows the secrets of a credential’s History that holds one before that editor has asked: the same answer then also shows and copies the credential’s passwords and verification code. It completes a system sentence like “WSurf is trying to …”, so it is a lowercase verb phrase with no period."
     },
     "Show Secrets" : {
       "comment" : "Button at the top right of the History panel that unmasks the passwords, notes and card details of the versions shown; it can ask for Touch ID first. Title Case, a command. Alternates with “Hide Secrets”."
