@@ -61,7 +61,8 @@ enum D4SpikeDriver {
             case "frames": await frames()
             case "input": await input()
             case "kill": await kill()
-            #if D4_AX
+            case "ime": await ime()
+            #if DEBUG
             case "ax": await accessibility()
             #endif
             default: log("unknown script \(script)")
@@ -265,6 +266,55 @@ enum D4SpikeDriver {
         try? await Task.sleep(for: .seconds(1))
     }
 
+    /// Day 5, the plumbing only (no system input method is driven): marked text, its bounds coming back for the candidate
+    /// window, commit, and cancel, through the page's own NSTextInputClient calls, in each of the three fields.
+    private static func ime() async {
+        var browser: BrowserModel { coordinator.browser }
+        let tab = browser.newTab(url: url("ime.html"), engine: .chromium)
+        _ = await waitLoaded(tab, timeout: 60)
+        try? await Task.sleep(for: .seconds(1))
+        guard let page = tab.liveView, let chromium = page.chromium, let window = chromium.window else {
+            log("ime: no page")
+            return
+        }
+        for (name, selector) in [("search box", "#s"), ("contenteditable", "#e"), ("textarea", "#t")] {
+            // Focus the field with a click at its centre (in-app events), as a person would.
+            let rectJSON = try? await page.evaluateJavaScript(
+                "JSON.stringify((r => [r.x + r.width / 2, r.y + r.height / 2])(document.querySelector('\(selector)').getBoundingClientRect()))")
+            guard let text = rectJSON as? String, let data = text.data(using: .utf8),
+                  let point = try? JSONSerialization.jsonObject(with: data) as? [Double], point.count == 2 else {
+                log("ime \(name): field not found")
+                continue
+            }
+            let inWindow = chromium.convert(CGPoint(x: point[0], y: point[1]), to: nil)
+            for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+                if let event = NSEvent.mouseEvent(with: type, location: inWindow, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                                  windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1) {
+                    window.sendEvent(event)
+                }
+            }
+            try? await Task.sleep(for: .milliseconds(300))
+            let before = chromium.firstRect(forCharacterRange: NSRange(location: 0, length: 1), actualRange: nil)
+            chromium.setMarkedText("にほん", selectedRange: NSRange(location: 3, length: 0), replacementRange: NSRange(location: NSNotFound, length: 0))
+            try? await Task.sleep(for: .milliseconds(400))
+            let marked = chromium.hasMarkedText()
+            let during = chromium.firstRect(forCharacterRange: NSRange(location: 0, length: 1), actualRange: nil)
+            let caret = chromium.convert(window.convertFromScreen(during), from: nil)
+            chromium.insertText("日本", replacementRange: NSRange(location: NSNotFound, length: 0))
+            try? await Task.sleep(for: .milliseconds(300))
+            chromium.setMarkedText("かな", selectedRange: NSRange(location: 2, length: 0), replacementRange: NSRange(location: NSNotFound, length: 0))
+            try? await Task.sleep(for: .milliseconds(200))
+            chromium.setMarkedText("", selectedRange: NSRange(location: 0, length: 0), replacementRange: NSRange(location: NSNotFound, length: 0))
+            try? await Task.sleep(for: .milliseconds(300))
+            let value = try? await page.evaluateJavaScript(
+                "(e => e.value !== undefined ? e.value : e.textContent)(document.querySelector('\(selector)')) + ' | ' + document.getElementById('log').textContent")
+            log("ime \(name): marked \(marked); firstRect before \(before.integral), during \(during.integral) (field centre at \(Int(point[0])),\(Int(point[1])) in the page, the marked text's first character at \(caret.integral) in the page); value after commit and cancel: \(String(describing: value))")
+        }
+        captureWindow("ime-after")
+        browser.close(tab)
+        try? await Task.sleep(for: .seconds(1))
+    }
+
     /// Day 8-9: the service ends as a crash would; WSurf must not stall or crash, and the tab must come back.
     private static func kill() async {
         var browser: BrowserModel { coordinator.browser }
@@ -283,7 +333,7 @@ enum D4SpikeDriver {
         try? await Task.sleep(for: .seconds(1))
     }
 
-    #if D4_AX
+    #if DEBUG
     /// Day 8-9: CEF's tree reaches WSurf's mirror (run with `WSURF_OOP_AX=1`; VoiceOver is the owner's pass). Press on a
     /// button and on a link goes back to the page as a click.
     private static func accessibility() async {

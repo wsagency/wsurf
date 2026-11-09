@@ -5,6 +5,9 @@
 
 import AppKit
 import CCefAppKit
+#if DEBUG
+import CefKit
+#endif
 
 if CommandLine.arguments.contains("--mcp") {
     let socketOption = CommandLine.arguments.firstIndex(of: "--mcp-socket")
@@ -13,6 +16,11 @@ if CommandLine.arguments.contains("--mcp") {
     }
     LocalMCPEndpoint.runStdioRelay(socketPath: socketPath ?? LocalMCPEndpoint.path)
 }
+
+#if DEBUG
+// D4 spike: the owner's keychain check (option b); returns at once unless `--d4-keychain` is given.
+D4KeychainProbe.runIfRequested(identity: "WSurf")
+#endif
 
 // Install CEF's lightweight AppKit subclass without loading Chromium.
 CEFApplication.install()

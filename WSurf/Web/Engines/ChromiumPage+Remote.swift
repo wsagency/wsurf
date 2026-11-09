@@ -55,7 +55,7 @@ extension ChromiumPage {
         }
     }
 
-    #if D4_AX
+    #if DEBUG
     override func accessibilityChildren() -> [Any]? {
         guard remote != nil else { return super.accessibilityChildren() }
         return accessibilityMirror?.rootElement.map { [$0] } ?? []
@@ -215,7 +215,7 @@ extension ChromiumPage {
         case CefRemote.Event.findResult:
             find.receive(identifier: Int(message.int(CefRemote.Key.identifier)), count: Int(message.int(CefRemote.Key.count)),
                          active: Int(message.int(CefRemote.Key.active)), isFinal: message.bool(CefRemote.Key.final))
-        #if D4_AX
+        #if DEBUG
         case CefRemote.Event.accessibilityTree:
             if accessibilityMirror == nil {
                 accessibilityMirror = ChromiumAccessibilityMirror(page: self)

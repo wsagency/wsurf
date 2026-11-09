@@ -5,8 +5,11 @@
 
 import AppKit
 import CCefAppKit
+import CefKit
 import XPC
 
+// The owner's keychain check (option b), run from Terminal with `--d4-keychain read`; returns at once otherwise.
+D4KeychainProbe.runIfRequested(identity: "WSurf Chromium")
 CEFApplication.install()
 // No Dock tile, no menu bar, never active: the service is not an app the person sees.
 NSApp.setActivationPolicy(.prohibited)

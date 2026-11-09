@@ -29,7 +29,7 @@ final class ChromiumPage: NSView {
     var remoteCursor: NSCursor = .arrow
     /// D4 spike: input state of the out-of-process page (`ChromiumPage+RemoteInput`).
     var remoteInput = ChromiumRemoteInputState()
-    #if D4_AX
+    #if DEBUG
     /// D4 spike: CEF's accessibility tree, mirrored for VoiceOver (`ChromiumAccessibilityMirror`).
     var accessibilityMirror: ChromiumAccessibilityMirror?
     #endif
