@@ -193,7 +193,7 @@ private nonisolated func title(of fact: AutofillItemFact) -> String {
 }
 
 private nonisolated enum Refusal: CaseIterable, Sendable {
-    case locked, revoked, expired, unknownVault, tamperedHead
+    case locked, revoked, expired, unknownVault, tamperedRow, tamperedHead
 }
 
 /// A store's clock that, once armed, counts the store's reads of it and revokes the access it was armed with at the third, as
@@ -369,8 +369,10 @@ struct VaultAutofillReadTests {
 
     /// Every read, list or pick, refuses exactly as the verified read does: a locked vault and a revoked access are `unauthorized`, a
     /// lease past its deadline `expired`, a vault the access holds no grant on `unauthorized` (the read never reaches the file), and a
-    /// head changed on disk `integrityFailure`. Nothing is returned. A changed row fails a pick only when it is the picked row; the
-    /// tamper cases of both reads are in `VaultPickReadTests`.
+    /// head changed on disk `integrityFailure`. Nothing is returned. A row changed on disk (the contact's) is `integrityFailure` for
+    /// every read that reads it: the verified read, the three lists and that row's own pick. A pick of another row reads only its own
+    /// row (D5 PR-6) and still returns, and the next list refuses the change. That the lists stay full reads is what bounds the
+    /// single-row pick's trade-off, and this case pins it. The tamper cases of the pick are in `VaultPickReadTests`.
     @Test(arguments: Refusal.allCases)
     private func everyReadRefusesWhatTheVerifiedReadRefuses(_ refusal: Refusal) async throws {
         try await VaultStoreFixture.with(accounts: try Entries.all()) { f in
@@ -389,6 +391,14 @@ struct VaultAutofillReadTests {
                 clock.advance(by: .seconds(301))
             case .unknownVault:
                 vaultID = UUID()
+            case .tamperedRow:
+                let row = try f.storedRecord(f.vaultID, Entries.contactID)
+                try f.mutate { db in
+                    try db.execute(
+                        sql: "UPDATE record SET sealed = ? WHERE vaultID = ? AND recordID = ?",
+                        arguments: [VaultStoreFixture.flipped(row.sealed), f.vaultID.lowerText, Entries.contactID.lowerText]
+                    )
+                }
             case .tamperedHead:
                 try f.mutate { db in
                     guard let stored = try StoreTables.head(db, vaultID: f.vaultID) else { throw CredentialStoreError.malformed }
@@ -396,38 +406,44 @@ struct VaultAutofillReadTests {
                 }
             }
             let expected = name(await failure { _ = try await store.snapshot(vaultID: vaultID, using: access) })
-            let reads: [(String, () async throws -> Void)] = [
-                ("candidates", { _ = try await store.autofillCandidates(vaultID: vaultID, using: access) }),
-                ("password", {
+            // Each read with whether it reads the contact's row: the lists read every row, a pick its own row only.
+            let reads: [(String, Bool, () async throws -> Void)] = [
+                ("candidates", true, { _ = try await store.autofillCandidates(vaultID: vaultID, using: access) }),
+                ("password", false, {
                     _ = try await store.autofillLogin(
                         vaultID: vaultID, accountID: Entries.loginID, field: .password, expectedRevision: revision, using: access
                     )
                 }),
-                ("code", {
+                ("code", false, {
                     _ = try await store.autofillLogin(vaultID: vaultID, accountID: Entries.codeID, field: .totp, expectedRevision: revision, using: access)
                 }),
-                ("cards", { _ = try await store.autofillItems(vaultID: vaultID, kind: .cards, using: access) }),
-                ("contacts", { _ = try await store.autofillItems(vaultID: vaultID, kind: .contacts, using: access) }),
-                ("card pick", {
+                ("cards", true, { _ = try await store.autofillItems(vaultID: vaultID, kind: .cards, using: access) }),
+                ("contacts", true, { _ = try await store.autofillItems(vaultID: vaultID, kind: .contacts, using: access) }),
+                ("card pick", false, {
                     _ = try await store.autofillItems(
                         vaultID: vaultID, kind: .cards, accountID: Entries.loginID, item: 0, expectedRevision: revision, using: access
                     )
                 }),
-                ("contact pick", {
+                ("contact pick", true, {
                     _ = try await store.autofillItems(
                         vaultID: vaultID, kind: .contacts, accountID: Entries.contactID, item: 0, expectedRevision: revision, using: access
                     )
                 }),
             ]
-            for (label, read) in reads {
-                #expect(name(await failure(read)) == expected, "\(label)")
+            for (label, readsTheContactRow, read) in reads {
+                let outcome = name(await failure(read))
+                if refusal == .tamperedRow, !readsTheContactRow {
+                    #expect(outcome == "none", "\(label) read another row than its own")
+                } else {
+                    #expect(outcome == expected, "\(label)")
+                }
             }
             switch refusal {
             case .locked, .revoked, .unknownVault:
                 #expect(expected == name(CredentialVaultError.unauthorized))
             case .expired:
                 #expect(expected == name(CredentialVaultError.expired))
-            case .tamperedHead:
+            case .tamperedRow, .tamperedHead:
                 #expect(expected.contains("integrityFailure"))
             }
         }

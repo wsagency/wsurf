@@ -346,7 +346,8 @@ extension ProfileVaultStore {
 
     /// The picked live account of one unlocked vault (`ProfileVaultStore+Autofill.swift`), under the grant checks `snapshot` makes:
     /// before the operation lock and under it. The caller checks the grant once more right before it returns. Any write since
-    /// `expectedRevision`, or an account the head does not list, is `staleRevision`.
+    /// `expectedRevision`, or an account the head does not list, is `staleRevision`. `expectedRevision` must come from a full read (a
+    /// list): only the head and this row are checked here, so that read is what refuses tampering with the vault's other rows.
     func pickedAccount(vaultID: UUID, accountID: UUID, expectedRevision: UInt64, using access: VaultAccess) async throws -> CredentialAccount {
         _ = try authorizedGrant(vaultID, access)
         let account = try await withOperation { pool in
