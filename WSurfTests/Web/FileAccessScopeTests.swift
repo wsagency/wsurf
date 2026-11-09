@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 
 import AppKit
+import CCef
 import Foundation
 import Testing
 import WebKit
@@ -410,6 +411,213 @@ struct FileAccessScopeTests {
         #expect(try refused(gate, site.style.absoluteString, by: "https://example.test/"))
         #expect(try refused(gate, site.style.absoluteString, by: "chrome-extension://abcdef/index.html"))
         #expect(refused(gate, site.style, by: site.outside), "a document outside the scope")
+    }
+
+    /// CEF can report a main frame's address late: the first subresource of a small document arrives while the frame still says
+    /// nothing or `about:blank`. That frame is judged by the address its navigation went to.
+    @Test func aMainFrameThatHasNotTakenItsAddressYetIsJudgedByItsNavigation() throws {
+        let site = try makeSite()
+        defer { site.remove() }
+
+        let own = try gate(navigatedTo: site.drawing.absoluteString)
+        for unsettled in [nil, URL(string: "about:blank")] {
+            #expect(!own.refuses(site.logo, requestedBy: unsettled, isMainFrame: true), "a saved drawing reads its folder")
+            #expect(own.refuses(site.outside, requestedBy: unsettled, isMainFrame: true), "but not outside it")
+        }
+        let mailed = try gate(navigatedTo: site.mailedDrawing.absoluteString)
+        for unsettled in [nil, URL(string: "about:blank")] {
+            #expect(mailed.refuses(site.logo, requestedBy: unsettled, isMainFrame: true), "a mailed drawing reads only itself")
+            #expect(!mailed.refuses(site.mailedDrawing, requestedBy: unsettled, isMainFrame: true))
+        }
+        let web = try gate(navigatedTo: "https://example.test/")
+        #expect(web.refuses(site.logo, requestedBy: nil, isMainFrame: true), "a navigation to a web page leaves no scope")
+        #expect(ChromiumFileScope().refuses(site.logo, requestedBy: nil, isMainFrame: true), "and no navigation leaves none")
+    }
+
+    @Test func aSubframeThatDoesNotSayWhatItShowsIsStillRefused() throws {
+        let site = try makeSite()
+        defer { site.remove() }
+        let gate = try gate(navigatedTo: site.page.absoluteString)
+
+        for unsettled in [nil, URL(string: "about:blank")] {
+            #expect(gate.refuses(site.logo, requestedBy: unsettled, isMainFrame: false))
+            #expect(gate.refuses(site.logo, requestedBy: unsettled))
+        }
+    }
+
+    @Test func aMainFrameThatStillShowsAnotherDocumentIsStillRefused() throws {
+        let site = try makeSite()
+        defer { site.remove() }
+        let gate = try gate(navigatedTo: site.page.absoluteString)
+
+        #expect(gate.refuses(site.logo, requestedBy: site.outside, isMainFrame: true), "the old file is outside the new scope")
+        #expect(try gate.refuses(site.logo, requestedBy: #require(URL(string: "https://example.test/")), isMainFrame: true))
+        #expect(try gate.refuses(site.logo, requestedBy: #require(URL(string: "about:srcdoc")), isMainFrame: true))
+        #expect(try gate.refuses(site.logo, requestedBy: #require(URL(string: "about:blank#blocked")), isMainFrame: true))
+        #expect(try gate.refuses(site.logo, requestedBy: #require(URL(string: "about:blank?x")), isMainFrame: true))
+        #expect(!gate.refuses(site.logo, requestedBy: site.page, isMainFrame: true), "the committed document reads its folder")
+    }
+
+    /// A pop-up's blank page is written by its opener's script, so a file the opener sends it to does not make that page the
+    /// file's document.
+    @Test func aPopupAnOpenerCreatedNeverTakesItsBlankPageForTheNavigationsDocument() throws {
+        let site = try makeSite()
+        defer { site.remove() }
+        let gate = ChromiumFileScope()
+        gate.markOpenerCreated()
+        gate.mainFrameNavigation(to: site.page)
+
+        for unsettled in [nil, URL(string: "about:blank")] {
+            #expect(gate.refuses(site.logo, requestedBy: unsettled, isMainFrame: true))
+        }
+        #expect(!gate.refuses(site.logo, requestedBy: site.page, isMainFrame: true), "once it shows the file, it reads its folder")
+    }
+
+    @Test func aMainFrameThatRanADocumentBeforeNeverTakesItsBlankPageForTheNavigationsDocument() throws {
+        let site = try makeSite()
+        defer { site.remove() }
+        let gate = try gate(navigatedTo: "https://example.test/")
+        gate.mainFrameNavigation(to: site.page)
+
+        for unsettled in [nil, URL(string: "about:blank")] {
+            #expect(gate.refuses(site.logo, requestedBy: unsettled, isMainFrame: true))
+        }
+    }
+
+    @Test func aMainFrameThatHasReportedItsDocumentIsNoLongerJudgedByItsNavigation() throws {
+        let site = try makeSite()
+        defer { site.remove() }
+        let gate = try gate(navigatedTo: site.page.absoluteString)
+
+        #expect(!gate.refuses(site.logo, requestedBy: nil, isMainFrame: true), "before the frame reports its address")
+        #expect(!gate.refuses(site.logo, requestedBy: site.page, isMainFrame: true))
+        #expect(gate.refuses(site.logo, requestedBy: URL(string: "about:blank"), isMainFrame: true), "after it did")
+    }
+
+    @Test func aMainFrameThatCommittedIsNoLongerJudgedByItsNavigation() throws {
+        let site = try makeSite()
+        defer { site.remove() }
+        let gate = try gate(navigatedTo: site.page.absoluteString)
+
+        gate.mainFrameCommitted(URL(string: "about:blank"))
+        #expect(!gate.refuses(site.logo, requestedBy: nil, isMainFrame: true), "the start-up page committing late changes nothing")
+        gate.mainFrameCommitted(site.page)
+        for unsettled in [nil, URL(string: "about:blank")] {
+            #expect(gate.refuses(site.logo, requestedBy: unsettled, isMainFrame: true), "a blank page after the commit is not the file")
+        }
+        #expect(!gate.refuses(site.logo, requestedBy: site.page, isMainFrame: true))
+    }
+
+    /// A navigation to `about:blank` leaves no scope, never counts as a document the frame ran, and so never re-arms the gate for
+    /// a frame that ran one; and the start-up blank page does not count as one either.
+    @Test func aNavigationToABlankPageLeavesNoScopeAndNeverRearmsTheGate() throws {
+        let site = try makeSite()
+        defer { site.remove() }
+        let blank = try #require(URL(string: "about:blank"))
+
+        let rearmed = try gate(navigatedTo: "https://example.test/")
+        rearmed.mainFrameNavigation(to: blank)
+        rearmed.mainFrameNavigation(to: site.page)
+        for unsettled in [nil, blank] {
+            #expect(rearmed.refuses(site.logo, requestedBy: unsettled, isMainFrame: true), "a frame that ran a web page")
+        }
+
+        let left = try gate(navigatedTo: site.page.absoluteString)
+        left.mainFrameNavigation(to: blank)
+        #expect(left.refuses(site.logo, requestedBy: nil, isMainFrame: true), "no scope after a blank navigation")
+        #expect(left.refuses(site.logo, requestedBy: site.page, isMainFrame: true))
+
+        let startUp = try gate(navigatedTo: "about:blank")
+        startUp.mainFrameNavigation(to: site.page)
+        #expect(!startUp.refuses(site.logo, requestedBy: nil, isMainFrame: true), "the start-up blank page is not a document before")
+    }
+
+    // MARK: Chromium's gate, as CEF calls it
+
+    private nonisolated final class FakeFrame: @unchecked Sendable {
+        let address: String
+        let isMain: Bool
+        init(address: String, isMain: Bool) {
+            self.address = address
+            self.isMain = isMain
+        }
+    }
+
+    /// A CEF frame that says it is valid, whether it is the main frame, and what it shows. `owner` keeps its answers alive.
+    private func fakeFrame(address: String, isMain: Bool) -> UnsafeMutablePointer<cef_frame_t> {
+        let frame = ChromiumInterop.allocate(cef_frame_t.self, owner: FakeFrame(address: address, isMain: isMain))
+        frame.pointee.is_valid = { _ in 1 }
+        frame.pointee.is_main = { me in
+            ChromiumInterop.owner(FakeFrame.self, of: me.map(UnsafeMutableRawPointer.init))?.isMain == true ? 1 : 0
+        }
+        frame.pointee.get_url = { me in
+            let value = cef_string_userfree_utf16_alloc()
+            let address = ChromiumInterop.owner(FakeFrame.self, of: me.map(UnsafeMutableRawPointer.init))?.address ?? ""
+            if let value {
+                ChromiumInterop.setString(address, to: &value.pointee)
+            }
+            return value
+        }
+        return frame
+    }
+
+    /// `refusesFile` asks CEF whether the requester is the main frame, and does not take an address Foundation cannot read for none.
+    @Test func theGateAsksCEFWhetherTheRequesterIsTheMainFrameAndReadsItsAddress() throws {
+        try ChromiumRuntime.shared.ensureInitialized()
+        let site = try makeSite()
+        defer { site.remove() }
+        let client = ChromiumClient(page: ChromiumPage(context: BrowserProfileContext(profile: .privateBrowsing())))
+        client.fileScope.mainFrameNavigation(to: site.page)
+        let unreadable = try #require(["http://[", "http://a b/", "ht tp://x"].first { URL(string: $0) == nil }, "a rejected address")
+        let frames = [
+            fakeFrame(address: "", isMain: false), fakeFrame(address: "", isMain: true),
+            fakeFrame(address: unreadable, isMain: true), fakeFrame(address: "about:blank", isMain: false),
+        ]
+        defer { frames.forEach { ChromiumInterop.release(UnsafeMutableRawPointer($0)) } }
+
+        #expect(client.refusesFile(site.logo, requestedBy: frames[0]), "a subframe that reports nothing")
+        #expect(!client.refusesFile(site.logo, requestedBy: frames[1]), "the main frame on its first navigation")
+        #expect(client.refusesFile(site.logo, requestedBy: frames[2]), "an address that cannot be read is not a missing one")
+        #expect(client.refusesFile(site.logo, requestedBy: frames[3]), "a blank subframe")
+        #expect(client.refusesFile(site.logo, requestedBy: nil), "no frame")
+    }
+
+    /// CEF makes a pop-up's browser from the client `hostPopup` returns: that page's gate never takes its blank page for the file.
+    @Test func aPageCEFMakesForAPopupNeverTakesItsBlankPageForTheFile() throws {
+        let site = try makeSite()
+        defer { site.remove() }
+        let context = BrowserProfileContext(profile: .privateBrowsing())
+        let opener = ChromiumPage(context: context)
+        let popup = ChromiumPage(context: context, popup: site.page)
+        var info = cef_window_info_t()
+        let hosted = try #require(popup.hostPopup(id: 1, opener: opener, in: &info))
+        defer { ChromiumInterop.release(UnsafeMutableRawPointer(hosted)) }
+        let client = try #require(popup.client)
+        defer { client.close() }
+        let gate = client.fileScope
+
+        gate.mainFrameNavigation(to: site.page)
+        for unsettled in [nil, URL(string: "about:blank")] {
+            #expect(gate.refuses(site.logo, requestedBy: unsettled, isMainFrame: true))
+        }
+        #expect(!gate.refuses(site.logo, requestedBy: site.page, isMainFrame: true), "once it shows the file it reads its folder")
+    }
+
+    /// An image document asks for no `file:` subresource, so only the main frame's commit can end the exception: the gate of a
+    /// Chromium tab that has loaded one no longer takes a blank main frame for it.
+    @Test func theCommitOfAnImageDocumentEndsTheExceptionOnChromium() async throws {
+        let site = try makeSite()
+        defer { site.remove() }
+        let image = site.folder.appendingPathComponent("sibling.png")
+        try await withTab(engine: .chromium) { tab in
+            tab.load(image)
+            let page = tab.page
+            try #require(await waitUntil { page.url?.lastPathComponent == "sibling.png" && !page.isLoading })
+            let gate = try #require(page.chromium?.client?.fileScope)
+            for unsettled in [nil, URL(string: "about:blank")] {
+                #expect(gate.refuses(site.logo, requestedBy: unsettled, isMainFrame: true))
+            }
+        }
     }
 
     @Test func navigatingToAWebPageLeavesNoScope() throws {

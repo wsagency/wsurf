@@ -937,6 +937,7 @@ extension ChromiumPage {
     func hostPopup(id: Int32, opener: ChromiumPage, in info: inout cef_window_info_t) -> UnsafeMutablePointer<cef_client_t>? {
         guard let reserved = popupInCreation, raw == nil, client == nil, !closing, !isClosed else { return nil }
         let client = ChromiumClient(page: self)
+        client.fileScope.markOpenerCreated()
         let pointer = client.makeClient()
         self.client = client
         opener.pendingPopups[id] = self

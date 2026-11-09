@@ -14,10 +14,17 @@ extension ChromiumClient {
     nonisolated func refusesFile(_ url: URL, requestedBy frame: UnsafeMutablePointer<cef_frame_t>?) -> Bool {
         guard url.isFileURL else { return false }
         var document: URL?
+        var isMainFrame = false
         if let frame, frame.pointee.is_valid?(frame) == 1 {
-            document = URL(string: ChromiumInterop.takeString(frame.pointee.get_url?(frame)))
+            let address = ChromiumInterop.takeString(frame.pointee.get_url?(frame))
+            // An address Foundation cannot read is not a missing one.
+            if !address.isEmpty, URL(string: address) == nil {
+                return true
+            }
+            document = URL(string: address)
+            isMainFrame = frame.pointee.is_main?(frame) == 1
         }
-        return fileScope.refuses(url, requestedBy: document)
+        return fileScope.refuses(url, requestedBy: document, isMainFrame: isMainFrame)
     }
 
     // MARK: JavaScript dialogs
@@ -407,6 +414,8 @@ extension ChromiumClient {
             MainActor.assumeIsolated {
                 client.advanceDocument(frame)
                 if frame.pointee.is_main?(frame) == 1 {
+                    // The document has committed and the frame reports its address now.
+                    client.fileScope.mainFrameCommitted(URL(string: ChromiumInterop.takeString(frame.pointee.get_url?(frame))))
                     client.endMainFrameRequest()
                     client.page?.didStartLoad()
                 }
@@ -430,6 +439,8 @@ extension ChromiumClient {
                     client.advanceDocument(frame)
                 }
                 if frame.pointee.is_main?(frame) == 1 {
+                    // A failed navigation shows an error page, never the blank page the exception waits for.
+                    client.fileScope.mainFrameCommitted(URL(string: ChromiumClient.string(failedURL)))
                     client.endMainFrameRequest()
                     client.page?.didFailLoad(code: Int(code.rawValue),
                                             text: ChromiumClient.string(text), url: ChromiumClient.string(failedURL))
