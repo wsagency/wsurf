@@ -255,7 +255,7 @@ private struct SecureItemDateButton: View {
     }
 }
 
-private extension View {
+extension View {
     /// A concealed value is never selectable, shown or not: ⌘C would go around the clipboard clearing (`SecretClipboard`).
     @ViewBuilder
     func selectable(_ allowed: Bool) -> some View {

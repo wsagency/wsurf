@@ -20,7 +20,6 @@ extension NSPasteboard.PasteboardType {
 @MainActor
 @Observable
 final class InputHistoryListModel {
-    static let clipboardLifetime: Duration = .seconds(60)
     /// Rows the list draws. The store keeps no more than this many entries, so a longer list only ever comes from a test.
     static let visibleLimit = 500
     static let mask = String(repeating: "\u{2022}", count: 8)

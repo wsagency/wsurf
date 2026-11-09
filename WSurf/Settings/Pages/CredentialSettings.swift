@@ -787,6 +787,7 @@ struct CredentialRow: View, Equatable {
             Text(verbatim: field.value)
                 .font(.system(.body, design: .monospaced))
                 .lineLimit(3)
+                .selectable(!item.isConcealed(field))
                 .privacySensitive()
             Spacer(minLength: 0)
             CredentialCopyButton(label: "Copy \(title)", extent: 18) {

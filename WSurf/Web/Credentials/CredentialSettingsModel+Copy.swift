@@ -102,10 +102,11 @@ extension CredentialSettingsModel {
     func deliver(epoch: UInt64, notice: LocalizedStringResource, _ produce: () throws -> CredentialCopyValue) throws {
         let value = try produce()
         try Task.checkCancellation()
-        guard manager?.authorizationEpoch == epoch else { throw CredentialVaultError.unauthorized }
-        if value.isSecret, let manager {
-            // For this Mac only, concealed, and gone after a minute, when this vault locks, or at quit, if still ours.
-            clipboard.copy(value.text, from: .vault(profile: profile.id, vault: manager.vaultID))
+        guard let manager, manager.authorizationEpoch == epoch else { throw CredentialVaultError.unauthorized }
+        if value.isSecret {
+            // For this Mac only, concealed, and gone after a minute, when this vault locks, or at quit, if still ours. A secret never
+            // takes the plain path below.
+            clipboard.copy(value.text, from: .vault(profile: manager.profileID, vault: manager.vaultID))
             showNotice(LocalizedStringResource("\(String(localized: notice)). It leaves the clipboard in a minute."))
         } else {
             pasteboard.declareTypes([.string], owner: nil)

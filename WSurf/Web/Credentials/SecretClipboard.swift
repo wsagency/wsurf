@@ -63,10 +63,11 @@ final class SecretClipboard {
     /// Puts `text` on the clipboard, concealed and for this Mac only, and schedules its clearing.
     func copy(_ text: String, from source: Source) {
         clearing?.cancel()
-        _ = pasteboard.prepareForNewContents(with: .currentHostOnly)
+        // The count `prepareForNewContents` returns is ours: if another app writes after it, the pasteboard's count moves on and this
+        // copy's clearing leaves that write alone, which reading the count after our own writes could not tell.
+        let changeCount = pasteboard.prepareForNewContents(with: .currentHostOnly)
         _ = pasteboard.setString(text, forType: .string)
         _ = pasteboard.setData(Data(), forType: .concealed)
-        let changeCount = pasteboard.changeCount
         held = (source, changeCount)
         clearing = Task { [pasteboard, clock] in
             do {

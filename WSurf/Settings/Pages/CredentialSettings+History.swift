@@ -160,13 +160,15 @@ struct CredentialHistoryPanel: View {
         _ from: CredentialAccount, _ draft: CredentialDraft, _ currentLabel: String, reveals: Bool, showsPasswords: Bool
     ) -> some View {
         let hidesUsername = draft.usernameIsConcealed && !reveals
+        // Each column's Copy follows that column's own flag (the version's, then the draft's): either one makes the username secret.
+        let usernameIsSecret = draft.usernameIsConcealed || from.basicAuthenticationMetadata?.username?.fieldType == .concealedString
         return VersionFieldRow(
             title: "Login", differs: from.username != draft.username || from.password != draft.password, use: { use(.login) }
         ) {
             VStack(alignment: .leading, spacing: 8) {
                 VersionValues(
                     caption: "Username", this: secret(from.username, hides: hidesUsername), current: secret(draft.username, hides: hidesUsername),
-                    currentLabel: currentLabel, isMasked: hidesUsername, isSecret: draft.usernameIsConcealed, copyName: "username",
+                    currentLabel: currentLabel, isMasked: hidesUsername, isSecret: usernameIsSecret, copyName: "username",
                     copyThis: copier(.username, current: false), copyCurrent: copier(.username, current: true)
                 )
                 VersionValues(
@@ -317,7 +319,7 @@ struct CredentialHistoryPanel: View {
                         let hides = item.isConcealed(field) && !reveals
                         HStack(alignment: .top, spacing: 8) {
                             Text(verbatim: item.label(of: field)).foregroundStyle(.secondary)
-                            noteText(field.value, reveals: !hides)
+                            noteText(field.value, reveals: !hides, selectable: !item.isConcealed(field))
                                 .lineLimit(3)
                                 .privacySensitive()
                                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -338,12 +340,12 @@ struct CredentialHistoryPanel: View {
         value.isEmpty || !hides ? value : Self.mask
     }
 
-    /// A shown note or item value cannot be selected, shown or not: ⌘C would go around the clipboard clearing (`SecretClipboard`). The
-    /// copy button next to it stays.
+    /// A shown note or hidden item value cannot be selected, shown or not: ⌘C would go around the clipboard clearing
+    /// (`SecretClipboard`). The copy button next to it stays. A plain item value (a holder's name) can be selected.
     @ViewBuilder
-    private func noteText(_ text: String, reveals: Bool) -> some View {
+    private func noteText(_ text: String, reveals: Bool, selectable: Bool = false) -> some View {
         if reveals {
-            Text(verbatim: text)
+            Text(verbatim: text).selectable(selectable)
         } else {
             Text(verbatim: Self.mask)
         }

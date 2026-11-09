@@ -173,7 +173,7 @@ struct InputHistoryListModelTests {
         #expect(rig.model.notice != nil)
         #expect(await waitUntil { rig.clock.pendingCount == 1 })
 
-        rig.clock.advance(by: InputHistoryListModel.clipboardLifetime - .seconds(1))
+        rig.clock.advance(by: SecretClipboard.lifetime - .seconds(1))
         #expect(rig.pasteboard.string(forType: .string) == "dummy-secret-123")
         rig.clock.advance(by: .seconds(1))
         await rig.model.clipboardClearing?.value
@@ -190,7 +190,7 @@ struct InputHistoryListModelTests {
         #expect(await waitUntil { rig.clock.pendingCount == 1 })
         rig.pasteboard.clearContents()
         rig.pasteboard.setString("copied later", forType: .string)
-        rig.clock.advance(by: InputHistoryListModel.clipboardLifetime)
+        rig.clock.advance(by: SecretClipboard.lifetime)
         await rig.model.clipboardClearing?.value
         #expect(rig.pasteboard.string(forType: .string) == "copied later")
     }

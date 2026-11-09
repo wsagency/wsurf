@@ -13,6 +13,8 @@ struct MCPSettingsPage: View {
     @State private var namingConfiguration = false
     @State private var configurationName = ""
     @State private var configurationFailure: String?
+    /// "Copied. It leaves the clipboard in a minute." after the paired configuration (which holds a token) was copied.
+    @State private var configurationNotice: String?
 
     private var trustStore: MCPTrustStore {
         server.trustStore
@@ -69,6 +71,11 @@ struct MCPSettingsPage: View {
                 RowSeparator()
                 DetailRow(verbatimTitle: configurationFailure) { EmptyView() }
             }
+
+            if let configurationNotice {
+                RowSeparator()
+                DetailRow(verbatimTitle: configurationNotice) { EmptyView() }
+            }
         }
         .task { trustStore.loadIfNeeded() }
         .alert("Name This App", isPresented: $namingConfiguration) {
@@ -100,7 +107,13 @@ extension MCPSettingsPage {
             try trustStore.pair(token: token, name: configurationName, kind: nil)
             copy(server.configuration(pairedWith: token), concealed: true)
             configurationFailure = nil
+            configurationNotice = String(localized: "Copied. It leaves the clipboard in a minute.")
+            Task {
+                try? await Task.sleep(for: .seconds(6))
+                configurationNotice = nil
+            }
         } catch {
+            configurationNotice = nil
             configurationFailure = String(localized: "WSurf couldn’t pair this app. Try again.")
         }
     }
