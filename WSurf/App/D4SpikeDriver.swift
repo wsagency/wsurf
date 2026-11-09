@@ -79,12 +79,24 @@ enum D4SpikeDriver {
     private static func day1() async {
         var browser: BrowserModel { coordinator.browser }
         log("before: CEF loaded in WSurf \(cefLoadedHere()), WSurf children \(childNames(of: getpid()))")
+        if ProcessInfo.processInfo.environment["WSURF_D4_WARM"] == "webkit" {
+            // K3 attribution: is the first Chromium tab's gap the window's first-tab cost (the same for a WebKit tab)?
+            let warmStarted = ContinuousClock.now
+            let warmWatch = GapWatch()
+            let warm = browser.newTab(url: url("plain/2.html"), engine: .webKit)
+            let warmSync = exactMs(ContinuousClock.now - warmStarted)
+            let warmLoaded = await waitLoaded(warm, timeout: 60)
+            let warmGap = warmWatch.stop()
+            log("first WebKit tab (warm-up): loaded \(warmLoaded) in \((ContinuousClock.now - warmStarted).milliseconds) ms, newTab itself \(String(format: "%.1f", warmSync)) ms, longest main-thread gap \(Int(warmGap)) ms (ended \(Int(warmWatch.longestEndedAtMs)) ms after)")
+            try? await Task.sleep(for: .seconds(1))
+        }
         let started = ContinuousClock.now
         let watch = GapWatch()
         let tab = browser.newTab(url: url("plain/1.html"), engine: .chromium)
+        let newTabSync = exactMs(ContinuousClock.now - started)
         let loaded = await waitLoaded(tab, timeout: 60)
         let gap = watch.stop()
-        log("first Chromium tab: loaded \(loaded) in \((ContinuousClock.now - started).milliseconds) ms, longest main-thread gap \(Int(gap)) ms (ended \(Int(watch.longestEndedAtMs)) ms after the tab was asked for, uptime \(String(format: "%.3f", ProcessInfo.processInfo.systemUptime))), engine \(String(describing: tab.loadedEngine)), title \(tab.liveView?.title ?? "nil"), url \(tab.liveView?.url?.absoluteString ?? "nil")")
+        log("first Chromium tab: loaded \(loaded) in \((ContinuousClock.now - started).milliseconds) ms, newTab itself \(String(format: "%.1f", newTabSync)) ms, longest main-thread gap \(Int(gap)) ms (ended \(Int(watch.longestEndedAtMs)) ms after the tab was asked for, uptime \(String(format: "%.3f", ProcessInfo.processInfo.systemUptime))), engine \(String(describing: tab.loadedEngine)), title \(tab.liveView?.title ?? "nil"), url \(tab.liveView?.url?.absoluteString ?? "nil")")
         await processReport()
         if let page = tab.liveView {
             let title = try? await page.evaluateJavaScript("document.title + ' / ' + navigator.userAgent")
@@ -409,6 +421,11 @@ enum D4SpikeDriver {
 
     private static func url(_ path: String) -> URL {
         URL(string: base + "/" + path)!
+    }
+
+    /// A duration in milliseconds with its fraction (`Duration.milliseconds` here is a whole number).
+    private static func exactMs(_ duration: Duration) -> Double {
+        Double(duration.components.seconds) * 1000 + Double(duration.components.attoseconds) / 1e15
     }
 
     private static func waitLoaded(_ tab: BrowserTab, timeout: Double) async -> Bool {

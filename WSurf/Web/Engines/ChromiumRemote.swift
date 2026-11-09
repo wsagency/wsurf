@@ -33,6 +33,12 @@ nonisolated enum ChromiumOOP {
 
     static let log = Logger(subsystem: "io.wsagency.wsurf", category: "chromium-oop")
 
+    /// Milliseconds since `start`, with the fraction (`Duration.milliseconds` here is a whole number).
+    nonisolated static func ms(since start: ContinuousClock.Instant) -> Double {
+        let duration = ContinuousClock.now - start
+        return Double(duration.components.seconds) * 1000 + Double(duration.components.attoseconds) / 1e15
+    }
+
     /// How frames reach this window: "remote" (`CALayer(remoteClientId:)`, the plan's design) or "xpc" (the plan's
     /// fallback: each frame's IOSurface over XPC, put into a layer from a queue that is not the main thread).
     /// The remote layer draws nothing across processes on macOS 26 (spike, b11), so "xpc" is the default.
@@ -178,7 +184,7 @@ final class ChromiumRemote {
         needsHello = false
         let started = ContinuousClock.now
         let root = ChromiumRuntime.shared.prepareRootForService()
-        let rootMs = Double((ContinuousClock.now - started).milliseconds)
+        let rootMs = ChromiumOOP.ms(since: started)
         let message = CefRemoteMessage(CefRemote.Op.hello)
         message.set(CefRemote.Key.identifier, CefRemote.protocolVersion)
         message.set(CefRemote.Key.rootPath, root.path)
@@ -208,7 +214,7 @@ final class ChromiumRemote {
             let answer = CefRemoteMessage(wrapping: reply)
             MainActor.assumeIsolated { ChromiumRemote.shared.helloAnswered(answer, sent: sent) }
         }
-        ChromiumOOP.log.notice("hello sent to \(self.serviceName, privacy: .public): built in \(Double((ContinuousClock.now - started).milliseconds)) ms (root \(rootMs) ms)")
+        ChromiumOOP.log.notice("hello sent to \(self.serviceName, privacy: .public): built in \(ChromiumOOP.ms(since: started)) ms (root \(rootMs) ms)")
         if ChromiumOOP.presentation == "xpc" {
             let connection = xpc_connection_create(serviceName, framesQueue)
             xpc_connection_set_event_handler(connection) { event in
@@ -236,7 +242,7 @@ final class ChromiumRemote {
             return
         }
         servicePID = pid_t(message.int(CefRemote.Key.pid))
-        helloRoundTripMs = Double((ContinuousClock.now - sent).milliseconds)
+        helloRoundTripMs = ChromiumOOP.ms(since: sent)
         cefStartMs = message.double(CefRemote.Key.value)
         let ok = message.bool(CefRemote.Key.success)
         ChromiumOOP.log.notice("hello answered: pid \(self.servicePID), ok \(ok), CEF start \(self.cefStartMs) ms, round trip \(self.helloRoundTripMs) ms")
@@ -272,7 +278,7 @@ final class ChromiumRemote {
     private func receive(_ incoming: Incoming) {
         let started = ContinuousClock.now
         defer {
-            let ms = Double((ContinuousClock.now - started).milliseconds)
+            let ms = ChromiumOOP.ms(since: started)
             if ms >= 4, case .message(let message) = incoming {
                 ChromiumOOP.log.notice("slow event \(message.op, privacy: .public) for browser \(message.browser): \(ms) ms")
             }

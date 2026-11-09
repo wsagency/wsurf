@@ -642,9 +642,14 @@ final class RemoteBrowser {
         guard let host = hostReference() else { return }
         defer { Native.release(UnsafeMutableRawPointer(host)) }
         let text = message.string(CefRemote.Key.text)
-        var replacement = cef_range_t(from: UInt32(truncatingIfNeeded: message.int(CefRemote.Key.replaceFrom)),
+        // The C API takes the ranges as pointers, but C++ has them as references: CEF's C-to-C++ layer drops the whole call
+        // when one is NULL. "No replacement" is CefRange::InvalidRange(), as cefclient passes it (the b13 IME check: with
+        // NULL, no composition and no commit reached the page).
+        var replacement = cef_range_t(from: UInt32.max, to: UInt32.max)
+        if message.has(CefRemote.Key.replaceFrom) {
+            replacement = cef_range_t(from: UInt32(truncatingIfNeeded: message.int(CefRemote.Key.replaceFrom)),
                                       to: UInt32(truncatingIfNeeded: message.int(CefRemote.Key.replaceTo)))
-        let hasReplacement = message.has(CefRemote.Key.replaceFrom)
+        }
         switch message.op {
         case CefRemote.Op.imeSetComposition:
             var selection = cef_range_t(from: UInt32(truncatingIfNeeded: message.int(CefRemote.Key.rangeFrom)),
@@ -654,20 +659,14 @@ final class RemoteBrowser {
                 range: cef_range_t(from: 0, to: UInt32(text.utf16.count)),
                 color: 0xFF00_0000, background_color: 0, thick: 0, style: CEF_CUS_SOLID)
             Native.withString(text) { native in
-                if hasReplacement {
-                    host.pointee.ime_set_composition?(host, native, 1, &underline, &replacement, &selection)
-                } else {
-                    host.pointee.ime_set_composition?(host, native, 1, &underline, nil, &selection)
-                }
+                host.pointee.ime_set_composition?(host, native, 1, &underline, &replacement, &selection)
             }
+            note("browser \(id): ime composition \(text.utf16.count) units, selection \(selection.from)-\(selection.to)")
         case CefRemote.Op.imeCommit:
             Native.withString(text) { native in
-                if hasReplacement {
-                    host.pointee.ime_commit_text?(host, native, &replacement, 0)
-                } else {
-                    host.pointee.ime_commit_text?(host, native, nil, 0)
-                }
+                host.pointee.ime_commit_text?(host, native, &replacement, 0)
             }
+            note("browser \(id): ime commit \(text.utf16.count) units")
         case CefRemote.Op.imeFinish:
             host.pointee.ime_finish_composing_text?(host, message.bool(CefRemote.Key.flag) ? 1 : 0)
         default:
