@@ -31,7 +31,8 @@ enum CredentialRouting {
         return await store.openState() == .firstRun
     }
 
-    /// `origin` nil routes a new entry that belongs to no website (a card or an address): straight to the default vault.
+    /// `origin` nil routes a new entry that belongs to no website (a card or an address): straight to the default vault. A match is
+    /// looked for in each unlocked vault's candidates (`autofillCandidates`): websites and usernames, never a secret.
     static func route(profile: Profile, origin: String?, username: String?) async -> VaultRoute {
         guard let store = try? CredentialManager.store(for: profile),
               case .provisional = await store.openState(),
@@ -42,8 +43,8 @@ enum CredentialRouting {
         var holders: [CredentialManager] = []
         for manager in unlocked {
             guard let origin else { break }
-            guard let snapshot = try? await manager.snapshot() else { continue }
-            if snapshot.accounts.contains(where: { $0.origins.contains(origin) && (username == nil || $0.username == username) }) {
+            guard let read = try? await manager.autofillCandidates() else { continue }
+            if read.candidates.contains(where: { $0.origins.contains(origin) && (username == nil || $0.username == username) }) {
                 holders.append(manager)
             }
         }

@@ -81,6 +81,45 @@ struct VaultRoutingTests {
         }
     }
 
+    /// A route looks for the match in what a list may know of each credential of each unlocked vault (websites and usernames), never
+    /// in the whole vault with its secrets, and never in a locked vault.
+    @Test func aRouteReadsTheUnlockedVaultsCandidatesOnly() async throws {
+        try await VaultManagerFixture.with(vaults: [.unlocked, .unlocked, .locked]) { profile, _, vaults in
+            try await VaultManagerFixture.save([VaultFixtures.account(username: "ada")], in: vaults[1])
+            let audit = VaultReadAudit()
+            CredentialManager.readAuditsForTesting[profile.id] = audit
+            defer { CredentialManager.readAuditsForTesting[profile.id] = nil }
+
+            let choice = try #require(choiceOf(await routeFor(profile, username: "bob")))
+            #expect(choice.reason == .noneMatchedLockedExists)
+            #expect(audit.reads == [.candidates, .candidates])
+            #expect(vaultOf(await routeFor(profile, username: "ada")) == vaults[1].vaultID)
+            #expect(audit.reads == [.candidates, .candidates, .candidates, .candidates])
+        }
+    }
+
+    /// The profile erase dialog counts an open vault's credentials from its candidates, never the whole vault with its secrets, and
+    /// says what a locked vault holds is unknown, without reading it.
+    @Test func theProfileEraseNoteCountsAnOpenVaultFromItsCandidates() async throws {
+        try await VaultManagerFixture.with(vaults: [.unlocked, .locked]) { profile, _, vaults in
+            try await VaultManagerFixture.save([VaultFixtures.account(username: "ada"), VaultFixtures.account(username: "bob")], in: vaults[0])
+            let listing = try await CredentialManager.store(for: profile).listing().sorted { $0.ordinal < $1.ordinal }
+            let audit = VaultReadAudit()
+            CredentialManager.readAuditsForTesting[profile.id] = audit
+            defer { CredentialManager.readAuditsForTesting[profile.id] = nil }
+
+            let note = await CredentialErasureNote.note(for: profile)
+
+            let expected = CredentialErasureNote.text(listing.map { listed in
+                listed.vaultID == vaults[0].vaultID
+                    ? CredentialErasureNote.Vault(name: listed.displayName, credentials: 2, trash: 0)
+                    : CredentialErasureNote.Vault(name: listed.displayName, credentials: nil, trash: nil)
+            })
+            #expect(note == expected)
+            #expect(audit.reads == [.candidates])
+        }
+    }
+
     @Test func autosaveGoesToTheVaultHoldingTheMatch() async throws {
         try await VaultManagerFixture.with(vaults: [.unlocked, .unlocked]) { profile, _, vaults in
             let (a, b) = (vaults[0], vaults[1])

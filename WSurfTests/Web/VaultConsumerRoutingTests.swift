@@ -210,8 +210,13 @@ struct VaultConsumerRoutingTests {
             let model = CredentialSettingsModel(profile: profile, manager: vaults[0].manager)
             await model.load()
             #expect(model.blockedSiteCount == 1)
+            let audit = VaultReadAudit()
+            CredentialManager.readAuditsForTesting[profile.id] = audit
+            defer { CredentialManager.readAuditsForTesting[profile.id] = nil }
             await model.resetSaveSuggestions()
 
+            // The reset needs the revision only: it reads the candidates, and then the page reads its list again as it always does.
+            #expect(audit.reads == [.candidates, .snapshot])
             #expect(model.error == nil && model.blockedSiteCount == 0)
             #expect(try await vaults[0].manager.snapshot().blockedPasswordOrigins.isEmpty)
             #expect(try await vaults[1].manager.snapshot().blockedPasswordOrigins == [Self.origin], "another vault keeps its own list")

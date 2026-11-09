@@ -14,14 +14,15 @@ extension CredentialSettingsModel {
 
     /// Empties the selected vault's list of excluded sites, so pages offer to save passwords there again, and forgets the "Not
     /// Now" answers pages of this profile were holding. The write is bound to the revision and unlock the page is looking at: a
-    /// vault that changed or locked meanwhile is left as it is.
+    /// vault that changed or locked meanwhile is left as it is. The revision comes from the vault's candidates (`autofillCandidates`),
+    /// which hold no secret.
     func resetSaveSuggestions() async {
         guard let epoch = authorizationEpoch else { return }
         let profileID = profile.id
         let reset = await perform(epoch: epoch) { manager in
-            let snapshot = try await manager.snapshot()
+            let revision = try await manager.autofillCandidates().revision
             guard manager.authorizationEpoch == epoch else { throw CredentialVaultError.unauthorized }
-            _ = try await manager.updatePasswordSavePolicy([], expectedRevision: snapshot.revision, authorizedEpoch: epoch)
+            _ = try await manager.updatePasswordSavePolicy([], expectedRevision: revision, authorizedEpoch: epoch)
         }
         guard reset else { return }
         AutofillSaveCoordinator.shared.resetDismissals(kind: .password, profileID: profileID)

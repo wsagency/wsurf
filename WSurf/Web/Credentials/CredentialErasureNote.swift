@@ -27,7 +27,8 @@ enum CredentialErasureNote {
         return String(localized: "Its credential vaults, with their Trash and earlier versions, are erased with it and WSurf can’t undo this: \(lines.joined(separator: "; ")).")
     }
 
-    /// `nil` when the profile has no vault to mention.
+    /// `nil` when the profile has no vault to mention. An open vault's credentials are counted from its candidates
+    /// (`autofillCandidates`), which hold no secret.
     static func note(for profile: Profile) async -> String? {
         guard !profile.isPrivate, let store = try? CredentialManager.store(for: profile) else { return nil }
         let unreadable = String(localized: "Its credential files can’t be read right now, so they may contain recoverable items. They are erased with it and WSurf can’t undo this.")
@@ -46,8 +47,8 @@ enum CredentialErasureNote {
             var credentials: Int?
             var trash: Int?
             if let manager = open.first(where: { $0.vaultID == listed.vaultID }),
-               let snapshot = try? await manager.snapshot(), let counts = try? await manager.historyCounts() {
-                credentials = snapshot.accounts.count
+               let read = try? await manager.autofillCandidates(), let counts = try? await manager.historyCounts() {
+                credentials = read.candidates.count
                 trash = counts.trash.trashEntry
             }
             vaults.append(Vault(name: listed.displayName, credentials: credentials, trash: trash))
