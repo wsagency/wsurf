@@ -619,12 +619,13 @@ final class CredentialManager {
         }
     }
 
-    /// Which saved passwords are weak or reused, as flags only (`ProfileVaultStore.passwordHealth`): the comparison runs in the vault,
-    /// so no password, digest or length reaches the caller. Read like `snapshot`.
-    func passwordHealth() async throws -> PasswordHealthReport {
+    /// Which saved passwords are weak or reused at `expectedRevision`, the revision the caller shows, as flags only
+    /// (`ProfileVaultStore.passwordHealth`): the comparison runs in the vault, so no password, digest or length reaches the caller,
+    /// and a vault at any other revision is `staleRevision` there, so no report of it does either. Read like `snapshot`.
+    func passwordHealth(expectedRevision: UInt64) async throws -> PasswordHealthReport {
         try await reading { access in
             Self.noteRead(.health, profile: profile.id)
-            return try await store.passwordHealth(vaultID: vaultID, using: access)
+            return try await store.passwordHealth(vaultID: vaultID, expectedRevision: expectedRevision, using: access)
         }
     }
 

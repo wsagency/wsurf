@@ -78,7 +78,9 @@ extension CredentialSettingsModel {
             // during the wait read nothing under the new one.
             guard !Task.isCancelled, let self, self.manager === manager, self.showsHealth, manager.authorizationEpoch == key.epoch
             else { return }
-            guard let report = try? await manager.passwordHealth(), !Task.isCancelled else { return }
+            // The vault refuses a report of any revision but the one asked about, such as one of a write that landed during the
+            // wait: its flags never reach the page.
+            guard let report = try? await manager.passwordHealth(expectedRevision: key.revision), !Task.isCancelled else { return }
             // Another vault on the page, another unlock or another revision takes nothing from this report.
             guard self.manager === manager, report.vaultID == key.vaultID else { return }
             try? self.update(key.epoch) { $0.applyHealth(report) }
