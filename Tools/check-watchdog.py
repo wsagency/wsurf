@@ -193,10 +193,18 @@ def check_console_filter(root: Path, env: dict[str, str]) -> None:
     held = [shown.index(t) for t in ("◇ Test hanging() started.", "◇ Test gluedHang() started.", "◇ Test gluedHang2() started.")]
     assert held == sorted(held) and held[-1] < crash, "unsettled start lines (also the glued ones) must name the hung test before the crash"
     assert not any("slowButFine" in line and "started" in line for line in shown), "a settled start line was printed"
-    # An expired wait names the test that is still running: its start line is printed before it.
-    expired = watchdog(["sh", "-c", "echo '◇ Test waits() started.'; echo 'WAIT-EXPIRED W.swift:1 after 5.0 seconds in waits()'"], root, filtered_env)
-    lines = expired.stdout.splitlines()
-    assert lines.index("◇ Test waits() started.") < lines.index("WAIT-EXPIRED W.swift:1 after 5.0 seconds in waits()"), lines
+    # Parallel plan: a's wait expires and a passes quickly while b is still running and then hangs. An expired wait names its own
+    # test and must not touch the held start lines: the line above the time-limit error is b's start, never a's line.
+    script = (
+        "echo '◇ Test a() started.'; echo '◇ Test b() started.'; "
+        "echo 'WAIT-EXPIRED W.swift:1 after 5.0 seconds in a()'; echo '✔ Test a() passed after 0.5 seconds.'; sleep 30"
+    )
+    parallel = watchdog(["sh", "-c", script], root, filtered_env)
+    lines = parallel.stdout.splitlines()
+    error = next(i for i, line in enumerate(lines) if line.startswith("::error::test command exceeded"))
+    assert "WAIT-EXPIRED W.swift:1 after 5.0 seconds in a()" in lines[:error], lines
+    assert lines[error - 1] == "◇ Test b() started.", lines
+    assert "◇ Test a() started." not in lines, lines
     # WSURF_CI_VERBOSE=1: raw log kept, console unfiltered.
     raw.unlink()
     verbose = watchdog(["cat", str(fixture)], root, {**filtered_env, "WSURF_CI_VERBOSE": "1"})

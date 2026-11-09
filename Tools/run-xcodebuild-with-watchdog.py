@@ -55,8 +55,8 @@ KEEP_ALWAYS = re.compile(KEEP_HOST.pattern + "|" + KEEP_ERROR.pattern)
 TROUBLE = re.compile(
     r"Restarting after unexpected exit|crashed|Thread \d+ Crashed|EXC_[A-Z_]+|SIG(?:TRAP|SEGV|ABRT|ILL|BUS|KILL)|[Ff]atal error"
     r"|Terminating app due to uncaught exception|Test crashed with signal|exceeded its time limit"
-    r"|exceeded execution time allowance|reason=Crash|WAIT-EXPIRED "
-)
+    r"|exceeded execution time allowance|reason=Crash"
+)  # not WAIT-EXPIRED: it names its own test, and flushing would clear the starts of tests still running
 # Framework and tool result lines that no deny pattern may ever remove.
 PROTECTED = re.compile(r"^(?:✘|✔ Test run|◇ Test run|\*\*|::|===|---|error:|Test (?:Case|Suite) .* failed|\s*Executed \d|\s*↳)")
 # Stdout and the os_log mirror share one pipe, so test output can be glued behind (part of) a host line. The host line is cut
