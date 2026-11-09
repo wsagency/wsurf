@@ -115,12 +115,39 @@ final class SidebarDriveRig {
 
     // MARK: Reading the list
 
+    /// Lets the list lay out until it has stopped changing: a round is a short sleep, a layout and a draw, and it ends after
+    /// three rounds in a row that read the same (`signature`). `rounds` is the longest it waits, as it was the whole wait when it
+    /// counted rounds of 20 ms, so a list that never settles costs what it always did and a settled one costs a few ticks.
     func settle(rounds: Int = 6) async throws {
-        for _ in 0..<rounds {
-            try await Task.sleep(for: .milliseconds(20))
+        var previous = signature()
+        var same = 0
+        for _ in 0..<(rounds * 5 / 2) {
+            try await Task.sleep(for: .milliseconds(8))
             window.layoutIfNeeded()
             window.displayIfNeeded()
+            let current = signature()
+            same = current == previous ? same + 1 : 0
+            previous = current
+            if same >= 3 {
+                return
+            }
         }
+    }
+
+    /// What a settled list reads the same on: how many rows are drawn and where (the sum of their tops), where the content
+    /// starts and the list is scrolled to, how tall it is, and whether a drag is in flight.
+    private func signature() -> Int {
+        let frames = coordinator.sidebarDrag.frames
+        let visible = frames.visible(in: browser)
+        var hasher = Hasher()
+        hasher.combine(visible.count)
+        hasher.combine(visible.values.reduce(0) { $0 + Int($1.minY.rounded()) })
+        hasher.combine(Int(frames.contentOrigin.y.rounded()))
+        let scroll = scrollView
+        hasher.combine(Int((scroll?.contentView.bounds.origin.y ?? 0).rounded()))
+        hasher.combine(Int((scroll?.documentView?.frame.height ?? 0).rounded()))
+        hasher.combine(coordinator.sidebarDrag.drag != nil)
+        return hasher.finalize()
     }
 
     var scrollView: NSScrollView? {
@@ -189,7 +216,12 @@ final class SidebarDriveRig {
         }
         post(.leftMouseUp, at: points[points.count - 1])
         try await settle()
-        try await Task.sleep(for: .milliseconds(400))
+        // The drop lands and the drag ends on its own clock (the row flies to its place): wait for that, for as long as the
+        // fixed wait it replaces, and not past it when the drag is already over.
+        let landed = ContinuousClock.now + .milliseconds(400)
+        while coordinator.sidebarDrag.drag != nil, ContinuousClock.now < landed {
+            try await Task.sleep(for: .milliseconds(8))
+        }
         try await settle()
     }
 }

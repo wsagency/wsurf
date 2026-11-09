@@ -25,148 +25,158 @@ struct MinimalBarHidingTests {
         }
     }
 
-    private func makeReveal(_ choice: Choice, keeps: @escaping () -> Bool = { false }) -> MicroReveal {
+    /// The model runs on a clock the case moves, so what it waits for is time passing in the case, not on the Mac: a loaded
+    /// machine cannot stretch a wait past a margin, and a bar that must stay is checked at the exact moments around its time.
+    private func makeReveal(_ choice: Choice, on clock: TestClock, keeps: @escaping () -> Bool = { false }) -> MicroReveal {
         MicroReveal(
             hideDelay: .milliseconds(40), hostFlash: .milliseconds(80), restsRevealed: true,
-            hiding: { choice.value }, idleDelay: { $0.interval.map { _ in Self.wait } }, keeps: keeps
+            hiding: { choice.value }, idleDelay: { $0.interval.map { _ in Self.wait } }, keeps: keeps, clock: clock
         )
     }
 
-    private func eventually(_ condition: @MainActor () -> Bool) async -> Bool {
-        await waitUntil(timeout: .seconds(8), condition)
-    }
-
-    private func pause(_ duration: Duration) async {
-        try? await Task.sleep(for: duration)
+    /// Time passes until `condition` holds; a few seconds of the clock's time is far beyond any wait here.
+    private func eventually(_ clock: TestClock, _ condition: @MainActor () -> Bool) async -> Bool {
+        await clock.run(upTo: .seconds(5), until: condition)
     }
 
     // MARK: - The model
 
     @Test func aTimedChoiceHidesTheBarOnceItHasGoneUnused() async {
-        let reveal = makeReveal(Choice(.fiveSeconds))
+        let clock = TestClock()
+        let reveal = makeReveal(Choice(.fiveSeconds), on: clock)
         reveal.start()
         defer { reveal.stop() }
 
         #expect(reveal.isRevealed)
-        await pause(.milliseconds(100))
+        await clock.run(for: Self.wait - .milliseconds(50))
         #expect(reveal.isRevealed, "not before its time")
-        #expect(await eventually { !reveal.isRevealed }, "and then it goes, with no scrolling at all")
+        await clock.run(for: .milliseconds(100))
+        #expect(!reveal.isRevealed, "and then it goes, with no scrolling at all")
     }
 
     @Test func scrollingMeansNothingToATimedChoice() async {
-        let reveal = makeReveal(Choice(.tenSeconds))
+        let clock = TestClock()
+        let reveal = makeReveal(Choice(.tenSeconds), on: clock)
         reveal.start()
         defer { reveal.stop() }
 
         reveal.scrolled(towardTop: false)
         #expect(reveal.isRevealed, "scrolling down does not put the bar away")
         #expect(!reveal.isScrolledAway)
-        #expect(await eventually { !reveal.isRevealed }, "its time does")
+        #expect(await eventually(clock) { !reveal.isRevealed }, "its time does")
 
         reveal.scrolled(towardTop: true)
         #expect(!reveal.isRevealed, "and scrolling up does not bring it back")
     }
 
     @Test func whileScrollingNeverTimesOut() async {
-        let reveal = makeReveal(Choice(.whileScrolling))
+        let clock = TestClock()
+        let reveal = makeReveal(Choice(.whileScrolling), on: clock)
         reveal.start()
         defer { reveal.stop() }
 
-        await pause(Self.wait * 2)
+        await clock.run(for: Self.wait * 2)
         #expect(reveal.isRevealed, "the same as before the choice existed: only the page puts the bar away")
         reveal.scrolled(towardTop: false)
         #expect(!reveal.isRevealed)
     }
 
     @Test func neverKeepsTheBarOverAScrolledPageAndForever() async {
-        let reveal = makeReveal(Choice(.never))
+        let clock = TestClock()
+        let reveal = makeReveal(Choice(.never), on: clock)
         reveal.start()
         defer { reveal.stop() }
 
         reveal.scrolled(towardTop: false)
-        await pause(Self.wait * 2)
+        await clock.run(for: Self.wait * 2)
         #expect(reveal.isRevealed)
     }
 
     @Test func thePointerAtTheEdgeWakesTheBarAndItRestsForItsWholeTimeAfter() async {
-        let reveal = makeReveal(Choice(.fiveSeconds))
+        let clock = TestClock()
+        let reveal = makeReveal(Choice(.fiveSeconds), on: clock)
         reveal.start()
         defer { reveal.stop() }
-        #expect(await eventually { !reveal.isRevealed })
+        #expect(await eventually(clock) { !reveal.isRevealed })
 
         reveal.pointer(inZone: true)
         #expect(reveal.isRevealed)
-        await pause(Self.wait * 2)
+        await clock.run(for: Self.wait * 2)
         #expect(reveal.isRevealed, "it stays while the pointer is on it")
 
         reveal.pointer(inZone: false)
-        await pause(.milliseconds(120))
+        await clock.run(for: Self.wait - .milliseconds(100))
         #expect(reveal.isRevealed, "and it rests for its whole time once the pointer has left, not for a moment")
-        #expect(await eventually { !reveal.isRevealed })
+        #expect(await eventually(clock) { !reveal.isRevealed })
     }
 
     @Test func whatHoldsTheBarDelaysItsTimeUntilItLetsGo() async {
         var asking = true
-        let reveal = makeReveal(Choice(.fiveSeconds), keeps: { asking })
+        let clock = TestClock()
+        let reveal = makeReveal(Choice(.fiveSeconds), on: clock, keeps: { asking })
         reveal.start()
         defer { reveal.stop() }
 
-        await pause(Self.wait * 2)
+        await clock.run(for: Self.wait * 2)
         #expect(reveal.isRevealed, "a prompt, a save offer, the address being edited or an open tab list keep the bar")
 
         asking = false
-        await pause(.milliseconds(120))
+        await clock.run(for: Self.wait - .milliseconds(100))
         #expect(reveal.isRevealed, "the time counts from when it let go")
-        #expect(await eventually { !reveal.isRevealed })
+        #expect(await eventually(clock) { !reveal.isRevealed })
     }
 
     @Test func anotherSiteWakesAnIdleBarAndItRestsAgain() async {
-        let reveal = makeReveal(Choice(.fiveSeconds))
+        let clock = TestClock()
+        let reveal = makeReveal(Choice(.fiveSeconds), on: clock)
         reveal.start()
         defer { reveal.stop() }
-        #expect(await eventually { !reveal.isRevealed })
+        #expect(await eventually(clock) { !reveal.isRevealed })
 
         reveal.siteChanged()
         #expect(reveal.isRevealed)
-        await pause(.milliseconds(250))
+        await clock.run(for: .milliseconds(250))
         #expect(reveal.isRevealed, "past the new site's moment, its bar rests for its time")
-        #expect(await eventually { !reveal.isRevealed })
+        #expect(await eventually(clock) { !reveal.isRevealed })
     }
 
     @Test func anotherChoiceStartsFromABarAtRest() async {
         let choice = Choice(.whileScrolling)
-        let reveal = makeReveal(choice)
+        let clock = TestClock()
+        let reveal = makeReveal(choice, on: clock)
         reveal.start()
         defer { reveal.stop() }
         reveal.scrolled(towardTop: false)
         #expect(!reveal.isRevealed)
 
         choice.value = .never
-        #expect(await eventually { reveal.isRevealed }, "the bar the page had put away is back")
+        #expect(await eventually(clock) { reveal.isRevealed }, "the bar the page had put away is back")
         choice.value = .fiveSeconds
-        #expect(await eventually { !reveal.isRevealed }, "and the new time counts")
+        #expect(await eventually(clock) { !reveal.isRevealed }, "and the new time counts")
 
         choice.value = .never
-        #expect(await eventually { reveal.isRevealed }, "a bar that timed out is back too")
+        #expect(await eventually(clock) { reveal.isRevealed }, "a bar that timed out is back too")
     }
 
     @Test func aRevealThatComesBackStartsItsCountAgain() async {
-        let reveal = makeReveal(Choice(.fiveSeconds))
+        let clock = TestClock()
+        let reveal = makeReveal(Choice(.fiveSeconds), on: clock)
         reveal.start()
-        #expect(await eventually { !reveal.isRevealed })
+        #expect(await eventually(clock) { !reveal.isRevealed })
         reveal.stop()
 
         reveal.start()
         defer { reveal.stop() }
         #expect(reveal.isRevealed, "a stopped reveal does not keep a bar that timed out")
-        #expect(await eventually { !reveal.isRevealed })
+        #expect(await eventually(clock) { !reveal.isRevealed })
     }
 
     @Test func theMicroBarIgnoresTheChoice() async {
-        let reveal = MicroReveal(hideDelay: .milliseconds(40), hostFlash: .milliseconds(80), hiding: { .never })
+        let clock = TestClock()
+        let reveal = MicroReveal(hideDelay: .milliseconds(40), hostFlash: .milliseconds(80), hiding: { .never }, clock: clock)
         reveal.start()
         defer { reveal.stop() }
-        await pause(.milliseconds(120))
+        await clock.run(for: .milliseconds(120))
         #expect(!reveal.isRevealed, "it rests hidden whatever the Minimal window chose")
     }
 

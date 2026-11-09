@@ -3,6 +3,7 @@
 
 import AppKit
 import Foundation
+import Observation
 import Security
 import Testing
 
@@ -61,11 +62,41 @@ struct MicroPromptTests {
         #expect(rig.reveal.isRevealed, "the bar is down as the prompt appears")
         #expect(rig.micro.hasPendingPagePrompt, "the one flag says a page is asking")
         #expect(MicroShell.host(of: rig.tab.urlString) != nil, "and the bar has the page's site to show")
-        try? await Task.sleep(for: .milliseconds(300))
+        try? await Task.sleep(for: .milliseconds(100))
         #expect(rig.reveal.isRevealed, "and it stays down until the prompt is gone")
         dismiss()
         try #require(await waitUntil { !rig.reveal.isRevealed }, "the bar goes up again once the prompt is closed")
         #expect(!rig.micro.hasPendingPagePrompt)
+    }
+
+    /// What `aSheetOnAnotherWindowIsNotThisWindowsBusiness` saw happen, in order.
+    @MainActor
+    private final class Seen {
+        var notes: [String] = []
+    }
+
+    /// Which of the things that keep the bar down are true now, for the message of a check that finds the bar down. It copies the
+    /// terms of three places by hand, so one added there must be added here: `MicroShell.keepsBar` (the live-window overload),
+    /// `AppCoordinator.hasPendingPagePrompt`, and `MicroReveal`'s own holds (`holdsApart`).
+    private static func keptBy(_ rig: Rig) -> String {
+        let micro = rig.micro
+        let terms: [(String, Bool)] = [
+            ("pointer in zone", rig.reveal.pointerInZone),
+            ("flashing", rig.reveal.isFlashing),
+            ("open prompts", rig.reveal.openPrompts > 0),
+            ("pending page prompt", micro.hasPendingPagePrompt),
+            ("editing", MicroShell.isEditing(in: rig.window)),
+            ("listening", micro.state == .listening),
+            ("status message", micro.statusMessage != nil),
+            ("notice", micro.notice != nil),
+            ("agent reply", micro.agentReply.message(inAnchor: micro.browser.activeAnchorID) != nil),
+            ("agent question", micro.pendingAgentQuestion(inChrome: true) != nil),
+            ("save offer", rig.tab.autofillSave.current != nil || rig.tab.autofillSave.websiteOffer != nil),
+            ("no page", MicroShell.host(of: rig.tab.urlString) == nil),
+            ("voiceover", NSWorkspace.shared.isVoiceOverEnabled),
+        ]
+        let held = terms.filter(\.1).map(\.0)
+        return held.isEmpty ? "none of these (statusMessage: \(micro.statusMessage ?? "nil"))" : held.joined(separator: ", ")
     }
 
     private func endSheet(of window: NSWindow) {
@@ -90,15 +121,19 @@ struct MicroPromptTests {
 
     @Test func aRealJavaScriptAlertShowsTheSite() async throws {
         let server = try await HTTPFixtureServer.start(routes: [
-            "/": .html("<title>Alert</title><script>setTimeout(function () { alert('Your session has expired') }, 1_500)</script>"),
+            "/": .html("<title>Alert</title><p>Nothing yet.</p>"),
         ])
         try await withHiddenBar { rig in
             rig.tab.load(try server.url("/"))
             let page = rig.tab.page
             try #require(await waitUntil { page.window === rig.window }, "the page is in the micro window")
+            // Loaded first: the bar is already up out of the way, so "hidden" alone would hold before the new site's moment began.
+            try #require(await waitUntil { page.title == "Alert" && !page.isLoading }, "the page has loaded")
             try #require(await waitUntil { !rig.reveal.isRevealed }, "the new site's moment is over")
             #expect(rig.window.attachedSheet == nil)
 
+            // The page raises its alert when the bar has gone up, not on a timer that has to be longer than that takes.
+            _ = try await page.evaluateJavaScript("setTimeout(function () { alert('Your session has expired') }, 0); true")
             try await expectBarHolds(rig, opened: { rig.window.attachedSheet != nil }, dismiss: { endSheet(of: rig.window) })
         }
         withExtendedLifetime(server) {}
@@ -176,14 +211,34 @@ struct MicroPromptTests {
             // Opening a second window can move this one's inputs (focus, status), and a slow runner shows that late. Start from a
             // bar that has settled back up, so only the other window's sheet can bring it down.
             try #require(await waitUntil { !rig.reveal.isRevealed }, "this window's bar settles after the other window opens")
+            // What brings the bar down is read as it happens: a hold is read while it is still true, and a write to an input of
+            // `hasPendingPagePrompt` brings the bar down with nothing holding (MicroReveal's pending watcher), so those inputs are
+            // watched by name. Each observation fires once, on the first change.
+            let seen = Seen()
+            func record(_ note: @escaping @MainActor () -> String) -> @Sendable () -> Void {
+                { MainActor.assumeIsolated { seen.notes.append(note()) } }
+            }
+            withObservationTracking({ _ = rig.reveal.isRevealed }, onChange: record { "bar changed, held by: \(Self.keptBy(rig))" })
+            withObservationTracking({ _ = rig.micro.browser.activeTab }, onChange: record { "active tab written" })
+            withObservationTracking(
+                { _ = (rig.tab.permissions.pendingAsks, rig.tab.permissions.isPopoverPresented) },
+                onChange: record { "permissions written" }
+            )
+            withObservationTracking(
+                { _ = (rig.tab.autofillSave.current, rig.tab.autofillSave.websiteOffer, rig.tab.autofillSave.isPopoverPresented) },
+                onChange: record { "save offer written" }
+            )
             let alert = NSAlert()
             alert.addButton(withTitle: "OK")
             let dialog = Task { await PageDialogs.present(alert, in: otherWindow) }
             try #require(await waitUntil { otherWindow.attachedSheet != nil })
 
+            // Not shortened with the other "stays down" waits: with 100 ms the check landed inside a late reveal of this window's bar
+            // that the second window's start-up caused, which is still unidentified (`seen` and `keptBy` name the input when it happens
+            // again).
             try? await Task.sleep(for: .milliseconds(200))
             #expect(rig.reveal.openPrompts == 0, "the other window's sheet is not this window's prompt")
-            #expect(!rig.reveal.isRevealed, "and it does not bring this window's bar down")
+            #expect(!rig.reveal.isRevealed, "and it does not bring this window's bar down; seen: \(seen.notes), kept by now: \(Self.keptBy(rig))")
 
             endSheet(of: otherWindow)
             _ = await dialog.value
@@ -248,7 +303,7 @@ struct MicroPromptTests {
             panel.orderFront(nil)
             rig.reveal.pointer(inZone: false)
 
-            try? await Task.sleep(for: .milliseconds(300))
+            try? await Task.sleep(for: .milliseconds(100))
             #expect(rig.reveal.isRevealed, "the pointer left, and the panel still hangs from the window")
             rig.window.removeChildWindow(panel)
             panel.orderOut(nil)

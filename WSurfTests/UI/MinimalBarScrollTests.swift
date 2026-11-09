@@ -19,8 +19,9 @@ struct MinimalBarScrollTests {
         await waitUntil(timeout: .seconds(8), condition)
     }
 
-    private func restingReveal(keeps: @escaping () -> Bool = { false }) -> MicroReveal {
-        MicroReveal(hideDelay: .milliseconds(40), hostFlash: .milliseconds(80), restsRevealed: true, keeps: keeps)
+    /// The model runs on a clock the case moves, so the margins below are exact and no machine load can stretch one.
+    private func restingReveal(on clock: TestClock = TestClock(), keeps: @escaping () -> Bool = { false }) -> MicroReveal {
+        MicroReveal(hideDelay: .milliseconds(40), hostFlash: .milliseconds(80), restsRevealed: true, keeps: keeps, clock: clock)
     }
 
     // MARK: - The model
@@ -40,7 +41,8 @@ struct MinimalBarScrollTests {
     }
 
     @Test func thePointerAtTheBarsEdgeShowsItUntilThePointerLeaves() async {
-        let reveal = restingReveal()
+        let clock = TestClock()
+        let reveal = restingReveal(on: clock)
         reveal.scrolled(towardTop: false)
         #expect(!reveal.isRevealed)
 
@@ -50,30 +52,32 @@ struct MinimalBarScrollTests {
         #expect(reveal.isRevealed, "scrolling under the pointer does not pull the bar from under it")
 
         reveal.pointer(inZone: false)
-        #expect(await eventually { !reveal.isRevealed }, "the page was scrolled down, so the bar goes again")
+        #expect(await clock.run(upTo: .seconds(5)) { !reveal.isRevealed }, "the page was scrolled down, so the bar goes again")
     }
 
     @Test func whatHoldsTheMicroBarHoldsTheMinimalBarWhileThePageScrolls() async {
         var asking = true
-        let reveal = restingReveal(keeps: { asking })
+        let clock = TestClock()
+        let reveal = restingReveal(on: clock, keeps: { asking })
 
         reveal.scrolled(towardTop: false)
         #expect(reveal.isRevealed, "a prompt, a save offer, a question or the address being edited wins over scrolling")
-        try? await Task.sleep(for: .milliseconds(200))
+        await clock.run(for: .milliseconds(200))
         #expect(reveal.isRevealed)
 
         asking = false
-        #expect(await eventually { !reveal.isRevealed }, "and once it is answered the scrolled page has the room again")
+        #expect(await clock.run(upTo: .seconds(5)) { !reveal.isRevealed }, "and once it is answered the scrolled page has the room again")
     }
 
     @Test func anotherSiteBringsTheBarBackAndLeavesItThere() async {
-        let reveal = restingReveal()
+        let clock = TestClock()
+        let reveal = restingReveal(on: clock)
         reveal.scrolled(towardTop: false)
         #expect(!reveal.isRevealed)
 
         reveal.siteChanged()
         #expect(reveal.isRevealed)
-        try? await Task.sleep(for: .milliseconds(300))
+        await clock.run(for: .milliseconds(300))
         #expect(reveal.isRevealed, "past the micro window's moment: the new site's bar rests until the page scrolls")
     }
 

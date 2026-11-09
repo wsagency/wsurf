@@ -181,8 +181,8 @@ struct SidebarRevealTests {
         let browser = model()
         open(browser)
         try #require(browser.sidebarReveal != nil)
-        try await Task.sleep(for: .seconds(SidebarPulse.duration + 0.4))
-        #expect(browser.sidebarReveal == nil)
+        let ended = await waitUntil(timeout: .seconds(SidebarPulse.duration + 0.4)) { browser.sidebarReveal == nil }
+        #expect(ended, "the request is over once the pulse is, with its margin")
     }
 
     @Test func aTabThatLandsInAShutFolderOpensItAndOnlyThat() {
