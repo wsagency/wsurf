@@ -3800,6 +3800,9 @@
     "Manually" : {
 
     },
+    "Mark weak and reused passwords. Asks for Touch ID or your Mac password first." : {
+      "comment" : "Tooltip of the Show Password Health button above the credential list in Settings › Credentials. Full sentences."
+    },
     "Marked as not the same" : {
       "comment" : "Second line of a dismissed group in the Suggested Merges sheet."
     },
@@ -5792,6 +5795,9 @@
     },
     "Show video in the player" : {
       "comment" : "Title of the only row on the Experiments settings page, and the title of that same row in Settings search. It turns on the picture inside the media player in the sidebar."
+    },
+    "show weak and reused passwords" : {
+      "comment" : "Reason shown in the Touch ID or password prompt of Show Password Health on the Credentials page in Settings, before the list marks weak and reused passwords. It completes a system sentence like “WSurf is trying to …”, so it is a lowercase verb phrase with no period."
     },
     "Show Web Inspector" : {
       "comment" : "Command in View > Developer, in the Developer Tools menu and in the ⌘K palette (shortcut ⌥⌘I) that opens WebKit’s Web Inspector for the page. Web Inspector is established platform terminology and is the name Safari uses. Show is a verb. Title Case."
@@ -9786,6 +9792,9 @@
     "No unlocked vault has this login, and another vault is locked and may hold it." : {
       "comment" : "Message of the “Which vault?” alert when no unlocked vault has the login but a locked vault might. A login is the username and password saved for a website. Full sentence."
     },
+    "No weak or reused passwords" : {
+      "comment" : "Shown above the credential list in Settings › Credentials, in place of the Show Password Health button, when the check found no weak password and no password saved for more than one website. No period."
+    },
     "No website" : {
       "comment" : "Word in the merge sheet’s Before and After lines for a credential that has no websites. Sentence case, a fragment."
     },
@@ -10484,6 +10493,9 @@
     },
     "Show Password" : {
       "comment" : "Button beside each credential in the merge sheet that reveals its password; also an item in a credential row’s ⋯ menu in the list. Alternates with “Hide Password”. Title Case, a verb phrase."
+    },
+    "Show Password Health" : {
+      "comment" : "Button above the credential list in Settings › Credentials. After Touch ID or the Mac password, the list marks weak and reused passwords (Weak and Reused chips and badges) until the vault locks. Title Case, a command."
     },
     "Show password of %@" : {
       "comment" : "VoiceOver label of the Show Password button for one credential in the merge sheet. %@ is the credential’s name, shown as typed and not translated. Sentence case, a command."

@@ -111,9 +111,32 @@ struct CredentialPasswordHealthPageTests {
 
     // MARK: - Through the page
 
+    /// Stands in for Touch ID: records each reason, refuses while `refuses` is set, and runs `whileAsking` once, as if while the
+    /// prompt is up.
+    @MainActor
+    private final class Prompts {
+        private(set) var reasons: [String] = []
+        var refuses = false
+        var whileAsking: (@MainActor () -> Void)?
+
+        func verify(_ reason: String) async throws {
+            reasons.append(reason)
+            if let action = whileAsking {
+                whileAsking = nil
+                action()
+            }
+            if refuses {
+                throw WebsiteAuthenticatorError.notAllowed
+            }
+        }
+    }
+
+    private static let reason = String(localized: "show weak and reused passwords")
+
     private final class Fixture {
         let profile: Profile
         let vault: FixtureVault
+        let prompts: Prompts
         let model: CredentialSettingsModel
         let audit = VaultReadAudit()
 
@@ -121,7 +144,11 @@ struct CredentialPasswordHealthPageTests {
             let profile = Profile(id: UUID(), name: "Password health", symbol: "key", color: .blue)
             vault = try #require(try await VaultManagerFixture.make(profile: profile, vaults: [.unlocked]).vaults.first)
             self.profile = profile
-            model = CredentialSettingsModel(profile: profile, manager: vault.manager, verifyUser: { _ in }, healthDelay: healthDelay)
+            let prompts = Prompts()
+            self.prompts = prompts
+            model = CredentialSettingsModel(
+                profile: profile, manager: vault.manager, verifyUser: { reason in try await prompts.verify(reason) }, healthDelay: healthDelay
+            )
             CredentialManager.readAuditsForTesting[profile.id] = audit
         }
 
@@ -135,7 +162,7 @@ struct CredentialPasswordHealthPageTests {
         }
     }
 
-    private func withFixture(healthDelay: Duration, _ body: (Fixture) async throws -> Void) async throws {
+    private func withFixture(healthDelay: Duration = .milliseconds(10), _ body: (Fixture) async throws -> Void) async throws {
         let fixture = try await Fixture(healthDelay: healthDelay)
         do {
             try await body(fixture)
@@ -146,13 +173,35 @@ struct CredentialPasswordHealthPageTests {
         await fixture.cleanup()
     }
 
-    /// Once the list shows, the page asks once for its revision and the rows carry the flags. A lock drops them with the session, and
-    /// the next unlock asks again.
-    @Test func thePageFlagsTheListOnceItShowsAndAsksAgainAfterALock() async throws {
-        try await withFixture(healthDelay: .milliseconds(10)) { f in
+    /// Until Show Password Health passes its prompt, the page reads no report and flags nothing, however the list changes.
+    @Test func nothingIsReadOrShownBeforeShowPasswordHealth() async throws {
+        try await withFixture { f in
+            var all = accounts()
+            try await VaultManagerFixture.save(all, in: f.vault)
+            await f.model.load()
+            all[3].password = "Zt4$pL8"
+            _ = try await f.model.save(all[3], expectedRevision: f.model.revision)
+
+            #expect(!f.model.showsHealth && f.model.healthTask == nil, "no report was asked for")
+            #expect(f.healthReads == 0 && flagged(f.model.summaries).isEmpty)
+            #expect(f.prompts.reasons.isEmpty)
+        }
+    }
+
+    /// Show Password Health asks once per unlock, reads nothing while its prompt is up, and then flags the list: the rows, the chips'
+    /// counts and the credentials that share a password.
+    @Test func showPasswordHealthAsksOnceThenFlagsTheList() async throws {
+        try await withFixture { f in
             let all = accounts()
             try await VaultManagerFixture.save(all, in: f.vault)
             await f.model.load()
+            var whileAsked: Int?
+            f.prompts.whileAsking = { whileAsked = f.healthReads }
+
+            try await f.model.revealHealth()
+            #expect(f.prompts.reasons == [Self.reason])
+            #expect(whileAsked == 0, "nothing was read while the prompt was up")
+            #expect(f.model.showsHealth)
             #expect(await waitUntil { f.model.healthRevision == f.model.revision })
             #expect(Set(flagged(f.model.summaries)) == [all[0].id, all[1].id, all[2].id])
             #expect(f.healthReads == 1)
@@ -161,30 +210,66 @@ struct CredentialPasswordHealthPageTests {
             let strong = try #require(f.model.summaries.first { $0.id == all[3].id })
             #expect(f.model.sharingPassword(with: strong).isEmpty)
 
+            try await f.model.revealHealth()
+            #expect(f.prompts.reasons.count == 1, "one prompt per unlock")
+        }
+    }
+
+    @Test func aRefusedPromptReadsAndShowsNothing() async throws {
+        try await withFixture { f in
+            try await VaultManagerFixture.save(accounts(), in: f.vault)
+            await f.model.load()
+            f.prompts.refuses = true
+
+            await #expect(throws: WebsiteAuthenticatorError.self) { try await f.model.revealHealth() }
+            #expect(!f.model.showsHealth && f.model.healthTask == nil)
+            #expect(f.healthReads == 0 && flagged(f.model.summaries).isEmpty)
+            #expect(!f.model.isRevealingHealth)
+        }
+    }
+
+    /// A lock drops the flags with the session. The next unlock shows none and reads nothing until Show Password Health asks again.
+    @Test func aLockDropsTheFlagsAndTheNextUnlockAsksAgain() async throws {
+        try await withFixture { f in
+            let all = accounts()
+            try await VaultManagerFixture.save(all, in: f.vault)
+            await f.model.load()
+            try await f.model.revealHealth()
+            #expect(await waitUntil { f.model.healthRevision == f.model.revision })
+
             f.model.lock()
-            #expect(f.model.summaries.isEmpty && f.model.healthRevision == nil)
+            #expect(f.model.summaries.isEmpty && f.model.healthRevision == nil && !f.model.showsHealth)
 
             try await VaultManagerFixture.unlock(f.vault)
             await f.model.load()
+            #expect(!f.model.showsHealth && flagged(f.model.summaries).isEmpty)
+            #expect(f.healthReads == 1, "the new unlock read nothing")
+
+            try await f.model.revealHealth()
+            #expect(f.prompts.reasons == [Self.reason, Self.reason])
             #expect(await waitUntil { f.model.healthRevision == f.model.revision })
             #expect(Set(flagged(f.model.summaries)) == [all[0].id, all[1].id, all[2].id])
             #expect(f.healthReads == 2)
         }
     }
 
-    /// A write while the page waits to ask replaces the request: it asks once, for the newer revision, and the flags describe it.
+    /// After the prompt, a write while the page waits to ask replaces the request: it asks once, for the newest revision, and the
+    /// flags describe it.
     @Test func aWriteWhileThePageWaitsAsksOnceForTheNewerRevision() async throws {
         try await withFixture(healthDelay: .seconds(1)) { f in
             var all = accounts()
             try await VaultManagerFixture.save(all, in: f.vault)
             await f.model.load()
-            let first = f.model.revision
-
-            all[3].password = "Zt4$pL8"
-            _ = try await f.model.save(all[3], expectedRevision: first)
-            #expect(f.model.revision != first)
-            #expect(await waitUntil { f.model.healthRevision == f.model.revision })
+            try await f.model.revealHealth()
+            #expect(await waitUntil { f.model.healthRevision == f.model.revision }, "the first report is read at once")
             #expect(f.healthReads == 1)
+
+            all[3].password = "Zt4$pL8x"
+            _ = try await f.model.save(all[3], expectedRevision: f.model.revision)
+            all[3].password = "Zt4$pL8"
+            _ = try await f.model.save(all[3], expectedRevision: f.model.revision)
+            #expect(await waitUntil { f.model.healthRevision == f.model.revision })
+            #expect(f.healthReads == 2, "one more read, for the newest revision")
             let shortened = try #require(f.model.summaries.first { $0.id == all[3].id })
             #expect(shortened.health?.weaknesses == [.short])
         }

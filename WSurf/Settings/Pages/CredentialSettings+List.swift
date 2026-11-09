@@ -443,7 +443,23 @@ struct CredentialListView<Switcher: View>: View {
                         .controlSize(.small)
                         .disabled(model.isBusy)
                 }
+                healthControl
             }
+        }
+    }
+
+    /// Weak and reused passwords show only after their own Touch ID prompt, once per unlock (`CredentialSettingsModel.revealHealth`):
+    /// until then, this button. After it, the Weak and Reused chips, or a word when there is nothing to flag.
+    @ViewBuilder private var healthControl: some View {
+        if !model.showsHealth {
+            Button("Show Password Health") { run { try await model.revealHealth() } }
+                .controlSize(.small)
+                .disabled(model.isBusy || model.isRevealingHealth)
+                .help("Mark weak and reused passwords. Asks for Touch ID or your Mac password first.")
+        } else if model.healthRevision != nil, list.counts?[.weak] == 0, list.counts?[.reused] == 0 {
+            Text("No weak or reused passwords")
+                .font(Theme.Font.label)
+                .foregroundStyle(.secondary)
         }
     }
 

@@ -63,8 +63,12 @@ final class CredentialSettingsModel {
     /// copied (`+PasswordPrivacy`), and before a card's or an ID document's hidden values are shown, copied or opened in the editor.
     /// Returns only on success. A seam so a test decides the answer; internal for the extensions.
     @ObservationIgnored let verifyUser: @MainActor (String) async throws -> Void
-    /// How long the page waits once a revision settles before it reads the password health report (`+Health`); `nil` reads none.
-    @ObservationIgnored let healthDelay: Duration?
+    /// How long the page waits once a revision settles before it reads the password health report again (`+Health`).
+    @ObservationIgnored let healthDelay: Duration
+    /// The vault and unlock under which Show Password Health passed its prompt (`+Health`): health is read and shown under it only.
+    var healthGrant: HealthGrant?
+    /// Set while Show Password Health's prompt is up, so a second click asks nothing more.
+    var isRevealingHealth = false
     /// The vault, epoch and revision the last report was asked for, and the task asking: a newer revision cancels it.
     @ObservationIgnored var healthKey: HealthKey?
     @ObservationIgnored var healthTask: Task<Void, Never>?
@@ -121,7 +125,7 @@ final class CredentialSettingsModel {
         openingDuration: Duration = .seconds(2),
         verifyUser: @escaping @MainActor (String) async throws -> Void = CredentialSettingsModel.systemVerifier,
         clock: any Clock<Duration> = ContinuousClock(),
-        healthDelay: Duration? = CredentialSettingsModel.defaultHealthDelay
+        healthDelay: Duration = .milliseconds(500)
     ) {
         self.profile = profile
         self.verifyUser = verifyUser
