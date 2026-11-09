@@ -1019,6 +1019,23 @@ check_average \
   'Autofill projection of 20,000 in-memory credentials memory growth' \
   'kB'
 
+# A pick (D5 PR-6, testPickingOneOfTwentyThousandCredentials): `autofillLogin` through `pickedAccount`, which authenticates the
+# head (all 20,000 catalog entries) and then opens the picked row alone; before, every pick ran the verified read of all 20,000.
+# Pro, Debug + coverage, whole WSurf-Rest run at 73b63986 (2026-11-09): time mean 0.021922 s, against 0.609428 s for the verified
+# read (testReadingTwentyThousandCredentials) in the same run. Memory median 0 kB. Time budget twice the mean; memory 4096 kB.
+check_average \
+  'VaultScalePerformanceTests/testPickingOneOfTwentyThousandCredentials()' \
+  'com.apple.dt.XCTMetric_Clock.time.monotonic' \
+  '0.0438' \
+  'A pick of one of 20,000 credentials' \
+  's'
+check_average \
+  'VaultScalePerformanceTests/testPickingOneOfTwentyThousandCredentials()' \
+  'com.apple.dt.XCTMetric_Memory.physical' \
+  '4096' \
+  'A pick of one of 20,000 credentials memory growth' \
+  'kB'
+
 # History and database (HistoryPerformanceTests), six-sample means on the Pro (2026-10-27, Debug), seconds, before and after WI-3
 # (an index on historyVisit.fromVisit, the schema defined by migrations instead of on every open, one and two letter queries answered
 # from memory). Time budgets are twice the mean after, or a little more where the mean is a fraction of a millisecond; the old code
