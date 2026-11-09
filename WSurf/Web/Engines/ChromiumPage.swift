@@ -40,10 +40,12 @@ final class ChromiumPage: NSView {
     }
     private(set) var history = PageHistoryList()
     private var requestedURL: URL?
-    private var awaitingNativeNavigation = false
+    var awaitingNativeNavigation = false
     /// The address of a same-document move the engine reported before it reported the address.
     private var awaitedMoveAddress: URL?
-    private var navigationStarted = false
+    /// Set while the awaited native navigation may stay inside the document, so it never reaches `willNavigate`.
+    var sameDocumentWait: SameDocumentWait?
+    var navigationStarted = false
     private var initialDocument = true
     /// Chromium records the startup about:blank as a real history entry. The first commit starts the reset that drops it.
     /// Until a reset has dropped it, it stays Chromium's first entry and Back never goes there (`nativeCanGoBack`,
@@ -281,7 +283,7 @@ final class ChromiumPage: NSView {
         navigation = next
         requestedURL = url
         htmlDocumentURL = nil
-        awaitingNativeNavigation = true
+        awaitLoad(of: url)
         navigationStarted = false
         owner?.isLoading = true
         owner?.estimatedProgress = 0
@@ -432,7 +434,7 @@ final class ChromiumPage: NSView {
         }
         let next = PageNavigation()
         navigation = next
-        awaitingNativeNavigation = true
+        awaitLoad(of: nil)
         navigationStarted = false
         withBrowser { browser in
             if ignoreCache {
@@ -448,7 +450,7 @@ final class ChromiumPage: NSView {
     func goBack() -> PageNavigation? {
         guard owner?.canGoBack == true else { return nil }
         navigation = PageNavigation()
-        awaitingNativeNavigation = true
+        awaitHistoryMove()
         navigationStarted = false
         withBrowser { $0.pointee.go_back?($0) }
         return navigation
@@ -458,7 +460,7 @@ final class ChromiumPage: NSView {
     func goForward() -> PageNavigation? {
         guard owner?.canGoForward == true else { return nil }
         navigation = PageNavigation()
-        awaitingNativeNavigation = true
+        awaitHistoryMove()
         navigationStarted = false
         withBrowser { $0.pointee.go_forward?($0) }
         return navigation
@@ -469,7 +471,7 @@ final class ChromiumPage: NSView {
         guard let entry = item.chromiumIndex else { return nil }
         let next = PageNavigation()
         navigation = next
-        awaitingNativeNavigation = true
+        awaitHistoryMove()
         navigationStarted = false
         Task { [weak self] in
             guard let self else { return }
@@ -574,6 +576,7 @@ final class ChromiumPage: NSView {
             client?.documentResponses.reset()
         }
         awaitingNativeNavigation = false
+        sameDocumentWait = nil
         awaitedMoveAddress = nil
         requestedURL = url
         owner?.isLoading = true
@@ -685,6 +688,7 @@ final class ChromiumPage: NSView {
     /// reports through `didChangeURL`, before or after this event.
     func didNavigateWithinDocument(to url: URL) {
         guard !closing, !isClosed, !initialDocument else { return }
+        completeAwaitedMoveWithinDocument()
         guard owner?.url == url else {
             awaitedMoveAddress = url
             return
@@ -696,26 +700,17 @@ final class ChromiumPage: NSView {
         // Chromium counts the startup page while it is in the history, and reports it on every loading change.
         owner?.canGoBack = canGoBack && nativeCanGoBack()
         owner?.canGoForward = canGoForward
+        sameDocumentWait?.held = loading
         guard !awaitingNativeNavigation || loading else { return }
         owner?.isLoading = loading
         if !loading {
             owner?.estimatedProgress = 1
         }
     }
-    func didChangeProgress(_ progress: Double) {
-        owner?.estimatedProgress = progress
-    }
     /// DevTools says the page's security changed: read the entry again under `hasOnlySecureContent(url:...)`, not its rating.
     func didChangeSecurity() {
         guard !closing, !isClosed else { return }
         updateNativeSecurity()
-    }
-
-    func didHoverLink(_ url: URL?) {
-        owner?.onLinkHovered?(url)
-    }
-    func didChangeFullscreen(_ enabled: Bool) {
-        owner?.isFullscreen = enabled
     }
 
     /// Back must never reach the startup page. The reset keeps only the committed entry, so it may run only while the history
