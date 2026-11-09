@@ -47,13 +47,15 @@ KEEP_HOST = re.compile(
     r"|SIG(?:TRAP|SEGV|ABRT|ILL|BUS|KILL)|Test crashed with signal|Restarting after unexpected exit|reason=Crash"
     r"|exceeded execution time allowance"
 )
-KEEP_ERROR = re.compile(r": error: |error: -\[")
+# Test-side signal: the compile/XCTest error forms, an expired wait (Tools' waitUntil helper prints
+# "WAIT-EXPIRED <file>:<line> after <timeout> in <test>") and a Swift Testing warning issue ("<symbol> Test x recorded a warning at ...").
+KEEP_ERROR = re.compile(r": error: |error: -\[|WAIT-EXPIRED |recorded a warning")
 KEEP_ALWAYS = re.compile(KEEP_HOST.pattern + "|" + KEEP_ERROR.pattern)
 # Lines that end a test run or flag trouble: the held "started" lines are printed before them.
 TROUBLE = re.compile(
     r"Restarting after unexpected exit|crashed|Thread \d+ Crashed|EXC_[A-Z_]+|SIG(?:TRAP|SEGV|ABRT|ILL|BUS|KILL)|[Ff]atal error"
     r"|Terminating app due to uncaught exception|Test crashed with signal|exceeded its time limit"
-    r"|exceeded execution time allowance|reason=Crash"
+    r"|exceeded execution time allowance|reason=Crash|WAIT-EXPIRED "
 )
 # Framework and tool result lines that no deny pattern may ever remove.
 PROTECTED = re.compile(r"^(?:✘|✔ Test run|◇ Test run|\*\*|::|===|---|error:|Test (?:Case|Suite) .* failed|\s*Executed \d|\s*↳)")
@@ -61,7 +63,8 @@ PROTECTED = re.compile(r"^(?:✘|✔ Test run|◇ Test run|\*\*|::|===|---|error
 # at the first of these markers: the test part goes on through the filter, only the host part is dropped.
 SPLIT = re.compile(
     r"\u200b?(?:◇ (?:Test|Suite) |[✔✘] |Test Suite '|Test Case '|\*\* TEST|\s*Executed \d+ tests?|Test run with \d)"
-    r"|/\S*?\.swift:\d+(?::\d+)?: error: "
+    r"|/\S*?\.swift:\d+(?::\d+)?: error: |WAIT-EXPIRED "
+    r"|(?:[\u26a0\U00100000-\U0010fffd][\ufe0e\ufe0f]* )?(?:Test|Suite) [^\n]*? recorded a warning"
 )
 GLUED_STARTED = re.compile(r"\u200b?◇ (?:Test|Suite) .*? started\.?\s*$")
 CONTINUATION = re.compile(r"^(?:\t\"|\}$|Invalidation reason: |\), NS|    \"LocalDataTask )")

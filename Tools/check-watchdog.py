@@ -107,6 +107,20 @@ FIXTURE: list[tuple[str, bool | str | None]] = [
     (HOST + "[default] WebContent[17716] Conn 0x0 is not a valid connection ID.", False),
     ("/p/H.swift:5: error: -[X y] : failed " + HOST + "[default] WebContent[1] Conn 0x0 is not a valid connection ID.", True),
     ("WAIT-EXPIRED A.swift:9 after 25s", True),
+    # waitUntil's real line (WSurfTests/Helpers/Wait.swift): file:line, the timeout as a Duration, the test name.
+    ("WAIT-EXPIRED MediaCenterTests.swift:721 after 25.0 seconds in aNewPageInTheTabEndsWhatItsFramesPlayed(engine:)", True),
+    (HOST + "[x] host text" + "WAIT-EXPIRED MediaCenterTests.swift:722 after 25.0 seconds in glued()",
+     "WAIT-EXPIRED MediaCenterTests.swift:722 after 25.0 seconds in glued()"),
+    (HOST + "[default] WebContent[17716] Conn 0x0 is not a valid connection ID.", False),
+    ("WAIT-EXPIRED Sandbox.swift:3 after 5.0 seconds in Handshake aborted is not a failure()", True),  # after a dropped record
+    # Swift Testing warning issues (Issue.record(severity: .warning)): shown like the failure issues, symbol or not.
+    ("\u26a0\ufe0e Test warns() recorded a warning at A.swift:3:5: Issue.record(severity: .warning)", True),
+    ("\U00100fbe Test warnsSF() recorded a warning at A.swift:4:5: with an SF symbol", True),
+    ("Test warnsPlain() recorded a warning at A.swift:5:5: no symbol", True),
+    (HOST + "[x] host text" + "\u26a0\ufe0e Test warnsGlued() recorded a warning at A.swift:6:5: glued",
+     "\u26a0\ufe0e Test warnsGlued() recorded a warning at A.swift:6:5: glued"),
+    (HOST + "[default] WebContent[17716] Conn 0x0 is not a valid connection ID.", False),
+    ("\u26a0\ufe0e Test warnsAfterNoise() recorded a warning at A.swift:7:5: Sandbox restriction", True),
     (HOST + "[logging] fault: something [fault] broke", True),
     (HOST + "[x] Received SIGTRAP in the test host", True),
     (HOST + "[x] Swift runtime: Fatal error: Index out of range", True),
@@ -150,6 +164,10 @@ def check_console_filter(root: Path, env: dict[str, str]) -> None:
     held = [shown.index(t) for t in ("◇ Test hanging() started.", "◇ Test gluedHang() started.", "◇ Test gluedHang2() started.")]
     assert held == sorted(held) and held[-1] < crash, "unsettled start lines (also the glued ones) must name the hung test before the crash"
     assert not any("slowButFine" in line and "started" in line for line in shown), "a settled start line was printed"
+    # An expired wait names the test that is still running: its start line is printed before it.
+    expired = watchdog(["sh", "-c", "echo '◇ Test waits() started.'; echo 'WAIT-EXPIRED W.swift:1 after 5.0 seconds in waits()'"], root, filtered_env)
+    lines = expired.stdout.splitlines()
+    assert lines.index("◇ Test waits() started.") < lines.index("WAIT-EXPIRED W.swift:1 after 5.0 seconds in waits()"), lines
     # WSURF_CI_VERBOSE=1: raw log kept, console unfiltered.
     raw.unlink()
     verbose = watchdog(["cat", str(fixture)], root, {**filtered_env, "WSURF_CI_VERBOSE": "1"})
