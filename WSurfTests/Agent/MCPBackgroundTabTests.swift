@@ -265,7 +265,10 @@ struct MCPBackgroundTabTests {
         try await withRig(engine: engine) { rig in
             let mine = try await parkedTab(rig, path: "/other")
             rig.window.setFrameOrigin(NSPoint(x: -30_000, y: -30_000))
-            let covered = await waitUntil(timeout: .seconds(3)) { !rig.window.occlusionState.contains(.visible) }
+            let covered = await waitUntil(timeout: .seconds(10)) { !rig.window.occlusionState.contains(.visible) }
+            // The window sits off every screen, which counts as covered: a window that is never reported so fails here, where
+            // the hidden-while-covered checks below would otherwise be skipped without a word.
+            #expect(covered, "\(engine): the window moved off every screen is reported covered")
             let hidesCovered = covered && engine == .webKit
             if hidesCovered {
                 #expect(await waitUntil { await visibility(of: mine) == "hidden true" }, "a covered window hides the person's WebKit tab")

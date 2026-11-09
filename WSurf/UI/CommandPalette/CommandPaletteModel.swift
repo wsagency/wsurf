@@ -55,51 +55,6 @@ struct CommandPaletteLayout: Equatable {
     }
 }
 
-enum CommandPaletteShortcutPolicy {
-    static let arrowKeys: Set<String> = Set(
-        [NSUpArrowFunctionKey, NSDownArrowFunctionKey, NSLeftArrowFunctionKey, NSRightArrowFunctionKey]
-            .compactMap { UnicodeScalar($0).map(String.init) }
-    )
-
-    static let returnKeys: Set<String> = ["\r", "\u{3}"]
-
-    static func showsCurrentTab(modifiers: NSEvent.ModifierFlags) -> Bool {
-        let actionModifiers: NSEvent.ModifierFlags = [.command, .control, .option, .shift]
-        return modifiers.intersection(actionModifiers) == .option
-    }
-
-    static func opensInCurrentTab(modifiers: NSEvent.ModifierFlags, key: String) -> Bool {
-        showsCurrentTab(modifiers: modifiers) && returnKeys.contains(key)
-    }
-
-    static func shouldDismiss(_ event: NSEvent) -> Bool {
-        let commandKey = event.modifierFlags.contains(.command)
-            ? event.characters(byApplyingModifiers: .command)
-            : nil
-        return shouldDismiss(
-            modifiers: event.modifierFlags,
-            key: event.charactersIgnoringModifiers ?? "",
-            commandKey: commandKey
-        )
-    }
-
-    static func shouldDismiss(modifiers: NSEvent.ModifierFlags, key: String, commandKey: String? = nil) -> Bool {
-        // Caps Lock and key-type flags do not change an editing shortcut.
-        let modifiers = modifiers.intersection([.command, .control, .option, .shift])
-        let editingKeys: Set<String> = ["a", "c", "v", "x", "z"]
-        // Some layouts use different letters while Command is held.
-        let normalizedKey = (modifiers.contains(.command) ? commandKey ?? key : key).lowercased()
-        let isTextEditing = modifiers == .command && editingKeys.contains(normalizedKey)
-            || modifiers == [.command, .shift] && normalizedKey == "z"
-            || modifiers == [.command, .option, .shift] && normalizedKey == "v"
-        let isPaletteShortcut = modifiers == .command && (normalizedKey == "k" || normalizedKey == "t")
-        let isListNavigation = arrowKeys.contains(key)
-        let isRun = returnKeys.contains(key)
-        let isCommand = !modifiers.isDisjoint(with: [.command, .control, .option])
-        return isCommand && !isTextEditing && !isPaletteShortcut && !isListNavigation && !isRun
-    }
-}
-
 struct CommandPaletteActions {
     var openCurrent: (URL) -> Void = { _ in }
     var ask: (String) -> Void = { _ in }

@@ -99,26 +99,13 @@ struct CommandPalette: View {
 
     private func watchForShortcuts(model: CommandPaletteModel) {
         guard shortcutMonitor == nil else { return }
+        let handle = CommandPaletteShortcutPolicy.monitor(
+            for: model.coordinator,
+            setOptionHeld: { optionHeld = $0 }, submitInCurrentTab: { model.submitInCurrentTab() }, dismiss: { model.dismiss() }
+        )
         shortcutMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { event in
-            guard MainActor.assumeIsolated({
-                guard let window = model.coordinator.nativeWindow else { return false }
-                return window.isKeyWindow && event.window === window
-            }) else { return event }
-            if event.type == .flagsChanged {
-                MainActor.assumeIsolated {
-                    optionHeld = CommandPaletteShortcutPolicy.showsCurrentTab(modifiers: event.modifierFlags)
-                }
-                return event
-            }
-            let key = event.charactersIgnoringModifiers ?? ""
-            if CommandPaletteShortcutPolicy.opensInCurrentTab(modifiers: event.modifierFlags, key: key) {
-                MainActor.assumeIsolated { model.submitInCurrentTab() }
-                return nil
-            }
-            if CommandPaletteShortcutPolicy.shouldDismiss(event) {
-                MainActor.assumeIsolated { model.dismiss() }
-            }
-            return event
+            let consumed = MainActor.assumeIsolated { handle(event) }
+            return consumed ? nil : event
         }
     }
 }
