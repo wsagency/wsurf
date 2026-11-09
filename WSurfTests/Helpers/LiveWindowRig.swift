@@ -156,6 +156,20 @@ struct LiveWindowRig {
 
     /// Whether the page runs animation frames and is visible. It takes one sample of the counter and then polls it, so a page that
     /// animates answers within a tick or two instead of after a fixed wait; a page that does not is given the same 300 ms as before.
+    /// Writes a value into the page that nothing in the page sets, and returns it. `__marker` cannot say "the page did not reload",
+    /// because the page sets it again on every load; this value is gone after a reload, so a test that stamps a tab once, after its
+    /// first load, and reads the stamp back later has seen the same document the whole time.
+    func stamp(_ tab: BrowserTab) async throws -> String {
+        let value = UUID().uuidString
+        _ = try await tab.page.evaluateJavaScript("window.__stamp = '\(value)'; true")
+        return value
+    }
+
+    /// Whether the page still holds `stamp` (see `stamp(_:)`): it is the same document as when it was written.
+    func stampSurvived(_ tab: BrowserTab, _ stamp: String) async -> Bool {
+        (try? await tab.page.evaluateJavaScript("window.__stamp")) as? String == stamp
+    }
+
     func isAnimating(_ tab: BrowserTab) async -> Bool {
         let first = await frames(of: tab)
         guard first >= 0 else { return false }

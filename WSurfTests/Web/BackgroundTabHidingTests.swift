@@ -56,6 +56,7 @@ struct BackgroundTabHidingTests {
     func aTabBehindAnotherTabIsHiddenAndStopsAnimating(engine: BrowserEngine) async throws {
         try await LiveWindowRig.with(engine: engine) { rig in
             let background = try await rig.open("/page")
+            let stamp = try await rig.stamp(background)
             try #require(await waitUntil { await rig.isAnimating(background) }, "in front the tab is visible and animates")
 
             let front = try await rig.open("/page")
@@ -70,7 +71,7 @@ struct BackgroundTabHidingTests {
             #expect(background.page.isParked, "it waits on the shelf")
             #expect(background.isMaterialised && !background.isDeferred, "it stays loaded")
             #expect(background.page.window != nil, "and in its window")
-            #expect(await rig.marker(of: background) == "loaded")
+            #expect(await rig.stampSurvived(background, stamp), "it did not reload while it was hidden")
 
             rig.browser.activate(background)
             #expect(
@@ -78,7 +79,7 @@ struct BackgroundTabHidingTests {
                 "\(engine): in front it is shown the moment it is in the content area"
             )
             #expect(await waitUntil { await rig.isAnimating(background) }, "\(engine): back in front it is visible and animates again")
-            #expect(await rig.marker(of: background) == "loaded", "it did not reload")
+            #expect(await rig.stampSurvived(background, stamp), "it did not reload")
         }
     }
 
@@ -91,6 +92,7 @@ struct BackgroundTabHidingTests {
         try await LiveWindowRig.with(engine: engine) { rig in
             let clock = TestClock()
             let first = try await rig.open("/page", grace: .seconds(10), clock: clock)
+            let stamp = try await rig.stamp(first)
             let front = try await rig.open("/still")
             for round in 1...3 {
                 rig.browser.activate(first)
@@ -103,7 +105,7 @@ struct BackgroundTabHidingTests {
                 #expect(reported == "visible", "\(engine), round \(round): left behind, within the wait, it reports \(reported ?? "nothing")")
                 #expect(await rig.isAnimating(first), "\(engine), round \(round): and it is still drawing")
             }
-            #expect(await rig.marker(of: first) == "loaded", "it did not reload")
+            #expect(await rig.stampSurvived(first, stamp), "it did not reload")
         }
     }
 
@@ -113,6 +115,7 @@ struct BackgroundTabHidingTests {
         try await LiveWindowRig.with(engine: engine) { rig in
             let clock = TestClock()
             let background = try await rig.open("/page", grace: .seconds(10), clock: clock)
+            let stamp = try await rig.stamp(background)
             let front = try await rig.open("/page")
             try #require(rig.browser.activeTab === front)
             try #require(await waitUntil { clock.pendingCount == 1 }, "the wait is running")
@@ -127,7 +130,7 @@ struct BackgroundTabHidingTests {
             #expect(hidden, "\(engine): when the wait ends it reports \(reported)")
             let ran = await rig.frames(of: background, whileFramesOf: front)
             #expect(ran.map { (0.0...1.0).contains($0) } == true, "\(engine): the hidden tab ran \(ran.map { "\($0)" } ?? "no") frames while the front tab ran 20")
-            #expect(await rig.marker(of: background) == "loaded", "it did not reload")
+            #expect(await rig.stampSurvived(background, stamp), "it did not reload")
         }
     }
 
@@ -169,7 +172,9 @@ struct BackgroundTabHidingTests {
     func twoTabsTakeTurnsBeingHiddenAndShown(engine: BrowserEngine) async throws {
         try await LiveWindowRig.with(engine: engine) { rig in
             let first = try await rig.open("/page")
+            let firstStamp = try await rig.stamp(first)
             let second = try await rig.open("/page")
+            let secondStamp = try await rig.stamp(second)
             for round in 1...3 {
                 rig.browser.activate(first)
                 #expect(await waitUntil { await rig.isAnimating(first) }, "\(engine), round \(round): the first is shown")
@@ -178,8 +183,8 @@ struct BackgroundTabHidingTests {
                 #expect(await waitUntil { await rig.isAnimating(second) }, "\(engine), round \(round): the second is shown")
                 #expect(await waitUntil(timeout: .seconds(10)) { await rig.state(of: first) == "hidden" }, "\(engine), round \(round): the first waits")
             }
-            let markers = [await rig.marker(of: first), await rig.marker(of: second)]
-            #expect(markers == ["loaded", "loaded"], "neither reloaded")
+            #expect(await rig.stampSurvived(first, firstStamp), "the first did not reload")
+            #expect(await rig.stampSurvived(second, secondStamp), "the second did not reload")
         }
     }
 
@@ -235,6 +240,7 @@ struct BackgroundTabHidingTests {
     func aTabThatPlaysAudioKeepsPlayingBehindAnotherTab(engine: BrowserEngine) async throws {
         try await LiveWindowRig.with(engine: engine) { rig in
             let background = try await rig.open("/page")
+            let stamp = try await rig.stamp(background)
             try await rig.startPlaying(background)
             try #require(await waitUntil { background.isPlayingAudio }, "the page plays")
 
@@ -257,7 +263,7 @@ struct BackgroundTabHidingTests {
             #expect(await rig.isPlaying(background) == true, "\(engine): its player was not paused")
             #expect(background.isMaterialised && !background.isDeferred)
             #expect(background.page.window != nil)
-            #expect(await rig.marker(of: background) == "loaded", "it did not reload")
+            #expect(await rig.stampSurvived(background, stamp), "it did not reload")
         }
     }
 
