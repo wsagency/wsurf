@@ -64,6 +64,7 @@ enum D4SpikeDriver {
             case "ime": await ime()
             case "imekeys": await imeKeys()
             case "select": await selectMenu()
+            case "latency": await latency()
             #if DEBUG
             case "ax": await accessibility()
             #endif
@@ -254,6 +255,47 @@ enum D4SpikeDriver {
         browser.close(tab)
         try? await Task.sleep(for: .seconds(1))
         await scroll()
+    }
+
+    /// K4 with a real sample: 200 keystrokes typed into a field (in-app events, 50 ms apart), each one's input leg (WSurf's send to
+    /// the service's `send_key_event`) and the output leg of the frames they cause (CEF's paint callback to WSurf's commit).
+    private static func latency() async {
+        var browser: BrowserModel { coordinator.browser }
+        let tab = browser.newTab(url: url("input.html"), engine: .chromium)
+        _ = await waitLoaded(tab, timeout: 60)
+        try? await Task.sleep(for: .seconds(1))
+        guard let page = tab.liveView, let chromium = page.chromium, let window = chromium.window else {
+            log("latency: no page")
+            return
+        }
+        let inWindow = chromium.convert(CGPoint(x: 120, y: 40), to: nil)
+        for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+            if let event = NSEvent.mouseEvent(with: type, location: inWindow, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                              windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1) {
+                window.sendEvent(event)
+            }
+        }
+        try? await Task.sleep(for: .milliseconds(500))
+        _ = await ChromiumRemote.shared.statistics(reset: true)
+        _ = RemoteFrameSinks.shared.report(reset: true)
+        let letters = Array("abcdefghijklmnopqrstuvwxyz")
+        for index in 0..<200 {
+            let text = String(letters[index % letters.count])
+            for type in [NSEvent.EventType.keyDown, .keyUp] {
+                if let event = NSEvent.keyEvent(with: type, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                                windowNumber: window.windowNumber, context: nil, characters: text,
+                                                charactersIgnoringModifiers: text, isARepeat: false, keyCode: Self.keyCode(letters[index % letters.count])) {
+                    window.sendEvent(event)
+                }
+            }
+            try? await Task.sleep(for: .milliseconds(50))
+        }
+        try? await Task.sleep(for: .milliseconds(800))
+        let value = try? await page.evaluateJavaScript("document.querySelector('input').value.length")
+        log("latency: typed 200 keys; the field holds \(String(describing: value)) characters")
+        await serviceStatistics()
+        browser.close(tab)
+        try? await Task.sleep(for: .seconds(1))
     }
 
     /// Wheel events reach the page: ten 40-point steps down on a long article. The event is made in process from a CGEvent
