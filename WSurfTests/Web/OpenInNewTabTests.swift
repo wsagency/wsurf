@@ -127,6 +127,7 @@ struct OpenInNewTabTests {
         "/frame": .html(frame),
         "/popup": .html(popup),
         "/held": .html(held),
+        "/release": .html("ok", gate: heldGate),
         "/auto": .html("<!doctype html><title>Auto</title><script>setTimeout(() => window.open('/target?via=auto'), 300);</script>"),
         "/target": .html("<!doctype html><title>Target</title><p>Target</p>"),
         // A page that opens a pop-up every few milliseconds once it is told to, from a timer: no gesture started any of them.

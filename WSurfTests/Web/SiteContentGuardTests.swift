@@ -286,8 +286,15 @@ struct PageColorChooserTests {
     @Test(arguments: [BrowserEngine.webKit, .chromium], ["/colour", "/player"])
     func onlyThePersonsClickOpensTheColourChooser(engine: BrowserEngine, path: String) async throws {
         try await LiveWindowRig.with(engine: engine, routes: ["/colour": .html(Self.page), "/player": .html(Self.page)]) { rig in
+            // Only what the rig's window and its chooser can open: a sheet, a child window or popover of it, or the colour panel. A
+            // window some other part of the process (or the Mac) shows meanwhile is not the page's doing.
+            let mine = { (window: NSWindow) in
+                window.parent === rig.window || window.sheetParent === rig.window || window is NSColorPanel
+                    || rig.window.childWindows?.contains(window) == true
+            }
             let shown = Set(NSApp.windows.filter(\.isVisible).map(ObjectIdentifier.init))
-            let added = { NSApp.windows.filter { $0.isVisible && !shown.contains(ObjectIdentifier($0)) } }
+            let added = { NSApp.windows.filter { $0.isVisible && !shown.contains(ObjectIdentifier($0)) && mine($0) } }
+            let everyNewWindow = { NSApp.windows.filter { $0.isVisible && !shown.contains(ObjectIdentifier($0)) }.map { String(describing: type(of: $0)) } }
             defer {
                 added().forEach { $0.orderOut(nil) }
             }
@@ -301,7 +308,7 @@ struct PageColorChooserTests {
             _ = try await tab.page.evaluateJavaScript(
                 "document.getElementById('field').click(); true", in: nil, contentWorld: .page, userGesture: true
             )
-            #expect(await waitUntil { !added().isEmpty }, "\(engine) \(path): the person's click opens it")
+            #expect(await waitUntil { !added().isEmpty }, "\(engine) \(path): the person's click opens it (new windows: \(everyNewWindow()))")
         }
     }
 }

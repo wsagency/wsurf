@@ -47,11 +47,10 @@ struct CommandPaletteShortcutTests {
         #expect(!CommandPaletteShortcutPolicy.shouldDismiss(event))
     }
 
+    /// The palette's shortcut monitor belongs to its own window. The events here are addressed to another window (`windowNumber`),
+    /// and no step depends on the test host being the active app: nothing is activated, and nothing waits for key status, so a
+    /// person using another app during the run changes nothing.
     @Test func backgroundPaletteCannotConsumeAnotherWindowsKeyboardEvents() async throws {
-        let activationPolicy = NSApp.activationPolicy()
-        NSApp.setActivationPolicy(.regular)
-        NSApp.activate(ignoringOtherApps: true)
-        defer { NSApp.setActivationPolicy(activationPolicy) }
         let app = BrowserApplication()
         let source = app.newWindow(profile: .original(), show: false)
         let destination = app.newWindow(profile: .original(), show: false)
@@ -66,28 +65,33 @@ struct CommandPaletteShortcutTests {
         editor.string = "before"
         editor.setSelectedRange(NSRange(location: 6, length: 0))
         destinationWindow.contentView = editor
-        destinationWindow.makeKeyAndOrderFront(nil)
-        #expect(await waitUntil { NSApp.isActive && destinationWindow.isKeyWindow }, """
-        active=\(NSApp.isActive), selfPID=\(ProcessInfo.processInfo.processIdentifier), \
-        frontPID=\(NSWorkspace.shared.frontmostApplication?.processIdentifier ?? 0), \
-        key=\(NSApp.keyWindow?.windowNumber ?? 0), destination=\(destinationWindow.windowNumber)
-        """)
         try #require(destinationWindow.makeFirstResponder(editor))
 
-        let optionReturn = try #require(NSEvent.keyEvent(
-            with: .keyDown, location: .zero, modifierFlags: .option,
-            timestamp: 0, windowNumber: destinationWindow.windowNumber, context: nil,
-            characters: "\r", charactersIgnoringModifiers: "\r", isARepeat: false, keyCode: 36
-        ))
+        func key(_ characters: String, code: UInt16, modifiers: NSEvent.ModifierFlags, in window: NSWindow) throws -> NSEvent {
+            try #require(NSEvent.keyEvent(
+                with: .keyDown, location: .zero, modifierFlags: modifiers,
+                timestamp: 0, windowNumber: window.windowNumber, context: nil,
+                characters: characters, charactersIgnoringModifiers: characters, isARepeat: false, keyCode: code
+            ))
+        }
+        let optionReturn = try key("\r", code: 36, modifiers: .option, in: destinationWindow)
+        let commandL = try key("l", code: 37, modifiers: .command, in: destinationWindow)
+
+        // The decision the palette's monitor makes, even were the palette's window key: another window's events are not its own,
+        // and the palette's own window's events are. The positive control proves the check is live.
+        for event in [optionReturn, commandL] {
+            #expect(!CommandPaletteShortcutPolicy.isAddressedToPalette(event, paletteWindow: sourceWindow, isKey: true))
+        }
+        let ownReturn = try key("\r", code: 36, modifiers: .option, in: sourceWindow)
+        #expect(CommandPaletteShortcutPolicy.isAddressedToPalette(ownReturn, paletteWindow: sourceWindow, isKey: true))
+        #expect(!CommandPaletteShortcutPolicy.isAddressedToPalette(ownReturn, paletteWindow: sourceWindow, isKey: false))
+
+        // And through the app's own event path, which runs the monitor: the destination's editor gets the keys, the palette
+        // stays open and takes nothing.
         NSApp.sendEvent(optionReturn)
         #expect(editor.string == "before\n")
         #expect(source.isPaletteOpen)
 
-        let commandL = try #require(NSEvent.keyEvent(
-            with: .keyDown, location: .zero, modifierFlags: .command,
-            timestamp: 0, windowNumber: destinationWindow.windowNumber, context: nil,
-            characters: "l", charactersIgnoringModifiers: "l", isARepeat: false, keyCode: 37
-        ))
         NSApp.sendEvent(commandL)
         #expect(source.isPaletteOpen)
         #expect(source.browser.activeTab?.urlString == originalURL)

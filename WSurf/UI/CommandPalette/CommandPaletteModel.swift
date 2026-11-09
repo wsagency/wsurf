@@ -72,6 +72,13 @@ enum CommandPaletteShortcutPolicy {
         showsCurrentTab(modifiers: modifiers) && returnKeys.contains(key)
     }
 
+    /// Whether the palette's shortcut monitor may act on `event`: only a key event addressed to the palette's own window, while
+    /// that window is key. An event for another window of the app is never the palette's, however the app was activated.
+    static func isAddressedToPalette(_ event: NSEvent, paletteWindow: NSWindow?, isKey: Bool) -> Bool {
+        guard let paletteWindow else { return false }
+        return isKey && event.window === paletteWindow
+    }
+
     static func shouldDismiss(_ event: NSEvent) -> Bool {
         let commandKey = event.modifierFlags.contains(.command)
             ? event.characters(byApplyingModifiers: .command)

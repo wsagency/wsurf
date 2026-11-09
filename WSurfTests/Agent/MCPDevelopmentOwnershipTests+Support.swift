@@ -112,8 +112,8 @@ extension MCPDevelopmentOwnershipTests {
             NSApp.setActivationPolicy(.regular)
             window.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
-            // Activation can take several seconds, or be refused; the resize check below is what the tests depend on.
-            _ = await waitUntil(timeout: .seconds(8)) { NSApp.isActive && window.isKeyWindow }
+            // Activation can take several seconds, or be refused: nothing waits for it here, and the resize check below is the
+            // condition the tests depend on.
         }
         let width = Int(container.bounds.width)
         #expect(

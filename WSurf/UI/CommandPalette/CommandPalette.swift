@@ -101,8 +101,10 @@ struct CommandPalette: View {
         guard shortcutMonitor == nil else { return }
         shortcutMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { event in
             guard MainActor.assumeIsolated({
-                guard let window = model.coordinator.nativeWindow else { return false }
-                return window.isKeyWindow && event.window === window
+                let window = model.coordinator.nativeWindow
+                return CommandPaletteShortcutPolicy.isAddressedToPalette(
+                    event, paletteWindow: window, isKey: window?.isKeyWindow ?? false
+                )
             }) else { return event }
             if event.type == .flagsChanged {
                 MainActor.assumeIsolated {

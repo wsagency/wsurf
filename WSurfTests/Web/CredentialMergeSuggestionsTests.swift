@@ -176,20 +176,33 @@ struct CredentialMergeSuggestionsTests {
         #expect(found.suggestions(containing: UUID()).isEmpty)
     }
 
+    /// Grouping and suggesting must grow linearly with the number of credentials. Not a wall-clock budget (a loaded machine
+    /// breaks those): the same work at 300 and at 3,000 credentials, each timed as the fastest of several runs on this machine and
+    /// under this load, grows about tenfold when linear and about a hundredfold when quadratic.
     @Test(.timeLimit(.minutes(1))) func groupingAndSuggestingThreeThousandCredentialsIsLinear() {
-        var accounts: [CredentialAccount] = []
-        for number in 0..<3_000 {
-            // One registrable site (example.test) for all; the last 300 repeat the first 300's username and password.
-            let site = number < 2_700 ? number : number - 2_700
-            accounts.append(login("user\(site)@example.test", "pw\(site)", on: "https://site\(site).example.test"))
+        /// One registrable site (example.test) for all; the last tenth repeat the first tenth's username and password.
+        func credentials(_ count: Int) -> [CredentialAccount] {
+            let unique = count * 9 / 10
+            return (0..<count).map { number in
+                let site = number < unique ? number : number - unique
+                return login("user\(site)@example.test", "pw\(site)", on: "https://site\(site).example.test")
+            }
         }
-        let summaries = accounts.map(CredentialSummary.init)
-        let clock = ContinuousClock()
-        let elapsed = clock.measure {
-            _ = CredentialSiteGroups.groups(summaries)
-            let found = CredentialMergeSuggestions.index(for: accounts, revision: 1)
-            #expect(found.suggestions.count == 300)
+        func fastest(_ count: Int) -> Duration {
+            let accounts = credentials(count)
+            let summaries = accounts.map(CredentialSummary.init)
+            let clock = ContinuousClock()
+            return (0..<5).map { _ in
+                clock.measure {
+                    _ = CredentialSiteGroups.groups(summaries)
+                    let found = CredentialMergeSuggestions.index(for: accounts, revision: 1)
+                    #expect(found.suggestions.count == count / 10)
+                }
+            }.min() ?? .zero
         }
-        #expect(elapsed < .milliseconds(500), "took \(elapsed)")
+        let small = fastest(300), large = fastest(3_000)
+        let growth = large / max(small, .microseconds(50))
+        // Linear is about 10, quadratic about 100.
+        #expect(growth < 40, "300 credentials \(small), 3,000 credentials \(large): \(growth) times")
     }
 }

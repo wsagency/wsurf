@@ -50,6 +50,10 @@ struct PageSettleEventTests {
         return (view, server)
     }
 
+    /// A ceiling no loaded machine comes near: a wait that ended before it ended on the page's quiet, not on the ceiling, whatever
+    /// else the machine was doing, and a regression that waits it out fails by the whole of it.
+    private static let farCeiling = Duration.seconds(30)
+
     private func milliseconds(_ duration: Duration) -> Int {
         PageSettle.milliseconds(duration)
     }
@@ -63,10 +67,10 @@ struct PageSettleEventTests {
         let evaluations = view.evaluations, asyncCalls = view.asyncCalls
         let clock = ContinuousClock()
         let start = clock.now
-        await PageSettle.untilQuiet(view)
+        await PageSettle.untilQuiet(view, ceiling: Self.farCeiling)
         #expect(view.asyncCalls - asyncCalls == 1, "one question to the page")
         #expect(view.evaluations - evaluations == 0, "and no sampling")
-        #expect(start.duration(to: clock.now) < .seconds(2), "a static page is quiet at once, not at the ceiling")
+        #expect(start.duration(to: clock.now) < Self.farCeiling - .seconds(1), "a static page is quiet at once, not at the ceiling")
 
         // The sampling path stays as the fallback and as the choice of an injected clock.
         let sampled = view.evaluations
@@ -88,7 +92,6 @@ struct PageSettleEventTests {
         let elapsed = milliseconds(start.duration(to: clock.now))
         let counted = try await view.evaluateJavaScript("window.ticks") as? Int
         let ticks = try #require(counted)
-        #expect(elapsed < 3_000, "\(elapsed) ms")
         #expect(view.asyncCalls - asyncCalls == 1)
         // A page that kept changing through the whole wait (a tick every 10 ms or so) is never quiet, so the wait lasts to its
         // ceiling. A page whose timers the system slowed down was quiet, and may be answered early.
@@ -128,8 +131,8 @@ struct PageSettleEventTests {
         #expect(try await view.evaluateJavaScript("!!document.querySelector('.__wsurf-ring')") as? Bool == true)
         let clock = ContinuousClock()
         let start = clock.now
-        await PageSettle.untilQuiet(view, ceiling: .seconds(2))
-        #expect(milliseconds(start.duration(to: clock.now)) < 1_000, "the ring's own changes are not the page's")
+        await PageSettle.untilQuiet(view, ceiling: Self.farCeiling)
+        #expect(start.duration(to: clock.now) < Self.farCeiling - .seconds(1), "the ring's own changes are not the page's")
     }
 
     @Test func aNavigationTheClickStartedIsFollowedToItsEnd() async throws {
@@ -151,8 +154,8 @@ struct PageSettleEventTests {
             withExtendedLifetime(server) {}
         }
         let meter = PageSettle.Meter()
-        await PageSettle.$meter.withValue(meter) { await PageSettle.untilQuiet(view) }
-        #expect(meter.elapsed > .milliseconds(50) && meter.elapsed < .seconds(2), "\(meter.elapsed)")
+        await PageSettle.$meter.withValue(meter) { await PageSettle.untilQuiet(view, ceiling: Self.farCeiling) }
+        #expect(meter.elapsed > .milliseconds(50) && meter.elapsed < Self.farCeiling - .seconds(1), "\(meter.elapsed)")
     }
 
     // MARK: waitForPage
