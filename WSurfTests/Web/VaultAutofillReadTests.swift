@@ -252,9 +252,10 @@ struct VaultAutofillReadTests {
     private static let factFields = ["kind", "customTitle", "cardLastFour", "cardNetwork"]
 
     private func withVault(
-        _ accounts: [CredentialAccount], _ body: (VaultStoreFixture, ProfileVaultStore, VaultAccess) async throws -> Void
+        _ accounts: [CredentialAccount], blockedOrigins: [String] = [],
+        _ body: (VaultStoreFixture, ProfileVaultStore, VaultAccess) async throws -> Void
     ) async throws {
-        try await VaultStoreFixture.with(accounts: accounts) { f in
+        try await VaultStoreFixture.with(accounts: accounts, blockedOrigins: blockedOrigins) { f in
             let (store, access) = try await f.unlocked(wall: { Entries.today })
             try await body(f, store, access)
         }
@@ -265,6 +266,7 @@ struct VaultAutofillReadTests {
     @Test func aCandidateHoldsIdentityFlagsAndItemNamesOnly() async throws {
         try await withVault(try Entries.all()) { f, store, access in
             let candidates = try await store.autofillCandidates(vaultID: f.vaultID, using: access)
+            #expect(Mirror(reflecting: candidates).children.map(\.label) == ["vaultID", "revision", "candidates", "blockedPasswordOrigins"])
             for candidate in candidates.candidates {
                 #expect(Mirror(reflecting: candidate).children.map(\.label) == Self.candidateFields)
                 for fact in candidate.items {
@@ -336,11 +338,13 @@ struct VaultAutofillReadTests {
     // MARK: V2 Candidates
 
     @Test func candidatesAreTheVerifiedReadProjected() async throws {
-        try await withVault(try Entries.all()) { f, store, access in
+        try await withVault(try Entries.all(), blockedOrigins: ["https://never.example.test"]) { f, store, access in
             let snapshot = try await store.snapshot(vaultID: f.vaultID, using: access)
             let read = try await store.autofillCandidates(vaultID: f.vaultID, using: access)
             #expect(read.vaultID == f.vaultID && read.revision == snapshot.revision)
             #expect(read.candidates.map(\.id) == snapshot.accounts.map(\.id))
+            // An offer to add a website reads the excluded websites here, not from the whole vault.
+            #expect(read.blockedPasswordOrigins == ["https://never.example.test"] && snapshot.blockedPasswordOrigins == read.blockedPasswordOrigins)
 
             let byID = Dictionary(uniqueKeysWithValues: read.candidates.map { ($0.id, $0) })
             let login = try #require(byID[Entries.loginID])

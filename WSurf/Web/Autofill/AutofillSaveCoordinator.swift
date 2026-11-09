@@ -438,7 +438,8 @@ final class AutofillSaveSession: NSObject {
     /// Offers to add `origin` to the credential `accountID` of the vault leased under `epoch`: a credential of a sibling website
     /// that was just filled here, or whose login was just submitted here, or (`manual`) any credential the person just picked by hand
     /// for this page. Nothing is written until `addWebsite`, and only then. A website the bar cannot draw as a plain name is never
-    /// offered, and a manual offer says when the page imitates one of the credential's websites.
+    /// offered, and a manual offer says when the page imitates one of the credential's websites. The offer reads the vault's
+    /// candidates (`autofillCandidates`), never a secret, so no secret waits with it for the page.
     func offerWebsite(
         accountID: UUID, epoch: UInt64, origin: String, documentID: String, liveOrigin: String? = nil, manual: Bool = false
     ) async {
@@ -453,12 +454,12 @@ final class AutofillSaveSession: NSObject {
             AutofillDiagnostics.note(.offerDroppedDismissed, kind: .password)
             return
         }
-        guard let snapshot = try? await manager.snapshot(), self.manager(epoch: epoch) === manager, revision == self.revision else { return }
-        guard !snapshot.blockedPasswordOrigins.contains(origin) else {
+        guard let read = try? await manager.autofillCandidates(), self.manager(epoch: epoch) === manager, revision == self.revision else { return }
+        guard !read.blockedPasswordOrigins.contains(origin) else {
             AutofillDiagnostics.note(.offerDroppedBlocked, kind: .password)
             return
         }
-        guard let account = snapshot.accounts.first(where: { $0.id == accountID }),
+        guard let account = read.candidates.first(where: { $0.id == accountID }),
               CredentialAccountSelection.canAddWebsite(origin, to: account, anySite: manual) else { return }
         if !documentID.isEmpty, await !liveness(page, documentID, liveOrigin) {
             AutofillDiagnostics.note(.offerDroppedNotLive, kind: .password)
