@@ -61,9 +61,7 @@ struct CommandPaletteShortcutTests {
         try #require(await waitUntil { sourceWindow.firstResponder is NSTextView })
         destination.showBrowser(activate: false)
         let destinationWindow = try #require(destination.nativeWindow)
-        let editor = NSTextView(frame: NSRect(x: 0, y: 0, width: 400, height: 200))
-        editor.string = "before"
-        editor.setSelectedRange(NSRange(location: 6, length: 0))
+        let editor = RecordingEditor(frame: NSRect(x: 0, y: 0, width: 400, height: 200))
         destinationWindow.contentView = editor
         try #require(destinationWindow.makeFirstResponder(editor))
 
@@ -86,15 +84,31 @@ struct CommandPaletteShortcutTests {
         #expect(CommandPaletteShortcutPolicy.isAddressedToPalette(ownReturn, paletteWindow: sourceWindow, isKey: true))
         #expect(!CommandPaletteShortcutPolicy.isAddressedToPalette(ownReturn, paletteWindow: sourceWindow, isKey: false))
 
-        // And through the app's own event path, which runs the monitor: the destination's editor gets the keys, the palette
-        // stays open and takes nothing.
-        NSApp.sendEvent(optionReturn)
-        #expect(editor.string == "before\n")
+        // And through the destination window's own path, which needs no active app and no key window (`NSApp.sendEvent` drops
+        // key events for a window that is not key): its editor gets the keys, the palette stays open and takes nothing.
+        destinationWindow.sendEvent(optionReturn)
+        #expect(editor.keyDowns == ["\r"], "the destination's editor received the Option-Return")
         #expect(source.isPaletteOpen)
 
-        NSApp.sendEvent(commandL)
+        destinationWindow.sendEvent(commandL)
+        #expect(editor.keyEquivalents == ["l"], "and the Command-L")
         #expect(source.isPaletteOpen)
         #expect(source.browser.activeTab?.urlString == originalURL)
+    }
+
+    /// An editor that notes the keys that reach it, whether or not it is in the key window of an active app to insert them.
+    private final class RecordingEditor: NSTextView {
+        var keyDowns: [String] = []
+        var keyEquivalents: [String] = []
+
+        override func keyDown(with event: NSEvent) {
+            keyDowns.append(event.characters ?? "")
+        }
+
+        override func performKeyEquivalent(with event: NSEvent) -> Bool {
+            keyEquivalents.append(event.charactersIgnoringModifiers ?? "")
+            return false
+        }
     }
 
     private func pasteEvent(

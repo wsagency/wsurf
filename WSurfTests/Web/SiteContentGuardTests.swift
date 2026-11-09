@@ -291,6 +291,8 @@ struct PageColorChooserTests {
             let mine = { (window: NSWindow) in
                 window.parent === rig.window || window.sheetParent === rig.window || window is NSColorPanel
                     || rig.window.childWindows?.contains(window) == true
+                    // Chromium's chooser is its own popup window, tied to no parent.
+                    || String(describing: type(of: window)) == "RenderWidgetPopupWindow"
             }
             let shown = Set(NSApp.windows.filter(\.isVisible).map(ObjectIdentifier.init))
             let added = { NSApp.windows.filter { $0.isVisible && !shown.contains(ObjectIdentifier($0)) && mine($0) } }
