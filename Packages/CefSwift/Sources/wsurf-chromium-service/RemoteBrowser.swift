@@ -6,6 +6,49 @@ import CCef
 import CefKit
 import IOSurface
 
+/// The client's handlers, made once on the main thread before the browser exists and never changed (the use-after-free fix,
+/// b19). CEF calls the client's getters on any thread, the IO thread included, and each getter retains the handler it returns.
+/// Before b19 the browser kept the handlers in mutable `nonisolated(unsafe)` properties and released them in `didClose` on
+/// the main thread, so a getter could retain a handler while it was being freed. Now the client owns this holder, its
+/// pointers are constants, and they are released only when CEF destroys the client, as CefKit's `BrowserClient` never
+/// releases its handlers before that either. Each handler owns the browser, so the browser lives until the last one goes.
+final class RemoteClientHandlers: @unchecked Sendable {
+    let lifeSpan: UnsafeMutablePointer<cef_life_span_handler_t>
+    let load: UnsafeMutablePointer<cef_load_handler_t>
+    let display: UnsafeMutablePointer<cef_display_handler_t>
+    let request: UnsafeMutablePointer<cef_request_handler_t>
+    let render: UnsafeMutablePointer<cef_render_handler_t>
+    let keyboard: UnsafeMutablePointer<cef_keyboard_handler_t>
+    let focus: UnsafeMutablePointer<cef_focus_handler_t>
+    let contextMenu: UnsafeMutablePointer<cef_context_menu_handler_t>
+    let find: UnsafeMutablePointer<cef_find_handler_t>
+
+    init(lifeSpan: UnsafeMutablePointer<cef_life_span_handler_t>, load: UnsafeMutablePointer<cef_load_handler_t>,
+         display: UnsafeMutablePointer<cef_display_handler_t>, request: UnsafeMutablePointer<cef_request_handler_t>,
+         render: UnsafeMutablePointer<cef_render_handler_t>, keyboard: UnsafeMutablePointer<cef_keyboard_handler_t>,
+         focus: UnsafeMutablePointer<cef_focus_handler_t>, contextMenu: UnsafeMutablePointer<cef_context_menu_handler_t>,
+         find: UnsafeMutablePointer<cef_find_handler_t>) {
+        self.lifeSpan = lifeSpan
+        self.load = load
+        self.display = display
+        self.request = request
+        self.render = render
+        self.keyboard = keyboard
+        self.focus = focus
+        self.contextMenu = contextMenu
+        self.find = find
+    }
+
+    /// CEF destroyed the client: give up the +1 each factory returned.
+    deinit {
+        for pointer in [UnsafeMutableRawPointer(lifeSpan), UnsafeMutableRawPointer(load), UnsafeMutableRawPointer(display),
+                        UnsafeMutableRawPointer(request), UnsafeMutableRawPointer(render), UnsafeMutableRawPointer(keyboard),
+                        UnsafeMutableRawPointer(focus), UnsafeMutableRawPointer(contextMenu), UnsafeMutableRawPointer(find)] {
+            Native.release(pointer)
+        }
+    }
+}
+
 @MainActor
 final class RemoteBrowser {
     let id: Int64
@@ -14,16 +57,8 @@ final class RemoteBrowser {
     private(set) var isClosing = false
     private var hasClosed = false
 
+    /// This browser's +1 on its client, given up in `didClose`. The client owns the handlers (`RemoteClientHandlers`).
     private var clientPointer: UnsafeMutablePointer<cef_client_t>?
-    nonisolated(unsafe) private var lifeSpanPointer: UnsafeMutablePointer<cef_life_span_handler_t>?
-    nonisolated(unsafe) private var loadPointer: UnsafeMutablePointer<cef_load_handler_t>?
-    nonisolated(unsafe) private var displayPointer: UnsafeMutablePointer<cef_display_handler_t>?
-    nonisolated(unsafe) private var requestPointer: UnsafeMutablePointer<cef_request_handler_t>?
-    nonisolated(unsafe) private var renderPointer: UnsafeMutablePointer<cef_render_handler_t>?
-    nonisolated(unsafe) private var keyboardPointer: UnsafeMutablePointer<cef_keyboard_handler_t>?
-    nonisolated(unsafe) private var focusPointer: UnsafeMutablePointer<cef_focus_handler_t>?
-    nonisolated(unsafe) private var contextMenuPointer: UnsafeMutablePointer<cef_context_menu_handler_t>?
-    nonisolated(unsafe) private var findPointer: UnsafeMutablePointer<cef_find_handler_t>?
     private var accessibilityPointer: UnsafeMutablePointer<cef_accessibility_handler_t>?
     private var observerPointer: UnsafeMutablePointer<cef_dev_tools_message_observer_t>?
     private var registration: UnsafeMutablePointer<cef_registration_t>?
@@ -138,26 +173,17 @@ final class RemoteBrowser {
             self.raw = nil
         }
         presenter.invalidate()
+        // The client's handlers are not released here: CEF may still call the client's getters on another thread (the IO
+        // thread too), and those retain the handlers. They go when CEF destroys the client (`RemoteClientHandlers.deinit`).
+        // This browser gives up only its own references: the client, the DevTools observer and the accessibility handler
+        // (both used on the main thread only).
         for pointer: UnsafeMutableRawPointer? in [
-            lifeSpanPointer.map(UnsafeMutableRawPointer.init), loadPointer.map(UnsafeMutableRawPointer.init),
-            displayPointer.map(UnsafeMutableRawPointer.init), requestPointer.map(UnsafeMutableRawPointer.init),
-            renderPointer.map(UnsafeMutableRawPointer.init), keyboardPointer.map(UnsafeMutableRawPointer.init),
-            focusPointer.map(UnsafeMutableRawPointer.init), contextMenuPointer.map(UnsafeMutableRawPointer.init),
-            findPointer.map(UnsafeMutableRawPointer.init), observerPointer.map(UnsafeMutableRawPointer.init),
+            observerPointer.map(UnsafeMutableRawPointer.init),
             accessibilityPointer.map(UnsafeMutableRawPointer.init),
             clientPointer.map(UnsafeMutableRawPointer.init),
         ] {
             Native.release(pointer)
         }
-        lifeSpanPointer = nil
-        loadPointer = nil
-        displayPointer = nil
-        requestPointer = nil
-        renderPointer = nil
-        keyboardPointer = nil
-        focusPointer = nil
-        contextMenuPointer = nil
-        findPointer = nil
         accessibilityPointer = nil
         observerPointer = nil
         clientPointer = nil
@@ -731,54 +757,51 @@ final class RemoteBrowser {
     // MARK: The client
 
     private func makeClient() -> UnsafeMutablePointer<cef_client_t> {
-        makeLifeSpanHandler()
-        makeLoadHandler()
-        makeDisplayHandler()
-        makeRequestHandler()
-        makeRenderHandler()
-        makeKeyboardHandler()
-        makeFocusHandler()
-        makeContextMenuHandler()
-        makeFindHandler()
-        let client = Native.allocate(cef_client_t.self, owner: self)
+        let handlers = RemoteClientHandlers(
+            lifeSpan: makeLifeSpanHandler(), load: makeLoadHandler(), display: makeDisplayHandler(),
+            request: makeRequestHandler(), render: makeRenderHandler(), keyboard: makeKeyboardHandler(),
+            focus: makeFocusHandler(), contextMenu: makeContextMenuHandler(), find: makeFindHandler())
+        // The client owns the holder, and the holder owns the handlers until CEF destroys the client.
+        let client = Native.allocate(cef_client_t.self, owner: handlers)
         client.pointee.get_life_span_handler = { clientSelf in
-            RemoteBrowser.handler(clientSelf) { $0.lifeSpanPointer }
+            RemoteBrowser.handler(clientSelf) { $0.lifeSpan }
         }
         client.pointee.get_load_handler = { clientSelf in
-            RemoteBrowser.handler(clientSelf) { $0.loadPointer }
+            RemoteBrowser.handler(clientSelf) { $0.load }
         }
         client.pointee.get_display_handler = { clientSelf in
-            RemoteBrowser.handler(clientSelf) { $0.displayPointer }
+            RemoteBrowser.handler(clientSelf) { $0.display }
         }
         client.pointee.get_request_handler = { clientSelf in
-            RemoteBrowser.handler(clientSelf) { $0.requestPointer }
+            RemoteBrowser.handler(clientSelf) { $0.request }
         }
         client.pointee.get_render_handler = { clientSelf in
-            RemoteBrowser.handler(clientSelf) { $0.renderPointer }
+            RemoteBrowser.handler(clientSelf) { $0.render }
         }
         client.pointee.get_keyboard_handler = { clientSelf in
-            RemoteBrowser.handler(clientSelf) { $0.keyboardPointer }
+            RemoteBrowser.handler(clientSelf) { $0.keyboard }
         }
         client.pointee.get_focus_handler = { clientSelf in
-            RemoteBrowser.handler(clientSelf) { $0.focusPointer }
+            RemoteBrowser.handler(clientSelf) { $0.focus }
         }
         client.pointee.get_context_menu_handler = { clientSelf in
-            RemoteBrowser.handler(clientSelf) { $0.contextMenuPointer }
+            RemoteBrowser.handler(clientSelf) { $0.contextMenu }
         }
         client.pointee.get_find_handler = { clientSelf in
-            RemoteBrowser.handler(clientSelf) { $0.findPointer }
+            RemoteBrowser.handler(clientSelf) { $0.find }
         }
         clientPointer = client
         return client
     }
 
-    /// A handler to return to CEF, with the reference the caller takes. CEF asks on any thread (the IO thread too), so the
-    /// handlers are made once on the main thread before the browser exists and read here without an actor hop.
+    /// A handler to return to CEF, with the reference the caller takes. CEF asks on any thread (the IO thread too). The getter
+    /// reads a constant of the client's own holder, which lives as long as the client CEF is calling through, so nothing it
+    /// reads can be released under it.
     private nonisolated static func handler<T>(
-        _ clientSelf: UnsafeMutablePointer<cef_client_t>?, _ pick: (RemoteBrowser) -> UnsafeMutablePointer<T>?
+        _ clientSelf: UnsafeMutablePointer<cef_client_t>?, _ pick: (RemoteClientHandlers) -> UnsafeMutablePointer<T>
     ) -> UnsafeMutablePointer<T>? {
-        guard let owner = Native.owner(RemoteBrowser.self, clientSelf.map(UnsafeMutableRawPointer.init)),
-              let pointer = pick(owner) else { return nil }
+        guard let handlers = Native.owner(RemoteClientHandlers.self, clientSelf.map(UnsafeMutableRawPointer.init)) else { return nil }
+        let pointer = pick(handlers)
         Native.retain(UnsafeMutableRawPointer(pointer))
         return pointer
     }
@@ -791,7 +814,7 @@ final class RemoteBrowser {
         frame?.pointee.is_main?(frame) == 1
     }
 
-    private func makeLifeSpanHandler() {
+    private func makeLifeSpanHandler() -> UnsafeMutablePointer<cef_life_span_handler_t> {
         let life = Native.allocate(cef_life_span_handler_t.self, owner: self)
         life.pointee.on_after_created = { handlerSelf, browser in
             guard let browser else { return }
@@ -824,10 +847,10 @@ final class RemoteBrowser {
             }
             return 1
         }
-        lifeSpanPointer = life
+        return life
     }
 
-    private func makeLoadHandler() {
+    private func makeLoadHandler() -> UnsafeMutablePointer<cef_load_handler_t> {
         let load = Native.allocate(cef_load_handler_t.self, owner: self)
         load.pointee.on_loading_state_change = { handlerSelf, browser, loading, back, forward in
             Native.release(browser.map(UnsafeMutableRawPointer.init))
@@ -868,10 +891,10 @@ final class RemoteBrowser {
                 }
             }
         }
-        loadPointer = load
+        return load
     }
 
-    private func makeDisplayHandler() {
+    private func makeDisplayHandler() -> UnsafeMutablePointer<cef_display_handler_t> {
         let display = Native.allocate(cef_display_handler_t.self, owner: self)
         display.pointee.on_address_change = { handlerSelf, browser, frame, url in
             Native.release(browser.map(UnsafeMutableRawPointer.init))
@@ -938,10 +961,10 @@ final class RemoteBrowser {
             Native.release(browser.map(UnsafeMutableRawPointer.init))
             return 0
         }
-        displayPointer = display
+        return display
     }
 
-    private func makeRequestHandler() {
+    private func makeRequestHandler() -> UnsafeMutablePointer<cef_request_handler_t> {
         let request = Native.allocate(cef_request_handler_t.self, owner: self)
         request.pointee.on_before_browse = { handlerSelf, browser, frame, nativeRequest, userGesture, isRedirect in
             Native.release(browser.map(UnsafeMutableRawPointer.init))
@@ -994,10 +1017,10 @@ final class RemoteBrowser {
                 owner.send(message)
             }
         }
-        requestPointer = request
+        return request
     }
 
-    private func makeRenderHandler() {
+    private func makeRenderHandler() -> UnsafeMutablePointer<cef_render_handler_t> {
         let render = Native.allocate(cef_render_handler_t.self, owner: self)
         render.pointee.get_view_rect = { handlerSelf, browser, rect in
             Native.release(browser.map(UnsafeMutableRawPointer.init))
@@ -1105,7 +1128,7 @@ final class RemoteBrowser {
             Native.release(dragData.map(UnsafeMutableRawPointer.init))
             return 0
         }
-        renderPointer = render
+        return render
     }
 
     private func noteFirstFrame(_ entry: UInt64) {
@@ -1114,7 +1137,7 @@ final class RemoteBrowser {
         note("browser \(id): first frame after \(String(format: "%.1f", Double(entry &- createdAt) / 1e6)) ms (accelerated \(presenter.acceleratedFrames), cpu \(presenter.cpuFrames))")
     }
 
-    private func makeKeyboardHandler() {
+    private func makeKeyboardHandler() -> UnsafeMutablePointer<cef_keyboard_handler_t> {
         let keyboard = Native.allocate(cef_keyboard_handler_t.self, owner: self)
         keyboard.pointee.on_pre_key_event = { _, browser, _, _, _ in
             Native.release(browser.map(UnsafeMutableRawPointer.init))
@@ -1136,10 +1159,10 @@ final class RemoteBrowser {
             }
             return 0
         }
-        keyboardPointer = keyboard
+        return keyboard
     }
 
-    private func makeFocusHandler() {
+    private func makeFocusHandler() -> UnsafeMutablePointer<cef_focus_handler_t> {
         let focus = Native.allocate(cef_focus_handler_t.self, owner: self)
         focus.pointee.on_take_focus = { handlerSelf, browser, next in
             Native.release(browser.map(UnsafeMutableRawPointer.init))
@@ -1159,10 +1182,10 @@ final class RemoteBrowser {
             guard let owner = RemoteBrowser.owner(handlerSelf) else { return }
             MainActor.assumeIsolated { owner.send(owner.event(CefRemote.Event.gotFocus)) }
         }
-        focusPointer = focus
+        return focus
     }
 
-    private func makeContextMenuHandler() {
+    private func makeContextMenuHandler() -> UnsafeMutablePointer<cef_context_menu_handler_t> {
         let menu = Native.allocate(cef_context_menu_handler_t.self, owner: self)
         menu.pointee.on_before_context_menu = { _, browser, frame, params, model in
             Native.release(browser.map(UnsafeMutableRawPointer.init))
@@ -1197,7 +1220,7 @@ final class RemoteBrowser {
             Native.release(browser.map(UnsafeMutableRawPointer.init))
             Native.release(frame.map(UnsafeMutableRawPointer.init))
         }
-        contextMenuPointer = menu
+        return menu
     }
 
     /// The accessibility handler, made on first use: CEF asks for it only once accessibility is on.
@@ -1205,6 +1228,7 @@ final class RemoteBrowser {
         if let accessibilityPointer {
             return accessibilityPointer
         }
+        guard !hasClosed else { return nil }
         let handler = Native.allocate(cef_accessibility_handler_t.self, owner: self)
         handler.pointee.on_accessibility_tree_change = { handlerSelf, value in
             defer { Native.release(value.map(UnsafeMutableRawPointer.init)) }
@@ -1228,7 +1252,7 @@ final class RemoteBrowser {
         send(message)
     }
 
-    private func makeFindHandler() {
+    private func makeFindHandler() -> UnsafeMutablePointer<cef_find_handler_t> {
         let find = Native.allocate(cef_find_handler_t.self, owner: self)
         find.pointee.on_find_result = { handlerSelf, browser, identifier, count, _, active, final in
             Native.release(browser.map(UnsafeMutableRawPointer.init))
@@ -1242,6 +1266,6 @@ final class RemoteBrowser {
                 owner.send(message)
             }
         }
-        findPointer = find
+        return find
     }
 }
