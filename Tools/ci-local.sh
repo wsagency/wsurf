@@ -98,7 +98,7 @@ acknowledgements() {
 }
 
 test_runs() {
-  python3 Tools/run-xcodebuild-with-watchdog.py -- xcodebuild build-for-testing \
+  python3 Tools/run-xcodebuild-with-watchdog.py -- xcodebuild build-for-testing -quiet \
     -project "$PROJECT" -scheme "$SCHEME" \
     -destination 'platform=macOS,arch=arm64' \
     -derivedDataPath "$DD" \

@@ -42,7 +42,13 @@ nonisolated enum AutofillDiagnostics {
 
     static func note(_ event: Event, kind: AutofillSaveKind, count: Int = 0) {
         #if DEBUG
-        log.notice("\(event.rawValue, privacy: .public) kind=\(kind.rawValue, privacy: .public) count=\(count, privacy: .public)")
+        switch event {
+        case .scriptReady, .saveScriptReady:
+            // Once per page load, always count=0: 5.5k lines per test run at notice level.
+            log.debug("\(event.rawValue, privacy: .public) kind=\(kind.rawValue, privacy: .public) count=\(count, privacy: .public)")
+        default:
+            log.notice("\(event.rawValue, privacy: .public) kind=\(kind.rawValue, privacy: .public) count=\(count, privacy: .public)")
+        }
         #endif
     }
 }
