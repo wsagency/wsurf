@@ -116,7 +116,14 @@ final class ChromiumRemote {
         message.set(CefRemote.Key.cachePath, root.appendingPathComponent("Global", isDirectory: true).path)
         message.set(CefRemote.Key.logFile, "/dev/null")
         message.set(CefRemote.Key.path, Self.serviceLogPath ?? "")
-        message.set(CefRemote.Key.switches, strings: ChromiumRuntime.extraCommandLineSwitches)
+        var switches = ChromiumRuntime.extraCommandLineSwitches
+        // DEBUG experiments: `WSURF_OOP_EXTRA_SWITCHES=name,name=value` adds Chromium switches in the service only.
+        for item in (ChromiumOOP.environment("WSURF_OOP_EXTRA_SWITCHES") ?? "").split(separator: ",") {
+            let parts = item.split(separator: "=", maxSplits: 1).map(String.init)
+            guard let name = parts.first, !name.isEmpty else { continue }
+            switches.updateValue(parts.count > 1 ? parts[1] : nil, forKey: name)
+        }
+        message.set(CefRemote.Key.switches, strings: switches)
         xpc_dictionary_set_mach_send(message.object, CefRemote.Key.layerServer, CARemoteLayerServer.shared().serverPort)
         message.set(CefRemote.Key.linger, Double(ChromiumOOP.environment("WSURF_OOP_LINGER") ?? "") ?? 60)
         let fps = Int(ChromiumOOP.environment("WSURF_OOP_FPS") ?? "") ?? NSScreen.main?.maximumFramesPerSecond ?? 60

@@ -150,8 +150,16 @@ final class ServiceHost {
         configuration.persistSessionCookies = true
         configuration.defaultRuntimeStyle = .alloy
         configuration.logSeverity = .error
-        let logFile = message.string(CefRemote.Key.logFile)
+        var logFile = message.string(CefRemote.Key.logFile)
+        let serviceLog = message.string(CefRemote.Key.path)
+        if logFile.isEmpty || logFile == "/dev/null", !serviceLog.isEmpty {
+            // Staged runs: CEF's own log next to the service's, at warning level, so a CHECK names itself.
+            logFile = URL(filePath: serviceLog).deletingLastPathComponent().appendingPathComponent("chromium-cef.log").path
+            configuration.logSeverity = .warning
+        }
         configuration.logFile = URL(filePath: logFile.isEmpty ? "/dev/null" : logFile)
+        note("CEF log: \(configuration.logFile?.path ?? "none")")
+        probeBootstrap()
         configuration.extraCommandLineSwitches = message.strings(CefRemote.Key.switches).mapValues { $0.isEmpty ? nil : $0 }
         configuration.windowlessRenderingEnabled = true
         configuration.frameworkDirectory = frameworks.appendingPathComponent("Chromium Embedded Framework.framework", isDirectory: true)
@@ -163,6 +171,23 @@ final class ServiceHost {
         cefStartMs = Double(Clock.nowNanoseconds &- started) / 1e6
         note(String(format: "CEF started in %.1f ms (%.1f ms after service start)", cefStartMs,
                     Double(Clock.nowNanoseconds &- startedAt) / 1e6))
+    }
+
+    /// Chromium's Mach rendezvous registers a bootstrap name at the first child process. In an XPC service that may be
+    /// refused; this tries the same call with a throwaway name and logs the answer.
+    private func probeBootstrap() {
+        typealias CheckIn = @convention(c) (mach_port_t, UnsafePointer<CChar>, UnsafeMutablePointer<mach_port_t>) -> kern_return_t
+        guard let symbol = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "bootstrap_check_in"),
+              let portSymbol = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "bootstrap_port") else {
+            note("bootstrap probe: symbols not found")
+            return
+        }
+        let checkIn = unsafeBitCast(symbol, to: CheckIn.self)
+        let bootstrap = portSymbol.assumingMemoryBound(to: mach_port_t.self).pointee
+        var port: mach_port_t = 0
+        let name = "\(Bundle.main.bundleIdentifier ?? "service").d4probe.\(getpid())"
+        let result = name.withCString { checkIn(bootstrap, $0, &port) }
+        note("bootstrap probe: bootstrap_check_in(\(name)) = \(result) (0 is success), port \(port)")
     }
 
     private func createContext(_ message: CefRemoteMessage) {
