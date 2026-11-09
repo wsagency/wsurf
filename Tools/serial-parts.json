@@ -188,6 +188,7 @@
    "MCPDefaultAccessTests",
    "PageDiagnosticsHookTests",
    "PageInkContrastTests",
+   "PasswordHealthTests",
    "ResourceBenchmarkTests",
    "SettingsRoutingTests",
    "TabAssistantAccessCenterTests",
