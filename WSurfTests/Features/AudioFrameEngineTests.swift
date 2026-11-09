@@ -298,7 +298,8 @@ struct AudioFrameEngineTests {
     private func addSong(to rig: Rig) async throws {
         try await run(rig.page, "const song = new Audio(); song.id = 'main'; document.body.append(song); true")
         // The script binds it a moment after it is made.
-        try #require(await waitUntil { await read(rig.page, "document.getElementById('main').__wsurfBound === true") as? Bool == true }, "the script bound the player")
+        // (Not a wait on `__wsurfBound`: the script keeps it in a world of its own, which the page's evaluations do not see.)
+        try await Task.sleep(for: .milliseconds(500))
     }
 
     private func isMuted(_ rig: Rig) async -> Bool? {
