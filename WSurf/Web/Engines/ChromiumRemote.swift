@@ -94,7 +94,9 @@ final class ChromiumRemote {
         if control == nil {
             let connection = xpc_connection_create(serviceName, DispatchQueue.main)
             xpc_connection_set_event_handler(connection) { event in
-                MainActor.assumeIsolated { ChromiumRemote.shared.receive(event) }
+                // The handler is Sendable and the XPC object is not: only a Sendable reading of it crosses to the main actor.
+                let incoming = Incoming(event)
+                MainActor.assumeIsolated { ChromiumRemote.shared.receive(incoming) }
             }
             xpc_connection_activate(connection)
             control = connection
@@ -123,7 +125,8 @@ final class ChromiumRemote {
         let sent = ContinuousClock.now
         helloSentAt = sent
         xpc_connection_send_message_with_reply(control, message.object, DispatchQueue.main) { reply in
-            MainActor.assumeIsolated { ChromiumRemote.shared.helloAnswered(reply, sent: sent) }
+            let answer = CefRemoteMessage(wrapping: reply)
+            MainActor.assumeIsolated { ChromiumRemote.shared.helloAnswered(answer, sent: sent) }
         }
         ChromiumOOP.log.notice("hello sent to \(self.serviceName, privacy: .public)")
     }
@@ -138,9 +141,9 @@ final class ChromiumRemote {
         #endif
     }
 
-    private func helloAnswered(_ reply: xpc_object_t, sent: ContinuousClock.Instant) {
-        guard let message = CefRemoteMessage(wrapping: reply) else {
-            ChromiumOOP.log.error("hello: no answer (\(String(describing: reply), privacy: .public))")
+    private func helloAnswered(_ answer: CefRemoteMessage?, sent: ContinuousClock.Instant) {
+        guard let message = answer else {
+            ChromiumOOP.log.error("hello: no answer (the service ended or refused the connection)")
             return
         }
         servicePID = pid_t(message.int(CefRemote.Key.pid))
@@ -153,17 +156,45 @@ final class ChromiumRemote {
         }
     }
 
-    private func receive(_ event: xpc_object_t) {
-        if xpc_get_type(event) == XPC_TYPE_ERROR {
-            if event === XPC_ERROR_CONNECTION_INTERRUPTED {
-                serviceEnded(reason: "interrupted")
-            } else if event === XPC_ERROR_CONNECTION_INVALID {
-                serviceEnded(reason: "invalid")
-                control = nil
+    /// What the control connection delivered, read off the main actor: a message (Sendable wrapper) or the error kind.
+    nonisolated enum Incoming: Sendable {
+        case message(CefRemoteMessage)
+        case interrupted
+        case invalid
+        case other
+
+        init(_ event: xpc_object_t) {
+            if xpc_get_type(event) == XPC_TYPE_ERROR {
+                if event === XPC_ERROR_CONNECTION_INTERRUPTED {
+                    self = .interrupted
+                } else if event === XPC_ERROR_CONNECTION_INVALID {
+                    self = .invalid
+                } else {
+                    self = .other
+                }
+            } else if let message = CefRemoteMessage(wrapping: event) {
+                self = .message(message)
+            } else {
+                self = .other
             }
-            return
         }
-        guard let message = CefRemoteMessage(wrapping: event) else { return }
+    }
+
+    private func receive(_ incoming: Incoming) {
+        let message: CefRemoteMessage
+        switch incoming {
+        case .interrupted:
+            serviceEnded(reason: "interrupted")
+            return
+        case .invalid:
+            serviceEnded(reason: "invalid")
+            control = nil
+            return
+        case .other:
+            return
+        case .message(let received):
+            message = received
+        }
         guard let browser = browsers[message.browser] else { return }
         if message.op == CefRemote.Event.browserClosed {
             browsers[message.browser] = nil
