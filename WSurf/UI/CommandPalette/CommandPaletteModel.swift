@@ -79,6 +79,32 @@ enum CommandPaletteShortcutPolicy {
         return isKey && event.window === paletteWindow
     }
 
+    /// What the palette's local key monitor does with `event`, and whether it consumes it (the event never reaches its window).
+    /// Only an event addressed to the palette's own window, while that window is key, is acted on; any other passes untouched.
+    static func consumes(
+        _ event: NSEvent,
+        paletteWindow: NSWindow?,
+        isKey: Bool,
+        setOptionHeld: (Bool) -> Void,
+        submitInCurrentTab: () -> Void,
+        dismiss: () -> Void
+    ) -> Bool {
+        guard isAddressedToPalette(event, paletteWindow: paletteWindow, isKey: isKey) else { return false }
+        if event.type == .flagsChanged {
+            setOptionHeld(showsCurrentTab(modifiers: event.modifierFlags))
+            return false
+        }
+        let key = event.charactersIgnoringModifiers ?? ""
+        if opensInCurrentTab(modifiers: event.modifierFlags, key: key) {
+            submitInCurrentTab()
+            return true
+        }
+        if shouldDismiss(event) {
+            dismiss()
+        }
+        return false
+    }
+
     static func shouldDismiss(_ event: NSEvent) -> Bool {
         let commandKey = event.modifierFlags.contains(.command)
             ? event.characters(byApplyingModifiers: .command)

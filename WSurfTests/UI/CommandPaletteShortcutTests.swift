@@ -47,9 +47,9 @@ struct CommandPaletteShortcutTests {
         #expect(!CommandPaletteShortcutPolicy.shouldDismiss(event))
     }
 
-    /// The palette's shortcut monitor belongs to its own window. The events here are addressed to another window (`windowNumber`),
-    /// and no step depends on the test host being the active app: nothing is activated, and nothing waits for key status, so a
-    /// person using another app during the run changes nothing.
+    /// The palette's shortcut monitor belongs to its own window. The events here are addressed to another window (`windowNumber`)
+    /// and handed to the handler the monitor runs; no step depends on the test host being the active app: nothing is activated,
+    /// and nothing waits for key status, so a person using another app during the run changes nothing.
     @Test func backgroundPaletteCannotConsumeAnotherWindowsKeyboardEvents() async throws {
         let app = BrowserApplication()
         let source = app.newWindow(profile: .original(), show: false)
@@ -61,9 +61,6 @@ struct CommandPaletteShortcutTests {
         try #require(await waitUntil { sourceWindow.firstResponder is NSTextView })
         destination.showBrowser(activate: false)
         let destinationWindow = try #require(destination.nativeWindow)
-        let editor = RecordingEditor(frame: NSRect(x: 0, y: 0, width: 400, height: 200))
-        destinationWindow.contentView = editor
-        try #require(destinationWindow.makeFirstResponder(editor))
 
         func key(_ characters: String, code: UInt16, modifiers: NSEvent.ModifierFlags, in window: NSWindow) throws -> NSEvent {
             try #require(NSEvent.keyEvent(
@@ -74,41 +71,38 @@ struct CommandPaletteShortcutTests {
         }
         let optionReturn = try key("\r", code: 36, modifiers: .option, in: destinationWindow)
         let commandL = try key("l", code: 37, modifiers: .command, in: destinationWindow)
+        let ownReturn = try key("\r", code: 36, modifiers: .option, in: sourceWindow)
+        let ownCommandL = try key("l", code: 37, modifiers: .command, in: sourceWindow)
 
-        // The decision the palette's monitor makes, even were the palette's window key: another window's events are not its own,
-        // and the palette's own window's events are. The positive control proves the check is live.
+        // The policy's decision, even were the palette's window key.
         for event in [optionReturn, commandL] {
             #expect(!CommandPaletteShortcutPolicy.isAddressedToPalette(event, paletteWindow: sourceWindow, isKey: true))
         }
-        let ownReturn = try key("\r", code: 36, modifiers: .option, in: sourceWindow)
         #expect(CommandPaletteShortcutPolicy.isAddressedToPalette(ownReturn, paletteWindow: sourceWindow, isKey: true))
         #expect(!CommandPaletteShortcutPolicy.isAddressedToPalette(ownReturn, paletteWindow: sourceWindow, isKey: false))
 
-        // And through the destination window's own path, which needs no active app and no key window (`NSApp.sendEvent` drops
-        // key events for a window that is not key): its editor gets the keys, the palette stays open and takes nothing.
-        destinationWindow.sendEvent(optionReturn)
-        #expect(editor.keyDowns == ["\r"], "the destination's editor received the Option-Return")
-        #expect(source.isPaletteOpen)
+        // The handler the palette's monitor runs, driven directly: no active app and no key window are needed to ask it. Keys
+        // addressed to another window come back unconsumed and move nothing in the palette, even with the palette's window key.
+        var submitted = 0, dismissed = 0
+        func consumed(_ event: NSEvent, isKey: Bool = true) -> Bool {
+            CommandPaletteShortcutPolicy.consumes(
+                event, paletteWindow: sourceWindow, isKey: isKey,
+                setOptionHeld: { _ in }, submitInCurrentTab: { submitted += 1 }, dismiss: { dismissed += 1 }
+            )
+        }
+        #expect(!consumed(optionReturn), "another window's Option-Return is not the palette's")
+        #expect(!consumed(commandL), "nor is its Command-L")
+        #expect(submitted == 0 && dismissed == 0, "and the palette did nothing for either")
 
-        destinationWindow.sendEvent(commandL)
-        #expect(editor.keyEquivalents == ["l"], "and the Command-L")
+        // Positive control: the same keys addressed to the palette's own window are the palette's, so the handler is live.
+        #expect(consumed(ownReturn), "the palette's own Option-Return is consumed")
+        #expect(submitted == 1)
+        #expect(!consumed(ownCommandL), "its own Command-L passes on, after the palette closes itself")
+        #expect(dismissed == 1)
+        #expect(!consumed(ownReturn, isKey: false) && submitted == 1, "a palette window that is not key takes nothing")
+
         #expect(source.isPaletteOpen)
         #expect(source.browser.activeTab?.urlString == originalURL)
-    }
-
-    /// An editor that notes the keys that reach it, whether or not it is in the key window of an active app to insert them.
-    private final class RecordingEditor: NSTextView {
-        var keyDowns: [String] = []
-        var keyEquivalents: [String] = []
-
-        override func keyDown(with event: NSEvent) {
-            keyDowns.append(event.characters ?? "")
-        }
-
-        override func performKeyEquivalent(with event: NSEvent) -> Bool {
-            keyEquivalents.append(event.charactersIgnoringModifiers ?? "")
-            return false
-        }
     }
 
     private func pasteEvent(
