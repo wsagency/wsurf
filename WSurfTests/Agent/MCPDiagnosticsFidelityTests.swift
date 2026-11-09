@@ -90,7 +90,7 @@ struct MCPDiagnosticsFidelityTests {
         #expect(status(try await call(rig, "startDiagnostics")) == "ok")
     }
 
-    /// Reads the stream until a record satisfies `matches`, returning every record read.
+    /// Reads the stream until a record satisfies `matches`, returning every record read; fails the test when none does in time.
     private func read(
         _ rig: Rig, _ tool: String, _ arguments: [String: Value] = [:], until matches: ([String: Value]) -> Bool
     ) async throws -> [[String: Value]] {

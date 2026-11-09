@@ -440,6 +440,7 @@ struct VerifyStepTests {
             _ = try #require(await rig.nextResult(after: 1), "the clicked request ended")
             #expect(read().last == true, "\(read())")
 
+            // Started right after the click: whether it still has the click's activation depends on timing, so only its end is checked.
             try await rig.tell("{ ask: 'get' }")
             _ = try #require(await rig.nextResult(after: 2), "the script-started request ended")
         }

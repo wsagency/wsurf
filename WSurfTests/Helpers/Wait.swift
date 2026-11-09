@@ -13,9 +13,10 @@ import Foundation
 /// there. This returns as soon as the condition holds, which makes a generous
 /// timeout free on a quiet machine.
 ///
-/// A wait that runs out never fails the test by itself (negative waits expire on purpose), but it prints one
-/// `WAIT-EXPIRED <file>:<line> after <timeout>` line, so a wait whose result is discarded and always runs to its
-/// deadline shows up in the run's output instead of silently costing its whole timeout.
+/// A wait that runs out never fails the test by itself (negative waits expire on
+/// purpose), but it prints one `WAIT-EXPIRED <file>:<line> after <timeout>` line,
+/// so a wait whose result is discarded and always runs to its deadline shows up
+/// in the run's output instead of silently costing its whole timeout.
 @MainActor
 func waitUntil(
     timeout: Duration = .seconds(25),
