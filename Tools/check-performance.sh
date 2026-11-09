@@ -575,10 +575,14 @@ check_average \
 # 0.1.23 (perf/theme-drag), a resting row no longer observes the sidebar's ground (SidebarGround): six samples, Pro, Debug, ThemePerformanceTests
 # alone, 5.108 s before and 3.687 s after. In about 40% of the steps the guarded ink changes too, and those still draw every row. The
 # budget is twice the new mean, 7.4 s.
+# 0.1.24 (perf/w1-theme-10hz, #67), the window takes a preview at most ten times a second, which a tight loop of steps skipped: the case
+# fell to 0.0008 s and no longer measured an apply. It now makes every step reach the window (`previewsEveryStep`, #67's manual clock).
+# Pro, Debug + coverage, whole Performance plan, two runs, mean of samples 2-6: 2.478 s (load 71) and 2.383 s (load 5). Budget twice
+# the larger mean, 4.96 s.
 check_average \
   'ThemePerformanceTests/testDraggingThemeBrightness()' \
   'com.apple.dt.XCTMetric_Clock.time.monotonic' \
-  '7.400' \
+  '4.960' \
   'Thirty brightness preview steps across 300 real sidebar rows' \
   's'
 check_average \

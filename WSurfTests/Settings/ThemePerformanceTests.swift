@@ -72,6 +72,10 @@ nonisolated final class ThemePerformanceTests: XCTestCase, @unchecked Sendable {
                     NSDictionary(dictionary: persisted)
                 )
             }
+            // The window takes a preview at most ten times a second (#67), which a tight loop would skip. Every step reaches it here,
+            // so this case measures what an apply costs again.
+            let restoreClock = settings.previewsEveryStep()
+            defer { restoreClock() }
             settings.beginThemePreview()
             let options = XCTMeasureOptions.budgeted
 
