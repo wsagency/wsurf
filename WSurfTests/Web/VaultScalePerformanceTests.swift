@@ -308,6 +308,25 @@ nonisolated final class VaultScalePerformanceTests: XCTestCase, @unchecked Senda
         }
     }
 
+    /// Heavy reuse: 20,000 logins on 20,000 websites sharing four passwords, 5,000 logins each, so every login is listed with 4,999
+    /// other websites. The grouping must stay linear in the logins of one password, and the report must keep a count per login, never
+    /// the other websites: each pass keeps its report, so the memory metric is the report's own size. The stored fixture's passwords
+    /// all differ and never form a group.
+    func testCheckingThePasswordHealthOfTwentyThousandCredentialsSharingFourPasswords() {
+        let accounts = (0..<Self.count).map { index in
+            VaultFixtures.account(username: "shared\(index)", password: "Kx9!vQ2#mW7p-\(index % 4)", origin: "https://site\(index).com")
+        }
+        MainActor.assumeIsolated {
+            var kept: [PasswordHealthReport] = []
+            measure(metrics: [XCTClockMetric(), XCTMemoryMetric()], options: measuredOptions()) {
+                kept.append(PasswordHealth.report(vaultID: UUID(), revision: 1, accounts: accounts))
+            }
+            let findings = kept.first?.findings ?? [:]
+            XCTAssertEqual(findings.count, Self.count)
+            XCTAssertTrue(findings.values.allSatisfy { $0.reuse?.otherSites == Self.count / 4 - 1 && $0.weaknesses.isEmpty })
+        }
+    }
+
     // MARK: Edits
 
     /// One changed password, written with the per-account write the import and the bulk actions use. The read that finds the

@@ -1049,6 +1049,23 @@ check_average \
   '4096' \
   'Password health rules over 20,000 in-memory credentials memory growth' \
   'kB'
+# Heavy reuse: 20,000 logins on 20,000 websites sharing four passwords, so every login is listed with 4,999 other websites. Each pass
+# keeps its report, so the memory median is the report's own size: a count per login, never the other websites. Pro, Debug +
+# coverage, 2026-11-09, two targeted runs: 0.366 / 0.366 s, memory medians 1851 / 1851 kB; in the Rest part 0.366 s and 0 kB. Time
+# budget twice the larger mean; memory 4096 kB. Counting each login's other websites as a set difference was quadratic in the
+# logins of one password.
+check_average \
+  'VaultScalePerformanceTests/testCheckingThePasswordHealthOfTwentyThousandCredentialsSharingFourPasswords()' \
+  'com.apple.dt.XCTMetric_Clock.time.monotonic' \
+  '0.732' \
+  'Password health of 20,000 logins sharing four passwords' \
+  's'
+check_average \
+  'VaultScalePerformanceTests/testCheckingThePasswordHealthOfTwentyThousandCredentialsSharingFourPasswords()' \
+  'com.apple.dt.XCTMetric_Memory.physical' \
+  '4096' \
+  'Password health report of 20,000 logins sharing four passwords' \
+  'kB'
 
 # History and database (HistoryPerformanceTests), six-sample means on the Pro (2026-10-27, Debug), seconds, before and after WI-3
 # (an index on historyVisit.fromVisit, the schema defined by migrations instead of on every open, one and two letter queries answered

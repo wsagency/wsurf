@@ -83,7 +83,9 @@ public nonisolated enum PasswordHealth {
             guard all.count > 1 else { continue }
             let group = UUID()
             for (member, own) in zip(members, sites) {
-                let others = all.subtracting(own).count
+                // `own` is part of `all`, so a count is enough: building `all` minus `own` for every login would grow with the square
+                // of the logins sharing one password.
+                let others = all.count - own.count
                 if others > 0 {
                     reuse[member] = PasswordReuse(group: group, otherSites: others)
                 }

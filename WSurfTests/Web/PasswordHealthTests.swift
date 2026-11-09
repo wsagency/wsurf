@@ -119,6 +119,18 @@ struct PasswordHealthTests {
         #expect([onLogin, onOther, onWWW].allSatisfy { found[$0.id]?.weaknesses.isEmpty == true })
     }
 
+    /// Passwords are compared as they are: one that differs only in case is another password.
+    @Test func reuseIsCaseSensitive() {
+        let accounts = [login("Kx9!vQ2#mW7p", at: ["https://example.com"]), login("kX9!Vq2#Mw7P", at: ["https://example.org"])]
+        #expect(report(accounts).findings.isEmpty)
+    }
+
+    /// An empty password is no password: it is neither compared nor checked.
+    @Test func anEmptyPasswordIsSkipped() {
+        let accounts = [login("", at: ["https://example.com"]), login("", at: ["https://example.org"])]
+        #expect(report(accounts).findings.isEmpty)
+    }
+
     /// `login.` and `www.` are one website, and so are the hosts of a two-part suffix: two accounts there with one password are not
     /// reuse.
     @Test func twoAccountsOnOneWebsiteAreNotReuse() {
