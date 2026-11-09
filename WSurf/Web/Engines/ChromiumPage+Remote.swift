@@ -20,6 +20,8 @@ extension ChromiumPage {
     func materializeRemote() throws {
         guard !isClosing, !isClosed else { throw ChromiumError.closed }
         guard remote == nil else { return }
+        let started = ContinuousClock.now
+        defer { ChromiumOOP.log.notice("materializeRemote: \(Double((ContinuousClock.now - started).milliseconds)) ms") }
         ChromiumRemote.shared.ensureContext(for: context)
         let browser = ChromiumRemote.shared.makeBrowser(for: self)
         remote = browser

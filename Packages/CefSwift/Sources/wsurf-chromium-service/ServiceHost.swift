@@ -226,7 +226,7 @@ final class ServiceHost {
     private func createBrowser(_ message: CefRemoteMessage) {
         let id = message.browser
         guard browsers[id] == nil else { return }
-        guard CefRuntime.shared.isInitialized, layerServerPort != 0 else {
+        guard CefRuntime.shared.isInitialized, presentation == "xpc" || layerServerPort != 0 else {
             note("browser \(id): CEF not started or no layer server")
             send(CefRemoteMessage(CefRemote.Event.browserClosed, browser: id))
             return

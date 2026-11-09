@@ -84,7 +84,7 @@ enum D4SpikeDriver {
         let tab = browser.newTab(url: url("plain/1.html"), engine: .chromium)
         let loaded = await waitLoaded(tab, timeout: 60)
         let gap = watch.stop()
-        log("first Chromium tab: loaded \(loaded) in \((ContinuousClock.now - started).milliseconds) ms, longest main-thread gap \(Int(gap)) ms, engine \(String(describing: tab.loadedEngine)), title \(tab.liveView?.title ?? "nil"), url \(tab.liveView?.url?.absoluteString ?? "nil")")
+        log("first Chromium tab: loaded \(loaded) in \((ContinuousClock.now - started).milliseconds) ms, longest main-thread gap \(Int(gap)) ms (ended \(Int(watch.longestEndedAtMs)) ms after the tab was asked for, uptime \(String(format: "%.3f", ProcessInfo.processInfo.systemUptime))), engine \(String(describing: tab.loadedEngine)), title \(tab.liveView?.title ?? "nil"), url \(tab.liveView?.url?.absoluteString ?? "nil")")
         await processReport()
         if let page = tab.liveView {
             let title = try? await page.evaluateJavaScript("document.title + ' / ' + navigator.userAgent")
@@ -547,6 +547,9 @@ private final class GapWatch {
     private var timer: Timer?
     private var last = DispatchTime.now().uptimeNanoseconds
     private var longest = 0.0
+    /// When the longest gap ended, in milliseconds after the watch started.
+    private(set) var longestEndedAtMs = 0.0
+    private let started = DispatchTime.now().uptimeNanoseconds
 
     init() {
         let timer = Timer(timeInterval: 0.002, repeats: true) { [weak self] _ in
@@ -558,7 +561,11 @@ private final class GapWatch {
 
     private func tick() {
         let now = DispatchTime.now().uptimeNanoseconds
-        longest = max(longest, Double(now - last) / 1e6)
+        let gap = Double(now - last) / 1e6
+        if gap > longest {
+            longest = gap
+            longestEndedAtMs = Double(now - started) / 1e6
+        }
         last = now
     }
 

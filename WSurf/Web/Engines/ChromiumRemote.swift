@@ -176,7 +176,9 @@ final class ChromiumRemote {
     private func sendHello() {
         guard let control else { return }
         needsHello = false
+        let started = ContinuousClock.now
         let root = ChromiumRuntime.shared.prepareRootForService()
+        let rootMs = Double((ContinuousClock.now - started).milliseconds)
         let message = CefRemoteMessage(CefRemote.Op.hello)
         message.set(CefRemote.Key.identifier, CefRemote.protocolVersion)
         message.set(CefRemote.Key.rootPath, root.path)
@@ -191,7 +193,9 @@ final class ChromiumRemote {
             switches.updateValue(parts.count > 1 ? parts[1] : nil, forKey: name)
         }
         message.set(CefRemote.Key.switches, strings: switches)
-        xpc_dictionary_set_mach_send(message.object, CefRemote.Key.layerServer, CARemoteLayerServer.shared().serverPort)
+        if ChromiumOOP.presentation == "remote" {
+            xpc_dictionary_set_mach_send(message.object, CefRemote.Key.layerServer, CARemoteLayerServer.shared().serverPort)
+        }
         message.set(CefRemote.Key.linger, Double(ChromiumOOP.environment("WSURF_OOP_LINGER") ?? "") ?? 60)
         let fps = Int(ChromiumOOP.environment("WSURF_OOP_FPS") ?? "") ?? NSScreen.main?.maximumFramesPerSecond ?? 60
         message.set(CefRemote.Key.frameRate, Int64(fps))
@@ -204,7 +208,7 @@ final class ChromiumRemote {
             let answer = CefRemoteMessage(wrapping: reply)
             MainActor.assumeIsolated { ChromiumRemote.shared.helloAnswered(answer, sent: sent) }
         }
-        ChromiumOOP.log.notice("hello sent to \(self.serviceName, privacy: .public)")
+        ChromiumOOP.log.notice("hello sent to \(self.serviceName, privacy: .public): built in \(Double((ContinuousClock.now - started).milliseconds)) ms (root \(rootMs) ms)")
         if ChromiumOOP.presentation == "xpc" {
             let connection = xpc_connection_create(serviceName, framesQueue)
             xpc_connection_set_event_handler(connection) { event in
@@ -266,6 +270,13 @@ final class ChromiumRemote {
     }
 
     private func receive(_ incoming: Incoming) {
+        let started = ContinuousClock.now
+        defer {
+            let ms = Double((ContinuousClock.now - started).milliseconds)
+            if ms >= 4, case .message(let message) = incoming {
+                ChromiumOOP.log.notice("slow event \(message.op, privacy: .public) for browser \(message.browser): \(ms) ms")
+            }
+        }
         let message: CefRemoteMessage
         switch incoming {
         case .interrupted:

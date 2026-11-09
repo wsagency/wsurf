@@ -19,7 +19,8 @@ final class FramePresenter {
     /// Surfaces per element. Three cover the one shown, the one the render server may still read, and the one being written.
     private static let ringLimit = 4
 
-    let client: CARemoteLayerClient
+    /// Presentation "remote" only: with XPC presentation WSurf sends no layer server port and there is no client.
+    let client: CARemoteLayerClient?
     private let root = CALayer()
     private let content = CALayer()
     private let popup = CALayer()
@@ -65,7 +66,7 @@ final class FramePresenter {
     var sink: ((IOSurfaceRef, Element, UInt64) -> Void)?
 
     init(serverPort: mach_port_t, debugRoot: Bool = false) {
-        client = CARemoteLayerClient(serverPort: serverPort)
+        client = serverPort != 0 ? CARemoteLayerClient(serverPort: serverPort) : nil
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         root.anchorPoint = .zero
@@ -79,18 +80,18 @@ final class FramePresenter {
         popup.isHidden = true
         root.addSublayer(content)
         root.addSublayer(popup)
-        client.layer = root
+        client?.layer = root
         CATransaction.commit()
         CATransaction.flush()
     }
 
     var clientID: UInt32 {
-        client.clientId
+        client?.clientId ?? 0
     }
 
     func invalidate() {
-        client.layer = nil
-        client.invalidate()
+        client?.layer = nil
+        client?.invalidate()
         ring.removeAll()
         popupRing.removeAll()
         shown = nil
