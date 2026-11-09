@@ -103,13 +103,14 @@ extension CredentialSettingsModel {
         let value = try produce()
         try Task.checkCancellation()
         guard manager?.authorizationEpoch == epoch else { throw CredentialVaultError.unauthorized }
-        pasteboard.declareTypes(value.isSecret ? [.string, Self.concealedType] : [.string], owner: nil)
-        pasteboard.setString(value.text, forType: .string)
-        if value.isSecret {
-            pasteboard.setString("", forType: Self.concealedType)
+        if value.isSecret, let manager {
+            // For this Mac only, concealed, and gone after a minute, when this vault locks, or at quit, if still ours.
+            clipboard.copy(value.text, from: .vault(profile: profile.id, vault: manager.vaultID))
+            showNotice(LocalizedStringResource("\(String(localized: notice)). It leaves the clipboard in a minute."))
+        } else {
+            pasteboard.declareTypes([.string], owner: nil)
+            pasteboard.setString(value.text, forType: .string)
+            showNotice(notice)
         }
-        showNotice(notice)
     }
-
-    private static let concealedType = NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType")
 }

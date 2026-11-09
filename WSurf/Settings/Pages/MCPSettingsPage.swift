@@ -106,13 +106,14 @@ extension MCPSettingsPage {
     }
 
     private func copy(_ configuration: String, concealed: Bool) {
+        if concealed {
+            // The pairing token is a secret: for this Mac only, concealed from clipboard managers, and gone after a minute or at quit.
+            SecretClipboard.shared.copy(configuration, from: .mcp)
+            return
+        }
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         pasteboard.setString(configuration, forType: .string)
-        if concealed {
-            // Clipboard managers skip items with this marker, so the token is not kept in their history.
-            pasteboard.setData(Data(), forType: NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType"))
-        }
     }
 }
 

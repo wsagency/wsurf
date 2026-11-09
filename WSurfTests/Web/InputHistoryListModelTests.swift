@@ -195,6 +195,17 @@ struct InputHistoryListModelTests {
         #expect(rig.pasteboard.string(forType: .string) == "copied later")
     }
 
+    @Test func copyLeavesTheClipboardWhenTheHistoryLocks() async throws {
+        let rig = Rig()
+        defer { rig.tearDown() }
+        rig.model.show([Self.entry("dummy-secret-123", kind: .password, at: 1)])
+        let row = try #require(rig.model.visible.first)
+        rig.model.copy(row)
+        #expect(rig.pasteboard.string(forType: .string) == "dummy-secret-123")
+        rig.harness.history.lock(profileID: rig.profile.id)
+        #expect(rig.pasteboard.string(forType: .string) == nil)
+    }
+
     // MARK: - Locking
 
     @Test func lockingDropsTheRowsTheRevealAndTheSearch() async throws {

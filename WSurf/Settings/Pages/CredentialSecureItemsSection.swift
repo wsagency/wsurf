@@ -115,7 +115,7 @@ struct CredentialSecureItemsSection: View {
                 Text(verbatim: concealed && !shown.contains(key) ? "••••••••" : field.value)
                     .lineLimit(1)
                     .truncationMode(.middle)
-                    .textSelection(.enabled)
+                    .textSelection(concealed ? .disabled : .enabled)
                     .privacySensitive(concealed)
                     .frame(maxWidth: .infinity, alignment: .leading)
             } else if concealed && !shown.contains(key) {

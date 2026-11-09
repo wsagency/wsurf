@@ -54,6 +54,8 @@ final class CredentialSettingsModel {
     @ObservationIgnored let native: VaultNativeUnlock?
     /// Internal for `CredentialSettingsModel+Copy`, the one clipboard exit.
     @ObservationIgnored let pasteboard: NSPasteboard
+    /// Where a secret copy goes (`SecretClipboard`): concealed, this Mac only, and cleared after a minute, at lock and at quit.
+    @ObservationIgnored let clipboard: SecretClipboard
     /// How long a copy confirmation stays, and how long one that offers Undo does; seams so a test does not wait for the real time.
     @ObservationIgnored private let noticeDuration: Duration
     @ObservationIgnored private let undoNoticeDuration: Duration
@@ -112,12 +114,14 @@ final class CredentialSettingsModel {
         noticeDuration: Duration = .seconds(1.6),
         undoNoticeDuration: Duration = .seconds(4),
         openingDuration: Duration = .seconds(2),
-        verifyUser: @escaping @MainActor (String) async throws -> Void = CredentialSettingsModel.systemVerifier
+        verifyUser: @escaping @MainActor (String) async throws -> Void = CredentialSettingsModel.systemVerifier,
+        clock: any Clock<Duration> = ContinuousClock()
     ) {
         self.profile = profile
         self.verifyUser = verifyUser
         self.exchange = exchange
         self.pasteboard = pasteboard
+        clipboard = SecretClipboard.clipboard(for: pasteboard, clock: clock)
         self.noticeDuration = noticeDuration
         self.undoNoticeDuration = undoNoticeDuration
         self.openingDuration = openingDuration

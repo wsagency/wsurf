@@ -166,12 +166,12 @@ struct CredentialHistoryPanel: View {
             VStack(alignment: .leading, spacing: 8) {
                 VersionValues(
                     caption: "Username", this: secret(from.username, hides: hidesUsername), current: secret(draft.username, hides: hidesUsername),
-                    currentLabel: currentLabel, isMasked: hidesUsername, copyName: "username",
+                    currentLabel: currentLabel, isMasked: hidesUsername, isSecret: draft.usernameIsConcealed, copyName: "username",
                     copyThis: copier(.username, current: false), copyCurrent: copier(.username, current: true)
                 )
                 VersionValues(
                     caption: "Password", this: secret(from.password ?? "", hides: !showsPasswords),
-                    current: secret(draft.password ?? "", hides: !showsPasswords), currentLabel: currentLabel, isMasked: !showsPasswords,
+                    current: secret(draft.password ?? "", hides: !showsPasswords), currentLabel: currentLabel, isMasked: !showsPasswords, isSecret: true,
                     copyName: "password",
                     copyThis: copier(.password, current: false), copyCurrent: copier(.password, current: true)
                 )
@@ -338,11 +338,12 @@ struct CredentialHistoryPanel: View {
         value.isEmpty || !hides ? value : Self.mask
     }
 
-    /// A shown note can be selected; its mask cannot, so selecting never copies bullets in place of the note.
+    /// A shown note or item value cannot be selected, shown or not: ⌘C would go around the clipboard clearing (`SecretClipboard`). The
+    /// copy button next to it stays.
     @ViewBuilder
     private func noteText(_ text: String, reveals: Bool) -> some View {
         if reveals {
-            Text(verbatim: text).textSelection(.enabled)
+            Text(verbatim: text)
         } else {
             Text(verbatim: Self.mask)
         }
@@ -398,6 +399,9 @@ private struct VersionValues: View {
     let currentLabel: String
     /// True when the values are masks: a mask is not selectable, so ⌘C never copies bullets in place of the secret.
     var isMasked = false
+    /// True for a password or a concealed username: shown or masked, it is never selectable, so ⌘C cannot go around the clipboard
+    /// clearing (`SecretClipboard`). The copy buttons stay.
+    var isSecret = false
     /// What the buttons copy, for VoiceOver: "Copy this version’s password".
     let copyName: LocalizedStringResource
     /// `nil` leaves the button out.
@@ -432,7 +436,7 @@ private struct VersionValues: View {
 
     @ViewBuilder
     private func shown(_ value: String) -> some View {
-        if isMasked {
+        if isMasked || isSecret {
             Text(verbatim: value).privacySensitive()
         } else {
             Text(verbatim: value).privacySensitive().textSelection(.enabled)
