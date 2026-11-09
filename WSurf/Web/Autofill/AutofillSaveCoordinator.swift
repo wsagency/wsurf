@@ -245,24 +245,24 @@ final class AutofillSaveSession: NSObject {
         case .manager(let routed):
             manager = routed
         }
-        guard let epoch = manager.authorizationEpoch, let snapshot = try? await manager.snapshot(),
+        guard let epoch = manager.authorizationEpoch, let matches = try? await manager.passwordMatches(login),
               self.manager(epoch: epoch) === manager, revision == self.revision, self.page === page else { return nil }
-        guard !snapshot.blockedPasswordOrigins.contains(origin) else {
+        guard !matches.blockedPasswordOrigins.contains(origin) else {
             AutofillDiagnostics.note(.offerDroppedBlocked, kind: .password)
             return nil
         }
         let selected = selectedAccount(in: page, origin: origin, enteredUsername: login.username, epoch: epoch)
-        let plan = CredentialAccountSelection.savePlan(for: login, origin: origin, accountID: selected, in: snapshot.accounts)
+        let plan = CredentialAccountSelection.savePlan(for: login, origin: origin, accountID: selected, in: matches.accounts) { matches.samePassword.contains($0.id) }
         // A sign-in with a saved login, the account `savePlan` compared: it leads this website's list next time (`AutofillLastUsed`).
-        if plan == .unchanged, let used = snapshot.accounts.first(where: { $0.id == selected && $0.origins.contains(origin) && $0.username == login.username })
-            ?? snapshot.accounts.first(where: { $0.origins.contains(origin) && $0.username == login.username }) {
+        if plan == .unchanged, let used = matches.accounts.first(where: { $0.id == selected && $0.origins.contains(origin) && $0.username == login.username })
+            ?? matches.accounts.first(where: { $0.origins.contains(origin) && $0.username == login.username }) {
             context.autofillLastUsed.record(account: used.id, origin: origin, in: manager)
         }
         guard plan != .unchanged, plan != .ambiguous else {
             AutofillDiagnostics.note(plan == .ambiguous ? .offerDroppedAmbiguous : .offerDroppedUnchanged, kind: .password)
             return nil
         }
-        return ManagedSave(plan: plan, epoch: epoch, revision: snapshot.revision, loginURL: loginURL)
+        return ManagedSave(plan: plan, epoch: epoch, revision: matches.revision, loginURL: loginURL)
     }
 
     /// What saving a card or a contact from a form would do, read from the profile's unlocked vaults: `nil` (nothing to offer) when the
@@ -410,14 +410,14 @@ final class AutofillSaveSession: NSObject {
         var found: [(accountID: UUID, epoch: UInt64)] = []
         let hasSiblings = CredentialAccountSelection.site(of: origin) != nil
         for manager in CredentialManager.unlockedManagers(for: context.profile) where listed.contains(manager.vaultID) {
-            guard let epoch = manager.authorizationEpoch, let snapshot = try? await manager.snapshot(),
+            guard let epoch = manager.authorizationEpoch, let matches = try? await manager.passwordMatches(login),
                   manager.authorizationEpoch == epoch else { continue }
-            if snapshot.accounts.contains(where: { $0.origins.contains(origin) && $0.username == login.username }) {
+            if matches.accounts.contains(where: { $0.origins.contains(origin) && $0.username == login.username }) {
                 return nil
             }
             guard hasSiblings else { continue }
-            for (account, _) in CredentialAccountSelection.siblings(in: snapshot.accounts, origin: origin, entered: nil)
-            where account.username == login.username && account.password == login.password
+            for (account, _) in CredentialAccountSelection.siblings(in: matches.accounts, origin: origin, entered: nil)
+            where account.username == login.username && matches.samePassword.contains(account.id)
                 && CredentialAccountSelection.canAddWebsite(origin, to: account) {
                 found.append((accountID: account.id, epoch: epoch))
             }
@@ -427,10 +427,10 @@ final class AutofillSaveSession: NSObject {
             return (sibling.accountID, sibling.epoch, false)
         }
         guard let picked = manualPick, picked.origin == origin, ContinuousClock.now < picked.deadline,
-              let manager = manager(epoch: picked.epoch), let snapshot = try? await manager.snapshot(),
+              let manager = manager(epoch: picked.epoch), let matches = try? await manager.passwordMatches(login),
               self.manager(epoch: picked.epoch) === manager,
-              let account = snapshot.accounts.first(where: { $0.id == picked.accountID }),
-              account.username == login.username, account.password == login.password,
+              let account = matches.accounts.first(where: { $0.id == picked.accountID }),
+              account.username == login.username, matches.samePassword.contains(account.id),
               CredentialAccountSelection.canAddWebsite(origin, to: account, anySite: true) else { return nil }
         return (account.id, picked.epoch, true)
     }

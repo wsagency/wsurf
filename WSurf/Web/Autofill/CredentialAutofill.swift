@@ -284,8 +284,20 @@ nonisolated enum CredentialAccountSelection {
     static func savePlan(
         for login: SavedPassword, origin: String, accountID: UUID?, in accounts: [CredentialAccount]
     ) -> CredentialSavePlan {
-        func plan(_ account: CredentialAccount) -> CredentialSavePlan {
-            account.password == login.password ? .unchanged : .update(account.id)
+        // `String` equality, as the vault compares for `AutofillPasswordMatches.samePassword` (`ProfileVaultStore`): change both, and
+        // the canonical test cases, together, or a save offer and `commitSave` plan differently.
+        savePlan(for: login, origin: origin, accountID: accountID, in: accounts) { $0.password == login.password }
+    }
+
+    /// `savePlan` over what a list may know of each credential, with `samePassword` saying whether one holds `login`'s password:
+    /// the vault's answer (`AutofillPasswordMatches.samePassword`), so that no stored password reaches the caller. That answer names
+    /// only credentials with `login`'s username, the only ones a plan compares. Both overloads make the same plan for the same
+    /// credentials (`AutofillListingTests`).
+    static func savePlan<Account: AutofillListable>(
+        for login: SavedPassword, origin: String, accountID: UUID?, in accounts: [Account], samePassword: (Account) -> Bool
+    ) -> CredentialSavePlan {
+        func plan(_ account: Account) -> CredentialSavePlan {
+            samePassword(account) ? .unchanged : .update(account.id)
         }
         if let accountID, let selected = accounts.first(where: { $0.id == accountID }),
            selected.origins.contains(origin), selected.username == login.username {

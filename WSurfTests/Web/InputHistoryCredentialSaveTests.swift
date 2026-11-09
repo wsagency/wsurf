@@ -61,9 +61,15 @@ struct InputHistoryCredentialSaveTests {
         try await VaultManagerFixture.with(vaults: [.unlocked]) { profile, _, vaults in
             let existing = VaultFixtures.account(username: Self.user, password: "dummy-old-123", origin: Self.origin)
             try await VaultManagerFixture.save([existing], in: vaults[0])
+            let audit = VaultReadAudit()
+            CredentialManager.readAuditsForTesting[profile.id] = audit
+            defer { CredentialManager.readAuditsForTesting[profile.id] = nil }
 
             let save = try await started(profile)
             #expect(save.plan == .update(existing.id))
+            // The route reads the candidates, and the plan is the vault's comparison (`passwordMatches`): no stored password reaches
+            // the sheet. Only Save reads the whole vault, to write it (D5 item d).
+            #expect(audit.reads == [.candidates, .passwordMatches])
             #expect(save.isUpdate)
             await save.confirm()
             #expect(save.stage == .finished(.saved))

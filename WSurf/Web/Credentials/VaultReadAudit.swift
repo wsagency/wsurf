@@ -13,7 +13,7 @@ final class VaultReadAudit {
         case snapshot, candidates, health
         case login(AutofillLoginField)
         case items(AutofillItemKind, pick: Bool)
-        case passkeys
+        case passkeys, passwordMatches
     }
 
     private(set) var reads: [Read] = []

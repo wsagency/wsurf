@@ -71,10 +71,17 @@ struct VaultConsumerRoutingTests {
             let epochA = try #require(vaults[0].manager.authorizationEpoch)
             let epochB = try #require(vaults[1].manager.authorizationEpoch)
             #expect(epochA != epochB)
+            let audit = VaultReadAudit(), profileID = vaults[0].manager.profileID
+            CredentialManager.readAuditsForTesting[profileID] = audit
+            defer { CredentialManager.readAuditsForTesting[profileID] = nil }
 
             await session.offer(try login("ada"), origin: Self.origin)
             #expect(session.current?.managerEpoch == epochA)
             #expect(session.current?.plan == .update(ada.id))
+            // The submitted password was compared in the vaults (`passwordMatches`), the routed vault's last: no stored password,
+            // and no whole vault, reached the offer (D5 item d).
+            #expect(!audit.reads.contains(.snapshot), "the offer read a whole vault: \(audit.reads)")
+            #expect(audit.reads.last == .passwordMatches, "\(audit.reads)")
 
             await session.offer(try login("bob"), origin: Self.origin)
             #expect(session.current?.managerEpoch == epochB)
