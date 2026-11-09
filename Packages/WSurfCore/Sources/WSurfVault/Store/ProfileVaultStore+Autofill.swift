@@ -3,11 +3,12 @@
 
 import Foundation
 
-/// What autofill reads, without the whole vault leaving the store. Each method runs the verified read (`snapshot(vaultID:using:)`:
-/// the operation lock, the head, every row's digest and AAD, the row count, and the decoded cache) on this actor, projects what its
+/// What autofill reads, without the whole vault leaving the store. A list runs the verified read (`snapshot(vaultID:using:)`: the
+/// operation lock, the head, every row's digest and AAD, the row count, and the decoded cache); a pick, named by a credential (and an
+/// item) and the revision its list was read at, reads that one row with the same checks (`pickedAccount`: the head, then the row's
+/// digest and AAD; tampering with another row is found by the next full read). Each method runs on this actor, projects what its
 /// caller needs, and checks once more, right before it returns, that `access` still holds its grant: a lock whose revocation lands
-/// during the read or the projection returns nothing. A list gets candidates or rows; a pick, named by a credential (and an item) and
-/// the revision its list was read at, gets that one value. The storage format, the read, the decoded cache, writes and sync are
+/// during the read or the projection returns nothing. The storage format, the full read, the decoded cache, writes and sync are
 /// unchanged.
 extension ProfileVaultStore {
     /// The credentials of an unlocked vault as a list may show them (`AutofillCandidate`), and the websites it excludes from save
@@ -22,15 +23,13 @@ extension ProfileVaultStore {
         return candidates
     }
 
-    /// The picked credential's candidate and `field`'s secret only: its password, or the source of its code. A credential that is no
-    /// longer there, or any write since `expectedRevision` (the revision its list was read at), is `staleRevision`.
+    /// The picked credential's candidate and `field`'s secret only: its password, or the source of its code. Only its row is read
+    /// (`pickedAccount`). A credential that is no longer there, or any write since `expectedRevision` (the revision its list was read
+    /// at), is `staleRevision`.
     public func autofillLogin(
         vaultID: UUID, accountID: UUID, field: AutofillLoginField, expectedRevision: UInt64, using access: VaultAccess
     ) async throws -> AutofillLogin {
-        let snapshot = try await snapshot(vaultID: vaultID, using: access)
-        guard snapshot.revision == expectedRevision, let account = snapshot.accounts.first(where: { $0.id == accountID }) else {
-            throw CredentialVaultError.staleRevision
-        }
+        let account = try await pickedAccount(vaultID: vaultID, accountID: accountID, expectedRevision: expectedRevision, using: access)
         let login = AutofillLogin(account, field: field)
         _ = try authorizedGrant(vaultID, access)
         return login
@@ -59,16 +58,13 @@ extension ProfileVaultStore {
     }
 
     /// One row a list showed, named by its credential and item and the revision its list was read at, with that row's values
-    /// (`AutofillItemPick`): the one card or the contact, and nothing else. A row that is no longer there (a card that has expired
-    /// since included), or any write since `expectedRevision`, is `staleRevision`.
+    /// (`AutofillItemPick`): the one card or the contact, and nothing else. Only its credential's row is read (`pickedAccount`). A row
+    /// that is no longer there (a card that has expired since included), or any write since `expectedRevision`, is `staleRevision`.
     public func autofillItems(
         vaultID: UUID, kind: AutofillItemKind, accountID: UUID, item: Int, expectedRevision: UInt64, using access: VaultAccess
     ) async throws -> AutofillItemPick {
-        let snapshot = try await snapshot(vaultID: vaultID, using: access)
+        let account = try await pickedAccount(vaultID: vaultID, accountID: accountID, expectedRevision: expectedRevision, using: access)
         let now = wall()
-        guard snapshot.revision == expectedRevision, let account = snapshot.accounts.first(where: { $0.id == accountID }) else {
-            throw CredentialVaultError.staleRevision
-        }
         let picked: AutofillItemPick
         switch kind {
         case .cards:

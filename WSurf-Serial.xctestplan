@@ -226,6 +226,7 @@
         "VaultMoveTests",
         "VaultNoteHistoryTests",
         "VaultOperationLockTests",
+        "VaultPickReadTests",
         "VaultPreUnlockDiscoveryTests",
         "VaultPrimitivesTests",
         "VaultPurgeTests",

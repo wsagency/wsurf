@@ -525,6 +525,45 @@ struct AutofillSecretsTests {
         }
     }
 
+    /// In the app the page check after Touch ID is the page's own `validate`, not only the request's native authority (#86 review
+    /// nit): every other card pick here replaces it (`withVault`), so this pins what they replace. The rig's frame has no document to
+    /// ask, so `validate` fails at once (`ChromiumError.staleFrame`) where `requireAuthority` passes. A card pick with the app's own
+    /// check therefore fails after the prompt, reads nothing after it, and shows the alert.
+    @Test(.timeLimit(.minutes(1))) func thePageCheckAfterTouchIDIsThePagesOwnValidate() async throws {
+        let appCheck = AutofillSuggestions.shared.validateAfterPrompt
+        try await withVault { rig, _, _, audit in
+            let suggestions = AutofillSuggestions.shared
+            let verify = suggestions.verifyUser
+            defer { suggestions.verifyUser = verify }
+            let request = rig.request(.card)
+            _ = await suggestions.vaultItemSuggestions(for: request, origin: Self.shop, presentation: suggestions.presentationID)
+            let rowID = try #require(request.itemRows.keys.first)
+            try suggestions.requireAuthority(request, in: rig.page)
+            var checked: (any Error)?
+            do {
+                try await appCheck(request, rig.page)
+            } catch {
+                checked = error
+            }
+            #expect(Self.isStaleFrame(checked), "the app's page check did not ask the page")
+
+            // `withVault` puts the app's own check back too.
+            suggestions.validateAfterPrompt = appCheck
+            var readsAtPrompt: Int?
+            suggestions.verifyUser = { _ in readsAtPrompt = audit.reads.count }
+            var refused: (any Error)?
+            do {
+                _ = try await suggestions.vaultItemFill(rowID, request: request, in: rig.page)
+            } catch {
+                refused = error
+            }
+            let atPrompt = try #require(readsAtPrompt, "Touch ID was not asked")
+            #expect(audit.reads.count == atPrompt, "the card was read after the page check failed: \(audit.reads.dropFirst(atPrompt))")
+            #expect(Self.isStaleFrame(refused), "the pick failed otherwise than at the page check")
+            #expect(refused.map(AutofillSuggestions.isUserCancellation) == false, "a failed page check would show no alert")
+        }
+    }
+
     // MARK: A5 A lock still drops everything
 
     /// List, lock every vault as a screen lock does, then pick: the request's authority, the vault read and the store's grant are all
@@ -596,6 +635,12 @@ struct AutofillSecretsTests {
     /// Whether `error` is `WebsiteAuthenticatorError.notAllowed`, what a cancelled or failed Touch ID prompt throws.
     private static func isNotAllowed(_ error: (any Error)?) -> Bool {
         guard let error = error as? WebsiteAuthenticatorError, case .notAllowed = error else { return false }
+        return true
+    }
+
+    /// Whether `error` is `ChromiumError.staleFrame`, what the page's own `validate` throws for a frame with no document to ask.
+    private static func isStaleFrame(_ error: (any Error)?) -> Bool {
+        guard let error = error as? ChromiumError, case .staleFrame = error else { return false }
         return true
     }
 

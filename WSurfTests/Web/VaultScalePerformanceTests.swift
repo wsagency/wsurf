@@ -229,6 +229,40 @@ nonisolated final class VaultScalePerformanceTests: XCTestCase, @unchecked Senda
         }
     }
 
+    /// What a pick reads since D5 PR-6: its own row (`autofillLogin` through `readOne`: the head, then that one row's digest, AAD
+    /// and decode), not the verified read of all 20,000 credentials (`testReadingTwentyThousandCredentials`). The head still lists all
+    /// 20,000, so it is opened whole. The revision is the vault's, read before the measurement.
+    func testPickingOneOfTwentyThousandCredentials() {
+        MainActor.assumeIsolated {
+            let fixture = Fixture()
+            finish { try await fixture.makeVault() }
+            guard let manager = fixture.vault?.manager, let picked = fixture.accounts.last else {
+                return XCTFail("The 20,000-credential vault was not made.")
+            }
+            finish {
+                let revision = try await manager.snapshot().revision
+                fixture.nextEntry = (id: picked.id, revision: revision)
+            }
+            guard let entry = fixture.nextEntry else { return XCTFail("The vault's revision was not read.") }
+            measure(metrics: [XCTClockMetric(), XCTMemoryMetric()], options: measuredOptions(manual: true)) {
+                autoreleasepool {
+                    Self.returnFreePages()
+                    startMeasuring()
+                    finish {
+                        let login = try await manager.store.autofillLogin(
+                            vaultID: manager.vaultID, accountID: entry.id, field: .password, expectedRevision: entry.revision,
+                            using: try manager.currentAccess()
+                        )
+                        XCTAssertEqual(login.candidate.id, entry.id)
+                    }
+                    Self.returnFreePages()
+                    stopMeasuring()
+                }
+            }
+            finish { await fixture.cleanup() }
+        }
+    }
+
     /// The calendar date the projection case dates its cards by: mid-June 2030, before `SecureItemFixtures.card` ends (2031-07).
     static let projectionDate = Date(timeIntervalSince1970: 1_907_755_200)
 

@@ -299,7 +299,8 @@ extension ProfileVaultStore {
 
     /// The snapshot, and what each live row decrypted to (for `remember`). Every row is read, its stored sealed bytes hashed against
     /// the head's catalog and opened under its own AAD, as at every read; only the JSON decode is skipped for a row whose plaintext
-    /// digest is the one `grant.decoded` holds for it.
+    /// digest is the one `grant.decoded` holds for it. `readOne` makes the same checks for one row: keep the two in sync (the
+    /// parity tamper cases of both are in `VaultPickReadTests`).
     nonisolated static func readLive(
         _ db: Database, grant: VaultGrant, vaultID: UUID
     ) throws -> (snapshot: StoreSnapshot, decoded: [UUID: DecodedRow]) {
@@ -338,6 +339,58 @@ extension ProfileVaultStore {
                 vaultID: vaultID, revision: head.revision, accounts: accounts, blockedPasswordOrigins: Set(head.blockedOrigins), stamps: stamps
             )
             return (snapshot, decoded)
+        }
+    }
+
+    // MARK: One row, for a pick
+
+    /// The picked live account of one unlocked vault (`ProfileVaultStore+Autofill.swift`), under the grant checks `snapshot` makes:
+    /// before the operation lock and under it. The caller checks the grant once more right before it returns. Any write since
+    /// `expectedRevision`, or an account the head does not list, is `staleRevision`. `expectedRevision` must come from a full read (a
+    /// list): only the head and this row are checked here, so that read is what refuses tampering with the vault's other rows.
+    func pickedAccount(vaultID: UUID, accountID: UUID, expectedRevision: UInt64, using access: VaultAccess) async throws -> CredentialAccount {
+        _ = try authorizedGrant(vaultID, access)
+        let account = try await withOperation { pool in
+            let grant = try authorizedGrant(vaultID, access)
+            return try pool.read { (db: Database) throws in
+                try Self.readOne(db, grant: grant, vaultID: vaultID, accountID: accountID, expectedRevision: expectedRevision)
+            }
+        }
+        guard let account else { throw CredentialVaultError.staleRevision }
+        return account
+    }
+
+    /// One live account, read on its own. The head is opened and authenticated as `readLive` does it, and its revision is compared
+    /// with `expectedRevision` before any row is opened. Then only `accountID`'s catalog entry is read, with `readLive`'s checks for
+    /// a row: its record's kind and version, its stored sealed bytes hashed against the entry, opened under its own AAD, and the
+    /// decoded account's id. `nil` when the head is at another revision or does not list the account. No other row is read, and the
+    /// rows are not counted, so tampering with another row is found by the next full read, not here. The decoded cache is only read
+    /// (a decode is reused once the row was opened and its plaintext digest matched) and nothing is remembered. Keep the row checks in
+    /// sync with `readLive` (the parity tamper cases of both are in `VaultPickReadTests`).
+    nonisolated static func readOne(
+        _ db: Database, grant: VaultGrant, vaultID: UUID, accountID: UUID, expectedRevision: UInt64
+    ) throws -> CredentialAccount? {
+        let row = try activeRow(vaultID, in: db)
+        let head = try openStoredHead(db, row: row, key: grant.dek, ids: grant.ids, ordinal: grant.ordinal)
+        guard head.revision == expectedRevision, let entry = head.liveCatalog.first(where: { $0.recordID == accountID }) else { return nil }
+        return try mapIntegrity(grant.ordinal) {
+            guard let record = try StoreTables.record(db, vaultID: vaultID, recordID: entry.recordID),
+                record.kind == .account, record.version == entry.version, StoreSeal.digest(record.sealed) == entry.digest
+            else { throw CredentialStoreError.malformed }
+            let aad = RowAAD(
+                ids: grant.ids, vaultID: vaultID, recordID: record.recordID, kind: record.kind, ownerID: record.ownerID,
+                subject: record.subject, version: record.version
+            )
+            let plaintext = try StoreSeal.openRow(record.sealed, key: grant.dek, aad: aad)
+            let digest = StoreSeal.digest(plaintext)
+            let account: CredentialAccount
+            if let known = grant.decoded[entry.recordID], known.plaintextDigest == digest {
+                account = known.account
+            } else {
+                account = try JSONDecoder().decode(CredentialAccount.self, from: plaintext)
+            }
+            guard account.id == entry.recordID else { throw CredentialStoreError.malformed }
+            return account
         }
     }
 }
