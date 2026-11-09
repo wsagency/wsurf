@@ -306,6 +306,7 @@ final class CredentialSettingsModel {
     /// has read the session again, and that gap is not a lock.
     func close() {
         session = nil
+        cancelHealthRead()
         startOpening()
     }
 
@@ -331,6 +332,7 @@ final class CredentialSettingsModel {
 
     func lock() {
         session = nil
+        cancelHealthRead()
         manager?.lock(reason: .manual)
     }
 
@@ -482,6 +484,7 @@ final class CredentialSettingsModel {
         }
         manager = next
         session = nil
+        cancelHealthRead()
         needsMigrationConfirmation = false
         watchAuthorization()
     }
@@ -559,7 +562,12 @@ final class CredentialSettingsModel {
         let (epoch, snapshot) = try await authorizedSnapshot()
         guard snapshot.revision == expectedRevision else { throw CredentialVaultError.staleRevision }
         var accounts = snapshot.accounts
-        if let index = accounts.firstIndex(where: { $0.id == account.id }) {
+        let index = accounts.firstIndex(where: { $0.id == account.id })
+        // A new or changed password ends Show Password Health's grant before it is written (`endHealthGrant`).
+        if let password = account.password, password != index.flatMap({ accounts[$0].password }) {
+            endHealthGrant()
+        }
+        if let index {
             accounts[index] = account
         } else {
             accounts.append(account)
@@ -763,6 +771,8 @@ final class CredentialSettingsModel {
         // Read before the commit: a failed one drops the review, and its message must still name the right retry.
         let origin = currentImportOrigin()
         ownMessage = nil
+        // An import saves new or changed passwords, so it ends Show Password Health's grant like a saved one (`endHealthGrant`).
+        endHealthGrant()
         let committed = await perform(describe: { self.importMessage(for: $0, origin: origin) }) { receipt = try await self.exchange.commitImport(into: $0, owner: self.owner) }
         guard committed, let receipt, let expected else { return }
         if let epoch, epoch == manager?.authorizationEpoch {
@@ -835,6 +845,7 @@ final class CredentialSettingsModel {
                 guard self?.manager === manager else { return }
                 self?.session = nil
                 self?.importResult = nil
+                self?.cancelHealthRead()
             }
             Task { @MainActor [weak self] in
                 guard self?.manager === manager else { return }

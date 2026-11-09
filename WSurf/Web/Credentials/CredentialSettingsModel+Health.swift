@@ -61,11 +61,32 @@ extension CredentialSettingsModel {
         let wait = delay ?? healthDelay
         healthTask = Task { [weak self, manager] in
             try? await Task.sleep(for: wait)
-            guard !Task.isCancelled, let report = try? await manager.passwordHealth(), !Task.isCancelled else { return }
+            // Right before the read: still shown, for this vault, under the unlock it was asked under. A lock and a new unlock
+            // during the wait read nothing under the new one.
+            guard !Task.isCancelled, let self, self.manager === manager, self.showsHealth, manager.authorizationEpoch == key.epoch
+            else { return }
+            guard let report = try? await manager.passwordHealth(), !Task.isCancelled else { return }
             // Another vault on the page, another unlock or another revision takes nothing from this report.
-            guard let self, self.manager === manager, report.vaultID == key.vaultID else { return }
+            guard self.manager === manager, report.vaultID == key.vaultID else { return }
             try? self.update(key.epoch) { $0.applyHealth(report) }
         }
+    }
+
+    /// Ends Show Password Health's grant: the flags go at once, nothing more is read, and the next Show Password Health asks again.
+    /// Called when this page saves a new or changed password, so each guess saved here costs a prompt to check.
+    func endHealthGrant() {
+        healthGrant = nil
+        cancelHealthRead()
+        if let live {
+            try? update(live.epoch) { $0.dropHealth() }
+        }
+    }
+
+    /// Cancels a report that waits or is being read: a page that was closed, locked or moved to another vault reads none.
+    func cancelHealthRead() {
+        healthTask?.cancel()
+        healthTask = nil
+        healthKey = nil
     }
 
     /// The other credentials that save the same password as `summary`, in the list's order; empty when it is not reused.

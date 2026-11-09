@@ -196,6 +196,17 @@ struct CredentialVaultSession {
         markHealth()
     }
 
+    /// Drops the report and its flags: the page shows no password health.
+    mutating func dropHealth() {
+        guard health != nil else { return }
+        health = nil
+        summaries = summaries.map { summary in
+            var unmarked = summary
+            unmarked.health = nil
+            return unmarked
+        }
+    }
+
     private mutating func markHealth() {
         guard let health, health.revision == revision else { return }
         summaries = summaries.map { summary in

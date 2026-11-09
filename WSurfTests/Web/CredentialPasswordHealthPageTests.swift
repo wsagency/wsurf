@@ -274,4 +274,115 @@ struct CredentialPasswordHealthPageTests {
             #expect(shortened.health?.weaknesses == [.short])
         }
     }
+
+    /// A lock and a new unlock while a report waits read nothing under the new unlock, which nobody granted.
+    @Test func aLockAndANewUnlockWhileAReportWaitsReadNothing() async throws {
+        try await withFixture(healthDelay: .milliseconds(300)) { f in
+            let all = accounts()
+            try await VaultManagerFixture.save(all, in: f.vault)
+            await f.model.load()
+            try await f.model.revealHealth()
+            #expect(await waitUntil { f.model.healthRevision == f.model.revision })
+
+            var renamed = all[3]
+            renamed.displayName = "Renamed"
+            _ = try await f.model.save(renamed, expectedRevision: f.model.revision)
+            #expect(f.model.healthTask != nil, "a report waits for the new revision")
+            f.vault.manager.lock(reason: .manual)
+            try await VaultManagerFixture.unlock(f.vault)
+            await f.model.load()
+            try await Task.sleep(for: .milliseconds(600))
+            #expect(f.healthReads == 1, "nothing was read under the new unlock")
+            #expect(!f.model.showsHealth && flagged(f.model.summaries).isEmpty)
+        }
+    }
+
+    /// Saving a new or changed password on this page ends the grant: the flags go at once, nothing is read for it, and the next
+    /// Show Password Health asks again. A save that keeps every password, such as a rename, keeps it.
+    @Test func savingANewOrChangedPasswordEndsTheGrant() async throws {
+        try await withFixture { f in
+            var all = accounts()
+            try await VaultManagerFixture.save(all, in: f.vault)
+            await f.model.load()
+            try await f.model.revealHealth()
+            #expect(await waitUntil { f.model.healthRevision == f.model.revision })
+
+            all[3].displayName = "Renamed"
+            _ = try await f.model.save(all[3], expectedRevision: f.model.revision)
+            #expect(f.model.showsHealth, "a rename keeps the grant")
+            #expect(await waitUntil { f.model.healthRevision == f.model.revision })
+            let reads = f.healthReads
+
+            // A guess: the password two other logins share.
+            all[3].password = Self.shared
+            _ = try await f.model.save(all[3], expectedRevision: f.model.revision)
+            #expect(!f.model.showsHealth && flagged(f.model.summaries).isEmpty)
+            try await Task.sleep(for: .milliseconds(50))
+            #expect(f.healthReads == reads, "nothing is read for the guess")
+
+            try await f.model.revealHealth()
+            #expect(f.prompts.reasons == [Self.reason, Self.reason])
+            #expect(await waitUntil { f.model.healthRevision == f.model.revision })
+            #expect(f.model.summaries.first { $0.id == all[3].id }?.health?.reuse != nil, "the guess shows only after a second prompt")
+
+            _ = try await f.model.save(login("Nw7!kQ2#pX9m", at: "https://example.info"), expectedRevision: f.model.revision)
+            #expect(!f.model.showsHealth, "a new credential with a password ends it too")
+        }
+    }
+
+    /// Leaving the page and coming back keeps the grant under the same unlock: the report is read again, and nothing asks.
+    @Test func leavingAndReturningKeepsTheGrantUnderTheSameUnlock() async throws {
+        try await withFixture { f in
+            let all = accounts()
+            try await VaultManagerFixture.save(all, in: f.vault)
+            await f.model.load()
+            try await f.model.revealHealth()
+            #expect(await waitUntil { f.model.healthRevision == f.model.revision })
+
+            f.model.close()
+            #expect(f.model.summaries.isEmpty && f.model.healthTask == nil)
+            await f.model.load()
+            #expect(f.model.showsHealth)
+            #expect(await waitUntil { f.model.healthRevision == f.model.revision })
+            #expect(Set(flagged(f.model.summaries)) == [all[0].id, all[1].id, all[2].id])
+            #expect(f.prompts.reasons.count == 1 && f.healthReads == 2)
+        }
+    }
+
+    /// The grant belongs to one vault and its unlock: another vault on the page shows and reads nothing until its own prompt, and
+    /// coming back to the first vault under the same unlock shows its health again without one.
+    @Test func anotherVaultOnThePageNeedsItsOwnPrompt() async throws {
+        try await VaultManagerFixture.with(vaults: [.unlocked, .unlocked]) { profile, _, vaults in
+            let prompts = Prompts()
+            let audit = VaultReadAudit()
+            CredentialManager.readAuditsForTesting[profile.id] = audit
+            defer { CredentialManager.readAuditsForTesting[profile.id] = nil }
+            @MainActor func healthReads() -> Int {
+                audit.reads.filter { $0 == .health }.count
+            }
+            let model = CredentialSettingsModel(
+                profile: profile, verifyUser: { reason in try await prompts.verify(reason) }, healthDelay: .milliseconds(10)
+            )
+            await model.load()
+            let first = try #require(model.selectedVaultID)
+            let home = try #require(vaults.first { $0.vaultID == first })
+            let other = try #require(vaults.first { $0.vaultID != first })
+            try await VaultManagerFixture.save(accounts(), in: home)
+            try await VaultManagerFixture.save(accounts(), in: other)
+            await model.load()
+            try await model.revealHealth()
+            #expect(await waitUntil { model.healthRevision == model.revision })
+            #expect(healthReads() == 1)
+
+            await model.select(vaultID: other.vaultID)
+            #expect(model.selectedVaultID == other.vaultID && !model.showsHealth)
+            #expect(flagged(model.summaries).isEmpty && model.healthTask == nil)
+            #expect(healthReads() == 1, "the other vault is not read")
+
+            await model.select(vaultID: first)
+            #expect(model.showsHealth, "the first vault's unlock is the one that was granted")
+            #expect(await waitUntil { model.healthRevision == model.revision })
+            #expect(prompts.reasons.count == 1 && healthReads() == 2)
+        }
+    }
 }
