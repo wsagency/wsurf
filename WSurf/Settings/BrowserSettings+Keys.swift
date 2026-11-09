@@ -38,6 +38,8 @@ extension BrowserSettings {
         static let windowBorderColor = "appearance.windowBorderColor"
         static let sleepsInactiveTabs = "tabs.sleep"
         static let sleepAfterMinutes = "tabs.sleepAfterMinutes"
+        static let sleepSparesFavorites = "tabs.sleepSparesFavorites"
+        static let sleepSparesPinned = "tabs.sleepSparesPinned"
         static let archiveTabsAfter = "tabs.archive"
         static let pageZoom = "content.defaultZoom"
         static let linkPreview = "content.linkPreview"

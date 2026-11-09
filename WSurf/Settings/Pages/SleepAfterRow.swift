@@ -94,8 +94,9 @@ struct SleepAfterRow: View {
             title: "Sleep after",
             caption: """
             Background tabs unload after they have been out of view this long, and reload when you open them. \
-            Favorites and tabs that play audio, use a camera or microphone, hold unsaved form input or are \
-            downloading stay loaded. Unloaded Chromium tabs restore only their URL.
+            Tabs that play audio, use a camera or microphone, hold unsaved form input or are downloading stay \
+            loaded, and so do the Favorites and pinned tabs the options below keep awake. This covers WebKit and \
+            Chromium tabs; Chromium tabs restore their address and scroll position, not Back/Forward history.
             """
         ) {
             SettingsMenu(options: options, selection: choice)

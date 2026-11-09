@@ -44,6 +44,26 @@ struct GeneralSettings: View {
                 RowSeparator()
 
                 SleepAfterRow(settings: settings)
+
+                RowSeparator()
+
+                DetailRow(
+                    title: "Favorites never sleep",
+                    caption: "Favorites stay loaded when other tabs sleep. A sleeping tab sends no notifications."
+                ) {
+                    SettingsToggle($settings.sleepSparesFavorites)
+                }
+                .settingsAnchor("general.sleepFavorites")
+
+                RowSeparator()
+
+                DetailRow(
+                    title: "Pinned tabs never sleep",
+                    caption: "Pinned tabs stay loaded when other tabs sleep. A sleeping tab sends no notifications, so turn this on for a pinned mail or chat tab."
+                ) {
+                    SettingsToggle($settings.sleepSparesPinned)
+                }
+                .settingsAnchor("general.sleepPinned")
             }
 
             RowSeparator()
