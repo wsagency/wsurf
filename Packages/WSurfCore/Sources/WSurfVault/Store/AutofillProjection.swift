@@ -73,6 +73,21 @@ public nonisolated struct AutofillCandidates: Sendable {
     public let blockedPasswordOrigins: Set<String>
 }
 
+/// A passkey as routing sees it (`ProfileVaultStore.passkeyRoutes`): the relying party, the algorithm and the credential ID that a
+/// request's allow list names. No key, no user handle and no user name: enough to tell which vault can answer, nothing to sign with.
+public nonisolated struct PasskeyRoute: Equatable, Sendable {
+    public let rpID: String
+    public let algorithm: Int
+    public let credentialID: Data
+}
+
+/// The passkeys of one unlocked vault as routing sees them, read at `revision`.
+public nonisolated struct PasskeyRoutes: Sendable {
+    public let vaultID: UUID
+    public let revision: UInt64
+    public let passkeys: [PasskeyRoute]
+}
+
 /// What a pick fills: a password field (the username and its password) or a verification-code field.
 public nonisolated enum AutofillLoginField: Sendable {
     case password, totp

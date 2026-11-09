@@ -23,6 +23,21 @@ extension ProfileVaultStore {
         return candidates
     }
 
+    /// Every passkey of an unlocked vault as routing sees it (`PasskeyRoute`): its relying party, algorithm and credential ID, so the
+    /// browser can tell which vault holds a passkey for a request without a key leaving the store. The ceremony that signs reads the
+    /// chosen passkey's key itself.
+    public func passkeyRoutes(vaultID: UUID, using access: VaultAccess) async throws -> PasskeyRoutes {
+        let snapshot = try await snapshot(vaultID: vaultID, using: access)
+        let routes = PasskeyRoutes(
+            vaultID: vaultID, revision: snapshot.revision,
+            passkeys: snapshot.accounts.flatMap { account in
+                account.passkeys.map { PasskeyRoute(rpID: $0.rpID, algorithm: $0.algorithm, credentialID: $0.credentialID) }
+            }
+        )
+        _ = try authorizedGrant(vaultID, access)
+        return routes
+    }
+
     /// The picked credential's candidate and `field`'s secret only: its password, or the source of its code. Only its row is read
     /// (`pickedAccount`). A credential that is no longer there, or any write since `expectedRevision` (the revision its list was read
     /// at), is `staleRevision`.
