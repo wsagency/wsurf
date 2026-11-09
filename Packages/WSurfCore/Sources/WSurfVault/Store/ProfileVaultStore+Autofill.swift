@@ -10,11 +10,13 @@ import Foundation
 /// the revision its list was read at, gets that one value. The storage format, the read, the decoded cache, writes and sync are
 /// unchanged.
 extension ProfileVaultStore {
-    /// The credentials of an unlocked vault as a list may show them (`AutofillCandidate`): no secret value.
+    /// The credentials of an unlocked vault as a list may show them (`AutofillCandidate`), and the websites it excludes from save
+    /// offers: no secret value.
     public func autofillCandidates(vaultID: UUID, using access: VaultAccess) async throws -> AutofillCandidates {
         let snapshot = try await snapshot(vaultID: vaultID, using: access)
         let candidates = AutofillCandidates(
-            vaultID: vaultID, revision: snapshot.revision, candidates: snapshot.accounts.map(AutofillCandidate.init)
+            vaultID: vaultID, revision: snapshot.revision, candidates: snapshot.accounts.map(AutofillCandidate.init),
+            blockedPasswordOrigins: snapshot.blockedPasswordOrigins
         )
         _ = try authorizedGrant(vaultID, access)
         return candidates

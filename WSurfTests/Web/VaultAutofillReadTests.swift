@@ -252,9 +252,10 @@ struct VaultAutofillReadTests {
     private static let factFields = ["kind", "customTitle", "cardLastFour", "cardNetwork"]
 
     private func withVault(
-        _ accounts: [CredentialAccount], _ body: (VaultStoreFixture, ProfileVaultStore, VaultAccess) async throws -> Void
+        _ accounts: [CredentialAccount], blockedOrigins: [String] = [],
+        _ body: (VaultStoreFixture, ProfileVaultStore, VaultAccess) async throws -> Void
     ) async throws {
-        try await VaultStoreFixture.with(accounts: accounts) { f in
+        try await VaultStoreFixture.with(accounts: accounts, blockedOrigins: blockedOrigins) { f in
             let (store, access) = try await f.unlocked(wall: { Entries.today })
             try await body(f, store, access)
         }
@@ -265,6 +266,7 @@ struct VaultAutofillReadTests {
     @Test func aCandidateHoldsIdentityFlagsAndItemNamesOnly() async throws {
         try await withVault(try Entries.all()) { f, store, access in
             let candidates = try await store.autofillCandidates(vaultID: f.vaultID, using: access)
+            #expect(Mirror(reflecting: candidates).children.map(\.label) == ["vaultID", "revision", "candidates", "blockedPasswordOrigins"])
             for candidate in candidates.candidates {
                 #expect(Mirror(reflecting: candidate).children.map(\.label) == Self.candidateFields)
                 for fact in candidate.items {
@@ -336,11 +338,13 @@ struct VaultAutofillReadTests {
     // MARK: V2 Candidates
 
     @Test func candidatesAreTheVerifiedReadProjected() async throws {
-        try await withVault(try Entries.all()) { f, store, access in
+        try await withVault(try Entries.all(), blockedOrigins: ["https://never.example.test"]) { f, store, access in
             let snapshot = try await store.snapshot(vaultID: f.vaultID, using: access)
             let read = try await store.autofillCandidates(vaultID: f.vaultID, using: access)
             #expect(read.vaultID == f.vaultID && read.revision == snapshot.revision)
             #expect(read.candidates.map(\.id) == snapshot.accounts.map(\.id))
+            // An offer to add a website reads the excluded websites here, not from the whole vault.
+            #expect(read.blockedPasswordOrigins == ["https://never.example.test"] && snapshot.blockedPasswordOrigins == read.blockedPasswordOrigins)
 
             let byID = Dictionary(uniqueKeysWithValues: read.candidates.map { ($0.id, $0) })
             let login = try #require(byID[Entries.loginID])
@@ -778,10 +782,14 @@ struct VaultAutofillReadTests {
         return SecureItem(kind: .creditCard, fields: fields)
     }
 
+    /// Longer than 200 characters, with a space as its 200th (#76 N5): a name cut there ends in that space until it is trimmed again.
+    private static let holderCutInASpace = String(repeating: "A", count: 199) + " Byron"
+
     private static func cardItems() -> [SecureItem] {
         let holder = "  " + String(repeating: "A", count: 250) + "  "
         return numbers.map { card(number: $0, code: "123", expiry: "2031-07", holder: "Ada") } + [
             card(number: "4242424242424242", code: "12", expiry: "2031-13", holder: holder),
+            card(number: "4242424242424242", code: "123", expiry: "2031-07", holder: holderCutInASpace),
             card(number: "4242424242424242", code: " 1234 ", expiry: "1999-05", holder: nil),
             card(number: "4242424242424242", code: "12a4", expiry: "2031", holder: "\nAda\t"),
             card(number: "4242424242424242", code: "", expiry: "x-7", holder: ""),
@@ -798,6 +806,24 @@ struct VaultAutofillReadTests {
             let same = vault.map { [$0.number, $0.cardholder, $0.securityCode ?? "-", "\($0.month ?? 0)", "\($0.year ?? 0)"] }
                 == app.map { [$0.number, $0.cardholder, $0.securityCode ?? "-", "\($0.month ?? 0)", "\($0.year ?? 0)"] }
             #expect(same, "card case \(index) reads differently")
+        }
+    }
+
+    /// The name on a card that is cut inside a space (#76 N5) shows in its row as its pick fills it: the cut, trimmed. Reading the name
+    /// again changes nothing.
+    @Test func aCardholderCutInASpaceShowsAsItFills() throws {
+        let cut = String(repeating: "A", count: 199)
+        let item = Self.card(number: "4242424242424242", code: nil, expiry: nil, holder: Self.holderCutInASpace)
+        let values = try #require(AutofillCardValues(item))
+        let row = AutofillCardRow(accountID: UUID(), item: 0, values)
+        let filled = try #require(VaultItemAutofill.paymentCard(values))
+        let names = [PaymentCardRules.cardholder(Self.holderCutInASpace), values.cardholder, row.cardholder, filled.cardholder]
+        let readTheCut = names.allSatisfy { $0 == cut }
+        #expect(readTheCut, "the row or the fill keeps the space the cut ends in")
+        for name in [Self.holderCutInASpace, "  Ada  ", "\nAda\t", "", "  ", String(repeating: "B", count: 250), cut + " \u{00A0}"] {
+            let once = PaymentCardRules.cardholder(name)
+            let isStable = PaymentCardRules.cardholder(once) == once && once.count <= 200
+            #expect(isStable, "a name of \(name.count) characters changes when it is read again")
         }
     }
 

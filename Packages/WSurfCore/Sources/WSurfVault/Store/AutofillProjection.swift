@@ -69,6 +69,8 @@ public nonisolated struct AutofillCandidates: Sendable {
     public let vaultID: UUID
     public let revision: UInt64
     public let candidates: [AutofillCandidate]
+    /// The websites the person excluded from password save offers ("Never for This Site"), which no offer to add a website names.
+    public let blockedPasswordOrigins: Set<String>
 }
 
 /// What a pick fills: a password field (the username and its password) or a verification-code field.

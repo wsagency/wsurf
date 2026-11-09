@@ -66,14 +66,36 @@ struct AutofillWebsiteOfferTests {
             try await VaultManagerFixture.save([ada], in: vaults[0])
             let epoch = try #require(vaults[0].manager.authorizationEpoch)
             let before = try await vaults[0].manager.snapshot().revision
+            let audit = VaultReadAudit(), profileID = vaults[0].manager.profileID
+            CredentialManager.readAuditsForTesting[profileID] = audit
+            defer { CredentialManager.readAuditsForTesting[profileID] = nil }
 
             await session.offerWebsite(accountID: ada.id, epoch: epoch, origin: Self.page, documentID: "")
 
+            // After the pick the offer reads what a list may know of each credential, never the whole vault with its secrets (R7).
+            #expect(audit.reads == [.candidates])
             let offer = try #require(session.websiteOffer)
             #expect(offer.accountID == ada.id && offer.origin == Self.page && offer.name == "ada" && offer.managerEpoch == epoch)
             #expect(offer.host == "login.example.test")
             #expect(session.current == nil && session.isPopoverPresented)
             #expect(try await vaults[0].manager.snapshot().revision == before, "offering writes nothing")
+        }
+    }
+
+    @Test(.boundedWebViews) func aWebsiteExcludedFromSaveOffersIsNeverOfferedToACredential() async throws {
+        try await withSession { session, vaults in
+            let ada = account("ada")
+            try await VaultManagerFixture.save([ada], in: vaults[0])
+            let manager = vaults[0].manager
+            let epoch = try #require(manager.authorizationEpoch)
+            let revision = try await manager.snapshot().revision
+            _ = try await manager.updatePasswordSavePolicy([Self.page], expectedRevision: revision, authorizedEpoch: epoch)
+            let before = try await manager.snapshot().revision
+
+            await session.offerWebsite(accountID: ada.id, epoch: epoch, origin: Self.page, documentID: "")
+
+            #expect(session.websiteOffer == nil && !session.isPopoverPresented)
+            #expect(try await manager.snapshot().revision == before, "a dropped offer writes nothing")
         }
     }
 
