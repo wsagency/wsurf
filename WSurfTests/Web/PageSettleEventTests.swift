@@ -70,7 +70,7 @@ struct PageSettleEventTests {
         await PageSettle.untilQuiet(view, ceiling: Self.farCeiling)
         #expect(view.asyncCalls - asyncCalls == 1, "one question to the page")
         #expect(view.evaluations - evaluations == 0, "and no sampling")
-        #expect(start.duration(to: clock.now) < Self.farCeiling - .seconds(1), "a static page is quiet at once, not at the ceiling")
+        #expect(start.duration(to: clock.now) < .seconds(5), "a static page is quiet at once, not at the ceiling")
 
         // The sampling path stays as the fallback and as the choice of an injected clock.
         let sampled = view.evaluations
@@ -92,6 +92,7 @@ struct PageSettleEventTests {
         let elapsed = milliseconds(start.duration(to: clock.now))
         let counted = try await view.evaluateJavaScript("window.ticks") as? Int
         let ticks = try #require(counted)
+        #expect(elapsed < 5_000, "\(elapsed) ms: the ceiling asked for was 400 ms")
         #expect(view.asyncCalls - asyncCalls == 1)
         // A page that kept changing through the whole wait (a tick every 10 ms or so) is never quiet, so the wait lasts to its
         // ceiling. A page whose timers the system slowed down was quiet, and may be answered early.
@@ -132,7 +133,8 @@ struct PageSettleEventTests {
         let clock = ContinuousClock()
         let start = clock.now
         await PageSettle.untilQuiet(view, ceiling: Self.farCeiling)
-        #expect(start.duration(to: clock.now) < Self.farCeiling - .seconds(1), "the ring's own changes are not the page's")
+        #expect(start.duration(to: clock.now) < .seconds(5), "the ring's own changes are not the page's")
+        #expect(try await view.evaluateJavaScript("!!document.querySelector('.__wsurf-ring')") as? Bool == true, "and the ring was still up")
     }
 
     @Test func aNavigationTheClickStartedIsFollowedToItsEnd() async throws {
@@ -155,7 +157,7 @@ struct PageSettleEventTests {
         }
         let meter = PageSettle.Meter()
         await PageSettle.$meter.withValue(meter) { await PageSettle.untilQuiet(view, ceiling: Self.farCeiling) }
-        #expect(meter.elapsed > .milliseconds(50) && meter.elapsed < Self.farCeiling - .seconds(1), "\(meter.elapsed)")
+        #expect(meter.elapsed > .milliseconds(50) && meter.elapsed < .seconds(5), "\(meter.elapsed)")
     }
 
     // MARK: waitForPage

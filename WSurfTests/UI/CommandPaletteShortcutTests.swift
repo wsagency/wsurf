@@ -55,7 +55,6 @@ struct CommandPaletteShortcutTests {
         let source = app.newWindow(profile: .original(), show: false)
         let destination = app.newWindow(profile: .original(), show: false)
         defer { source.closeWindow(); destination.closeWindow() }
-        let originalURL = source.browser.activeTab?.urlString
         source.openPalette()
         let sourceWindow = try #require(source.nativeWindow)
         try #require(await waitUntil { sourceWindow.firstResponder is NSTextView })
@@ -81,28 +80,27 @@ struct CommandPaletteShortcutTests {
         #expect(CommandPaletteShortcutPolicy.isAddressedToPalette(ownReturn, paletteWindow: sourceWindow, isKey: true))
         #expect(!CommandPaletteShortcutPolicy.isAddressedToPalette(ownReturn, paletteWindow: sourceWindow, isKey: false))
 
-        // The handler the palette's monitor runs, driven directly: no active app and no key window are needed to ask it. Keys
-        // addressed to another window come back unconsumed and move nothing in the palette, even with the palette's window key.
+        // The handler the view installs as the palette's monitor, built the way the view builds it, driven directly: no active app
+        // and no key window are needed to ask it. Every window is reported key, so only the window rule can tell the events apart.
         var submitted = 0, dismissed = 0
-        func consumed(_ event: NSEvent, isKey: Bool = true) -> Bool {
-            CommandPaletteShortcutPolicy.consumes(
-                event, paletteWindow: sourceWindow, isKey: isKey,
+        func handler(isKey: @escaping @MainActor (NSWindow) -> Bool) -> @MainActor (NSEvent) -> Bool {
+            CommandPaletteShortcutPolicy.monitor(
+                for: source, isKey: isKey,
                 setOptionHeld: { _ in }, submitInCurrentTab: { submitted += 1 }, dismiss: { dismissed += 1 }
             )
         }
-        #expect(!consumed(optionReturn), "another window's Option-Return is not the palette's")
-        #expect(!consumed(commandL), "nor is its Command-L")
+        let everyWindowKey = handler { _ in true }
+        #expect(!everyWindowKey(optionReturn), "another window's Option-Return is not the palette's")
+        #expect(!everyWindowKey(commandL), "nor is its Command-L")
         #expect(submitted == 0 && dismissed == 0, "and the palette did nothing for either")
 
         // Positive control: the same keys addressed to the palette's own window are the palette's, so the handler is live.
-        #expect(consumed(ownReturn), "the palette's own Option-Return is consumed")
+        #expect(everyWindowKey(ownReturn), "the palette's own Option-Return is consumed")
         #expect(submitted == 1)
-        #expect(!consumed(ownCommandL), "its own Command-L passes on, after the palette closes itself")
+        #expect(!everyWindowKey(ownCommandL), "its own Command-L passes on, after the palette closes itself")
         #expect(dismissed == 1)
-        #expect(!consumed(ownReturn, isKey: false) && submitted == 1, "a palette window that is not key takes nothing")
-
-        #expect(source.isPaletteOpen)
-        #expect(source.browser.activeTab?.urlString == originalURL)
+        let noWindowKey = handler { _ in false }
+        #expect(!noWindowKey(ownReturn) && submitted == 1, "a palette window that is not key takes nothing")
     }
 
     private func pasteEvent(

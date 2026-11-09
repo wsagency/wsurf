@@ -53,10 +53,11 @@ extension OpenInNewTabTests {
             defer { Self.heldGate.open() }
             try #require(await waitUntil { try await rig.messages().contains("\"frame-ready\"") }, "the frame is in")
             rig.showOpenedTabs()
+            let requestsBefore = Self.heldGate.requestCount
             try await rig.click("held")
             let landed = try #require(await waitForAnyTab(in: rig), "a tab opened for the pop-up")
             let popup = try #require(landed.page.chromium)
-            try #require(await Self.heldGate.waitForRequest(), "the frame's renderer is busy")
+            try #require(await waitUntil { Self.heldGate.requestCount > requestsBefore }, "the frame's renderer is busy")
             try #require(await waitUntil { rig.server.lastRequestHead(for: "/popup") != nil && popup.withBrowser { _ in true } == true },
                          "the pop-up asked for its first page")
             // Its commit waits for the busy renderer until the gate opens, so the command can be answered only after that, or be
