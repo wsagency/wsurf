@@ -130,19 +130,25 @@ nonisolated final class RemoteFrameSinks: @unchecked Sendable {
     /// A popup was shown, moved or hidden. CEF's rectangle is in view points with a top-left origin; it is flipped unless the
     /// page layer's geometry already is.
     private func showPopup(_ message: CefRemoteMessage) {
+        // Everything here, the popup layer's creation included, is in one explicit transaction: a layer changed outside one on
+        // this queue (a GCD thread with no run loop) opens an implicit transaction that is never committed, and the explicit
+        // ones after it are nested in it, so nothing would reach the screen.
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
         lock.lock()
         let page = layers[message.browser]
         let popup = page.map { popupLayer(for: message.browser, in: $0) }
         lock.unlock()
-        guard let page, let popup else { return }
+        guard let page, let popup else {
+            CATransaction.commit()
+            return
+        }
         let visible = message.bool(CefRemote.Key.flag)
         var rect = CGRect(x: message.double(CefRemote.Key.x), y: message.double(CefRemote.Key.y),
                           width: message.double(CefRemote.Key.width), height: message.double(CefRemote.Key.height))
         if !page.contentsAreFlipped() {
             rect.origin.y = page.bounds.height - rect.maxY
         }
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
         popup.contentsScale = page.contentsScale
         popup.frame = rect
         popup.isHidden = !visible
