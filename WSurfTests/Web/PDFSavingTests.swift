@@ -93,6 +93,8 @@ struct PDFSavingTests {
         private(set) var offered: [String] = []
         private var chosen = false
         private var seenMenu = false
+        private var menuDone = false
+        private var watchdogFired = false
 
         init(
             engine: BrowserEngine, server: HTTPFixtureServer, log: RequestLog, folder: URL, history: URL,
@@ -150,6 +152,8 @@ struct PDFSavingTests {
             offered = []
             chosen = false
             seenMenu = false
+            menuDone = false
+            watchdogFired = false
             if let menuObserver {
                 NotificationCenter.default.removeObserver(menuObserver)
             }
@@ -158,19 +162,12 @@ struct PDFSavingTests {
                 MainActor.assumeIsolated {
                     guard let self, let menu = tracked, !self.seenMenu else { return }
                     self.seenMenu = true
-                    // Whatever the test does, the menu does not stay: a menu that stays holds the whole test run.
-                    let watchdog = Timer(timeInterval: 8, repeats: false) { _ in menu.cancelTracking() }
-                    RunLoop.main.add(watchdog, forMode: .common)
-                    Task { @MainActor in
-                        try? await Task.sleep(for: .milliseconds(300))
-                        self.offered = menu.items.map { $0.isSeparatorItem ? "—" : $0.title }
-                        let index = menu.items.firstIndex { !$0.isSeparatorItem && choose($0.title) }
-                        self.chosen = index != nil
-                        if let index {
-                            menu.performActionForItem(at: index)
-                        }
-                        menu.cancelTracking()
-                        watchdog.invalidate()
+                    ContextMenuReader.start(menu, after: 0.3, choosing: choose) { titles, _, chose in
+                        self.offered = titles
+                        self.chosen = chose
+                    } finished: { watchdogFired in
+                        self.watchdogFired = watchdogFired
+                        self.menuDone = true
                     }
                 }
             }
@@ -194,8 +191,9 @@ struct PDFSavingTests {
                     )))
                 }
             }
-            _ = await waitUntil(timeout: .seconds(10)) { !self.offered.isEmpty }
-            // The chosen action runs in the turn after the menu was read.
+            // The menu is read from a timer; the chosen item is performed once the menu has ended tracking.
+            _ = await waitUntil(timeout: .seconds(10)) { self.menuDone }
+            #expect(!watchdogFired, "the menu was cancelled by the watchdog, not read")
             try await Task.sleep(for: .milliseconds(100))
             return chosen
         }
