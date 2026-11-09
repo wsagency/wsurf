@@ -952,6 +952,22 @@ extension PageInteractionTests {
             #expect(await waitUntil(timeout: .seconds(5)) { !view.isLoading }, "engine \(engine): isLoading stuck after a history jump")
         }
     }
+
+    /// Not fixed by the same-document hook: a fragment-only `load` still leaves Chromium's `isLoading` set (the address bar
+    /// animates, form filling refuses, the agent's anchor navigation settles slowly). The wrapper keeps it visible, and
+    /// reports it when a fix makes the expectation pass.
+    @Test func aFragmentOnlyLoadEndsTheLoadingStateOnChromium() async throws {
+        let server = try await HTTPFixtureServer.start(routes: ["/": .html("<h1>Same doc</h1>")])
+        defer { withExtendedLifetime(server) {} }
+        try await withPage(engine: .chromium, url: server.url()) { view in
+            let fragment = try #require(URL(string: "#section", relativeTo: try server.url())?.absoluteURL)
+            view.load(URLRequest(url: fragment))
+            try #require(await waitUntil { view.url?.fragment == "section" })
+            await withKnownIssue("Chromium fragment-only load leaves isLoading set; needs its own trace (test-audit TRACE section 1)") {
+                #expect(await waitUntil(timeout: .seconds(3)) { !view.isLoading })
+            }
+        }
+    }
 }
 
 private extension Result {
