@@ -4,9 +4,9 @@
 import Foundation
 
 extension ChromiumPage {
-    /// What a native navigation that may stay inside its document holds back: the last loading state CEF reported while
-    /// `awaitingNativeNavigation` dropped it.
+    /// The wait of a native navigation that may stay inside its document.
     struct SameDocumentWait {
+        /// The last loading state CEF reported while `awaitingNativeNavigation` dropped it; nil before any report.
         var held: Bool?
     }
 
@@ -15,13 +15,21 @@ extension ChromiumPage {
         sameDocumentWait = SameDocumentWait()
     }
 
-    /// A load reaches `willNavigate`, which ends the wait; this also drops what an earlier history move left.
-    func awaitLoad() {
+    /// A load stays inside the document only when it differs from the address by its fragment; a reload never does.
+    func awaitLoad(of target: URL?) {
         awaitingNativeNavigation = true
         sameDocumentWait = nil
+        guard let target, target.fragment != nil, let current = owner?.url else { return }
+        var base = URLComponents(url: target, resolvingAgainstBaseURL: false)
+        var now = URLComponents(url: current, resolvingAgainstBaseURL: false)
+        base?.fragment = nil
+        now?.fragment = nil
+        if base != nil, base == now {
+            sameDocumentWait = SameDocumentWait()
+        }
     }
 
-    /// A Back, Forward or history jump that stays inside the document never calls `willNavigate`, the only
+    /// A Back, Forward, history jump or fragment load that stays inside the document never calls `willNavigate`, the only
     /// other place that ends the wait for a native navigation. Without this, `isLoading` latched on, because the matching
     /// `loading = false` was held back. Like WebKit, a same-document move reports no navigation start or finish.
     func completeAwaitedMoveWithinDocument() {
@@ -34,16 +42,5 @@ extension ChromiumPage {
             owner?.isLoading = false
             owner?.estimatedProgress = 1
         }
-    }
-
-    func didChangeProgress(_ progress: Double) {
-        owner?.estimatedProgress = progress
-    }
-
-    func didHoverLink(_ url: URL?) {
-        owner?.onLinkHovered?(url)
-    }
-    func didChangeFullscreen(_ enabled: Bool) {
-        owner?.isFullscreen = enabled
     }
 }

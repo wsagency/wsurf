@@ -953,19 +953,36 @@ extension PageInteractionTests {
         }
     }
 
-    /// Not fixed by the same-document hook: a fragment-only `load` still leaves Chromium's `isLoading` set (the address bar
-    /// animates, form filling refuses, the agent's anchor navigation settles slowly). The wrapper keeps it visible, and
-    /// reports it when a fix makes the expectation pass.
-    @Test func aFragmentOnlyLoadEndsTheLoadingStateOnChromium() async throws {
+    /// A fragment-only `load` and fragment-only history entries (`pushState('#x')`, then Back, Forward, a jump) change no
+    /// document and send Chromium's DevTools event that the page treats as a jump, not as a move; they still end the wait.
+    @Test(arguments: BrowserEngine.allCases)
+    func fragmentOnlyMovesEndTheLoadingState(engine: BrowserEngine) async throws {
         let server = try await HTTPFixtureServer.start(routes: ["/": .html("<h1>Same doc</h1>")])
         defer { withExtendedLifetime(server) {} }
-        try await withPage(engine: .chromium, url: server.url()) { view in
-            let fragment = try #require(URL(string: "#section", relativeTo: try server.url())?.absoluteURL)
-            view.load(URLRequest(url: fragment))
-            try #require(await waitUntil { view.url?.fragment == "section" })
-            await withKnownIssue("Chromium fragment-only load leaves isLoading set; needs its own trace (test-audit TRACE section 1)") {
-                #expect(await waitUntil(timeout: .seconds(3)) { !view.isLoading })
+        try await withPage(engine: engine, url: server.url()) { view in
+            if let chromium = view.chromium {
+                try #require(await waitUntil { chromium.startupEntry == .dropped || chromium.startupEntry == .kept })
             }
+            func settles() async -> Bool {
+                await waitUntil(timeout: .seconds(5)) { !view.isLoading }
+            }
+            _ = try await view.evaluateJavaScript("history.pushState({}, '', '#x'); 0", in: nil, contentWorld: .page, userGesture: true)
+            try #require(await waitUntil { view.url?.fragment == "x" && view.canGoBack })
+            view.goBack()
+            try #require(await waitUntil { view.url?.fragment == nil }, "engine \(engine): Back never landed")
+            #expect(await settles(), "engine \(engine): isLoading stuck after Back to a fragment-only entry")
+            try #require(await waitUntil { view.canGoForward })
+            view.goForward()
+            try #require(await waitUntil { view.url?.fragment == "x" }, "engine \(engine): Forward never landed")
+            #expect(await settles(), "engine \(engine): isLoading stuck after Forward to a fragment-only entry")
+            let start = try #require(view.backForwardList.backList.first)
+            view.go(to: start)
+            try #require(await waitUntil { view.url?.fragment == nil }, "engine \(engine): the jump never landed")
+            #expect(await settles(), "engine \(engine): isLoading stuck after a jump to a fragment-only entry")
+            let target = try #require(URL(string: "#section", relativeTo: view.url)?.absoluteURL)
+            view.load(URLRequest(url: target))
+            try #require(await waitUntil { view.url?.fragment == "section" }, "engine \(engine): the fragment load never landed")
+            #expect(await settles(), "engine \(engine): isLoading stuck after a fragment-only load")
         }
     }
 }

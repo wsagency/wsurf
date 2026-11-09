@@ -166,12 +166,13 @@ extension ChromiumDevTools {
 
     /// The main frame moved inside its document (`pushState`, `replaceState`, a fragment, Back or Forward between such
     /// entries). Only this event proves it: Chromium reports the new address before or after it, and a document that is
-    /// still loading changes the address too. A move that changes nothing but the fragment is a jump, so it is not passed on.
+    /// still loading changes the address too. A move that changes nothing but the fragment is a jump: it only ends an awaited move's wait, and is not passed on.
     private func navigatedWithinDocument(_ params: [String: Any]) {
         guard let frameID = params["frameId"] as? String, framesByID[frameID]?.isMainFrame == true,
               let address = params["url"] as? String, let url = URL(string: address) else { return }
         let previous = mainFrameAddress
         mainFrameAddress = url
+        page?.completeAwaitedMoveWithinDocument()
         guard let previous, Self.withoutFragment(previous) != Self.withoutFragment(url) else { return }
         page?.didNavigateWithinDocument(to: url)
     }
