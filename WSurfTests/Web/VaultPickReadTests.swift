@@ -9,10 +9,11 @@ import Testing
 @testable import WSurfVault
 
 // D5 PR-6: a pick reads its own row (`ProfileVaultStore.readOne`), the full read every row (`readLive`). The same tamper cases run
-// through both, so the two keep the same row checks: a case on the picked row or on the head fails both reads alike. A case on another
-// row, or one only the row count sees, fails the full read only. The pick returns its own row's authentic value, which the head and
-// the row's digest and AAD still prove, and the tampering is found by the next full read: the trade-off the owner accepted for the
-// single-row read. Synthetic vaults only; a failure never prints a value.
+// through both, so the two keep the same row checks: a case on the picked row or on the head fails both reads alike, and a row
+// rewritten at the same revision is read as it is on disk by both. A case on another row, or one only the row count sees, fails the
+// full read only. The pick returns its own row's authentic value, which the head and the row's digest and AAD still prove, and the
+// next list refuses the tampering: the trade-off the owner accepted for the single-row read. Synthetic vaults only; a failure never
+// prints a value.
 
 private nonisolated enum Tamper: CaseIterable, Sendable {
     /// The picked row's stored bytes changed.
@@ -31,6 +32,11 @@ private nonisolated enum Tamper: CaseIterable, Sendable {
     case pickedForeignStore
     /// The picked row holding another row's sealed bytes; the head's digest follows.
     case pickedSwappedCiphertext
+    /// Another credential's content sealed under the picked row's own AAD; the head's digest follows. Only the decoded id tells.
+    case pickedOtherIDUnderItsAAD
+    /// The picked row rewritten with a new password under its own AAD, the head's digest following at the same revision, after the
+    /// list remembered its earlier decode: both reads must decode the row on disk, not reuse the earlier one.
+    case pickedRewrittenSameRevision
     /// The head's stored bytes changed.
     case head
     /// Another row's stored bytes changed.
@@ -40,13 +46,26 @@ private nonisolated enum Tamper: CaseIterable, Sendable {
     /// A sealed row the head does not list.
     case extraRow
 
-    /// Whether the pick must fail too: the picked row or the head. Otherwise only the full read does.
-    var reachesThePick: Bool {
+    static let rewrittenPassword = "pw-rewritten-5a90"
+
+    /// What the two reads must do.
+    enum Expected {
+        /// Both refuse with `integrityFailure`: the picked row or the head.
+        case bothRefuse
+        /// The full read refuses; the pick returns its own row's password.
+        case fullReadOnly
+        /// Both return the picked row as rewritten on disk.
+        case bothReadTheRewrite
+    }
+
+    var expected: Expected {
         switch self {
         case .otherFlipped, .otherDeleted, .extraRow:
-            false
+            .fullReadOnly
+        case .pickedRewrittenSameRevision:
+            .bothReadTheRewrite
         default:
-            true
+            .bothRefuse
         }
     }
 
@@ -79,6 +98,18 @@ private nonisolated enum Tamper: CaseIterable, Sendable {
             try Self.put(&f, try f.storedRecord(vault, picked.id), sealed: sealed, catalogDigest: StoreSeal.digest(sealed))
         case .pickedSwappedCiphertext:
             let sealed = try f.storedRecord(vault, other.id).sealed
+            try Self.put(&f, try f.storedRecord(vault, picked.id), sealed: sealed, catalogDigest: StoreSeal.digest(sealed))
+        case .pickedOtherIDUnderItsAAD:
+            let aad = RowAAD(
+                ids: f.ids, vaultID: vault, recordID: picked.id, kind: .account, ownerID: picked.id, subject: .account,
+                version: VaultStoreFixture.accountVersion
+            )
+            let sealed = try StoreSeal.sealRow(try VaultFixtures.sortedJSON(other), key: f.dek, aad: aad)
+            try Self.put(&f, try f.storedRecord(vault, picked.id), sealed: sealed, catalogDigest: StoreSeal.digest(sealed))
+        case .pickedRewrittenSameRevision:
+            var rewritten = picked
+            rewritten.password = Self.rewrittenPassword
+            let sealed = try VaultStoreFixture.sealAccount(rewritten, ids: f.ids, vaultID: vault, key: f.dek)
             try Self.put(&f, try f.storedRecord(vault, picked.id), sealed: sealed, catalogDigest: StoreSeal.digest(sealed))
         case .head:
             try f.mutate { db in
@@ -133,8 +164,9 @@ struct VaultPickReadTests {
     }
 
     /// Each tamper case through the pick (`autofillLogin`, which reads one row) and the full read (`snapshot`, every row), at the
-    /// revision the list was read at. Both reads fail alike for the picked row and the head; for another row or an extra one the pick
-    /// returns its own row's password and the full read fails.
+    /// revision the list was read at, after that list remembered its decodes. Both reads refuse the picked row's and the head's cases
+    /// alike, and both read a row rewritten at the same revision as it is on disk. For another row or an extra one the pick returns its
+    /// own row's password and the full read refuses.
     @Test(arguments: Tamper.allCases)
     private func aPickAndTheFullReadMeetTheSameTampering(_ tamper: Tamper) async throws {
         let (picked, other, all) = Self.accounts()
@@ -145,35 +177,43 @@ struct VaultPickReadTests {
             try tamper.apply(&f, picked: picked, other: other)
 
             var pickError: (any Error)?
-            var filledThePassword = false
+            var pickedPassword: String?
             do {
                 let login = try await store.autofillLogin(
                     vaultID: f.vaultID, accountID: picked.id, field: .password, expectedRevision: revision, using: access
                 )
-                filledThePassword = login.password == Self.password && login.candidate.id == picked.id
+                pickedPassword = login.candidate.id == picked.id ? login.password : nil
             } catch {
                 pickError = error
             }
             var fullError: (any Error)?
+            var fullPassword: String?
             do {
-                _ = try await store.snapshot(vaultID: f.vaultID, using: access)
+                fullPassword = try await store.snapshot(vaultID: f.vaultID, using: access).accounts.first { $0.id == picked.id }?.password
             } catch {
                 fullError = error
             }
 
-            #expect(Self.isIntegrityFailure(fullError), "the full read did not refuse the tampering")
-            if tamper.reachesThePick {
+            switch tamper.expected {
+            case .bothRefuse:
                 #expect(Self.isIntegrityFailure(pickError), "the pick did not refuse its own row's or the head's tampering")
-                #expect(!filledThePassword, "the pick returned a value")
-            } else {
-                #expect(pickError == nil, "the pick read another row than its own")
-                #expect(filledThePassword, "the pick did not return its own row's password")
+                #expect(Self.isIntegrityFailure(fullError), "the full read did not refuse the tampering")
+                let returnedNothing = pickedPassword == nil && fullPassword == nil
+                #expect(returnedNothing, "a read returned a value")
+            case .fullReadOnly:
+                #expect(Self.isIntegrityFailure(fullError), "the full read did not refuse the tampering")
+                let filled = pickError == nil && pickedPassword == Self.password
+                #expect(filled, "the pick did not return its own row's password")
+            case .bothReadTheRewrite:
+                let rewritten = pickedPassword == Tamper.rewrittenPassword && fullPassword == Tamper.rewrittenPassword
+                #expect(rewritten, "a read returned the row it decoded before, not the row on disk")
             }
         }
     }
 
-    /// A pick compares the revision its list was read at before it opens any row: after a write, a pick of a row tampered with since
-    /// is `staleRevision`, not an integrity failure. A credential the head does not list is `staleRevision` too.
+    /// A pick compares the revision its list was read at before it opens any row. This is a proxy, not a count of the rows opened:
+    /// after a write, a pick of a row tampered with since is `staleRevision`, which it could not be had the row been opened first (that
+    /// would be `integrityFailure`). A credential the head does not list is `staleRevision` too.
     @Test func aStalePickOpensNoRow() async throws {
         let (picked, other, all) = Self.accounts()
         try await VaultStoreFixture.with(accounts: all) { fixture in
