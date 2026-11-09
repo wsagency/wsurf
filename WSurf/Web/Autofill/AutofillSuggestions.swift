@@ -961,7 +961,9 @@ final class AutofillSuggestions {
         }
         return (prepare, field == .password ? login.candidate.username : nil)
     }
+}
 
+extension AutofillSuggestions {
     private static func fillArguments(_ request: Request, fields: [String: Any]) -> [String: Any] {
         [
             "bridge": request.bridge,
@@ -971,9 +973,7 @@ final class AutofillSuggestions {
             "documentID": request.documentID,
         ]
     }
-}
 
-extension AutofillSuggestions {
     /// A prompt the user dismissed or failed is not an error worth a second alert; every other fill error shows one. Internal for tests.
     static func isUserCancellation(_ error: any Error) -> Bool {
         switch error {
