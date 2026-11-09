@@ -4,6 +4,7 @@
 // Linen portions: Apache-2.0; WSurf modifications: BUSL-1.1. See NOTICE.
 
 import Foundation
+import Testing
 
 /// Waits for a condition instead of for a number of ticks.
 ///
@@ -14,9 +15,10 @@ import Foundation
 /// timeout free on a quiet machine.
 ///
 /// A wait that runs out never fails the test by itself (negative waits expire on
-/// purpose), but it prints one `WAIT-EXPIRED <file>:<line> after <timeout>` line,
-/// so a wait whose result is discarded and always runs to its deadline shows up
-/// in the run's output instead of silently costing its whole timeout.
+/// purpose), but it prints one `WAIT-EXPIRED <file>:<line> after <timeout> in <test>`
+/// line (`-` outside a Swift Testing case), so a wait whose result is discarded and
+/// always runs to its deadline shows up in the run's output instead of silently
+/// costing its whole timeout.
 @MainActor
 func waitUntil(
     timeout: Duration = .seconds(25),
@@ -41,6 +43,6 @@ func waitUntil(
     if try await condition() {
         return true
     }
-    print("WAIT-EXPIRED \(file):\(line) after \(timeout)")
+    print("WAIT-EXPIRED \(file):\(line) after \(timeout) in \(Test.current?.name ?? "-")")
     return false
 }
