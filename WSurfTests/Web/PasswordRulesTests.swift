@@ -113,12 +113,27 @@ struct PasswordRulesTests {
         let rules = PasswordRules(parsing: "max-repeating: 3; max-sequential: 2")
         #expect(rules.maxRepeating == 3)
         #expect(rules.maxSequential == 2)
-        #expect(rules.accepts(Array("aXaYaZa".utf8)) == false)
+        // Apple's reading: `max-repeating` is a run of identical characters in a row, not one character's total.
+        #expect(rules.accepts(Array("aXaYaZa".utf8)))
+        #expect(rules.accepts(Array("aaaX".utf8)))
+        #expect(rules.accepts(Array("aaaaX".utf8)) == false)
         #expect(rules.accepts(Array("abc".utf8)) == false)
         #expect(rules.accepts(Array("abXab".utf8)))
+        #expect(PasswordRules(parsing: "max-repeating: 2").accepts(Array("aXaYaZa".utf8)))
+        #expect(PasswordRules(parsing: "max-repeating: 2").accepts(Array("abcdef".utf8)), "max-repeating leaves sequences alone")
+        #expect(PasswordRules(parsing: "max-sequential: 2").accepts(Array("aaaa".utf8)), "max-sequential leaves repeats alone")
+        // `max-consecutive` is an alias for both limits.
+        let alias = PasswordRules(parsing: "max-consecutive: 2")
+        #expect(alias.accepts(Array("aab".utf8)))
+        #expect(alias.accepts(Array("aaab".utf8)) == false)
+        #expect(alias.accepts(Array("abXbc".utf8)))
+        #expect(alias.accepts(Array("abc".utf8)) == false)
+        #expect(alias.accepts(Array("Xcba".utf8)) == false)
+        // The smaller limit of the two applies to each kind of run.
+        let both = PasswordRules(parsing: "max-consecutive: 2; max-repeating: 1")
+        #expect(both.accepts(Array("aab".utf8)) == false)
+        #expect(both.accepts(Array("abXbc".utf8)))
         #expect(rules.accepts(Array("acegi".utf8)))
-        #expect(PasswordRules(parsing: "max-consecutive: 2").accepts(Array("aab".utf8)))
-        #expect(PasswordRules(parsing: "max-consecutive: 2").accepts(Array("aaab".utf8)) == false)
         #expect(PasswordRules(parsing: "max-sequential: 2").accepts(Array("xcba".utf8)) == false)
     }
 

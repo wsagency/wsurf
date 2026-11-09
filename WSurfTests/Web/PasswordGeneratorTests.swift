@@ -53,14 +53,18 @@ struct PasswordGeneratorTests {
     @Test
     func defaultFormatScalesItsGroupsWithTheLength() throws {
         for length in 2...64 {
-            let password = try #require(make(.easyToType, length: length, seed: UInt64(length)))
+            // Below the sheet's 12 only the field's own limit asks for a length.
+            let field = length < PasswordGenerator.lengthRange.lowerBound ? PasswordFieldLimits(maxLength: length) : PasswordFieldLimits()
+            let password = try #require(make(.easyToType, length: length, field: field, seed: UInt64(length)))
             #expect(password.count == length)
             let groups = String(decoding: password, as: UTF8.self).split(separator: "-", omittingEmptySubsequences: false)
             #expect(groups.count == max(1, (length + 1) / 7))
             #expect(groups.allSatisfy { !$0.isEmpty })
         }
-        // One character cannot hold the digit and the capital the format needs.
-        #expect(make(.easyToType, length: 1, seed: 1) == nil)
+        // One character cannot hold the digit and the capital the format needs; only a site's own limit gets below the sheet's 12.
+        #expect(make(.easyToType, field: PasswordFieldLimits(maxLength: 1), seed: 1) == nil)
+        #expect(make(.easyToType, length: 4, seed: 1)?.count == 12)
+        #expect(make(.lettersAndDigits, length: 500, seed: 1)?.count == 64)
     }
 
     // MARK: U3
@@ -105,9 +109,11 @@ struct PasswordGeneratorTests {
             down = delta == -1 ? down + 1 : 1
             longest = (max(longest.run, run), max(longest.up, up), max(longest.down, down))
         }
-        if let consecutive, longest.run > consecutive { found.append("consecutive") }
-        if let sequential, max(longest.up, longest.down) > sequential { found.append("sequential") }
-        if let repeating, Dictionary(grouping: password, by: { $0 }).values.contains(where: { $0.count > repeating }) { found.append("repeating") }
+        // Apple: max-repeating limits identical runs, max-sequential sequences, and max-consecutive is an alias for both.
+        let identical = [consecutive, repeating].compactMap { $0 }.min()
+        let sequence = [consecutive, sequential].compactMap { $0 }.min()
+        if let identical, longest.run > identical { found.append("identical run") }
+        if let sequence, max(longest.up, longest.down) > sequence { found.append("sequential run") }
         return found
     }
 
@@ -205,6 +211,9 @@ struct PasswordGeneratorTests {
         #expect(make(.websiteRules, "required: [é]", seed: 1) == nil)
         #expect(make(.websiteRules, "minlength: 40; maxlength: 10", seed: 1) == nil)
         #expect(make(.websiteRules, "minlength: 200", seed: 1) == nil)
+        // The field wins wherever it and the rules conflict, also when the rules cannot be met on their own.
+        #expect(make(.websiteRules, "minlength: 200", field: PasswordFieldLimits(maxLength: 16), seed: 1)?.count == 16)
+        #expect(make(.websiteRules, "minlength: 30", field: PasswordFieldLimits(maxLength: 16), seed: 1)?.count == 16)
         #expect(make(.websiteRules, "required: upper; required: lower; required: digit; required: special; maxlength: 3", seed: 1) == nil)
         #expect(make(.websiteRules, "allowed: [a]; max-repeating: 2; minlength: 20", seed: 1) == nil)
         #expect(make(.websiteRules, "required: [a]; required: [b]; maxlength: 1", seed: 1) == nil)
@@ -313,7 +322,8 @@ struct PasswordGeneratorTests {
         #expect(digits == Set(PasswordRules.digit))
         // Any permutation of the ten digits meets this, though two of them are look-alikes.
         let permutation = try #require(make(.websiteRules, "allowed: digit; minlength: 10; maxlength: 10; max-repeating: 1", seed: 3))
-        #expect(Set(permutation) == Set(PasswordRules.digit))
+        #expect(permutation.count == 10)
+        #expect(zip(permutation, permutation.dropFirst()).allSatisfy { $0 != $1 })
     }
 
     @Test func everyFormatKeepsTheWebsitesMaxlength() throws {

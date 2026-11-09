@@ -21,10 +21,9 @@ import Foundation
 ///
 /// As in Apple's parser, a `-` in a custom set counts only as its first character; any other is dropped.
 ///
-/// `max-consecutive`, `max-repeating` and `max-sequential` have no published definition: Apple's parser reads them and its tests call
-/// them run-length rules. WSurf reads `max-consecutive` as the longest run of one identical character, `max-sequential` as the longest
-/// run of neighbouring code points, ascending or descending (`abc`, `321`), and `max-repeating` as how often any one character may
-/// occur in the whole password, the strictest reading, so a password that meets it meets a per-run reading too.
+/// The run limits follow Apple's reference parser (apple/password-manager-resources, pull request 1255): `max-repeating` is the longest
+/// run of one identical character in a row, `max-sequential` the longest run of neighbouring code points, ascending or descending
+/// (`abc`, `321`), and `max-consecutive`, now deprecated, is an alias for both, so it limits each kind of run.
 nonisolated struct PasswordRules: Equatable, Sendable {
     /// Input longer than this (in UTF-8 bytes, which bounds the parse work however the text is built) is ignored as a whole: the rules are empty.
     static let maximumInputLength = 1_000
@@ -222,16 +221,16 @@ nonisolated struct PasswordRules: Equatable, Sendable {
     struct Matcher {
         private let allowed: [Bool]
         private let required: [[Bool]]
-        private let maxConsecutive: Int?
-        private let maxRepeating: Int?
-        private let maxSequential: Int?
+        /// The longest run of one identical character: the smaller of `max-repeating` and `max-consecutive`.
+        private let identicalLimit: Int?
+        /// The longest ascending or descending run: the smaller of `max-sequential` and `max-consecutive`.
+        private let sequentialLimit: Int?
 
         init(_ rules: PasswordRules) {
             allowed = Self.table(rules.allowedCharacters)
             required = rules.requiredSets.map(Self.table)
-            maxConsecutive = rules.maxConsecutive
-            maxRepeating = rules.maxRepeating
-            maxSequential = rules.maxSequential
+            identicalLimit = [rules.maxRepeating, rules.maxConsecutive].compactMap { $0 }.min()
+            sequentialLimit = [rules.maxSequential, rules.maxConsecutive].compactMap { $0 }.min()
         }
 
         func accepts(_ password: [UInt8]) -> Bool {
@@ -239,20 +238,11 @@ nonisolated struct PasswordRules: Equatable, Sendable {
             for set in required where !password.contains(where: { set[Int($0)] }) {
                 return false
             }
-            if let limit = maxConsecutive, Self.longestRun(password, step: 0) > limit {
+            if let limit = identicalLimit, Self.longestRun(password, step: 0) > limit {
                 return false
             }
-            if let limit = maxSequential, max(Self.longestRun(password, step: 1), Self.longestRun(password, step: -1)) > limit {
+            if let limit = sequentialLimit, max(Self.longestRun(password, step: 1), Self.longestRun(password, step: -1)) > limit {
                 return false
-            }
-            if let limit = maxRepeating {
-                var counts = [Int](repeating: 0, count: 256)
-                for byte in password {
-                    counts[Int(byte)] += 1
-                    if counts[Int(byte)] > limit {
-                        return false
-                    }
-                }
             }
             return true
         }

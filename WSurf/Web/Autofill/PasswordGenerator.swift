@@ -39,7 +39,7 @@ nonisolated struct PasswordFieldLimits: Equatable, Sendable {
 /// minimum above the maximum, required sets that do not fit, or the tries run out.
 nonisolated enum PasswordGenerator {
     static let defaultLength = 20
-    /// The length range the sheet's stepper offers; the field's limits narrow it.
+    /// The length range the sheet's stepper offers. A requested length is clamped into it; only the site's own limits go beyond.
     static let lengthRange = 12...64
     /// What the generator accepts at all, whatever a website asks for.
     static let absoluteLengthRange = 1...128
@@ -90,7 +90,9 @@ nonisolated enum PasswordGenerator {
         using generator: inout Source
     ) -> GeneratedPassword? {
         guard let bounds = lengthBounds(for: format, rules: rules, field: field) else { return nil }
-        let count = min(max(length, bounds.lowerBound), bounds.upperBound)
+        // Only the site's own limits may push a password below the sheet's 12 characters (or above its 64).
+        let wanted = min(max(length, lengthRange.lowerBound), lengthRange.upperBound)
+        let count = min(max(wanted, bounds.lowerBound), bounds.upperBound)
         let characters: [UInt8]?
         switch format {
         case .easyToType:
@@ -108,8 +110,8 @@ nonisolated enum PasswordGenerator {
     /// The lengths a password may have. Every format keeps the field's own limits and the website's length limits, because a site
     /// that cuts a value to its `maxlength` would otherwise store a different password than the vault. A rules bound that conflicts
     /// with the field's is dropped, so the field wins. Rules that conflict on their own (a minimum above the maximum, or above what
-    /// the generator makes) give nil for `.websiteRules`, and are ignored by the formats that ignore the rules' characters. Nil when
-    /// no length fits.
+    /// the generator makes) leave the field's limits alone; with none, `.websiteRules` gives nil and the other formats ignore the rules'
+    /// bounds. Nil when no length fits.
     static func lengthBounds(for format: PasswordFormat, rules: PasswordRules, field: PasswordFieldLimits) -> ClosedRange<Int>? {
         let absolute = absoluteLengthRange
         var low = field.bounds.low
@@ -123,7 +125,9 @@ nonisolated enum PasswordGenerator {
                 low = mergedLow
                 high = mergedHigh
             }
-        } else if format == .websiteRules {
+        } else if format == .websiteRules, low == nil, high == nil {
+            // Rules that cannot be met on their own and no field limit to fall back on. With one, the field wins, as it does
+            // wherever the two conflict.
             return nil
         }
         let lower = max(low ?? absolute.lowerBound, absolute.lowerBound)
@@ -202,25 +206,20 @@ nonisolated enum PasswordGenerator {
             for set in rules.requiredSets where set.allSatisfy(lookAlikes.contains) {
                 pool += set
             }
-            if let password = draw(count, from: PasswordRules.normalized(pool), limit: rules.maxRepeating, using: &generator, accepting: matcher.accepts) {
+            if let password = draw(count, from: PasswordRules.normalized(pool), using: &generator, accepting: matcher.accepts) {
                 return password
             }
         }
-        return draw(count, from: allowed, limit: rules.maxRepeating, using: &generator, accepting: matcher.accepts)
+        return draw(count, from: allowed, using: &generator, accepting: matcher.accepts)
     }
 
     private static func draw<Source: RandomNumberGenerator>(
         _ count: Int,
         from pool: [UInt8],
-        limit maxRepeating: Int? = nil,
         using generator: inout Source,
         accepting accepts: ([UInt8]) -> Bool
     ) -> [UInt8]? {
         guard !pool.isEmpty else { return nil }
-        // Too few symbols for the length when none may occur more than `maxRepeating` times: no candidate can pass.
-        if let maxRepeating, pool.count * maxRepeating < count {
-            return nil
-        }
         for _ in 0..<maximumTries {
             let candidate = (0..<count).map { _ in pool[Int.random(in: 0..<pool.count, using: &generator)] }
             if accepts(candidate) {
