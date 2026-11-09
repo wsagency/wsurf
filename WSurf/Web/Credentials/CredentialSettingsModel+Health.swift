@@ -11,25 +11,30 @@ struct HealthKey: Equatable {
     let revision: UInt64
 }
 
-/// The vault and unlock under which Show Password Health passed its prompt.
+/// The vault, unlock and revision Show Password Health's prompt covers. The revision moves on only with this page's own writes that
+/// keep every password (`CredentialSettingsModel.write`); any other revision ends the grant.
 struct HealthGrant: Equatable {
     let vaultID: UUID
     let epoch: UInt64
+    var revision: UInt64
 }
 
 /// Password health on the Credentials page (S4): the vault's report (`CredentialManager.passwordHealth`) puts "Weak" and "Reused"
 /// flags on the summaries the list shows, and the editor's note explains them.
 ///
-/// Nothing of it is read or shown until Show Password Health passes Touch ID (`verifyOwner`), once per vault and unlock. The flags
-/// are derived from the passwords: without the prompt, saving a guessed password and watching "Reused" appear would tell which
-/// login holds it. After the prompt, the page asks once per settled revision: a write while a request waits cancels it and asks
-/// again for the newer revision. The report is made in the vault, so only flags reach the page. A lock drops them with the session,
-/// and the next unlock asks again. Reading the vault does not extend its unlock (`CredentialAutoLock`).
+/// Nothing of it is read or shown until Show Password Health passes Touch ID (`verifyOwner`). The flags are derived from the
+/// passwords: without the prompt, saving a guessed password and watching "Reused" appear would tell which login holds it. So the
+/// prompt covers one vault, one unlock and the revision shown, and moves on only with this page's own writes that keep every
+/// password, such as a rename (`HealthGrant`). A password this page saves or imports ends it, and so does any revision the page did
+/// not write: autofill's save on submit, another window, sync. After the prompt, the page asks once per settled revision: a write
+/// while a request waits cancels it and asks again for the newer revision. The report is made in the vault, so only flags reach the
+/// page. A lock drops them with the session, and the next unlock asks again. Reading the vault does not extend its unlock
+/// (`CredentialAutoLock`).
 extension CredentialSettingsModel {
-    /// Whether password health is shown: Show Password Health passed its prompt for the vault and unlock shown.
+    /// Whether password health is shown: Show Password Health's prompt covers the vault, unlock and revision shown.
     var showsHealth: Bool {
         guard let live, let manager else { return false }
-        return healthGrant == HealthGrant(vaultID: manager.vaultID, epoch: live.epoch)
+        return healthGrant == HealthGrant(vaultID: manager.vaultID, epoch: live.epoch, revision: live.revision)
     }
 
     /// The revision whose health the summaries show, `nil` while they show none.
@@ -44,8 +49,8 @@ extension CredentialSettingsModel {
         isRevealingHealth = true
         defer { isRevealingHealth = false }
         let epoch = try await verifyOwner(String(localized: "show weak and reused passwords"))
-        guard self.manager === manager, live?.epoch == epoch else { throw CredentialVaultError.unauthorized }
-        healthGrant = HealthGrant(vaultID: manager.vaultID, epoch: epoch)
+        guard self.manager === manager, let live, live.epoch == epoch else { throw CredentialVaultError.unauthorized }
+        healthGrant = HealthGrant(vaultID: manager.vaultID, epoch: epoch, revision: live.revision)
         healthKey = nil
         scheduleHealthIfNeeded(after: .zero)
     }
@@ -53,6 +58,11 @@ extension CredentialSettingsModel {
     /// Asks for a report while health is shown and the vault shown is at a revision none was asked for, after `delay` (by default
     /// `healthDelay`). Called whenever the session changes.
     func scheduleHealthIfNeeded(after delay: Duration? = nil) {
+        // A revision of the granted vault and unlock that this page did not write ends the grant.
+        if let grant = healthGrant, let live, let manager, grant.vaultID == manager.vaultID, grant.epoch == live.epoch,
+           grant.revision != live.revision {
+            endHealthGrant()
+        }
         guard showsHealth, let live, let manager else { return }
         let key = HealthKey(vaultID: manager.vaultID, epoch: live.epoch, revision: live.revision)
         guard key != healthKey else { return }
@@ -73,13 +83,22 @@ extension CredentialSettingsModel {
     }
 
     /// Ends Show Password Health's grant: the flags go at once, nothing more is read, and the next Show Password Health asks again.
-    /// Called when this page saves a new or changed password, so each guess saved here costs a prompt to check.
+    /// Called when this page saves or imports a new or changed password, so each guess saved here costs a prompt to check, and when
+    /// the page meets a revision it did not write.
     func endHealthGrant() {
         healthGrant = nil
         cancelHealthRead()
         if let live {
             try? update(live.epoch) { $0.dropHealth() }
         }
+    }
+
+    /// Moves the grant on with a write this page made itself from the revision it covers, so a rename or a removal keeps it. A write
+    /// that saves a new or changed password ended it before it was made (`save`, `commitImport`).
+    func carryHealthGrant(from expected: UInt64, to written: UInt64) {
+        guard var grant = healthGrant, grant.revision == expected else { return }
+        grant.revision = written
+        healthGrant = grant
     }
 
     /// Cancels a report that waits or is being read: a page that was closed, locked or moved to another vault reads none.

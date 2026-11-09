@@ -915,6 +915,7 @@ final class CredentialSettingsModel {
         // Last point before the durable write: a cancelled task or a changed authorization never commits.
         try Task.checkCancellation()
         let receipt = try await manager.commit(accounts, expectedRevision: expectedRevision, authorizedEpoch: epoch, changing: changing)
+        carryHealthGrant(from: expectedRevision, to: receipt.revision)
         try? update(epoch) { $0.committed(accounts, revision: receipt.revision) }
         return receipt
     }

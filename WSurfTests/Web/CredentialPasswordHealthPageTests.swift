@@ -253,8 +253,8 @@ struct CredentialPasswordHealthPageTests {
         }
     }
 
-    /// After the prompt, a write while the page waits to ask replaces the request: it asks once, for the newest revision, and the
-    /// flags describe it.
+    /// After the prompt, a write of this page's own that keeps every password, while the page waits to ask, replaces the request: it
+    /// asks once, for the newest revision, and the flags describe it.
     @Test func aWriteWhileThePageWaitsAsksOnceForTheNewerRevision() async throws {
         try await withFixture(healthDelay: .seconds(1)) { f in
             var all = accounts()
@@ -264,14 +264,53 @@ struct CredentialPasswordHealthPageTests {
             #expect(await waitUntil { f.model.healthRevision == f.model.revision }, "the first report is read at once")
             #expect(f.healthReads == 1)
 
-            all[3].password = "Zt4$pL8x"
-            _ = try await f.model.save(all[3], expectedRevision: f.model.revision)
-            all[3].password = "Zt4$pL8"
-            _ = try await f.model.save(all[3], expectedRevision: f.model.revision)
+            all[1].displayName = "Renamed once"
+            _ = try await f.model.save(all[1], expectedRevision: f.model.revision)
+            all[1].displayName = "Renamed twice"
+            _ = try await f.model.save(all[1], expectedRevision: f.model.revision)
+            #expect(f.model.showsHealth, "renames keep the grant")
             #expect(await waitUntil { f.model.healthRevision == f.model.revision })
             #expect(f.healthReads == 2, "one more read, for the newest revision")
-            let shortened = try #require(f.model.summaries.first { $0.id == all[3].id })
-            #expect(shortened.health?.weaknesses == [.short])
+            #expect(Set(flagged(f.model.summaries)) == [all[0].id, all[1].id, all[2].id])
+        }
+    }
+
+    /// A revision this page did not write ends the grant: a password saved elsewhere (autofill's save on submit, another window)
+    /// shows nothing and is read for nothing when the page next reads the vault, here by opening an editor.
+    @Test func aRevisionThisPageDidNotWriteEndsTheGrant() async throws {
+        try await withFixture { f in
+            var all = accounts()
+            try await VaultManagerFixture.save(all, in: f.vault)
+            await f.model.load()
+            try await f.model.revealHealth()
+            #expect(await waitUntil { f.model.healthRevision == f.model.revision })
+
+            all[3].password = Self.shared
+            try await VaultManagerFixture.save(all, in: f.vault)
+            try await f.model.beginEditing(accountID: all[0].id)
+            #expect(!f.model.showsHealth && f.model.healthGrant == nil)
+            #expect(flagged(f.model.summaries).isEmpty && f.model.healthTask == nil)
+            try await Task.sleep(for: .milliseconds(50))
+            #expect(f.healthReads == 1, "nothing is read for the outside write")
+        }
+    }
+
+    /// The same for a sync: the page reads the synced revision again and ends the grant.
+    @Test func aSyncedRevisionEndsTheGrant() async throws {
+        try await withFixture { f in
+            var all = accounts()
+            try await VaultManagerFixture.save(all, in: f.vault)
+            await f.model.load()
+            try await f.model.revealHealth()
+            #expect(await waitUntil { f.model.healthRevision == f.model.revision })
+
+            all[3].password = Self.shared
+            try await VaultManagerFixture.save(all, in: f.vault)
+            await f.model.reloadAfterSync()
+            #expect(!f.model.showsHealth && f.model.healthGrant == nil)
+            #expect(flagged(f.model.summaries).isEmpty && f.model.healthTask == nil)
+            try await Task.sleep(for: .milliseconds(50))
+            #expect(f.healthReads == 1, "nothing is read for the synced write")
         }
     }
 
