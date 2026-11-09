@@ -9,9 +9,10 @@ import Testing
 @testable import WSurfVault
 
 // Model-level checks of the device-owner prompt (Touch ID) before a saved password or verification code is shown or copied in the
-// Credential Manager: every time from the list, once per editor (its History included), and before the vault is read. The prompt is
-// a counting stub that can fail and can act while it is up; test-only in-memory unlock keys and a private pasteboard are used, so
-// nothing here touches the general pasteboard, a real vault, the Keychain or a native ceremony. Every value is synthetic.
+// Credential Manager: every time from the list, once per editor (its History included), and before the vault is read (counted by
+// D5's `VaultReadAudit`). The prompt is a counting stub that can fail and can act while it is up; test-only in-memory unlock keys
+// and a private pasteboard are used, so nothing here touches the general pasteboard, a real vault, the Keychain or a native
+// ceremony. Every value is synthetic.
 
 @MainActor
 struct CredentialPasswordPrivacyTests {
@@ -60,6 +61,7 @@ struct CredentialPasswordPrivacyTests {
         let vault: FixtureVault
         let verifier: Verifier
         let model: CredentialSettingsModel
+        let audit = VaultReadAudit()
 
         @MainActor init() async throws {
             let profile = Profile(id: UUID(), name: "Password privacy", symbol: "key", color: .blue)
@@ -70,6 +72,12 @@ struct CredentialPasswordPrivacyTests {
             model = CredentialSettingsModel(
                 profile: profile, pasteboard: pasteboard, manager: vault.manager, verifyUser: { reason in try await verifier.verify(reason) }
             )
+            CredentialManager.readAuditsForTesting[profile.id] = audit
+        }
+
+        /// Whole-vault reads so far (`CredentialManager.snapshot`), the read every Show and Copy makes.
+        @MainActor var snapshots: Int {
+            audit.reads.filter { $0 == .snapshot }.count
         }
 
         var manager: CredentialManager {
@@ -104,6 +112,7 @@ struct CredentialPasswordPrivacyTests {
         }
 
         @MainActor func cleanup() async {
+            CredentialManager.readAuditsForTesting[profile.id] = nil
             pasteboard.releaseGlobally()
             await VaultManagerFixture.cleanup(profile)
         }
@@ -215,6 +224,37 @@ struct CredentialPasswordPrivacyTests {
             #expect(shownCode != newCode)
             #expect(f.model.totpCode(now: 59)?.value == shownCode)
             #expect(f.verifier.calls == 4)
+        }
+    }
+
+    /// Counted: no Show or Copy reads the vault while its prompt is up, and a refused one reads nothing at all.
+    @Test func noShowOrCopyReadsTheVaultBeforeTheAnswerOrAfterARefusal() async throws {
+        try await withFixture { f in
+            let stored = login(password: "counted-secret", totp: generator)
+            try await f.seed([stored])
+            let model = f.model
+            let operations: [@MainActor () async throws -> Void] = [
+                { try await model.revealPassword(accountID: stored.id) },
+                { try await model.showTOTP(accountID: stored.id) },
+                { try await model.copyPassword(accountID: stored.id) },
+                { try await model.copyTOTP(accountID: stored.id) { 59 } },
+            ]
+            for operation in operations {
+                let start = f.snapshots
+                var whileAsked: Int?
+                f.verifier.whileAsking = { whileAsked = f.snapshots }
+                try await operation()
+                #expect(whileAsked == start, "nothing was read before the answer")
+                #expect(f.snapshots > start, "the answer was followed by the read")
+            }
+
+            f.verifier.failure = WebsiteAuthenticatorError.notAllowed
+            for operation in operations {
+                let start = f.snapshots
+                await #expect(throws: WebsiteAuthenticatorError.self) { try await operation() }
+                #expect(f.snapshots == start, "a refusal reads nothing")
+            }
+            #expect(f.verifier.calls == 8)
         }
     }
 
@@ -484,19 +524,26 @@ struct CredentialPasswordPrivacyTests {
         }
     }
 
-    /// A password replaced long ago (here: saved under the earlier username, then cleared) comes back on an older page of History.
-    /// Show Secrets on the newer pages, which held no password, asked nothing; the older password stays masked, and the next Show
-    /// Secrets asks the editor's one prompt.
+    /// A password can come back on an older page of History after Show Secrets asked nothing. Clearing a password moves its History
+    /// to Trash, but restoring an earlier version that held only a username keeps the password it replaces as a newer version. With
+    /// 55 renames on top, Show Secrets on the first page has no password to ask for; the older page brings the password back masked,
+    /// and the next Show Secrets asks the editor's one prompt.
     @Test func anOlderPasswordLoadedLaterStaysMaskedUntilTheEditorAsks() async throws {
         try await withFixture { f in
             let id = UUID()
-            var account = login(id: id, password: "older-page-secret")
+            var account = login(id: id, password: nil)
             try await VaultManagerFixture.unlock(f.vault)
             try await VaultManagerFixture.save([account], in: f.vault)
-            account.username = "ada-renamed"
+            account.password = "older-page-secret"
             try await VaultManagerFixture.save([account], in: f.vault)
-            account.password = nil
-            try await VaultManagerFixture.save([account], in: f.vault)
+            let usernameOnly = try #require(
+                try await f.manager.revisionValuePage(accountID: id, after: nil).items.first { $0.item.subject == .password }
+            )
+            let epoch = try #require(f.manager.authorizationEpoch)
+            let revision = try await f.manager.snapshot().revision
+            _ = try await f.manager.restoreRevision(revisionID: usernameOnly.item.id, expectedRevision: revision, authorizedEpoch: epoch)
+            account = try #require(try await f.manager.snapshot().accounts.first { $0.id == id })
+            #expect(account.password == nil, "the restored version holds no password")
             for index in 0..<55 {
                 account.displayName = "Renamed \(index)"
                 try await VaultManagerFixture.save([account], in: f.vault)

@@ -434,9 +434,13 @@ struct CredentialExportReviewTests {
                 return CredentialExchangeCoordinator.SystemExport(format: .v1, send: { _ in sends.withLock { $0 += 1 } })
             }
             let onlyThePasskey = [CredentialExportSelection(accountID: holder.id, password: false, passkeyIDs: [passkey.id], totp: false)]
+            let audit = VaultReadAudit()
+            CredentialManager.readAuditsForTesting[f.profile.id] = audit
+            defer { CredentialManager.readAuditsForTesting[f.profile.id] = nil }
 
             #expect(await model.exportCredentials(selection: onlyThePasskey, epoch: epoch, in: NSWindow()) == nil)
-            #expect(requests.withLock { $0 } == 0 && sends.withLock { $0 } == 0, "a refusal opens no sheet and reads nothing for it")
+            #expect(requests.withLock { $0 } == 0 && sends.withLock { $0 } == 0, "a refusal opens no sheet")
+            #expect(audit.reads.isEmpty, "a refusal reads nothing")
             #expect(model.error == String(localized: "Authentication didn’t finish. Nothing was exported."))
 
             prompts.refuses = false

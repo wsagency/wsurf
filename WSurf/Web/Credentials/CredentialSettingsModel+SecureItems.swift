@@ -29,7 +29,7 @@ extension CredentialSettingsModel {
         }
         if !asks, items.contains(where: \.isSensitive) {
             try update(epoch) { $0.refresh(snapshot) }
-            throw CredentialVaultError.staleRevision
+            throw CredentialPromptError.listChanged
         }
         try update(epoch) { $0.revealedItems = (accountID, items) }
     }

@@ -90,6 +90,12 @@ extension CredentialSettingsModel {
     }
 }
 
+/// A Show or a Copy found a card or an identity document that the list did not hold when it was read, so nothing asked for it:
+/// nothing was shown or copied, and the list has caught up, so the next try asks.
+nonisolated enum CredentialPromptError: Error, Equatable, Sendable {
+    case listChanged
+}
+
 nonisolated extension CredentialExportSelection {
     /// Whether `selection` sends a passkey that `summaries` still hold: its private key leaves the vault, which needs Touch ID
     /// first. A passkey the summary no longer holds is not asked for; the export refuses an account that changed since its stamp.

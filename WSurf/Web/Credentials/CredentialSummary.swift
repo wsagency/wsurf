@@ -46,6 +46,8 @@ nonisolated struct CredentialSummary: Identifiable, Equatable, Sendable {
     let hasSensitiveItems: Bool
     /// The hidden values of its items that the row's menu offers to copy, by name.
     let hiddenItemFields: [SecureFieldReference]
+    /// The positions of its items whose hidden values ask for Touch ID (`SecureItem.isSensitive`), so a copy can ask before the read.
+    let sensitiveItems: Set<Int>
     /// How many files it holds and their bytes: the counts the Files section and the 2 GB limit read. Never a name or a key.
     let fileCount: Int
     let fileBytes: Int64
@@ -77,6 +79,7 @@ nonisolated struct CredentialSummary: Identifiable, Equatable, Sendable {
         itemKinds = kinds
         itemTitles = items.map(\.title)
         hasSensitiveItems = items.contains(where: \.isSensitive)
+        sensitiveItems = Set(items.indices.filter { items[$0].isSensitive })
         hiddenItemFields = items.enumerated().flatMap { index, item -> [SecureFieldReference] in
             item.fields.enumerated().compactMap { position, field -> SecureFieldReference? in
                 item.isConcealed(field) ? SecureFieldReference(item: index, field: position, label: item.label(of: field)) : nil
@@ -121,9 +124,14 @@ nonisolated struct CredentialSummary: Identifiable, Equatable, Sendable {
               lhs.displayName == rhs.displayName, lhs.origins == rhs.origins, lhs.hasPassword == rhs.hasPassword,
               lhs.hasLogin == rhs.hasLogin, lhs.hasTOTP == rhs.hasTOTP, lhs.hasNotes == rhs.hasNotes,
               lhs.itemKinds == rhs.itemKinds, lhs.itemTitles == rhs.itemTitles, lhs.hasSensitiveItems == rhs.hasSensitiveItems,
-              lhs.hiddenItemFields == rhs.hiddenItemFields, lhs.website == rhs.website, lhs.fileCount == rhs.fileCount,
-              lhs.fileBytes == rhs.fileBytes else { return false }
+              lhs.hiddenItemFields == rhs.hiddenItemFields, lhs.sensitiveItems == rhs.sensitiveItems, lhs.website == rhs.website,
+              lhs.fileCount == rhs.fileCount, lhs.fileBytes == rhs.fileBytes else { return false }
         return lhs.passkeys == rhs.passkeys
+    }
+
+    /// Whether copying the hidden value at `item` and `field` asks for Touch ID first, as far as this summary knows.
+    func asksToCopy(item: Int, field: Int) -> Bool {
+        sensitiveItems.contains(item) && hiddenItemFields.contains { $0.item == item && $0.field == field }
     }
 
     /// What a row, a removal prompt or an import review calls this credential. An empty imported title counts as none.

@@ -10908,6 +10908,9 @@
     "This contact has no details autofill can use." : {
       "comment" : "Error text under the Import rows in Settings › Autofill (Vault tab) when the single contact picked has no usable details. Singular; the plural counterpart is “These contacts have no details autofill can use.” Sentence case."
     },
+    "This credential changed while the list was open. Try again." : {
+      "comment" : "Error on the Credentials page in Settings when Show Details or a copy found a card or ID document that the list did not hold when it was read, so nothing was shown or copied without Touch ID. The page has already read the vault again; trying again asks for Touch ID first. Full sentences."
+    },
     "This file couldn’t be decrypted. It may be damaged. Nothing was saved or opened." : {
       "comment" : "Error text at the bottom of the credential editor in Settings › Credentials, when an attached file’s encrypted copy doesn’t open or isn’t the file that was added, for example while previewing it or saving a copy. “Decrypted” means unlocked from its encrypted form. Full sentences."
     },
