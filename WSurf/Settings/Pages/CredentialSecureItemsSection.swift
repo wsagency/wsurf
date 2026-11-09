@@ -115,7 +115,7 @@ struct CredentialSecureItemsSection: View {
                 Text(verbatim: concealed && !shown.contains(key) ? "••••••••" : field.value)
                     .lineLimit(1)
                     .truncationMode(.middle)
-                    .textSelection(concealed ? .disabled : .enabled)
+                    .selectable(!concealed)
                     .privacySensitive(concealed)
                     .frame(maxWidth: .infinity, alignment: .leading)
             } else if concealed && !shown.contains(key) {
@@ -252,5 +252,17 @@ private struct SecureItemDateButton: View {
             get: { (try? Self.style.parse(text)) ?? .now },
             set: { text = $0.formatted(Self.style) }
         )
+    }
+}
+
+private extension View {
+    /// A concealed value is never selectable, shown or not: ⌘C would go around the clipboard clearing (`SecretClipboard`).
+    @ViewBuilder
+    func selectable(_ allowed: Bool) -> some View {
+        if allowed {
+            textSelection(.enabled)
+        } else {
+            textSelection(.disabled)
+        }
     }
 }
