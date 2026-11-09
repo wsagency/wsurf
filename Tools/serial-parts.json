@@ -297,6 +297,7 @@
    "MicroWindowTests",
    "PDFSavingTests",
    "SidebarListHeightTests",
+   "TabDeinitTests",
    "TabSleepScheduleTests",
    "TabSwitchWorkTests"
   ],
