@@ -90,11 +90,23 @@ extension ChromiumPage {
         browser.sentScale = scale
     }
 
-    /// The service published the browser's layer tree: show it here.
+    /// The service published the browser's layer tree: show it here. Presentation "xpc": a plain layer instead, whose
+    /// contents the frames queue sets.
     func attachRemoteLayer(_ clientID: UInt32) {
         wantsLayer = true
         remoteLayer?.removeFromSuperlayer()
-        let hosted = CALayer(remoteClientId: clientID)
+        let hosted: CALayer
+        if ChromiumOOP.presentation == "xpc" {
+            hosted = CALayer()
+            hosted.contentsGravity = .resize
+            hosted.backgroundColor = NSColor.white.cgColor
+            if let id = remote?.id {
+                RemoteFrameSinks.shared.set(hosted, for: id)
+            }
+        } else {
+            hosted = CALayer(remoteClientId: clientID)
+        }
+        ChromiumOOP.log.notice("attach layer: client \(clientID), presentation \(ChromiumOOP.presentation, privacy: .public), view layer \(self.layer != nil)")
         hosted.anchorPoint = .zero
         CATransaction.begin()
         CATransaction.setDisableActions(true)
@@ -221,6 +233,9 @@ extension ChromiumPage {
 
     /// The service closed the browser (`on_before_close` in process).
     func remoteBrowserClosed() {
+        if let id = remote?.id {
+            RemoteFrameSinks.shared.set(nil, for: id)
+        }
         remoteLayer?.removeFromSuperlayer()
         remoteLayer = nil
         browserDidClose()
@@ -229,6 +244,9 @@ extension ChromiumPage {
     /// The service ended with this page's browser in it: the page is left with no browser, as after a renderer crash, and
     /// the tab's crash handling reloads it, which asks a new service for a new browser.
     func remoteServiceEnded() {
+        if let id = remote?.id {
+            RemoteFrameSinks.shared.set(nil, for: id)
+        }
         remoteLayer?.removeFromSuperlayer()
         remoteLayer = nil
         resetAfterServiceEnd()

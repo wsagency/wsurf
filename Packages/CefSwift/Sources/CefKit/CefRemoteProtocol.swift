@@ -51,6 +51,11 @@ public enum CefRemote {
         public static let linger = "linger"
         public static let frameRate = "fps"
         public static let beginFrames = "beginFrames"
+        /// How frames reach WSurf: "remote" (CARemoteLayerClient) or "xpc" (each frame's IOSurface on the frames connection).
+        public static let presentation = "present"
+        /// DEBUG: the service's root layer gets a loud colour, to see whether its layer tree reaches WSurf's window at all.
+        public static let debugRoot = "debugRoot"
+        public static let surface = "surface"
         public static let javaScript = "js"
         public static let pid = "pid"
         public static let loading = "loading"
@@ -115,6 +120,8 @@ public enum CefRemote {
         public static let hello = "hello"
         /// The second connection, for input only, says which control connection it belongs to.
         public static let inputHello = "inputHello"
+        /// The frames connection's first message (presentation "xpc"): frames go to its sender.
+        public static let framesHello = "framesHello"
         public static let createContext = "context.create"
         public static let createBrowser = "browser.create"
         public static let load = "browser.load"
@@ -152,6 +159,8 @@ public enum CefRemote {
     /// Events from the service to WSurf.
     public enum Event {
         public static let browserCreated = "browser.created"
+        /// Presentation "xpc": one frame of a browser, its IOSurface as an XPC object, on the frames connection.
+        public static let frame = "frame"
         public static let browserReady = "browser.ready"
         public static let browserClosed = "browser.closed"
         public static let loadingState = "load.state"

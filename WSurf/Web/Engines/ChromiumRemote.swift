@@ -7,6 +7,7 @@
 
 import AppKit
 import CefKit
+import IOSurface
 import QuartzCore
 import XPC
 import os
@@ -31,6 +32,42 @@ nonisolated enum ChromiumOOP {
     }
 
     static let log = Logger(subsystem: "io.wsagency.wsurf", category: "chromium-oop")
+
+    /// How frames reach this window: "remote" (`CALayer(remoteClientId:)`, the plan's design) or "xpc" (the plan's
+    /// fallback: each frame's IOSurface over XPC, put into a layer from a queue that is not the main thread).
+    static var presentation: String {
+        environment("WSURF_OOP_PRESENT") == "xpc" ? "xpc" : "remote"
+    }
+}
+
+/// Presentation "xpc": the layer of each browser, for the frames queue. Locked: pages register on the main thread.
+nonisolated final class RemoteFrameSinks: @unchecked Sendable {
+    static let shared = RemoteFrameSinks()
+    private let lock = NSLock()
+    private var layers: [Int64: CALayer] = [:]
+    private(set) var framesShown = 0
+
+    func set(_ layer: CALayer?, for browser: Int64) {
+        lock.lock()
+        defer { lock.unlock() }
+        layers[browser] = layer
+    }
+
+    /// On the frames queue: the surface becomes the layer's contents in its own transaction. WSurf's main thread does nothing.
+    func show(_ event: xpc_object_t) {
+        guard let message = CefRemoteMessage(wrapping: event), message.op == CefRemote.Event.frame,
+              let object = xpc_dictionary_get_value(event, CefRemote.Key.surface),
+              let surface = IOSurfaceLookupFromXPCObject(object) else { return }
+        lock.lock()
+        let layer = layers[message.browser]
+        framesShown += 1
+        lock.unlock()
+        guard let layer, !message.bool(CefRemote.Key.flag) else { return }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        layer.contents = surface
+        CATransaction.commit()
+    }
 }
 
 /// The connection to the service: one control connection (requests and every event, in order) and one input connection.
@@ -40,6 +77,8 @@ final class ChromiumRemote {
 
     private var control: xpc_connection_t?
     private var input: xpc_connection_t?
+    private var frames: xpc_connection_t?
+    private let framesQueue = DispatchQueue(label: "io.wsagency.wsurf.chromium-frames", qos: .userInteractive)
     private var needsHello = true
     private var browsers: [Int64: ChromiumRemoteBrowser] = [:]
     private var contexts: Set<UUID> = []
@@ -129,6 +168,8 @@ final class ChromiumRemote {
         let fps = Int(ChromiumOOP.environment("WSURF_OOP_FPS") ?? "") ?? NSScreen.main?.maximumFramesPerSecond ?? 60
         message.set(CefRemote.Key.frameRate, Int64(fps))
         message.set(CefRemote.Key.beginFrames, ChromiumOOP.environment("WSURF_OOP_BEGIN_FRAMES") ?? "internal")
+        message.set(CefRemote.Key.presentation, ChromiumOOP.presentation)
+        message.set(CefRemote.Key.debugRoot, ChromiumOOP.environment("WSURF_OOP_DEBUG_ROOT") == "1")
         let sent = ContinuousClock.now
         helloSentAt = sent
         xpc_connection_send_message_with_reply(control, message.object, DispatchQueue.main) { reply in
@@ -136,6 +177,15 @@ final class ChromiumRemote {
             MainActor.assumeIsolated { ChromiumRemote.shared.helloAnswered(answer, sent: sent) }
         }
         ChromiumOOP.log.notice("hello sent to \(self.serviceName, privacy: .public)")
+        if ChromiumOOP.presentation == "xpc" {
+            let connection = xpc_connection_create(serviceName, framesQueue)
+            xpc_connection_set_event_handler(connection) { event in
+                RemoteFrameSinks.shared.show(event)
+            }
+            xpc_connection_activate(connection)
+            xpc_connection_send_message(connection, CefRemoteMessage(CefRemote.Op.framesHello).object)
+            frames = connection
+        }
     }
 
     /// The service's own log, in the stage home: the service cannot see WSurf's environment.
@@ -218,6 +268,7 @@ final class ChromiumRemote {
         servicePID = 0
         contexts.removeAll()
         input = nil
+        frames = nil
         let lost = browsers.values
         browsers.removeAll()
         for browser in lost {

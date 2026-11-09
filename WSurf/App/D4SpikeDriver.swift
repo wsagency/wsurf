@@ -127,6 +127,9 @@ enum D4SpikeDriver {
         _ = await waitLoaded(blue, timeout: 60)
         try? await Task.sleep(for: .seconds(1))
         captureWindow("frames-blue")
+        if let page = blue.liveView?.chromium {
+            log("layers: \(layerReport(page))")
+        }
         _ = await ChromiumRemote.shared.statistics(reset: true)
         for number in 0..<6 {
             let target = number.isMultiple(of: 2) ? red : blue
@@ -335,6 +338,23 @@ enum D4SpikeDriver {
     #endif
 
     // MARK: Helpers
+
+    /// Where the page's layer sits: the view chain, the hosted layer and, in presentation "xpc", the frames shown.
+    private static func layerReport(_ page: ChromiumPage) -> String {
+        var chain: [String] = []
+        var view: NSView? = page
+        while let current = view, chain.count < 12 {
+            chain.append("\(type(of: current))\(current.isHidden ? "(hidden)" : "")\(current.alphaValue < 1 ? "(alpha \(current.alphaValue))" : "")")
+            view = current.superview
+        }
+        let layer = page.layer
+        let hosted = page.remoteLayer.map {
+            "\(type(of: $0)) frame \($0.frame.integral) attached \($0.superlayer === layer) hidden \($0.isHidden) opacity \($0.opacity)"
+        } ?? "nil"
+        return "page frame \(page.frame.integral) in window \(page.window != nil), layer \(layer != nil), sublayers "
+            + "\(layer?.sublayers?.count ?? -1), hosted \(hosted), xpc frames shown \(RemoteFrameSinks.shared.framesShown), "
+            + "chain \(chain.joined(separator: " < "))"
+    }
 
     private static func url(_ path: String) -> URL {
         URL(string: base + "/" + path)!

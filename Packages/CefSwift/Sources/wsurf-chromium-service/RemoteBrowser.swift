@@ -46,7 +46,7 @@ final class RemoteBrowser {
     /// The service's own `Page.resetNavigationHistory`, by its CDP id: WSurf's request id.
     private var collapses: [Int64: Int64] = [:]
 
-    init(id: Int64, message: CefRemoteMessage, serverPort: mach_port_t) {
+    init(id: Int64, message: CefRemoteMessage, serverPort: mach_port_t, debugRoot: Bool = false) {
         self.id = id
         sizeDIP = CGSize(width: max(1, message.double(CefRemote.Key.width)), height: max(1, message.double(CefRemote.Key.height)))
         scale = max(1, message.double(CefRemote.Key.scale))
@@ -54,7 +54,7 @@ final class RemoteBrowser {
         origin = CGPoint(x: message.double(CefRemote.Key.originX), y: message.double(CefRemote.Key.originY))
         hidden = message.bool(CefRemote.Key.hidden)
         parked = message.bool(CefRemote.Key.parked)
-        presenter = FramePresenter(serverPort: serverPort)
+        presenter = FramePresenter(serverPort: serverPort, debugRoot: debugRoot)
         presenter.setGeometry(sizeDIP: sizeDIP, scale: scale)
         presenter.hidden = hidden
         presenter.parked = parked

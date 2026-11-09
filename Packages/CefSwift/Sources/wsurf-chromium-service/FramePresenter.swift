@@ -61,13 +61,16 @@ final class FramePresenter {
     private var blitMs: [Double] = []
     private var presentTimes: [Double] = []
 
-    init(serverPort: mach_port_t) {
+    /// Presentation "xpc": each frame's surface goes to WSurf over XPC instead of into the remote layer tree.
+    var sink: ((IOSurfaceRef, Element) -> Void)?
+
+    init(serverPort: mach_port_t, debugRoot: Bool = false) {
         client = CARemoteLayerClient(serverPort: serverPort)
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         root.anchorPoint = .zero
         root.isGeometryFlipped = true
-        root.backgroundColor = NSColor.white.cgColor
+        root.backgroundColor = debugRoot ? NSColor.systemPink.cgColor : NSColor.white.cgColor
         root.masksToBounds = true
         content.anchorPoint = .zero
         content.contentsGravity = .resize
@@ -183,6 +186,19 @@ final class FramePresenter {
     }
 
     private func show(_ surface: IOSurfaceRef, element: Element, entry: UInt64, blitDone: UInt64) {
+        if let sink {
+            switch element {
+            case .view: shown = surface
+            case .popup: popupShown = surface
+            }
+            sink(surface, element)
+            let done = Clock.nowNanoseconds
+            presented += 1
+            record(&blitMs, Double(blitDone &- entry) / 1e6)
+            record(&outputLegMs, Double(done &- entry) / 1e6)
+            record(&presentTimes, Double(done) / 1e9)
+            return
+        }
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         switch element {

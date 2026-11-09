@@ -5,6 +5,7 @@ import AppKit
 import CCef
 import CCefAppKit
 import CefKit
+import IOSurface
 import XPC
 
 @MainActor
@@ -24,6 +25,10 @@ final class ServiceHost {
     private var displayLink: CADisplayLink?
     private var holdsTransaction = false
     private var exiting = false
+    /// Presentation "xpc": frames go to this connection (WSurf's frames connection, served off its main thread).
+    private(set) var framesPeer: xpc_connection_t?
+    private(set) var presentation = "remote"
+    private(set) var debugRoot = false
     private let startedAt = Clock.nowNanoseconds
     private var cefStartMs: Double = -1
 
@@ -75,6 +80,9 @@ final class ServiceHost {
             hello(message, from: peer)
         case CefRemote.Op.inputHello:
             note("input connection open")
+        case CefRemote.Op.framesHello:
+            framesPeer = peer
+            note("frames connection open")
         case CefRemote.Op.createContext:
             createContext(message)
         case CefRemote.Op.createBrowser:
@@ -108,6 +116,9 @@ final class ServiceHost {
         }
         frameRate = Int32(max(1, min(240, message.int(CefRemote.Key.frameRate))))
         externalBeginFrames = message.string(CefRemote.Key.beginFrames) == "external"
+        presentation = message.string(CefRemote.Key.presentation) == "xpc" ? "xpc" : "remote"
+        debugRoot = message.bool(CefRemote.Key.debugRoot)
+        note("presentation \(presentation), debug root \(debugRoot)")
         let port = xpc_dictionary_copy_mach_send(message.object, CefRemote.Key.layerServer)
         if port != 0 {
             layerServerPort = port
@@ -227,10 +238,16 @@ final class ServiceHost {
             xpc_transaction_begin()
             holdsTransaction = true
         }
-        let browser = RemoteBrowser(id: id, message: message, serverPort: layerServerPort)
+        let browser = RemoteBrowser(id: id, message: message, serverPort: layerServerPort, debugRoot: debugRoot)
         browsers[id] = browser
+        if presentation == "xpc" {
+            browser.presenter.sink = { surface, element in
+                ServiceHost.shared.sendFrame(browser: id, surface: surface, popup: element == .popup)
+            }
+        }
         let created = CefRemoteMessage(CefRemote.Event.browserCreated, browser: id)
         created.set(CefRemote.Key.layerClient, Int64(browser.presenter.clientID))
+        note("browser \(id): remote layer client \(browser.presenter.clientID) on server port \(layerServerPort)")
         send(created)
         let context = contexts[message.string(CefRemote.Key.context)]
         let started = browser.create(url: message.string(CefRemote.Key.url), context: context,
@@ -243,6 +260,16 @@ final class ServiceHost {
         }
         CefRuntime.shared.externalBrowserDidOpen()
         updateDisplayLink()
+    }
+
+    /// Presentation "xpc": one frame to WSurf's frames connection. The IOSurface travels as a Mach port; WSurf puts it in a
+    /// layer from its frames queue, never its main thread.
+    func sendFrame(browser id: Int64, surface: IOSurfaceRef, popup: Bool) {
+        guard let framesPeer else { return }
+        let message = CefRemoteMessage(CefRemote.Event.frame, browser: id)
+        xpc_dictionary_set_value(message.object, CefRemote.Key.surface, IOSurfaceCreateXPCObject(surface))
+        message.set(CefRemote.Key.flag, popup)
+        xpc_connection_send_message(framesPeer, message.object)
     }
 
     func browserDidClose(_ id: Int64) {
