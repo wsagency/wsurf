@@ -243,6 +243,7 @@ struct BackgroundTabHidingTests {
             let stamp = try await rig.stamp(background)
             try await rig.startPlaying(background)
             try #require(await waitUntil { background.isPlayingAudio }, "the page plays")
+            let hiding = HidingWatch(background)
 
             // A silent tab leaves the front after the one that plays did, and goes through the same hide path. Once it reports
             // `hidden` that path has run, so what it would have done to the tab that plays has been done.
@@ -256,6 +257,7 @@ struct BackgroundTabHidingTests {
 
             // A tab that plays is kept shown (it is protected from hiding), and it draws: a hidden page still loads and plays, so
             // the player alone would not tell the difference.
+            #expect(!hiding.hid, "\(engine): the tab that plays was never marked hidden (the media dock may have taken it since)")
             #expect(await rig.state(of: background) == "visible", "\(engine): the tab that plays is not hidden")
             #expect(await waitUntil { await rig.isAnimating(background) }, "\(engine): and it still draws")
             #expect(background.isPlayingAudio, "\(engine): the tab is still heard")

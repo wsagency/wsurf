@@ -141,6 +141,7 @@ struct KeptAliveFavoritesTests {
             try #require(await waitUntil { favorite.isPlayingAudio }, "the page plays")
             rig.browser.addFavorite(favorite)
             try #require(favorite.isFavorite)
+            let hiding = HidingWatch(favorite)
 
             // A silent tab leaves the front after the favorite did and goes through the same hide path: once it reports `hidden`
             // that path has run, so what it would have done to the favorite has been done.
@@ -154,6 +155,7 @@ struct KeptAliveFavoritesTests {
 
             // A favorite that plays is kept shown, and it draws: a hidden page still loads and plays, so the player alone would not
             // tell the difference.
+            #expect(!hiding.hid, "\(engine): the favorite that plays was never marked hidden (the media dock may have taken it since)")
             #expect(await rig.state(of: favorite) == "visible", "\(engine): the favorite that plays is not hidden")
             #expect(await waitUntil { await rig.isAnimating(favorite) }, "\(engine): and it still draws")
             #expect(favorite.isPlayingAudio, "\(engine): the favorite is still heard")

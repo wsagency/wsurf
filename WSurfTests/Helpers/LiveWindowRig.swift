@@ -3,10 +3,24 @@
 
 import AppKit
 import Foundation
+import Observation
 import Testing
 import WebKit
 
 @testable import WSurf
+
+/// Whether a tab's page was ever marked to be hidden in the background since the watch began. The flag is written only when it
+/// changes, and observation reports the first write, so a tab that is hidden and shown again before the test looks still counts.
+@MainActor
+final class HidingWatch {
+    private(set) var hid = false
+
+    init(_ tab: BrowserTab) {
+        withObservationTracking({ _ = tab.hidesPageInBackground }, onChange: { [weak self] in
+            MainActor.assumeIsolated { self?.hid = true }
+        })
+    }
+}
 
 /// The window the app builds (content area, sidebar and parking shelf) on one engine, with a page that counts animation frames,
 /// which an engine runs only while it counts the page visible, and a page that does not move. For the cases that watch what a tab
