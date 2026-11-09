@@ -412,6 +412,85 @@ struct FileAccessScopeTests {
         #expect(refused(gate, site.style, by: site.outside), "a document outside the scope")
     }
 
+    /// CEF can report a main frame's address late: the first subresource of a small document arrives while the frame still says
+    /// nothing or `about:blank`. That frame is judged by the address its navigation went to.
+    @Test func aMainFrameThatHasNotTakenItsAddressYetIsJudgedByItsNavigation() throws {
+        let site = try makeSite()
+        defer { site.remove() }
+
+        let own = try gate(navigatedTo: site.drawing.absoluteString)
+        for unsettled in [nil, URL(string: "about:blank")] {
+            #expect(!own.refuses(site.logo, requestedBy: unsettled, isMainFrame: true), "a saved drawing reads its folder")
+            #expect(own.refuses(site.outside, requestedBy: unsettled, isMainFrame: true), "but not outside it")
+        }
+        let mailed = try gate(navigatedTo: site.mailedDrawing.absoluteString)
+        for unsettled in [nil, URL(string: "about:blank")] {
+            #expect(mailed.refuses(site.logo, requestedBy: unsettled, isMainFrame: true), "a mailed drawing reads only itself")
+            #expect(!mailed.refuses(site.mailedDrawing, requestedBy: unsettled, isMainFrame: true))
+        }
+        let web = try gate(navigatedTo: "https://example.test/")
+        #expect(web.refuses(site.logo, requestedBy: nil, isMainFrame: true), "a navigation to a web page leaves no scope")
+        #expect(ChromiumFileScope().refuses(site.logo, requestedBy: nil, isMainFrame: true), "and no navigation leaves none")
+    }
+
+    @Test func aSubframeThatDoesNotSayWhatItShowsIsStillRefused() throws {
+        let site = try makeSite()
+        defer { site.remove() }
+        let gate = try gate(navigatedTo: site.page.absoluteString)
+
+        for unsettled in [nil, URL(string: "about:blank")] {
+            #expect(gate.refuses(site.logo, requestedBy: unsettled, isMainFrame: false))
+            #expect(gate.refuses(site.logo, requestedBy: unsettled))
+        }
+    }
+
+    @Test func aMainFrameThatStillShowsAnotherDocumentIsStillRefused() throws {
+        let site = try makeSite()
+        defer { site.remove() }
+        let gate = try gate(navigatedTo: site.page.absoluteString)
+
+        #expect(gate.refuses(site.logo, requestedBy: site.outside, isMainFrame: true), "the old file is outside the new scope")
+        #expect(try gate.refuses(site.logo, requestedBy: #require(URL(string: "https://example.test/")), isMainFrame: true))
+        #expect(try gate.refuses(site.logo, requestedBy: #require(URL(string: "about:srcdoc")), isMainFrame: true))
+        #expect(!gate.refuses(site.logo, requestedBy: site.page, isMainFrame: true), "the committed document reads its folder")
+    }
+
+    /// A pop-up's blank page is written by its opener's script, so a file the opener sends it to does not make that page the
+    /// file's document.
+    @Test func aPopupAnOpenerCreatedNeverTakesItsBlankPageForTheNavigationsDocument() throws {
+        let site = try makeSite()
+        defer { site.remove() }
+        let gate = ChromiumFileScope()
+        gate.markOpenerCreated()
+        gate.mainFrameNavigation(to: site.page)
+
+        for unsettled in [nil, URL(string: "about:blank")] {
+            #expect(gate.refuses(site.logo, requestedBy: unsettled, isMainFrame: true))
+        }
+        #expect(!gate.refuses(site.logo, requestedBy: site.page, isMainFrame: true), "once it shows the file, it reads its folder")
+    }
+
+    @Test func aMainFrameThatRanADocumentBeforeNeverTakesItsBlankPageForTheNavigationsDocument() throws {
+        let site = try makeSite()
+        defer { site.remove() }
+        let gate = try gate(navigatedTo: "https://example.test/")
+        gate.mainFrameNavigation(to: site.page)
+
+        for unsettled in [nil, URL(string: "about:blank")] {
+            #expect(gate.refuses(site.logo, requestedBy: unsettled, isMainFrame: true))
+        }
+    }
+
+    @Test func aMainFrameThatHasReportedItsDocumentIsNoLongerJudgedByItsNavigation() throws {
+        let site = try makeSite()
+        defer { site.remove() }
+        let gate = try gate(navigatedTo: site.page.absoluteString)
+
+        #expect(!gate.refuses(site.logo, requestedBy: nil, isMainFrame: true), "before the frame reports its address")
+        #expect(!gate.refuses(site.logo, requestedBy: site.page, isMainFrame: true))
+        #expect(gate.refuses(site.logo, requestedBy: URL(string: "about:blank"), isMainFrame: true), "after it did")
+    }
+
     @Test func navigatingToAWebPageLeavesNoScope() throws {
         let site = try makeSite()
         defer { site.remove() }

@@ -104,21 +104,66 @@ nonisolated enum FileAccessScope {
 nonisolated final class ChromiumFileScope: @unchecked Sendable {
     private let lock = NSLock()
     private var scope: URL?
+    /// The `file:` address the main frame is going to, which `scope` was made from.
+    private var navigated: URL?
+    /// Whether the main frame has navigated to an address before the current one. Such a frame has run a document, and what it
+    /// reports is that document's address, never the initial blank page's.
+    private var hasNavigatedBefore = false
+    /// True from the first real main-frame navigation, if it is to a file, until the frame has reported that file's document.
+    private var pendingFirstCommit = false
+    /// Whether this page was made by `window.open()`: its blank document belongs to a script of its opener.
+    private var isOpenerCreated = false
+
+    /// This page is a pop-up its opener created, so it never takes a blank main frame for its navigation's document.
+    func markOpenerCreated() {
+        lock.lock()
+        isOpenerCreated = true
+        lock.unlock()
+    }
 
     /// A main-frame navigation to `url` is going ahead: what that file may read is the scope, and any other address leaves none.
     func mainFrameNavigation(to url: URL?) {
-        let next = url.flatMap { $0.isFileURL ? FileAccessScope.readAccess(for: $0) : nil }
+        let file = url.flatMap { $0.isFileURL ? $0 : nil }
+        let next = file.map { FileAccessScope.readAccess(for: $0) }
         lock.lock()
         scope = next
+        navigated = file
+        if url?.absoluteString != "about:blank" {
+            // The first real navigation is the one that can still find the initial blank page; this call's own is not "before".
+            pendingFirstCommit = !hasNavigatedBefore && file != nil
+            hasNavigatedBefore = true
+        }
         lock.unlock()
     }
 
     /// Whether `resource`, requested by the frame whose document is `document` (nil when it is not known), must be refused.
-    func refuses(_ resource: URL, requestedBy document: URL?) -> Bool {
+    ///
+    /// CEF can report a main frame's address late: the first subresource a small document asks for (an SVG's script runs as it
+    /// is parsed) can arrive while the frame still reports no address or the initial `about:blank`. A main frame that is in
+    /// that state, is on its first navigation, to a file, whose document it has not reported yet, and that no opener created, is
+    /// judged by the address that navigation went to, which is what it is about to show. Everything else is judged by what the
+    /// frame reports: a frame that still shows another document (the old page between a navigation and its commit), a frame that
+    /// ran a document before, a pop-up's blank page and every subframe.
+    func refuses(_ resource: URL, requestedBy document: URL?, isMainFrame: Bool = false) -> Bool {
         guard resource.isFileURL else { return false }
         lock.lock()
         defer { lock.unlock() }
-        guard let scope, let document, document.isFileURL else { return true }
+        guard let scope else { return true }
+        var document = document
+        if isMainFrame, pendingFirstCommit {
+            if Self.isUnsettled(document), !isOpenerCreated, let navigated {
+                document = navigated
+            } else if let document, document.isFileURL, FileAccessScope.allows(document, from: scope) {
+                pendingFirstCommit = false
+            }
+        }
+        guard let document, document.isFileURL else { return true }
         return !FileAccessScope.allows(document, from: scope) || !FileAccessScope.allows(resource, from: document)
+    }
+
+    /// Whether a frame that reports `document` has not yet taken the address it is showing.
+    private static func isUnsettled(_ document: URL?) -> Bool {
+        guard let document else { return true }
+        return document.absoluteString == "about:blank"
     }
 }

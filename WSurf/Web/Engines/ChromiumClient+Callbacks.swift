@@ -14,10 +14,12 @@ extension ChromiumClient {
     nonisolated func refusesFile(_ url: URL, requestedBy frame: UnsafeMutablePointer<cef_frame_t>?) -> Bool {
         guard url.isFileURL else { return false }
         var document: URL?
+        var isMainFrame = false
         if let frame, frame.pointee.is_valid?(frame) == 1 {
             document = URL(string: ChromiumInterop.takeString(frame.pointee.get_url?(frame)))
+            isMainFrame = frame.pointee.is_main?(frame) == 1
         }
-        return fileScope.refuses(url, requestedBy: document)
+        return fileScope.refuses(url, requestedBy: document, isMainFrame: isMainFrame)
     }
 
     // MARK: JavaScript dialogs
