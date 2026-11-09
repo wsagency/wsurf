@@ -23,6 +23,7 @@ struct KeptAliveFavoritesTests {
     func aFavoriteBehindAnotherTabIsHiddenAndStopsAnimating(engine: BrowserEngine) async throws {
         try await LiveWindowRig.with(engine: engine) { rig in
             let favorite = try await rig.open("/page")
+            let stamp = try await rig.stamp(favorite)
             rig.browser.addFavorite(favorite)
             try #require(favorite.isFavorite)
             rig.browser.activate(favorite)
@@ -39,11 +40,11 @@ struct KeptAliveFavoritesTests {
 
             #expect(favorite.isMaterialised && !favorite.isDeferred, "it stays loaded")
             #expect(favorite.page.window != nil, "and in its window")
-            #expect(await rig.marker(of: favorite) == "loaded")
+            #expect(await rig.stampSurvived(favorite, stamp), "it did not reload while it was hidden")
 
             rig.browser.activate(favorite)
             #expect(await waitUntil { await rig.isAnimating(favorite) }, "\(engine): back in front it is visible and animates again")
-            #expect(await rig.marker(of: favorite) == "loaded", "it did not reload")
+            #expect(await rig.stampSurvived(favorite, stamp), "it did not reload")
         }
     }
 
@@ -91,6 +92,7 @@ struct KeptAliveFavoritesTests {
                 "\(engine): the favorite loads without being shown"
             )
             #expect(await waitUntil { favorite.page.window === rig.window }, "in the window, where Chromium needs it")
+            let stamp = try await rig.stamp(favorite)
             let hidden = await waitUntil(timeout: .seconds(10)) { await rig.state(of: favorite) == "hidden" }
             let reported = await rig.state(of: favorite) ?? "nothing"
             #expect(hidden, "\(engine): it reports \(reported)")
@@ -99,7 +101,7 @@ struct KeptAliveFavoritesTests {
 
             rig.browser.activate(favorite)
             #expect(await waitUntil { await rig.isAnimating(favorite) }, "\(engine): shown, it animates")
-            #expect(await rig.marker(of: favorite) == "loaded", "it did not reload")
+            #expect(await rig.stampSurvived(favorite, stamp), "it did not reload")
         }
     }
 
@@ -134,10 +136,12 @@ struct KeptAliveFavoritesTests {
     func aFavoriteThatPlaysAudioKeepsPlayingBehindAnotherTab(engine: BrowserEngine) async throws {
         try await LiveWindowRig.with(engine: engine) { rig in
             let favorite = try await rig.open("/page")
+            let stamp = try await rig.stamp(favorite)
             try await rig.startPlaying(favorite)
             try #require(await waitUntil { favorite.isPlayingAudio }, "the page plays")
             rig.browser.addFavorite(favorite)
             try #require(favorite.isFavorite)
+            let hiding = HidingWatch(favorite)
 
             // A silent tab leaves the front after the favorite did and goes through the same hide path: once it reports `hidden`
             // that path has run, so what it would have done to the favorite has been done.
@@ -151,6 +155,7 @@ struct KeptAliveFavoritesTests {
 
             // A favorite that plays is kept shown, and it draws: a hidden page still loads and plays, so the player alone would not
             // tell the difference.
+            #expect(!hiding.hid, "\(engine): the favorite that plays was never marked hidden (the media dock may have taken it since)")
             #expect(await rig.state(of: favorite) == "visible", "\(engine): the favorite that plays is not hidden")
             #expect(await waitUntil { await rig.isAnimating(favorite) }, "\(engine): and it still draws")
             #expect(favorite.isPlayingAudio, "\(engine): the favorite is still heard")
@@ -158,7 +163,7 @@ struct KeptAliveFavoritesTests {
             #expect(await rig.isPlaying(favorite) == true, "\(engine): its player was not paused")
             #expect(favorite.isMaterialised && !favorite.isDeferred)
             #expect(favorite.page.window != nil)
-            #expect(await rig.marker(of: favorite) == "loaded", "it did not reload")
+            #expect(await rig.stampSurvived(favorite, stamp), "it did not reload")
         }
     }
 

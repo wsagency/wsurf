@@ -3,10 +3,24 @@
 
 import AppKit
 import Foundation
+import Observation
 import Testing
 import WebKit
 
 @testable import WSurf
+
+/// Whether a tab's page was ever marked to be hidden in the background since the watch began. The flag is written only when it
+/// changes, and observation reports the first write, so a tab that is hidden and shown again before the test looks still counts.
+@MainActor
+final class HidingWatch {
+    private(set) var hid = false
+
+    init(_ tab: BrowserTab) {
+        withObservationTracking({ _ = tab.hidesPageInBackground }, onChange: { [weak self] in
+            MainActor.assumeIsolated { self?.hid = true }
+        })
+    }
+}
 
 /// The window the app builds (content area, sidebar and parking shelf) on one engine, with a page that counts animation frames,
 /// which an engine runs only while it counts the page visible, and a page that does not move. For the cases that watch what a tab
@@ -152,6 +166,20 @@ struct LiveWindowRig {
 
     func marker(of tab: BrowserTab) async -> String? {
         (try? await tab.page.evaluateJavaScript("window.__marker")) as? String
+    }
+
+    /// Writes a value into the page that nothing in the page sets, and returns it. `__marker` cannot say "the page did not reload",
+    /// because the page sets it again on every load; this value is gone after a reload, so a test that stamps a tab once, after its
+    /// first load, and reads the stamp back later has seen the same document the whole time.
+    func stamp(_ tab: BrowserTab) async throws -> String {
+        let value = UUID().uuidString
+        _ = try await tab.page.evaluateJavaScript("window.__stamp = '\(value)'; true")
+        return value
+    }
+
+    /// Whether the page still holds `stamp` (see `stamp(_:)`): it is the same document as when it was written.
+    func stampSurvived(_ tab: BrowserTab, _ stamp: String) async -> Bool {
+        (try? await tab.page.evaluateJavaScript("window.__stamp")) as? String == stamp
     }
 
     /// Whether the page runs animation frames and is visible. It takes one sample of the counter and then polls it, so a page that
