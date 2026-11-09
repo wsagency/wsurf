@@ -205,6 +205,16 @@ def check_console_filter(root: Path, env: dict[str, str]) -> None:
     assert "WAIT-EXPIRED W.swift:1 after 5.0 seconds in a()" in lines[:error], lines
     assert lines[error - 1] == "◇ Test b() started.", lines
     assert "◇ Test a() started." not in lines, lines
+    # Same for a crash: b's start line is above the crash line even though an unrelated wait expired before it.
+    crash_line = "2026-11-09 09:50:34.217941+0100 WSurf[17395:89331466] [x] Received SIGTRAP in the test host"
+    script = (
+        "echo '◇ Test a() started.'; echo '◇ Test b() started.'; "
+        "echo 'WAIT-EXPIRED W.swift:1 after 5.0 seconds in a()'; echo '✔ Test a() passed after 0.5 seconds.'; "
+        f"echo '{crash_line}'"
+    )
+    lines = watchdog(["sh", "-c", script], root, filtered_env).stdout.splitlines()
+    assert lines.index("◇ Test b() started.") == lines.index(crash_line) - 1, lines
+    assert "◇ Test a() started." not in lines, lines
     # WSURF_CI_VERBOSE=1: raw log kept, console unfiltered.
     raw.unlink()
     verbose = watchdog(["cat", str(fixture)], root, {**filtered_env, "WSURF_CI_VERBOSE": "1"})
