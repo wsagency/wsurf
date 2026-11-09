@@ -55,6 +55,7 @@ extension ChromiumPage {
         }
     }
 
+    #if D4_AX
     override func accessibilityChildren() -> [Any]? {
         guard remote != nil else { return super.accessibilityChildren() }
         return accessibilityMirror?.rootElement.map { [$0] } ?? []
@@ -63,6 +64,7 @@ extension ChromiumPage {
     override func isAccessibilityElement() -> Bool {
         remote != nil ? false : super.isAccessibilityElement()
     }
+    #endif
 
     /// Geometry for the service: the view's size in points, the scale, the screen and the view's top-left on it.
     func fillGeometry(_ message: CefRemoteMessage, browser: ChromiumRemoteBrowser) {
@@ -201,6 +203,7 @@ extension ChromiumPage {
         case CefRemote.Event.findResult:
             find.receive(identifier: Int(message.int(CefRemote.Key.identifier)), count: Int(message.int(CefRemote.Key.count)),
                          active: Int(message.int(CefRemote.Key.active)), isFinal: message.bool(CefRemote.Key.final))
+        #if D4_AX
         case CefRemote.Event.accessibilityTree:
             if accessibilityMirror == nil {
                 accessibilityMirror = ChromiumAccessibilityMirror(page: self)
@@ -208,6 +211,7 @@ extension ChromiumPage {
             accessibilityMirror?.applyTree(message.data(CefRemote.Key.data))
         case CefRemote.Event.accessibilityLocation:
             accessibilityMirror?.applyLocations(message.data(CefRemote.Key.data))
+        #endif
         case CefRemote.Event.popupBlocked:
             ChromiumOOP.log.notice("spike: pop-up or new-tab link refused (out of scope)")
         default:

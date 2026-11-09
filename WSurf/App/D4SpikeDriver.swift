@@ -61,7 +61,9 @@ enum D4SpikeDriver {
             case "frames": await frames()
             case "input": await input()
             case "kill": await kill()
+            #if D4_AX
             case "ax": await accessibility()
+            #endif
             default: log("unknown script \(script)")
             }
             log("driver \(script): done")
@@ -277,6 +279,7 @@ enum D4SpikeDriver {
         try? await Task.sleep(for: .seconds(1))
     }
 
+    #if D4_AX
     /// Day 8-9: CEF's tree reaches WSurf's mirror (run with `WSURF_OOP_AX=1`; VoiceOver is the owner's pass). Press on a
     /// button and on a link goes back to the page as a click.
     private static func accessibility() async {
@@ -329,6 +332,7 @@ enum D4SpikeDriver {
         browser.close(tab)
         try? await Task.sleep(for: .seconds(1))
     }
+    #endif
 
     // MARK: Helpers
 

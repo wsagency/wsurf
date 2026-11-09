@@ -9,6 +9,8 @@
 // and headings, links and buttons are leaves that speak their name. Press is a click at the element's centre, sent as
 // input. A prototype: no text ranges, no search predicates (the rotor), no tables or live regions.
 
+// Compiled only with the D4_AX condition (days 8-9), so that days 1-5 build without it.
+#if D4_AX
 import AppKit
 import CefKit
 
@@ -518,3 +520,4 @@ nonisolated final class ChromiumAccessibilityElement: NSAccessibilityElement, @u
         return MainActor.assumeIsolated { mirror?.press(key) ?? false }
     }
 }
+#endif
