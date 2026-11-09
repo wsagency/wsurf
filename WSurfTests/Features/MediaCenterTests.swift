@@ -721,12 +721,6 @@ struct MediaScriptRectTests {
         await waitUntil { collector.messages.contains { $0.hasPrefix(prefix) } }
     }
 
-    private func settle(_ webView: BrowserPage, _ collector: Collector) async {
-        collector.messages.removeAll { $0.hasPrefix("rect:") }
-        _ = try? await webView.evaluateJavaScript("window.postMessage('wsurf-resend', '*')")
-        _ = await waitForMessage(collector, prefix: "rect:")
-    }
-
     @Test func thePlayerRectIsReported() async {
         let (webView, collector) = await playerWebView()
         defer { withExtendedLifetime(webView) {} }
@@ -799,7 +793,9 @@ struct MediaScriptRectTests {
         collector.messages.removeAll()
 
         _ = try? await webView.evaluateJavaScript("window.postMessage('wsurf-pip', '*')")
-        await settle(webView, collector)
+        // This player has no frames, so the request ends in `diag:no-video`. Had it been treated as the automatic request
+        // (`wsurf-pip-auto`), a paused player would answer `diag:not-playing` first and never reach it.
+        #expect(await waitForMessage(collector, prefix: "diag:no-video"))
 
         #expect(!collector.messages.contains("diag:not-playing"))
     }
