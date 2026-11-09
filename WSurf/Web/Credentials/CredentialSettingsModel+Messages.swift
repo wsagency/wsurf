@@ -45,6 +45,8 @@ extension CredentialSettingsModel {
         switch error {
         case CredentialVaultError.staleRevision:
             return String(localized: "Your credentials changed elsewhere. Reload and try again.")
+        case CredentialPromptError.listChanged:
+            return String(localized: "This credential changed while the list was open. Try again.")
         case CredentialVaultError.unauthorized, CredentialVaultError.expired:
             return String(localized: "Credentials are locked.")
         case CredentialVaultError.missingVault:

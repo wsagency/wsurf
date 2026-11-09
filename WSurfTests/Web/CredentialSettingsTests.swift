@@ -36,7 +36,8 @@ struct CredentialSettingsTests {
             vault = try #require(try await VaultManagerFixture.make(profile: profile, vaults: [.locked]).vaults.first)
             self.profile = profile
             manager = vault.manager
-            model = CredentialSettingsModel(profile: profile, pasteboard: pasteboard, manager: manager)
+            // Touch ID answers yes at once here; CredentialPasswordPrivacyTests checks when a Show or Copy asks.
+            model = CredentialSettingsModel(profile: profile, pasteboard: pasteboard, manager: manager, verifyUser: { _ in })
         }
 
         /// A fresh unlock of the vault (a new authorization epoch every time).
@@ -652,7 +653,7 @@ struct CredentialSettingsTests {
         let standalone = try await VaultManagerFixture.standalone(clock: clock)
         let manager = standalone.manager
         let pasteboard = NSPasteboard(name: NSPasteboard.Name("io.wsagency.wsurf.tests.\(UUID().uuidString)"))
-        let model = CredentialSettingsModel(profile: standalone.profile, pasteboard: pasteboard, manager: manager)
+        let model = CredentialSettingsModel(profile: standalone.profile, pasteboard: pasteboard, manager: manager, verifyUser: { _ in })
         func cleanup() async {
             manager.lock(reason: .manual)
             pasteboard.releaseGlobally()

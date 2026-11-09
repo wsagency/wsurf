@@ -26,11 +26,13 @@ struct CredentialSecureItemPrivacyTests {
     private static let networkPart = CredentialCopyPart.secureField(item: 0, field: 0)
     private static let passphrasePart = CredentialCopyPart.secureField(item: 0, field: 2)
 
-    /// Stands in for Touch ID: counts how often the model asks, and fails when told to.
+    /// Stands in for Touch ID: counts how often the model asks, fails when told to, and runs `whileAsking` once, as if while the
+    /// prompt is up.
     @MainActor
     private final class Verifier {
         private(set) var reasons: [String] = []
         var failure: (any Error)?
+        var whileAsking: (@MainActor () async throws -> Void)?
 
         var calls: Int {
             reasons.count
@@ -38,6 +40,10 @@ struct CredentialSecureItemPrivacyTests {
 
         func verify(_ reason: String) async throws {
             reasons.append(reason)
+            if let action = whileAsking {
+                whileAsking = nil
+                try await action()
+            }
             if let failure {
                 throw failure
             }
@@ -50,6 +56,7 @@ struct CredentialSecureItemPrivacyTests {
         let vault: FixtureVault
         let verifier: Verifier
         let model: CredentialSettingsModel
+        let audit = VaultReadAudit()
 
         @MainActor init() async throws {
             let profile = Profile(id: UUID(), name: "Secure items", symbol: "key", color: .blue)
@@ -60,6 +67,12 @@ struct CredentialSecureItemPrivacyTests {
             model = CredentialSettingsModel(
                 profile: profile, pasteboard: pasteboard, manager: vault.manager, verifyUser: { reason in try await verifier.verify(reason) }
             )
+            CredentialManager.readAuditsForTesting[profile.id] = audit
+        }
+
+        /// Whole-vault reads so far (`CredentialManager.snapshot`), the read every Show and Copy makes.
+        @MainActor var snapshots: Int {
+            audit.reads.filter { $0 == .snapshot }.count
         }
 
         var manager: CredentialManager {
@@ -94,6 +107,7 @@ struct CredentialSecureItemPrivacyTests {
         }
 
         @MainActor func cleanup() async {
+            CredentialManager.readAuditsForTesting[profile.id] = nil
             pasteboard.releaseGlobally()
             await VaultManagerFixture.cleanup(profile)
         }
@@ -174,6 +188,53 @@ struct CredentialSecureItemPrivacyTests {
         }
     }
 
+    /// The card shown is the one stored when the prompt was answered: Show Details reads the vault only after the answer.
+    @Test func showingACardReadsTheVaultOnlyAfterTheAnswer() async throws {
+        try await withFixture { f in
+            let stored = cardAccount()
+            try await f.seed([stored])
+            var renamed = stored
+            renamed.secureItems = [SecureItemFixtures.card(name: "Renamed Holder")]
+            let start = f.snapshots
+            var whileAsked: Int?
+            f.verifier.whileAsking = { [renamed] in
+                whileAsked = f.snapshots
+                try await VaultManagerFixture.save([renamed], in: f.vault)
+            }
+
+            try await f.model.revealSecureItems(accountID: stored.id)
+            #expect(whileAsked == start, "nothing was read before the answer")
+            #expect(f.verifier.calls == 1)
+            #expect(f.model.revealedItems?.items.first?.value("fullName") == "Renamed Holder")
+
+            f.model.hideSecrets()
+            f.verifier.failure = WebsiteAuthenticatorError.notAllowed
+            let refused = f.snapshots
+            await #expect(throws: WebsiteAuthenticatorError.self) { try await f.model.revealSecureItems(accountID: stored.id) }
+            #expect(f.snapshots == refused && f.model.revealedItems == nil, "a refusal reads nothing")
+        }
+    }
+
+    /// A card that arrived after the list was read is not shown without its prompt: the list catches up, says so, and the next Show
+    /// asks.
+    @Test func aCardAddedSinceTheListWasReadIsNotShownUnasked() async throws {
+        try await withFixture { f in
+            let id = UUID()
+            try await f.seed([wifiAccount(id: id)])
+            try await VaultManagerFixture.save([cardAccount(id: id)], in: f.vault)
+
+            await #expect(throws: CredentialPromptError.listChanged) { try await f.model.revealSecureItems(accountID: id) }
+            #expect(f.verifier.calls == 0 && f.model.revealedItems == nil)
+            #expect(f.model.summaries.first { $0.id == id }?.hasSensitiveItems == true, "the list caught up")
+            #expect(CredentialSettingsModel.message(for: CredentialPromptError.listChanged)
+                == String(localized: "This credential changed while the list was open. Try again."))
+
+            try await f.model.revealSecureItems(accountID: id)
+            #expect(f.verifier.calls == 1)
+            #expect(f.model.revealedItems?.items.first?.value("number") == SecureItemFixtures.cardNumber)
+        }
+    }
+
     // MARK: - Copying
 
     @Test func copyingAHiddenCardValueAsksEveryTimeAndStaysConcealed() async throws {
@@ -193,6 +254,67 @@ struct CredentialSecureItemPrivacyTests {
             #expect(f.text == SecureItemFixtures.cardCode)
             #expect(f.isConcealed)
             #expect(f.verifier.calls == 3)
+        }
+    }
+
+    /// A hidden card value from the list or History asks before the vault is read: nothing is read while the prompt is up, a value
+    /// changed meanwhile is the one copied, and a refusal reads nothing.
+    @Test func copyingAHiddenCardValueReadsTheVaultOnlyAfterTheAnswer() async throws {
+        try await withFixture { f in
+            let id = UUID()
+            let stored = cardAccount(id: id)
+            try await f.seed([stored])
+            var renumbered = stored
+            renumbered.secureItems = [SecureItemFixtures.card(number: "5555555555554444", name: "Synthetic Holder")]
+            let start = f.snapshots
+            var whileAsked: Int?
+            f.verifier.whileAsking = { [renumbered] in
+                whileAsked = f.snapshots
+                try await VaultManagerFixture.save([renumbered], in: f.vault)
+            }
+            try await f.model.copy(Self.numberPart, of: .stored(id))
+            #expect(whileAsked == start, "nothing was read before the answer")
+            #expect(f.text == "5555555555554444" && f.isConcealed)
+
+            f.verifier.failure = WebsiteAuthenticatorError.notAllowed
+            let sentinel = f.sentinel()
+            let refused = f.snapshots
+            await #expect(throws: WebsiteAuthenticatorError.self) { try await f.model.copy(Self.numberPart, of: .stored(id)) }
+            #expect(f.snapshots == refused && f.text == sentinel, "a refusal reads nothing")
+
+            // History: an earlier card, now only a Wi-Fi network.
+            f.verifier.failure = nil
+            try await f.replace([wifiAccount(id: id)])
+            try await f.model.openHistory(accountID: id)
+            let beforeCopy = f.snapshots
+            var whileAskedInHistory: Int?
+            f.verifier.whileAsking = { whileAskedInHistory = f.snapshots }
+            try await f.model.copy(Self.numberPart, of: .version)
+            #expect(whileAskedInHistory == beforeCopy, "nothing was read before the answer")
+            #expect(f.text == "5555555555554444" && f.isConcealed)
+
+            f.verifier.failure = WebsiteAuthenticatorError.notAllowed
+            let refusedInHistory = f.snapshots
+            await #expect(throws: WebsiteAuthenticatorError.self) { try await f.model.copy(Self.numberPart, of: .version) }
+            #expect(f.snapshots == refusedInHistory, "a refusal reads nothing")
+        }
+    }
+
+    /// A hidden card value that the list did not hold when it was read is not copied without its prompt: the list catches up, and
+    /// the next copy asks.
+    @Test func aCardValueAddedSinceTheListWasReadIsNotCopiedUnasked() async throws {
+        try await withFixture { f in
+            let id = UUID()
+            try await f.seed([wifiAccount(id: id)])
+            try await VaultManagerFixture.save([cardAccount(id: id)], in: f.vault)
+            let sentinel = f.sentinel()
+
+            await #expect(throws: CredentialPromptError.listChanged) { try await f.model.copy(Self.numberPart, of: .stored(id)) }
+            #expect(f.verifier.calls == 0 && f.text == sentinel)
+
+            try await f.model.copy(Self.numberPart, of: .stored(id))
+            #expect(f.verifier.calls == 1)
+            #expect(f.text == SecureItemFixtures.cardNumber && f.isConcealed)
         }
     }
 

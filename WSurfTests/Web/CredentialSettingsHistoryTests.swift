@@ -24,7 +24,8 @@ struct CredentialSettingsHistoryTests {
             let profile = Profile(id: UUID(), name: "History", symbol: "key", color: .blue)
             vault = try #require(try await VaultManagerFixture.make(profile: profile, passkeys: passkeys, vaults: [.locked]).vaults.first)
             self.profile = profile
-            model = CredentialSettingsModel(profile: profile, pasteboard: pasteboard, manager: vault.manager)
+            // Touch ID answers yes at once here; CredentialPasswordPrivacyTests checks when History asks.
+            model = CredentialSettingsModel(profile: profile, pasteboard: pasteboard, manager: vault.manager, verifyUser: { _ in })
         }
 
         @MainActor func unlockAndLoad() async throws {

@@ -530,7 +530,7 @@ struct VaultTransferLifecycleTests {
         try await base.withFixture { f in
             let target = base.account(username: "ada", password: "pw")
             try await f.seed([target] + base.neighbours(1))
-            let model = CredentialSettingsModel(profile: f.profile, exchange: f.coordinator, manager: f.manager)
+            let model = CredentialSettingsModel(profile: f.profile, exchange: f.coordinator, manager: f.manager, verifyUser: { _ in })
             await model.load()
             let epoch = try #require(f.manager.authorizationEpoch)
             let loaded = model.revision
@@ -570,7 +570,7 @@ struct VaultTransferLifecycleTests {
             let target = base.account(username: "ada", password: "pw")
             try await f.seed([target] + base.neighbours(1))
             let inbox = inbox(f)
-            let model = CredentialSettingsModel(profile: f.profile, exchange: f.coordinator, manager: f.manager)
+            let model = CredentialSettingsModel(profile: f.profile, exchange: f.coordinator, manager: f.manager, verifyUser: { _ in })
             await model.load()
             let epoch = try #require(f.manager.authorizationEpoch)
             let before = try f.diskBytes()
