@@ -23,9 +23,11 @@ struct ChromiumScrollWakeTests {
     @Test func aSleepingChromiumTabWakesAtItsScrollOffset() async throws {
         try await LiveWindowRig.with(engine: .chromium, routes: ["/tall": .html(Self.tall)]) { rig in
             let tab = try await rig.open("/tall")
-            _ = try await rig.open("/still")
+            // A hidden Chromium page does not run its rendering update, so it never fires the scroll event the report
+            // hangs on: the tab scrolls and reports while it is the visible one, and only then goes to the background.
             _ = try? await tab.page.evaluateJavaScript("window.scrollTo(0, 1500)")
             try #require(await waitUntil { abs(tab.lastReportedScrollY - 1500) < 2 }, "the page reports where it is")
+            _ = try await rig.open("/still")
 
             rig.coordinator.unloadTab(tab)
             #expect(tab.isDeferred && !tab.isMaterialised)
