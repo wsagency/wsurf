@@ -155,6 +155,7 @@ enum D4SpikeDriver {
         _ = await waitLoaded(animated, timeout: 60)
         try? await Task.sleep(for: .seconds(1))
         _ = await ChromiumRemote.shared.statistics(reset: true)
+        _ = RemoteFrameSinks.shared.report(reset: true)
         try? await Task.sleep(for: .seconds(3))
         await serviceStatistics()
         if let fps = try? await animated.liveView?.evaluateJavaScript("JSON.stringify(window.__frames ? window.__frames() : null)") {
@@ -394,6 +395,7 @@ enum D4SpikeDriver {
                         "inputLegMs.n", "inputLegMs.p50", "inputLegMs.p95", "hidden", "parked"]
             lines.append("  browser \(browser.browser): " + keys.map { "\($0) \(String(format: "%.2f", browser.double($0)))" }.joined(separator: ", "))
         }
+        lines.append(RemoteFrameSinks.shared.report())
         log(lines.joined(separator: "\n"))
     }
 

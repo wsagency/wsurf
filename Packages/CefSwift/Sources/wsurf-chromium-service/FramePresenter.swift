@@ -62,7 +62,7 @@ final class FramePresenter {
     private var presentTimes: [Double] = []
 
     /// Presentation "xpc": each frame's surface goes to WSurf over XPC instead of into the remote layer tree.
-    var sink: ((IOSurfaceRef, Element) -> Void)?
+    var sink: ((IOSurfaceRef, Element, UInt64) -> Void)?
 
     init(serverPort: mach_port_t, debugRoot: Bool = false) {
         client = CARemoteLayerClient(serverPort: serverPort)
@@ -191,7 +191,7 @@ final class FramePresenter {
             case .view: shown = surface
             case .popup: popupShown = surface
             }
-            sink(surface, element)
+            sink(surface, element, entry)
             let done = Clock.nowNanoseconds
             presented += 1
             record(&blitMs, Double(blitDone &- entry) / 1e6)

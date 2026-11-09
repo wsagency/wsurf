@@ -241,8 +241,8 @@ final class ServiceHost {
         let browser = RemoteBrowser(id: id, message: message, serverPort: layerServerPort, debugRoot: debugRoot)
         browsers[id] = browser
         if presentation == "xpc" {
-            browser.presenter.sink = { surface, element in
-                ServiceHost.shared.sendFrame(browser: id, surface: surface, popup: element == .popup)
+            browser.presenter.sink = { surface, element, entry in
+                ServiceHost.shared.sendFrame(browser: id, surface: surface, popup: element == .popup, entry: entry)
             }
         }
         let created = CefRemoteMessage(CefRemote.Event.browserCreated, browser: id)
@@ -264,11 +264,13 @@ final class ServiceHost {
 
     /// Presentation "xpc": one frame to WSurf's frames connection. The IOSurface travels as a Mach port; WSurf puts it in a
     /// layer from its frames queue, never its main thread.
-    func sendFrame(browser id: Int64, surface: IOSurfaceRef, popup: Bool) {
+    func sendFrame(browser id: Int64, surface: IOSurfaceRef, popup: Bool, entry: UInt64) {
         guard let framesPeer else { return }
         let message = CefRemoteMessage(CefRemote.Event.frame, browser: id)
         xpc_dictionary_set_value(message.object, CefRemote.Key.surface, IOSurfaceCreateXPCObject(surface))
         message.set(CefRemote.Key.flag, popup)
+        // K4's output leg ends in WSurf: when CEF entered the paint callback, on the shared mach clock.
+        message.set(CefRemote.Key.timestamp, Double(entry) / 1e9)
         xpc_connection_send_message(framesPeer, message.object)
     }
 

@@ -35,8 +35,9 @@ nonisolated enum ChromiumOOP {
 
     /// How frames reach this window: "remote" (`CALayer(remoteClientId:)`, the plan's design) or "xpc" (the plan's
     /// fallback: each frame's IOSurface over XPC, put into a layer from a queue that is not the main thread).
+    /// The remote layer draws nothing across processes on macOS 26 (spike, b11), so "xpc" is the default.
     static var presentation: String {
-        environment("WSURF_OOP_PRESENT") == "xpc" ? "xpc" : "remote"
+        environment("WSURF_OOP_PRESENT") == "remote" ? "remote" : "xpc"
     }
 }
 
@@ -46,6 +47,8 @@ nonisolated final class RemoteFrameSinks: @unchecked Sendable {
     private let lock = NSLock()
     private var layers: [Int64: CALayer] = [:]
     private(set) var framesShown = 0
+    /// K4's whole output leg, CEF's paint callback in the service to this commit, in milliseconds.
+    private var outputLegMs: [Double] = []
 
     func set(_ layer: CALayer?, for browser: Int64) {
         lock.lock()
@@ -67,6 +70,31 @@ nonisolated final class RemoteFrameSinks: @unchecked Sendable {
         CATransaction.setDisableActions(true)
         layer.contents = surface
         CATransaction.commit()
+        let entry = message.double(CefRemote.Key.timestamp)
+        guard entry > 0 else { return }
+        let leg = (ProcessInfo.processInfo.systemUptime - entry) * 1000
+        lock.lock()
+        if outputLegMs.count >= 4_000 {
+            outputLegMs.removeFirst(1_000)
+        }
+        outputLegMs.append(leg)
+        lock.unlock()
+    }
+
+    /// Percentiles of the output leg since the last reset.
+    func report(reset: Bool = false) -> String {
+        lock.lock()
+        let samples = outputLegMs.sorted()
+        if reset {
+            outputLegMs.removeAll()
+        }
+        lock.unlock()
+        guard !samples.isEmpty else { return "WSurf frames: none" }
+        func percentile(_ q: Double) -> Double {
+            samples[min(samples.count - 1, Int((Double(samples.count - 1) * q).rounded()))]
+        }
+        return String(format: "WSurf frames: n %ld, output leg to WSurf's commit p50 %.2f ms, p95 %.2f ms, max %.2f ms",
+                      samples.count, percentile(0.5), percentile(0.95), samples.last ?? 0)
     }
 }
 
