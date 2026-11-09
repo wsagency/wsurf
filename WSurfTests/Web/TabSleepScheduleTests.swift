@@ -202,9 +202,15 @@ struct TabSleepScheduleTests {
             try #require(await waitUntil {
                 ((try? await tab.page.evaluateJavaScript("window.scrollY")) as? Double ?? 0) >= 1400
             })
+            if engine == .chromium {
+                // The wake keeps the offset the page last reported to the app, which a script reports after a short debounce
+                // (`BrowserTab.swift`, the arm at unload): without it the unload arms nothing.
+                try #require(await waitUntil { tab.lastReportedScrollY >= 1400 }, "the page's scroll report reached the tab")
+            }
             _ = try await rig.open("/still")
             rig.coordinator.unloadTab(tab)
             try #require(tab.isDeferred)
+            let armedAtUnload = tab.wakeScroll.isArmed
             await tab.waitForRetirement()
 
             rig.browser.activate(tab)
@@ -227,6 +233,8 @@ struct TabSleepScheduleTests {
                     return abs(latest - 1500) < 2
                 }
                 let cause = switch (taken, tab.wakeScroll.appliedCount) {
+                case _ where !armedAtUnload:
+                    "the unload armed nothing: the page's scroll report had not reached the tab"
                 case (false, _):
                     "the offset was never taken: the load of the address did not finish for the tab"
                 case (true, 0):
