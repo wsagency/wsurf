@@ -40,22 +40,31 @@ DENY = re.compile(
     r"|com\.apple\.linkd|Error registering app with intents framework|send_message_with_reply_sync\(\): XPC_ERROR"
     r"|\[assertion\] Error acquiring assertion"
 )
-# Kept even when they look like host noise.
-KEEP_ALWAYS = re.compile(
-    r" \[fault\] |[Ff]atal error|Assertion failed|Precondition failed|Terminating app due to uncaught exception"
-    r"|NSInternalInconsistencyException|Thread \d+ Crashed|EXC_BAD_ACCESS|SIG(?:TRAP|SEGV|ABRT)|Test crashed with signal"
-    r"|Restarting after unexpected exit"
+# Real signal, kept even when it sits in a host os_log line (a crash report, a failed assertion) and even in a dropped record.
+KEEP_HOST = re.compile(
+    r" \[fault\] |[Ff]atal error|Assertion failed|Assertion failure|Precondition failed"
+    r"|Terminating app due to uncaught exception|NSInternalInconsistencyException|Thread \d+ Crashed|EXC_[A-Z_]+"
+    r"|SIG(?:TRAP|SEGV|ABRT|ILL|BUS|KILL)|Test crashed with signal|Restarting after unexpected exit|reason=Crash"
+    r"|exceeded execution time allowance"
 )
+KEEP_ERROR = re.compile(r": error: |error: -\[")
+KEEP_ALWAYS = re.compile(KEEP_HOST.pattern + "|" + KEEP_ERROR.pattern)
 # Lines that end a test run or flag trouble: the held "started" lines are printed before them.
 TROUBLE = re.compile(
-    r"Restarting after unexpected exit|crashed|Thread \d+ Crashed|EXC_BAD_ACCESS|SIG(?:TRAP|SEGV|ABRT)|[Ff]atal error"
+    r"Restarting after unexpected exit|crashed|Thread \d+ Crashed|EXC_[A-Z_]+|SIG(?:TRAP|SEGV|ABRT|ILL|BUS|KILL)|[Ff]atal error"
     r"|Terminating app due to uncaught exception|Test crashed with signal|exceeded its time limit"
+    r"|exceeded execution time allowance|reason=Crash"
 )
 # Framework and tool result lines that no deny pattern may ever remove.
-PROTECTED = re.compile(r"^(?:✘|✔ Test run|◇ Test run|\*\*|::|===|---|error:|Test (?:Case|Suite) .* failed|\s*Executed \d)")
-# Stdout and the os_log mirror share one pipe, so a result can land in the middle of a host line. Such a line passes.
-MIDLINE_RESULT = re.compile(r"✘|Test run with \d|\*\* TEST|Test Case '.*' failed|Executed \d+ tests?, with [1-9]")
-CONTINUATION = re.compile(r"^(?:\t\"|\}$|\), NS|    \"LocalDataTask )")
+PROTECTED = re.compile(r"^(?:✘|✔ Test run|◇ Test run|\*\*|::|===|---|error:|Test (?:Case|Suite) .* failed|\s*Executed \d|\s*↳)")
+# Stdout and the os_log mirror share one pipe, so test output can be glued behind (part of) a host line. The host line is cut
+# at the first of these markers: the test part goes on through the filter, only the host part is dropped.
+SPLIT = re.compile(
+    r"\u200b?(?:◇ (?:Test|Suite) |[✔✘] |Test Suite '|Test Case '|\*\* TEST|\s*Executed \d+ tests?|Test run with \d)"
+    r"|/\S*?\.swift:\d+(?::\d+)?: error: "
+)
+GLUED_STARTED = re.compile(r"\u200b?◇ (?:Test|Suite) .*? started\.?\s*$")
+CONTINUATION = re.compile(r"^(?:\t\"|\}$|Invalidation reason: |\), NS|    \"LocalDataTask )")
 STARTED = re.compile(r"^◇ ((?:Test|Suite) .*?) started\.?\s*$")
 PASSED = re.compile(r"^✔ (Test (?!run with)(?:case )?.*?) passed after ([\d.]+) seconds?")
 RESULT = re.compile(r"^[✔✘] ((?:Test|Suite) .*?) (?:passed|failed|with \d+ test cases? (?:passed|failed)|recorded)\b")
@@ -69,6 +78,7 @@ class ConsoleFilter:
     def __init__(self, raw_path: str) -> None:
         self.raw_path = raw_path
         self.dropped = 0
+        self.counted = -1  # the count the last counter line showed
         self.in_dropped_record = False
         self.started: dict[str, str] = {}  # test key -> its "started" line, for tests with no result yet
         self.last_counter = time.monotonic()
@@ -79,12 +89,28 @@ class ConsoleFilter:
         if self.in_dropped_record and CONTINUATION.match(text):
             self.dropped += 1
             return out
-        self.in_dropped_record = False
-        if not PROTECTED.match(text) and not MIDLINE_RESULT.search(text) and DENY.search(text):
-            return self._drop(out)
-        if not KEEP_ALWAYS.search(text):
-            if HOST_LOG.match(text) and not MIDLINE_RESULT.search(text):
-                return self._drop(out)
+        in_record, self.in_dropped_record = self.in_dropped_record, False
+        host = HOST_LOG.match(text)
+        if host:
+            if not KEEP_HOST.search(text):
+                marker = SPLIT.search(text, host.end())
+                if marker is None:
+                    if not KEEP_ERROR.search(text):
+                        return self._drop(out)
+                else:
+                    self.dropped += 1  # the host part; the test part carries on as a line of its own
+                    text = text[marker.start():].lstrip("\u200b")
+                    line = text + "\n"
+        elif in_record and DENY.search(text) and not PROTECTED.match(text) and not KEEP_ALWAYS.search(text):
+            return self._drop(out)  # DENY applies only to host lines and to the rest of a dropped record
+        else:
+            glued = GLUED_STARTED.search(text)
+            if glued and glued.start() > 0 and not KEEP_ALWAYS.search(text):
+                prefix = text[: glued.start()]
+                if prefix.strip():
+                    out.append(prefix + "\n")
+                text = text[glued.start():].lstrip("\u200b")
+                line = text + "\n"
         started = STARTED.match(text)
         if started:
             self.started[started.group(1)] = line  # held; printed only if no result follows
@@ -127,7 +153,10 @@ class ConsoleFilter:
         now = time.monotonic()
         if not force and now - self.last_counter < COUNTER_SECONDS:
             return []
+        if force and self.dropped == self.counted:
+            return []
         self.last_counter = now
+        self.counted = self.dropped
         return [f"filtered {self.dropped} host-log lines (raw: {self.raw_path})\n"]
 
 
@@ -166,6 +195,9 @@ def main() -> int:
         print("usage: run-xcodebuild-with-watchdog.py -- xcodebuild test ...", file=sys.stderr)
         return 2
 
+    raw_path = os.getenv("WSURF_CI_RAW_LOG")
+    raw = open(raw_path, "ab", buffering=0) if raw_path else None  # byte for byte, before any filtering; opened first
+    console = ConsoleFilter(raw_path) if raw_path and os.getenv("WSURF_CI_VERBOSE") != "1" else None
     process = subprocess.Popen(
         command,
         stdout=subprocess.PIPE,
@@ -173,9 +205,6 @@ def main() -> int:
         start_new_session=True,
     )
     lines: queue.Queue[bytes | None] = queue.Queue()
-    raw_path = os.getenv("WSURF_CI_RAW_LOG")
-    raw = open(raw_path, "ab", buffering=0) if raw_path else None  # byte for byte, before any filtering
-    console = ConsoleFilter(raw_path) if raw_path and os.getenv("WSURF_CI_VERBOSE") != "1" else None
 
     def read_output() -> None:
         assert process.stdout is not None
@@ -185,6 +214,31 @@ def main() -> int:
         finally:
             lines.put(None)
 
+    def show(text: str) -> None:
+        print(text, end="", flush=True)
+
+    def own(text: str) -> None:
+        """The watchdog's own lines bypass the filter and are part of the raw log."""
+        show(text)
+        if raw is not None:
+            raw.write(text.encode("utf-8", errors="replace"))
+
+    def emit(data: bytes) -> str:
+        if raw is not None:
+            raw.write(data)
+        text = data.decode("utf-8", errors="replace")
+        if console is None:
+            show(text)
+        else:
+            for shown in console.feed(text):
+                show(shown)
+        return text
+
+    def finish_console() -> None:
+        if console is not None:
+            for shown in console.flush_started() + console.counter(force=True):
+                show(shown)
+
     threading.Thread(target=read_output, daemon=True).start()
     deadline = time.monotonic() + TOTAL_LIMIT_SECONDS
     saw_summary = False
@@ -193,41 +247,44 @@ def main() -> int:
         try:
             line = lines.get(timeout=0.5)
         except queue.Empty:
-            line = ""
+            line = b""
         if line is None:
             output_closed = True
         if console is not None and not line:
             for shown in console.counter():
-                print(shown, end="", flush=True)
+                show(shown)
         if line:
-            if raw is not None:
-                raw.write(line)
-            line = line.decode("utf-8", errors="replace")
-            if console is None:
-                print(line, end="", flush=True)
-            else:
-                for shown in console.feed(line):
-                    print(shown, end="", flush=True)
-            if not saw_summary and SUITE_SUMMARY.search(line):
+            text = emit(line)
+            if not saw_summary and SUITE_SUMMARY.search(text):
                 saw_summary = True
                 deadline = min(deadline, time.monotonic() + FINALIZATION_LIMIT_SECONDS)
         if output_closed and process.poll() is not None:
-            if console is not None:
-                for shown in console.flush_started() + console.counter(force=True):
-                    print(shown, end="", flush=True)
+            finish_console()
             return process.wait()
         if time.monotonic() >= deadline:
             reason = "test result finalization" if saw_summary else "test command"
             if console is not None:
-                for shown in console.flush_started() + console.counter(force=True):
-                    print(shown, end="", flush=True)
-            print(f"::error::{reason} exceeded its time limit; saving process diagnostics", flush=True)
+                for shown in console.flush_started():
+                    show(shown)
+            own(f"::error::{reason} exceeded its time limit; saving process diagnostics\n")
             try:
                 capture_diagnostics(process)
             except (OSError, ValueError, subprocess.TimeoutExpired) as error:
-                print(f"::warning::could not save all process diagnostics: {error}", flush=True)
+                own(f"::warning::could not save all process diagnostics: {error}\n")
             finally:
                 stop(process)
+            # What the child printed while it was being stopped (its interruption banner, the .xcresult path) is signal.
+            drain_until = time.monotonic() + 5
+            while not output_closed and time.monotonic() < drain_until:
+                try:
+                    last = lines.get(timeout=0.5)
+                except queue.Empty:
+                    continue
+                if last is None:
+                    output_closed = True
+                else:
+                    emit(last)
+            finish_console()
             return 124
 
 
