@@ -563,8 +563,11 @@ final class CredentialSettingsModel {
         guard snapshot.revision == expectedRevision else { throw CredentialVaultError.staleRevision }
         var accounts = snapshot.accounts
         let index = accounts.firstIndex(where: { $0.id == account.id })
-        // A new or changed password ends Show Password Health's grant before it is written (`endHealthGrant`).
-        if let password = account.password, password != index.flatMap({ accounts[$0].password }) {
+        // A save that changes anything password health reads of the credential (its password, username, websites or login
+        // addresses), or adds a credential, ends Show Password Health's grant before it is written (`endHealthGrant`). With the grant
+        // kept, a username or website name saved as a guess would show "Weak" when the password holds it, four characters at a time,
+        // and a guessed password "Reused".
+        if !PasswordHealth.sameInputs(index.map { accounts[$0] }, account) {
             endHealthGrant()
         }
         if let index {

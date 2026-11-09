@@ -12,7 +12,8 @@ struct HealthKey: Equatable {
 }
 
 /// The vault, unlock and revision Show Password Health's prompt covers. The revision moves on only with this page's own writes that
-/// keep every password (`CredentialSettingsModel.write`); any other revision ends the grant.
+/// change nothing health reads of the credentials they keep (`CredentialSettingsModel.save`, `remove`); any other revision ends the
+/// grant.
 struct HealthGrant: Equatable {
     let vaultID: UUID
     let epoch: UInt64
@@ -23,13 +24,15 @@ struct HealthGrant: Equatable {
 /// flags on the summaries the list shows, and the editor's note explains them.
 ///
 /// Nothing of it is read or shown until Show Password Health passes Touch ID (`verifyOwner`). The flags are derived from the
-/// passwords: without the prompt, saving a guessed password and watching "Reused" appear would tell which login holds it. So the
-/// prompt covers one vault, one unlock and the revision shown, and moves on only with this page's own writes that keep every
-/// password, such as a rename (`HealthGrant`). A password this page saves or imports ends it, and so does any revision the page did
-/// not write: autofill's save on submit, another window, sync. After the prompt, the page asks once per settled revision: a write
-/// while a request waits cancels it and asks again for the newer revision. The report is made in the vault, so only flags reach the
-/// page. A lock drops them with the session, and the next unlock asks again. Reading the vault does not extend its unlock
-/// (`CredentialAutoLock`).
+/// passwords: without the prompt, saving a guessed password and watching "Reused" appear would tell which login holds it, and
+/// saving a guessed username or website name and watching "Weak" appear would tell what the password holds. So the prompt covers
+/// one vault, one unlock and the revision shown, and moves on only with this page's own writes that change none of the passwords,
+/// usernames, websites and login addresses of the credentials they keep (`PasswordHealth.sameInputs`), such as a rename or a
+/// removal (`HealthGrant`). A save that changes one of them or adds a credential ends it, so does an import, and so does any
+/// revision the page did not write: autofill's save on submit, another window, sync. After the prompt, the page asks once per
+/// settled revision: a write while a request waits cancels it and asks again for the newer revision. The report is made in the
+/// vault, so only flags reach the page. A lock drops them with the session, and the next unlock asks again. Reading the vault does
+/// not extend its unlock (`CredentialAutoLock`).
 extension CredentialSettingsModel {
     /// Whether password health is shown: Show Password Health's prompt covers the vault, unlock and revision shown.
     var showsHealth: Bool {
@@ -83,8 +86,8 @@ extension CredentialSettingsModel {
     }
 
     /// Ends Show Password Health's grant: the flags go at once, nothing more is read, and the next Show Password Health asks again.
-    /// Called when this page saves or imports a new or changed password, so each guess saved here costs a prompt to check, and when
-    /// the page meets a revision it did not write.
+    /// Called when this page saves a change to what health reads of a credential or adds one, and when it imports, so each guess
+    /// saved here costs a prompt to check, and when the page meets a revision it did not write.
     func endHealthGrant() {
         healthGrant = nil
         cancelHealthRead()
@@ -93,8 +96,9 @@ extension CredentialSettingsModel {
         }
     }
 
-    /// Moves the grant on with a write this page made itself from the revision it covers, so a rename or a removal keeps it. A write
-    /// that saves a new or changed password ended it before it was made (`save`, `commitImport`).
+    /// Moves the grant on with a write this page made itself from the revision it covers, so a rename or a removal keeps it. A save
+    /// that changes what health reads of a credential or adds one, and an import, ended it before they were made (`save`,
+    /// `commitImport`).
     func carryHealthGrant(from expected: UInt64, to written: UInt64) {
         guard var grant = healthGrant, grant.revision == expected else { return }
         grant.revision = written

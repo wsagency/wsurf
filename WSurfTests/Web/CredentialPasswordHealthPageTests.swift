@@ -11,6 +11,14 @@ import Testing
 // chips, the editor's note, and when the page asks for a report. Test-only in-memory unlock keys and synthetic passwords; nothing here
 // touches a real vault, the Keychain or a native ceremony, and no check prints a password.
 
+/// What a save changes of a credential's websites (`savingAChangedWebsiteOrLoginAddressEndsTheGrant`).
+private nonisolated enum WebsiteEdit: CaseIterable, Sendable {
+    /// One more website, named after a guess.
+    case website
+    /// Another login address on a website the credential already has.
+    case loginAddress
+}
+
 @MainActor
 struct CredentialPasswordHealthPageTests {
     private static let shared = "Kx9!vQ2#mW7p"
@@ -366,6 +374,66 @@ struct CredentialPasswordHealthPageTests {
 
             _ = try await f.model.save(login("Nw7!kQ2#pX9m", at: "https://example.info"), expectedRevision: f.model.revision)
             #expect(!f.model.showsHealth, "a new credential with a password ends it too")
+        }
+    }
+
+    /// A username is a guess as well: "Weak" (`personal`) flags a password that holds 4 or more characters of the username, so saving
+    /// usernames and watching the flag would read the password a few characters at a time. Saving a changed username ends the grant
+    /// like a password.
+    @Test func savingAChangedUsernameEndsTheGrant() async throws {
+        try await withFixture { f in
+            var all = accounts()
+            try await VaultManagerFixture.save(all, in: f.vault)
+            await f.model.load()
+            try await f.model.revealHealth()
+            #expect(await waitUntil { f.model.healthRevision == f.model.revision })
+            #expect(f.model.summaries.first { $0.id == all[3].id }?.health == nil, "the strong password is not flagged")
+            let reads = f.healthReads
+
+            // A guess: the last four characters of the strong password.
+            all[3].username = "nr2w"
+            _ = try await f.model.save(all[3], expectedRevision: f.model.revision)
+            #expect(!f.model.showsHealth && f.model.healthGrant == nil && flagged(f.model.summaries).isEmpty)
+            try await Task.sleep(for: .milliseconds(50))
+            #expect(f.healthReads == reads, "nothing is read for the guess")
+
+            try await f.model.revealHealth()
+            #expect(f.prompts.reasons == [Self.reason, Self.reason])
+            #expect(await waitUntil { f.model.healthRevision == f.model.revision })
+            let guessed = f.model.summaries.first { $0.id == all[3].id }?.health?.weaknesses
+            #expect(guessed == [.personal], "the guess shows only after a second prompt")
+        }
+    }
+
+    /// A website is a guess as well: "Weak" (`personal`) flags a password that holds its website's name, and "Reused" counts
+    /// websites. Saving a changed website or login address ends the grant, here even where the report would not change.
+    @Test(arguments: WebsiteEdit.allCases)
+    private func savingAChangedWebsiteOrLoginAddressEndsTheGrant(_ edit: WebsiteEdit) async throws {
+        try await withFixture { f in
+            var all = accounts()
+            try await VaultManagerFixture.save(all, in: f.vault)
+            await f.model.load()
+            try await f.model.revealHealth()
+            #expect(await waitUntil { f.model.healthRevision == f.model.revision })
+            let reads = f.healthReads
+
+            switch edit {
+            case .website:
+                // A guess: a website named after the last four characters of the strong password.
+                all[3].origins.append("https://nr2w.net")
+            case .loginAddress:
+                all[3].loginURLs = [URL(string: "https://example.edu/signin")!]
+            }
+            _ = try await f.model.save(all[3], expectedRevision: f.model.revision)
+            #expect(!f.model.showsHealth && f.model.healthGrant == nil && flagged(f.model.summaries).isEmpty)
+            try await Task.sleep(for: .milliseconds(50))
+            #expect(f.healthReads == reads, "nothing is read for the edit")
+
+            guard edit == .website else { return }
+            try await f.model.revealHealth()
+            #expect(await waitUntil { f.model.healthRevision == f.model.revision })
+            let guessed = f.model.summaries.first { $0.id == all[3].id }?.health?.weaknesses
+            #expect(guessed == [.personal], "the guess shows only after a second prompt")
         }
     }
 

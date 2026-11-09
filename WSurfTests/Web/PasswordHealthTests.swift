@@ -190,6 +190,31 @@ struct PasswordHealthTests {
         #expect(first != second)
     }
 
+    // MARK: - What a report reads of a credential
+
+    /// A page keeps its health grant only across saves that keep what a report reads (`CredentialSettingsModel.save`): the id,
+    /// password, username, websites and login addresses. A display name may change; a new credential counts as a change.
+    @Test func aReportReadsTheIdPasswordUsernameWebsitesAndLoginAddresses() {
+        let stored = login("Kx9!vQ2#mW7p", at: ["https://example.com"])
+        var renamed = stored
+        renamed.displayName = "Renamed"
+        #expect(PasswordHealth.sameInputs(stored, stored) && PasswordHealth.sameInputs(stored, renamed))
+        #expect(!PasswordHealth.sameInputs(nil, stored), "a new credential")
+        let edits: [(String, (inout CredentialAccount) -> Void)] = [
+            ("password", { $0.password = "Zt4$pL8@nR2w" }),
+            ("cleared password", { $0.password = nil }),
+            ("username", { $0.username = "kx9!" }),
+            ("website", { $0.origins.append("https://example.org") }),
+            ("login address", { $0.loginURLs = [URL(string: "https://example.com/signin")!] }),
+            ("id", { $0.id = UUID() }),
+        ]
+        for (label, edit) in edits {
+            var changed = stored
+            edit(&changed)
+            #expect(!PasswordHealth.sameInputs(stored, changed), "\(label)")
+        }
+    }
+
     // MARK: - Through the vault
 
     /// The manager's read: the vault's live credentials at its revision, as flags, read once as `.health`. A locked vault returns

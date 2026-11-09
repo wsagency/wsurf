@@ -104,6 +104,18 @@ public nonisolated enum PasswordHealth {
         return PasswordHealthReport(vaultID: vaultID, revision: revision, findings: findings)
     }
 
+    /// Whether `report` would read the same of `saved` as of `stored`, the credential it replaces. `report` reads a credential's id,
+    /// password, username and websites (`origins`, which hold its login addresses' origins), and nothing else; the login addresses
+    /// are compared too, as editing them edits the websites. A new credential (`stored` is `nil`) counts as a change. A page that
+    /// shows findings under one Touch ID prompt carries that prompt only across its own saves where this holds
+    /// (`CredentialSettingsModel.save`): a password, username or website saved as a guess would show whether the password is another
+    /// website's too (`reuse`) or holds the guess (`personal`).
+    public static func sameInputs(_ stored: CredentialAccount?, _ saved: CredentialAccount) -> Bool {
+        guard let stored else { return false }
+        return stored.id == saved.id && stored.password == saved.password && stored.username == saved.username
+            && stored.origins == saved.origins && stored.loginURLs == saved.loginURLs
+    }
+
     /// The lowercased hosts of a credential's websites: its origins, which hold its login addresses' origins too
     /// (`CredentialAccount.validate()`, which every commit runs, refuses a login address whose origin is not among them).
     static func hosts(of account: CredentialAccount) -> [String] {
