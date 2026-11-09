@@ -444,6 +444,51 @@ struct AutofillSecretsTests {
         }
     }
 
+    /// What can change while the Touch ID prompt is open: another field of the page asks (its request replaces this one), the vault
+    /// locks and unlocks again (a new unlock of the same manager), or a write lands.
+    enum PromptChange: CaseIterable, Sendable {
+        case anotherField, relock, write
+    }
+
+    /// The prompt can stay open for any time, so what it waited through is checked again before the card is read (review L1): the
+    /// pick fails with `changedPage`, and no vault read follows the prompt, so no card number or security code reaches the main actor.
+    @Test(arguments: PromptChange.allCases)
+    func aChangeDuringTouchIDReadsNoCard(_ change: PromptChange) async throws {
+        try await withVault { rig, vault, accounts, audit in
+            let suggestions = AutofillSuggestions.shared
+            let verify = suggestions.verifyUser
+            defer { suggestions.verifyUser = verify }
+            let request = rig.request(.card)
+            _ = await suggestions.vaultItemSuggestions(for: request, origin: Self.shop, presentation: suggestions.presentationID)
+            let rowID = try #require(request.itemRows.keys.first)
+            var readsAfterPrompt: Int?
+            suggestions.verifyUser = { _ in
+                switch change {
+                case .anotherField:
+                    _ = rig.request(.card)
+                case .relock:
+                    vault.manager.lock(reason: .manual)
+                    try await VaultManagerFixture.unlock(vault)
+                case .write:
+                    try await VaultManagerFixture.save(accounts + [VaultFixtures.account(username: "grace", origin: Self.shop)], in: vault)
+                }
+                readsAfterPrompt = audit.reads.count
+            }
+
+            var refused: (any Error)?
+            do {
+                _ = try await suggestions.vaultItemFill(rowID, request: request, in: rig.page)
+            } catch {
+                refused = error
+            }
+            #expect(refused as? ContactAutofillError == .changedPage, "a pick the prompt outlived fails otherwise")
+            let atPrompt = try #require(readsAfterPrompt, "Touch ID was not asked")
+            #expect(audit.reads.count == atPrompt, "the vault was read after the prompt: \(audit.reads.dropFirst(atPrompt))")
+            let leaks = Self.leaks(in: Self.kept(by: request))
+            #expect(leaks.isEmpty, "the request keeps a value after the prompt: \(leaks)")
+        }
+    }
+
     // MARK: A5 A lock still drops everything
 
     /// List, lock every vault as a screen lock does, then pick: the request's authority, the vault read and the store's grant are all
