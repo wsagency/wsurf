@@ -4,6 +4,9 @@
     "%@" : {
 
     },
+    "%@. It leaves the clipboard in a minute." : {
+      "comment" : "Brief notice above the Credentials list in Settings after a secret (a password, a verification code, a hidden value) is copied. First %@ is the usual confirmation, such as “Password Copied”, so the notice reads “Password Copied. It leaves the clipboard in a minute.” WSurf clears the clipboard a minute later, when the vault locks or at quit, unless something else was copied since. Two short sentences."
+    },
     "%@ looks like %@, but it is a different website. Add it only if you are sure." : {
       "comment" : "Warning in the toolbar popover after a hand-picked login or code, when the page's website imitates one of the credential's own websites (a look-alike letter, a digit for a letter, a one-letter typo). First %@ is the page's website, second %@ is the credential's website it resembles, both as the address bar draws them (punycode). “Not Now” is then the default button."
     },

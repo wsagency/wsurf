@@ -211,6 +211,7 @@ final class InputHistory {
 
     /// Drops the profile's decrypted entries. The private key is never kept, so opening again asks again.
     func lock(profileID: UUID) {
+        SecretClipboard.inputHistoryLocked(profile: profileID)
         generations[profileID, default: 0] += 1
         relockTimers.removeValue(forKey: profileID)?.cancel()
         if unlocked[profileID] != nil {

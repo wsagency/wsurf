@@ -298,6 +298,7 @@
    "MicroShellTests",
    "MicroWindowTests",
    "PDFSavingTests",
+   "SecretClipboardTests",
    "SidebarListHeightTests",
    "TabSleepScheduleTests",
    "TabSleepSparesTests",

@@ -173,7 +173,7 @@ struct InputHistoryListModelTests {
         #expect(rig.model.notice != nil)
         #expect(await waitUntil { rig.clock.pendingCount == 1 })
 
-        rig.clock.advance(by: InputHistoryListModel.clipboardLifetime - .seconds(1))
+        rig.clock.advance(by: SecretClipboard.lifetime - .seconds(1))
         #expect(rig.pasteboard.string(forType: .string) == "dummy-secret-123")
         rig.clock.advance(by: .seconds(1))
         await rig.model.clipboardClearing?.value
@@ -190,9 +190,20 @@ struct InputHistoryListModelTests {
         #expect(await waitUntil { rig.clock.pendingCount == 1 })
         rig.pasteboard.clearContents()
         rig.pasteboard.setString("copied later", forType: .string)
-        rig.clock.advance(by: InputHistoryListModel.clipboardLifetime)
+        rig.clock.advance(by: SecretClipboard.lifetime)
         await rig.model.clipboardClearing?.value
         #expect(rig.pasteboard.string(forType: .string) == "copied later")
+    }
+
+    @Test func copyLeavesTheClipboardWhenTheHistoryLocks() async throws {
+        let rig = Rig()
+        defer { rig.tearDown() }
+        rig.model.show([Self.entry("dummy-secret-123", kind: .password, at: 1)])
+        let row = try #require(rig.model.visible.first)
+        rig.model.copy(row)
+        #expect(rig.pasteboard.string(forType: .string) == "dummy-secret-123")
+        rig.harness.history.lock(profileID: rig.profile.id)
+        #expect(rig.pasteboard.string(forType: .string) == nil)
     }
 
     // MARK: - Locking

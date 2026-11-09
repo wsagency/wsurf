@@ -23,6 +23,7 @@ struct CredentialCopyTests {
         let pasteboard = NSPasteboard(name: NSPasteboard.Name("io.wsagency.wsurf.tests.\(UUID().uuidString)"))
         let vault: FixtureVault
         let model: CredentialSettingsModel
+        let clock = TestClock()
 
         @MainActor init(noticeDuration: Duration = .seconds(60), undoNoticeDuration: Duration = .seconds(60)) async throws {
             let profile = Profile(id: UUID(), name: "Copy", symbol: "key", color: .blue)
@@ -31,7 +32,7 @@ struct CredentialCopyTests {
             // Touch ID answers yes at once here; CredentialPasswordPrivacyTests checks when a copy asks.
             model = CredentialSettingsModel(
                 profile: profile, pasteboard: pasteboard, manager: vault.manager, noticeDuration: noticeDuration,
-                undoNoticeDuration: undoNoticeDuration, verifyUser: { _ in }
+                undoNoticeDuration: undoNoticeDuration, verifyUser: { _ in }, clock: clock
             )
         }
 
@@ -170,6 +171,48 @@ struct CredentialCopyTests {
                 await #expect(throws: CredentialVaultError.invalidData) { try await f.model.copy(part, of: .stored(stored.id)) }
             }
             await #expect(throws: CredentialVaultError.invalidData) { try await f.model.copy(.username, of: .stored(UUID())) }
+            #expect(f.text == sentinel)
+        }
+    }
+
+    // MARK: - Leaving the clipboard
+
+    @Test func aSecretCopyLeavesTheClipboardAfterAMinuteForThisMacOnly() async throws {
+        try await withFixture { f in
+            let stored = account(password: "very-secret-value")
+            try await f.seed([stored])
+            try await f.model.copy(.password, of: .stored(stored.id))
+            #expect(f.text == "very-secret-value")
+            #expect(await waitUntil { f.clock.pendingCount == 1 })
+            f.clock.advance(by: SecretClipboard.lifetime)
+            await f.model.clipboard.clearing?.value
+            #expect(f.text == nil)
+        }
+    }
+
+    @Test func aSecretCopyLeavesTheClipboardWhenItsVaultLocksAndAPlainOneStays() async throws {
+        try await withFixture { f in
+            let stored = account(password: "very-secret-value")
+            try await f.seed([stored])
+            try await f.model.copy(.password, of: .stored(stored.id))
+            f.vault.manager.lock(reason: .manual)
+            #expect(f.text == nil)
+
+            try await f.seed([stored])
+            try await f.model.copy(.username, of: .stored(stored.id))
+            #expect(f.text == "ada")
+            f.vault.manager.lock(reason: .manual)
+            #expect(f.text == "ada", "a username is not a secret: it is not cleared")
+        }
+    }
+
+    @Test func aLockDoesNotClearWhatWasCopiedAfterTheSecret() async throws {
+        try await withFixture { f in
+            let stored = account(password: "very-secret-value")
+            try await f.seed([stored])
+            try await f.model.copy(.password, of: .stored(stored.id))
+            let sentinel = f.sentinel()
+            f.vault.manager.lock(reason: .manual)
             #expect(f.text == sentinel)
         }
     }
@@ -381,7 +424,7 @@ struct CredentialCopyTests {
             #expect(f.model.notice == nil)
 
             try await f.model.copyPassword(accountID: stored.id)
-            #expect(f.model.notice?.text == String(localized: "Password Copied"))
+            #expect(f.model.notice?.text == "Password Copied. It leaves the clipboard in a minute.")
             #expect(f.model.notice?.text.contains("very-secret-value") == false)
             #expect(await waitUntil { f.model.notice == nil })
 

@@ -104,6 +104,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         guard !isRunningTests else { return }
         VaultFilePreviewFolder.shared.removeAll()
+        SecretClipboard.clearAtQuit()
         application.finishTermination()
     }
 }

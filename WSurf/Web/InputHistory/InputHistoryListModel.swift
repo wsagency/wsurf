@@ -20,7 +20,6 @@ extension NSPasteboard.PasteboardType {
 @MainActor
 @Observable
 final class InputHistoryListModel {
-    static let clipboardLifetime: Duration = .seconds(60)
     /// Rows the list draws. The store keeps no more than this many entries, so a longer list only ever comes from a test.
     static let visibleLimit = 500
     static let mask = String(repeating: "\u{2022}", count: 8)
@@ -75,8 +74,6 @@ final class InputHistoryListModel {
     let profile: Profile
     private let settings: BrowserSettings
     @ObservationIgnored private let history: InputHistory
-    @ObservationIgnored private let pasteboard: NSPasteboard
-    @ObservationIgnored private let clock: any Clock<Duration>
 
     /// All unlocked entries, newest first.
     private(set) var rows: [Row] = []
@@ -99,8 +96,12 @@ final class InputHistoryListModel {
     private(set) var error: String?
     /// The result of the last action that has no visible effect on the list, such as copying.
     private(set) var notice: String?
+    /// Where a copy goes (`SecretClipboard`): concealed, this Mac only, cleared after a minute, at lock and at quit.
+    @ObservationIgnored private let clipboard: SecretClipboard
     /// The last copy's clearing, so a test can wait for it after moving the clock.
-    @ObservationIgnored private(set) var clipboardClearing: Task<Void, Never>?
+    var clipboardClearing: Task<Void, Never>? {
+        clipboard.clearing
+    }
 
     init(
         profile: Profile,
@@ -112,8 +113,7 @@ final class InputHistoryListModel {
         self.profile = profile
         self.settings = settings
         self.history = history
-        self.pasteboard = pasteboard
-        self.clock = clock
+        clipboard = SecretClipboard.clipboard(for: pasteboard, clock: clock)
     }
 
     // MARK: - Opening
@@ -301,21 +301,7 @@ final class InputHistoryListModel {
 
     /// The text goes to the clipboard marked concealed, and leaves it after a minute unless something else was copied since.
     func copy(_ row: Row) {
-        pasteboard.declareTypes([.string, .concealed], owner: nil)
-        pasteboard.setString(row.value, forType: .string)
-        pasteboard.setString("", forType: .concealed)
-        let changeCount = pasteboard.changeCount
-        // The task holds the pasteboard and the clock, not the model: closing the list does not cancel the clearing.
-        clipboardClearing = Task { [pasteboard, clock] in
-            do {
-                try await clock.sleep(for: Self.clipboardLifetime)
-            } catch {
-                return
-            }
-            if pasteboard.changeCount == changeCount {
-                pasteboard.clearContents()
-            }
-        }
+        clipboard.copy(row.value, from: .inputHistory(profile: profile.id))
         notice = String(localized: "Copied. It leaves the clipboard in a minute.")
     }
 

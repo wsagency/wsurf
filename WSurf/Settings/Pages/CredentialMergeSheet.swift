@@ -104,7 +104,6 @@ struct CredentialMergeSheet: View {
                     if let revealed = model.revealedPassword, revealed.accountID == item.id {
                         Text(verbatim: revealed.value)
                             .font(.system(.body, design: .monospaced))
-                            .textSelection(.enabled)
                             .privacySensitive()
                     }
                 }

@@ -766,7 +766,6 @@ struct CredentialRow: View, Equatable {
                         Text("Verification code").foregroundStyle(.secondary)
                         Text(verbatim: code.value)
                             .font(.system(.body, design: .monospaced))
-                            .textSelection(.enabled)
                             .privacySensitive()
                         Spacer(minLength: 8)
                         Text("Expires in \(Int(code.remainingSeconds.rounded(.up))) s")
@@ -788,7 +787,7 @@ struct CredentialRow: View, Equatable {
             Text(verbatim: field.value)
                 .font(.system(.body, design: .monospaced))
                 .lineLimit(3)
-                .textSelection(.enabled)
+                .selectable(!item.isConcealed(field))
                 .privacySensitive()
             Spacer(minLength: 0)
             CredentialCopyButton(label: "Copy \(title)", extent: 18) {
@@ -804,7 +803,6 @@ struct CredentialRow: View, Equatable {
             Text(title).foregroundStyle(.secondary)
             Text(verbatim: value)
                 .font(.system(.body, design: .monospaced))
-                .textSelection(.enabled)
                 .privacySensitive()
             Spacer(minLength: 0)
         }

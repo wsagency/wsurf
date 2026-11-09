@@ -848,6 +848,8 @@ final class CredentialManager {
         native.cancel()
         // Decrypted copies shown in Quick Look or handed to another app end with the lease.
         VaultFilePreviewFolder.shared.removeAll()
+        // A password, code or value copied from this vault leaves the clipboard with the lease, if it is still there.
+        SecretClipboard.vaultLocked(profile: profile.id, vault: vaultID)
         VaultStateChanges.shared.note(profile.id)
         let store = store
         Task { for access in revoked { await store.lock(ifUsing: access) } }

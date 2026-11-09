@@ -102,14 +102,16 @@ extension CredentialSettingsModel {
     func deliver(epoch: UInt64, notice: LocalizedStringResource, _ produce: () throws -> CredentialCopyValue) throws {
         let value = try produce()
         try Task.checkCancellation()
-        guard manager?.authorizationEpoch == epoch else { throw CredentialVaultError.unauthorized }
-        pasteboard.declareTypes(value.isSecret ? [.string, Self.concealedType] : [.string], owner: nil)
-        pasteboard.setString(value.text, forType: .string)
+        guard let manager, manager.authorizationEpoch == epoch else { throw CredentialVaultError.unauthorized }
         if value.isSecret {
-            pasteboard.setString("", forType: Self.concealedType)
+            // For this Mac only, concealed, and gone after a minute, when this vault locks, or at quit, if still ours. A secret never
+            // takes the plain path below.
+            clipboard.copy(value.text, from: .vault(profile: manager.profileID, vault: manager.vaultID))
+            showNotice(LocalizedStringResource("\(String(localized: notice)). It leaves the clipboard in a minute."))
+        } else {
+            pasteboard.declareTypes([.string], owner: nil)
+            pasteboard.setString(value.text, forType: .string)
+            showNotice(notice)
         }
-        showNotice(notice)
     }
-
-    private static let concealedType = NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType")
 }
