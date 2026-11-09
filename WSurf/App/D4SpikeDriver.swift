@@ -128,7 +128,8 @@ enum D4SpikeDriver {
         let linger = Double(ProcessInfo.processInfo.environment["WSURF_OOP_LINGER"] ?? "") ?? 60
         try? await Task.sleep(for: .seconds(linger + 3))
         log("after the linger (\(Int(linger)) s): service \(pid) alive \(isAlive(pid)), its children \(pid > 0 ? childNames(of: pid) : [])")
-        log("end: CEF loaded in WSurf \(cefLoadedHere())")
+        log("end: CEF loaded in WSurf \(cefLoadedHere())\(cefImagePath().map { " from \($0)" } ?? "")")
+        log("end: WSurf's helper executables: \(childPaths(of: getpid()))")
     }
 
     /// Day 2-3: frames at the display rate, resize, switching between two Chromium tabs, the band over the page.
@@ -482,6 +483,31 @@ enum D4SpikeDriver {
             guard let name = _dyld_get_image_name(index) else { return false }
             return String(cString: name).contains("Chromium Embedded Framework")
         }
+    }
+
+    /// Where the CEF framework in this process was loaded from, if it was.
+    private static func cefImagePath() -> String? {
+        for index in 0..<_dyld_image_count() {
+            guard let name = _dyld_get_image_name(index) else { continue }
+            let path = String(cString: name)
+            if path.contains("Chromium Embedded Framework") {
+                return path
+            }
+        }
+        return nil
+    }
+
+    /// The executable paths of a process's children, with the app's bundle path cut to "<app>".
+    private static func childPaths(of pid: pid_t) -> [String] {
+        var pids = [pid_t](repeating: 0, count: 512)
+        let bytes = proc_listpids(UInt32(PROC_PPID_ONLY), UInt32(pid), &pids, Int32(pids.count * MemoryLayout<pid_t>.size))
+        guard bytes > 0 else { return [] }
+        let app = Bundle.main.bundlePath
+        return pids.prefix(Int(bytes) / MemoryLayout<pid_t>.size).filter { $0 > 0 }.map { child in
+            var path = [CChar](repeating: 0, count: 4096)
+            proc_pidpath(child, &path, 4096)
+            return String(cString: path).replacingOccurrences(of: app, with: "<app>")
+        }.sorted()
     }
 
     private static func childNames(of pid: pid_t) -> [String] {

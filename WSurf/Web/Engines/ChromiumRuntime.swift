@@ -137,6 +137,19 @@ final class ChromiumRuntime {
         disposable = disposable || StageMode.isActive
         #endif
         configuration.safeStorage = disposable ? .mockKeychain : .keychain
+        #if DEBUG
+        // D4 spike, one copy of CEF: with `WSURF_D4_ONE_COPY=1` the in-process path loads the framework and the helpers from
+        // the service's bundle, where the out-of-process path must have them (Chromium's helper sandbox reads only inside the
+        // browser process's main bundle). The service's bundle is inside WSurf.app, so WSurf's own helpers may live there too.
+        if ProcessInfo.processInfo.environment["WSURF_D4_ONE_COPY"] == "1" {
+            let frameworks = Bundle.main.bundleURL
+                .appendingPathComponent("Contents/XPCServices/WSurf Chromium.xpc/Contents/Frameworks", isDirectory: true)
+            configuration.frameworkDirectory = frameworks
+                .appendingPathComponent("Chromium Embedded Framework.framework", isDirectory: true)
+            configuration.browserSubprocessPath = frameworks
+                .appendingPathComponent("WSurf Helper.app/Contents/MacOS/WSurf Helper", isDirectory: false)
+        }
+        #endif
         configuration.rootCachePath = rootDirectory
         configuration.cachePath = rootDirectory.appendingPathComponent("Global", isDirectory: true)
         configuration.persistSessionCookies = true
