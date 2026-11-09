@@ -36,6 +36,9 @@ DD="$PWD/build/DD"
 OUT="build/ci-local/$(date -u +%Y%m%dT%H%M%SZ)"
 mkdir -p "$OUT/results"
 OUT="$PWD/$OUT"
+# The watchdog appends every build and test output line, byte for byte, to this file and prints a compact console
+# (host os_log mirror noise dropped, every result, failure, crash and time-limit line kept). WSURF_CI_VERBOSE=1 prints it all.
+export WSURF_CI_RAW_LOG="$OUT/console.raw.log"
 
 for key in $(env | sed -n 's/^\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/p'); do
   case "$key" in
