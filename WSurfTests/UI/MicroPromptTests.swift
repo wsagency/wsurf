@@ -3,6 +3,7 @@
 
 import AppKit
 import Foundation
+import Observation
 import Security
 import Testing
 
@@ -68,8 +69,16 @@ struct MicroPromptTests {
         #expect(!rig.micro.hasPendingPagePrompt)
     }
 
-    /// Which of the things that keep the bar down are true now, for the message of a check that finds the bar down.
-    private func keptBy(_ rig: Rig) -> String {
+    /// What `aSheetOnAnotherWindowIsNotThisWindowsBusiness` saw happen, in order.
+    @MainActor
+    private final class Seen {
+        var notes: [String] = []
+    }
+
+    /// Which of the things that keep the bar down are true now, for the message of a check that finds the bar down. It copies the
+    /// terms of three places by hand, so one added there must be added here: `MicroShell.keepsBar` (the live-window overload),
+    /// `AppCoordinator.hasPendingPagePrompt`, and `MicroReveal`'s own holds (`holdsApart`).
+    private static func keptBy(_ rig: Rig) -> String {
         let micro = rig.micro
         let terms: [(String, Bool)] = [
             ("pointer in zone", rig.reveal.pointerInZone),
@@ -202,16 +211,34 @@ struct MicroPromptTests {
             // Opening a second window can move this one's inputs (focus, status), and a slow runner shows that late. Start from a
             // bar that has settled back up, so only the other window's sheet can bring it down.
             try #require(await waitUntil { !rig.reveal.isRevealed }, "this window's bar settles after the other window opens")
+            // What brings the bar down is read as it happens: a hold is read while it is still true, and a write to an input of
+            // `hasPendingPagePrompt` brings the bar down with nothing holding (MicroReveal's pending watcher), so those inputs are
+            // watched by name. Each observation fires once, on the first change.
+            let seen = Seen()
+            func record(_ note: @escaping @MainActor () -> String) -> @Sendable () -> Void {
+                { MainActor.assumeIsolated { seen.notes.append(note()) } }
+            }
+            withObservationTracking({ _ = rig.reveal.isRevealed }, onChange: record { "bar changed, held by: \(Self.keptBy(rig))" })
+            withObservationTracking({ _ = rig.micro.browser.activeTab }, onChange: record { "active tab written" })
+            withObservationTracking(
+                { _ = (rig.tab.permissions.pendingAsks, rig.tab.permissions.isPopoverPresented) },
+                onChange: record { "permissions written" }
+            )
+            withObservationTracking(
+                { _ = (rig.tab.autofillSave.current, rig.tab.autofillSave.websiteOffer, rig.tab.autofillSave.isPopoverPresented) },
+                onChange: record { "save offer written" }
+            )
             let alert = NSAlert()
             alert.addButton(withTitle: "OK")
             let dialog = Task { await PageDialogs.present(alert, in: otherWindow) }
             try #require(await waitUntil { otherWindow.attachedSheet != nil })
 
             // Not shortened with the other "stays down" waits: with 100 ms the check landed inside a late reveal of this window's bar
-            // that the second window's start-up caused, which is still unidentified (`keptBy` names the input when it happens again).
+            // that the second window's start-up caused, which is still unidentified (`seen` and `keptBy` name the input when it happens
+            // again).
             try? await Task.sleep(for: .milliseconds(200))
             #expect(rig.reveal.openPrompts == 0, "the other window's sheet is not this window's prompt")
-            #expect(!rig.reveal.isRevealed, "and it does not bring this window's bar down; kept by: \(keptBy(rig))")
+            #expect(!rig.reveal.isRevealed, "and it does not bring this window's bar down; seen: \(seen.notes), kept by now: \(Self.keptBy(rig))")
 
             endSheet(of: otherWindow)
             _ = await dialog.value
