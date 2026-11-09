@@ -613,6 +613,15 @@ final class CredentialManager {
         }
     }
 
+    /// Which saved passwords are weak or reused, as flags only (`ProfileVaultStore.passwordHealth`): the comparison runs in the vault,
+    /// so no password, digest or length reaches the caller. Read like `snapshot`.
+    func passwordHealth() async throws -> PasswordHealthReport {
+        try await reading { access in
+            Self.noteRead(.health, profile: profile.id)
+            return try await store.passwordHealth(vaultID: vaultID, using: access)
+        }
+    }
+
     /// `authorizedEpoch` is the lease the caller's decision was made under. It is compared with the current access in the
     /// same main-actor segment that captures it, before any write starts, so a lock and re-unlock that landed after the
     /// decision (for example while a task was queued) can never carry the write into the newer lease. `changing` names the accounts

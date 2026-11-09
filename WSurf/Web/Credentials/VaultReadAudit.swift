@@ -10,7 +10,7 @@ import WSurfVault
 @MainActor
 final class VaultReadAudit {
     nonisolated enum Read: Equatable, Sendable {
-        case snapshot, candidates
+        case snapshot, candidates, health
         case login(AutofillLoginField)
         case items(AutofillItemKind, pick: Bool)
     }

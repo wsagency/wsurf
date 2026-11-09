@@ -284,6 +284,30 @@ nonisolated final class VaultScalePerformanceTests: XCTestCase, @unchecked Senda
         }
     }
 
+    // MARK: Password health (S4a)
+
+    /// The password health report of the 20,000-credential vault through its store: the verified read, then every password compared
+    /// and checked against the weak rules on the vault actor. A page asks for it once per settled revision, off the main actor. The
+    /// stored passwords all differ and none is weak, so the report is empty; every one is still compared and checked.
+    func testCheckingThePasswordHealthOfTwentyThousandCredentials() {
+        MainActor.assumeIsolated {
+            measureRead { store, vaultID, access in
+                let health = try await store.passwordHealth(vaultID: vaultID, using: access)
+                XCTAssertTrue(health.findings.isEmpty)
+            }
+        }
+    }
+
+    /// The comparison and the rules alone, over the same 20,000 credentials in memory: what the report adds to the verified read.
+    func testCheckingThePasswordHealthOfTwentyThousandInMemoryCredentials() throws {
+        let accounts = try Self.storedAccounts()
+        MainActor.assumeIsolated {
+            measure(metrics: [XCTClockMetric(), XCTMemoryMetric()], options: measuredOptions()) {
+                XCTAssertTrue(PasswordHealth.report(vaultID: UUID(), revision: 1, accounts: accounts).findings.isEmpty)
+            }
+        }
+    }
+
     // MARK: Edits
 
     /// One changed password, written with the per-account write the import and the bulk actions use. The read that finds the

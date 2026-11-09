@@ -1019,6 +1019,37 @@ check_average \
   'Autofill projection of 20,000 in-memory credentials memory growth' \
   'kB'
 
+# Password health (S4a): the report of the 20,000-credential vault through its store (the verified read, then every password
+# compared and checked against the weak rules on the vault actor), and the comparison and rules alone over the same credentials in
+# memory. Pro, Debug + coverage, 2026-11-09, two targeted runs with the read beside them: report 0.733974 / 0.719139 s, rules alone
+# 0.127938 / 0.130538 s, read 0.605293 / 0.595776 s, so the report takes about 1.2 times the read. The rules read UTF-8 bytes through
+# buffer pointers; written over Characters they took 0.49 s, and over bytes through arrays 0.63 s, both in the same harness. Memory
+# medians 40.96 / 0 kB and 0 / 0 kB. Time budgets twice the larger mean; memory 4096 kB.
+check_average \
+  'VaultScalePerformanceTests/testCheckingThePasswordHealthOfTwentyThousandCredentials()' \
+  'com.apple.dt.XCTMetric_Clock.time.monotonic' \
+  '1.47' \
+  'Password health of 20,000 credentials' \
+  's'
+check_average \
+  'VaultScalePerformanceTests/testCheckingThePasswordHealthOfTwentyThousandCredentials()' \
+  'com.apple.dt.XCTMetric_Memory.physical' \
+  '4096' \
+  'Password health of 20,000 credentials memory growth' \
+  'kB'
+check_average \
+  'VaultScalePerformanceTests/testCheckingThePasswordHealthOfTwentyThousandInMemoryCredentials()' \
+  'com.apple.dt.XCTMetric_Clock.time.monotonic' \
+  '0.261' \
+  'Password health rules over 20,000 in-memory credentials' \
+  's'
+check_average \
+  'VaultScalePerformanceTests/testCheckingThePasswordHealthOfTwentyThousandInMemoryCredentials()' \
+  'com.apple.dt.XCTMetric_Memory.physical' \
+  '4096' \
+  'Password health rules over 20,000 in-memory credentials memory growth' \
+  'kB'
+
 # History and database (HistoryPerformanceTests), six-sample means on the Pro (2026-10-27, Debug), seconds, before and after WI-3
 # (an index on historyVisit.fromVisit, the schema defined by migrations instead of on every open, one and two letter queries answered
 # from memory). Time budgets are twice the mean after, or a little more where the mean is a fraction of a millisecond; the old code

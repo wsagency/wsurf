@@ -392,6 +392,7 @@ struct VaultAutofillReadTests {
             let expected = name(await failure { _ = try await store.snapshot(vaultID: vaultID, using: access) })
             let reads: [(String, () async throws -> Void)] = [
                 ("candidates", { _ = try await store.autofillCandidates(vaultID: vaultID, using: access) }),
+                ("password health", { _ = try await store.passwordHealth(vaultID: vaultID, using: access) }),
                 ("password", {
                     _ = try await store.autofillLogin(
                         vaultID: vaultID, accountID: Entries.loginID, field: .password, expectedRevision: revision, using: access
@@ -434,6 +435,7 @@ struct VaultAutofillReadTests {
     @Test func aRevocationDuringTheReadLeavesTheReadWithNothing() async throws {
         let reads: [(String, ArmedRead)] = [
             ("candidates", { store, vaultID, access, _ in _ = try await store.autofillCandidates(vaultID: vaultID, using: access) }),
+            ("password health", { store, vaultID, access, _ in _ = try await store.passwordHealth(vaultID: vaultID, using: access) }),
             ("password", { store, vaultID, access, revision in
                 _ = try await store.autofillLogin(
                     vaultID: vaultID, accountID: Entries.loginID, field: .password, expectedRevision: revision, using: access
