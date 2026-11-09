@@ -123,7 +123,9 @@ struct AudioMuteEngineTests {
             rig.app.muteAll()
             #expect(!rig.tab.isMuted, "nothing plays, so the tab carries no mark")
             // The page learns of the mute before it has a player: the message is not dropped for want of one.
-            try await Task.sleep(for: .milliseconds(300))
+            // The mute message is posted from a task of its own: let it start, then the page's messages are all delivered.
+            await Task.yield()
+            try await rig.page.finishPendingPageMessages()
             try await run(rig.page, "const song = new Audio(); song.id = 'song'; document.body.append(song); true")
             #expect(await waitUntil { await read(rig.page, "document.getElementById('song').muted") as? Bool == true })
 

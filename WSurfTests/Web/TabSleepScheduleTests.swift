@@ -115,7 +115,8 @@ struct TabSleepScheduleTests {
             stale.lastForegroundAt = .now - .seconds(61)
             fresh.lastForegroundAt = .now - .seconds(30)
             clock.advance(by: .seconds(14))
-            try? await Task.sleep(for: .milliseconds(200))
+            // A tick can only run once the clock releases its sleep: it is still waiting, so none has.
+            #expect(clock.pendingCount == 1, "the tick is still waiting")
             #expect(!stale.isDeferred, "no tick before a quarter of the delay")
             clock.advance(by: .seconds(1))
             #expect(await waitUntil { stale.isDeferred }, "past the delay at the tick")
@@ -126,9 +127,9 @@ struct TabSleepScheduleTests {
             try #require(await waitUntil { clock.pendingCount == 1 })
             fresh.lastForegroundAt = .now - .seconds(90)
             clock.advance(by: .seconds(30))
-            try? await Task.sleep(for: .milliseconds(200))
+            // The advance released the sleep (nothing pending); the tick ran and the timer waits for the next one again.
+            try #require(await waitUntil { clock.pendingCount == 1 }, "the tick ran and the timer is waiting again")
             #expect(!fresh.isDeferred, "90 s is inside the new delay")
-            try #require(await waitUntil { clock.pendingCount == 1 })
             fresh.lastForegroundAt = .now - .seconds(121)
             clock.advance(by: .seconds(30))
             #expect(await waitUntil { fresh.isDeferred }, "past the new delay")

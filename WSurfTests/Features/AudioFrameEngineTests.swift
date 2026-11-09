@@ -61,6 +61,7 @@ struct AudioFrameEngineTests {
           if (event.data === 'stop') { wanted = false; song.pause(); }
           if (event.data === 'play') { wanted = true; }
           if (event.data === 'unmute') { song.muted = false; }
+          if (event.data === 'ping') { parent.postMessage('pong', '*'); }
         });
         </script>
         """
@@ -69,8 +70,10 @@ struct AudioFrameEngineTests {
         <!doctype html><title>Host</title><p>The page.</p>
         <script>
         window.__songs = [];
+        window.__pongs = 0;
         addEventListener('message', (event) => {
           if (typeof event.data === 'string' && event.data.indexOf('song:') === 0) { window.__songs.push(event.data); }
+          if (event.data === 'pong') { window.__pongs += 1; }
         });
         </script>
         """
@@ -172,6 +175,14 @@ struct AudioFrameEngineTests {
         try await run(rig.page, "document.getElementById('\(id)').contentWindow.postMessage('\(message)', '*'); true")
     }
 
+    /// A round trip through the frame: its script answers after everything told to it before, so a "nothing happened" check made
+    /// afterwards has had every chance to be wrong, without waiting out a time.
+    private func roundTrip(_ id: String, in rig: Rig) async throws {
+        let before = await read(rig.page, "window.__pongs") as? Int ?? 0
+        try await tell(id, "ping", in: rig)
+        try #require(await waitUntil { (await read(rig.page, "window.__pongs") as? Int ?? 0) > before }, "the frame answered")
+    }
+
     private func isListed(_ rig: Rig) -> Bool {
         rig.app.audibleTabs(for: rig.main).contains { $0.tab === rig.tab }
     }
@@ -207,7 +218,8 @@ struct AudioFrameEngineTests {
             try #require(await waitUntil { rig.main.media.audio(of: rig.page).frames.count == 2 }, "both frames reported for themselves")
 
             try await tell("a", "stop", in: rig)
-            try await Task.sleep(for: .milliseconds(400))
+            // The app has heard that the first frame stopped (one frame is left playing), and the tab still plays for the other.
+            try #require(await waitUntil { rig.main.media.audio(of: rig.page).frames.count == 1 }, "the first frame's stop is reported")
             #expect(rig.tab.isPlayingAudio, "the other frame still plays")
 
             try await tell("b", "stop", in: rig)
@@ -286,7 +298,7 @@ struct AudioFrameEngineTests {
     private func addSong(to rig: Rig) async throws {
         try await run(rig.page, "const song = new Audio(); song.id = 'main'; document.body.append(song); true")
         // The script binds it a moment after it is made.
-        try await Task.sleep(for: .milliseconds(500))
+        try #require(await waitUntil { await read(rig.page, "document.getElementById('main').__wsurfBound === true") as? Bool == true }, "the script bound the player")
     }
 
     private func isMuted(_ rig: Rig) async -> Bool? {
@@ -318,7 +330,7 @@ struct AudioFrameEngineTests {
 
             _ = try await rig.page.evaluateJavaScript("document.getElementById('main').muted = false; true")
             #expect(await waitUntil { await isMuted(rig) == true }, "the player is silenced again")
-            try await Task.sleep(for: .milliseconds(600))
+            try await rig.page.finishPendingPageMessages()
             #expect(rig.tab.isMuted, "the tab is still muted")
             #expect(await isMuted(rig) == true)
         }
@@ -337,7 +349,7 @@ struct AudioFrameEngineTests {
 
             _ = try await rig.page.evaluateJavaScript("document.getElementById('main').muted = false; true", in: nil, contentWorld: .page, userGesture: true)
             #expect(await waitUntil { !rig.tab.isMuted }, "the person unmuted it: the tab is no longer muted")
-            try await Task.sleep(for: .milliseconds(400))
+            try await rig.page.finishPendingPageMessages()
             #expect(await isMuted(rig) == false, "and the player stays unmuted")
         }
     }
@@ -352,7 +364,7 @@ struct AudioFrameEngineTests {
 
             _ = try await rig.page.evaluateJavaScript("document.getElementById('main').muted = false; true", in: nil, contentWorld: .page, userGesture: true)
             #expect(await waitUntil { await isMuted(rig) == true }, "the player is silenced again")
-            try await Task.sleep(for: .milliseconds(600))
+            try await rig.page.finishPendingPageMessages()
             #expect(rig.app.isMuted, "WSurf is still muted")
             #expect(await isMuted(rig) == true)
 
@@ -374,7 +386,7 @@ struct AudioFrameEngineTests {
 
             try await tell("a", "unmute", in: rig)
             #expect(await waitUntil { await songs(rig).suffix(2) == ["song:false", "song:true"] }, "the frame unmuted it, and it was silenced again")
-            try await Task.sleep(for: .milliseconds(600))
+            try await roundTrip("a", in: rig)
             #expect(rig.tab.isMuted, "the tab is still muted")
         }
     }

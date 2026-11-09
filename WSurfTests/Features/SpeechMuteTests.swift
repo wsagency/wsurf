@@ -228,7 +228,9 @@ struct SpeechMuteTests {
         #expect(voice.isMuted && voice.stops >= 1, "and the voice stops at once")
 
         voice.onSpeakingChange?(false)
-        try await Task.sleep(for: .milliseconds(150))
+        // Everything this listener does is synchronous but for a source read, which a paused or stopped reading does not start: a
+        // hop lets any such task run, and the cases that go on speaking are the control for it.
+        await Task.yield()
         #expect(voice.spoken == ["First one."], "nothing moves on in the meantime")
         #expect(reading.spot?.range == 0..<10)
 
@@ -249,7 +251,9 @@ struct SpeechMuteTests {
         reading.setSilenced(true)
         reading.setSilenced(false)
         #expect(reading.state == .paused, "it was the person's pause, not WSurf's")
-        try await Task.sleep(for: .milliseconds(150))
+        // Everything this listener does is synchronous but for a source read, which a paused or stopped reading does not start: a
+        // hop lets any such task run, and the cases that go on speaking are the control for it.
+        await Task.yield()
         #expect(voice.spoken.count == 1)
     }
 
@@ -278,7 +282,9 @@ struct SpeechMuteTests {
         reading.stop()
         reading.setSilenced(false)
         #expect(reading.state == .idle)
-        try await Task.sleep(for: .milliseconds(150))
+        // Everything this listener does is synchronous but for a source read, which a paused or stopped reading does not start: a
+        // hop lets any such task run, and the cases that go on speaking are the control for it.
+        await Task.yield()
         #expect(voice.spoken.count == 1)
     }
 
