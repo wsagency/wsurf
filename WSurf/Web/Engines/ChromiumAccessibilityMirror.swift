@@ -383,10 +383,10 @@ nonisolated final class ChromiumAccessibilityElement: NSAccessibilityElement, @u
     @MainActor private var role: NSAccessibility.Role? {
         if isRoot {
             // An AXWebArea makes VoiceOver ask for text markers, which the prototype does not have.
-            return ChromiumOOP.environment("WSURF_OOP_AX_ROOT") == "webArea" ? NSAccessibility.Role("AXWebArea") : .group
+            return ChromiumOOP.environment("WSURF_OOP_AX_ROOT") == "webArea" ? NSAccessibility.Role(rawValue: "AXWebArea") : .group
         }
         return switch node?.role ?? "" {
-        case "heading": NSAccessibility.Role("AXHeading")
+        case "heading": NSAccessibility.Role(rawValue: "AXHeading")
         case "link": .link
         case "staticText": .staticText
         case "button", "popUpButton": .button
