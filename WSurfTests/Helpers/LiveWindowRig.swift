@@ -178,10 +178,27 @@ struct LiveWindowRig {
         return await frames(of: tab) - first
     }
 
-    /// Frames `tab` ran while `reference`, a visible page of this rig's counting page, ran `count` of its own. A page that is
-    /// hidden stays near zero however long that took, and the visible one is the control that proves the engine was drawing: the
-    /// answer does not depend on how long a second is on this machine. Nil when `reference` did not get to `count` frames.
+    /// Frames `tab`, a page the engine reports hidden, ran while `reference`, a visible page of this rig's counting page, ran `count`
+    /// of its own. A page that is hidden stays near zero however long that took, and the visible one is the control that proves the
+    /// engine was drawing: the answer does not depend on how long a second is on this machine. The count starts once a stretch of
+    /// ten frames of `reference` has passed with none of `tab`'s, because an engine reports `hidden` to the page a little before it
+    /// stops drawing it (Chromium ran 7 frames in the first 20 of a page that had just loaded behind another tab), and a page that
+    /// never goes quiet still fails: its frames are counted in the last window. Nil when `reference` did not draw.
     func frames(of tab: BrowserTab, whileFramesOf reference: BrowserTab, run count: Double = 20) async -> Double? {
+        var windows: [Double] = []
+        for _ in 0..<5 {
+            guard let ran = await framesCounted(of: tab, whileFramesOf: reference, run: 10) else { return nil }
+            windows.append(ran)
+            if ran == 0 {
+                break
+            }
+        }
+        guard let ran = await framesCounted(of: tab, whileFramesOf: reference, run: count) else { return nil }
+        print("hidden page frames per 10 of the front's, until quiet: \(windows), then \(ran) per \(Int(count))")
+        return ran
+    }
+
+    private func framesCounted(of tab: BrowserTab, whileFramesOf reference: BrowserTab, run count: Double) async -> Double? {
         let before = await frames(of: tab)
         let referenceBefore = await frames(of: reference)
         guard before >= 0, referenceBefore >= 0 else { return nil }
