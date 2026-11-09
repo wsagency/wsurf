@@ -90,8 +90,15 @@ class ConsoleFilter:
         text = line.lstrip("\u200b").rstrip("\r\n")
         out: list[str] = []
         if self.in_dropped_record and CONTINUATION.match(text):
+            marker = SPLIT.search(text)
+            if marker is None:
+                self.dropped += 1
+                return out
+            # Test output glued behind a record's fragment: drop only the fragment (same cut as behind a host line).
             self.dropped += 1
-            return out
+            self.in_dropped_record = False
+            text = text[marker.start():].lstrip("\u200b")
+            line = text + "\n"
         in_record, self.in_dropped_record = self.in_dropped_record, False
         host = HOST_LOG.match(text)
         if host:
@@ -129,6 +136,8 @@ class ConsoleFilter:
         result = RESULT.match(text)
         if result:
             self.settle(result.group(1))
+        if text.startswith(("✔ Test run with", "✘ Test run with")):
+            self.started.pop("Test run", None)  # "◇ Test run started." is settled by the summary
         if TROUBLE.search(text):
             out.extend(self.flush_started())
         out.append(line)
