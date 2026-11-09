@@ -95,17 +95,17 @@ struct TabSleepSparesTests {
         #expect(outcome.pinned, "a pinned tab sleeps")
     }
 
-    @Test(arguments: [BrowserEngine.webKit, .chromium])
-    func sparingPinnedTabsKeepsThemLoaded(engine: BrowserEngine) async throws {
-        let outcome = try await sleptTabs(engine: engine, sparesFavorites: true, sparesPinned: true, route: .idleSweep)
+    @Test(arguments: [BrowserEngine.webKit, .chromium], Route.allCases)
+    func sparingPinnedTabsKeepsThemLoaded(engine: BrowserEngine, route: Route) async throws {
+        let outcome = try await sleptTabs(engine: engine, sparesFavorites: true, sparesPinned: true, route: route)
         #expect(outcome.plain)
         #expect(!outcome.favorite)
         #expect(!outcome.pinned, "Pinned tabs never sleep keeps it loaded")
     }
 
-    @Test(arguments: [BrowserEngine.webKit, .chromium])
-    func notSparingFavoritesLetsThemSleep(engine: BrowserEngine) async throws {
-        let outcome = try await sleptTabs(engine: engine, sparesFavorites: false, sparesPinned: false, route: .idleSweep)
+    @Test(arguments: [BrowserEngine.webKit, .chromium], Route.allCases)
+    func notSparingFavoritesLetsThemSleep(engine: BrowserEngine, route: Route) async throws {
+        let outcome = try await sleptTabs(engine: engine, sparesFavorites: false, sparesPinned: false, route: route)
         #expect(outcome.plain)
         #expect(outcome.favorite, "with Favorites never sleep off, a Favorite sleeps like any tab")
         #expect(outcome.pinned)

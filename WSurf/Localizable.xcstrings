@@ -5874,17 +5874,14 @@
     "Favorites never sleep" : {
       "comment" : "Title of the switch in Settings > General, shown under Sleep inactive tabs, that keeps Favorites loaded when other tabs sleep. On by default. Sentence case; Sleep is a verb the browser does to the tabs, and the same row in Settings search."
     },
-    "Favorites stay loaded when other tabs sleep. A sleeping tab sends no notifications." : {
-      "comment" : "Caption of the Favorites never sleep row in Settings > General. Says that a tab that is asleep cannot send notifications."
+    "Favorites stay loaded when tabs sleep, when you choose Free Memory and when memory runs low. A sleeping tab sends no notifications." : {
+      "comment" : "Caption of the Favorites never sleep row in Settings > General, and its description in Settings search. Says what keeps Favorites loaded and that a tab that is asleep cannot send notifications. Free Memory is the name of a button."
     },
     "Pinned tabs never sleep" : {
       "comment" : "Title of the switch in Settings > General, shown under Sleep inactive tabs, that keeps pinned tabs loaded when other tabs sleep. Off by default. Sentence case; Sleep is a verb the browser does to the tabs, and the same row in Settings search."
     },
-    "Pinned tabs stay loaded when other tabs sleep. A sleeping tab sends no notifications." : {
-      "comment" : "Description of the Pinned tabs never sleep row in Settings search, shown under its title. Says that a tab that is asleep cannot send notifications."
-    },
-    "Pinned tabs stay loaded when other tabs sleep. A sleeping tab sends no notifications, so turn this on for a pinned mail or chat tab." : {
-      "comment" : "Caption of the Pinned tabs never sleep row in Settings > General. Says that a tab that is asleep cannot send notifications, and suggests when to turn the switch on."
+    "Pinned tabs stay loaded when tabs sleep, when you choose Free Memory and when memory runs low. A sleeping tab sends no notifications." : {
+      "comment" : "Caption of the Pinned tabs never sleep row in Settings > General, and its description in Settings search. Says what keeps pinned tabs loaded and that a tab that is asleep cannot send notifications. Free Memory is the name of a button."
     },
     "Tint Icons as Folder" : {
       "comment" : "Item in the context menu of a sidebar folder, checked while on: draws the icons of the tabs inside the folder in the folder's color instead of their own colors. Off by default. Title Case, next to Size."
