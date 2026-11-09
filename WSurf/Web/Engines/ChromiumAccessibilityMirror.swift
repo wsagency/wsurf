@@ -349,43 +349,19 @@ final class ChromiumAccessibilityMirror {
             + "'\(title)' bounds \(root?.bounds.integral ?? .zero) in a \(pageSize) view (units per point \(unitsPerPoint)), "
             + "roles \(counts.sorted { $0.value > $1.value }.prefix(10).map { "\($0.key) \($0.value)" }), headings \(headings), links \(links)"
     }
-}
 
-/// One node of the mirror as VoiceOver sees it. NSAccessibilityElement is not main-actor isolated, so neither is this
-/// class (its initializers and overrides must match); AppKit asks for accessibility on the main thread, where the overrides
-/// read the mirror.
-nonisolated final class ChromiumAccessibilityElement: NSAccessibilityElement, @unchecked Sendable {
-    private weak var mirror: ChromiumAccessibilityMirror?
-    let key: ChromiumAccessibilityMirror.Key
+    // MARK: Answers for the elements (main actor; the elements call these through `MainActor.assumeIsolated`)
 
-    init(mirror: ChromiumAccessibilityMirror, key: ChromiumAccessibilityMirror.Key) {
-        self.mirror = mirror
-        self.key = key
-        super.init()
+    func exists(_ key: Key) -> Bool {
+        node(key) != nil
     }
 
-    @MainActor private var node: ChromiumAccessibilityMirror.Node? {
-        mirror?.node(key)
-    }
-
-    @MainActor private var isRoot: Bool {
-        mirror?.rootKey == key
-    }
-
-    override func isAccessibilityElement() -> Bool {
-        MainActor.assumeIsolated { node != nil }
-    }
-
-    override func accessibilityRole() -> NSAccessibility.Role? {
-        MainActor.assumeIsolated { role?.rawValue }.map { NSAccessibility.Role(rawValue: $0) }
-    }
-
-    @MainActor private var role: NSAccessibility.Role? {
-        if isRoot {
+    func roleName(of key: Key) -> String? {
+        if key == rootKey {
             // An AXWebArea makes VoiceOver ask for text markers, which the prototype does not have.
-            return ChromiumOOP.environment("WSURF_OOP_AX_ROOT") == "webArea" ? NSAccessibility.Role(rawValue: "AXWebArea") : .group
+            return ChromiumOOP.environment("WSURF_OOP_AX_ROOT") == "webArea" ? "AXWebArea" : NSAccessibility.Role.group.rawValue
         }
-        return switch node?.role ?? "" {
+        let role: NSAccessibility.Role = switch node(key)?.role ?? "" {
         case "heading": NSAccessibility.Role(rawValue: "AXHeading")
         case "link": .link
         case "staticText": .staticText
@@ -401,68 +377,131 @@ nonisolated final class ChromiumAccessibilityElement: NSAccessibilityElement, @u
         case "tab": .radioButton
         default: .group
         }
+        return role.rawValue
+    }
+
+    func roleDescription(of key: Key) -> String? {
+        if key == rootKey {
+            return "web content"
+        }
+        return node(key)?.role == "heading" ? "heading" : nil
+    }
+
+    func elementTitle(of key: Key) -> String? {
+        guard let node = self.node(key) else { return nil }
+        if key == rootKey {
+            return self.title.isEmpty ? node.name : self.title
+        }
+        return node.role == "staticText" || node.name.isEmpty ? nil : node.name
+    }
+
+    func elementLabel(of key: Key) -> String? {
+        guard let node = self.node(key), !node.detail.isEmpty else { return nil }
+        return node.detail
+    }
+
+    func elementValue(of key: Key) -> (any Sendable)? {
+        guard let node = self.node(key) else { return nil }
+        switch node.role {
+        case "staticText": return node.name
+        case "heading": return node.level
+        case "textField", "searchBox", "textFieldWithComboBox": return node.value
+        default: return node.value.isEmpty ? nil : node.value
+        }
+    }
+
+    func elementURL(of key: Key) -> URL? {
+        node(key).flatMap { URL(string: $0.url) }
+    }
+
+    func childElements(of key: Key) -> [ChromiumAccessibilityElement] {
+        visibleChildren(of: key).compactMap { element(for: $0) }
+    }
+
+    func parentObject(of key: Key) -> (element: ChromiumAccessibilityElement?, page: ChromiumPage?) {
+        guard let page else { return (nil, nil) }
+        if key != rootKey, let parent = visibleParent(of: key), let element = self.element(for: parent) {
+            return (element, nil)
+        }
+        return (nil, page)
+    }
+
+    func screenFrame(of key: Key) -> NSRect {
+        guard let page, let window = page.window else { return .zero }
+        return window.convertToScreen(page.convert(rectInView(key), to: nil))
+    }
+
+    func press(_ key: Key) -> Bool {
+        guard let page else { return false }
+        let rect = rectInView(key)
+        guard rect.width > 0, rect.height > 0 else { return false }
+        page.remoteClick(at: CGPoint(x: rect.midX, y: rect.midY))
+        return true
+    }
+}
+
+/// One node of the mirror as VoiceOver sees it. NSAccessibilityElement is not main-actor isolated, so neither is this
+/// class (its initializers and overrides must match). AppKit asks for accessibility on the main thread; each override takes
+/// the mirror and the key (both Sendable) into `MainActor.assumeIsolated` and asks the mirror.
+nonisolated final class ChromiumAccessibilityElement: NSAccessibilityElement, @unchecked Sendable {
+    private weak var mirror: ChromiumAccessibilityMirror?
+    let key: ChromiumAccessibilityMirror.Key
+
+    init(mirror: ChromiumAccessibilityMirror, key: ChromiumAccessibilityMirror.Key) {
+        self.mirror = mirror
+        self.key = key
+        super.init()
+    }
+
+    override func isAccessibilityElement() -> Bool {
+        let mirror = mirror, key = key
+        return MainActor.assumeIsolated { mirror?.exists(key) ?? false }
+    }
+
+    override func accessibilityRole() -> NSAccessibility.Role? {
+        let mirror = mirror, key = key
+        return MainActor.assumeIsolated { mirror?.roleName(of: key) }.map { NSAccessibility.Role(rawValue: $0) }
     }
 
     override func accessibilityRoleDescription() -> String? {
-        let own: String? = MainActor.assumeIsolated {
-            if isRoot {
-                return "web content"
-            }
-            return node?.role == "heading" ? "heading" : nil
+        let mirror = mirror, key = key
+        if let own = MainActor.assumeIsolated({ mirror?.roleDescription(of: key) }) {
+            return own
         }
-        return own ?? super.accessibilityRoleDescription()
+        return super.accessibilityRoleDescription()
     }
 
     override func accessibilityTitle() -> String? {
-        MainActor.assumeIsolated {
-            guard let node else { return nil }
-            if isRoot {
-                return mirror?.title.isEmpty == false ? mirror?.title : node.name
-            }
-            return node.role == "staticText" || node.name.isEmpty ? nil : node.name
-        }
+        let mirror = mirror, key = key
+        return MainActor.assumeIsolated { mirror?.elementTitle(of: key) }
     }
 
     override func accessibilityLabel() -> String? {
-        MainActor.assumeIsolated {
-            guard let node, !node.detail.isEmpty else { return nil }
-            return node.detail
-        }
+        let mirror = mirror, key = key
+        return MainActor.assumeIsolated { mirror?.elementLabel(of: key) }
     }
 
     override func accessibilityValue() -> Any? {
-        let value: (any Sendable)? = MainActor.assumeIsolated {
-            guard let node else { return nil }
-            switch node.role {
-            case "staticText": return node.name
-            case "heading": return node.level
-            case "textField", "searchBox", "textFieldWithComboBox": return node.value
-            default: return node.value.isEmpty ? nil : node.value
-            }
-        }
+        let mirror = mirror, key = key
+        let value: (any Sendable)? = MainActor.assumeIsolated { mirror?.elementValue(of: key) }
         return value
     }
 
     override func accessibilityURL() -> URL? {
-        MainActor.assumeIsolated { node.flatMap { URL(string: $0.url) } }
+        let mirror = mirror, key = key
+        return MainActor.assumeIsolated { mirror?.elementURL(of: key) }
     }
 
     override func accessibilityChildren() -> [Any]? {
-        let children: [ChromiumAccessibilityElement]? = MainActor.assumeIsolated {
-            guard let mirror else { return nil }
-            return mirror.visibleChildren(of: key).compactMap { mirror.element(for: $0) }
-        }
+        let mirror = mirror, key = key
+        let children: [ChromiumAccessibilityElement]? = MainActor.assumeIsolated { mirror?.childElements(of: key) }
         return children
     }
 
     override func accessibilityParent() -> Any? {
-        let parent: (element: ChromiumAccessibilityElement?, page: ChromiumPage?) = MainActor.assumeIsolated {
-            guard let mirror, let page = mirror.page else { return (nil, nil) }
-            if !isRoot, let key = mirror.visibleParent(of: key), let element = mirror.element(for: key) {
-                return (element, nil)
-            }
-            return (nil, page)
-        }
+        let mirror = mirror, key = key
+        let parent: (element: ChromiumAccessibilityElement?, page: ChromiumPage?) =
+            MainActor.assumeIsolated { mirror?.parentObject(of: key) ?? (nil, nil) }
         if let element = parent.element {
             return element
         }
@@ -470,20 +509,12 @@ nonisolated final class ChromiumAccessibilityElement: NSAccessibilityElement, @u
     }
 
     override func accessibilityFrame() -> NSRect {
-        MainActor.assumeIsolated {
-            guard let mirror, let page = mirror.page, let window = page.window else { return .zero }
-            let rect = mirror.rectInView(key)
-            return window.convertToScreen(page.convert(rect, to: nil))
-        }
+        let mirror = mirror, key = key
+        return MainActor.assumeIsolated { mirror?.screenFrame(of: key) ?? .zero }
     }
 
     override func accessibilityPerformPress() -> Bool {
-        MainActor.assumeIsolated {
-            guard let mirror, let page = mirror.page else { return false }
-            let rect = mirror.rectInView(key)
-            guard rect.width > 0, rect.height > 0 else { return false }
-            page.remoteClick(at: CGPoint(x: rect.midX, y: rect.midY))
-            return true
-        }
+        let mirror = mirror, key = key
+        return MainActor.assumeIsolated { mirror?.press(key) ?? false }
     }
 }
