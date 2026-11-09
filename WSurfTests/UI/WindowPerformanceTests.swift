@@ -257,6 +257,12 @@ nonisolated final class WindowPerformanceTests: XCTestCase, @unchecked Sendable 
                     browser.activate(front)
                 }
                 rig.draw()
+                // The pool refills a taken view 320 ms later, whenever the run loop next turns, so whether two warm views waited
+                // at the start of the closes was luck: the mean was 0.16 s with them and 0.22-0.26 s without (ten CI runs, two
+                // clusters). Cancel any refill and fill the pool synchronously: two warm views, three made cold, every pass.
+                let pool = browser.context.webViewPool
+                pool.discardIdleForMemoryPressure()
+                pool.warmUp()
                 viewsBefore = Self.liveWebViews()
                 startMeasuring()
                 for _ in 0..<5 {
