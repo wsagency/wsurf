@@ -64,6 +64,10 @@ final class FramePresenter {
 
     /// Presentation "xpc": each frame's surface goes to WSurf over XPC instead of into the remote layer tree.
     var sink: ((IOSurfaceRef, Element, UInt64) -> Void)?
+    /// Presentation "xpc": the popup's visibility and rectangle (view points, top-left origin) go to WSurf too.
+    var popupSink: ((Bool, CGRect) -> Void)?
+    private var popupVisible = false
+    private var popupRect = CGRect.zero
 
     init(serverPort: mach_port_t, debugRoot: Bool = false) {
         client = serverPort != 0 ? CARemoteLayerClient(serverPort: serverPort) : nil
@@ -113,6 +117,11 @@ final class FramePresenter {
     }
 
     func setPopup(visible: Bool) {
+        popupVisible = visible
+        if !visible {
+            popupRect = .zero
+        }
+        popupSink?(visible, popupRect)
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         popup.isHidden = !visible
@@ -126,6 +135,8 @@ final class FramePresenter {
     }
 
     func setPopup(rect: CGRect) {
+        popupRect = rect
+        popupSink?(popupVisible, rect)
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         popup.frame = rect

@@ -17,6 +17,24 @@ extension ChromiumPage {
     /// the pixels are the same; only the bytes of the file differ. The preview and the band colour ask for it, a capture a person or
     /// an agent asks for does not.
     func capture(rect: CGRect?, width: CGFloat?, fastEncoding: Bool = false) async throws -> NSImage {
+        #if DEBUG
+        // D4 spike (decision 4, fair arms): count every capture asked for and how it ended, in both modes, so the OOP arm cannot
+        // pass K1 or K2 by skipping or losing the switch's captures.
+        ChromiumCaptureStats.requested += 1
+        do {
+            let image = try await captureCounted(rect: rect, width: width, fastEncoding: fastEncoding)
+            ChromiumCaptureStats.answered += 1
+            return image
+        } catch {
+            ChromiumCaptureStats.failed += 1
+            throw error
+        }
+        #else
+        return try await captureCounted(rect: rect, width: width, fastEncoding: fastEncoding)
+        #endif
+    }
+
+    private func captureCounted(rect: CGRect?, width: CGFloat?, fastEncoding: Bool) async throws -> NSImage {
         try await ensureReady()
         var params: [String: Any] = ["format": "png", "captureBeyondViewport": false]
         if fastEncoding {
@@ -68,3 +86,16 @@ extension ChromiumPage {
         return image
     }
 }
+
+#if DEBUG
+/// D4 spike: Chromium page captures since launch (preview, band colour, and any other), for the driver and the tour.
+enum ChromiumCaptureStats {
+    static var requested = 0
+    static var answered = 0
+    static var failed = 0
+
+    static var summary: String {
+        "captures requested \(requested), answered \(answered), failed \(failed), in flight \(requested - answered - failed)"
+    }
+}
+#endif

@@ -244,6 +244,9 @@ final class ServiceHost {
             browser.presenter.sink = { surface, element, entry in
                 ServiceHost.shared.sendFrame(browser: id, surface: surface, popup: element == .popup, entry: entry)
             }
+            browser.presenter.popupSink = { visible, rect in
+                ServiceHost.shared.sendPopup(browser: id, visible: visible, rect: rect)
+            }
         }
         let created = CefRemoteMessage(CefRemote.Event.browserCreated, browser: id)
         created.set(CefRemote.Key.layerClient, Int64(browser.presenter.clientID))
@@ -272,6 +275,18 @@ final class ServiceHost {
         // K4's output leg ends in WSurf: when CEF entered the paint callback, on the shared mach clock.
         message.set(CefRemote.Key.timestamp, Double(entry) / 1e9)
         xpc_connection_send_message(framesPeer, message.object)
+    }
+
+    func sendPopup(browser id: Int64, visible: Bool, rect: CGRect) {
+        guard let framesPeer else { return }
+        let message = CefRemoteMessage(CefRemote.Event.popup, browser: id)
+        message.set(CefRemote.Key.flag, visible)
+        message.set(CefRemote.Key.x, Double(rect.minX))
+        message.set(CefRemote.Key.y, Double(rect.minY))
+        message.set(CefRemote.Key.width, Double(rect.width))
+        message.set(CefRemote.Key.height, Double(rect.height))
+        xpc_connection_send_message(framesPeer, message.object)
+        note("browser \(id): popup \(visible ? "shown" : "hidden") at \(Int(rect.minX)),\(Int(rect.minY)) \(Int(rect.width))x\(Int(rect.height))")
     }
 
     func browserDidClose(_ id: Int64) {

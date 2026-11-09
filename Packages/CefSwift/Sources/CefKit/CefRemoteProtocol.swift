@@ -161,6 +161,9 @@ public enum CefRemote {
         public static let browserCreated = "browser.created"
         /// Presentation "xpc": one frame of a browser, its IOSurface as an XPC object, on the frames connection.
         public static let frame = "frame"
+        /// Presentation "xpc": a popup widget (a `<select>` list) was shown, moved or hidden; on the frames connection, so it is
+        /// ordered with the popup's frames. Keys: `flag` (visible), `x`, `y`, `w`, `h` (view points, top-left origin).
+        public static let popup = "popup"
         public static let browserReady = "browser.ready"
         public static let browserClosed = "browser.closed"
         public static let loadingState = "load.state"

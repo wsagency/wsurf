@@ -62,6 +62,8 @@ enum D4SpikeDriver {
             case "input": await input()
             case "kill": await kill()
             case "ime": await ime()
+            case "imekeys": await imeKeys()
+            case "select": await selectMenu()
             #if DEBUG
             case "ax": await accessibility()
             #endif
@@ -119,6 +121,7 @@ enum D4SpikeDriver {
         let secondLoaded = await waitLoaded(second, timeout: 60)
         log("second Chromium tab: loaded \(secondLoaded) in \((ContinuousClock.now - secondStart).milliseconds) ms, longest gap \(Int(secondWatch.stop())) ms")
         try? await Task.sleep(for: .seconds(1))
+        log("after the second tab and 1 s: \(ChromiumCaptureStats.summary)")
         captureWindow("day1-second")
         browser.close(second)
         browser.close(tab)
@@ -151,10 +154,12 @@ enum D4SpikeDriver {
             let cpu = mainThreadCPU()
             browser.activate(target)
             try? await Task.sleep(for: .milliseconds(400))
-            log("switch \(number) to \(number.isMultiple(of: 2) ? "red" : "blue"): main CPU 400 ms \(String(format: "%.1f", mainThreadCPU() - cpu)) ms, longest gap \(Int(watch.stop())) ms")
+            log("switch \(number) to \(number.isMultiple(of: 2) ? "red" : "blue"): main CPU 400 ms \(String(format: "%.1f", mainThreadCPU() - cpu)) ms, longest gap \(Int(watch.stop())) ms; \(ChromiumCaptureStats.summary)")
             try? await Task.sleep(for: .milliseconds(300))
             captureWindow("frames-switch-\(number)")
         }
+        try? await Task.sleep(for: .seconds(1.5))
+        log("after the 6 switches and 1.5 s: \(ChromiumCaptureStats.summary)")
         // Glass over the page: the command palette's glass must sample the page under it (red, then blue).
         for (name, tab) in [("red", red), ("blue", blue)] {
             browser.activate(tab)
@@ -335,6 +340,155 @@ enum D4SpikeDriver {
             log("ime: WSurf-side paste into the textarea (service half): value \(String(describing: value))")
         }
         captureWindow("ime-after")
+        browser.close(tab)
+        try? await Task.sleep(for: .seconds(1))
+    }
+
+    /// Day 5, the keystroke path of IME, the one real typing with an input method takes: the input method's calls come inside
+    /// keyDown, and the page gets them after `interpretKeyEvents` (the deferred model of cefclient and Chromium's own view). The
+    /// calls are played by the driver; no system input method is driven.
+    private static func imeKeys() async {
+        var browser: BrowserModel { coordinator.browser }
+        let tab = browser.newTab(url: url("ime.html"), engine: .chromium)
+        _ = await waitLoaded(tab, timeout: 60)
+        try? await Task.sleep(for: .seconds(1))
+        guard let page = tab.liveView, let chromium = page.chromium, let window = chromium.window else {
+            log("imekeys: no page")
+            return
+        }
+        let rectJSON = try? await page.evaluateJavaScript(
+            "JSON.stringify((r => [r.x + r.width / 2, r.y + r.height / 2])(document.querySelector('#t').getBoundingClientRect()))")
+        guard let text = rectJSON as? String, let data = text.data(using: .utf8),
+              let point = try? JSONSerialization.jsonObject(with: data) as? [Double], point.count == 2 else {
+            log("imekeys: textarea not found")
+            return
+        }
+        let inWindow = chromium.convert(CGPoint(x: point[0], y: point[1]), to: nil)
+        for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+            if let event = NSEvent.mouseEvent(with: type, location: inWindow, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                              windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1) {
+                window.sendEvent(event)
+            }
+        }
+        try? await Task.sleep(for: .milliseconds(300))
+        let none = NSRange(location: NSNotFound, length: 0)
+        func key(_ code: UInt16, _ characters: String, _ interpret: () -> Void) {
+            guard let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                               windowNumber: window.windowNumber, context: nil, characters: characters,
+                                               charactersIgnoringModifiers: characters, isARepeat: false, keyCode: code) else { return }
+            chromium.simulateKeyDownForIMECheck(event, interpret: interpret)
+        }
+        func state(_ label: String) async {
+            try? await Task.sleep(for: .milliseconds(350))
+            let value = try? await page.evaluateJavaScript(
+                "JSON.stringify(document.querySelector('#t').value) + ' | ' + document.getElementById('log').textContent")
+            log("imekeys \(label): marked \(chromium.hasMarkedText()); value | events (newest first): \(String(describing: value))")
+        }
+        func reset() async {
+            _ = try? await page.evaluateJavaScript(
+                "document.querySelector('#t').value = ''; seen.length = 0; document.getElementById('log').textContent = ''; 0")
+            try? await Task.sleep(for: .milliseconds(200))
+        }
+        // a. Compose, update, then Return commits inside the keystroke.
+        key(45, "n") { chromium.setMarkedText("n", selectedRange: NSRange(location: 1, length: 0), replacementRange: none) }
+        key(34, "i") { chromium.setMarkedText("に", selectedRange: NSRange(location: 1, length: 0), replacementRange: none) }
+        await state("a1 after n, i (composition に)")
+        key(36, "\r") { chromium.insertText("に", replacementRange: none) }
+        await state("a2 after Return (commit に)")
+        // b. Compose, then the input method calls unmarkText inside the keystroke (finish).
+        await reset()
+        key(40, "k") { chromium.setMarkedText("か", selectedRange: NSRange(location: 1, length: 0), replacementRange: none) }
+        key(36, "\r") { chromium.unmarkText() }
+        await state("b after unmarkText in a keystroke (finish か)")
+        // c. Compose, then an empty setMarkedText inside the keystroke (Escape cancels).
+        await reset()
+        key(1, "s") { chromium.setMarkedText("さ", selectedRange: NSRange(location: 1, length: 0), replacementRange: none) }
+        key(53, "\u{1b}") { chromium.setMarkedText("", selectedRange: NSRange(location: 0, length: 0), replacementRange: none) }
+        await state("c after an empty setMarkedText in a keystroke (cancel さ)")
+        // d. Space converts the whole composition (selected), then Return commits it.
+        await reset()
+        key(45, "n") { chromium.setMarkedText("にほん", selectedRange: NSRange(location: 3, length: 0), replacementRange: none) }
+        key(49, " ") { chromium.setMarkedText("日本", selectedRange: NSRange(location: 0, length: 2), replacementRange: none) }
+        await state("d1 after Space (composition 日本, selected)")
+        key(36, "\r") { chromium.insertText("日本", replacementRange: none) }
+        await state("d2 after Return (commit 日本)")
+        // e. Commit and a new composition in one keystroke (typing on after a conversion): commit 日本, then compose か.
+        await reset()
+        key(45, "n") { chromium.setMarkedText("にほん", selectedRange: NSRange(location: 3, length: 0), replacementRange: none) }
+        key(40, "k") {
+            chromium.insertText("日本", replacementRange: none)
+            chromium.setMarkedText("k", selectedRange: NSRange(location: 1, length: 0), replacementRange: none)
+        }
+        await state("e after commit-and-compose in one keystroke (日本, then composition k)")
+        key(36, "\r") { chromium.insertText("k", replacementRange: none) }
+        await state("e2 after Return (commit k)")
+        // f. A plain key with no input method: KEYDOWN and CHAR.
+        await reset()
+        key(0, "a") { chromium.insertText("a", replacementRange: none) }
+        await state("f plain a")
+        // g. Real keystrokes (AppKit's own interpretKeyEvents): Left moves the caret and inserts nothing, so Left then b gives "ba".
+        let left = String(UnicodeScalar(UInt16(NSLeftArrowFunctionKey))!)
+        for (code, characters, flags) in [(UInt16(123), left, NSEvent.ModifierFlags([.numericPad, .function])), (UInt16(11), "b", [])] {
+            for type in [NSEvent.EventType.keyDown, .keyUp] {
+                if let event = NSEvent.keyEvent(with: type, location: .zero, modifierFlags: flags, timestamp: ProcessInfo.processInfo.systemUptime,
+                                                windowNumber: window.windowNumber, context: nil, characters: characters,
+                                                charactersIgnoringModifiers: characters, isARepeat: false, keyCode: code) {
+                    window.sendEvent(event)
+                }
+            }
+            try? await Task.sleep(for: .milliseconds(150))
+        }
+        await state("g after the real keys Left, b (expect \"ba\")")
+        captureWindow("imekeys-after")
+        browser.close(tab)
+        try? await Task.sleep(for: .seconds(1))
+    }
+
+    /// Decision 3 (windowless changes): a `<select>` opens as Chromium's own popup widget; it must show at the menu, follow the
+    /// arrow keys and Return, and close.
+    private static func selectMenu() async {
+        var browser: BrowserModel { coordinator.browser }
+        let tab = browser.newTab(url: url("select.html"), engine: .chromium)
+        _ = await waitLoaded(tab, timeout: 60)
+        try? await Task.sleep(for: .seconds(1))
+        guard let page = tab.liveView, let chromium = page.chromium, let window = chromium.window else {
+            log("select: no page")
+            return
+        }
+        let rectJSON = try? await page.evaluateJavaScript(
+            "JSON.stringify((r => [r.x + r.width / 2, r.y + r.height / 2, r.x, r.bottom])(document.querySelector('#s').getBoundingClientRect()))")
+        guard let text = rectJSON as? String, let data = text.data(using: .utf8),
+              let box = try? JSONSerialization.jsonObject(with: data) as? [Double], box.count == 4 else {
+            log("select: menu not found")
+            return
+        }
+        let inWindow = chromium.convert(CGPoint(x: box[0], y: box[1]), to: nil)
+        for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+            if let event = NSEvent.mouseEvent(with: type, location: inWindow, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                              windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1) {
+                window.sendEvent(event)
+            }
+        }
+        try? await Task.sleep(for: .milliseconds(700))
+        log("select: menu at page \(Int(box[2])),\(Int(box[3])) (left, bottom); popup events \(RemoteFrameSinks.shared.popupReport())")
+        captureWindow("select-open")
+        for (code, name) in [(UInt16(125), "Down"), (UInt16(125), "Down"), (UInt16(36), "Return")] {
+            for type in [NSEvent.EventType.keyDown, .keyUp] {
+                let characters = code == 36 ? "\r" : String(UnicodeScalar(UInt16(NSDownArrowFunctionKey))!)
+                if let event = NSEvent.keyEvent(with: type, location: .zero, modifierFlags: code == 36 ? [] : [.numericPad, .function],
+                                                timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                                                context: nil, characters: characters, charactersIgnoringModifiers: characters,
+                                                isARepeat: false, keyCode: code) {
+                    window.sendEvent(event)
+                }
+            }
+            log("select: key \(name) sent")
+            try? await Task.sleep(for: .milliseconds(250))
+        }
+        try? await Task.sleep(for: .milliseconds(500))
+        let value = try? await page.evaluateJavaScript("document.querySelector('#s').value + ' / ' + document.getElementById('out').textContent")
+        log("select: after Down, Down, Return: \(String(describing: value)); popup events \(RemoteFrameSinks.shared.popupReport())")
+        captureWindow("select-closed")
         browser.close(tab)
         try? await Task.sleep(for: .seconds(1))
     }

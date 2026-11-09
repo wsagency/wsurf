@@ -235,6 +235,22 @@ extension ChromiumPage {
         sendKeyAfterTextInput(event)
     }
 
+    #if DEBUG
+    /// D4 spike: `keyDown` with `interpret` in place of `interpretKeyEvents`, so the driver can play an input method's calls
+    /// inside a keystroke, the path real IME typing takes, without driving a system input method.
+    func simulateKeyDownForIMECheck(_ event: NSEvent, interpret: () -> Void) {
+        guard remote != nil else { return }
+        remoteInput.oldHasMarkedText = remoteInput.hasMarkedText
+        remoteInput.handlingKeyDown = true
+        remoteInput.textToBeInserted = ""
+        remoteInput.markedReplacement = nil
+        remoteInput.unmarkTextCalled = false
+        interpret()
+        remoteInput.handlingKeyDown = false
+        sendKeyAfterTextInput(event)
+    }
+    #endif
+
     override func keyUp(with event: NSEvent) {
         guard remote != nil else { return super.keyUp(with: event) }
         sendKey(event, type: KEYEVENT_KEYUP)
@@ -282,16 +298,20 @@ extension ChromiumPage {
             sendKey(event, type: KEYEVENT_CHAR, character: state.textToBeInserted.utf16.first ?? event.characters?.utf16.first)
         }
         let threshold = (state.hasMarkedText || state.oldHasMarkedText) ? 0 : 1
+        var textInserted = false
         if state.textToBeInserted.utf16.count > threshold {
             remote.sendInput(imeMessage(CefRemote.Op.imeCommit, text: state.textToBeInserted, replacement: nil))
             remoteInput.textToBeInserted = ""
+            textInserted = true
         }
+        // As Chromium's own view (RenderWidgetHostViewCocoa): text that was inserted ended the composition, so no cancel follows
+        // it (the extra cancel is an empty composition, which deletes a selection that is not collapsed).
         if state.hasMarkedText, !state.markedText.isEmpty {
             let message = imeMessage(CefRemote.Op.imeSetComposition, text: state.markedText, replacement: state.markedReplacement)
             message.set(CefRemote.Key.rangeFrom, Int64(max(0, state.markedSelection.location)))
             message.set(CefRemote.Key.rangeTo, Int64(max(0, state.markedSelection.location + state.markedSelection.length)))
             remote.sendInput(message)
-        } else if state.oldHasMarkedText, !state.hasMarkedText {
+        } else if state.oldHasMarkedText, !state.hasMarkedText, !textInserted {
             if state.unmarkTextCalled {
                 let message = imeMessage(CefRemote.Op.imeFinish, text: "", replacement: nil)
                 message.set(CefRemote.Key.flag, false)
@@ -477,8 +497,9 @@ extension ChromiumPage: @preconcurrency NSTextInputClient {
         if remoteInput.handlingKeyDown {
             remoteInput.unmarkTextCalled = true
         } else if let remote {
+            // keep_selection false, as inside a keystroke and as Chromium's own view: the caret goes after the finished text.
             let message = remote.message(CefRemote.Op.imeFinish)
-            message.set(CefRemote.Key.flag, true)
+            message.set(CefRemote.Key.flag, false)
             remote.sendInput(message)
         }
     }

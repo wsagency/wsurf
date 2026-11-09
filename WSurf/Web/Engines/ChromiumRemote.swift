@@ -52,6 +52,8 @@ nonisolated final class RemoteFrameSinks: @unchecked Sendable {
     static let shared = RemoteFrameSinks()
     private let lock = NSLock()
     private var layers: [Int64: CALayer] = [:]
+    /// The popup widget of each page (a `<select>` list), a sublayer of the page's layer, made at its first popup event.
+    private var popups: [Int64: CALayer] = [:]
     private(set) var framesShown = 0
     /// K4's whole output leg, CEF's paint callback in the service to this commit, in milliseconds.
     private var outputLegMs: [Double] = []
@@ -60,18 +62,50 @@ nonisolated final class RemoteFrameSinks: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         layers[browser] = layer
+        if layer == nil {
+            popups[browser] = nil
+        }
+    }
+
+    /// The page's popup layer, made on first use. Call with the lock held.
+    private func popupLayer(for browser: Int64, in page: CALayer) -> CALayer {
+        if let existing = popups[browser] {
+            return existing
+        }
+        let popup = CALayer()
+        popup.anchorPoint = .zero
+        popup.contentsGravity = .resize
+        popup.isHidden = true
+        popup.zPosition = 1
+        page.addSublayer(popup)
+        popups[browser] = popup
+        return popup
     }
 
     /// On the frames queue: the surface becomes the layer's contents in its own transaction. WSurf's main thread does nothing.
     func show(_ event: xpc_object_t) {
-        guard let message = CefRemoteMessage(wrapping: event), message.op == CefRemote.Event.frame,
+        guard let message = CefRemoteMessage(wrapping: event) else { return }
+        if message.op == CefRemote.Event.popup {
+            showPopup(message)
+            return
+        }
+        guard message.op == CefRemote.Event.frame,
               let object = xpc_dictionary_get_value(event, CefRemote.Key.surface),
               let surface = IOSurfaceLookupFromXPCObject(object) else { return }
         lock.lock()
         let layer = layers[message.browser]
+        let popup = popups[message.browser]
         framesShown += 1
         lock.unlock()
-        guard let layer, !message.bool(CefRemote.Key.flag) else { return }
+        if message.bool(CefRemote.Key.flag) {
+            guard let popup else { return }
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            popup.contents = surface
+            CATransaction.commit()
+            return
+        }
+        guard let layer else { return }
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         layer.contents = surface
@@ -85,6 +119,42 @@ nonisolated final class RemoteFrameSinks: @unchecked Sendable {
         }
         outputLegMs.append(leg)
         lock.unlock()
+    }
+
+    /// A popup was shown, moved or hidden. CEF's rectangle is in view points with a top-left origin; it is flipped unless the
+    /// page layer's geometry already is.
+    private func showPopup(_ message: CefRemoteMessage) {
+        lock.lock()
+        let page = layers[message.browser]
+        let popup = page.map { popupLayer(for: message.browser, in: $0) }
+        lock.unlock()
+        guard let page, let popup else { return }
+        let visible = message.bool(CefRemote.Key.flag)
+        var rect = CGRect(x: message.double(CefRemote.Key.x), y: message.double(CefRemote.Key.y),
+                          width: message.double(CefRemote.Key.width), height: message.double(CefRemote.Key.height))
+        if !page.contentsAreFlipped() {
+            rect.origin.y = page.bounds.height - rect.maxY
+        }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        popup.contentsScale = page.contentsScale
+        popup.frame = rect
+        popup.isHidden = !visible
+        if !visible {
+            popup.contents = nil
+        }
+        CATransaction.commit()
+        lock.lock()
+        popupLog.append("\(visible ? "shown" : "hidden") \(Int(rect.minX)),\(Int(rect.minY)) \(Int(rect.width))x\(Int(rect.height)) flipped page \(page.contentsAreFlipped())")
+        lock.unlock()
+    }
+
+    /// DEBUG driver: the popup events seen, oldest first.
+    private var popupLog: [String] = []
+    func popupReport() -> [String] {
+        lock.lock()
+        defer { lock.unlock() }
+        return popupLog
     }
 
     /// Percentiles of the output leg since the last reset.
