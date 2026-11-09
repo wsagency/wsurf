@@ -109,6 +109,9 @@ FIXTURE: list[tuple[str, bool | str | None]] = [
     ("WAIT-EXPIRED A.swift:9 after 25s", True),
     # waitUntil's real line (WSurfTests/Helpers/Wait.swift): file:line, the timeout as a Duration, the test name.
     ("WAIT-EXPIRED MediaCenterTests.swift:721 after 25.0 seconds in aNewPageInTheTabEndsWhatItsFramesPlayed(engine:)", True),
+    ("WAIT-EXPIRED Helpers/Wait.swift:120 after 25.0 seconds in aTestName()", True),  # #91's format
+    (HOST + "[x] host text" + "WAIT-EXPIRED Helpers/Wait.swift:120 after 25.0 seconds in aTestName()",
+     "WAIT-EXPIRED Helpers/Wait.swift:120 after 25.0 seconds in aTestName()"),
     (HOST + "[x] host text" + "WAIT-EXPIRED MediaCenterTests.swift:722 after 25.0 seconds in glued()",
      "WAIT-EXPIRED MediaCenterTests.swift:722 after 25.0 seconds in glued()"),
     (HOST + "[default] WebContent[17716] Conn 0x0 is not a valid connection ID.", False),
