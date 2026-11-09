@@ -15,15 +15,15 @@ final class RemoteBrowser {
     private var hasClosed = false
 
     private var clientPointer: UnsafeMutablePointer<cef_client_t>?
-    private var lifeSpanPointer: UnsafeMutablePointer<cef_life_span_handler_t>?
-    private var loadPointer: UnsafeMutablePointer<cef_load_handler_t>?
-    private var displayPointer: UnsafeMutablePointer<cef_display_handler_t>?
-    private var requestPointer: UnsafeMutablePointer<cef_request_handler_t>?
-    private var renderPointer: UnsafeMutablePointer<cef_render_handler_t>?
-    private var keyboardPointer: UnsafeMutablePointer<cef_keyboard_handler_t>?
-    private var focusPointer: UnsafeMutablePointer<cef_focus_handler_t>?
-    private var contextMenuPointer: UnsafeMutablePointer<cef_context_menu_handler_t>?
-    private var findPointer: UnsafeMutablePointer<cef_find_handler_t>?
+    nonisolated(unsafe) private var lifeSpanPointer: UnsafeMutablePointer<cef_life_span_handler_t>?
+    nonisolated(unsafe) private var loadPointer: UnsafeMutablePointer<cef_load_handler_t>?
+    nonisolated(unsafe) private var displayPointer: UnsafeMutablePointer<cef_display_handler_t>?
+    nonisolated(unsafe) private var requestPointer: UnsafeMutablePointer<cef_request_handler_t>?
+    nonisolated(unsafe) private var renderPointer: UnsafeMutablePointer<cef_render_handler_t>?
+    nonisolated(unsafe) private var keyboardPointer: UnsafeMutablePointer<cef_keyboard_handler_t>?
+    nonisolated(unsafe) private var focusPointer: UnsafeMutablePointer<cef_focus_handler_t>?
+    nonisolated(unsafe) private var contextMenuPointer: UnsafeMutablePointer<cef_context_menu_handler_t>?
+    nonisolated(unsafe) private var findPointer: UnsafeMutablePointer<cef_find_handler_t>?
     private var accessibilityPointer: UnsafeMutablePointer<cef_accessibility_handler_t>?
     private var observerPointer: UnsafeMutablePointer<cef_dev_tools_message_observer_t>?
     private var registration: UnsafeMutablePointer<cef_registration_t>?
@@ -758,14 +758,13 @@ final class RemoteBrowser {
         return client
     }
 
-    /// A handler to return to CEF, with the reference the caller takes.
+    /// A handler to return to CEF, with the reference the caller takes. CEF asks on any thread (the IO thread too), so the
+    /// handlers are made once on the main thread before the browser exists and read here without an actor hop.
     private nonisolated static func handler<T>(
-        _ clientSelf: UnsafeMutablePointer<cef_client_t>?, _ pick: @MainActor (RemoteBrowser) -> UnsafeMutablePointer<T>?
+        _ clientSelf: UnsafeMutablePointer<cef_client_t>?, _ pick: (RemoteBrowser) -> UnsafeMutablePointer<T>?
     ) -> UnsafeMutablePointer<T>? {
-        guard let owner = Native.owner(RemoteBrowser.self, clientSelf.map(UnsafeMutableRawPointer.init)) else { return nil }
-        // The address crosses `assumeIsolated` as an integer: its result must be Sendable.
-        let address = MainActor.assumeIsolated { pick(owner).map { Int(bitPattern: $0) } ?? 0 }
-        guard let pointer = UnsafeMutablePointer<T>(bitPattern: address) else { return nil }
+        guard let owner = Native.owner(RemoteBrowser.self, clientSelf.map(UnsafeMutableRawPointer.init)),
+              let pointer = pick(owner) else { return nil }
         Native.retain(UnsafeMutableRawPointer(pointer))
         return pointer
     }
