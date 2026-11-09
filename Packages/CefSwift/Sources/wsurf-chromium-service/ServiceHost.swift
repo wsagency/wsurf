@@ -80,8 +80,9 @@ final class ServiceHost {
         case CefRemote.Op.createBrowser:
             createBrowser(message)
         case CefRemote.Op.debugAbort:
-            note("debug.abort: ending the service as a crash would")
-            abort()
+            // As the plan's kill test: SIGKILL, which leaves no crash report (and so no crash dialog) behind.
+            note("debug.abort: the service kills itself (SIGKILL)")
+            kill(getpid(), SIGKILL)
         case CefRemote.Op.debugStats:
             statistics(replyTo: message, peer: peer)
         default:
