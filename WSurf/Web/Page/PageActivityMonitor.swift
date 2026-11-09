@@ -237,6 +237,8 @@ nonisolated struct ScrollReturnMemory {
 nonisolated struct WakeScroll: Equatable {
     private var offset: Double?
     private var url: String?
+    /// How many times `take` has handed an offset out. Read by tests, to tell a restore that was applied from one that was dropped.
+    private(set) var appliedCount = 0
 
     var isArmed: Bool {
         offset != nil
@@ -263,6 +265,7 @@ nonisolated struct WakeScroll: Equatable {
         guard let offset, let url, let finished else { return nil }
         if finished == url {
             disarm()
+            appliedCount += 1
             return offset
         }
         if finished.hasPrefix("http://") || finished.hasPrefix("https://") {

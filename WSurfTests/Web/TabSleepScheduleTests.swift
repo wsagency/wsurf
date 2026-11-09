@@ -218,12 +218,23 @@ struct TabSleepScheduleTests {
                 #expect(restored, "WebKit restores the scroll position")
             } else {
                 // The same tolerance as ChromiumScrollWakeTests: within 2 points of where the tab was.
+                // The wake hands the kept offset out once, when the load of the tab's address finishes (`WakeScroll.take`): wait for
+                // that, so a failure below says which half went wrong.
+                let taken = await waitUntil(timeout: .seconds(5)) { !tab.wakeScroll.isArmed }
                 var latest = 0.0
                 let restored = await waitUntil(timeout: .seconds(5)) {
                     latest = await scrollY()
                     return abs(latest - 1500) < 2
                 }
-                #expect(restored, "Chromium puts the kept offset back after the load (scrollY is \(latest))")
+                let cause = switch (taken, tab.wakeScroll.appliedCount) {
+                case (false, _):
+                    "the offset was never taken: the load of the address did not finish for the tab"
+                case (true, 0):
+                    "the offset was cleared without being taken: another load finished first (a test race)"
+                case (true, _):
+                    "the offset was taken and applied but the page did not scroll (a product or CEF race)"
+                }
+                #expect(restored, "Chromium puts the kept offset back after the load (scrollY is \(latest)): \(cause)")
             }
         }
     }

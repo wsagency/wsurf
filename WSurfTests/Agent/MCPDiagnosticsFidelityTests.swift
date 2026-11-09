@@ -338,6 +338,10 @@ struct MCPDiagnosticsFidelityTests {
         #expect(result.structuredContent?.objectValue?["lostEarly"]?.intValue == 173)
         let first = try #require(records(result).first)
         #expect(text(first, "text") == "burst 173")
+        // The newest 28, "burst-done" last, follow on the next page: what the ring kept is delivered whole.
+        let cursor = try #require(result.structuredContent?.objectValue?["nextCursor"]?.stringValue)
+        let rest = try await read(rig, "readConsole", ["limit": 100, "cursor": .string(cursor)]) { $0["text"]?.stringValue == "burst-done" }
+        #expect(rest.compactMap { text($0, "text") } == (273..<300).map { "burst \($0)" } + ["burst-done"])
     }
 
     @Test(.boundedWebViews)
