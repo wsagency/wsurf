@@ -11,7 +11,7 @@ import WebKit
 @testable import WSurf
 
 @MainActor
-@Suite(.boundedWebViews)
+@Suite(.boundedWebViews, .noAnnouncePause)
 struct MCPPrivacyTests {
     private static let html = """
         <!doctype html><title>Shared fixture</title>

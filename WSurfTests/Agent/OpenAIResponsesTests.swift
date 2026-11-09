@@ -147,11 +147,17 @@ struct OpenAIResponsesTests {
         #expect(OpenAIProgressMessage.partial(#"{"other":"secret"}"#) == nil)
     }
 
+    /// The tests below run with a zero delay; the shipped delays stay what users get.
+    @Test func productionRetryDelaysArePinned() {
+        #expect(OpenAIAPI(transport: OpenAITransportFixture([])).retryDelay == .seconds(2))
+        #expect(PageDriver.announcePause == .milliseconds(450))
+    }
+
     @Test func retriesInterruptedStreamBeforeFirstEvent() async throws {
         let wire = OpenAITransportFixture([OpenAITransportFixture.response([
             OpenAITransportFixture.message("Ready"),
         ]), ], failureStarts: 1)
-        let response = try await OpenAIAPI(transport: wire).createResponse([:]) { _ in }
+        let response = try await OpenAIAPI(transport: wire, retryDelay: .zero).createResponse([:]) { _ in }
         #expect(response["status"] == "completed")
         #expect(wire.requests.count == 2)
     }
@@ -160,7 +166,7 @@ struct OpenAIResponsesTests {
         let wire = OpenAITransportFixture([], failureStarts: 1)
         let body: OpenAIJSON = ["tools": [["type": "web_search_preview"]]]
         await #expect(throws: OpenAIFailure.self) {
-            try await OpenAIAPI(transport: wire).createResponse(body) { _ in }
+            try await OpenAIAPI(transport: wire, retryDelay: .zero).createResponse(body) { _ in }
         }
         #expect(wire.requests.count == 1)
     }
@@ -169,7 +175,7 @@ struct OpenAIResponsesTests {
         let wire = OpenAITransportFixture([OpenAITransportFixture.response([
             OpenAITransportFixture.message("Ready"),
         ]), ], eventErrorsBeforeSuccess: 1)
-        let response = try await OpenAIAPI(transport: wire).createResponse([:]) { _ in }
+        let response = try await OpenAIAPI(transport: wire, retryDelay: .zero).createResponse([:]) { _ in }
         #expect(response["status"] == "completed")
         #expect(wire.requests.count == 2)
     }
@@ -178,7 +184,7 @@ struct OpenAIResponsesTests {
         let wire = OpenAITransportFixture([OpenAITransportFixture.response([
             OpenAITransportFixture.message("Ready"),
         ]), ], eventErrorsBeforeSuccess: 1, eventErrorCode: nil)
-        let response = try await OpenAIAPI(transport: wire).createResponse([:]) { _ in }
+        let response = try await OpenAIAPI(transport: wire, retryDelay: .zero).createResponse([:]) { _ in }
         #expect(response["status"] == "completed")
         #expect(wire.requests.count == 2)
     }
@@ -187,7 +193,7 @@ struct OpenAIResponsesTests {
     func retriesExpiredSocketStateOnceBeforeOutput(code: String) async throws {
         let wire = OpenAITransportFixture([OpenAITransportFixture.response([OpenAITransportFixture.message("Ready")])],
                                           eventErrorsBeforeSuccess: 1, eventErrorCode: code)
-        let response = try await OpenAIAPI(transport: wire).createResponse(["input": [["role": "user", "content": "Find trains"]]]) { _ in }
+        let response = try await OpenAIAPI(transport: wire, retryDelay: .zero).createResponse(["input": [["role": "user", "content": "Find trains"]]]) { _ in }
         #expect(response["status"] == "completed")
         #expect(wire.requests.count == 2)
         #expect(wire.requests[0].body == wire.requests[1].body)
@@ -199,7 +205,7 @@ struct OpenAIResponsesTests {
             let wire = OpenAITransportFixture([], eventErrorsBeforeSuccess: 1,
                                               eventErrorCode: code, outputBeforeError: output)
             await #expect(throws: OpenAIFailure.self) {
-                try await OpenAIAPI(transport: wire).createResponse([:]) { _ in }
+                try await OpenAIAPI(transport: wire, retryDelay: .zero).createResponse([:]) { _ in }
             }
             #expect(wire.requests.count == 1)
         }

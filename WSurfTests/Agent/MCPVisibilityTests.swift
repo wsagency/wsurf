@@ -11,7 +11,7 @@ import Testing
 
 /// The badge's model, the activity log a connection writes, and Stop.
 @MainActor
-@Suite(.serialized, .boundedWebViews)
+@Suite(.serialized, .boundedWebViews, .noAnnouncePause)
 struct MCPVisibilityTests {
     private static let page = "<!doctype html><title>Visible</title><input id=name type=text aria-label=Name><button>Go</button>"
 

@@ -7,6 +7,9 @@ import Foundation
 
 nonisolated struct OpenAIAPI: Sendable {
     let transport: any OpenAITransport
+    /// How long `createResponse` waits before its one replay of a request that failed before any output.
+    var retryDelay: Duration = defaultRetryDelay
+    static let defaultRetryDelay: Duration = .seconds(2)
 
     func request(
         _ path: [String], method: String = "POST", body: OpenAIJSON? = nil,
@@ -42,7 +45,7 @@ nonisolated struct OpenAIAPI: Sendable {
                 throw OpenAIFailure(kind: .streamInterrupted)
             } catch {
                 guard attempt == 0, canReplay, !receivedOutput, Self.isRetryablePreOutputFailure(error) else { throw error }
-                try await Task.sleep(for: .seconds(2))
+                try await Task.sleep(for: retryDelay)
             }
         }
         throw OpenAIFailure(kind: .streamInterrupted)

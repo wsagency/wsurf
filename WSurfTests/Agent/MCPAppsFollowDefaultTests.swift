@@ -10,7 +10,7 @@ import Testing
 /// A paired app that follows the Website access default opens a new website without the Open and Share sheet, and everything
 /// that should still ask, still asks. Two loopback servers are two websites; the trust store is in memory.
 @MainActor
-@Suite(.serialized)
+@Suite(.serialized, .noAnnouncePause)
 struct MCPAppsFollowDefaultTests {
     private final class Sheets {
         var opened: [URL] = []

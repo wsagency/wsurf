@@ -11,7 +11,7 @@ import WebKit
 @testable import WSurf
 
 @MainActor
-@Suite(.boundedWebViews)
+@Suite(.boundedWebViews, .noAnnouncePause)
 struct AgentToolkitPolicyTests {
     private func toolkit(
         browser: BrowserModel = BrowserModel(database: .temporary()),

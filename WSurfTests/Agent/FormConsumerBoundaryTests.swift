@@ -12,7 +12,7 @@ import WebKit
 @testable import WSurf
 
 @MainActor
-@Suite(.serialized, .boundedWebViews)
+@Suite(.serialized, .boundedWebViews, .noAnnouncePause)
 struct FormConsumerBoundaryTests {
     private enum Consumer: CaseIterable, Sendable {
         case assistant

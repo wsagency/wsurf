@@ -12,7 +12,7 @@ import Testing
 
 /// A report names, and authorizes, only the tabs the shared page opened.
 @MainActor
-@Suite(.boundedWebViews)
+@Suite(.boundedWebViews, .noAnnouncePause)
 struct MCPOpenedTabTests {
     private typealias Rig = MCPFeedbackRig
 

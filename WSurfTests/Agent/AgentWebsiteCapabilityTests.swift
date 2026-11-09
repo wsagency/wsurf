@@ -11,7 +11,7 @@ import WebKit
 @testable import WSurf
 
 @MainActor
-@Suite(.serialized, .boundedWebViews)
+@Suite(.serialized, .boundedWebViews, .noAnnouncePause)
 struct AgentWebsiteCapabilityTests {
     @Test(arguments: [false, true])
     func uploadUsesOnlyFilesReturnedByTheChooser(cancelled: Bool) async throws {

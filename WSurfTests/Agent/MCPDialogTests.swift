@@ -12,7 +12,7 @@ import WebKit
 /// Page dialogs over MCP: a dialog blocks the page, so the call that caused it returns the dialog, and the connection
 /// answers it with `handleDialog`. Real pages, real dialogs, on both engines.
 @MainActor
-@Suite(.boundedWebViews)
+@Suite(.boundedWebViews, .noAnnouncePause)
 struct MCPDialogTests {
     /// Controls in document order: 1 alert, 2 confirm, 3 prompt, 4 secret prompt, 5 consequential confirm, 6 and 7 prompts
     /// that carry a decision, 8 a prompt whose default is too long to approve. The script keeps the

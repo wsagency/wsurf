@@ -10,7 +10,7 @@ import WebKit
 
 /// Selector targeting, drag and key chords as an external client reaches them.
 @MainActor
-@Suite(.boundedWebViews)
+@Suite(.boundedWebViews, .noAnnouncePause)
 struct MCPInputToolsTests {
     private static let html = """
         <!doctype html><title>Input fixture</title>

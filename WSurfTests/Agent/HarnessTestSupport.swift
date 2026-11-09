@@ -169,7 +169,8 @@ struct HarnessFixture {
         inputTokens: Int = 100_000, database: AppDatabase? = nil, tabID: UUID = UUID(),
         state: HarnessToolState? = nil, contextBudget: ContextBudget? = nil,
         openAI: OpenAIResponsesClient? = nil, browser: BrowserModel? = nil,
-        questions: AgentQuestionModel? = nil, factModel: (() -> (any LanguageModel)?)? = nil
+        questions: AgentQuestionModel? = nil, factModel: (() -> (any LanguageModel)?)? = nil,
+        retrySleep: @escaping @Sendable (Double) async throws -> Void = { _ in }
     ) {
         let database = database ?? .temporary()
         self.database = database
@@ -191,6 +192,7 @@ struct HarnessFixture {
                 toolSchemaTokens: 0, instructionTier: .compact, toolTier: .full,
                 toolOutput: .standard, retainedExchanges: 12, retainedToolRounds: 1
             ),
+            retrySleep: retrySleep,
             toolkit: AgentToolkit(
                 browser: browser ?? BrowserModel(database: .temporary()), media: MediaCenter(), log: log, questions: questions
             ),

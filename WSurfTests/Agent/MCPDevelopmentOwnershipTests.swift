@@ -12,7 +12,7 @@ import WebKit
 
 /// Development access, the one-owner-per-tab lease, and the events that must release it.
 @MainActor
-@Suite(.boundedWebViews)
+@Suite(.boundedWebViews, .noAnnouncePause)
 struct MCPDevelopmentOwnershipTests {
     static let page = "<!doctype html><title>Dev</title><p id=a class=x>Hello</p><button class=x>Go</button>"
 

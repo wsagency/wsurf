@@ -12,7 +12,7 @@ import Testing
 @testable import WSurf
 
 @MainActor
-@Suite(.serialized, .boundedWebViews)
+@Suite(.serialized, .boundedWebViews, .noAnnouncePause)
 struct MCPWindowScopeTests {
     private func window(in app: BrowserApplication, privately: Bool = false) -> AppCoordinator {
         let profile = privately ? Profile.privateBrowsing() : .original()
