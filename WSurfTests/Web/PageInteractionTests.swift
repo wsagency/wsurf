@@ -923,7 +923,7 @@ extension PageInteractionTests {
         }
     }
 
-    /// A move inside the document (Back, Forward, a fragment load) never reaches Chromium's `on_before_browse`, the only
+    /// A move inside the document (Back, Forward, a history jump) never reaches Chromium's `on_before_browse`, the only
     /// place that ended the wait for a native navigation, so the page's `isLoading` latched on. Form filling and the
     /// agent's settle both read it. The wait is a few seconds, not the settle's 24.
     @Test(arguments: BrowserEngine.allCases)
@@ -946,11 +946,10 @@ extension PageInteractionTests {
             try #require(await waitUntil { view.url?.path == "/pushed" }, "engine \(engine): Forward never landed")
             #expect(await waitUntil(timeout: .seconds(5)) { !view.isLoading }, "engine \(engine): isLoading stuck after Forward")
 
-            let pushed = try server.url("/pushed")
-            let fragment = try #require(URL(string: "#section", relativeTo: pushed)?.absoluteURL)
-            view.load(URLRequest(url: fragment))
-            try #require(await waitUntil { view.url?.fragment == "section" }, "engine \(engine): the fragment load never landed")
-            #expect(await waitUntil(timeout: .seconds(5)) { !view.isLoading }, "engine \(engine): isLoading stuck after a fragment load")
+            let start = try #require(view.backForwardList.backList.first)
+            view.go(to: start)
+            try #require(await waitUntil { view.url?.path == "/" }, "engine \(engine): the history jump never landed")
+            #expect(await waitUntil(timeout: .seconds(5)) { !view.isLoading }, "engine \(engine): isLoading stuck after a history jump")
         }
     }
 }

@@ -283,7 +283,7 @@ final class ChromiumPage: NSView {
         navigation = next
         requestedURL = url
         htmlDocumentURL = nil
-        awaitLoad(of: url)
+        awaitLoad()
         navigationStarted = false
         owner?.isLoading = true
         owner?.estimatedProgress = 0
@@ -434,7 +434,7 @@ final class ChromiumPage: NSView {
         }
         let next = PageNavigation()
         navigation = next
-        awaitLoad(of: nil)
+        awaitLoad()
         navigationStarted = false
         withBrowser { browser in
             if ignoreCache {

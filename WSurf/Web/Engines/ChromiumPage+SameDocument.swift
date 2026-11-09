@@ -15,21 +15,13 @@ extension ChromiumPage {
         sameDocumentWait = SameDocumentWait()
     }
 
-    /// A load stays inside the document only when it differs from the address by its fragment; a reload never does.
-    func awaitLoad(of target: URL?) {
+    /// A load reaches `willNavigate`, which ends the wait; this also drops what an earlier history move left.
+    func awaitLoad() {
         awaitingNativeNavigation = true
         sameDocumentWait = nil
-        guard let target, target.fragment != nil, let current = owner?.url else { return }
-        var base = URLComponents(url: target, resolvingAgainstBaseURL: false)
-        var now = URLComponents(url: current, resolvingAgainstBaseURL: false)
-        base?.fragment = nil
-        now?.fragment = nil
-        if base != nil, base == now {
-            sameDocumentWait = SameDocumentWait()
-        }
     }
 
-    /// A Back, Forward, history jump or fragment load that stays inside the document never calls `willNavigate`, the only
+    /// A Back, Forward or history jump that stays inside the document never calls `willNavigate`, the only
     /// other place that ends the wait for a native navigation. Without this, `isLoading` latched on, because the matching
     /// `loading = false` was held back. Like WebKit, a same-document move reports no navigation start or finish.
     func completeAwaitedMoveWithinDocument() {
