@@ -89,7 +89,8 @@ extension AppCoordinator {
         if onboarding.isPresented {
             bloomWindowOpen()
         }
-        if !AppDatabase.ownsSession {
+        // A window of an app object that was told otherwise (a test) answers to that; the app itself asks the database.
+        if !(application?.ownsSession ?? AppDatabase.ownsSession) {
             self.show(notice: String(localized: "Another copy of WSurf is running. Changes in this window won’t be saved."))
         }
         drainQueuedExternalURLs()

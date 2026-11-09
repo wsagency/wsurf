@@ -27,7 +27,11 @@ struct MicroPromptTests {
         let catalog = ProfileStore.shared
         let previous = catalog.current
         let profile = catalog.add(name: "Micro prompts")
-        let app = BrowserApplication(defaults: InMemoryUserDefaults(inheriting: .standard), notifications: NotificationCenter())
+        // The test host never owns the saved session, which puts a 1.6 s "Another copy of WSurf is running" notice in every window
+        // and keeps the bar down for it; these cases are about prompts, so the window is a first copy's (see the case below).
+        let app = BrowserApplication(
+            defaults: InMemoryUserDefaults(inheriting: .standard), notifications: NotificationCenter(), ownsSession: true
+        )
         var failure: (any Error)?
         do {
             let micro = app.newWindow(profile: profile, show: false, kind: .micro)
@@ -93,6 +97,49 @@ struct MicroPromptTests {
     private func endSheet(of window: NSWindow) {
         if let sheet = window.attachedSheet {
             window.endSheet(sheet, returnCode: .cancel)
+        }
+    }
+
+    /// What the rigs above leave out: a window of a second copy of the app says so, and the notice keeps the bar down like any
+    /// other notice, while a first copy's window shows neither.
+    @Test func aSecondCopysWindowSaysSoAndTheNoticeHoldsTheBar() async throws {
+        let notice = String(localized: "Another copy of WSurf is running. Changes in this window won’t be saved.")
+        let catalog = ProfileStore.shared
+        let previous = catalog.current
+        let profile = catalog.add(name: "Micro session notice")
+        var failure: (any Error)?
+        do {
+            for ownsSession in [true, false] {
+                let app = BrowserApplication(
+                    defaults: InMemoryUserDefaults(inheriting: .standard), notifications: NotificationCenter(), ownsSession: ownsSession
+                )
+                let micro = app.newWindow(profile: profile, show: false, kind: .micro)
+                let reveal = micro.microReveal
+                reveal.hideDelay = .milliseconds(30)
+                reveal.hostFlash = .milliseconds(200)
+                #expect(micro.notice == (ownsSession ? nil : notice), "owns the session: \(ownsSession)")
+                let tab = try #require(micro.browser.activeTab)
+                tab.urlString = "https://example.com/"
+                // The new site's moment passes in 200 ms, far inside the notice's 1.6 s; what is left holding the bar is the notice.
+                try #require(await waitUntil { reveal.isFlashing }, "the new site's moment begins")
+                try #require(await waitUntil { !reveal.isFlashing }, "and ends")
+                if ownsSession {
+                    #expect(await waitUntil { !reveal.isRevealed }, "with no notice the bar goes up")
+                } else {
+                    #expect(reveal.isRevealed, "the notice keeps the bar down")
+                    #expect(micro.notice == notice, "and is still showing")
+                }
+                for coordinator in app.windows {
+                    coordinator.closeWindow()
+                }
+            }
+        } catch {
+            failure = error
+        }
+        await catalog.remove(profile)
+        catalog.markCurrent(previous)
+        if let failure {
+            throw failure
         }
     }
 
