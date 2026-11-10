@@ -895,6 +895,7 @@ extension PageInteractionTests {
             let back = await PageDriver.goBack(in: view)
             #expect(back.hasPrefix("Went back."), "\(back)")
             #expect(await waitUntil { view.url == first }, "url \(String(describing: view.url))")
+            #expect(await waitUntil(timeout: .seconds(5)) { !view.isLoading }, "isLoading stuck after Back")
             // The startup page is still Chromium's first entry, one step behind the first page; Back never goes there.
             #expect(await waitUntil { !view.canGoBack && view.backForwardList.backList.isEmpty },
                     "\(view.backForwardList.backList.map(\.url))")
@@ -917,6 +918,71 @@ extension PageInteractionTests {
             let back = await PageDriver.goBack(in: view)
             #expect(back.hasPrefix("Went back."), "engine \(engine): \(back)")
             #expect(await waitUntil { view.url?.path == "/" }, "engine \(engine): url \(String(describing: view.url))")
+            // The agent's settle waits for `isLoading` to end (two 12 s ceilings), so a stuck flag costs it 24 s.
+            #expect(await waitUntil(timeout: .seconds(5)) { !view.isLoading }, "engine \(engine): isLoading stuck after Back")
+        }
+    }
+
+    /// A move inside the document (Back, Forward, a history jump) never reaches Chromium's `on_before_browse`, the only
+    /// place that ended the wait for a native navigation, so the page's `isLoading` latched on. Form filling and the
+    /// agent's settle both read it. The wait is a few seconds, not the settle's 24.
+    @Test(arguments: BrowserEngine.allCases)
+    func sameDocumentMovesEndTheLoadingState(engine: BrowserEngine) async throws {
+        let server = try await HTTPFixtureServer.start(routes: ["/": .html("<h1>Same doc</h1>")])
+        defer { withExtendedLifetime(server) {} }
+        try await withPage(engine: engine, url: server.url()) { view in
+            if let chromium = view.chromium {
+                try #require(await waitUntil { chromium.startupEntry == .dropped || chromium.startupEntry == .kept })
+            }
+            _ = try await view.evaluateJavaScript("history.pushState({}, '', '/pushed'); 0", in: nil, contentWorld: .page, userGesture: true)
+            try #require(await waitUntil { view.url?.path == "/pushed" && view.canGoBack })
+
+            view.goBack()
+            try #require(await waitUntil { view.url?.path == "/" }, "engine \(engine): Back never landed")
+            #expect(await waitUntil(timeout: .seconds(5)) { !view.isLoading }, "engine \(engine): isLoading stuck after Back")
+
+            try #require(await waitUntil { view.canGoForward })
+            view.goForward()
+            try #require(await waitUntil { view.url?.path == "/pushed" }, "engine \(engine): Forward never landed")
+            #expect(await waitUntil(timeout: .seconds(5)) { !view.isLoading }, "engine \(engine): isLoading stuck after Forward")
+
+            let start = try #require(view.backForwardList.backList.first)
+            view.go(to: start)
+            try #require(await waitUntil { view.url?.path == "/" }, "engine \(engine): the history jump never landed")
+            #expect(await waitUntil(timeout: .seconds(5)) { !view.isLoading }, "engine \(engine): isLoading stuck after a history jump")
+        }
+    }
+
+    /// A fragment-only `load` and fragment-only history entries (`pushState('#x')`, then Back, Forward, a jump) change no
+    /// document and send Chromium's DevTools event that the page treats as a jump, not as a move; they still end the wait.
+    @Test(arguments: BrowserEngine.allCases)
+    func fragmentOnlyMovesEndTheLoadingState(engine: BrowserEngine) async throws {
+        let server = try await HTTPFixtureServer.start(routes: ["/": .html("<h1>Same doc</h1>")])
+        defer { withExtendedLifetime(server) {} }
+        try await withPage(engine: engine, url: server.url()) { view in
+            if let chromium = view.chromium {
+                try #require(await waitUntil { chromium.startupEntry == .dropped || chromium.startupEntry == .kept })
+            }
+            @MainActor func settles() async -> Bool {
+                await waitUntil(timeout: .seconds(5)) { !view.isLoading }
+            }
+            _ = try await view.evaluateJavaScript("history.pushState({}, '', '#x'); 0", in: nil, contentWorld: .page, userGesture: true)
+            try #require(await waitUntil { view.url?.fragment == "x" && view.canGoBack })
+            view.goBack()
+            try #require(await waitUntil { view.url?.fragment == nil }, "engine \(engine): Back never landed")
+            #expect(await settles(), "engine \(engine): isLoading stuck after Back to a fragment-only entry")
+            try #require(await waitUntil { view.canGoForward })
+            view.goForward()
+            try #require(await waitUntil { view.url?.fragment == "x" }, "engine \(engine): Forward never landed")
+            #expect(await settles(), "engine \(engine): isLoading stuck after Forward to a fragment-only entry")
+            let start = try #require(view.backForwardList.backList.first)
+            view.go(to: start)
+            try #require(await waitUntil { view.url?.fragment == nil }, "engine \(engine): the jump never landed")
+            #expect(await settles(), "engine \(engine): isLoading stuck after a jump to a fragment-only entry")
+            let target = try #require(URL(string: "#section", relativeTo: view.url)?.absoluteURL)
+            view.load(URLRequest(url: target))
+            try #require(await waitUntil { view.url?.fragment == "section" }, "engine \(engine): the fragment load never landed")
+            #expect(await settles(), "engine \(engine): isLoading stuck after a fragment-only load")
         }
     }
 }
