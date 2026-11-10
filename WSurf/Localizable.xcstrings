@@ -6323,6 +6323,9 @@
     "The extension’s companion app is unavailable. Features that require it won’t work." : {
       "comment" : "Shown in the issues popover beside an extension in settings, and to the extension itself when it calls runtime.sendNativeMessage. Some extensions keep their data in a companion app that only Safari can reach. Two sentences; curly apostrophes."
     },
+    "The field changed while the sheet was open, so nothing was saved or filled. Right-click the field and choose Generate Password… to try again." : {
+      "comment" : "Alert text when Generate Password… refuses at Use Password because the field no longer matches what the sheet showed (its username, length limits, password rules or confirmation changed while the sheet was open). Nothing was saved or filled. Generate Password… is the context menu item’s title. Full sentences."
+    },
     "The file could not be saved. It may have expired at OpenAI." : {
 
     },
@@ -11503,6 +11506,9 @@
     },
     "WSurf saved the password for %@, but the field changed, so nothing was filled. Right-click the field and choose Pick Credential… to fill it." : {
       "comment" : "Alert text when Generate Password… saved the new login but the page changed before the fill. %@ is the website (example.com). Pick Credential… is the context menu item’s title. Full sentences."
+    },
+    "WSurf saved the password for %@, but this form now sends what you type to another website, so nothing was filled." : {
+      "comment" : "Alert text when Generate Password… saved the new login but the form now sends what is typed in it to another website, so nothing was filled. %@ is the website (example.com). Full sentence."
     },
     "WSurf saves a generated password in a vault. Set up a vault in Settings first." : {
       "comment" : "Alert text when Generate Password… finds no vault to save in (none set up yet, or one Settings has to repair). The alert’s button is Set Up Vault…. Full sentences."

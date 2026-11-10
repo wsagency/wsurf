@@ -120,6 +120,9 @@ final class PasswordGeneratorFlow {
         case noField
         /// The form sends what it gets to another website: nothing was saved or filled.
         case unsafeForm
+        /// At Use Password the field no longer matched what the sheet showed (its username, limits, rules or confirmation): nothing
+        /// was saved or filled.
+        case fieldChanged
         /// The right-clicked field takes no password.
         case notPasswordField
         /// The right-clicked field is the current password of a form that asks for a new one.
@@ -130,6 +133,8 @@ final class PasswordGeneratorFlow {
         case notSaved
         /// The login was saved for the website named, but the page changed before the fill, so nothing was filled.
         case savedNotFilled(host: String)
+        /// The login was saved for the website named, but the form now sends what it gets to another website, so nothing was filled.
+        case savedFormUnsafe(host: String)
     }
 
     enum Outcome: Equatable {
@@ -220,7 +225,7 @@ final class PasswordGeneratorFlow {
             switch await choose(proposal, target: target, in: window) {
             case .use(let password, let vaultID)?:
                 guard isCurrent(), let vault = proposal.vaults.first(where: { $0.id == vaultID }) else { return .nothing }
-                return await save(password, in: vault, target: target, in: page, isCurrent: isCurrent)
+                return await save(password, in: vault, shown: proposal.field, target: target, in: page, isCurrent: isCurrent)
             case .unlock?:
                 unlocking = true
             case nil:
@@ -315,10 +320,12 @@ final class PasswordGeneratorFlow {
         return await PasswordGeneratorSheet.present(proposal, profileID: target.context.profile.id, page: page, in: window)
     }
 
-    /// Use Password: the field is read again (a fresh username, still there, still safe), the vault is the one the sheet was opened
-    /// under, a new login is written with nothing read first, and only then the password goes into the field and its confirmation.
+    /// Use Password: the field is read again and must still be what the sheet showed (`shown`: still there, still safe, the same
+    /// username, limits, rules and confirmation, since the password and the sentence under it were made for those), the vault is the
+    /// one the sheet was opened under, a new login is written with nothing read first, and only then the password goes into the
+    /// field and its confirmation.
     private func save(
-        _ password: GeneratedPassword, in vault: Vault, target: CredentialPicker.Target, in page: BrowserPage,
+        _ password: GeneratedPassword, in vault: Vault, shown: Field, target: CredentialPicker.Target, in page: BrowserPage,
         isCurrent: @escaping @MainActor @Sendable () -> Bool
     ) async -> Outcome {
         let context = target.context
@@ -326,6 +333,7 @@ final class PasswordGeneratorFlow {
         guard isCurrent() else { return .nothing }
         guard let field, field.kind == .new else { return .failed(.noField) }
         guard field.isSafe else { return .failed(.unsafeForm) }
+        guard field == shown else { return .failed(.fieldChanged) }
         guard let manager = CredentialPicker.manager(of: context, vaultID: vault.id, epoch: vault.epoch),
               let host = WebsiteLookalike.displayHost(of: target.origin) else { return .failed(.noField) }
         let username = field.username.isEmpty ? Self.rememberedUsername(in: page, origin: target.origin, documentID: target.documentID) : field.username
@@ -365,7 +373,8 @@ final class PasswordGeneratorFlow {
             return .failed(.savedNotFilled(host: host))
         }
         let count = ((answer as? [String: Any])?["count"] as? NSNumber)?.intValue ?? 0
-        guard count > 0 else { return .failed(.savedNotFilled(host: host)) }
+        // -1 is the script's "the form sends what it gets to another website now".
+        guard count > 0 else { return .failed(count < 0 ? .savedFormUnsafe(host: host) : .savedNotFilled(host: host)) }
         AutofillDiagnostics.note(.generatorFilled, kind: .password, count: count)
         if isCurrent() {
             context.autofillLastUsed.record(account: login.id, origin: target.origin, in: manager)
@@ -393,6 +402,16 @@ final class PasswordGeneratorFlow {
             alert.messageText = String(localized: "Password Saved but Not Filled")
             alert.informativeText = String(
                 localized: "WSurf saved the password for \(host), but the field changed, so nothing was filled. Right-click the field and choose Pick Credential… to fill it."
+            )
+        case .savedFormUnsafe(let host):
+            alert.messageText = String(localized: "Password Saved but Not Filled")
+            alert.informativeText = String(
+                localized: "WSurf saved the password for \(host), but this form now sends what you type to another website, so nothing was filled."
+            )
+        case .fieldChanged:
+            alert.messageText = String(localized: "Couldn’t Generate a Password")
+            alert.informativeText = String(
+                localized: "The field changed while the sheet was open, so nothing was saved or filled. Right-click the field and choose Generate Password… to try again."
             )
         case .notSaved:
             alert.messageText = String(localized: "Couldn’t Save the Password")

@@ -204,10 +204,26 @@ struct PasswordGeneratorView: View {
         return lines.isEmpty ? nil : lines.joined(separator: " ")
     }
 
-    /// What Use Password does, with the username the form shows (page text, shown as it is).
     private var explanation: String {
-        let host = proposal.host, username = proposal.field.username
-        switch (proposal.field.hasConfirmation, username.isEmpty) {
+        Self.explanation(host: proposal.host, field: proposal.field)
+    }
+
+    /// The most characters of the username the sheet shows.
+    nonisolated static let shownUsernameLimit = 64
+
+    /// A page-supplied username, safe to put in this sheet's own text: control, format (bidi overrides and isolates, zero-width) and
+    /// line and paragraph separator characters are dropped, so it is one line, and it is cut at `shownUsernameLimit` characters. Display
+    /// only: what is saved is the username as the form shows it.
+    nonisolated static func shownUsername(_ page: String) -> String {
+        let hidden: Set<Unicode.GeneralCategory> = [.control, .format, .lineSeparator, .paragraphSeparator]
+        let clean = String(String.UnicodeScalarView(page.unicodeScalars.filter { !hidden.contains($0.properties.generalCategory) }))
+        return clean.count > shownUsernameLimit ? String(clean.prefix(shownUsernameLimit)) + "…" : clean
+    }
+
+    /// What Use Password does, with the username the form shows (page text, cleaned by `shownUsername`).
+    static func explanation(host: String, field: PasswordGeneratorFlow.Field) -> String {
+        let username = shownUsername(field.username)
+        switch (field.hasConfirmation, username.isEmpty) {
         case (true, false):
             return String(localized: "WSurf fills this field and its confirmation, and saves the password for \(host) as \(username).")
         case (true, true):

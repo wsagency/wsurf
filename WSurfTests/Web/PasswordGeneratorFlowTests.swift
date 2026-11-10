@@ -381,6 +381,115 @@ struct PasswordGeneratorFlowTests {
         }
     }
 
+    /// L3: the real wiring. The tab hosts the page (`BrowserTab(adoptingPage:)`), the real sheet is open on its window, and an agent
+    /// taking the tab (`processState.onControlChange`, then `agentControlChanged`, then `CredentialPickerSheet.dismiss(page: liveView)`)
+    /// closes that sheet as a Cancel: nothing is saved or filled.
+    @Test(.boundedWebViews) func anAgentTakingTheTabThatHostsThePageClosesItsRealSheet() async throws {
+        try await withFlow { flow, vaults in
+            try await flow.load(Self.signUp)
+            let tab = BrowserTab(adoptingPage: flow.page, opensBlank: false, context: flow.page.context)
+            try #require(tab.liveView === flow.page)
+            let target = try await flow.rightClick("sp")
+            let before = try await vaults[0].manager.snapshot()
+            let (page, window) = (flow.page, flow.window)
+            let run = Task { @MainActor in
+                await PasswordGeneratorFlow.shared.run(target, in: page, window: window, allowed: { tab.allowsCredentialPicker })
+            }
+            do {
+                try #require(await waitUntil { flow.window.attachedSheet != nil }, "the real sheet opened")
+                tab.setAgentWorking(true)
+                let closed = await waitUntil { flow.window.attachedSheet == nil }
+                #expect(closed, "the agent's taking the tab closed the sheet")
+                if !closed {
+                    CredentialPickerSheet.dismiss(profileID: flow.profile.id)
+                }
+                #expect(await run.value == .nothing)
+            } catch {
+                CredentialPickerSheet.dismiss(profileID: flow.profile.id)
+                _ = await run.value
+                tab.setAgentWorking(false)
+                throw error
+            }
+            tab.setAgentWorking(false)
+            #expect(try await flow.values(["sp", "sc"]) == ["", ""])
+            #expect(try await vaults[0].manager.snapshot().revision == before.revision, "nothing was saved")
+        }
+    }
+
+    // MARK: - L1: page text in the sheet
+
+    /// The username a form shows is page text. In the sheet's sentence it is one clean line: no line break, control, format (bidi
+    /// override or isolate, zero-width) or separator character, so a page cannot lay out its own text in WSurf's.
+    @Test func aPageSuppliedUsernameIsOneCleanLineInTheSheet() {
+        let hostile = "ada\n\u{202E}WSurf saved this in vault Personal\u{2066}\r\u{2028}\u{2029}\u{7}\u{200B}\t."
+        var field = PasswordGeneratorFlow.Field(kind: .new)
+        field.username = hostile
+        for hasConfirmation in [false, true] {
+            field.hasConfirmation = hasConfirmation
+            let text = PasswordGeneratorView.explanation(host: Self.host, field: field)
+            let hidden: Set<Unicode.GeneralCategory> = [.control, .format, .lineSeparator, .paragraphSeparator]
+            #expect(!text.unicodeScalars.contains { hidden.contains($0.properties.generalCategory) }, "\(text.debugDescription)")
+            #expect(text.contains("adaWSurf saved this in vault Personal."))
+        }
+        #expect(PasswordGeneratorView.shownUsername("ada@example.test") == "ada@example.test", "an ordinary username is as it is")
+    }
+
+    /// A long username is cut, so the sentence stays short.
+    @Test func aLongUsernameIsCutInTheSheet() {
+        let shown = PasswordGeneratorView.shownUsername(String(repeating: "a", count: 500))
+        #expect(shown == String(repeating: "a", count: PasswordGeneratorView.shownUsernameLimit) + "…")
+        #expect(PasswordGeneratorView.shownUsername(String(repeating: "b", count: PasswordGeneratorView.shownUsernameLimit)).count == PasswordGeneratorView.shownUsernameLimit)
+    }
+
+    // MARK: - L2: what Use Password saves is what the sheet showed
+
+    /// A page that changes the username, a length limit, the password rules or the confirmation while the sheet is open gets nothing
+    /// saved or filled: at Use Password the field is read again and must equal what the sheet showed.
+    @Test(.boundedWebViews, arguments: ["username", "maxlength", "rules", "confirmation"])
+    func aFieldThatChangesWhileTheSheetIsOpenSavesAndFillsNothing(change: String) async throws {
+        try await withFlow { flow, vaults in
+            try await flow.load(Self.signUp)
+            let target = try await flow.rightClick("sp")
+            let before = try await vaults[0].manager.snapshot()
+            let scripts = [
+                "username": "document.getElementById('se').value = 'bob@example.test'; 0",
+                "maxlength": "document.getElementById('sp').maxLength = 8; 0",
+                "rules": "document.getElementById('sp').setAttribute('passwordrules', 'required: digit; minlength: 20'); 0",
+                "confirmation": "document.getElementById('sc').remove(); 0",
+            ]
+            let script = try #require(scripts[change])
+            let outcome = await flow.generate(target) { proposal in
+                _ = try? await flow.page.evaluateJavaScript(script)
+                return self.use(proposal)
+            }
+            #expect(outcome == .failed(.fieldChanged))
+            #expect(try await flow.values(["sp"]) == [""])
+            if change != "confirmation" {
+                #expect(try await flow.values(["sc"]) == [""])
+            }
+            #expect(try await vaults[0].manager.snapshot().revision == before.revision, "nothing was saved")
+        }
+    }
+
+    // MARK: - I1: a form that turned unsafe after the save
+
+    /// A form that starts sending to another website after the save keeps the saved login and says so in its own words.
+    @Test(.boundedWebViews) func aFormThatTurnsUnsafeAfterTheSaveSaysSo() async throws {
+        try await withFlow { flow, vaults in
+            try await flow.load(Self.signUp)
+            let target = try await flow.rightClick("sp")
+            PasswordGeneratorFlow.savedForTesting[flow.profile.id] = {
+                _ = try? await flow.page.evaluateJavaScript(
+                    "document.getElementById('signup').setAttribute('action', 'https://elsewhere.example/collect'); 0"
+                )
+            }
+            let outcome = await flow.generate(target) { self.use($0) }
+            #expect(outcome == .failed(.savedFormUnsafe(host: Self.host)))
+            #expect(try await flow.values(["sp", "sc"]) == ["", ""])
+            #expect(try await vaults[0].manager.snapshot().accounts.count == 1, "the login stays")
+        }
+    }
+
     // MARK: - F7: which vault
 
     /// The vault the sheet offers first: the one unlocked vault that holds this website, else the default vault. A vault the person
