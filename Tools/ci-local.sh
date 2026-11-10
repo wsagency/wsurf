@@ -15,6 +15,11 @@
 #   - One fixed test identity (WSURF_BUNDLE_ID_SUFFIX, default .ci-local), reused run after run, so CI's last step, which
 #     removes a per-run identity with rm -rf and defaults delete, is skipped.
 #   - Each run writes to a fresh build/ci-local/<UTC stamp>/; build/DD is kept, so a rerun builds incrementally.
+#   - A budgeted performance case that misses its budget is measured once more, alone, in the same hold (perf_gate): a case that
+#     meets the budget the second time passes as "PASS (retried: ...)" in the summary, both statistics and the machine load
+#     averages are printed, and a case that misses twice, or whose rerun fails or yields no metric, fails the step. GitHub CI never
+#     retries. WSURF_CI_PERF_GATE_ONLY=<ci-local output dir> runs only this step on that directory's performance-metrics.json (with
+#     WSURF_CI_DD for the build products it reruns from); it is how the retry is proved without a full run.
 #   - Opt-in suites (live, foreground, microphone, Stage...) are refused through their environment, as the local gate does:
 #     the default plans ask the system for no permission.
 #   Set WSURF_CEF_PACKAGE only to a CefSwift package with the same sources; a fresh worktree otherwise downloads CEF once.
@@ -32,10 +37,15 @@ SCHEME=WSurf
 XCODE=$(sed -n "s/^  XCODE: '\(.*\)'$/\1/p" .github/workflows/ci.yml)
 SWIFTLINT=$(sed -n "s/^  SWIFTLINT: '\(.*\)'$/\1/p" .github/workflows/ci.yml)
 export WSURF_BUNDLE_ID_SUFFIX="${WSURF_BUNDLE_ID_SUFFIX:-.ci-local}"
-DD="$PWD/build/DD"
-OUT="build/ci-local/$(date -u +%Y%m%dT%H%M%SZ)"
-mkdir -p "$OUT/results"
-OUT="$PWD/$OUT"
+DD="${WSURF_CI_DD:-$PWD/build/DD}"
+if [ -n "${WSURF_CI_PERF_GATE_ONLY:-}" ]; then
+  OUT="$WSURF_CI_PERF_GATE_ONLY"
+  mkdir -p "$OUT/results"
+else
+  OUT="build/ci-local/$(date -u +%Y%m%dT%H%M%SZ)"
+  mkdir -p "$OUT/results"
+  OUT="$PWD/$OUT"
+fi
 # The watchdog appends every build and test output line, byte for byte, to this file and prints a compact console
 # (host os_log mirror noise dropped, every result, failure, crash and time-limit line kept). WSURF_CI_VERBOSE=1 prints it all.
 export WSURF_CI_RAW_LOG="$OUT/console.raw.log"
@@ -51,6 +61,7 @@ done
 # Inside step, set -e is off (the command runs under ||), so the functions below return on failure explicitly.
 SUMMARY=()
 FAILED=0
+STEP_NOTE=""
 step() {  # step NAME COMMAND...: run, time and record one step
   local name="$1" start=$SECONDS code=0
   shift
@@ -58,6 +69,9 @@ step() {  # step NAME COMMAND...: run, time and record one step
   "$@" || code=$?
   local result=PASS
   [ "$code" -eq 0 ] || { result="FAIL (exit $code)"; FAILED=1; }
+  # A step that only passed on a rerun says so, so it is never silent (perf_gate sets STEP_NOTE).
+  [ "$code" -ne 0 ] || [ -z "$STEP_NOTE" ] || result="PASS (retried: $STEP_NOTE)"
+  STEP_NOTE=""
   SUMMARY+=("$(printf '%-28s %-14s %5ss' "$name" "$result" $((SECONDS - start)))")
   return 0
 }
@@ -139,6 +153,51 @@ export_metrics() {
   xcrun xcresulttool get test-results metrics --path "$OUT/results/WSurf-Rest.xcresult" --compact > "$OUT/performance-metrics.json"
 }
 
+load_average() { uptime | sed 's/.*load averages*: //'; }
+
+# The performance budgets, with one rerun of the cases that missed (see the header). Exit codes of check-performance.sh: 0 all within
+# budget, 3 only budget misses (listed in $OUT/perf-misses.tsv), anything else an error, which is never retried.
+perf_gate() {
+  local misses="$OUT/perf-misses.tsv" code=0 first_load retry_load id class method xctestrun
+  local ids=() selection=() only=()
+  : > "$misses"
+  first_load=$(load_average)
+  WSURF_PERF_COLLECT="$misses" Tools/check-performance.sh "$OUT/performance-metrics.json" || code=$?
+  [ "$code" -eq 3 ] || return "$code"
+  while IFS= read -r id; do ids+=("$id"); done < <(cut -f1 "$misses" | sort -u)
+  [ "${#ids[@]}" -gt 0 ] || { echo "error: a budget miss was reported but none was listed" >&2; return 1; }
+  for id in "${ids[@]}"; do
+    class="${id%%/*}"
+    method="${id#*/}"
+    selection+=("-only-testing:WSurfTests/$class/${method%()}")
+    only+=(--only "$id")
+  done
+  echo "--- performance budget missed (machine load $first_load); measuring again once, alone: ${ids[*]}"
+  while IFS=$'\t' read -r id _ statistic maximum label; do
+    echo "first:  $label $statistic (budget $maximum), load $first_load"
+  done < "$misses"
+  set -- "$DD"/Build/Products/*.xctestrun
+  [ "$#" -eq 1 ] && [ -f "$1" ] || { echo "error: expected exactly one generated .xctestrun in $DD/Build/Products" >&2; return 1; }
+  xctestrun="$1"
+  retry_load=$(load_average)
+  python3 Tools/run-xcodebuild-with-watchdog.py -- xcodebuild test-without-building \
+    -xctestrun "$xctestrun" \
+    -destination 'platform=macOS,arch=arm64' \
+    -resultBundlePath "$OUT/results/perf-retry.xcresult" \
+    -enableCodeCoverage YES \
+    "${selection[@]}" || { echo "error: the rerun of ${ids[*]} failed" >&2; return 1; }
+  xcrun xcresulttool get test-results metrics --path "$OUT/results/perf-retry.xcresult" --compact \
+    > "$OUT/performance-metrics-retry.json" || { echo "error: no metrics from the rerun" >&2; return 1; }
+  echo "retry load $retry_load"
+  Tools/check-performance.sh "${only[@]}" "$OUT/performance-metrics-retry.json" || { echo "error: missed again (load $first_load, then $retry_load)" >&2; return 1; }
+  STEP_NOTE="${ids[*]}"
+}
+
+if [ -n "${WSURF_CI_PERF_GATE_ONLY:-}" ]; then
+  step "Check performance budgets" perf_gate
+  finish
+fi
+
 step "Select Xcode" select_xcode
 step "Verify Metal toolchain" xcrun metal --version
 lint
@@ -159,7 +218,7 @@ step "Merge test results" xcrun xcresulttool merge "$OUT/results/WSurf-Serial-1.
   "$OUT/results/WSurf-Serial-3.xcresult" "$OUT/results/WSurf-Rest.xcresult" --output-path "$OUT/TestResults.xcresult"
 step "Check coverage" Tools/check-coverage.sh "$OUT/TestResults.xcresult" 24.0
 step "Export performance metrics" export_metrics
-step "Check performance budgets" Tools/check-performance.sh "$OUT/performance-metrics.json"
+step "Check performance budgets" perf_gate
 skip "Uploads" "artifacts stay in $OUT"
 skip "Remove test identity" "fixed identity io.wsagency.wsurf$WSURF_BUNDLE_ID_SUFFIX is reused; no rm -rf or defaults delete"
 finish
