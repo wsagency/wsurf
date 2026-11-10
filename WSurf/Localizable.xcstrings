@@ -50,6 +50,9 @@
     "Follow Website access" : {
       "comment" : "Row on the Connected apps page. Its switch lets paired apps open and use new websites under the Website access default, as the assistant does. Sentence case. Website access is the name of the row in Acting on websites."
     },
+    "Follows this website’s password rules." : {
+      "comment" : "Shown under the generated password in the Generate Password sheet when the format is Website’s Rules and the password meets the rules the page publishes. A full sentence."
+    },
     "%@ — Private Browsing" : {
 
     },
@@ -228,6 +231,9 @@
     },
     "Import…" : {
 
+    },
+    "In a frame on %@" : {
+      "comment" : "Second line of the Generate Password sheet’s title when the right-clicked field is in a frame of another website. %@ is the page’s website, as the address bar shows it."
     },
     "It will need your approval each time it connects until you pair it again." : {
       "comment" : "Body of the dialog that confirms withdrawing a paired app."
@@ -2592,6 +2598,9 @@
     "Couldn’t Reset Save Suggestions" : {
 
     },
+    "Couldn’t Save the Password" : {
+      "comment" : "Title of the alert when the vault refused the new login that Generate Password… was about to save, so nothing was filled. Title Case."
+    },
     "Couldn’t save these details." : {
 
     },
@@ -3186,8 +3195,14 @@
     "General" : {
       "comment" : "Name of the General page in the Settings sidebar and the heading at the top of that page."
     },
+    "Generate a Password for %@" : {
+      "comment" : "Title of the Generate Password sheet. %@ is the website the password is saved for, as the address bar shows it (example.com). Title Case, one line."
+    },
     "Generate Strong Password" : {
 
+    },
+    "Generated password" : {
+      "comment" : "VoiceOver label of the generated password in the Generate Password sheet; VoiceOver then spells the password out."
     },
     "Get a Key" : {
       "comment" : "Button in the API key row in Settings > Provider that opens the provider's own website, where a key can be obtained. A command; “key” means API key."
@@ -3623,6 +3638,9 @@
     "left ⌥" : {
       "comment" : "Name of one physical modifier key in the shortcut recorder in Settings, where the two sides of the keyboard have to be told apart. Only the side word is translated — the symbol is the glyph macOS prints on the key, so keep it exactly and keep it beside the word. Very tight: this is a key cap. The glyph is Option."
     },
+    "Length %lld" : {
+      "comment" : "Label of the stepper that sets how many characters the Generate Password sheet’s password has. %lld is the length."
+    },
     "Left to the assistant" : {
 
     },
@@ -3656,6 +3674,9 @@
     "WSurf can’t confirm that this certificate belongs to %@. Somebody may be impersonating the website." : {
 
     },
+    "WSurf can’t make a password that meets this website’s rules." : {
+      "comment" : "Shown in place of the password in the Generate Password sheet when the website’s published rules cannot be met; Use Password is then off. A full sentence."
+    },
     "WSurf chooses these models unless you enter different IDs for your API setup." : {
 
     },
@@ -3673,6 +3694,18 @@
     },
     "WSurf encrypts saved contacts. Imported copies don’t sync." : {
 
+    },
+    "WSurf fills this field and its confirmation, and saves the password for %@ as %@." : {
+      "comment" : "What Use Password does, at the bottom of the Generate Password sheet. The first %@ is the website (example.com), the second the username the page’s form shows, as the page has it. A full sentence."
+    },
+    "WSurf fills this field and its confirmation, and saves the password for %@." : {
+      "comment" : "What Use Password does, at the bottom of the Generate Password sheet, when the form shows no username. %@ is the website (example.com). A full sentence."
+    },
+    "WSurf fills this field and saves the password for %@ as %@." : {
+      "comment" : "What Use Password does, at the bottom of the Generate Password sheet, for a form without a confirmation field. The first %@ is the website (example.com), the second the username the page’s form shows, as the page has it. A full sentence."
+    },
+    "WSurf fills this field and saves the password for %@." : {
+      "comment" : "What Use Password does, at the bottom of the Generate Password sheet, for a form without a confirmation field and without a username. %@ is the website (example.com). A full sentence."
     },
     "WSurf is using %@ instead." : {
       "comment" : "Settings → Assistant. %@ is the provider name of the stand-in, e.g. \"Apple Intelligence\". Caption shown when the chosen provider is not ready and another one serves replies. WSurf is the application name and is never translated."
@@ -5241,8 +5274,17 @@
     "right ⌥" : {
       "comment" : "Name of one physical modifier key in the shortcut recorder in Settings, where the two sides of the keyboard have to be told apart. Only the side word is translated — the symbol is the glyph macOS prints on the key, so keep it exactly and keep it beside the word. Very tight: this is a key cap. The glyph is Option."
     },
+    "Right-click a password field to generate a password." : {
+      "comment" : "Alert text when Generate Password… was chosen on a field that is not a password field. A full sentence."
+    },
+    "Right-click the field and choose Generate Password… to try again." : {
+      "comment" : "Alert text when the right-clicked field or its page changed before Generate Password… saved anything. Generate Password… is the context menu item’s title. A full sentence."
+    },
     "Right-click the field and choose Pick Credential… to try again." : {
       "comment" : "Informative text of the “Couldn’t Fill Saved Details” alert after Pick Credential…, when the field, the page or the vault changed before the fill, or the page took nothing. Must name the menu item exactly as “Pick Credential…”. Sentence."
+    },
+    "Right-click the new password field to generate a password." : {
+      "comment" : "Alert text when Generate Password… was chosen on the current-password field of a change-password form. A full sentence."
     },
     "Route your traffic through a proxy" : {
       "comment" : "One bullet in the list of what a browser extension will be able to do, shown in the install confirmation dialog. Traffic means the user’s network traffic. It follows the line It will also be able to:, so it is a bare verb phrase and takes no final full stop."
@@ -5321,6 +5363,9 @@
     },
     "Save Image" : {
 
+    },
+    "Save in" : {
+      "comment" : "Label of the pop-up menu in the Generate Password sheet that chooses the vault the password is saved in. Shown only with two or more unlocked vaults."
     },
     "Save Page As" : {
       "comment" : "Title of the macOS save panel that the Save Page As… command opens. It carries no ellipsis, because the panel is already open."
@@ -6293,6 +6338,9 @@
     "The extension’s companion app is unavailable. Features that require it won’t work." : {
       "comment" : "Shown in the issues popover beside an extension in settings, and to the extension itself when it calls runtime.sendNativeMessage. Some extensions keep their data in a companion app that only Safari can reach. Two sentences; curly apostrophes."
     },
+    "The field changed while the sheet was open, so nothing was saved or filled. Right-click the field and choose Generate Password… to try again." : {
+      "comment" : "Alert text when Generate Password… refuses at Use Password because the field no longer matches what the sheet showed (its username, length limits, password rules or confirmation changed while the sheet was open). Nothing was saved or filled. Generate Password… is the context menu item’s title. Full sentences."
+    },
     "The file could not be saved. It may have expired at OpenAI." : {
 
     },
@@ -6413,6 +6461,9 @@
     "The website’s certificate couldn’t be verified, so WSurf stopped before sending anything." : {
       "comment" : "Explanatory sentence on the certificate error page, under its headline. Curly apostrophes."
     },
+    "The website’s limits make this password easier to guess than most." : {
+      "comment" : "Shown under the generated password in the Generate Password sheet when the field’s length limits (or the website’s rules) only allow a short or simple password. A full sentence."
+    },
     "Theme" : {
       "comment" : "Title of the Appearance settings row that chooses light, dark or automatic, and the same word in the Settings search index. Noun; a short row title."
     },
@@ -6478,6 +6529,29 @@
     },
     "This extension’s package has no manifest" : {
       "comment" : "Error shown when an extension install fails because the package holds no manifest.json. Manifest is the extension’s own description file — keep the term. Curly apostrophe, no final full stop."
+    },
+    "This field allows at most %lld characters." : {
+      "comment" : "Shown under the generated password in the Generate Password sheet when the field’s maxlength keeps the password shorter than the length chosen. %lld is the most characters the field allows.",
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "This field allows at most %lld character."
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "This field allows at most %lld characters."
+                }
+              }
+            }
+          }
+        }
+      }
     },
     "This file couldn’t be read." : {
       "comment" : "Caption under the Bookmarks row when the chosen file could not be opened, or was not a bookmarks file."
@@ -7022,6 +7096,9 @@
     "Websites you’ve changed" : {
 
     },
+    "Website’s Rules" : {
+      "comment" : "A format in the Generate Password sheet, offered when the field publishes password rules (the passwordrules attribute): the password meets those rules. Title Case, a menu item."
+    },
     "Welcome to WSurf" : {
       "comment" : "Heading of the first onboarding screen, shown under the app icon. WSurf is the application name and is never translated. Keep it short — it is set in large type."
     },
@@ -7075,6 +7152,9 @@
     },
     "Window transparency" : {
 
+    },
+    "With Symbols" : {
+      "comment" : "A format in the Generate Password sheet: letters, digits and symbols such as ! @ # $. Title Case, a menu item."
     },
     "Working" : {
 
@@ -7461,6 +7541,9 @@
     },
     "Forget everything the assistant remembers?" : {
       "comment" : "Title of the confirmation for Forget All… on Settings › Assistant › Memory."
+    },
+    "Format" : {
+      "comment" : "Label of the pop-up menu that chooses how the Generate Password sheet makes passwords (Easy to Type, Letters and Digits, With Symbols, Website’s Rules)."
     },
     "Forget All" : {
       "comment" : "Destructive button of the confirmation that deletes every note the assistant keeps. Title Case."
@@ -8781,6 +8864,9 @@
     "Couldn’t find this window to show the passkey prompt. Bring it to the front and try again." : {
       "comment" : "Error text on the Autofill page when the passkey prompt cannot be shown because the Settings window is not visible. Second sentence is an imperative."
     },
+    "Couldn’t Generate a Password" : {
+      "comment" : "Title of the alert when Generate Password… (a web page field’s context menu) refuses the right-clicked field or finds no vault to save in. Title Case."
+    },
     "Couldn’t move Input History. It is still kept where it was." : {
       "comment" : "Error under the Input History list in Settings > Autofill when moving the entries to another vault (Keep Here) failed for any other reason. Nothing was moved."
     },
@@ -9020,6 +9106,9 @@
     },
     "Earlier versions" : {
       "comment" : "Label of a count row in the Delete Vault sheet: how many earlier versions of credentials the vault keeps. Also a row in the Statistics section. Sentence case."
+    },
+    "Easy to Type" : {
+      "comment" : "A format in the Generate Password sheet: groups of lowercase letters and digits with one capital and hyphens, like hq4mzt-wnbcke-paXr9j. Title Case, a menu item."
     },
     "Edit Colors" : {
       "comment" : "Button in the Customize row of Settings › Appearance › Theme, shown for a saved theme: it opens the Colors section of the same page. A verb phrase, Title Case."
@@ -9519,6 +9608,9 @@
     "Lets you take over this tab or stop the app." : {
       "comment" : "VoiceOver hint of the “AI” badge on a sidebar tab; pressing it opens a popover with Take Over and Stop buttons. “The app” is the external app using the tab."
     },
+    "Letters and Digits" : {
+      "comment" : "A format in the Generate Password sheet: upper and lowercase letters and digits, for websites that refuse symbols. Title Case, a menu item."
+    },
     "Level 1" : {
       "comment" : "Slider row title under Folder indent in the Layout card in Settings › Appearance: the indent for items directly inside a folder. Level is a nesting depth; keep the number."
     },
@@ -9752,6 +9844,9 @@
     },
     "New passkey" : {
       "comment" : "Title of the first choice in the Create Credential Vault sheet: protect the new vault with a newly created passkey. The second choice is “Use existing passkey”. Sentence case; a noun phrase, not a command."
+    },
+    "New password" : {
+      "comment" : "VoiceOver announcement after Regenerate in the Generate Password sheet made a new password."
     },
     "New Vault" : {
       "comment" : "Label of the chip button with a plus icon in the Vaults section header; it opens the Create Credential Vault sheet. Verb phrase (a command), Title Case, tight."
@@ -10023,6 +10118,9 @@
     "Password save suggestions" : {
       "comment" : "Row title of a reset row in Settings › Autofill for password save prompts, with the caption “Restore prompts on excluded sites.” and a Reset button. Counterparts: “Card save suggestions” and “Address save suggestions”. The code defines it, but this build shows only the card and address rows. Sentence case."
     },
+    "Password Saved but Not Filled" : {
+      "comment" : "Title of the alert when Generate Password… saved the new login but the page changed before the field could be filled. Title Case."
+    },
     "Password, hidden" : {
       "comment" : "VoiceOver label for an Input History row whose value is a password that has not been revealed; read instead of the row’s masked bullets. Not shown on screen. A noun, then a state."
     },
@@ -10157,6 +10255,9 @@
     },
     "Reduce transparency or increase contrast is on in System Settings, so WSurf uses Plain." : {
       "comment" : "Caption under the Material row in Settings › Appearance › Theme, shown instead of the Glass caption when a macOS accessibility setting (Reduce transparency or Increase contrast) is on. Use the macOS names of those settings. Plain is the “Plain” choice of the Material control. Sentence case."
+    },
+    "Regenerate" : {
+      "comment" : "Button in the Generate Password sheet that makes a new password in the same format and length. A command."
     },
     "Reload page?" : {
       "comment" : "Title of the sheet shown by a Chromium tab when the page asks for confirmation before it is reloaded. The page’s own message appears below it; buttons are Leave and Stay. Sentence case, a question."
@@ -10899,6 +11000,9 @@
     "The vault changed. Review your selection before exporting again." : {
       "comment" : "Bold headline of a notice in the Export sheet, shown when the vault changed while the sheet was open. Nothing was sent; the user checks the selection and clicks Export again. Lines below name the credentials that changed or are gone. Sentence case."
     },
+    "The vault didn’t save the new password, so nothing was filled. Try again." : {
+      "comment" : "Alert text when the vault refused the new login Generate Password… was saving; the page got nothing. Full sentences."
+    },
     "The vault is encrypted with your unlock passkeys. If you lose every unlock passkey, WSurf cannot recover the vault or anything stored in it, and there is no recovery option. Removing an unlock passkey does not change the vault’s encryption key. Someone with that passkey and an older vault file can still decrypt later copies of this vault they obtain. Deleting the vault does not delete backups." : {
       "comment" : "Warning paragraph at the bottom of the Create Credential Vault sheet, read before creating a vault: losing every unlock passkey means no recovery, removing a passkey does not change the encryption key, and deleting a vault does not delete backups. Keep the serious, precise tone."
     },
@@ -11277,6 +11381,9 @@
     "Use Passkey" : {
       "comment" : "Default button of the sheet titled “Sign in to %@ with a passkey?”, which appears when a website asks to sign in with a saved passkey. Title Case, a verb phrase."
     },
+    "Use Password" : {
+      "comment" : "Default button of the Generate Password sheet: saves the generated password in the vault, then fills it into the right-clicked field. A command."
+    },
     "Use the current website’s color in the toolbar and sidebar. Off while a theme’s colors or brightness are changed." : {
       "comment" : "Caption of the Website tint switch in Settings › Appearance › Theme: the toolbar and sidebar take the color of the page being viewed. The last sentence says the tint is switched off while theme colors or brightness are being edited. Sentence case."
     },
@@ -11444,6 +11551,15 @@
     },
     "WSurf saved %lld password rows to a CSV file. The file is not encrypted and anyone who can open it can read the passwords. Delete it as soon as you have imported it. WSurf does not delete it for you." : {
       "comment" : "Warning shown after the user exports credentials as a CSV file. %lld is the number of password rows written. A CSV file is plain, unencrypted text, which is why it must be deleted after use. Full sentences."
+    },
+    "WSurf saved the password for %@, but the field changed, so nothing was filled. Right-click the field and choose Pick Credential… to fill it." : {
+      "comment" : "Alert text when Generate Password… saved the new login but the page changed before the fill. %@ is the website (example.com). Pick Credential… is the context menu item’s title. Full sentences."
+    },
+    "WSurf saved the password for %@, but this form now sends what you type to another website, so nothing was filled." : {
+      "comment" : "Alert text when Generate Password… saved the new login but the form now sends what is typed in it to another website, so nothing was filled. %@ is the website (example.com). Full sentence."
+    },
+    "WSurf saves a generated password in a vault. Set up a vault in Settings first." : {
+      "comment" : "Alert text when Generate Password… finds no vault to save in (none set up yet, or one Settings has to repair). The alert’s button is Set Up Vault…. Full sentences."
     },
     "WSurf saves passwords in an encrypted vault that you unlock with a passkey. There is no recovery: if you lose every passkey that unlocks the vault, its passwords can’t be recovered. This password isn’t saved now. After you set up the vault, sign in again to save it." : {
       "comment" : "Body text of the toolbar popover that offers to save a password when no vault exists yet (title “Save passwords in Credential Manager?”). Nothing is saved now. A vault is an encrypted store unlocked by a passkey. WSurf is not translated."

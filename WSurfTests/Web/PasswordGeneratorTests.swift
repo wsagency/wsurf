@@ -411,6 +411,52 @@ struct PasswordGeneratorTests {
         #expect(logged(password) == "GeneratedPassword")
         Logger(subsystem: "app.wsurf.tests", category: "password-generator").debug("\(password, privacy: .public)")
     }
+
+    // MARK: - The sheet's choices (G2)
+
+    /// The strength the sheet notes below 60 bits comes from the alphabet of the draw. Easy to Type draws from 32 characters: 18 of a
+    /// 20-character password (two are hyphens) and all of an 8-character one. Letters and Digits draws from 56. Website's Rules is
+    /// never rated above Easy to Type, which it tries first.
+    @Test func theEstimatedStrengthFollowsTheAlphabetOfTheDraw() {
+        #expect(PasswordGenerator.estimatedBits(.easyToType, count: 20) == 90)
+        #expect(PasswordGenerator.estimatedBits(.easyToType, count: 8) == 40)
+        #expect(PasswordGenerator.estimatedBits(.easyToType, count: 8) < PasswordGenerator.weakBits)
+        #expect(abs(PasswordGenerator.estimatedBits(.lettersAndDigits, count: 8) - 8 * log2(56)) < 0.001)
+        #expect(PasswordGenerator.estimatedBits(.websiteRules, count: 20, rules: PasswordRules(parsing: "allowed: digit;")) == 20 * log2(10))
+        #expect(PasswordGenerator.estimatedBits(.websiteRules, count: 20, rules: PasswordRules(parsing: "allowed: ascii-printable;")) == 90)
+    }
+
+    /// The sheet starts with Website's Rules for a field that has rules, and with Letters and Digits for one that allows fewer than
+    /// 13 characters, where Easy to Type would be the weakest format.
+    @Test func theSheetStartsWithTheRulesOrTheStrongerFormatForAShortField() {
+        var field = PasswordGeneratorFlow.Field(kind: .new)
+        #expect(PasswordGeneratorFlow.initialFormat(for: field) == .easyToType)
+        field.limits = PasswordFieldLimits(maxLength: 12)
+        #expect(PasswordGeneratorFlow.initialFormat(for: field) == .lettersAndDigits)
+        field.limits = PasswordFieldLimits(maxLength: 13)
+        #expect(PasswordGeneratorFlow.initialFormat(for: field) == .easyToType)
+        field.rules = PasswordRules(parsing: "required: digit;")
+        #expect(PasswordGeneratorFlow.initialFormat(for: field) == .websiteRules)
+    }
+
+    /// The vault offered first: the one unlocked vault that holds the website, else the default vault while it is unlocked, else the
+    /// first unlocked one.
+    @Test func theVaultOfferedFirstIsTheHolderThenTheDefaultThenTheFirstUnlocked() {
+        let (first, second, third) = (UUID(), UUID(), UUID())
+        #expect(PasswordGeneratorFlow.preferredVault([first, second, third], holders: [second], defaultID: third) == second)
+        #expect(PasswordGeneratorFlow.preferredVault([first, second, third], holders: [first, second], defaultID: third) == third)
+        #expect(PasswordGeneratorFlow.preferredVault([first, second], holders: [], defaultID: third) == first, "the default is locked")
+        #expect(PasswordGeneratorFlow.preferredVault([], holders: [], defaultID: first) == nil)
+    }
+
+    /// A field and its confirmation must both take the password: the larger minimum and the smaller maximum; -1 is the DOM's none.
+    @Test func aFieldAndItsConfirmationTakeTheNarrowerLimits() {
+        #expect(PasswordFieldLimits(minLength: -1, maxLength: 24).narrowed(by: PasswordFieldLimits(minLength: 14, maxLength: -1))
+            == PasswordFieldLimits(minLength: 14, maxLength: 24))
+        #expect(PasswordFieldLimits(minLength: 8, maxLength: 64).narrowed(by: PasswordFieldLimits(minLength: 12, maxLength: 32))
+            == PasswordFieldLimits(minLength: 12, maxLength: 32))
+        #expect(PasswordFieldLimits().narrowed(by: PasswordFieldLimits()) == PasswordFieldLimits())
+    }
 }
 
 private extension Int {

@@ -102,8 +102,9 @@ final class CredentialPicker {
     static var answersForTesting: [UUID: @MainActor ([Row]) async -> Answer?] = [:]
 
     private var targets: [ObjectIdentifier: Target] = [:]
-    /// Pages whose pick is under way: a second menu command for the same page waits for the first to end.
-    private var picking: Set<ObjectIdentifier> = []
+    /// Pages whose pick, or generated password (`PasswordGeneratorFlow`), is under way: they share the right-click, so a second menu
+    /// command for the same page is refused until the first ends.
+    var picking: Set<ObjectIdentifier> = []
 
     private init() {}
 
@@ -182,7 +183,7 @@ final class CredentialPicker {
     /// Chromium names the right-clicked frame by its own id, which need not be the DevTools id the script's frame carries. The URL
     /// then names it only while no other live frame of the page, cross-site frames included, has that URL, the rule of
     /// `ChromiumPage.frame(id:requestURL:isMainFrame:)`.
-    private static func isNamedFrame(_ target: Target, by menu: Menu, in page: BrowserPage) async -> Bool {
+    static func isNamedFrame(_ target: Target, by menu: Menu, in page: BrowserPage) async -> Bool {
         guard let named = menu.chromiumFrame, target.frame.chromiumID != named.id else { return true }
         guard let chromium = page.chromium, let live = try? await chromium.devTools.framesIncludingCrossSiteFrames() else { return false }
         return live.filter { $0.isMainFrame == named.isMain && $0.request.url == named.url }.count == 1
@@ -193,12 +194,8 @@ final class CredentialPicker {
     func run(
         _ target: Target, in page: BrowserPage, window: NSWindow, allowed: @escaping @MainActor @Sendable () -> Bool
     ) async -> Outcome {
-        let context = target.context, profile = context.profile, key = ObjectIdentifier(page), token = target.token
-        let isCurrent: @MainActor @Sendable () -> Bool = { [weak self, weak page, weak window] in
-            guard let self, let page, let window else { return false }
-            return page.context === context && self.targets[key]?.token == token && page.window === window
-                && Self.isOffered(in: page, allowedByTab: allowed())
-        }
+        let profile = target.context.profile
+        let isCurrent = currentCheck(for: target, in: page, window: window, allowed: allowed)
         guard isCurrent(), await field(of: target, in: page) != nil, isCurrent() else { return .nothing }
         var unlocking = await AutofillSuggestions.allVaultsLocked(of: profile)
         while true {
@@ -220,6 +217,19 @@ final class CredentialPicker {
             case nil:
                 return .nothing
             }
+        }
+    }
+
+    /// The check made after every suspension of a flow that started from `target`: the page, its window, its profile and the
+    /// right-click are still the ones it started from, and the policy still offers the item (`allowed` is the tab's, asked again).
+    func currentCheck(
+        for target: Target, in page: BrowserPage, window: NSWindow, allowed: @escaping @MainActor @Sendable () -> Bool
+    ) -> @MainActor @Sendable () -> Bool {
+        let context = target.context, key = ObjectIdentifier(page), token = target.token
+        return { [weak self, weak page, weak window] in
+            guard let self, let page, let window else { return false }
+            return page.context === context && self.targets[key]?.token == token && page.window === window
+                && Self.isOffered(in: page, allowedByTab: allowed())
         }
     }
 
@@ -272,7 +282,7 @@ final class CredentialPicker {
         guard let host = WebsiteLookalike.displayHost(of: target.origin) else { return nil }
         return await CredentialPickerSheet.present(
             rows: reading.rows, host: host, canUnlock: reading.hasLockedVault, offersCode: Self.offersMessagesCode(for: target.field),
-            profileID: target.context.profile.id, in: window
+            profileID: target.context.profile.id, page: target.page, in: window
         )
     }
 
@@ -379,7 +389,8 @@ final class CredentialPicker {
         return .filled(count)
     }
 
-    private static func manager(of context: BrowserProfileContext, vaultID: UUID, epoch: UInt64) -> CredentialManager? {
+    /// The unlocked manager of `vaultID`, only under the unlock `epoch` a list or a sheet was made under.
+    static func manager(of context: BrowserProfileContext, vaultID: UUID, epoch: UInt64) -> CredentialManager? {
         guard !context.profile.isPrivate else { return nil }
         return CredentialManager.unlockedManagers(for: context.profile).first { $0.vaultID == vaultID && $0.authorizationEpoch == epoch }
     }

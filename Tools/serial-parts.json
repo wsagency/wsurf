@@ -189,6 +189,8 @@
    "MCPDefaultAccessTests",
    "PageDiagnosticsHookTests",
    "PageInkContrastTests",
+   "PasswordGeneratorFlowTests",
+   "PasswordGeneratorScriptTests",
    "PasswordHealthTests",
    "ResourceBenchmarkTests",
    "SettingsRoutingTests",

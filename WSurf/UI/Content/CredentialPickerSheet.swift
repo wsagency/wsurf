@@ -9,31 +9,55 @@ import SwiftUI
 /// native field macOS lists the codes of Messages and Mail under (`MessagesCodeField`), in a sheet of the key window.
 @MainActor
 enum CredentialPickerSheet {
-    /// The sheets on screen: their profile, the sheet and its window.
-    private static var open: [(profileID: UUID, sheet: NSWindow, window: NSWindow)] = []
+    /// A sheet on screen, the picker's or the password generator's (`PasswordGeneratorSheet`): its profile, the page it is for, the
+    /// sheet and its window.
+    private struct Entry {
+        let profileID: UUID
+        weak var page: BrowserPage?
+        let sheet: NSWindow
+        let window: NSWindow
+    }
+
+    private static var open: [Entry] = []
 
     /// Ends the sheets of `profileID` (all with nil) as a Cancel: its vault access ended or the autofill policy changed, so the list
-    /// of titles does not stay on screen.
+    /// of titles, or a generated password, does not stay on screen.
     static func dismiss(profileID: UUID? = nil) {
         for entry in open where profileID == nil || entry.profileID == profileID {
             entry.window.endSheet(entry.sheet)
         }
     }
 
+    /// Ends the sheets of `page` only, as a Cancel: an agent took its tab (`BrowserTab.agentControlChanged`). The sheets of other
+    /// tabs, of the same profile and window included, stay: an agent can take a background tab.
+    static func dismiss(page: BrowserPage) {
+        for entry in open where entry.page === page {
+            entry.window.endSheet(entry.sheet)
+        }
+    }
+
     /// The person's answer; nil for Cancel, Escape, a window that went away or `dismiss`.
     static func present(
-        rows: [CredentialPicker.Row], host: String, canUnlock: Bool, offersCode: Bool = false, profileID: UUID, in window: NSWindow
+        rows: [CredentialPicker.Row], host: String, canUnlock: Bool, offersCode: Bool = false, profileID: UUID, page: BrowserPage? = nil,
+        in window: NSWindow
     ) async -> CredentialPicker.Answer? {
+        await show(size: NSSize(width: 460, height: 440), profileID: profileID, page: page, in: window) { finish in
+            CredentialPickerList(rows: rows, host: host, canUnlock: canUnlock, offersCode: offersCode, finish: finish)
+        }
+    }
+
+    /// `content` as a sheet of `size` on `window`, until it calls its `finish` once: nil for Cancel, Escape, a window that went away
+    /// or `dismiss`.
+    static func show<Answer: Sendable, Content: View>(
+        size: NSSize, profileID: UUID, page: BrowserPage?, in window: NSWindow,
+        content: (_ finish: @escaping @MainActor @Sendable (Answer?) -> Void) -> Content
+    ) async -> Answer? {
         await withCheckedContinuation { continuation in
-            final class Once {
-                var continuation: CheckedContinuation<CredentialPicker.Answer?, Never>?
-                var closing: NSObjectProtocol?
-            }
-            let once = Once()
+            let once = SheetAnswer<Answer>()
             once.continuation = continuation
-            let sheet = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 460, height: 440), styleMask: [.titled], backing: .buffered, defer: true)
+            let sheet = NSWindow(contentRect: NSRect(origin: .zero, size: size), styleMask: [.titled], backing: .buffered, defer: true)
             sheet.isReleasedWhenClosed = false
-            let finish: @MainActor @Sendable (CredentialPicker.Answer?) -> Void = { [weak window, weak sheet] answer in
+            let finish: @MainActor @Sendable (Answer?) -> Void = { [weak window, weak sheet] answer in
                 guard let resume = once.continuation else { return }
                 once.continuation = nil
                 open.removeAll { $0.sheet === sheet }
@@ -45,17 +69,21 @@ enum CredentialPickerSheet {
                 }
                 resume.resume(returning: answer)
             }
-            sheet.contentViewController = NSHostingController(
-                rootView: CredentialPickerList(rows: rows, host: host, canUnlock: canUnlock, offersCode: offersCode, finish: finish)
-            )
+            sheet.contentViewController = NSHostingController(rootView: content(finish))
             // A window that closes with the sheet on it is a cancel too.
             once.closing = NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: window, queue: .main) { _ in
                 MainActor.assumeIsolated { finish(nil) }
             }
-            open.append((profileID, sheet, window))
+            open.append(Entry(profileID: profileID, page: page, sheet: sheet, window: window))
             window.beginSheet(sheet) { _ in finish(nil) }
         }
     }
+}
+
+/// One sheet's answer, given once.
+private final class SheetAnswer<Answer> {
+    var continuation: CheckedContinuation<Answer?, Never>?
+    var closing: NSObjectProtocol?
 }
 
 struct CredentialPickerList: View {
