@@ -706,6 +706,7 @@ struct CredentialRow: View, Equatable {
         VStack(alignment: .leading, spacing: 6) {
             SiteRow(host: host, summary: detail.isEmpty ? nil : detail, caption: summary.dates.caption(style: .list)) {
                 HStack(spacing: 8) {
+                    CredentialHealthBadges(health: summary.health)
                     CredentialRowMoreButton(model: model, summary: summary, selection: selection, actions: actions)
                     if let website = summary.website {
                         Button {

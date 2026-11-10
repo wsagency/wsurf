@@ -553,6 +553,15 @@ check_average \
   '0.0748' \
   'Credential Manager search narrowing 1,111 rows to 111 in a vault of 3,000' \
   's'
+# Password health (S4b): a report flagging a quarter of 20,000 credentials (2,500 weak, 2,500 reused) arrives on the shown page:
+# the summaries take their flags, the list recounts its chips and the rows on screen are drawn again. Pro, Debug + coverage,
+# 2026-11-09, two targeted runs: 0.2102 / 0.2088 s; in the Rest part 0.2146 s. Budget twice the larger targeted mean.
+check_average \
+  'CredentialListPerformanceTests/testFlaggingAQuarterOfTwentyThousandCredentialsRedrawsThePage()' \
+  'com.apple.dt.XCTMetric_Clock.time.monotonic' \
+  '0.420' \
+  'Credential Manager page flagging a quarter of 20,000 credentials' \
+  's'
 check_average \
   'BrowserPerformanceTests/testResolvingThemeColorsForACrowdedSidebar()' \
   'com.apple.dt.XCTMetric_Clock.time.monotonic' \

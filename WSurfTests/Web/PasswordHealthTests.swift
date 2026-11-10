@@ -190,6 +190,46 @@ struct PasswordHealthTests {
         #expect(first != second)
     }
 
+    // MARK: - What a report reads of a credential
+
+    /// A page keeps its health grant only across saves that keep what a report reads (`CredentialSettingsModel.save`): the id,
+    /// password, username, websites and login addresses. A display name may change; a new credential counts as a change.
+    @Test func aReportReadsTheIdPasswordUsernameWebsitesAndLoginAddresses() {
+        let stored = login("Kx9!vQ2#mW7p", at: ["https://example.com"])
+        var renamed = stored
+        renamed.displayName = "Renamed"
+        #expect(PasswordHealth.sameInputs(stored, stored) && PasswordHealth.sameInputs(stored, renamed))
+        #expect(!PasswordHealth.sameInputs(nil, stored), "a new credential")
+        let edits: [(String, (inout CredentialAccount) -> Void)] = [
+            ("password", { $0.password = "Zt4$pL8@nR2w" }),
+            ("cleared password", { $0.password = nil }),
+            ("username", { $0.username = "kx9!" }),
+            ("website", { $0.origins.append("https://example.org") }),
+            ("login address", { $0.loginURLs = [URL(string: "https://example.com/signin")!] }),
+            ("id", { $0.id = UUID() }),
+        ]
+        for (label, edit) in edits {
+            var changed = stored
+            edit(&changed)
+            #expect(!PasswordHealth.sameInputs(stored, changed), "\(label)")
+        }
+    }
+
+    /// The rules read bytes, so a username or password typed again in the other Unicode normalization form is a change, though
+    /// Swift's `==` calls the two texts the same.
+    @Test func textInAnotherNormalizationFormIsAChange() {
+        let composed = "Zo\u{EB}"
+        let decomposed = "Zoe\u{308}"
+        #expect(composed == decomposed && !composed.utf8.elementsEqual(decomposed.utf8), "the same text in two forms")
+        let stored = login("Kx9!vQ2#mW7p-\(composed)", at: ["https://example.com"], username: composed)
+        var username = stored
+        username.username = decomposed
+        #expect(!PasswordHealth.sameInputs(stored, username), "username")
+        var password = stored
+        password.password = "Kx9!vQ2#mW7p-\(decomposed)"
+        #expect(!PasswordHealth.sameInputs(stored, password), "password")
+    }
+
     // MARK: - Through the vault
 
     /// The manager's read: the vault's live credentials at its revision, as flags, read once as `.health`. A locked vault returns

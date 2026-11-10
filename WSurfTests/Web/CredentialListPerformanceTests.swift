@@ -20,7 +20,7 @@ nonisolated final class CredentialListPerformanceTests: XCTestCase, @unchecked S
 
     // MARK: Fixtures
 
-    private static func accounts() throws -> [CredentialAccount] {
+    private static func accounts(count: Int = CredentialListPerformanceTests.count) throws -> [CredentialAccount] {
         try (0..<count).map { index in
             let host = "site\(index).example.test"
             let passkeys = try index % 10 == 0
@@ -49,9 +49,9 @@ nonisolated final class CredentialListPerformanceTests: XCTestCase, @unchecked S
     /// An unlocked vault holding the accounts, closed again whether or not `body` throws.
     @MainActor
     private func withLargeVault(
-        _ body: (_ profile: Profile, _ vault: FixtureVault) async throws -> Void
+        count: Int = CredentialListPerformanceTests.count, _ body: (_ profile: Profile, _ vault: FixtureVault) async throws -> Void
     ) async throws {
-        let accounts = try Self.accounts()
+        let accounts = try Self.accounts(count: count)
         try await VaultManagerFixture.with(vaults: [.unlocked]) { profile, _, vaults in
             let vault = try XCTUnwrap(vaults.first)
             try await VaultManagerFixture.save(accounts, in: vault)
@@ -60,11 +60,11 @@ nonisolated final class CredentialListPerformanceTests: XCTestCase, @unchecked S
     }
 
     @MainActor
-    private func loadedModel(_ profile: Profile, _ vault: FixtureVault) async throws -> CredentialSettingsModel {
+    private func loadedModel(_ profile: Profile, _ vault: FixtureVault, count: Int = CredentialListPerformanceTests.count) async throws -> CredentialSettingsModel {
         // Touch ID answers yes at once: Show Password asks for it first.
         let model = CredentialSettingsModel(profile: profile, manager: vault.manager, verifyUser: { _ in })
         await model.load()
-        XCTAssertEqual(model.summaries.count, Self.count)
+        XCTAssertEqual(model.summaries.count, count)
         return model
     }
 
@@ -367,6 +367,48 @@ nonisolated final class CredentialListPerformanceTests: XCTestCase, @unchecked S
             Self.settle(host)
             XCTAssertEqual(selection.stateReadCount, reads, "no row is evaluated again for a keystroke that keeps them")
             XCTAssertEqual(list.rows(of: model.summaries).count, Self.count)
+            window.close()
+        }
+    }
+
+    /// A password health report that flags a quarter of 20,000 credentials arrives on the shown page: the summaries take their flags,
+    /// the list recounts its chips (what the list's `.task(id:)` runs when the report's revision changes its key), and the page draws
+    /// the rows on screen again. Each pass starts from the page without flags; only the arrival is timed. The page without flags is
+    /// `testLayingOutThreeThousandCredentials`.
+    @MainActor
+    func testFlaggingAQuarterOfTwentyThousandCredentialsRedrawsThePage() async throws {
+        let count = 20_000
+        try await withLargeVault(count: count) { profile, vault in
+            let model = try await loadedModel(profile, vault, count: count)
+            let list = CredentialListState()
+            let (host, window) = Self.mount(Self.page(model, list: list))
+            Self.settle(host)
+            _ = await waitUntil { list.counts != nil }
+            _ = await Self.waitUntilIdle()
+            let epoch = try XCTUnwrap(model.authorizationEpoch)
+            let group = UUID()
+            var findings: [UUID: PasswordHealthFinding] = [:]
+            for (index, summary) in model.summaries.enumerated() where index % 4 == 0 {
+                findings[summary.id] = index % 8 == 0
+                    ? PasswordHealthFinding(reuse: PasswordReuse(group: group, otherSites: 1), weaknesses: [])
+                    : PasswordHealthFinding(reuse: nil, weaknesses: [.short])
+            }
+            let report = PasswordHealthReport(vaultID: vault.vaultID, revision: model.revision, findings: findings)
+
+            let options = XCTMeasureOptions.budgeted
+            options.invocationOptions = [.manuallyStart, .manuallyStop]
+            measure(metrics: [XCTClockMetric()], options: options) {
+                try? model.update(epoch) { $0.dropHealth() }
+                list.refresh(model.summaries)
+                Self.settle(host)
+                startMeasuring()
+                try? model.update(epoch) { $0.applyHealth(report) }
+                list.refresh(model.summaries)
+                Self.settle(host)
+                stopMeasuring()
+            }
+            XCTAssertEqual(list.counts?[.weak], count / 8)
+            XCTAssertEqual(list.counts?[.reused], count / 8)
             window.close()
         }
     }

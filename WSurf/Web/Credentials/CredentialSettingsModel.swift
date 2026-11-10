@@ -63,6 +63,15 @@ final class CredentialSettingsModel {
     /// copied (`+PasswordPrivacy`), and before a card's or an ID document's hidden values are shown, copied or opened in the editor.
     /// Returns only on success. A seam so a test decides the answer; internal for the extensions.
     @ObservationIgnored let verifyUser: @MainActor (String) async throws -> Void
+    /// How long the page waits once a revision settles before it reads the password health report again (`+Health`).
+    @ObservationIgnored let healthDelay: Duration
+    /// The vault and unlock under which Show Password Health passed its prompt (`+Health`): health is read and shown under it only.
+    var healthGrant: HealthGrant?
+    /// Set while Show Password Health's prompt is up, so a second click asks nothing more.
+    var isRevealingHealth = false
+    /// The vault, epoch and revision the last report was asked for, and the task asking: a newer revision cancels it.
+    @ObservationIgnored var healthKey: HealthKey?
+    @ObservationIgnored var healthTask: Task<Void, Never>?
     /// Opens an address in a new tab of the window that shows this page (`openWebsite`); `nil` where there is none, such as a test.
     @ObservationIgnored var websiteOpener: (@MainActor (URL) -> Void)?
     /// Where decrypted copies of vault files go for Quick Look and Open With; a seam so a test keeps them in its own folder.
@@ -115,7 +124,8 @@ final class CredentialSettingsModel {
         undoNoticeDuration: Duration = .seconds(4),
         openingDuration: Duration = .seconds(2),
         verifyUser: @escaping @MainActor (String) async throws -> Void = CredentialSettingsModel.systemVerifier,
-        clock: any Clock<Duration> = ContinuousClock()
+        clock: any Clock<Duration> = ContinuousClock(),
+        healthDelay: Duration = .milliseconds(500)
     ) {
         self.profile = profile
         self.verifyUser = verifyUser
@@ -125,6 +135,7 @@ final class CredentialSettingsModel {
         self.noticeDuration = noticeDuration
         self.undoNoticeDuration = undoNoticeDuration
         self.openingDuration = openingDuration
+        self.healthDelay = healthDelay
         self.native = native
         legacy = LegacyPasswordImport(profile: profile)
         if profile.isPrivate {
@@ -295,6 +306,7 @@ final class CredentialSettingsModel {
     /// has read the session again, and that gap is not a lock.
     func close() {
         session = nil
+        cancelHealthRead()
         startOpening()
     }
 
@@ -320,6 +332,7 @@ final class CredentialSettingsModel {
 
     func lock() {
         session = nil
+        cancelHealthRead()
         manager?.lock(reason: .manual)
     }
 
@@ -348,6 +361,9 @@ final class CredentialSettingsModel {
             session = CredentialVaultSession(epoch: epoch, snapshot: snapshot)
             error = nil
             vaultExists = true
+            // A new session holds no health flags yet, whatever the last one held.
+            healthKey = nil
+            scheduleHealthIfNeeded()
         } catch {
             guard !Task.isCancelled, manager.authorizationEpoch == epoch else { return }
             session = nil
@@ -468,6 +484,7 @@ final class CredentialSettingsModel {
         }
         manager = next
         session = nil
+        cancelHealthRead()
         needsMigrationConfirmation = false
         watchAuthorization()
     }
@@ -545,7 +562,15 @@ final class CredentialSettingsModel {
         let (epoch, snapshot) = try await authorizedSnapshot()
         guard snapshot.revision == expectedRevision else { throw CredentialVaultError.staleRevision }
         var accounts = snapshot.accounts
-        if let index = accounts.firstIndex(where: { $0.id == account.id }) {
+        let index = accounts.firstIndex(where: { $0.id == account.id })
+        // A save that changes anything password health reads of the credential (its password, username, websites or login
+        // addresses), or adds a credential, ends Show Password Health's grant before it is written (`endHealthGrant`). With the grant
+        // kept, a username or website name saved as a guess would show "Weak" when the password holds it, four characters at a time,
+        // and a guessed password "Reused".
+        if !PasswordHealth.sameInputs(index.map { accounts[$0] }, account) {
+            endHealthGrant()
+        }
+        if let index {
             accounts[index] = account
         } else {
             accounts.append(account)
@@ -749,6 +774,8 @@ final class CredentialSettingsModel {
         // Read before the commit: a failed one drops the review, and its message must still name the right retry.
         let origin = currentImportOrigin()
         ownMessage = nil
+        // An import saves new or changed passwords, so it ends Show Password Health's grant like a saved one (`endHealthGrant`).
+        endHealthGrant()
         let committed = await perform(describe: { self.importMessage(for: $0, origin: origin) }) { receipt = try await self.exchange.commitImport(into: $0, owner: self.owner) }
         guard committed, let receipt, let expected else { return }
         if let epoch, epoch == manager?.authorizationEpoch {
@@ -821,6 +848,7 @@ final class CredentialSettingsModel {
                 guard self?.manager === manager else { return }
                 self?.session = nil
                 self?.importResult = nil
+                self?.cancelHealthRead()
             }
             Task { @MainActor [weak self] in
                 guard self?.manager === manager else { return }
@@ -877,6 +905,7 @@ final class CredentialSettingsModel {
     func update(_ epoch: UInt64, _ change: (inout CredentialVaultSession) -> Void) throws {
         guard session?.epoch == epoch, manager?.authorizationEpoch == epoch else { throw CredentialVaultError.unauthorized }
         change(&session!)
+        scheduleHealthIfNeeded()
     }
 
     /// Nothing throws once the vault has committed: the receipt reflects what is on disk, and a lock that
@@ -889,6 +918,7 @@ final class CredentialSettingsModel {
         // Last point before the durable write: a cancelled task or a changed authorization never commits.
         try Task.checkCancellation()
         let receipt = try await manager.commit(accounts, expectedRevision: expectedRevision, authorizedEpoch: epoch, changing: changing)
+        carryHealthGrant(from: expectedRevision, to: receipt.revision)
         try? update(epoch) { $0.committed(accounts, revision: receipt.revision) }
         return receipt
     }

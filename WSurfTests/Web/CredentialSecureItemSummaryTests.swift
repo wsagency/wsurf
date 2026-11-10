@@ -209,7 +209,7 @@ struct CredentialSecureItemSummaryTests {
         }
         #expect(counts[.all] == all.count)
         #expect(counts[.passkeys] == 0 && counts[.codes] == 0 && counts[.notes] == 0)
-        #expect(Set(CredentialListFilter.allCases.filter(\.hidesWhenEmpty)) == [.documents, .otherItems, .files])
+        #expect(Set(CredentialListFilter.allCases.filter(\.hidesWhenEmpty)) == [.documents, .otherItems, .files, .weak, .reused])
     }
 
     @Test func searchFindsAnItemByItsTitleAndNeverByASecret() {

@@ -42,6 +42,8 @@ struct CredentialVaultSession {
     /// The open credential's earlier values and versions (secrets included), masked until shown; see `HistoryState`.
     var history: HistoryState?
     var pendingUnlockRemoval: PendingUnlockRemoval?
+    /// The last password health report (S4), kept so summaries read again at its revision keep their flags. Flags only.
+    private(set) var health: PasswordHealthReport?
     /// Verified counts of the vault and its Trash, as of the last Trash load.
     var counts: (live: HistoryCounts, trash: HistoryCounts)?
     var trash: [TrashItem] = []
@@ -179,6 +181,39 @@ struct CredentialVaultSession {
         stampsRevision = snapshot.revision
         summaries = snapshot.accounts.map(CredentialSummary.init)
         blockedSiteCount = snapshot.blockedPasswordOrigins.count
+        markHealth()
+    }
+
+    /// The revision whose password health the summaries show, `nil` while they show none.
+    var healthRevision: UInt64? {
+        health?.revision == revision ? revision : nil
+    }
+
+    /// Puts `report`'s flags on the summaries when it describes the revision shown; a report of another revision changes nothing.
+    mutating func applyHealth(_ report: PasswordHealthReport) {
+        guard report.revision == revision else { return }
+        health = report
+        markHealth()
+    }
+
+    /// Drops the report and its flags: the page shows no password health.
+    mutating func dropHealth() {
+        guard health != nil else { return }
+        health = nil
+        summaries = summaries.map { summary in
+            var unmarked = summary
+            unmarked.health = nil
+            return unmarked
+        }
+    }
+
+    private mutating func markHealth() {
+        guard let health, health.revision == revision else { return }
+        summaries = summaries.map { summary in
+            var marked = summary
+            marked.health = health.findings[summary.id]
+            return marked
+        }
     }
 
     /// After a write this page made: the accounts as written, and no secret still shown. The stamps stay as they were read.

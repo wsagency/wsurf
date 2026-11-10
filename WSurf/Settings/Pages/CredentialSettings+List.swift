@@ -123,6 +123,8 @@ private struct CredentialListKey: Equatable {
     let vault: UUID?
     let epoch: UInt64?
     let revision: UInt64
+    /// The revision whose password health flags the summaries carry: their arrival recounts the Weak and Reused chips.
+    let health: UInt64?
     let bySite: Bool
 }
 
@@ -153,6 +155,10 @@ extension CredentialListFilter {
             "Other"
         case .files:
             "Files"
+        case .weak:
+            "Weak"
+        case .reused:
+            "Reused"
         }
     }
 }
@@ -236,7 +242,10 @@ struct CredentialListView<Switcher: View>: View {
     @State private var rowActions = CredentialRowActions()
 
     private var key: CredentialListKey {
-        CredentialListKey(vault: model.selectedVaultID, epoch: model.authorizationEpoch, revision: model.revision, bySite: list.bySite)
+        CredentialListKey(
+            vault: model.selectedVaultID, epoch: model.authorizationEpoch, revision: model.revision, health: model.healthRevision,
+            bySite: list.bySite
+        )
     }
 
     /// The vault's name; the page is about one vault at a time.
@@ -434,7 +443,23 @@ struct CredentialListView<Switcher: View>: View {
                         .controlSize(.small)
                         .disabled(model.isBusy)
                 }
+                healthControl
             }
+        }
+    }
+
+    /// Weak and reused passwords show only after their own Touch ID prompt, once per unlock (`CredentialSettingsModel.revealHealth`):
+    /// until then, this button. After it, the Weak and Reused chips, or a word when there is nothing to flag.
+    @ViewBuilder private var healthControl: some View {
+        if !model.showsHealth {
+            Button("Show Password Health") { run { try await model.revealHealth() } }
+                .controlSize(.small)
+                .disabled(model.isBusy || model.isRevealingHealth)
+                .help("Mark weak and reused passwords. Asks for Touch ID or your Mac password first.")
+        } else if model.healthRevision != nil, list.counts?[.weak] == 0, list.counts?[.reused] == 0 {
+            Text("No weak or reused passwords")
+                .font(Theme.Font.label)
+                .foregroundStyle(.secondary)
         }
     }
 

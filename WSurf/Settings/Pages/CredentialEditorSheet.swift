@@ -300,6 +300,7 @@ struct CredentialEditorSheet: View {
             }
             .formStyle(.columns)
             .textFieldStyle(.roundedBorder)
+            CredentialHealthNote(model: model)
         }
     }
 
