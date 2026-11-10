@@ -31,6 +31,14 @@
 # 1,000 tabs: 0.393 0.048 0.039 0.061 0.049 0.045, mean 0.105643 against 0.102, 0.048 without the warm-up).
 #
 # A real regression still fails: it lifts every sample, so it lifts the mean and the median.
+#
+# Local reruns (Tools/ci-local.sh, never GitHub CI, which stays strict):
+#   WSURF_PERF_COLLECT=FILE   a budget miss is appended to FILE as TEST_ID, METRIC, STATISTIC, MAXIMUM, LABEL (tab separated) and the
+#                             check goes on; at the end it appends "#complete ROWS" and exits 3 if there were only budget misses (a
+#                             caller must find that line, not trust the exit code alone). A missing metric or any other error is
+#                             still an immediate exit 1.
+#   --only TEST_ID            (repeatable) judge only these cases. Each must then have a metric in the file, or it is an error: a
+#                             rerun that produced nothing never passes.
 
 set -eu
 
@@ -40,6 +48,13 @@ if ! command -v jq >/dev/null 2>&1; then
 fi
 
 memory_metric='com.apple.dt.XCTMetric_Memory.physical'
+collect_file="${WSURF_PERF_COLLECT:-}"
+# Both lists hold one identifier per line, each line and the list itself bounded by a newline, so a case is found by "\nID\n".
+only_ids=""
+seen_ids="
+"
+budget_missed=0
+rows_judged=0
 
 # summarize KIND: reads one sample per line and prints the mean (KIND mean) or the median (KIND median) of the samples after the
 # first, to six decimals; a lone sample is kept.
@@ -72,6 +87,16 @@ check_average() {
   label="$4"
   unit="$5"
 
+  if [ -n "$only_ids" ]; then
+    case "$only_ids" in
+      *"
+$test_id
+"*) seen_ids="$seen_ids$test_id
+" ;;
+      *) return 0 ;;
+    esac
+  fi
+
   values="$(jq -r \
     --arg test "$test_id" \
     --arg metric "$metric_id" \
@@ -93,9 +118,15 @@ check_average() {
     kind=median
   fi
   statistic="$(printf '%s\n' "$values" | summarize "$kind")"
+  rows_judged=$((rows_judged + 1))
   if ! awk -v value="$statistic" -v maximum="$maximum" 'BEGIN { exit !(value <= maximum) }'; then
     echo "error: $label $kind $statistic $unit; budget is $maximum $unit (samples: $(printf '%s\n' "$values" | tr '\n' ' '))" >&2
-    exit 1
+    if [ -z "$collect_file" ]; then
+      exit 1
+    fi
+    printf '%s\t%s\t%s\t%s\t%s\n' "$test_id" "$metric_id" "$statistic" "$maximum" "$label" >> "$collect_file"
+    budget_missed=1
+    return 0
   fi
 
   echo "$label: $statistic $unit ($kind; budget: $maximum $unit)"
@@ -164,6 +195,67 @@ self_test() {
   expect_verdict fail "$clock_metric" 0.15 '0.1 0.5 0.1 0.1 0.1 0.1'
   expect_verdict fail "$clock_metric" 0.15 '0.1 0.2 0.2 0.2 0.2 0.2'
 
+  # Collect mode: a miss is listed and the check goes on; a pass is not listed; the list names the case.
+  jq -n --arg metric "$clock_metric" \
+    '[{testIdentifier: "Fixture/slow()", testRuns: [{metrics: [{identifier: $metric, measurements: [0.5, 0.5, 0.5]}]}]},
+      {testIdentifier: "Fixture/fast()", testRuns: [{metrics: [{identifier: $metric, measurements: [0.1, 0.1, 0.1]}]}]}]' > "$fixture"
+  collect_file="$(mktemp "${TMPDIR:-/tmp}/check-performance-collect.XXXXXX")"
+  : > "$collect_file"
+  (check_average 'Fixture/slow()' "$clock_metric" 0.2 slow s; check_average 'Fixture/fast()' "$clock_metric" 0.2 fast s) >/dev/null 2>&1
+  if [ "$(cut -f1 "$collect_file")" != 'Fixture/slow()' ]; then
+    echo "self-test FAILED: collect mode listed [$(cut -f1 "$collect_file" | tr '\n' ' ')], expected only Fixture/slow()" >&2
+    failures=$((failures + 1))
+  fi
+  # --only: other cases are skipped, the named one is judged and marked as seen.
+  only_ids='
+Fixture/fast()
+'
+  seen_ids='
+'
+  : > "$collect_file"
+  check_average 'Fixture/slow()' "$clock_metric" 0.2 slow s >/dev/null 2>&1
+  check_average 'Fixture/fast()' "$clock_metric" 0.2 fast s >/dev/null 2>&1
+  if [ -s "$collect_file" ] || [ "$seen_ids" != '
+Fixture/fast()
+' ]; then
+    echo "self-test FAILED: --only judged a case it was not given, or missed the one it was (seen: $seen_ids)" >&2
+    failures=$((failures + 1))
+  fi
+  only_ids='
+Fixture/slow()
+'
+  seen_ids='
+'
+  check_average 'Fixture/slow()' "$clock_metric" 0.2 slow s >/dev/null 2>&1
+  if [ "$(cut -f1 "$collect_file")" != 'Fixture/slow()' ]; then
+    echo "self-test FAILED: --only did not list the miss of the case it was given" >&2
+    failures=$((failures + 1))
+  fi
+  # End to end: the script lists the miss, appends "#complete" and exits 3; the same fixture without collect mode exits 1.
+  e2e_id='WindowPerformanceTests/testClosingTheFrontTabInACrowdedWindow()'
+  jq -n --arg id "$e2e_id" --arg metric "$clock_metric" \
+    '[{testIdentifier: $id, testRuns: [{metrics: [{identifier: $metric, measurements: [0.9, 0.9, 0.9]}]}]}]' > "$fixture"
+  : > "$collect_file"
+  rc=0
+  WSURF_PERF_COLLECT="$collect_file" sh "$0" --only "$e2e_id" "$fixture" >/dev/null 2>&1 || rc=$?
+  if [ "$rc" -ne 3 ] || [ "$(tail -n 1 "$collect_file" | cut -f1)" != '#complete' ] || [ "$(head -n 1 "$collect_file" | cut -f1)" != "$e2e_id" ]; then
+    echo "self-test FAILED: end to end exit $rc, list [$(tr '\t\n' ' ' < "$collect_file")]" >&2
+    failures=$((failures + 1))
+  fi
+  rc=0
+  sh "$0" --only "$e2e_id" "$fixture" >/dev/null 2>&1 || rc=$?
+  if [ "$rc" -ne 1 ]; then
+    echo "self-test FAILED: a miss without collect mode exited $rc, expected 1" >&2
+    failures=$((failures + 1))
+  fi
+  # Without collect, a miss is an immediate error again.
+  rm -f "$collect_file"
+  collect_file=""
+  only_ids=""
+  if (check_average 'Fixture/slow()' "$clock_metric" 0.2 slow s) >/dev/null 2>&1; then
+    echo "self-test FAILED: a miss passed without collect mode" >&2
+    failures=$((failures + 1))
+  fi
   rm -f "$fixture"
   if [ "$failures" -ne 0 ]; then
     exit 1
@@ -176,7 +268,19 @@ if [ "${1:-}" = "--self-test" ]; then
   exit 0
 fi
 
-metrics_file="${1:-build/performance-metrics.json}"
+metrics_file=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --only)
+      [ "$#" -ge 2 ] || { echo "error: --only needs a test identifier" >&2; exit 1; }
+      only_ids="${only_ids:-
+}$2
+"
+      shift 2 ;;
+    *) metrics_file="$1"; shift ;;
+  esac
+done
+metrics_file="${metrics_file:-build/performance-metrics.json}"
 
 if [ ! -f "$metrics_file" ]; then
   echo "error: performance metrics not found: $metrics_file" >&2
@@ -1298,3 +1402,20 @@ check_average \
   '4096' \
   'Three History page opens over 50,000 pages memory growth' \
   'kB'
+
+# A rerun of named cases must have judged every one of them; a case that is not in the table above is an error too.
+while IFS= read -r id; do
+  [ -n "$id" ] || continue
+  case "$seen_ids" in
+    *"
+$id
+"*) ;;
+    *) echo "error: no budget judged $id (not a budgeted case, or no metric for it)" >&2; exit 1 ;;
+  esac
+done <<EOF_ONLY
+$only_ids
+EOF_ONLY
+if [ "$budget_missed" -ne 0 ]; then
+  printf '#complete\t%s\n' "$rows_judged" >> "$collect_file"
+  exit 3
+fi
