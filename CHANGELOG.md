@@ -5,6 +5,31 @@ This file preserves release notes inherited from the upstream
 describe upstream Linen releases, not releases published by WSurf. New WSurf
 release notes will be added above this provenance record.
 
+## 0.1.26 (build 26) — 2026-11-10
+
+Everything since 0.1.25 (build 25). None of the screens and prompts below has been checked by hand.
+
+### Passwords and the Credential Manager
+
+- Settings › Credentials can now show which saved passwords are weak or used for more than one website. Choose Show Password Health and confirm with Touch ID or your Mac password; until then the page reads and shows nothing. Weak and Reused badges then appear on the rows, Weak and Reused filters appear beside the other filters while a login is flagged, and a saved login’s editor explains its flag. Only the page’s own saves that leave the password, username and websites unchanged keep that answer; anything else that changes the vault, such as an autofill save, another window, an import, an undo or a change to those fields, ends it and the next Show Password Health asks again. Locking the vault also clears the flags.
+
+### Autofill
+
+- Saving a password you typed into a page, and routing a passkey sign-in, no longer load every saved password and passkey key into the app first. The vault compares the new password itself and answers with matches only, so those steps are quicker with a large vault.
+
+### Chromium tabs
+
+- After Back, Forward or a history jump that stays on the same page, a Chromium tab now stops showing that it is loading. Before, it could stay in the loading state until you opened another page, which made the assistant wait about 24 seconds after “go back” and made form filling refuse the page.
+
+### Settings and accessibility
+
+- VoiceOver now names the switches, menus and option groups in Settings by their row’s title, instead of only saying “switch, off”. The extension switch, the website permission menus and the credential vault picker are not named yet.
+
+### Known issues
+
+- After the vault changes in a way the Credentials page did not make itself, such as an autofill save or a sync, the weak and reused flags go away and the next Show Password Health asks for Touch ID or your Mac password again.
+- The known issues of 0.1.25 are unchanged.
+
 ## 0.1.25 (build 25) — 2026-11-09
 
 Everything since 0.1.24 (build 24). None of the screens and prompts below has been checked by hand.
