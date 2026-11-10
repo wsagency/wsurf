@@ -32,10 +32,10 @@ extension VaultRoute {
 
 extension CredentialRouting {
     /// Which vault serves a passkey assertion for `rpID`. Passkeys scope to the relying party, not to a password origin, so the
-    /// holders are the unlocked vaults whose own snapshot (read under that vault's lease) has a matching passkey; a locked vault is
-    /// never read. One holder is the vault, several are a choice among only those. With no unlocked holder and a locked vault that
-    /// may hold it, the answer is that vault's unlock (alone) or a choice among all; with nothing locked, the password-origin
-    /// route decides, and the ceremony then tells the user there is no passkey.
+    /// holders are the unlocked vaults whose passkey routes (read under that vault's lease: relying parties, algorithms and credential
+    /// IDs, never a key) include a matching passkey; a locked vault is never read. One holder is the vault, several are a choice among
+    /// only those. With no unlocked holder and a locked vault that may hold it, the answer is that vault's unlock (alone) or a choice
+    /// among all; with nothing locked, the password-origin route decides, and the ceremony then tells the user there is no passkey.
     static func route(profile: Profile, origin: String, passkeyRPID rpID: String, allowed: [Data]) async -> VaultRoute {
         guard let store = try? CredentialManager.store(for: profile),
               case .provisional = await store.openState(),
@@ -44,8 +44,12 @@ extension CredentialRouting {
         let unlocked = CredentialManager.unlockedManagers(for: profile).filter { active[$0.vaultID] != nil }
         var holders: [CredentialManager] = []
         for manager in unlocked {
-            guard let snapshot = try? await manager.snapshot() else { continue }
-            if !WebsiteAuthenticator.assertionCandidates(snapshot.accounts, rpID: rpID, allowed: allowed).isEmpty {
+            guard let routes = try? await manager.passkeyRoutes() else { continue }
+            // The ceremony's own rule, `WebsiteAuthenticator.canAssert`, as `assertionCandidates` applies it (keep in sync).
+            let holdsOne = routes.passkeys.contains {
+                WebsiteAuthenticator.canAssert(passkeyRPID: $0.rpID, algorithm: $0.algorithm, credentialID: $0.credentialID, rpID: rpID, allowed: allowed)
+            }
+            if holdsOne {
                 holders.append(manager)
             }
         }

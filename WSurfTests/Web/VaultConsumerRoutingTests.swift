@@ -71,10 +71,17 @@ struct VaultConsumerRoutingTests {
             let epochA = try #require(vaults[0].manager.authorizationEpoch)
             let epochB = try #require(vaults[1].manager.authorizationEpoch)
             #expect(epochA != epochB)
+            let audit = VaultReadAudit(), profileID = vaults[0].manager.profileID
+            CredentialManager.readAuditsForTesting[profileID] = audit
+            defer { CredentialManager.readAuditsForTesting[profileID] = nil }
 
             await session.offer(try login("ada"), origin: Self.origin)
             #expect(session.current?.managerEpoch == epochA)
             #expect(session.current?.plan == .update(ada.id))
+            // The submitted password was compared in the vaults (`passwordMatches`), the routed vault's last: no stored password,
+            // and no whole vault, reached the offer (D5 item d).
+            #expect(!audit.reads.contains(.snapshot), "the offer read a whole vault: \(audit.reads)")
+            #expect(audit.reads.last == .passwordMatches, "\(audit.reads)")
 
             await session.offer(try login("bob"), origin: Self.origin)
             #expect(session.current?.managerEpoch == epochB)
@@ -346,13 +353,19 @@ struct VaultConsumerRoutingTests {
         try await VaultManagerFixture.with(vaults: [.unlocked, .unlocked]) { profile, _, vaults in
             try await VaultManagerFixture.save([account("ada")], in: vaults[0])
             try await VaultManagerFixture.save([try passkeyAccount(rpID: "login.example")], in: vaults[1])
+            let audit = VaultReadAudit()
+            CredentialManager.readAuditsForTesting[profile.id] = audit
+            defer { CredentialManager.readAuditsForTesting[profile.id] = nil }
 
             let route = await CredentialRouting.route(profile: profile, origin: Self.origin, passkeyRPID: "login.example", allowed: [])
             #expect(chosen(route) == vaults[1].vaultID, "the vault with the passkey, though the other has the password for the origin")
+            // Each unlocked vault is asked for its passkey routes, never for its passkeys' keys (D5 item c).
+            #expect(audit.reads == [.passkeys, .passkeys])
 
             // A passkey of another relying party is not here: the answer is the password-origin route, never vault B.
             let other = await CredentialRouting.route(profile: profile, origin: Self.origin, passkeyRPID: "other.example", allowed: [])
             #expect(chosen(other) == vaults[0].vaultID)
+            #expect(!audit.reads.contains(.snapshot), "a route read a whole vault: \(audit.reads)")
         }
     }
 

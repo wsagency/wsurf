@@ -221,6 +221,7 @@
         "VaultHistoryCountsTests",
         "VaultIntegrityTests",
         "VaultItemAutofillTests",
+        "VaultMatchReadTests",
         "VaultMigrationTests",
         "VaultMoveReplayTests",
         "VaultMoveTests",

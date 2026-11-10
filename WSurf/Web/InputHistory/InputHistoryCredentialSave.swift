@@ -182,17 +182,20 @@ final class InputHistoryCredentialSave: Identifiable {
         try? SavedPassword(website: origin, username: username, password: password)
     }
 
-    /// What saving would do against the vault as it is now. Nil, with the sheet showing why, when the vault cannot be read.
+    /// What saving would do against the vault as it is now. Nil, with the sheet showing why, when the vault cannot be read. The vault
+    /// compares the password (`passwordMatches`), so no stored password reaches the sheet; `confirm` still writes from a whole read.
     private func currentPlan() async -> CredentialSavePlan? {
         guard let manager, let login = login() else {
             finish(.failed(Self.message(for: CredentialVaultError.invalidData)))
             return nil
         }
-        guard let snapshot = try? await manager.snapshot() else {
+        guard let matches = try? await manager.passwordMatches(login) else {
             finish(.failed(Self.message(for: CredentialVaultError.unauthorized)))
             return nil
         }
-        return CredentialAccountSelection.savePlan(for: login, origin: origin, accountID: nil, in: snapshot.accounts)
+        return CredentialAccountSelection.savePlan(for: login, origin: origin, accountID: nil, in: matches.accounts) {
+            matches.samePassword.contains($0.id)
+        }
     }
 
     private func review(_ login: SavedPassword, in snapshot: StoreSnapshot) throws {

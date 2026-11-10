@@ -81,6 +81,70 @@ struct AutofillListingTests {
         #expect(scanned == files.count)
     }
 
+    /// `passwordMatches` answers whether a login with a given password is saved, so only the two password saves may reach it: the save
+    /// offer and the Input History save, through the manager's wrapper (D5 PR-7). Every reference to the name, called or not, is
+    /// counted in every first-party source the app and its extension build (`WSurf`, `WSurfCredentialExchange`, each package's
+    /// `Sources`), comments left out: any other reference anywhere fails here, a new one in an allowed file included.
+    @Test func onlyTheTwoPasswordSavesAskTheVaultWhetherALoginIsSaved() throws {
+        let expected = [
+            // `siblingAccount`, for each vault and for a manual pick, and `managedPlan`.
+            "WSurf/Web/Autofill/AutofillSaveCoordinator.swift": 3,
+            "WSurf/Web/InputHistory/InputHistoryCredentialSave.swift": 1,
+            // The wrapper, its audit note and its store call.
+            "WSurf/Web/Credentials/CredentialManager+Matching.swift": 3,
+            "WSurf/Web/Credentials/VaultReadAudit.swift": 1,
+            "Packages/WSurfCore/Sources/WSurfVault/Store/ProfileVaultStore+Autofill.swift": 1,
+        ]
+        let packages = try FileManager.default.contentsOfDirectory(atPath: repositoryRoot.appending(path: "Packages").path(percentEncoded: false))
+        let roots = ["WSurf", "WSurfCredentialExchange"] + packages.sorted().map { "Packages/\($0)/Sources" }
+        let name = try NSRegularExpression(pattern: #"\bpasswordMatches\b"#)
+        var found: [String: Int] = [:]
+        var scanned: [String: Int] = [:]
+        for root in roots {
+            let directory = repositoryRoot.appending(path: root)
+            guard let enumerator = FileManager.default.enumerator(at: directory, includingPropertiesForKeys: nil) else { continue }
+            for case let url as URL in enumerator where url.pathExtension == "swift" {
+                scanned[root, default: 0] += 1
+                let code = Self.withoutComments(try String(contentsOf: url, encoding: .utf8))
+                let count = name.numberOfMatches(in: code, range: NSRange(code.startIndex..., in: code))
+                if count > 0 {
+                    found[root + url.path(percentEncoded: false).dropFirst(directory.path(percentEncoded: false).count)] = count
+                }
+            }
+        }
+        // A scan that read nothing would pass for the wrong reason.
+        for root in ["WSurf", "WSurfCredentialExchange", "Packages/WSurfCore/Sources", "Packages/CefSwift/Sources"] {
+            #expect(scanned[root, default: 0] > 0, "\(root) was not scanned")
+        }
+        #expect(scanned.values.reduce(0, +) > 800)
+        #expect(found == expected)
+    }
+
+    /// `source` without its line comments: each line ends at a `//` outside a string literal on that line. A name in a block comment
+    /// or a string still counts, which only makes a scan stricter.
+    private static func withoutComments(_ source: String) -> String {
+        source.split(separator: "\n", omittingEmptySubsequences: false).map { line -> Substring in
+            var inString = false
+            var escaped = false
+            var index = line.startIndex
+            while index < line.endIndex {
+                let character = line[index]
+                let next = line.index(after: index)
+                if escaped {
+                    escaped = false
+                } else if character == "\\" {
+                    escaped = inString
+                } else if character == "\"" {
+                    inString.toggle()
+                } else if !inString, character == "/", next < line.endIndex, line[next] == "/" {
+                    return line[..<index]
+                }
+                index = next
+            }
+            return line
+        }.joined(separator: "\n")
+    }
+
     // MARK: A3 Candidates list exactly what whole entries listed
 
     @Test(arguments: [CredentialAutofillField.password, .totp])
@@ -216,5 +280,42 @@ struct AutofillListingTests {
             let sameFill = AutofillContact(values).fields == contact.fields
             #expect(row.title == whole.title && row.detail == whole.detail && sameFill)
         }
+    }
+
+    /// A password save plans the same from the vault's answer (candidates, and the ids of the submitted username's credentials that
+    /// hold the submitted password) as it did from whole credentials (D5 PR-7): every selection, password and number of matching
+    /// credentials, a password written another canonically equal way, a credential without a password, and another username's
+    /// credential with the same password, which the answer leaves out.
+    @Test func aPasswordSavePlansTheSameFromTheVaultsAnswer() throws {
+        let composed = "pw-caf\u{E9}", decomposed = "pw-cafe\u{301}"
+        let ada = Self.account("ada", password: composed), other = Self.account("ada", password: "pw-two", origins: [Self.site])
+        let sibling = Self.account("ada", password: composed, origins: ["https://www.example.test"])
+        let bare = Self.account("grace", password: nil), twin = Self.account("grace", password: decomposed)
+        let vaults: [[CredentialAccount]] = [[], [ada], [ada, sibling], [ada, other], [bare], [ada, bare, sibling], [ada, twin]]
+        var plans: Set<String> = []
+        for accounts in vaults {
+            for username in ["ada", "grace", "Ada"] {
+                for password in [composed, decomposed, "pw-two", "PW-TWO", "pw-other"] {
+                    let login = try SavedPassword(website: Self.site, username: username, password: password)
+                    // What the vault answers for the submitted login: its username's credentials that hold its password.
+                    let same = Set(accounts.filter { $0.username == login.username && $0.password == login.password }.map(\.id))
+                    let candidates = accounts.map(AutofillCandidate.init)
+                    for selected in [nil, ada.id, other.id, bare.id, sibling.id] as [UUID?] {
+                        let whole = CredentialAccountSelection.savePlan(for: login, origin: Self.site, accountID: selected, in: accounts)
+                        let answered = CredentialAccountSelection.savePlan(
+                            for: login, origin: Self.site, accountID: selected, in: candidates
+                        ) { same.contains($0.id) }
+                        #expect(answered == whole, "\(accounts.count) credentials, \(username), selected \(selected == nil ? "none" : "one")")
+                        if case .update = whole {
+                            plans.insert("update")
+                        } else {
+                            plans.insert("\(whole)")
+                        }
+                    }
+                }
+            }
+        }
+        // Every kind of plan occurs, so the comparison covers each branch.
+        #expect(plans.count == 4)
     }
 }

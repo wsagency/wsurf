@@ -628,12 +628,21 @@ extension WebsiteAuthenticator {
         var choice: WebAuthnPromptChoice
     }
 
+    /// Whether a passkey can answer an assertion for `rpID`: ES256 (-7), of exactly that relying party, and named by `allowed`, or
+    /// any when the request names none. The one rule for which passkeys the ceremony offers (`assertionCandidates`) and which
+    /// unlocked vaults hold one (`CredentialRouting.route(profile:origin:passkeyRPID:allowed:)`, from `PasskeyRoute`s). Keep in sync:
+    /// both call this, never a copy of it.
+    nonisolated static func canAssert(passkeyRPID: String, algorithm: Int, credentialID: Data, rpID: String, allowed: [Data]) -> Bool {
+        passkeyRPID == rpID && algorithm == -7 && (allowed.isEmpty || allowed.contains(credentialID))
+    }
+
     /// Every ES256 passkey for this relying party the request allows, one entry per passkey ID.
     static func assertionCandidates(_ accounts: [CredentialAccount], rpID: String, allowed: [Data]) -> [AssertionCandidate] {
         var found: [(CredentialAccount, WebsitePasskey)] = []
         for account in accounts {
+            // `canAssert`, the rule the passkey route also uses (keep in sync).
             for passkey in account.passkeys
-            where passkey.rpID == rpID && passkey.algorithm == -7 && (allowed.isEmpty || allowed.contains(passkey.credentialID)) {
+            where canAssert(passkeyRPID: passkey.rpID, algorithm: passkey.algorithm, credentialID: passkey.credentialID, rpID: rpID, allowed: allowed) {
                 found.append((account, passkey))
             }
         }
