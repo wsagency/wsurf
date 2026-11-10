@@ -256,6 +256,7 @@ private struct ThinkingSection: View {
     var body: some View {
         SettingsSection(title: "Thinking", symbol: "brain") {
             OptionList(
+                title: "Thinking",
                 options: model.availableEfforts.map {
                     .init(value: $0, label: $0.label, caption: $0.caption)
                 },
