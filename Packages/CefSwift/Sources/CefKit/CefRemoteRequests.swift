@@ -60,6 +60,12 @@ public final class CefRemoteRequests<Value: Sendable>: Sendable {
         self.schedule = schedule ?? cefRemoteTimer(on: DispatchQueue(label: "wsurf.cef-remote.requests", qos: .userInitiated))
     }
 
+    /// A table that goes away with requests pending ends them with `.interrupted`, so a `begin(completion:)` caller whose table
+    /// is replaced (a new one per connection, say) still gets its one completion.
+    deinit {
+        interruptAll()
+    }
+
     /// Requests that have been started and not ended.
     public var pendingCount: Int { state.withLock { $0.pending.count } }
 

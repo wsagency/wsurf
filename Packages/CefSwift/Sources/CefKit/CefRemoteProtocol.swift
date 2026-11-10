@@ -73,10 +73,6 @@ public enum CefRemote {
         public static let code = "code"
         public static let title = "title"
         public static let progress = "progress"
-        /// The native history: entry count, current index, first entry's URL. Sent with the state events.
-        public static let historyCount = "hcount"
-        public static let historyIndex = "hindex"
-        public static let historyFirst = "hfirst"
         /// `historyChanged`: the whole native list, an array of ``CefRemote/HistoryEntry`` dictionaries.
         public static let entries = "entries"
         /// One history entry: its id, committed URL, title, whether it was made by a POST, and whether it is the current one.
@@ -143,7 +139,8 @@ public enum CefRemote {
         /// One frame of a browser, its IOSurface as an XPC object, on the frames connection.
         public static let frame = "frame"
         /// A popup widget (a `<select>` list) was shown, moved or hidden; on the frames connection, so it is ordered with the
-        /// popup's frames. Keys: `flag` (visible), `x`, `y`, `w`, `h` (view points, top-left origin).
+        /// popup's frames. Keys: `flag` (visible) and the popup's rectangle in view points, top-left origin; the rectangle's
+        /// keys are defined with the frame transport (D4-7).
         public static let popup = "popup"
         public static let browserReady = "browser.ready"
         public static let browserClosed = "browser.closed"
@@ -171,7 +168,8 @@ public enum CefRemote {
 
     /// How a ``Op/collapseHistory`` ended.
     public enum CollapseOutcome: Int64, Sendable {
-        /// The reset went through, or there was nothing left to drop. See ``CefRemote/collapseVerdict(native:keeping:expected:)``.
+        /// The reset went through, or there was nothing left to drop (so it can be answered without any reset having run). See
+        /// ``CefRemote/collapseVerdict(native:keeping:expected:)``.
         case landed = 0
         /// The native list was not the expected one, or Chromium did not accept the reset. Nothing changed; a retry may work.
         case refused = 1
@@ -198,12 +196,18 @@ public enum CefRemote {
 
     /// What the service does with a ``Op/collapseHistory`` when it has read its native list on its UI thread. `nil` means the
     /// list is exactly the expected one and the entry to keep is current: send `Page.resetNavigationHistory` in this same
-    /// turn and answer ``CollapseOutcome/landed`` when Chromium accepts it. Anything else is the answer to send instead. The
-    /// outcomes are the ones `ChromiumPage.startupResetBlocker` gives today, with the startup page and the committed entry
-    /// as `expected` and `keeping`.
+    /// turn and answer ``CollapseOutcome/landed`` when Chromium accepts it. Anything else is the answer to send instead.
+    ///
+    /// With the startup page and the committed entry as `expected` and `keeping`, this reaches the same end state as
+    /// `ChromiumPage.startupResetBlocker` today but is stricter in two cases: a list `[startup, X, Y]` that does not begin
+    /// with `expected` is `refused` here (`skipped` there, so a retry or two more, same end state), and `[startup, X]` with
+    /// X current is `refused` here (today's check cannot tell X from the committed entry and resets). It also matches
+    /// entries by id, not by the first entry's URL.
     ///
     /// - `landed`: none of the expected entries other than the kept one is left, so there is nothing to drop. That includes
-    ///   a list that has moved on since (a later navigation, or the startup page already replaced).
+    ///   a list that has moved on since (a later navigation, or the startup page already replaced), and a list holding none
+    ///   of the expected entries at all. It does not mean this call collapsed anything: a caller must not treat it as proof
+    ///   that a reset ran.
     /// - `skipped`: the list begins with the expected one and goes on, so a reset would drop entries the caller never saw.
     /// - `refused`: anything else (an empty list, a list that is not the expected one, or a kept entry that is not current).
     ///   The caller may retry: the list can be mid-update.
@@ -228,7 +232,10 @@ public enum CefRemote {
     }
 }
 
-/// A libxpc dictionary with typed accessors. Reads of a missing key give the type's empty value.
+/// A libxpc dictionary with typed accessors. Reads of a missing or wrong-typed key give the type's empty value, and every
+/// number read as a `Double` is finite (NaN and infinities from a peer read as 0). Ranges are the consumer's job: clamp the
+/// double to the target range first, then convert with `Int32(clamping:)` (an integer API), never `Int32(_:)` on a peer's
+/// number, which traps outside the range. Build a message, then send it; do not mutate it after sending.
 public struct CefRemoteMessage: @unchecked Sendable {
     public let object: xpc_object_t
 
@@ -332,8 +339,13 @@ public struct CefRemoteMessage: @unchecked Sendable {
     }
 
     public func double(_ key: String) -> Double {
-        // libxpc answers NaN for a missing key; the rule here is the type's empty value.
-        has(key) ? xpc_dictionary_get_double(object, key) : 0
+        // libxpc answers NaN for a missing or non-double value, and a peer can send NaN or an infinity: only finite numbers
+        // get through, everything else is the type's empty value.
+        Self.finite(xpc_dictionary_get_double(object, key))
+    }
+
+    private static func finite(_ value: Double) -> Double {
+        value.isFinite ? value : 0
     }
 
     public func bool(_ key: String) -> Bool {
@@ -356,7 +368,7 @@ public struct CefRemoteMessage: @unchecked Sendable {
 
     public func doubles(_ key: String) -> [Double] {
         guard let array = xpc_dictionary_get_value(object, key), xpc_get_type(array) == XPC_TYPE_ARRAY else { return [] }
-        return (0..<xpc_array_get_count(array)).map { xpc_array_get_double(array, $0) }
+        return (0..<xpc_array_get_count(array)).map { Self.finite(xpc_array_get_double(array, $0)) }
     }
 
     public func int64s(_ key: String) -> [Int64] {
@@ -403,7 +415,8 @@ extension CefRemoteMessage {
         return theirs == CefRemote.protocolVersion ? .compatible : .mismatch(theirs: theirs)
     }
 
-    /// Fills a reply to a hello that was refused: not ok, our version, and a sentence the tab's error can show.
+    /// Fills a reply to a hello that was refused: not ok, our version, and a sentence the tab's error can show. The sentence
+    /// is the service's own: WSurf builds the tab's text from the two versions and never shows a peer's `error` as it is.
     public func setRefusal(_ check: CefRemote.VersionCheck) {
         set(CefRemote.Key.success, false)
         set(CefRemote.Key.protocolVersion, CefRemote.protocolVersion)
@@ -466,8 +479,12 @@ extension CefRemoteMessage {
         return message
     }
 
-    /// The outcome a ``CefRemote/Event/historyCollapsed`` carries; nil for a value this build does not know.
+    /// The outcome a ``CefRemote/Event/historyCollapsed`` carries; nil for a value this build does not know, and for an answer
+    /// with no outcome or one that is not an integer (a missing key reads 0, which would otherwise decode as `landed`).
     public var collapseOutcome: CefRemote.CollapseOutcome? {
-        CefRemote.CollapseOutcome(rawValue: int(CefRemote.Key.outcome))
+        guard let value = xpc_dictionary_get_value(object, CefRemote.Key.outcome), xpc_get_type(value) == XPC_TYPE_INT64 else {
+            return nil
+        }
+        return CefRemote.CollapseOutcome(rawValue: int(CefRemote.Key.outcome))
     }
 }

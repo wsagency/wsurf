@@ -150,6 +150,43 @@ struct ChromiumRemoteProtocolTests {
         #expect(message.messages("text").isEmpty)
     }
 
+    @Test func aWrongTypedNumberReadsAsZero() {
+        // libxpc answers NaN for a value that is not a double; the decoder's floor is 0.
+        let message = CefRemoteMessage("wrong")
+        message.set("text", "1.5")
+        message.set("integer", Int64(3))
+        message.set("flag", true)
+        #expect(message.double("text") == 0)
+        #expect(message.double("integer") == 0)
+        #expect(message.double("flag") == 0)
+    }
+
+    @Test func aNonFiniteDoubleFromAPeerReadsAsZero() {
+        let message = CefRemoteMessage("hostile")
+        message.set("nan", Double.nan)
+        message.set("plus", Double.infinity)
+        message.set("minus", -Double.infinity)
+        message.set("big", Double.greatestFiniteMagnitude)
+        #expect(message.double("nan") == 0)
+        #expect(message.double("plus") == 0)
+        #expect(message.double("minus") == 0)
+        // A finite value is the consumer's to clamp.
+        #expect(message.double("big") == Double.greatestFiniteMagnitude)
+    }
+
+    @Test func nonFiniteAndWrongTypedElementsOfADoubleArrayReadAsZero() {
+        let message = CefRemoteMessage("hostile")
+        message.set("doubles", doubles: [1.5, .nan, .infinity, -.infinity, -2])
+        #expect(message.doubles("doubles") == [1.5, 0, 0, 0, -2])
+
+        let mixed = xpc_array_create(nil, 0)
+        xpc_array_append_value(mixed, xpc_double_create(4))
+        xpc_array_append_value(mixed, xpc_string_create("x"))
+        xpc_array_append_value(mixed, xpc_int64_create(9))
+        xpc_dictionary_set_value(message.object, "mixed", mixed)
+        #expect(message.doubles("mixed") == [4, 0, 0])
+    }
+
     @Test func aWrappedObjectMustBeADictionary() {
         let message = CefRemoteMessage("ping")
         #expect(CefRemoteMessage(wrapping: message.object)?.op == "ping")
@@ -196,6 +233,18 @@ struct ChromiumRemoteProtocolTests {
         #expect(CefRemote.CollapseOutcome.landed.rawValue == 0)
         #expect(CefRemote.CollapseOutcome.refused.rawValue == 1)
         #expect(CefRemote.CollapseOutcome.skipped.rawValue == 2)
+    }
+
+    @Test func aCollapseAnswerWithoutAnIntegerOutcomeIsNotLanded() {
+        // A missing key reads 0, which is `landed`: a malformed answer must not decode as success.
+        #expect(CefRemoteMessage(CefRemote.Event.historyCollapsed).collapseOutcome == nil)
+
+        let text = CefRemoteMessage(CefRemote.Event.historyCollapsed)
+        text.set(CefRemote.Key.outcome, "landed")
+        #expect(text.collapseOutcome == nil)
+
+        let real = CefRemoteMessage.historyCollapsed(browser: 1, request: 2, outcome: .landed)
+        #expect(real.collapseOutcome == .landed)
     }
 
     // MARK: - Collapse verdict
@@ -341,6 +390,22 @@ struct ChromiumRemoteProtocolTests {
         #expect(requests.interruptAll() == 0)
     }
 
+    @Test func aTableThatIsDroppedWithRequestsPendingEndsThemInterrupted() {
+        let clock = FakeClock()
+        let ended = Tally<CefRemoteReply<Int>>()
+        do {
+            let requests = table(clock)
+            _ = requests.begin { ended.add($0) }
+            _ = requests.begin { ended.add($0) }
+            #expect(ended.count == 0)
+        }
+
+        #expect(ended.all == [.interrupted, .interrupted])
+        #expect(clock.activeTimers == 0)
+        clock.advance(by: 60)
+        #expect(ended.count == 2)
+    }
+
     @Test func aReplyGoesToTheRequestItNamesAndLeavesTheOthersWaiting() {
         let clock = FakeClock()
         let requests = table(clock)
@@ -415,7 +480,12 @@ struct ChromiumRemoteProtocolTests {
         }
 
         answerEvenRequestsConcurrently(requests, ids: ids)
-        try await Task.sleep(for: .milliseconds(300))
+        // Real timers on a loaded machine: wait for the table to drain and every completion to have run (a request leaves the
+        // table just before its completion runs), with a generous deadline, then assert.
+        let deadline = ContinuousClock.now + .seconds(5)
+        while requests.pendingCount > 0 || counts.withLock({ $0.count }) < ids.count, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
 
         #expect(requests.pendingCount == 0)
         let result = counts.withLock { $0 }
@@ -494,6 +564,47 @@ struct ChromiumRemoteProtocolTests {
 
         #expect(exits.count == 0)
         #expect(!linger.hasExited)
+    }
+
+    @Test func aTimerOfAnEarlierWaitDoesNotEndALaterOne() {
+        let fires = Tally<@Sendable () -> Void>()
+        let exits = Tally<CefRemoteLinger.Reason>()
+        // A scheduler whose cancel does nothing: a cancelled timer may still fire.
+        let linger = CefRemoteLinger(seconds: 10, schedule: { _, fire in
+            fires.add(fire)
+            return {}
+        }, onExit: { exits.add($0) })
+        linger.start()  // wait A
+        linger.browserCountChanged(1)  // A is cancelled
+        linger.browserCountChanged(0)  // wait B
+        #expect(fires.count == 2)
+
+        fires.all[0]()  // A fires late: not B's linger.
+        #expect(exits.count == 0)
+        #expect(!linger.hasExited)
+
+        fires.all[1]()
+        #expect(exits.all == [.lingerOver])
+    }
+
+    @Test func aTimerIsCancelledOutsideTheLock() {
+        // This cancel asks the linger something. os_unfair_lock aborts on a recursive lock, so the test passes only when
+        // `browserCountChanged` and the exits call cancel with the lock released.
+        let linger = OSAllocatedUnfairLock<CefRemoteLinger?>(initialState: nil)
+        let asked = Tally<Void>()
+        let exits = Tally<CefRemoteLinger.Reason>()
+        let made = CefRemoteLinger(seconds: 10, schedule: { _, _ in
+            { _ = linger.withLock { $0 }?.hasExited; asked.add(()) }
+        }, onExit: { exits.add($0) })
+        linger.withLock { $0 = made }
+
+        made.start()
+        made.browserCountChanged(1)  // cancels the wait
+        made.browserCountChanged(0)
+        made.memoryPressureChanged(isUnder: true)  // exits, cancelling the second wait
+
+        #expect(asked.count == 2)
+        #expect(exits.all == [.memoryPressure])
     }
 
     @Test func aHelloMayShortenTheLingerBeforeItStarts() {
@@ -624,6 +735,24 @@ struct ChromiumRemoteProtocolTests {
         #expect(policy.recordDeath(at: 2) == .relaunch)
         #expect(policy.recordDeath(at: 3) == .relaunch)
         #expect(policy.recordDeath(at: 4) == .crashLooping)
+    }
+
+    @Test func anEndWithNoBrowserAndNoRequestIsAnIdleExitNotADeath() {
+        var policy = CefRemoteRelaunchPolicy()
+
+        for second in 0..<10 {
+            #expect(policy.recordDeath(at: TimeInterval(second), serviceWasInUse: false) == .idleExit)
+        }
+        #expect(policy.recentDeaths.isEmpty)
+        #expect(!policy.isCrashLooping)
+        // Idle exits did not count: the first real deaths still relaunch.
+        #expect(policy.recordDeath(at: 11) == .relaunch)
+        #expect(policy.recordDeath(at: 12) == .relaunch)
+        // And one during a crash loop neither relaunches nor clears it.
+        #expect(policy.recordDeath(at: 13) == .crashLooping)
+        #expect(policy.recordDeath(at: 14, serviceWasInUse: false) == .idleExit)
+        #expect(policy.isCrashLooping)
+        #expect(policy.recentDeaths == [11, 12, 13])
     }
 
     @Test func theCapAndTheWindowAreParameters() {

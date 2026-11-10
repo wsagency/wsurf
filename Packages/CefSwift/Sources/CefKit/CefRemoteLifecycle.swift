@@ -33,7 +33,17 @@ public final class CefRemoteLinger: Sendable {
         var browsers = 0
         var underPressure = false
         var cancelTimer: (@Sendable () -> Void)?
+        /// Which wait the timer slot belongs to: bumped whenever a wait starts or is ended. A timer that fires late, or a
+        /// start that attaches late, checks it, so it can only act on its own wait.
+        var generation = 0
         var exited = false
+    }
+
+    /// Ends the current wait: the slot is emptied and its cancel is handed back, to be called outside the lock.
+    private static func endWait(_ state: inout State) -> (@Sendable () -> Void)? {
+        state.generation += 1
+        defer { state.cancelTimer = nil }
+        return state.cancelTimer
     }
 
     private let schedule: CefRemoteScheduler
@@ -66,16 +76,16 @@ public final class CefRemoteLinger: Sendable {
 
     /// The number of open browsers changed. Zero starts the linger; anything above zero cancels it.
     public func browserCountChanged(_ count: Int) {
-        let reason: Reason? = state.withLock { state in
-            guard !state.exited else { return nil }
+        let (reason, cancel): (Reason?, (@Sendable () -> Void)?) = state.withLock { state in
+            guard !state.exited else { return (nil, nil) }
             state.browsers = count
             if count > 0 {
-                state.cancelTimer?()
-                state.cancelTimer = nil
-                return nil
+                return (nil, Self.endWait(&state))
             }
-            return state.underPressure ? Self.exit(&state, .memoryPressure) : nil
+            guard state.underPressure else { return (nil, nil) }
+            return (Reason.memoryPressure, Self.exit(&state))
         }
+        cancel?()
         if let reason {
             onExit(reason)
         } else if count <= 0 {
@@ -86,26 +96,29 @@ public final class CefRemoteLinger: Sendable {
     /// The system's memory pressure rose or fell. Under pressure a service with no browser leaves at once, and so does one
     /// that loses its last browser later; a service with browsers open is not touched.
     public func memoryPressureChanged(isUnder: Bool) {
-        let reason: Reason? = state.withLock { state in
+        let cancel: (@Sendable () -> Void)? = state.withLock { state in
             state.underPressure = isUnder
             guard isUnder, !state.exited, state.browsers == 0 else { return nil }
-            return Self.exit(&state, .memoryPressure)
+            return Self.exit(&state) ?? {}
         }
-        if let reason {
-            onExit(reason)
+        if let cancel {
+            cancel()
+            onExit(.memoryPressure)
         }
     }
 
     private func startTimerIfNeeded() {
-        let delay: TimeInterval? = state.withLock { state in
+        let wait: (delay: TimeInterval, generation: Int)? = state.withLock { state in
             guard !state.exited, state.browsers == 0, state.cancelTimer == nil else { return nil }
+            state.generation += 1
             state.cancelTimer = {}  // The slot is taken before the timer exists, so two callers cannot both start one.
-            return state.seconds
+            return (state.seconds, state.generation)
         }
-        guard let delay else { return }
-        let cancel = schedule(delay) { [weak self] in self?.timerFired() }
+        guard let wait else { return }
+        let cancel = schedule(wait.delay) { [weak self] in self?.timerFired(generation: wait.generation) }
         let attached: Bool = state.withLock { state in
-            guard state.cancelTimer != nil, !state.exited, state.browsers == 0 else { return false }
+            // The slot may have been ended, or taken by a newer wait, while the timer was being made.
+            guard state.generation == wait.generation, !state.exited, state.browsers == 0 else { return false }
             state.cancelTimer = cancel
             return true
         }
@@ -114,35 +127,45 @@ public final class CefRemoteLinger: Sendable {
         }
     }
 
-    private func timerFired() {
-        let reason: Reason? = state.withLock { state in
-            // A browser that opened while the timer was already firing is the reason this check exists.
-            guard !state.exited, state.browsers == 0 else { return nil }
-            return Self.exit(&state, .lingerOver)
+    private func timerFired(generation: Int) {
+        let cancel: (@Sendable () -> Void)? = state.withLock { state in
+            // A browser that opened while the timer was already firing is the reason this check exists, and `generation` is
+            // why a timer of an earlier wait cannot end a later one: a cancelled timer may still fire.
+            guard !state.exited, state.browsers == 0, state.generation == generation else { return nil }
+            return Self.exit(&state) ?? {}
         }
-        if let reason {
-            onExit(reason)
+        if let cancel {
+            cancel()
+            onExit(.lingerOver)
         }
     }
 
-    private static func exit(_ state: inout State, _ reason: Reason) -> Reason {
+    /// The service is leaving: no wait is left. Returns the cancel of the wait that was running, to be called outside the lock.
+    private static func exit(_ state: inout State) -> (@Sendable () -> Void)? {
         state.exited = true
-        state.cancelTimer?()
-        state.cancelTimer = nil
-        return reason
+        return endWait(&state)
     }
 }
 
-/// What WSurf does when the Chromium service ends without being asked to.
+/// What WSurf does when the Chromium service ends.
 ///
-/// The service relaunches at once after a death. If it dies `maxDeaths` times within `window` seconds it is in a crash
-/// loop: no more automatic relaunches until the person reloads a page (`userReload`). All times come from the caller, so a
-/// test passes its own clock.
-public struct CefRemoteRelaunchPolicy: Equatable, Sendable {
+/// WSurf cannot tell a crash from the service's own idle exit (the linger, memory pressure): both arrive as an interrupted
+/// or invalid connection. The rule is on what WSurf had in the service: an end while WSurf has at least one browser in it or
+/// a request pending is a death; an end with neither is an idle exit, which is neither recorded nor relaunched (the next
+/// page launches the service). Without that rule an idle service would be relaunched at once, linger, exit and be relaunched
+/// again every linger, and every idle exit would count toward the crash-loop cap. The caller says which case it is with
+/// `serviceWasInUse`.
+///
+/// A death relaunches at once. If the service dies `maxDeaths` times within `window` seconds it is in a crash loop: no more
+/// automatic relaunches until the person reloads a page (`userReload`). All times come from the caller, so a test passes its
+/// own clock; production passes a monotonic one (`ProcessInfo.systemUptime`), never wall time.
+public struct CefRemoteRelaunchPolicy: Sendable {
     public enum Decision: Equatable, Sendable {
         case relaunch
         /// The service keeps dying. Pages show their crash state until `userReload`.
         case crashLooping
+        /// The service ended with no browser in it and no request pending: not a death. Do not relaunch.
+        case idleExit
     }
 
     public let maxDeaths: Int
@@ -156,8 +179,11 @@ public struct CefRemoteRelaunchPolicy: Equatable, Sendable {
         self.window = window
     }
 
-    /// The service died at `now`. A death while already crash-looping stays a crash loop.
-    public mutating func recordDeath(at now: TimeInterval) -> Decision {
+    /// The service ended at `now`. `serviceWasInUse` is whether WSurf had a browser in it or a request pending; false makes it
+    /// an idle exit (`.idleExit`, nothing recorded, the crash-loop state untouched). A death while already crash-looping stays
+    /// a crash loop.
+    public mutating func recordDeath(at now: TimeInterval, serviceWasInUse: Bool = true) -> Decision {
+        guard serviceWasInUse else { return .idleExit }
         recentDeaths.removeAll { now - $0 >= window }
         recentDeaths.append(now)
         if isCrashLooping || recentDeaths.count >= maxDeaths {
