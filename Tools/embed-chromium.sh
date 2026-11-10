@@ -20,6 +20,16 @@ if [[ -n "$oop" ]]; then
         exit 1
     fi
 fi
+if [[ -z "$oop" ]]; then
+    # The Embed Chromium phase declares the service's executable as an output, so that a change to the service seals the app
+    # again (without it the app's seal goes stale). Xcode makes that path's folders before the script runs; without the service
+    # they stay empty, and CodeSign refuses an .xpc with no Info.plist. Only empty folders go (rmdir), so the default app is
+    # exactly what it was.
+    leftover="$TARGET_BUILD_DIR/$CONTENTS_FOLDER_PATH/XPCServices/WSurf Chromium.xpc"
+    for folder in "$leftover/Contents/MacOS" "$leftover/Contents" "$leftover" "${leftover%/*}"; do
+        /bin/rmdir "$folder" 2>/dev/null || break
+    done
+fi
 if [[ ! -f "$package/CEF_VERSION.json" ]]; then
     echo "error: CefSwift package not found at $package." >&2
     exit 1
