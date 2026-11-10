@@ -246,14 +246,41 @@ struct PasswordHealthTests {
             CredentialManager.readAuditsForTesting[profile.id] = audit
             defer { CredentialManager.readAuditsForTesting[profile.id] = nil }
 
-            let health = try await manager.passwordHealth()
+            let health = try await manager.passwordHealth(expectedRevision: receipt.revision)
             #expect(health.vaultID == manager.vaultID && health.revision == receipt.revision)
             #expect(Set(health.findings.keys) == Set(reused.map(\.id) + [weak.id]))
             #expect(health.findings[weak.id]?.weaknesses == [.pattern])
             #expect(audit.reads == [.health])
 
             manager.lock(reason: .manual)
-            await #expect(throws: CredentialVaultError.unauthorized) { _ = try await manager.passwordHealth() }
+            await #expect(throws: CredentialVaultError.unauthorized) { _ = try await manager.passwordHealth(expectedRevision: receipt.revision) }
+        }
+    }
+
+    /// The page asks about the revision it shows, and the vault refuses any other as `staleRevision` right after the read, before a
+    /// password is compared. Here a write behind the page's back saves a guessed password on a second login: the report of that
+    /// revision would flag the guess as reused, and it never leaves the vault for a request about the revision before. A refused
+    /// request has still read the vault, so it is noted as a read.
+    @Test func aReportOfAnyRevisionButTheOneAskedAboutStaysInTheVault() async throws {
+        try await VaultManagerFixture.with(vaults: [.unlocked]) { profile, _, vaults in
+            let manager = vaults[0].manager
+            let saved = login("Zt4$pL8@nR2w", at: ["https://example.edu"])
+            let shown = try await VaultManagerFixture.save([saved], in: vaults[0])
+            let guess = login("Zt4$pL8@nR2w", at: ["https://example.com"])
+            let written = try await VaultManagerFixture.save([saved, guess], in: vaults[0])
+            #expect(written.revision > shown.revision)
+            let audit = VaultReadAudit()
+            CredentialManager.readAuditsForTesting[profile.id] = audit
+            defer { CredentialManager.readAuditsForTesting[profile.id] = nil }
+
+            for revision in [shown.revision, written.revision + 1] {
+                await #expect(throws: CredentialVaultError.staleRevision, "revision \(revision)") {
+                    _ = try await manager.passwordHealth(expectedRevision: revision)
+                }
+            }
+            let health = try await manager.passwordHealth(expectedRevision: written.revision)
+            #expect(health.revision == written.revision && Set(health.findings.keys) == [saved.id, guess.id])
+            #expect(audit.reads == [.health, .health, .health])
         }
     }
 }

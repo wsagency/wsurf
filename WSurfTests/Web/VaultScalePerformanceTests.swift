@@ -43,6 +43,8 @@ nonisolated final class VaultScalePerformanceTests: XCTestCase, @unchecked Senda
         var nextSave: (login: SavedPassword, accountID: UUID, snapshot: StoreSnapshot)?
         var nextEntry: (id: UUID, revision: UInt64)?
         var model: CredentialSettingsModel?
+        /// The revision `makeVault` saved the stored accounts at.
+        var revision: UInt64 = 0
 
         /// An unlocked vault holding `storedAccounts()`.
         func makeVault() async throws {
@@ -52,7 +54,7 @@ nonisolated final class VaultScalePerformanceTests: XCTestCase, @unchecked Senda
             let vault = try XCTUnwrap(made.vaults.first)
             self.vault = vault
             accounts = try VaultScalePerformanceTests.storedAccounts()
-            try await VaultManagerFixture.save(accounts, in: vault)
+            revision = try await VaultManagerFixture.save(accounts, in: vault).revision
         }
 
         /// Stages `transfer` for review against the vault, as the system hand-off does.
@@ -187,18 +189,20 @@ nonisolated final class VaultScalePerformanceTests: XCTestCase, @unchecked Senda
 
     // MARK: Autofill reads (D5)
 
-    /// Measures `read` of a fresh 20,000-credential vault through its store, under the manager's current access, as the memory it
-    /// retains; the free pages are returned just before the measurement starts and just before it stops, as in `measureWrite`.
+    /// Measures `read` of a fresh 20,000-credential vault through its store, under the manager's current access and with the
+    /// revision the vault was made at, as the memory it retains; the free pages are returned just before the measurement starts and
+    /// just before it stops, as in `measureWrite`.
     @MainActor
-    func measureRead(_ read: @escaping @MainActor (ProfileVaultStore, UUID, VaultAccess) async throws -> Void) {
+    func measureRead(_ read: @escaping @MainActor (ProfileVaultStore, UUID, VaultAccess, UInt64) async throws -> Void) {
         let fixture = Fixture()
         finish { try await fixture.makeVault() }
         guard let manager = fixture.vault?.manager else { return XCTFail("The 20,000-credential vault was not made.") }
+        let revision = fixture.revision
         measure(metrics: [XCTClockMetric(), XCTMemoryMetric()], options: measuredOptions(manual: true)) {
             autoreleasepool {
                 Self.returnFreePages()
                 startMeasuring()
-                finish { try await read(manager.store, manager.vaultID, try manager.currentAccess()) }
+                finish { try await read(manager.store, manager.vaultID, try manager.currentAccess(), revision) }
                 Self.returnFreePages()
                 stopMeasuring()
             }
@@ -210,7 +214,7 @@ nonisolated final class VaultScalePerformanceTests: XCTestCase, @unchecked Senda
     /// below.
     func testReadingTwentyThousandCredentials() {
         MainActor.assumeIsolated {
-            measureRead { store, vaultID, access in
+            measureRead { store, vaultID, access, _ in
                 let snapshot = try await store.snapshot(vaultID: vaultID, using: access)
                 XCTAssertEqual(snapshot.accounts.count, Self.count)
             }
@@ -222,7 +226,7 @@ nonisolated final class VaultScalePerformanceTests: XCTestCase, @unchecked Senda
     /// was measured by hand when the budgets were set. The budgets themselves are absolute and gate gross regressions only.
     func testListingAutofillCandidatesAmongTwentyThousandCredentials() {
         MainActor.assumeIsolated {
-            measureRead { store, vaultID, access in
+            measureRead { store, vaultID, access, _ in
                 let candidates = try await store.autofillCandidates(vaultID: vaultID, using: access)
                 XCTAssertEqual(candidates.candidates.count, Self.count)
             }
@@ -325,8 +329,8 @@ nonisolated final class VaultScalePerformanceTests: XCTestCase, @unchecked Senda
     /// stored passwords all differ and none is weak, so the report is empty; every one is still compared and checked.
     func testCheckingThePasswordHealthOfTwentyThousandCredentials() {
         MainActor.assumeIsolated {
-            measureRead { store, vaultID, access in
-                let health = try await store.passwordHealth(vaultID: vaultID, using: access)
+            measureRead { store, vaultID, access, revision in
+                let health = try await store.passwordHealth(vaultID: vaultID, expectedRevision: revision, using: access)
                 XCTAssertTrue(health.findings.isEmpty)
             }
         }
