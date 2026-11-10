@@ -311,7 +311,9 @@
 			files = ();
 			inputPaths = ();
 			name = "Embed Chromium";
-			outputPaths = ();
+			outputPaths = (
+				"$(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/XPCServices/WSurf Chromium.xpc/Contents/MacOS/WSurf Chromium",
+			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/bash;
 			shellScript = "\"$SRCROOT/Tools/embed-chromium.sh\"\n";
