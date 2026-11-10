@@ -102,6 +102,7 @@ struct CrossSiteFrameAutofillTests {
         /// out-of-process frame only once it has been drawn; until then the click lands on a frame around it, on no field. Only
         /// that is tried again.
         func rightClick(_ id: String, path: [BrowserFrame]) async throws -> (body: [String: Any], frame: BrowserFrame) {
+            try await PageRightClick.awaitInputDelivery(in: page)
             for attempt in 1...10 {
                 let point = try await center(of: id, path: path)
                 let count = posted("context").count
@@ -148,6 +149,7 @@ struct CrossSiteFrameAutofillTests {
 
         /// A real left click on `id`, inside the frames of `path` (see `center`).
         func click(_ id: String, path: [BrowserFrame]) async throws {
+            try await PageRightClick.awaitInputDelivery(in: page)
             let point = try await center(of: id, path: path)
             if let chromium = page.chromium {
                 for (type, buttons) in [("mousePressed", 1), ("mouseReleased", 0)] {
@@ -272,6 +274,7 @@ struct CrossSiteFrameAutofillTests {
         window.orderBack(nil)
         defer { window.contentView = nil; window.close() }
         let harness = Harness(page: page, window: window, port: url.port ?? 0)
+        PageRightClick.watchInput(on: page)
         page.installScript(PasswordAutofillScript.source, in: PasswordAutofill.world, injectionTime: .atDocumentStart, forMainFrameOnly: false)
         page.installScript(AutofillSaveScript.clientSource, in: AutofillPage.world, injectionTime: .atDocumentStart, forMainFrameOnly: false)
         for name in ["wsurfPasswords", "wsurfAutofillSave"] {

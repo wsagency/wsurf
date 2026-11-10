@@ -12,6 +12,32 @@ import WebKit
 /// fixture here does, so no menu opens. WebKit gets the mouse events through its window, Chromium through DevTools input.
 @MainActor
 enum PageRightClick {
+    private static let inputSeen = "wsurfInputSeen"
+
+    /// Chromium takes no input into a page it has not drawn yet: the first page of a fresh process can drop a single click, and
+    /// nothing re-sends it. Installed before the first load, this records in the page that a mouse event reached it, so a test
+    /// can wait for that positive signal before it clicks (`awaitInputDelivery`). WebKit takes events through its window and
+    /// needs neither.
+    static func watchInput(on page: BrowserPage) {
+        guard page.chromium != nil else { return }
+        page.installScript(
+            "document.addEventListener('mousemove', () => { document.documentElement.dataset.\(inputSeen) = '1'; }, true);",
+            in: PasswordAutofill.world, injectionTime: .atDocumentStart, forMainFrameOnly: true
+        )
+    }
+
+    /// Moves the mouse over the page (changes no state: no click, no key) until the page reports it saw the move. A page that
+    /// never takes input fails here, naming the cause, instead of as a click that "never reached its frame".
+    static func awaitInputDelivery(in page: BrowserPage) async throws {
+        guard let chromium = page.chromium else { return }
+        try #require(await waitUntil {
+            _ = try await chromium.command("Input.dispatchMouseEvent", params: ["type": "mouseMoved", "x": 2.0, "y": 2.0, "buttons": 0])
+            return try await page.callAsyncJavaScript(
+                "return document.documentElement.dataset.\(inputSeen) === '1';", arguments: [:], in: nil, contentWorld: PasswordAutofill.world
+            ) as? Bool == true
+        }, "the Chromium page took mouse input")
+    }
+
     /// `left`: an ordinary click instead, which focuses a field the way a person does.
     static func send(at point: CGPoint, in page: BrowserPage, window: NSWindow, left: Bool = false) async throws {
         if let chromium = page.chromium {
@@ -93,6 +119,7 @@ struct CredentialPickerScriptTests {
         /// Chromium hit-tests an out-of-process frame only once it has been drawn: until then the click lands on the page, which
         /// reports a right-click on no field. Only that is tried again; any other report is returned as it is.
         func rightClick(_ id: String, in frame: BrowserFrame? = nil) async throws -> (body: [String: Any], frame: BrowserFrame) {
+            try await PageRightClick.awaitInputDelivery(in: page)
             for attempt in 1...10 {
                 let point = try await PageRightClick.center(of: id, in: page, frame: frame)
                 let count = contexts.count
@@ -215,6 +242,7 @@ struct CredentialPickerScriptTests {
         window.orderBack(nil)
         defer { window.contentView = nil; window.close() }
         let harness = Harness(page: page, window: window)
+        PageRightClick.watchInput(on: page)
         page.installScript(PasswordAutofillScript.source, in: PasswordAutofill.world, injectionTime: .atDocumentStart, forMainFrameOnly: false)
         page.addScriptMessageHandler(name: "wsurfPasswords", in: PasswordAutofill.world) { harness.receive($0) }
         do {
@@ -467,6 +495,7 @@ struct CredentialPickerScriptTests {
     @Test(.boundedWebViews, arguments: BrowserEngine.allCases)
     func aSuggestionReachesAFormThatCopiesItsFieldsOnKeyAndBlur(engine: BrowserEngine) async throws {
         try await withHarness(engine) { harness in
+            try await PageRightClick.awaitInputDelivery(in: harness.page)
             try await PageRightClick.send(
                 at: try await PageRightClick.center(of: "vp", in: harness.page), in: harness.page, window: harness.window, left: true
             )
