@@ -312,6 +312,7 @@
    "ChromiumAutoplayAllowlistTests",
    "ChromiumFileDialogFilterTests",
    "ChromiumPopupAllowlistTests",
+   "ChromiumRemoteProtocolTests",
    "DownloadFilenameTests",
    "ErrorPageTests",
    "ExtensionConsentTests",
