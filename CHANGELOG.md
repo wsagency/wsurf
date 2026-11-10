@@ -5,6 +5,56 @@ This file preserves release notes inherited from the upstream
 describe upstream Linen releases, not releases published by WSurf. New WSurf
 release notes will be added above this provenance record.
 
+## 0.1.25 (build 25) — 2026-11-09
+
+Everything since 0.1.24 (build 24). None of the screens and prompts below has been checked by hand.
+
+### Passwords and the Credential Manager
+
+- Showing or copying a saved password or verification code in Settings › Credentials now asks for Touch ID or your Mac password first. The list asks every time. A saved credential’s editor asks once, and that answer also covers its History; the editor’s verification code stays hidden until Show Code. A new credential’s editor never asks. Cards and ID documents keep their own prompt.
+- Export to CSV… now asks for Touch ID or your Mac password when it writes passwords, and an export to another app asks when it sends passkeys, passwords or verification codes.
+- A copied password, verification code, note or hidden value now leaves the clipboard after a minute, when its vault locks and when WSurf quits, unless you have copied something else since. The copy stays on this Mac and does not reach your other devices, and the notice says “It leaves the clipboard in a minute.” Copies from Input History and the MCP pairing token work the same way. Shown secrets can no longer be selected as text: use the copy buttons.
+- Searching a long credential list is quicker.
+
+### Autofill
+
+- No password, verification code or card number leaves the vault before you pick a credential. The suggestions show names and titles only; the item you pick is read when you pick it, and only that item.
+- Filling a card asks for Touch ID before the card is read, not after. If the vault locks during the prompt, “Couldn’t Fill Saved Details” appears, as before.
+
+### Tabs
+
+- With Sleep inactive tabs on, two new settings appear under it in Settings › General › Tabs: Favorites never sleep (on, as before) and Pinned tabs never sleep (off). They also apply when WSurf frees memory. Their captions also say that a sleeping tab sends no notifications.
+- A sleeping Chromium tab now wakes where you had scrolled to, instead of at the top.
+
+### Appearance
+
+- Fast transitions, in Settings › Appearance › Window and off by default, switches between Standard and Minimal and opens and closes Reader without animation. With Reduce motion on in System Settings these animations were already skipped, and the setting’s caption now says so.
+- While you drag a theme slider, the window follows at most 10 times a second; the Appearance preview card still follows every step, and the last step reaches the window even before you let go.
+
+### Chromium tabs
+
+- A local file opened in a Chromium tab, such as an SVG, is no longer sometimes refused the files next to it while it is still loading.
+
+### Command palette
+
+- The Command palette now always takes your typing when it opens. Before, it sometimes opened without the cursor in its field, and what you typed went nowhere.
+
+### Speed
+
+- When your session uses Chromium (a restored Chromium tab or favorite, a tab pinned to Chromium, or a website set to Chromium), WSurf starts Chromium about 2 seconds after launch, once you stop typing and clicking, so the first switch to a Chromium tab no longer stalls. Other sessions start it when it is first needed, as before.
+- Switching to and from a Chromium tab is quicker.
+- Reader opens quicker: it uses a view prepared in advance and counts the article’s words once.
+- Private windows and new WebKit tabs open quicker, and windows do less work while they resize.
+
+### Known issues
+
+- A Chromium tab’s tint at the top of the window is checked about 0.7 seconds after you switch to it, so a page whose top color changed in the background shows its old tint until then.
+- When your session uses Chromium, its helper processes start after launch and use memory even if you do not show a Chromium tab in that session.
+- A password shown in a credential’s editor is an editable field: ⌘C or ⌘X there uses the clipboard directly, and that copy is not cleared after a minute.
+- A sleeping Chromium tab wakes with its address and scroll position, not with its Back and Forward history.
+- If a saved item has been damaged or changed outside WSurf, autofill offers nothing for that kind of field and does not say why; the Credential Manager, a save or the next unlock reports it.
+- The known issues of 0.1.24 are unchanged.
+
 ## 0.1.24 (build 24) — 2026-11-05
 
 Everything since 0.1.22 (build 22); 0.1.23 (build 23) was built but never released. None of the screens and prompts below has been checked by hand.
