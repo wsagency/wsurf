@@ -138,7 +138,7 @@ enum SettingsIndex {
                       ["lyrics", "words", "sing", "karaoke", "music", "song", "lrclib", "synced", "media", "player"]),
         SettingsEntry("general.passwordsMenuBar", .general, "Show Passwords in Menu Bar",
                       "Show the credentials vault in the menu bar.",
-                      ["passwords", "credentials", "menu bar", "menubar", "status", "vault", "logins", "keychain"]),
+                      ["passwords", "credentials", "menu bar", "menubar", "status", "vault", "logins"]),
         SettingsEntry("general.agentOnly", .search, "Always ask the assistant", "Send questions to the assistant. Open links normally.",
                       ["agent", "assistant", "ask", "search", "no search", "web search", "address bar",
                        "omnibox", "command palette", "start page", "model", "llm", "chat",
