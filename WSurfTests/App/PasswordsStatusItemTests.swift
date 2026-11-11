@@ -12,7 +12,7 @@ import Testing
 @MainActor
 private final class FakeStatusBar: PasswordsStatusBar {
     final class Item: PasswordsStatusItemHandle {
-        var isVisible = true
+        var isVisible = false
         var behavior: NSStatusItem.Behavior = []
         let anchor: NSView? = nil
         private var click: (@MainActor () -> Void)?
@@ -302,6 +302,8 @@ struct PasswordsStatusItemTests {
         rig.controller.open()
 
         #expect(rig.controller.profile.id == work.id, "private browsing shows the profile to return to")
+        #expect(rig.requested == [work.id], "the popover bound to that profile, not to the private one")
+        // A private profile keeps no vault: the model the rig falls back to is one, and it lists nothing.
         #expect(rig.controller.model?.menuPhase == .unavailable)
         #expect(rig.controller.model?.menuSections(query: "", origin: nil) == nil)
     }
@@ -331,6 +333,35 @@ struct PasswordsStatusItemTests {
             #expect(rig.prompt.calls == 3)
             #expect(rig.text == sentinel, "a refused prompt copies nothing")
             #expect(model.error != nil)
+        }
+    }
+
+    @Test func copyingAVerificationCodeAsksEveryTimeAndAFailedAskLeavesTheClipboardAlone() async throws {
+        var account = login()
+        account.totp = TOTPGenerator(
+            secret: Data("12345678901234567890".utf8), algorithm: .sha1, period: 30, digits: 8, issuer: "Example", userName: "ada"
+        )
+        try await withVault(accounts: [account]) { rig, _ in
+            let model = try #require(rig.model)
+            rig.controller.open()
+            let summary = try #require(model.summaries.first { $0.id == account.id })
+            #expect(summary.hasTOTP)
+
+            rig.controller.perform(.copyCode, on: summary)
+            await finishCopy(rig)
+            #expect(rig.prompt.calls == 1)
+            #expect(rig.text?.count == 8 && rig.text?.allSatisfy(\.isNumber) == true && rig.isConcealed, "a code is a secret too")
+
+            rig.controller.perform(.copyCode, on: summary)
+            await finishCopy(rig)
+            #expect(rig.prompt.calls == 2, "Touch ID on every code, not once per open")
+
+            let sentinel = rig.sentinel()
+            rig.prompt.failure = WebsiteAuthenticatorError.notAllowed
+            rig.controller.perform(.copyCode, on: summary)
+            await finishCopy(rig)
+            #expect(rig.prompt.calls == 3)
+            #expect(rig.text == sentinel, "a refused prompt copies no code")
         }
     }
 

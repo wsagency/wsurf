@@ -204,6 +204,8 @@ final class PasswordsStatusItem: NSObject, NSPopoverDelegate {
     }
 
     func popoverDidClose(_ notification: Notification) {
+        // A late close of a popover that was already dropped must not drop the one open now.
+        guard notification.object as? NSPopover === popover else { return }
         finishClose()
     }
 

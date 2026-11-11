@@ -52,14 +52,20 @@ nonisolated enum PasswordsMenuList {
                 others.append(summary)
             }
         }
-        // `sorted` is not stable: the id breaks a tie, so two rows with one date never swap between two keystrokes.
-        let recent = others.sorted { lhs, rhs in
-            let (left, right) = (lhs.changed, rhs.changed)
-            if left != right {
-                return (left ?? .distantPast) > (right ?? .distantPast)
-            }
-            return lhs.id.uuidString < rhs.id.uuidString
+        // `sorted` is not stable: the id breaks a tie, so two rows with one date never swap between two keystrokes. The keys are made
+        // once per row, not once per comparison: an import gives thousands of rows one date, and the vault allows 25,000.
+        var keyed: [(summary: CredentialSummary, changed: Date, key: String)] = []
+        keyed.reserveCapacity(others.count)
+        for summary in others {
+            keyed.append((summary, summary.changed ?? .distantPast, summary.id.uuidString))
         }
+        keyed.sort { lhs, rhs in
+            if lhs.changed != rhs.changed {
+                return lhs.changed > rhs.changed
+            }
+            return lhs.key < rhs.key
+        }
+        let recent = keyed.map(\.summary)
         let shownMatching = Array(matching.prefix(limit))
         let shownRecent = Array(recent.prefix(max(limit - shownMatching.count, 0)))
         return Sections(

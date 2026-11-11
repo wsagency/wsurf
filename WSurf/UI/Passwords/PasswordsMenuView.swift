@@ -80,6 +80,7 @@ struct PasswordsMenuView: View {
             Spacer()
             Menu {
                 Button("Open Passwords") { actions.openPasswords() }
+                    .keyboardShortcut("k", modifiers: [.command, .option])
                 Button("Lock Credentials") { actions.lockNow() }
                     .help(Text("Locks every vault and Input History of every profile."))
                 Divider()
