@@ -88,7 +88,7 @@ struct ChromiumLanguageTests {
     @Test(.boundedWebViews)
     func chromiumReportsEnglishWhicheverLocalesAreBundled() async throws {
         // The fallback language the pruning must never remove, and every kept language has its pak.
-        let resources = try #require(Bundle.main.privateFrameworksURL)
+        let resources = try #require(ChromiumServiceBundle.frameworks ?? Bundle.main.privateFrameworksURL)
             .appending(path: "Chromium Embedded Framework.framework/Versions/A/Resources")
         let bundled = try FileManager.default.contentsOfDirectory(atPath: resources.path).filter { $0.hasSuffix(".lproj") }
         #expect(bundled.contains("en.lproj"))

@@ -47,10 +47,21 @@ The Git history keeps an unmodified copy as its own commit (`chore(deps): vendor
 - **Why.** WSurf must never wait on the service, and every awaited request must end. Keeping this logic free of XPC and CEF lets `WSurfTests/Web/ChromiumRemoteProtocolTests.swift` test it without a service. Nothing uses the files yet; the default build only compiles them.
 - **Re-applying.** Copy the three files. They import only Foundation, `os` and XPC.
 
+### 3. The out-of-process Chromium service (D4), part 2: the service executable and `mainBundlePath`
+
+Part 1 (the shared protocol) is a separate entry; this is the bundle part, D4-2.
+
+- **What.**
+  - `Package.swift`: a new executable product and target, `wsurf-chromium-service`, which depends on `CCefAppKit` only for now. Its `main.swift` is a stub (`CEFApplication.install()`, activation policy `.prohibited`, `xpc_main`, and a plain-XPC `ping` that answers with its pid). It does not start CEF.
+  - `Sources/CefKit/CefConfiguration.swift` and `CefRuntime.swift`: `CefConfiguration.mainBundlePath` maps to CEF's `main_bundle_path`, which an XPC service needs because its browser process is not the top-level app.
+- **Why.** CEF's browser process moves out of WSurf's process into `WSurf Chromium.xpc` (the D4 plan). `Tools/embed-chromium.sh` builds the product like `cef-helper` and assembles the `.xpc`, only for a build with `WSURF_CHROMIUM_OOP_BUILD=YES`.
+- **Re-applying.** Add the product and target back to `Package.swift`, restore the `Sources/wsurf-chromium-service/` folder, and add the one property and its two lines in `CefRuntime.swift` (`set` and `clear`).
+
 ### Outside the package
 
 - `WSurf/Web/Engines/ChromiumPage.swift`: one call to `externalBrowserDidOpen()` after the browser is created and registered (`materialize()`), one call to `externalBrowserDidClose()` where `didClose()` releases the browser.
 - `WSurfTests/Web/CefMessagePumpTests.swift`: the pump's unit tests.
+- Patch 3 (D4-2): `Tools/embed-chromium.sh` (the `.xpc`, only with `WSURF_CHROMIUM_OOP_BUILD=YES`), `Tools/check-built-identity.py`, `Tools/run-chromium-oop-tests.sh`, the Embed Chromium phase's `outputPaths` in `WSurf.xcodeproj`, `WSurf/Web/Engines/ChromiumServiceBundle.swift` and the framework and helper paths in `ChromiumRuntime.swift`, and `WSurfTests/Web/ChromiumServiceBundleTests.swift`.
 
 ## Updating CefSwift
 

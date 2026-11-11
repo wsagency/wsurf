@@ -13,6 +13,12 @@ only generated run in this DerivedData and its test targets name this app and it
 WSurfTests bundle (a run with no test target, or a target missing its host or
 bundle, fails). The caller must then run tests with exactly `-xctestrun XCTESTRUN`.
 Exits non-zero before any host launch.
+
+An app with the out-of-process Chromium service (WSurf Chromium.xpc, built only with WSURF_CHROMIUM_OOP_BUILD=YES) has one
+copy of the Chromium framework and the five helpers, inside the service: the service's id is checked, the helpers are
+looked for there, and any copy in the app's own Frameworks is an error. With WSURF_CHROMIUM_OOP_BUILD=YES in the environment
+(Tools/run-chromium-oop-tests.sh sets it) a build without the service is an error too, so a switch that did not reach the
+build cannot pass as an OOP run with every service test skipped.
 """
 
 from __future__ import annotations
@@ -69,8 +75,21 @@ def main() -> int:
     app = products / "Debug/WSurf.app"
     appex = app / "Contents/PlugIns/WSurfCredentialExchange.appex"
     wanted = {app: expected, appex: f"{expected}.CredentialExchange"}
+    service = app / "Contents/XPCServices/WSurf Chromium.xpc"
+    if os.environ.get("WSURF_CHROMIUM_OOP_BUILD") == "YES" and not service.is_dir():
+        problems.append(f"WSURF_CHROMIUM_OOP_BUILD=YES, but the build has no {service}")
+    if service.is_dir():
+        wanted[service] = f"{expected}.chromium"
+        helpers = service / "Contents/Frameworks"
+        for name in ("Chromium Embedded Framework.framework", *(f"WSurf Helper{n}.app" for n in HELPERS)):
+            if (app / "Contents/Frameworks" / name).exists():
+                problems.append(f"{name} is in the app's Frameworks as well as in the service: one copy only")
+        if not (helpers / "Chromium Embedded Framework.framework").is_dir():
+            problems.append(f"missing {helpers / 'Chromium Embedded Framework.framework'}")
+    else:
+        helpers = app / "Contents/Frameworks"
     for name, kind in HELPERS.items():
-        wanted[app / f"Contents/Frameworks/WSurf Helper{name}.app"] = f"{expected}.helper{kind}"
+        wanted[helpers / f"WSurf Helper{name}.app"] = f"{expected}.helper{kind}"
     for bundle, identifier in wanted.items():
         if not bundle.is_dir():
             problems.append(f"missing {bundle}")

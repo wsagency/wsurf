@@ -317,6 +317,7 @@
    "ChromiumFrameSinkTests",
    "ChromiumPopupAllowlistTests",
    "ChromiumRemoteProtocolTests",
+   "ChromiumServiceBundleTests",
    "DownloadFilenameTests",
    "ErrorPageTests",
    "ExtensionConsentTests",

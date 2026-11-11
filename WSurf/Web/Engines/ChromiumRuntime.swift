@@ -115,6 +115,10 @@ final class ChromiumRuntime {
         disposable = disposable || StageMode.isActive
         #endif
         configuration.safeStorage = disposable ? .mockKeychain : .keychain
+        // An app with the Chromium service (a build with WSURF_CHROMIUM_OOP_BUILD=YES) has the one copy of CEF's framework and
+        // helpers inside the service, and loads from it; any other app has them in its own Frameworks, where CefKit looks.
+        configuration.frameworkDirectory = ChromiumServiceBundle.frameworkDirectory
+        configuration.browserSubprocessPath = ChromiumServiceBundle.helperExecutable
         configuration.rootCachePath = rootDirectory
         configuration.cachePath = rootDirectory.appendingPathComponent("Global", isDirectory: true)
         configuration.persistSessionCookies = true
@@ -156,11 +160,11 @@ final class ChromiumRuntime {
         }
     }
 
-    /// The framework binary in the app bundle, where `CefRuntime` looks first.
+    /// The framework binary the app loads: in the Chromium service when the app has one, else in the app bundle.
     private nonisolated static var frameworkBinary: URL? {
         let name = "Chromium Embedded Framework"
-        return Bundle.main.privateFrameworksURL?
-            .appendingPathComponent("\(name).framework", isDirectory: true).appendingPathComponent(name)
+        guard let frameworks = ChromiumServiceBundle.frameworks ?? Bundle.main.privateFrameworksURL else { return nil }
+        return frameworks.appendingPathComponent("\(name).framework", isDirectory: true).appendingPathComponent(name)
     }
 
     /// Whether a page of this installation has loaded in Chromium: a profile's catalog of origins (`catalogDirectory`) exists
