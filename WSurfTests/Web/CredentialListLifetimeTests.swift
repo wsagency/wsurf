@@ -68,6 +68,35 @@ nonisolated final class CredentialListLifetimeTests: XCTestCase, @unchecked Send
         return Weak(model: model, list: list, selection: selection)
     }
 
+    @MainActor
+    private static func anchorViews(in view: NSView) -> [CredentialWindowAnchorNSView] {
+        let own = (view as? CredentialWindowAnchorNSView).map { [$0] } ?? []
+        return own + view.subviews.flatMap { anchorViews(in: $0) }
+    }
+
+    /// The Passwords window hides the page header. The window anchor, which every passkey or file prompt of the page (Unlock
+    /// included) reads its window from, must stay in the window either way, or each of those actions finds no window and does nothing.
+    @MainActor
+    func testThePageKeepsItsWindowAnchorWithoutItsHeader() async throws {
+        try await withSmallVault { profile, vault in
+            let standard = CredentialSettings(model: CredentialSettingsModel(profile: profile, manager: vault.manager))
+            XCTAssertTrue(standard.showsHeader, "the page keeps its header by default")
+            for showsHeader in [true, false] {
+                let model = CredentialSettingsModel(profile: profile, manager: vault.manager)
+                await model.load()
+                let page = CredentialSettings(model: model, showsHeader: showsHeader)
+                XCTAssertEqual(page.showsHeader, showsHeader)
+                let (host, window) = Self.mount(ScrollView { VStack(alignment: .leading) { page } })
+                Self.settle(host)
+                let anchors = Self.anchorViews(in: host)
+                XCTAssertEqual(anchors.count, 1, "one window anchor with showsHeader \(showsHeader)")
+                XCTAssertTrue(anchors.first?.window === window, "the anchor resolves to the window hosting the page (showsHeader \(showsHeader))")
+                window.contentView = nil
+                window.close()
+            }
+        }
+    }
+
     /// Closing the page releases the model, the list state and the selection.
     @MainActor
     func testClosingThePageReleasesItsObjects() async throws {

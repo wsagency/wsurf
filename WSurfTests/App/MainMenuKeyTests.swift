@@ -151,6 +151,110 @@ struct MainMenuKeyTests {
         #expect(app.windows.isEmpty, "Validating a menu must not create a browser window")
     }
 
+    // MARK: - Passwords window
+
+    /// Production builds the menu over the application, and with no browser window open `validateMenuItem` refuses everything not in
+    /// `withoutAWindow`. `MainMenu(coordinator:)` skips that gate, so these cases use the application with no coordinator.
+    @Test func passwordsAnswersOptionCommandKWithNoBrowserWindow() throws {
+        let app = BrowserApplication()
+        let menu = MainMenu(application: app)
+        menu.install()
+        defer { NSApp.mainMenu = nil }
+        let root = try #require(NSApp.mainMenu)
+        let items = root.items.compactMap(\.submenu).flatMap(\.items)
+        let item = try #require(items.first { $0.title == String(localized: "Passwords…") })
+
+        #expect(item.keyEquivalent == "k")
+        #expect(item.keyEquivalentModifierMask == [.command, .option])
+        #expect(menu.validateMenuItem(item), "Passwords… works with no browser window open")
+        let search = try #require(items.first { $0.title == String(localized: "Search Everything…") })
+        #expect(search.keyEquivalentModifierMask == [.command], "⌘K stays Search Everything")
+        #expect(app.windows.isEmpty, "Validating a menu must not create a browser window")
+    }
+
+    @Test func optionCommandKOpensThePasswordsWindowAndNoBrowserWindow() throws {
+        let rig = PasswordsWindowRig()
+        let shared = PasswordsWindow.shared
+        PasswordsWindow.shared = rig.controller
+        let app = BrowserApplication()
+        let menu = MainMenu(application: app)
+        menu.install()
+        defer {
+            NSApp.mainMenu = nil
+            PasswordsWindow.shared = shared
+            rig.tearDown()
+        }
+        let root = try #require(NSApp.mainMenu)
+
+        #expect(pressed("k", modifiers: [.command, .option], in: root))
+
+        #expect(rig.controller.window?.isVisible == true)
+        #expect(app.windows.isEmpty, "Opening Passwords must not create a browser window")
+    }
+
+    /// A window is key only in an active regular app, which a test host is not by default.
+    private func activateApp() -> NSApplication.ActivationPolicy {
+        let policy = NSApp.activationPolicy()
+        NSApp.setActivationPolicy(.regular)
+        NSApp.activate(ignoringOtherApps: true)
+        return policy
+    }
+
+    /// ⌘W with the Passwords window as the only window open: Close Tab is enabled for it, closes it, and opens no browser window.
+    @Test func commandWClosesThePasswordsWindowWhenItIsAllThatIsOpen() async throws {
+        let policy = activateApp()
+        let rig = PasswordsWindowRig()
+        let app = BrowserApplication()
+        let menu = MainMenu(application: app)
+        menu.install()
+        defer {
+            NSApp.mainMenu = nil
+            rig.tearDown()
+            NSApp.setActivationPolicy(policy)
+        }
+        let root = try #require(NSApp.mainMenu)
+        let close = try #require(root.items.compactMap(\.submenu).flatMap(\.items)
+            .first { $0.keyEquivalent == "w" && $0.keyEquivalentModifierMask == .command })
+        rig.controller.show()
+        let window = try #require(rig.controller.window)
+        try #require(await waitUntil { NSApp.keyWindow === window }, "the Passwords window must be key for ⌘W")
+
+        #expect(menu.validateMenuItem(close), "⌘W is enabled although no browser window is open")
+        #expect(pressed("w", modifiers: .command, in: root))
+
+        #expect(!window.isVisible)
+        #expect(window.contentViewController == nil)
+        #expect(app.windows.isEmpty, "⌘W must not open a browser window")
+    }
+
+    @Test func commandWClosesThePasswordsWindowNotATabBehindIt() async throws {
+        let policy = activateApp()
+        let rig = PasswordsWindowRig()
+        let coordinator = AppCoordinator(browser: BrowserModel(database: .temporary()))
+        let menu = MainMenu(coordinator: coordinator)
+        menu.install()
+        defer {
+            NSApp.mainMenu = nil
+            coordinator.closePeekImmediately()
+            coordinator.browser.closeAllTabs(saving: false)
+            rig.tearDown()
+            NSApp.setActivationPolicy(policy)
+        }
+        let root = try #require(NSApp.mainMenu)
+        let tab = coordinator.browser.newTab()
+        tab.urlString = "https://example.test/behind"
+        let tabs = coordinator.browser.tabs.count
+        rig.controller.show()
+        let window = try #require(rig.controller.window)
+        try #require(await waitUntil { NSApp.keyWindow === window }, "the Passwords window must be key for ⌘W")
+
+        #expect(pressed("w", modifiers: .command, in: root))
+
+        #expect(!window.isVisible)
+        #expect(coordinator.browser.tabs.count == tabs)
+        #expect(!tab.isClosed)
+    }
+
     @Test func translatePageWaitsForAWebPage() throws {
         let coordinator = AppCoordinator()
         let menu = MainMenu(coordinator: coordinator)
