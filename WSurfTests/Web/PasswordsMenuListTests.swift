@@ -130,6 +130,38 @@ struct PasswordsMenuListTests {
         #expect(sections([concealed], query: "vault").rows.count == 1)
     }
 
+    @Test func aCredentialWithNothingToCopyOrOpenIsNotListed() {
+        // A card, an identity or a note without a username, password, code or website: its row would do nothing.
+        var card = VaultFixtures.account(username: "", password: nil)
+        card.displayName = "Visa 4242"
+        card.origins = []
+        card.loginURLs = []
+        let empty = CredentialSummary(card)
+        #expect(PasswordsMenuAction.offered(for: empty).isEmpty)
+        let login = summary("https://a.test", displayName: "Login")
+
+        let result = sections([empty, login])
+
+        #expect(result.rows.map(\.id) == [login.id])
+        #expect(result.more == 0, "an unlisted credential is not counted as one more")
+        #expect(sections([empty], query: "visa").rows.isEmpty)
+    }
+
+    // MARK: Row text
+
+    @Test func aRowDrawsNoBidiOrLineBreakCharacterOfWhatAWebsiteSupplied() {
+        let tricky = summary("https://example.test", username: "ada\u{202E}\nroot", displayName: "Bank\u{202E}\u{2028}Corp")
+
+        #expect(tricky.menuTitle == "BankCorp")
+        #expect(tricky.menuDetail == "adaroot · example.test")
+        #expect(tricky.menuLabel == "BankCorp, adaroot · example.test")
+        // Display only: the summary and what is copied keep the stored username.
+        #expect(tricky.username == "ada\u{202E}\nroot")
+
+        let bare = summary("https://example.test", username: "\u{202E}", displayName: "")
+        #expect(bare.menuDetail == "example.test", "a username that is only a format character leaves no empty part")
+    }
+
     // MARK: Row actions
 
     @Test func aRowOffersOnlyWhatItHoldsAndNeverShowsAValue() {

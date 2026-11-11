@@ -47,6 +47,9 @@ final class SystemPasswordsStatusItem: NSObject, PasswordsStatusItemHandle {
             button.setAccessibilityHelp(name)
             button.target = self
             button.action = #selector(clicked)
+            // A transient popover closes on the mouse-down of a click on the icon. An action on mouse-up would find it closed and
+            // reopen it; on mouse-down the click closes the popover and does not reopen it.
+            button.sendAction(on: .leftMouseDown)
         }
     }
 
@@ -261,11 +264,7 @@ final class PasswordsStatusItem: NSObject, NSPopoverDelegate {
         }
     }
 
-    /// Opens the Passwords window, where the unlock runs. The popover itself never unlocks.
-    func unlock() {
-        openPasswords()
-    }
-
+    /// Opens the Passwords window, where an unlock runs ("Unlock…" is this too). The popover itself never unlocks.
     func openPasswords() {
         PasswordsWindow.shared.show()
         closePopover()

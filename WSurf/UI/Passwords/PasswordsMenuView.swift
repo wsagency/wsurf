@@ -109,7 +109,7 @@ struct PasswordsMenuView: View {
             VStack(spacing: 12) {
                 Image(systemName: "lock.fill").font(.largeTitle).foregroundStyle(.secondary)
                 Text("Credentials are locked").foregroundStyle(.secondary)
-                Button("Unlock…") { actions.unlock() }.buttonStyle(.borderedProminent)
+                Button("Unlock…") { actions.openPasswords() }.buttonStyle(.borderedProminent)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         case .content:

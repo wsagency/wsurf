@@ -40,9 +40,10 @@ nonisolated enum PasswordsMenuList {
 
     /// The credentials that match `query`, split into those of `origin` (the origin of the front tab, `CredentialAccountSelection.origin`;
     /// nil for none) and the rest by `updated ?? added`, newest first, with an unknown date last. At most `limit` rows, the matching
-    /// ones first. The search reads only each summary's precomputed key, so a concealed username is never searched.
+    /// ones first, and only credentials that offer an action. The search reads only each summary's precomputed key, so a concealed username is never searched.
     static func sections(summaries: [CredentialSummary], query: String, origin: String?, limit: Int = limit) -> Sections {
-        let found = CredentialListFilter.visible(summaries, query: query, filter: .all)
+        // A card, identity or note with nothing to copy or open has no action: its row would do nothing, so it is not listed.
+        let found = CredentialListFilter.visible(summaries, query: query, filter: .all).filter { !PasswordsMenuAction.offered(for: $0).isEmpty }
         var matching: [CredentialSummary] = []
         var others: [CredentialSummary] = []
         for summary in found {

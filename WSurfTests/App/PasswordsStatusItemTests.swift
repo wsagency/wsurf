@@ -84,7 +84,7 @@ struct PasswordsStatusItemTests {
         var openedWebsites: [URL] = []
         var controller: PasswordsStatusItem!
 
-        init(lockEverything: @escaping () -> Void = { CredentialManager.lockAll(reason: .manual) }) {
+        init() {
             catalog = ProfileStore(file: file)
             selection = ProfileStore.selection(profile: .original(), catalog: catalog)
             controller = PasswordsStatusItem(
@@ -95,7 +95,7 @@ struct PasswordsStatusItemTests {
                     made.websiteOpener = { [unowned self] in openedWebsites.append($0) }
                     return made
                 },
-                frontTab: { nil }, lockEverything: lockEverything, openSettings: { _ in }
+                frontTab: { nil }, openSettings: { _ in }
             )
         }
 
@@ -283,7 +283,7 @@ struct PasswordsStatusItemTests {
             #expect(rig.controller.model?.menuPhase == .locked)
             #expect(window.builtProfileIDs.isEmpty)
 
-            rig.controller.unlock()
+            rig.controller.openPasswords()
 
             #expect(window.builtProfileIDs.count == 1 && window.controller.window?.isVisible == true, "the unlock runs in the window")
             #expect(!rig.controller.isOpen, "the popover closes")
@@ -455,16 +455,6 @@ struct PasswordsStatusItemTests {
                 }
             }
         }
-    }
-
-    @Test func lockNowAsksTheLockOnceAndNothingElse() {
-        var locks = 0
-        let rig = Rig(lockEverything: { locks += 1 })
-        defer { rig.tearDown() }
-
-        rig.controller.lockNow()
-
-        #expect(locks == 1)
     }
 
     @Test func aProfileSwitchBetweenOpensBindsTheProfileShownNow() {
