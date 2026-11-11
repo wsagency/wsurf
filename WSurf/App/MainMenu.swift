@@ -370,8 +370,8 @@ final class MainMenu: NSObject, NSMenuItemValidation {
     @objc private func closeOrUnloadTab() {
         // ⌘W in the Passwords window closes that window, never a tab of a browser window behind it. Before `coordinator`, which
         // would open a browser window if there is none.
-        if PasswordsWindow.isPasswordsWindow(NSApp.keyWindow) {
-            NSApp.keyWindow?.performClose(nil)
+        if let passwords = PasswordsWindow.keyWindow(), PasswordsWindow.isPasswordsWindow(passwords) {
+            passwords.performClose(nil)
             return
         }
         if coordinator.closePeek() {
@@ -609,7 +609,7 @@ final class MainMenu: NSObject, NSMenuItemValidation {
     /// window open everything else. `nil` leaves the item to `validateMenuItem`.
     private func validateWithoutBrowserWindow(_ menuItem: NSMenuItem) -> Bool? {
         // First: the no-browser-window gate below would disable ⌘W when the Passwords window is all that is open.
-        if menuItem.action == #selector(closeOrUnloadTab), PasswordsWindow.isPasswordsWindow(NSApp.keyWindow) {
+        if menuItem.action == #selector(closeOrUnloadTab), PasswordsWindow.isPasswordsWindow(PasswordsWindow.keyWindow()) {
             menuItem.title = String(localized: "Close Window")
             return true
         }

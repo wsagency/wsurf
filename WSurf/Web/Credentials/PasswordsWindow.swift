@@ -14,6 +14,8 @@ import SwiftUI
 final class PasswordsWindow: NSObject, NSWindowDelegate {
     /// A test swaps it for a window with its own content, so the menu's ⌥⌘K and ⌘W can be driven without opening a vault.
     static var shared = PasswordsWindow()
+    /// The window ⌘W and its menu item act on. A test swaps it: a test host in the background never has a key window.
+    static var keyWindow: () -> NSWindow? = { NSApp.keyWindow }
     nonisolated static let frameAutosaveName = "WSurfPasswordsWindow"
     static let defaultContentSize = NSSize(width: 760, height: 640)
     static let minimumContentSize = NSSize(width: 560, height: 480)
