@@ -38,6 +38,17 @@ enum PageRightClick {
         }, "the Chromium page took mouse input")
     }
 
+    /// Puts focus in `id` as a person's click does, for the page's own document. WebKit reports `document.hasFocus()` false in a
+    /// window that is not key, and a test window in the background never is, so the document is made to report focus the way a key
+    /// window would, and the field takes it directly. Chromium keeps its own focus and needs neither.
+    static func focus(_ id: String, in page: BrowserPage, frame: BrowserFrame? = nil) async throws {
+        guard page.chromium == nil else { return }
+        _ = try await page.callAsyncJavaScript(
+            "document.hasFocus = () => true; document.getElementById(id).focus();", arguments: ["id": id], in: frame,
+            contentWorld: PasswordAutofill.world
+        )
+    }
+
     /// `left`: an ordinary click instead, which focuses a field the way a person does.
     static func send(at point: CGPoint, in page: BrowserPage, window: NSWindow, left: Bool = false) async throws {
         if let chromium = page.chromium {
@@ -303,6 +314,7 @@ struct CredentialPickerScriptTests {
             try await PageRightClick.send(
                 at: try await PageRightClick.center(of: "bu", in: harness.page), in: harness.page, window: harness.window, left: true
             )
+            try await PageRightClick.focus("bu", in: harness.page, frame: main)
             var report: [String: Any]?
             try #require(await waitUntil { report = try? await focused(in: main); return report != nil }, "the focused field is reported")
             let body = try #require(report)

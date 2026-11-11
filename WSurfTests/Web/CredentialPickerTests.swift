@@ -343,6 +343,7 @@ struct CredentialPickerTests {
         /// A left click into `id`, as a person focuses a field, once the page says it holds focus in it.
         func focus(_ id: String) async throws {
             try await PageRightClick.send(at: try await PageRightClick.center(of: id, in: page), in: page, window: window, left: true)
+            try await PageRightClick.focus(id, in: page)
             try #require(await waitUntil {
                 (try? await self.page.callAsyncJavaScript(
                     "return document.activeElement?.id === id && document.hasFocus();", arguments: ["id": id], in: nil,
