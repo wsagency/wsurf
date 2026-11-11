@@ -316,6 +316,7 @@
    "ChromiumFileDialogFilterTests",
    "ChromiumFrameSinkTests",
    "ChromiumPopupAllowlistTests",
+   "ChromiumRemoteProtocolTests",
    "DownloadFilenameTests",
    "ErrorPageTests",
    "ExtensionConsentTests",

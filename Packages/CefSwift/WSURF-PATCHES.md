@@ -38,6 +38,15 @@ The Git history keeps an unmodified copy as its own commit (`chore(deps): vendor
 - **Why.** WSurf owns its browser lifetimes (`ChromiumPage`, `ChromiumClient`) and does not use the registry. Without the count the pump cannot tell an idle runtime from a busy one.
 - **Re-applying.** Three small edits in `registerBrowser`, `unregisterBrowser` and the two new methods next to them.
 
+### 3. D4 (out-of-process Chromium), part 1: `Sources/CefKit/CefRemoteProtocol.swift`, `CefRemoteRequests.swift`, `CefRemoteLifecycle.swift`
+
+- **What.** Three new files, no change to an upstream file. They are the shared logic of the Chromium service that D4 adds (`plans/d4-phase2-plan.md`, D4-1), with no XPC connection, no service and no CEF call in them.
+  - `CefRemoteProtocol.swift`: the message vocabulary (`CefRemote.Key`, `Op`, `Event`) and `CefRemoteMessage`, a typed wrapper over a libxpc dictionary. Protocol version 1: `hello` carries it, and a mismatch is refused (`checkProtocolVersion()`, `setRefusal(_:)`). `historyChanged` carries the native history; `collapseHistory(keeping:ifEntriesAre:)` has the answer `landed`, `refused` or `skipped`, decided by `CefRemote.collapseVerdict`.
+  - `CefRemoteRequests.swift`: the table of requests WSurf waits on. Each ends exactly once, on its reply, on an interruption, or on its timeout (5 s default). A late reply is dropped. The timer is injected.
+  - `CefRemoteLifecycle.swift`: `CefRemoteLinger` (the idle service leaves after the linger, 60 s by default; at once under memory pressure while no browser is open) and `CefRemoteRelaunchPolicy` (relaunch at once after a death; 3 deaths in 30 s is a crash loop until the person reloads). Time comes in from outside.
+- **Why.** WSurf must never wait on the service, and every awaited request must end. Keeping this logic free of XPC and CEF lets `WSurfTests/Web/ChromiumRemoteProtocolTests.swift` test it without a service. Nothing uses the files yet; the default build only compiles them.
+- **Re-applying.** Copy the three files. They import only Foundation, `os` and XPC.
+
 ### Outside the package
 
 - `WSurf/Web/Engines/ChromiumPage.swift`: one call to `externalBrowserDidOpen()` after the browser is created and registered (`materialize()`), one call to `externalBrowserDidClose()` where `didClose()` releases the browser.
