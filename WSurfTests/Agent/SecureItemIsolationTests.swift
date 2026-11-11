@@ -24,6 +24,8 @@ struct SecureItemIsolationTests {
         "autofillitempick", "autofillitemrows", "passwordhealth", "passwordreuse", "passwordweakness",
         // The Passwords window hosts the vault page: no tool of the assistant or MCP may name it, so none can open or drive it.
         "passwordswindow",
+        // So do the menu bar item and its popover (`PasswordsStatusItem`, `PasswordsMenuView`, `PasswordsMenuList`, …).
+        "passwordsstatusitem", "passwordsmenu",
     ]
 
     private var repositoryRoot: URL {
