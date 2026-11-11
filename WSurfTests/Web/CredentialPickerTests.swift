@@ -215,7 +215,8 @@ struct CredentialPickerTests {
             expect(good, .insecurePage, "mixed content or a certificate warning on an HTTPS page")
             good.hasOnlySecureContent = true
             good.context.settings.fillsPasswords = false
-            expect(good, .passwordsOff, "password filling is off")
+            expect(good, nil, "password filling is off: no item, as before")
+            expect(good, agent: true, nil, "and still none when an AI app also holds the tab")
             good.context.settings.fillsPasswords = true
             expect(good, nil, "and back on")
             window?.contentView = nil
@@ -233,9 +234,12 @@ struct CredentialPickerTests {
             await plain.close()
         }
         let (privatePage, privateWindow) = page(profile: Profile.privateBrowsing())
-        expect(privatePage, .privateWindow, "a private window")
+        expect(privatePage, nil, "a private window: no item, as before")
+        expect(privatePage, agent: true, nil, "and none when an AI app also holds the tab")
+        privatePage.hasOnlySecureContent = false
+        expect(privatePage, nil, "nor for a page that is not fully secure")
         privatePage.url = URL(string: "http://login.example.test/")
-        expect(privatePage, nil, "a private window on a page that is not HTTPS has no other item to show")
+        expect(privatePage, nil, "a private window on a page that is not HTTPS has no item either")
         privateWindow?.contentView = nil
         privateWindow?.close()
         await privatePage.close()

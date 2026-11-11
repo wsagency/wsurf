@@ -98,20 +98,17 @@ final class CredentialPicker {
 
     static let menuItemIdentifier = NSUserInterfaceItemIdentifier("WSurfPickCredential")
 
-    /// Why an editable field's menu shows Pick Credential… disabled instead of leaving it out: the four reasons a person can see and
-    /// change. It only explains. The item is never usable then: `isOffered` is the one gate, and a refusal always implies it fails.
+    /// Why an editable field's menu shows Pick Credential… disabled instead of leaving it out: the two reasons a person can see and
+    /// act on. A private window and turned-off password filling show no item, as before. It only explains. The item is never usable
+    /// then: `isOffered` is the one gate, and a refusal always implies it fails.
     nonisolated enum Refusal: CaseIterable, Sendable {
-        case privateWindow, agentControl, passwordsOff, insecurePage
+        case agentControl, insecurePage
 
         /// The menu title, the same in both engines (a Chromium menu item has no subtitle).
         var menuTitle: String {
             switch self {
-            case .privateWindow:
-                String(localized: "Pick Credential… (Not Available in a Private Window)")
             case .agentControl:
                 String(localized: "Pick Credential… (An AI App Is Using This Tab)")
-            case .passwordsOff:
-                String(localized: "Pick Credential… (Password Filling Is Off)")
             case .insecurePage:
                 String(localized: "Pick Credential… (Page Isn’t Fully Secure)")
             }
@@ -141,19 +138,16 @@ final class CredentialPicker {
     }
 
     /// The reason to show the item disabled, for a page where `isOffered` is false: nil where the item is left out (an internal or
-    /// closed tab, no window, a page that is not HTTPS, a locked screen). `agentControlled` is the tab's (`isAgentControlled`).
+    /// closed tab, no window, a page that is not HTTPS, a private window, password filling off, a locked screen). `agentControlled`
+    /// is the tab's (`isAgentControlled`).
     static func refusal(in page: BrowserPage, agentControlled: Bool) -> Refusal? {
         // A page that is not HTTPS stays without the item whatever else holds, so no reason is the real one.
         guard page.url.flatMap(SavedPassword.origin(for:)) != nil else { return nil }
         let context = page.context
-        if context.profile.isPrivate {
-            return .privateWindow
-        }
+        // Private windows and turned-off password filling have no item, whatever else holds.
+        guard !context.profile.isPrivate, PasswordAutofill.shared.isEnabled(in: context) else { return nil }
         if agentControlled {
             return .agentControl
-        }
-        if !PasswordAutofill.shared.isEnabled(in: context) {
-            return .passwordsOff
         }
         return page.hasOnlySecureContent ? nil : .insecurePage
     }
