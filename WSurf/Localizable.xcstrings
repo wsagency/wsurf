@@ -5805,6 +5805,9 @@
     "Show password" : {
 
     },
+    "Show Passwords in Menu Bar" : {
+      "comment" : "Label of the switch on the General settings page that decides whether a Passwords item sits in the macOS menu bar, and its settings-search title. Passwords is the name of WSurf's credentials vault. Title Case, as the menu bar’s own wording is."
+    },
     "Show Peek" : {
 
     },
@@ -5831,6 +5834,9 @@
     },
     "Show tabs from" : {
       "comment" : "VoiceOver label of the control at the top of the sidebar that chooses whose tabs the sidebar lists: This Mac or one of the person’s other devices. The control does not show this text. Sentence case."
+    },
+    "Show the credentials vault in the menu bar." : {
+      "comment" : "Caption under the Show Passwords in Menu Bar switch on the General settings page, and its settings-search description. Imperative with a final full stop."
     },
     "Show the whole address of the page in the address bar, not just the website name." : {
       "comment" : "Caption under the Show full website address switch on the General settings page."
