@@ -130,6 +130,50 @@ struct PasswordsWindowTests {
         #expect(rig.builtProfileIDs == [work.id])
     }
 
+    @Test func theWindowNeverJoinsTheTabBarOfAnotherWindow() throws {
+        let rig = PasswordsWindowRig()
+        defer { rig.tearDown() }
+        rig.controller.show()
+
+        #expect(try #require(rig.controller.window).tabbingMode == .disallowed)
+    }
+
+    /// Links of the window open in a browser window of the window's profile, never another profile's: its cookies and history are
+    /// not this vault's, and its Settings are not this profile's.
+    @Test func linksOpenInAWindowOfTheWindowsProfileNotAnotherProfilesWindow() throws {
+        let rig = PasswordsWindowRig()
+        defer { rig.tearDown() }
+        let work = rig.catalog.add(name: "Work")
+        let app = BrowserApplication()
+        func window(of profile: Profile) -> AppCoordinator {
+            let context = BrowserProfileContext.shared(for: profile)
+            let coordinator = AppCoordinator(
+                browser: BrowserModel(context: context, windowID: UUID(), database: .temporary()),
+                profiles: ProfileStore.selection(profile: profile, catalog: rig.catalog)
+            )
+            app.register(coordinator)
+            return coordinator
+        }
+        let personal = window(of: .original())
+        let workWindow = window(of: work)
+        defer {
+            personal.closeWindow()
+            if !workWindow.isClosed {
+                workWindow.closeWindow()
+            }
+        }
+
+        app.focus(workWindow)
+        #expect(app.externalLinkTarget === workWindow)
+        #expect(app.externalLinkTarget(for: .original()) === personal, "the focused window is another profile's")
+        #expect(app.externalLinkTarget(for: work) === workWindow)
+        #expect(PasswordsWindowContent.linkTarget(in: app, for: .original()) === personal)
+
+        workWindow.closeWindow()
+        #expect(app.externalLinkTarget(for: work) == nil, "no window of the profile: the caller opens a new one")
+        #expect(app.externalLinkTarget(for: .original()) === personal)
+    }
+
     @Test func aProfileSwitchRebindsTheContentOfTheOpenWindow() throws {
         let rig = PasswordsWindowRig()
         defer { rig.tearDown() }

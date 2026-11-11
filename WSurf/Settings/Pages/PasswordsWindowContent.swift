@@ -41,11 +41,15 @@ struct PasswordsWindowContent: View {
         .id(context.contextID)
     }
 
-    /// Runs `action` in the window external links go to, or a new one: never a private window, which keeps no vault, and the
-    /// profile of this window, not the current one.
+    /// The browser window a link of this window opens in: one that shows this window's profile (the external-link window if it
+    /// does, else the last regular one), otherwise a new window of that profile. Never a private window, which keeps no vault,
+    /// and never another profile's window, whose cookies and history are not this vault's profile.
+    static func linkTarget(in app: BrowserApplication, for profile: Profile) -> AppCoordinator {
+        app.externalLinkTarget(for: profile) ?? app.newWindow(profile: profile)
+    }
+
     private func openInBrowser(_ action: (AppCoordinator) -> Void) {
-        let app = BrowserApplication.shared
-        let target = app.externalLinkTarget ?? app.newWindow(profile: profile)
+        let target = Self.linkTarget(in: BrowserApplication.shared, for: profile)
         action(target)
         target.showBrowser()
     }

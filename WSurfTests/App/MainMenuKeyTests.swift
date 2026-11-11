@@ -255,6 +255,78 @@ struct MainMenuKeyTests {
         #expect(!tab.isClosed)
     }
 
+    /// With a sheet open on the Passwords window (editor, import review, passkey sheet) the key window is the sheet. ⌘W must still
+    /// be the Passwords window's: it is not a tab of the browser window behind, and it does not close the window under its sheet.
+    @Test func commandWWithASheetOnThePasswordsWindowLeavesTheBrowserTabOpen() async throws {
+        let rig = PasswordsWindowRig()
+        let coordinator = AppCoordinator(browser: BrowserModel(database: .temporary()))
+        let menu = MainMenu(coordinator: coordinator)
+        menu.install()
+        let sheet = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 200, height: 100), styleMask: [.titled], backing: .buffered, defer: false
+        )
+        sheet.isReleasedWhenClosed = false
+        var restoreKey: () -> Void = {}
+        defer {
+            restoreKey()
+            NSApp.mainMenu = nil
+            coordinator.closePeekImmediately()
+            coordinator.browser.closeAllTabs(saving: false)
+            sheet.sheetParent?.endSheet(sheet)
+            rig.tearDown()
+        }
+        let root = try #require(NSApp.mainMenu)
+        let close = try #require(root.items.compactMap(\.submenu).flatMap(\.items)
+            .first { $0.keyEquivalent == "w" && $0.keyEquivalentModifierMask == .command })
+        let tab = coordinator.browser.newTab()
+        tab.urlString = "https://example.test/behind"
+        let tabs = coordinator.browser.tabs.count
+        rig.controller.show()
+        let window = try #require(rig.controller.window)
+        window.beginSheet(sheet, completionHandler: nil)
+        try #require(sheet.sheetParent === window)
+        restoreKey = makeKey(sheet)
+
+        #expect(menu.validateMenuItem(close), "⌘W is the Passwords window's while its sheet is key")
+        #expect(close.title == String(localized: "Close Window"), "and not a browser tab's Close Tab")
+        #expect(pressed("w", modifiers: .command, in: root))
+
+        // Chosen: ⌘W does nothing (a beep) until the sheet is dismissed, as AppKit's performClose does with a sheet attached.
+        #expect(coordinator.browser.tabs.count == tabs)
+        #expect(!tab.isClosed)
+        #expect(window.isVisible)
+        #expect(window.attachedSheet === sheet)
+    }
+
+    /// The title is "Close Window" only while the Passwords window is the key one: with it open but not key (About in front, or
+    /// miniaturized) and no browser window, the item is the disabled "Close Tab" again, not a stale "Close Window".
+    @Test func closeWindowTitleGoesBackToCloseTabWhenThePasswordsWindowIsNotKey() throws {
+        let rig = PasswordsWindowRig()
+        let app = BrowserApplication()
+        let menu = MainMenu(application: app)
+        menu.install()
+        var restoreKey: () -> Void = {}
+        defer {
+            restoreKey()
+            NSApp.mainMenu = nil
+            rig.tearDown()
+        }
+        let root = try #require(NSApp.mainMenu)
+        let close = try #require(root.items.compactMap(\.submenu).flatMap(\.items)
+            .first { $0.keyEquivalent == "w" && $0.keyEquivalentModifierMask == .command })
+        rig.controller.show()
+        let window = try #require(rig.controller.window)
+        restoreKey = makeKey(window)
+
+        #expect(menu.validateMenuItem(close))
+        #expect(close.title == String(localized: "Close Window"))
+
+        PasswordsWindow.keyWindow = { nil }
+
+        #expect(!menu.validateMenuItem(close), "no browser window and the Passwords window is not key")
+        #expect(close.title == String(localized: "Close Tab"))
+    }
+
     @Test func translatePageWaitsForAWebPage() throws {
         let coordinator = AppCoordinator()
         let menu = MainMenu(coordinator: coordinator)

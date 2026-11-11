@@ -49,6 +49,13 @@ final class PasswordsWindow: NSObject, NSWindowDelegate {
         window?.delegate is PasswordsWindow
     }
 
+    /// The Passwords window the key window belongs to, or nil. While a sheet of the page is up (editor, import review, passkey
+    /// sheet) the key window is the sheet, so its parent is the one to ask: otherwise ⌘W would reach a browser window behind.
+    static func passwordsWindow(key: NSWindow?) -> NSWindow? {
+        let window = key?.sheetParent ?? key
+        return isPasswordsWindow(window) ? window : nil
+    }
+
     /// The profile whose vault the window shows: never a private one, which keeps no vault.
     var profile: Profile {
         profiles.isPrivate ? profiles.profileToReturnTo : profiles.current
@@ -85,6 +92,7 @@ final class PasswordsWindow: NSObject, NSWindowDelegate {
         window.delegate = self
         window.isReleasedWhenClosed = false
         window.isRestorable = false
+        window.tabbingMode = .disallowed
         window.level = .normal
         window.contentMinSize = Self.minimumContentSize
         if let autosaveName {
