@@ -2290,6 +2290,9 @@
     "Click Page Point" : {
 
     },
+    "Click the field and choose Pick Credential… from the Edit menu or the field’s context menu to try again." : {
+      "comment" : "Informative text of the “Couldn’t Fill Saved Details” alert after Pick Credential…, when the field, the page or the vault changed before the fill, or the page took nothing. The pick may have come from the Edit menu command or the field’s context menu, so it names both and does not say right-click. Must name the menu item exactly as “Pick Credential…”. Sentence."
+    },
     "Click to Talk" : {
       "comment" : "Tooltip on the microphone button in the toolbar while it is idle: one click starts listening. Title Case; alternates with “Stop and Run”."
     },
@@ -4676,7 +4679,13 @@
       "comment" : "Caption for the Choose From Menus tool in assistant settings."
     },
     "Pick Credential…" : {
-      "comment" : "Item at the top of a web page's context menu when the right-click landed in an editable field, in both engines. Opens a sheet to choose a saved login or verification code for that field. Title Case, ends in an ellipsis because it opens a sheet. Also used inside “Right-click the field and choose Pick Credential… to try again.”"
+      "comment" : "Item at the top of a web page's context menu when the right-click landed in an editable field, in both engines. Opens a sheet to choose a saved login or verification code for that field. Title Case, ends in an ellipsis because it opens a sheet. Also the title of the Edit menu command (⌃⌘P) that does the same for the field in focus, for pages that cancel the right-click menu. Also used inside “Click the field and choose Pick Credential… from the Edit menu or the field’s context menu to try again.”"
+    },
+    "Pick Credential… (An AI App Is Using This Tab)" : {
+      "comment" : "Disabled item at the top of a web page's context menu when the right-click landed in an editable field, in both engines, and the Pick Credential… item is withheld because the assistant or a connected AI app is using the tab (nothing is filled into a page an AI app can read). The text in parentheses is the reason. Title Case, keeps the ellipsis of “Pick Credential…”."
+    },
+    "Pick Credential… (Page Isn’t Fully Secure)" : {
+      "comment" : "Disabled item at the top of a web page's context menu when the right-click landed in an editable field, in both engines, and the Pick Credential… item is withheld because the page is on HTTPS but not fully secure (mixed content or a certificate warning, the orange lock in the address bar). The text in parentheses is the reason. Title Case, keeps the ellipsis of “Pick Credential…”."
     },
     "Picture in Picture" : {
       "comment" : "Tooltip on the button that floats the video in a system Picture in Picture window. It is used twice: beside the address field, left of the speaker, for the tab you are looking at, and on the media player in the sidebar. Apple feature name; use the platform glossary. Title Case."
@@ -5279,9 +5288,6 @@
     },
     "Right-click the field and choose Generate Password… to try again." : {
       "comment" : "Alert text when the right-clicked field or its page changed before Generate Password… saved anything. Generate Password… is the context menu item’s title. A full sentence."
-    },
-    "Right-click the field and choose Pick Credential… to try again." : {
-      "comment" : "Informative text of the “Couldn’t Fill Saved Details” alert after Pick Credential…, when the field, the page or the vault changed before the fill, or the page took nothing. Must name the menu item exactly as “Pick Credential…”. Sentence."
     },
     "Right-click the new password field to generate a password." : {
       "comment" : "Alert text when Generate Password… was chosen on the current-password field of a change-password form. A full sentence."

@@ -38,6 +38,17 @@ enum PageRightClick {
         }, "the Chromium page took mouse input")
     }
 
+    /// Puts focus in `id` as a person's click does, for the page's own document. WebKit reports `document.hasFocus()` false in a
+    /// window that is not key, and a test window in the background never is, so the document is made to report focus the way a key
+    /// window would, and the field takes it directly. Chromium keeps its own focus and needs neither.
+    static func focus(_ id: String, in page: BrowserPage, frame: BrowserFrame? = nil) async throws {
+        guard page.chromium == nil else { return }
+        _ = try await page.callAsyncJavaScript(
+            "document.hasFocus = () => true; document.getElementById(id).focus();", arguments: ["id": id], in: frame,
+            contentWorld: PasswordAutofill.world
+        )
+    }
+
     /// `left`: an ordinary click instead, which focuses a field the way a person does.
     static func send(at point: CGPoint, in page: BrowserPage, window: NSWindow, left: Bool = false) async throws {
         if let chromium = page.chromium {
@@ -280,6 +291,85 @@ struct CredentialPickerScriptTests {
             let frame = try #require(harness.subframe)
             #expect(try await harness.values(["fu", "fp"], in: frame) == ["", ""])
             #expect(try await harness.fill(click, ["username": "again", "password": "again"]) == 0, "a right-click fills once")
+        }
+    }
+
+    /// Edit ▸ Pick Credential…: with no right-click, the frame reports its focused field as a right-click would, and the fill that
+    /// follows is the right-click's own. Nothing in focus, no pickable field in focus, a frame that is not focused and a frame whose
+    /// autofill is off all report nothing.
+    @Test(.boundedWebViews, arguments: BrowserEngine.allCases)
+    func theFocusedFieldIsReportedAsARightClickWouldAndNothingElseIs(engine: BrowserEngine) async throws {
+        try await withHarness(engine) { harness in
+            let main = try #require(harness.readyFrames.first { $0.isMainFrame })
+            let sub = try #require(harness.subframe)
+            @MainActor func focused(in frame: BrowserFrame) async throws -> [String: Any]? {
+                try await harness.page.callAsyncJavaScript(
+                    "return globalThis.__wsurfPasswords.focusedContext();", arguments: [:], in: frame, contentWorld: PasswordAutofill.world
+                ) as? [String: Any]
+            }
+            try await PageRightClick.awaitInputDelivery(in: harness.page)
+            #expect(try await focused(in: main) == nil, "nothing is focused")
+            #expect(try await focused(in: sub) == nil)
+
+            try await PageRightClick.send(
+                at: try await PageRightClick.center(of: "bu", in: harness.page), in: harness.page, window: harness.window, left: true
+            )
+            try await PageRightClick.focus("bu", in: harness.page, frame: main)
+            var report: [String: Any]?
+            try #require(await waitUntil { report = try? await focused(in: main); return report != nil }, "the focused field is reported")
+            let body = try #require(report)
+            #expect(body["action"] as? String == "context" && body["field"] as? String == "text")
+            #expect(UUID(uuidString: body["token"] as? String ?? "") != nil && body["documentID"] is String && body["url"] is String)
+            #expect(try await focused(in: sub) == nil, "another frame has nothing focused")
+
+            // The token is the right-click's: the fill reaches the focused field's form and no other.
+            report = try await focused(in: main)
+            let fresh = try #require(report)
+            #expect(try await harness.fill((fresh, main), ["username": "ada", "password": "dummy-secret"]) == 2)
+            #expect(try await harness.values(["bu", "bp", "au", "ap", "xu", "xp"]) == ["ada", "dummy-secret", "", "", "", ""])
+
+            // A focus in something that cannot be picked reports nothing; so does a frame whose autofill is off.
+            _ = try await harness.page.callAsyncJavaScript(
+                "document.getElementById('bu').blur();", arguments: [:], in: main, contentWorld: PasswordAutofill.world
+            )
+            #expect(try await focused(in: main) == nil, "the body is in focus")
+            _ = try await harness.page.callAsyncJavaScript(
+                "document.getElementById('bu').focus(); globalThis.__wsurfPasswords.setEnabled(false);", arguments: [:], in: main,
+                contentWorld: PasswordAutofill.world
+            )
+            #expect(try await focused(in: main) == nil, "autofill is off")
+        }
+    }
+
+    /// A page can focus a field ahead of the command, off the screen where the person never saw it: such a field is not reported,
+    /// where a right-click could not have reached it either. The same field in view is reported again.
+    @Test(.boundedWebViews, arguments: BrowserEngine.allCases)
+    func aFocusedFieldOffTheScreenIsNotReported(engine: BrowserEngine) async throws {
+        try await withHarness(engine) { harness in
+            let main = try #require(harness.readyFrames.first { $0.isMainFrame })
+            @MainActor func focused() async throws -> [String: Any]? {
+                try await harness.page.callAsyncJavaScript(
+                    "return globalThis.__wsurfPasswords.focusedContext();", arguments: [:], in: main, contentWorld: PasswordAutofill.world
+                ) as? [String: Any]
+            }
+            @MainActor func place(_ style: String) async throws {
+                _ = try await harness.page.callAsyncJavaScript(
+                    "document.getElementById('bu').style.cssText = style;", arguments: ["style": style], in: main,
+                    contentWorld: PasswordAutofill.world
+                )
+            }
+            try await PageRightClick.awaitInputDelivery(in: harness.page)
+            try await PageRightClick.send(
+                at: try await PageRightClick.center(of: "bu", in: harness.page), in: harness.page, window: harness.window, left: true
+            )
+            try await PageRightClick.focus("bu", in: harness.page, frame: main)
+            try #require(await waitUntil { (try? await focused()) != nil }, "in view, the focused field is reported")
+
+            try await place("position: fixed; left: -5000px; top: 0")
+            #expect(try await focused() == nil, "off the screen, the same focused field is not")
+
+            try await place("")
+            #expect(try await focused() != nil, "back in view, it is reported again")
         }
     }
 

@@ -27,6 +27,13 @@ extension BrowserTab {
         !isPrivate && !isClosed && !isAgentControlled && internalPage == nil
     }
 
+    /// Why `view`'s editable fields show Pick Credential… disabled instead of leaving it out (`CredentialPicker.refusal`); nil on a
+    /// closed tab or an internal page, which never show it.
+    func credentialPickerRefusal(in view: BrowserPage) -> CredentialPicker.Refusal? {
+        guard !isClosed, internalPage == nil else { return nil }
+        return CredentialPicker.refusal(in: view, agentControlled: isAgentControlled)
+    }
+
     /// Control started: no offer of the tab stays on screen, and nothing staged before it is offered afterwards. Offers come back with
     /// the next focus once control ends. A Pick Credential… or Generate Password… sheet of the tab closes as a Cancel, so a generated
     /// password is never on screen while an agent works in the tab; other tabs' sheets stay.

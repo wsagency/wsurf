@@ -69,6 +69,8 @@ final class TabWebView: WKWebView {
     private var pdfMenuObserver: NSObjectProtocol?
     /// Pick Credential…: whether the tab offers it now (`CredentialPicker.isOffered`), and what choosing it does.
     var canPickCredential: (() -> Bool)?
+    /// Why it is not offered, for a menu that shows the item disabled; asked only while `canPickCredential` says no.
+    var credentialRefusal: (() -> CredentialPicker.Refusal?)?
     var onPickCredential: ((CredentialPicker.Menu) -> Void)?
     private var pickCredentialMenu: CredentialPicker.Menu?
 
@@ -301,9 +303,13 @@ final class TabWebView: WKWebView {
         }
         TabContextMenu.sinkInspect(in: menu)
         pickCredentialMenu = nil
-        if TabContextMenu.isEditable(menu), canPickCredential?() == true {
-            TabContextMenu.addPickCredential(to: menu, target: self, action: #selector(pickCredential))
-            pickCredentialMenu = CredentialPicker.Menu(opened: .now)
+        if TabContextMenu.isEditable(menu) {
+            if canPickCredential?() == true {
+                TabContextMenu.addPickCredential(to: menu, target: self, action: #selector(pickCredential))
+                pickCredentialMenu = CredentialPicker.Menu(opened: .now)
+            } else if let refusal = credentialRefusal?() {
+                TabContextMenu.addPickCredential(to: menu, target: self, action: #selector(pickCredential), refusal: refusal)
+            }
         }
     }
 
