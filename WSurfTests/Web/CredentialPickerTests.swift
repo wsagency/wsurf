@@ -525,10 +525,49 @@ struct CredentialPickerTests {
             #expect(flow.offered.isEmpty, "nothing is listed while a pick is under way")
             #expect(try await flow.values(["bu", "bp"]) == ["", ""])
             #expect(CredentialPicker.shared.picking.contains(key), "the pick under way is left as it was")
+            #expect(CredentialPicker.shared.target(for: flow.page, menu: .init(opened: .now)) == nil, "no field was noted over the pick under way")
 
             CredentialPicker.shared.picking.remove(key)
             CredentialPicker.shared.pickFocused(in: flow.page) { true }
             #expect(await waitUntil { (try? await flow.values(["bu", "bp"])) == ["ada", "dummy-secret-1"] }, "and it runs once that ends")
+        }
+    }
+
+    /// While the command waits for a frame (up to a second), a pick or a second command that starts is refused and cannot have the
+    /// right-click it runs from replaced; once the frame has timed out the command has released the page.
+    @Test(.boundedWebViews) func aPickStartedWhileTheMenuCommandAwaitsAFrameIsRefusedAndKeepsItsTarget() async throws {
+        try await withFlow { flow, vaults in
+            let ada = account("ada", password: "dummy-secret-1")
+            try await VaultManagerFixture.save([ada], in: vaults[0])
+            try await flow.load(Self.login)
+            CredentialPicker.answersForTesting[flow.profile.id] = { rows in
+                flow.offered.append(rows)
+                return rows.first { $0.accountID == ada.id && $0.fill == .login }.map { .row($0.id) }
+            }
+            _ = try await flow.page.callAsyncJavaScript(
+                "globalThis.__wsurfPasswords.focusedContext = () => new Promise(() => {});", arguments: [:], in: nil,
+                contentWorld: PasswordAutofill.world
+            )
+            let target = try await flow.rightClick("au")
+            let key = ObjectIdentifier(flow.page)
+
+            CredentialPicker.shared.pickFocused(in: flow.page) { true }
+            #expect(CredentialPicker.shared.picking.contains(key), "the command holds the page while the frame has not answered")
+            CredentialPicker.shared.pick(in: flow.page, menu: .init(opened: .now)) { true }
+            CredentialPicker.shared.pickFocused(in: flow.page) { true }
+            try await Task.sleep(for: .milliseconds(300))
+            #expect(flow.offered.isEmpty, "neither the pick nor the second command ran")
+            #expect(try await flow.values(["au", "ap", "bu", "bp"]) == ["", "", "", ""])
+            #expect(
+                CredentialPicker.shared.target(for: flow.page, menu: .init(opened: .now))?.token == target.token,
+                "the right-click it would run from is kept"
+            )
+
+            let released = await waitUntil(timeout: CredentialPicker.focusedFieldCeiling + .seconds(5)) {
+                !CredentialPicker.shared.picking.contains(key)
+            }
+            #expect(released, "the command that timed out released the page")
+            #expect(flow.offered.isEmpty)
         }
     }
 

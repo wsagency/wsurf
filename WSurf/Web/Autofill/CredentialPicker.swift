@@ -223,12 +223,23 @@ final class CredentialPicker {
     func pickFocused(in page: BrowserPage, allowed: @escaping @MainActor @Sendable () -> Bool) {
         // Not while a pick or a generated password is under way for the page: noting the focused field would replace the right-click
         // that flow runs from, and cancel it.
-        guard !picking.contains(ObjectIdentifier(page)), Self.isOffered(in: page, allowedByTab: allowed()) else {
+        let key = ObjectIdentifier(page)
+        guard !picking.contains(key), Self.isOffered(in: page, allowedByTab: allowed()) else {
             NSSound.beep()
             return
         }
+        // Held while the frames answer (up to a second each), so a right-click pick, Generate Password… or a second command that
+        // starts meanwhile is refused and cannot have its target replaced by `note`. Released in one place, in the same turn that
+        // `pick` takes over (it holds the key itself) or the command ends.
+        picking.insert(key)
         Task { [weak self, weak page] in
-            guard let self, let page, await self.noteFocusedField(in: page) else {
+            guard let self else { return }
+            var noted = false
+            if let page {
+                noted = await self.noteFocusedField(in: page)
+            }
+            self.picking.remove(key)
+            guard noted, let page else {
                 NSSound.beep()
                 return
             }
