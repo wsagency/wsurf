@@ -38,12 +38,18 @@ enum TabContextMenu {
     }
 
     /// "Pick Credential…" at the top of the menu, then a separator. The caller decides that the field is editable and that the
-    /// policy offers it (`CredentialPicker.isOffered`).
+    /// policy offers it (`CredentialPicker.isOffered`), or, with a `refusal`, that it does not: the item is then disabled, has no
+    /// action and names the reason in its title.
     @discardableResult
-    static func addPickCredential(to menu: NSMenu, target: AnyObject, action: Selector) -> NSMenuItem {
-        let item = NSMenuItem(title: String(localized: "Pick Credential…"), action: action, keyEquivalent: "")
+    static func addPickCredential(
+        to menu: NSMenu, target: AnyObject, action: Selector, refusal: CredentialPicker.Refusal? = nil
+    ) -> NSMenuItem {
+        let item = NSMenuItem(
+            title: refusal?.menuTitle ?? String(localized: "Pick Credential…"), action: refusal == nil ? action : nil, keyEquivalent: ""
+        )
         item.identifier = CredentialPicker.menuItemIdentifier
-        item.target = target
+        item.target = refusal == nil ? target : nil
+        item.isEnabled = refusal == nil
         item.image = NSImage(systemSymbolName: "key", accessibilityDescription: nil)
         menu.insertItem(item, at: 0)
         if menu.numberOfItems > 1 {

@@ -209,6 +209,87 @@ struct ChromiumContextMenuTests {
         await context.endPrivateSession()
     }
 
+    // MARK: - Pick Credential…
+
+    /// What `offerCredentialPicker` does to a hand-built `cef_menu_model_t` (no engine needed): the callbacks record into a process
+    /// global (`PickerMenuProbe`), so these tests run in this serialized suite.
+    private func offerPicker(
+        editable: Bool, offered: Bool, refusal: CredentialPicker.Refusal?, existingItems: Int = 3
+    ) async -> PickerOutcome {
+        PickerMenuProbe.menu = PickerMenuRecord()
+        PickerMenuProbe.count = existingItems
+        var model = cef_menu_model_t()
+        model.get_count = { _ in PickerMenuProbe.count }
+        model.insert_item_at = { _, index, command, label in
+            PickerMenuProbe.menu.items.append((Int(index), command, ChromiumInterop.string(label)))
+            PickerMenuProbe.count += 1
+            return 1
+        }
+        model.set_enabled_at = { _, index, enabled in
+            if enabled == 0 {
+                PickerMenuProbe.menu.disabled.append(Int(index))
+            }
+            return 1
+        }
+        model.insert_separator_at = { _, index in
+            PickerMenuProbe.menu.separators.append(Int(index))
+            return 1
+        }
+        let context = BrowserProfileContext(profile: .privateBrowsing())
+        let page = ChromiumPage(context: context)
+        let client = ChromiumClient(page: page)
+        var picked = 0
+        page.canPickCredential = { offered }
+        page.credentialRefusal = { refusal }
+        page.onPickCredential = { _ in picked += 1 }
+        withUnsafeMutablePointer(to: &model) {
+            client.offerCredentialPicker(in: $0, editable: editable, frame: nil)
+        }
+        let remembered = client.pickCredentialMenu != nil
+        let handled = client.runCredentialPicker()
+        withExtendedLifetime(page) {}
+        client.close()
+        await context.endPrivateSession()
+        return PickerOutcome(menu: PickerMenuProbe.menu, handled: handled, picked: picked, remembered: remembered)
+    }
+
+    @Test func anEditableFieldGetsTheEnabledItemAtTheTopWhileTheTabOffersIt() async {
+        let result = await offerPicker(editable: true, offered: true, refusal: nil)
+
+        #expect(result.menu.items.count == 1 && result.menu.items[0].index == 0)
+        #expect(result.menu.items[0].command == ChromiumClient.pickCredentialCommand)
+        #expect(result.menu.items[0].title == String(localized: "Pick Credential…"))
+        #expect(result.menu.disabled.isEmpty && result.menu.separators == [1])
+        #expect(result.remembered && result.handled && result.picked == 1)
+    }
+
+    @Test(arguments: CredentialPicker.Refusal.allCases)
+    func aWithheldItemIsDisabledNamesItsReasonAndRunsNothing(refusal: CredentialPicker.Refusal) async {
+        let result = await offerPicker(editable: true, offered: false, refusal: refusal)
+
+        #expect(result.menu.items.map(\.title) == [refusal.menuTitle], "the item names the reason")
+        #expect(result.menu.items.first?.index == 0 && result.menu.disabled == [0], "disabled")
+        #expect(result.menu.separators == [1])
+        #expect(!result.remembered && !result.handled && result.picked == 0, "choosing it, if the engine delivered it, runs nothing")
+    }
+
+    @Test func noItemWhereThePolicyGivesNoReasonOrTheClickWasNotOnAnEditableField() async {
+        for (editable, offered, refusal) in [
+            (true, false, CredentialPicker.Refusal?.none), (false, true, nil), (false, false, .insecurePage),
+        ] {
+            let result = await offerPicker(editable: editable, offered: offered, refusal: refusal)
+            #expect(result.menu.items.isEmpty && result.menu.disabled.isEmpty && result.menu.separators.isEmpty)
+            #expect(!result.remembered && !result.handled && result.picked == 0)
+        }
+    }
+
+    @Test func anOfferedItemIsNeverDisabledEvenWhenAReasonIsAlsoGiven() async {
+        let result = await offerPicker(editable: true, offered: true, refusal: .insecurePage)
+
+        #expect(result.menu.items.map(\.title) == [String(localized: "Pick Credential…")] && result.menu.disabled.isEmpty)
+        #expect(result.remembered && result.picked == 1)
+    }
+
     // MARK: - Clicks
 
     @Test func theEnginesWindowKindsAreTheClicksWebKitTellsApart() {
@@ -335,4 +416,23 @@ struct ChromiumContextMenuTests {
         withExtendedLifetime(page) {}
         await context.endPrivateSession()
     }
+}
+
+private nonisolated struct PickerMenuRecord {
+    var items: [(index: Int, command: Int32, title: String)] = []
+    var disabled: [Int] = []
+    var separators: [Int] = []
+}
+
+private struct PickerOutcome {
+    let menu: PickerMenuRecord
+    let handled: Bool
+    let picked: Int
+    let remembered: Bool
+}
+
+/// C function pointers cannot capture, so the menu model's callbacks write here.
+private nonisolated enum PickerMenuProbe {
+    nonisolated(unsafe) static var menu = PickerMenuRecord()
+    nonisolated(unsafe) static var count = 0
 }

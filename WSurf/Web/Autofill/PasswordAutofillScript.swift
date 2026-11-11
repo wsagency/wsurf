@@ -60,14 +60,16 @@ nonisolated enum PasswordAutofillScript {
       // What the field looks like to the picker, which lists codes first for a code field: only an ordering hint.
       const pickKind = el => forms.field(el)?.kind === 'one-time-code' || el.maxLength === 1 ||
         el.inputMode === 'numeric' && el.maxLength > 0 && el.maxLength <= 8 ? 'code' : secret(el) ? 'password' : 'text';
-      document.addEventListener('contextmenu', event => {
-        if (!event.isTrusted || !enabled) return;
-        const target = event.composedPath()[0];
+      const note = target => {
         const fits = pickable(target);
         pick.target = fits ? target : null;
         pick.token = fits ? crypto.randomUUID() : null;
         pick.url = location.href;
-        channel?.postMessage({action:'context',token:pick.token,url:pick.url,documentID:forms.documentID,field:fits ? pickKind(target) : ''});
+        return {action:'context',token:pick.token,url:pick.url,documentID:forms.documentID,field:fits ? pickKind(target) : ''};
+      };
+      document.addEventListener('contextmenu', event => {
+        if (!event.isTrusted || !enabled) return;
+        channel?.postMessage(note(event.composedPath()[0]));
       }, true);
       const picked = (token,url) => enabled && !!token && pick.token === token && pick.url === url && location.href === url &&
         !!pick.target?.isConnected && pickable(pick.target);
@@ -248,6 +250,13 @@ nonisolated enum PasswordAutofillScript {
         refresh() { if (enabled) tracker.refresh(); },
         eligible,
         pickTarget(token,url) { return picked(token,url) ? pickKind(pick.target) : null; },
+        // Edit ▸ Pick Credential…, asked by native only: the focused field of the frame that has focus, as a right-click on it would
+        // be reported, or null. A frame without focus is silent, the top one too: with focus in the address bar or the sidebar a
+        // document keeps its last field as its active element. A focus in no pickable field is silent. Nothing the page does reaches it.
+        focusedContext() {
+          const field = suggestions.active();
+          return enabled && document.hasFocus() && pickable(field) ? note(field) : null;
+        },
         pickFill,
         generateTarget,
         generateFill,

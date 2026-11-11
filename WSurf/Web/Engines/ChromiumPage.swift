@@ -98,6 +98,8 @@ final class ChromiumPage: NSView {
     /// Pick Credential…: whether the tab offers it now (`CredentialPicker.isOffered`), and what choosing it does. `ChromiumClient` adds
     /// the item to an editable field's menu.
     var canPickCredential: (() -> Bool)?
+    /// Why it is not offered, for a menu that shows the item disabled; asked only while `canPickCredential` says no.
+    var credentialRefusal: (() -> CredentialPicker.Refusal?)?
     var onPickCredential: ((CredentialPicker.Menu) -> Void)?
     /// The PDF items of the context menu: whether the tab shows a PDF it can save now (`BrowserTab.shownPDF`), and what choosing
     /// Download PDF (false) or Open in Preview (true) does (`BrowserTab.savePDF`). `ChromiumClient` adds the items.

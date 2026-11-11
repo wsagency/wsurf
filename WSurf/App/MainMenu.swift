@@ -173,6 +173,9 @@ final class MainMenu: NSObject, NSMenuItemValidation {
         menu.addItem(.separator())
         menu.addItem(command("Copy Link", #selector(copyPageURL), key: "c", modifiers: [.command, .shift]))
         menu.addItem(.separator())
+        // ⌃⌘P: ⌘P prints and ⌥⌘P is Read Aloud; ⌃⌘P was free. The way in where a site cancels the right-click menu.
+        menu.addItem(command("Pick Credential…", #selector(pickCredential), key: "p", modifiers: [.command, .control]))
+        menu.addItem(.separator())
 
         let find = NSMenu(title: "Find")
         find.addItem(command("Find…", #selector(openFind), key: "f"))
@@ -413,6 +416,9 @@ final class MainMenu: NSObject, NSMenuItemValidation {
     @objc private func hardReload() {
         coordinator.pageCommandTab?.page.reloadFromOrigin()
     }
+    @objc private func pickCredential() {
+        coordinator.pageCommandTab?.pickFocusedCredential()
+    }
     @objc private func showWebInspector() {
         coordinator.pageCommandTab?.showWebInspector()
     }
@@ -592,7 +598,7 @@ final class MainMenu: NSObject, NSMenuItemValidation {
         #selector(openSettings), #selector(checkForUpdates), #selector(reopenClosedTab), #selector(showAbout),
     ]
 
-    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {  // swiftlint:disable:this cyclomatic_complexity
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {  // swiftlint:disable:this cyclomatic_complexity function_body_length
         if menuItem.action == #selector(reopenClosedWindow) {
             return application?.canReopenWindow == true
         }
@@ -615,6 +621,8 @@ final class MainMenu: NSObject, NSMenuItemValidation {
         case #selector(zoomIn), #selector(zoomOut), #selector(openFind), #selector(findNext),
              #selector(findPrevious), #selector(printPage), #selector(savePage):
             return coordinator.pageCommandTab != nil
+        case #selector(pickCredential):
+            return coordinator.pageCommandTab?.canPickFocusedCredential ?? false
         case #selector(showWebInspector), #selector(toggleDevMode(_:)):
             return validateDeveloperItem(menuItem)
         case #selector(restartPage):

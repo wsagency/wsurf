@@ -98,6 +98,26 @@ final class CredentialPicker {
 
     static let menuItemIdentifier = NSUserInterfaceItemIdentifier("WSurfPickCredential")
 
+    /// Why an editable field's menu shows Pick Credential… disabled instead of leaving it out: the four reasons a person can see and
+    /// change. It only explains. The item is never usable then: `isOffered` is the one gate, and a refusal always implies it fails.
+    nonisolated enum Refusal: CaseIterable, Sendable {
+        case privateWindow, agentControl, passwordsOff, insecurePage
+
+        /// The menu title, the same in both engines (a Chromium menu item has no subtitle).
+        var menuTitle: String {
+            switch self {
+            case .privateWindow:
+                String(localized: "Pick Credential… (Not Available in a Private Window)")
+            case .agentControl:
+                String(localized: "Pick Credential… (An AI App Is Using This Tab)")
+            case .passwordsOff:
+                String(localized: "Pick Credential… (Password Filling Is Off)")
+            case .insecurePage:
+                String(localized: "Pick Credential… (Page Isn’t Fully Secure)")
+            }
+        }
+    }
+
     /// Tests answer the picker without a sheet, keyed by profile like `VaultChoicePrompt.answersForTesting`.
     static var answersForTesting: [UUID: @MainActor ([Row]) async -> Answer?] = [:]
 
@@ -120,25 +140,48 @@ final class CredentialPicker {
             && !page.isHiddenOrHasHiddenAncestor
     }
 
+    /// The reason to show the item disabled, for a page where `isOffered` is false: nil where the item is left out (an internal or
+    /// closed tab, no window, a page that is not HTTPS, a locked screen). `agentControlled` is the tab's (`isAgentControlled`).
+    static func refusal(in page: BrowserPage, agentControlled: Bool) -> Refusal? {
+        // A page that is not HTTPS stays without the item whatever else holds, so no reason is the real one.
+        guard page.url.flatMap(SavedPassword.origin(for:)) != nil else { return nil }
+        let context = page.context
+        if context.profile.isPrivate {
+            return .privateWindow
+        }
+        if agentControlled {
+            return .agentControl
+        }
+        if !PasswordAutofill.shared.isEnabled(in: context) {
+            return .passwordsOff
+        }
+        return page.hasOnlySecureContent ? nil : .insecurePage
+    }
+
     /// A trusted right-click as the frame's script reported it: an editable text field with a fresh token, or nothing (which
     /// forgets the page's earlier one, so a menu never fills a field from an older right-click).
     func noteContext(_ message: BrowserScriptMessage) {
-        let page = message.page
+        note(message.body, in: message.page, frame: message.frameInfo)
+    }
+
+    /// What `noteContext` and `pickFocused` share: the script's report, taken in the frame the engine says sent it.
+    @discardableResult
+    private func note(_ report: Any?, in page: BrowserPage, frame: BrowserFrame) -> Bool {
         targets = targets.filter { $0.value.page != nil }
-        let frame = message.frameInfo
-        guard let body = message.body as? [String: Any],
+        guard let body = report as? [String: Any],
               let token = body["token"] as? String, UUID(uuidString: token) != nil,
               let documentID = body["documentID"] as? String, UUID(uuidString: documentID) != nil,
               let field = (body["field"] as? String).flatMap(Field.init(rawValue:)),
               let raw = body["url"] as? String, let frameURL = URL(string: raw),
               let origin = CredentialAccountSelection.origin(for: frameURL), frame.autofillOrigin(reportedURL: frameURL) == origin else {
             targets[ObjectIdentifier(page)] = nil
-            return
+            return false
         }
         targets[ObjectIdentifier(page)] = Target(
             page: page, context: page.context, frame: frame, token: token, documentID: documentID, frameURL: frameURL, origin: origin,
             field: field, received: .now
         )
+        return true
     }
 
     /// The right-click that belongs to `menu`: the page's latest, reported around the time the menu opened, and in Chromium from the
@@ -178,6 +221,39 @@ final class CredentialPicker {
                 await Self.report(failure, in: window)
             }
         }
+    }
+
+    /// Edit ▸ Pick Credential…, for a site that cancels or replaces the context menu: the picker for the field that has focus. The
+    /// focused frame's script reports that field as it reports a right-click (`note`), then `pick` runs, which is the menu item's
+    /// whole path with every gate: the same `isOffered` first, again before each step, the same target check and the same flow.
+    func pickFocused(in page: BrowserPage, allowed: @escaping @MainActor @Sendable () -> Bool) {
+        guard Self.isOffered(in: page, allowedByTab: allowed()) else {
+            NSSound.beep()
+            return
+        }
+        Task { [weak self, weak page] in
+            guard let self, let page, await self.noteFocusedField(in: page) else {
+                NSSound.beep()
+                return
+            }
+            // Opened now, after the frames answered, so a slow frame cannot use up the two seconds `target(for:menu:)` allows.
+            self.pick(in: page, menu: Menu(opened: .now), allowed: allowed)
+        }
+    }
+
+    /// The frame whose document has focus, main frame first, reports its focused field; the engine names the frame, never the page.
+    private func noteFocusedField(in page: BrowserPage) async -> Bool {
+        let frames = (PasswordAutofill.shared.frames[ObjectIdentifier(page)] ?? [:]).sorted { $0.value.isMainFrame && !$1.value.isMainFrame }
+        for (documentID, frame) in frames {
+            let report = try? await page.callAsyncJavaScript(
+                "if (globalThis.__wsurfAutofillForms?.documentID !== documentID) return null; return globalThis.__wsurfPasswords?.focusedContext() ?? null;",
+                arguments: ["documentID": documentID], in: frame, contentWorld: PasswordAutofill.world
+            )
+            if report is [String: Any] {
+                return note(report, in: page, frame: frame)
+            }
+        }
+        return false
     }
 
     /// Chromium names the right-clicked frame by its own id, which need not be the DevTools id the script's frame carries. The URL

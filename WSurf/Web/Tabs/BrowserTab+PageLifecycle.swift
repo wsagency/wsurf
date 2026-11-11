@@ -307,11 +307,7 @@ extension BrowserTab {
                     self?.onSummarizeLink?(url, anchor ?? TabNavigationDelegate.pointer(in: view))
                 }
                 tabView.onZoomChanged = { [weak self] in self?.zoomDidChange() }
-                tabView.canPickCredential = { [weak self, weak view] in
-                    guard let self, let view, liveView === view else { return false }
-                    return CredentialPicker.isOffered(in: view, allowedByTab: allowsCredentialPicker)
-                }
-                tabView.onPickCredential = { [weak self, weak view] menu in self?.pickCredential(in: view, menu: menu) }
+                installCredentialPicker(on: tabView, in: view)
                 tabView.showsPDF = { [weak self, weak view] in
                     guard let self, let view else { return false }
                     return liveView === view && shownPDF != nil
@@ -323,11 +319,7 @@ extension BrowserTab {
             }
         } else if let chromium = view.chromium {
             installChromiumCallbacks(on: chromium, in: view)
-            chromium.canPickCredential = { [weak self, weak view] in
-                guard let self, let view, liveView === view else { return false }
-                return CredentialPicker.isOffered(in: view, allowedByTab: allowsCredentialPicker)
-            }
-            chromium.onPickCredential = { [weak self, weak view] menu in self?.pickCredential(in: view, menu: menu) }
+            installCredentialPicker(on: chromium, in: view)
             chromium.canInspect = { [weak self, weak view] in
                 guard let self, let view else { return false }
                 return liveView === view && canShowWebInspector
@@ -450,10 +442,53 @@ extension BrowserTab {
     /// Pick Credential… from the page's context menu. The tab's policy is asked again before every step of the picker.
     private func pickCredential(in view: BrowserPage?, menu: CredentialPicker.Menu) {
         guard let view, liveView === view else { return }
-        CredentialPicker.shared.pick(in: view, menu: menu) { [weak self, weak view] in
+        CredentialPicker.shared.pick(in: view, menu: menu, allowed: credentialPickerPolicy(for: view))
+    }
+
+    /// What the engine's context menu asks and calls for Pick Credential…: whether the tab offers it, why not (for a disabled item),
+    /// and what choosing it does.
+    private func installCredentialPicker(on tabView: TabWebView, in view: BrowserPage) {
+        tabView.canPickCredential = { [weak self, weak view] in
+            guard let self, let view, liveView === view else { return false }
+            return CredentialPicker.isOffered(in: view, allowedByTab: allowsCredentialPicker)
+        }
+        tabView.credentialRefusal = { [weak self, weak view] in
+            guard let self, let view, liveView === view else { return nil }
+            return credentialPickerRefusal(in: view)
+        }
+        tabView.onPickCredential = { [weak self, weak view] menu in self?.pickCredential(in: view, menu: menu) }
+    }
+
+    private func installCredentialPicker(on chromium: ChromiumPage, in view: BrowserPage) {
+        chromium.canPickCredential = { [weak self, weak view] in
+            guard let self, let view, liveView === view else { return false }
+            return CredentialPicker.isOffered(in: view, allowedByTab: allowsCredentialPicker)
+        }
+        chromium.credentialRefusal = { [weak self, weak view] in
+            guard let self, let view, liveView === view else { return nil }
+            return credentialPickerRefusal(in: view)
+        }
+        chromium.onPickCredential = { [weak self, weak view] menu in self?.pickCredential(in: view, menu: menu) }
+    }
+
+    /// The tab's policy for `view`, asked again before every step of the picker.
+    private func credentialPickerPolicy(for view: BrowserPage) -> @MainActor @Sendable () -> Bool {
+        { [weak self, weak view] in
             guard let self, let view else { return false }
             return liveView === view && allowsCredentialPicker
         }
+    }
+
+    /// Whether Edit ▸ Pick Credential… may run: exactly when the context-menu item would be offered, as the tab offers it.
+    var canPickFocusedCredential: Bool {
+        guard let liveView else { return false }
+        return CredentialPicker.isOffered(in: liveView, allowedByTab: allowsCredentialPicker)
+    }
+
+    /// Edit ▸ Pick Credential…: the picker for the field in focus, through the same gates and flow as the context-menu item.
+    func pickFocusedCredential() {
+        guard let view = liveView else { return }
+        CredentialPicker.shared.pickFocused(in: view, allowed: credentialPickerPolicy(for: view))
     }
 
     /// A page's pop-up opens in a tab of its own, unless an app takes it or the pop-up blocker refuses it. The tab's page hosts the

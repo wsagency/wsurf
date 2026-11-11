@@ -56,6 +56,24 @@ struct MainMenuKeyTests {
         #expect(menu.validateMenuItem(item))
     }
 
+    /// Edit ▸ Pick Credential… on ⌃⌘P, a chord no other item of the menu bar uses, enabled only where the tab could offer it.
+    @Test func pickCredentialIsOnTheEditMenuOnItsOwnChordAndNeedsAPageThatOffersIt() throws {
+        let coordinator = AppCoordinator()
+        let menu = MainMenu(coordinator: coordinator)
+        menu.install()
+        defer { NSApp.mainMenu = nil }
+        let root = try #require(NSApp.mainMenu)
+        let title = String(localized: "Pick Credential…")
+        let edit = try #require(root.items.compactMap(\.submenu).first { $0.items.contains { $0.title == title } })
+        #expect(edit.items.contains { $0.title == String(localized: "Select All") }, "it is in the Edit menu")
+        let item = try #require(edit.items.first { $0.title == title })
+
+        #expect(item.keyEquivalent == "p" && item.keyEquivalentModifierMask == [.command, .control])
+        let all = root.items.compactMap(\.submenu).flatMap(\.items).flatMap { [$0] + ($0.submenu?.items ?? []) }
+        #expect(all.filter { $0.keyEquivalent.lowercased() == "p" && $0.keyEquivalentModifierMask == [.command, .control] }.count == 1)
+        #expect(!menu.validateMenuItem(item), "a window with no page that offers it")
+    }
+
     // Shift-letter shortcuts use the uppercase character in AppKit's menu matching.
     @Test func shiftCommandNIsBoundToNewPrivateWindow() throws {
         let coordinator = AppCoordinator()

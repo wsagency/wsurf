@@ -199,6 +199,85 @@ struct CredentialPickerTests {
         #expect(!refused.items.contains { $0.identifier == CredentialPicker.menuItemIdentifier }, "not while the policy refuses")
     }
 
+    /// The reason is only an explanation: wherever one is given the picker is not offered, and where it is offered none is given.
+    @Test(.boundedWebViews) func aWithheldItemNamesItsReasonAndEveryReasonMeansNotOffered() async throws {
+        func expect(_ page: BrowserPage, agent: Bool = false, _ refusal: CredentialPicker.Refusal?, _ note: Comment) {
+            #expect(CredentialPicker.refusal(in: page, agentControlled: agent) == refusal, note)
+            if refusal != nil {
+                #expect(!CredentialPicker.isOffered(in: page, allowedByTab: !agent), "a reason is never given for an offered item: \(note)")
+            }
+        }
+        try await VaultManagerFixture.with(vaults: []) { profile, _, _ in
+            let (good, window) = page(profile: profile)
+            expect(good, nil, "a secure page the tab allows")
+            expect(good, agent: true, .agentControl, "an assistant or a connected app holds the tab")
+            good.hasOnlySecureContent = false
+            expect(good, .insecurePage, "mixed content or a certificate warning on an HTTPS page")
+            good.hasOnlySecureContent = true
+            good.context.settings.fillsPasswords = false
+            expect(good, .passwordsOff, "password filling is off")
+            good.context.settings.fillsPasswords = true
+            expect(good, nil, "and back on")
+            window?.contentView = nil
+            window?.close()
+            await good.close()
+
+            let (plain, plainWindow) = page(profile: profile, url: "http://login.example.test/")
+            expect(plain, nil, "a page that is not HTTPS gets no item at all")
+            expect(plain, agent: true, nil, "and none of the other reasons is the real one there")
+            plain.context.settings.fillsPasswords = false
+            expect(plain, nil, "not even with password filling off")
+            plain.context.settings.fillsPasswords = true
+            plainWindow?.contentView = nil
+            plainWindow?.close()
+            await plain.close()
+        }
+        let (privatePage, privateWindow) = page(profile: Profile.privateBrowsing())
+        expect(privatePage, .privateWindow, "a private window")
+        privatePage.url = URL(string: "http://login.example.test/")
+        expect(privatePage, nil, "a private window on a page that is not HTTPS has no other item to show")
+        privateWindow?.contentView = nil
+        privateWindow?.close()
+        await privatePage.close()
+        await privatePage.context.endPrivateSession()
+    }
+
+    @Test(.boundedWebViews) func theWebKitMenuShowsAWithheldItemDisabledWithItsReasonAndNeverRunsIt() throws {
+        let view = TabWebView(frame: NSRect(x: 0, y: 0, width: 400, height: 300), configuration: WebViewPool.makeConfiguration())
+        let event = try #require(NSEvent.mouseEvent(
+            with: .rightMouseDown, location: NSPoint(x: 10, y: 10), modifierFlags: [], timestamp: 0, windowNumber: 0, context: nil,
+            eventNumber: 0, clickCount: 1, pressure: 1
+        ))
+        var reason: CredentialPicker.Refusal?
+        var picked = 0
+        view.canPickCredential = { false }
+        view.credentialRefusal = { reason }
+        view.onPickCredential = { _ in picked += 1 }
+        let editable = ["WKMenuItemIdentifierCopy", "WKMenuItemIdentifierPaste", "WKMenuItemIdentifierSpellingMenu"]
+
+        #expect(Set(CredentialPicker.Refusal.allCases.map(\.menuTitle)).count == CredentialPicker.Refusal.allCases.count)
+        for refusal in CredentialPicker.Refusal.allCases {
+            reason = refusal
+            let field = menu(editable)
+            view.willOpenMenu(field, with: event)
+            let item = try #require(field.items.first)
+            #expect(item.identifier == CredentialPicker.menuItemIdentifier && field.items[1].isSeparatorItem)
+            #expect(item.title == refusal.menuTitle && item.title.hasPrefix(String(localized: "Pick Credential…")))
+            #expect(!item.isEnabled && item.action == nil && item.target == nil, "disabled, with nothing to run: \(refusal)")
+        }
+
+        reason = .insecurePage
+        let text = menu(["WKMenuItemIdentifierCopy", "WKMenuItemIdentifierLookUp"])
+        view.willOpenMenu(text, with: event)
+        #expect(!text.items.contains { $0.identifier == CredentialPicker.menuItemIdentifier }, "not on text that cannot be edited")
+
+        reason = nil
+        let silent = menu(editable)
+        view.willOpenMenu(silent, with: event)
+        #expect(!silent.items.contains { $0.identifier == CredentialPicker.menuItemIdentifier }, "no reason, no item")
+        #expect(picked == 0)
+    }
+
     // MARK: - Picking against real vaults (WebKit)
 
     private final class Flow {
@@ -255,6 +334,17 @@ struct CredentialPickerTests {
                 return found != nil && found?.token != before
             }, "the right-click on \(id) was recorded")
             return try #require(found)
+        }
+
+        /// A left click into `id`, as a person focuses a field, once the page says it holds focus in it.
+        func focus(_ id: String) async throws {
+            try await PageRightClick.send(at: try await PageRightClick.center(of: id, in: page), in: page, window: window, left: true)
+            try #require(await waitUntil {
+                (try? await self.page.callAsyncJavaScript(
+                    "return document.activeElement?.id === id && document.hasFocus();", arguments: ["id": id], in: nil,
+                    contentWorld: PasswordAutofill.world
+                )) as? Bool == true
+            }, "\(id) has focus")
         }
 
         /// The whole pick for `target`, with `choose` standing in for the person at the sheet.
@@ -339,6 +429,46 @@ struct CredentialPickerTests {
                 rows.first { $0.accountID == ada.id && $0.fill == .login }.map { .row($0.id) }
             }
             #expect(filled == .filled(2))
+        }
+    }
+
+    /// Edit ▸ Pick Credential…: the picker for the field in focus, with no right-click. It is the menu item's path, so every gate that
+    /// refuses the item refuses it: the tab's policy, a page that is not fully secure, and a page that is not offered at all.
+    @Test(.boundedWebViews) func theMenuCommandPicksForTheFocusedFieldOnlyWhereTheContextMenuItemWouldBeOffered() async throws {
+        try await withFlow { flow, vaults in
+            let ada = account("ada", password: "dummy-secret-1")
+            try await VaultManagerFixture.save([ada], in: vaults[0])
+            try await flow.load(Self.login)
+            CredentialPicker.answersForTesting[flow.profile.id] = { rows in
+                flow.offered.append(rows)
+                return rows.first { $0.accountID == ada.id && $0.fill == .login }.map { .row($0.id) }
+            }
+            try await flow.focus("bu")
+
+            // Each gate on its own: nothing is listed and nothing is filled.
+            CredentialPicker.shared.pickFocused(in: flow.page) { false }
+            flow.page.hasOnlySecureContent = false
+            CredentialPicker.shared.pickFocused(in: flow.page) { true }
+            flow.page.hasOnlySecureContent = true
+            try await Task.sleep(for: .milliseconds(500))
+            #expect(flow.offered.isEmpty, "the tab's policy and the page's security each refuse it")
+            #expect(try await flow.values(["bu", "bp"]) == ["", ""])
+
+            // No field in focus: nothing to pick for.
+            _ = try await flow.page.callAsyncJavaScript(
+                "document.activeElement.blur();", arguments: [:], in: nil, contentWorld: PasswordAutofill.world
+            )
+            CredentialPicker.shared.pickFocused(in: flow.page) { true }
+            try await Task.sleep(for: .milliseconds(500))
+            let none = try await flow.values(["bu", "bp"])
+            #expect(flow.offered.isEmpty && none == ["", ""], "no focused field")
+
+            // Offered: the focused field's form takes the login, and no other form does.
+            try await flow.focus("bu")
+            CredentialPicker.shared.pickFocused(in: flow.page) { true }
+            #expect(await waitUntil { (try? await flow.values(["bu", "bp"])) == ["ada", "dummy-secret-1"] }, "the focused form is filled")
+            #expect(flow.offered.count == 1 && flow.offered[0].first?.accountID == ada.id)
+            #expect(try await flow.values(["au", "ap", "xu", "xp"]) == ["", "", "", ""])
         }
     }
 

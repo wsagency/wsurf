@@ -283,6 +283,52 @@ struct CredentialPickerScriptTests {
         }
     }
 
+    /// Edit ▸ Pick Credential…: with no right-click, the frame reports its focused field as a right-click would, and the fill that
+    /// follows is the right-click's own. Nothing in focus, no pickable field in focus, a frame that is not focused and a frame whose
+    /// autofill is off all report nothing.
+    @Test(.boundedWebViews, arguments: BrowserEngine.allCases)
+    func theFocusedFieldIsReportedAsARightClickWouldAndNothingElseIs(engine: BrowserEngine) async throws {
+        try await withHarness(engine) { harness in
+            let main = try #require(harness.readyFrames.first(where: \.isMainFrame))
+            let sub = try #require(harness.subframe)
+            func focused(in frame: BrowserFrame) async throws -> [String: Any]? {
+                try await harness.page.callAsyncJavaScript(
+                    "return globalThis.__wsurfPasswords.focusedContext();", arguments: [:], in: frame, contentWorld: PasswordAutofill.world
+                ) as? [String: Any]
+            }
+            try await PageRightClick.awaitInputDelivery(in: harness.page)
+            #expect(try await focused(in: main) == nil, "nothing is focused")
+            #expect(try await focused(in: sub) == nil)
+
+            try await PageRightClick.send(
+                at: try await PageRightClick.center(of: "bu", in: harness.page), in: harness.page, window: harness.window, left: true
+            )
+            var report: [String: Any]?
+            try #require(await waitUntil { report = try? await focused(in: main); return report != nil }, "the focused field is reported")
+            let body = try #require(report)
+            #expect(body["action"] as? String == "context" && body["field"] as? String == "text")
+            #expect(UUID(uuidString: body["token"] as? String ?? "") != nil && body["documentID"] is String && body["url"] is String)
+            #expect(try await focused(in: sub) == nil, "another frame has nothing focused")
+
+            // The token is the right-click's: the fill reaches the focused field's form and no other.
+            report = try await focused(in: main)
+            let fresh = try #require(report)
+            #expect(try await harness.fill((fresh, main), ["username": "ada", "password": "dummy-secret"]) == 2)
+            #expect(try await harness.values(["bu", "bp", "au", "ap", "xu", "xp"]) == ["ada", "dummy-secret", "", "", "", ""])
+
+            // A focus in something that cannot be picked reports nothing; so does a frame whose autofill is off.
+            _ = try await harness.page.callAsyncJavaScript(
+                "document.getElementById('bu').blur();", arguments: [:], in: main, contentWorld: PasswordAutofill.world
+            )
+            #expect(try await focused(in: main) == nil, "the body is in focus")
+            _ = try await harness.page.callAsyncJavaScript(
+                "document.getElementById('bu').focus(); globalThis.__wsurfPasswords.setEnabled(false);", arguments: [:], in: main,
+                contentWorld: PasswordAutofill.world
+            )
+            #expect(try await focused(in: main) == nil, "autofill is off")
+        }
+    }
+
     @Test(.boundedWebViews, arguments: BrowserEngine.allCases)
     func aRightClickedPasswordFieldTakesThePasswordAndItsUsernameFieldTheUsername(engine: BrowserEngine) async throws {
         try await withHarness(engine) { harness in
