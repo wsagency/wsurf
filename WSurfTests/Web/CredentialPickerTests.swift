@@ -477,6 +477,81 @@ struct CredentialPickerTests {
         }
     }
 
+    /// With focus outside the page (the address bar, the sidebar) a document keeps its last field as its active element: the command
+    /// does nothing. A test window in the background is never key, so WebKit really reports the document without focus here, and
+    /// `document.hasFocus` is left as it is.
+    @Test(.boundedWebViews) func theMenuCommandDoesNothingWhileFocusIsOutsideThePage() async throws {
+        try await withFlow { flow, vaults in
+            let ada = account("ada", password: "dummy-secret-1")
+            try await VaultManagerFixture.save([ada], in: vaults[0])
+            try await flow.load(Self.login)
+            CredentialPicker.answersForTesting[flow.profile.id] = { rows in
+                flow.offered.append(rows)
+                return rows.first { $0.accountID == ada.id && $0.fill == .login }.map { .row($0.id) }
+            }
+            _ = try await flow.page.callAsyncJavaScript(
+                "document.getElementById('bu').focus();", arguments: [:], in: nil, contentWorld: PasswordAutofill.world
+            )
+            let state = try await flow.page.callAsyncJavaScript(
+                "return [document.activeElement?.id, document.hasFocus()];", arguments: [:], in: nil, contentWorld: PasswordAutofill.world
+            ) as? [Any]
+            try #require(state?.first as? String == "bu" && state?.last as? Bool == false, "the field is the active element, the document has no focus")
+
+            CredentialPicker.shared.pickFocused(in: flow.page) { true }
+            try await Task.sleep(for: .milliseconds(500))
+            #expect(flow.offered.isEmpty, "nothing is listed")
+            #expect(try await flow.values(["bu", "bp"]) == ["", ""])
+            #expect(CredentialPicker.shared.target(for: flow.page, menu: .init(opened: .now)) == nil, "and no field was noted")
+        }
+    }
+
+    /// A second command while a pick or a generated password is under way for the page is refused, not run: it would replace the
+    /// right-click the first one runs from.
+    @Test(.boundedWebViews) func theMenuCommandIsRefusedWhileAPickIsUnderWayForThePage() async throws {
+        try await withFlow { flow, vaults in
+            let ada = account("ada", password: "dummy-secret-1")
+            try await VaultManagerFixture.save([ada], in: vaults[0])
+            try await flow.load(Self.login)
+            CredentialPicker.answersForTesting[flow.profile.id] = { rows in
+                flow.offered.append(rows)
+                return rows.first { $0.accountID == ada.id && $0.fill == .login }.map { .row($0.id) }
+            }
+            try await flow.focus("bu")
+            let key = ObjectIdentifier(flow.page)
+
+            CredentialPicker.shared.picking.insert(key)
+            CredentialPicker.shared.pickFocused(in: flow.page) { true }
+            try await Task.sleep(for: .milliseconds(500))
+            #expect(flow.offered.isEmpty, "nothing is listed while a pick is under way")
+            #expect(try await flow.values(["bu", "bp"]) == ["", ""])
+            #expect(CredentialPicker.shared.picking.contains(key), "the pick under way is left as it was")
+
+            CredentialPicker.shared.picking.remove(key)
+            CredentialPicker.shared.pickFocused(in: flow.page) { true }
+            #expect(await waitUntil { (try? await flow.values(["bu", "bp"])) == ["ada", "dummy-secret-1"] }, "and it runs once that ends")
+        }
+    }
+
+    /// A frame that never answers ends the command within its ceiling: no field is noted, and the command is not left waiting.
+    @Test(.boundedWebViews) func aFrameThatNeverNamesItsFocusedFieldDoesNotStallTheMenuCommand() async throws {
+        try await withFlow { flow, _ in
+            try await flow.load(Self.login)
+            try await flow.focus("bu")
+            let before = CredentialPicker.shared.target(for: flow.page, menu: .init(opened: .now))?.token
+            _ = try await flow.page.callAsyncJavaScript(
+                "globalThis.__wsurfPasswords.focusedContext = () => new Promise(() => {});", arguments: [:], in: nil,
+                contentWorld: PasswordAutofill.world
+            )
+            final class Outcome { var noted: Bool? }
+            let outcome = Outcome()
+            let asking = Task { outcome.noted = await CredentialPicker.shared.noteFocusedField(in: flow.page) }
+            let ended = await waitUntil(timeout: CredentialPicker.focusedFieldCeiling + .seconds(5)) { outcome.noted != nil }
+            asking.cancel()
+            #expect(ended && outcome.noted == false, "the frame did not answer, so the command ended without a field")
+            #expect(CredentialPicker.shared.target(for: flow.page, menu: .init(opened: .now))?.token == before, "and noted nothing")
+        }
+    }
+
     @Test(.boundedWebViews) func aLockedVaultIsUnlockedFirstAndNothingIsFilledWhenThePersonCancels() async throws {
         let passkeys = VaultPasskeys()
         try await withFlow(passkeys: passkeys) { flow, vaults in

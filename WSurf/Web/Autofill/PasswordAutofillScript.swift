@@ -252,10 +252,12 @@ nonisolated enum PasswordAutofillScript {
         pickTarget(token,url) { return picked(token,url) ? pickKind(pick.target) : null; },
         // Edit ▸ Pick Credential…, asked by native only: the focused field of the frame that has focus, as a right-click on it would
         // be reported, or null. A frame without focus is silent, the top one too: with focus in the address bar or the sidebar a
-        // document keeps its last field as its active element. A focus in no pickable field is silent. Nothing the page does reaches it.
+        // document keeps its last field as its active element. A focus in no pickable field is silent, and so is one that is scrolled
+        // out of view or off the page: a page can focus such a field ahead of time, and the person never saw it. Nothing the page does
+        // reaches it.
         focusedContext() {
           const field = suggestions.active();
-          return enabled && document.hasFocus() && pickable(field) ? note(field) : null;
+          return enabled && document.hasFocus() && pickable(field) && forms.visible(field) ? note(field) : null;
         },
         pickFill,
         generateTarget,

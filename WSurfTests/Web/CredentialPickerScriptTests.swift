@@ -341,6 +341,38 @@ struct CredentialPickerScriptTests {
         }
     }
 
+    /// A page can focus a field ahead of the command, off the screen where the person never saw it: such a field is not reported,
+    /// where a right-click could not have reached it either. The same field in view is reported again.
+    @Test(.boundedWebViews, arguments: BrowserEngine.allCases)
+    func aFocusedFieldOffTheScreenIsNotReported(engine: BrowserEngine) async throws {
+        try await withHarness(engine) { harness in
+            let main = try #require(harness.readyFrames.first { $0.isMainFrame })
+            @MainActor func focused() async throws -> [String: Any]? {
+                try await harness.page.callAsyncJavaScript(
+                    "return globalThis.__wsurfPasswords.focusedContext();", arguments: [:], in: main, contentWorld: PasswordAutofill.world
+                ) as? [String: Any]
+            }
+            @MainActor func place(_ style: String) async throws {
+                _ = try await harness.page.callAsyncJavaScript(
+                    "document.getElementById('bu').style.cssText = style;", arguments: ["style": style], in: main,
+                    contentWorld: PasswordAutofill.world
+                )
+            }
+            try await PageRightClick.awaitInputDelivery(in: harness.page)
+            try await PageRightClick.send(
+                at: try await PageRightClick.center(of: "bu", in: harness.page), in: harness.page, window: harness.window, left: true
+            )
+            try await PageRightClick.focus("bu", in: harness.page, frame: main)
+            try #require(await waitUntil { (try? await focused()) != nil }, "in view, the focused field is reported")
+
+            try await place("position: fixed; left: -5000px; top: 0")
+            #expect(try await focused() == nil, "off the screen, the same focused field is not")
+
+            try await place("")
+            #expect(try await focused() != nil, "back in view, it is reported again")
+        }
+    }
+
     @Test(.boundedWebViews, arguments: BrowserEngine.allCases)
     func aRightClickedPasswordFieldTakesThePasswordAndItsUsernameFieldTheUsername(engine: BrowserEngine) async throws {
         try await withHarness(engine) { harness in

@@ -138,14 +138,14 @@ final class CredentialPicker {
     }
 
     /// The reason to show the item disabled, for a page where `isOffered` is false: nil where the item is left out (an internal or
-    /// closed tab, no window, a page that is not HTTPS, a private window, password filling off, a locked screen). `agentControlled`
-    /// is the tab's (`isAgentControlled`).
+    /// closed tab, no window, a page that is not HTTPS, a private window, password filling off, a locked screen or an inactive
+    /// session: the last four by the same check `isOffered` makes). `agentControlled` is the tab's (`isAgentControlled`).
     static func refusal(in page: BrowserPage, agentControlled: Bool) -> Refusal? {
         // A page that is not HTTPS stays without the item whatever else holds, so no reason is the real one.
         guard page.url.flatMap(SavedPassword.origin(for:)) != nil else { return nil }
         let context = page.context
-        // Private windows and turned-off password filling have no item, whatever else holds.
-        guard !context.profile.isPrivate, PasswordAutofill.shared.isEnabled(in: context) else { return nil }
+        // Private windows, turned-off password filling, a locked screen and an inactive session have no item, whatever else holds.
+        guard AutofillSaveCoordinator.shared.isEnabled(.password, context: context) else { return nil }
         if agentControlled {
             return .agentControl
         }
@@ -221,7 +221,9 @@ final class CredentialPicker {
     /// focused frame's script reports that field as it reports a right-click (`note`), then `pick` runs, which is the menu item's
     /// whole path with every gate: the same `isOffered` first, again before each step, the same target check and the same flow.
     func pickFocused(in page: BrowserPage, allowed: @escaping @MainActor @Sendable () -> Bool) {
-        guard Self.isOffered(in: page, allowedByTab: allowed()) else {
+        // Not while a pick or a generated password is under way for the page: noting the focused field would replace the right-click
+        // that flow runs from, and cancel it.
+        guard !picking.contains(ObjectIdentifier(page)), Self.isOffered(in: page, allowedByTab: allowed()) else {
             NSSound.beep()
             return
         }
@@ -236,18 +238,34 @@ final class CredentialPicker {
     }
 
     /// The frame whose document has focus, main frame first, reports its focused field; the engine names the frame, never the page.
-    private func noteFocusedField(in page: BrowserPage) async -> Bool {
+    /// A frame that has not answered within a second ends the command, so a busy frame cannot hold the page or stall the menu.
+    func noteFocusedField(in page: BrowserPage) async -> Bool {
         let frames = (PasswordAutofill.shared.frames[ObjectIdentifier(page)] ?? [:]).sorted { $0.value.isMainFrame && !$1.value.isMainFrame }
         for (documentID, frame) in frames {
-            let report = try? await page.callAsyncJavaScript(
-                "if (globalThis.__wsurfAutofillForms?.documentID !== documentID) return null; return globalThis.__wsurfPasswords?.focusedContext() ?? null;",
-                arguments: ["documentID": documentID], in: frame, contentWorld: PasswordAutofill.world
-            )
-            if report is [String: Any] {
+            // The answer waits in a box that an answer after the ceiling fills for nobody.
+            let box = FocusReport()
+            let answered = await PageReply<Bool>.awaiting(within: Self.focusedFieldCeiling) { gate in
+                Task {
+                    box.report = try? await page.callAsyncJavaScript(
+                        "if (globalThis.__wsurfAutofillForms?.documentID !== documentID) return null; return globalThis.__wsurfPasswords?.focusedContext() ?? null;",
+                        arguments: ["documentID": documentID], in: frame, contentWorld: PasswordAutofill.world
+                    )
+                    gate.finish(true)
+                }
+            }
+            guard answered == true else { return false }
+            if let report = box.report, report is [String: Any] {
                 return note(report, in: page, frame: frame)
             }
         }
         return false
+    }
+
+    /// How long a frame has to name its focused field (Edit ▸ Pick Credential…).
+    static let focusedFieldCeiling: Duration = .seconds(1)
+
+    @MainActor private final class FocusReport {
+        var report: Any?
     }
 
     /// Chromium names the right-clicked frame by its own id, which need not be the DevTools id the script's frame carries. The URL
@@ -472,7 +490,7 @@ final class CredentialPicker {
         case .unsafeForm:
             String(localized: "This form sends what you type to another website, so nothing was filled.")
         case .noField:
-            String(localized: "Right-click the field and choose Pick Credential… to try again.")
+            String(localized: "Click the field and choose Pick Credential… from the Edit menu or the field’s context menu to try again.")
         }
         await alert.beginSheetModal(for: window)
     }
