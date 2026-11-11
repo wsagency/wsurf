@@ -289,9 +289,9 @@ struct CredentialPickerScriptTests {
     @Test(.boundedWebViews, arguments: BrowserEngine.allCases)
     func theFocusedFieldIsReportedAsARightClickWouldAndNothingElseIs(engine: BrowserEngine) async throws {
         try await withHarness(engine) { harness in
-            let main = try #require(harness.readyFrames.first(where: \.isMainFrame))
+            let main = try #require(harness.readyFrames.first { $0.isMainFrame })
             let sub = try #require(harness.subframe)
-            func focused(in frame: BrowserFrame) async throws -> [String: Any]? {
+            @MainActor func focused(in frame: BrowserFrame) async throws -> [String: Any]? {
                 try await harness.page.callAsyncJavaScript(
                     "return globalThis.__wsurfPasswords.focusedContext();", arguments: [:], in: frame, contentWorld: PasswordAutofill.world
                 ) as? [String: Any]
