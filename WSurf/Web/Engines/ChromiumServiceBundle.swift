@@ -10,33 +10,28 @@ import Foundation
 /// Chromium's helper sandbox reads only inside its browser process's main bundle. The default build has no service and keeps
 /// them in `Contents/Frameworks`. The layout decides, so no switch is read here.
 nonisolated enum ChromiumServiceBundle {
-    static let name = "WSurf Chromium.xpc"
     static let frameworkName = "Chromium Embedded Framework.framework"
-    /// The five helper apps, in the order `Tools/embed-chromium.sh` writes them.
-    static let helperNames = ["WSurf Helper", "WSurf Helper (Alerts)", "WSurf Helper (GPU)", "WSurf Helper (Plugin)", "WSurf Helper (Renderer)"]
 
-    static func url(in app: URL) -> URL {
-        app.appending(path: "Contents/XPCServices/\(name)", directoryHint: .isDirectory)
-    }
-
-    /// Whether this app bundle has the service.
-    static func isPresent(in app: URL) -> Bool {
-        FileManager.default.fileExists(atPath: url(in: app).appending(path: "Contents/Info.plist").path)
+    static var url: URL {
+        Bundle.main.bundleURL.appending(path: "Contents/XPCServices/WSurf Chromium.xpc", directoryHint: .isDirectory)
     }
 
     /// Whether the running app has the service: the gate of every test that needs it.
+    ///
+    /// Never in a Release build, whatever is on disk, until the owner's signing PR (D4-S) signs the service: the service is for
+    /// DEBUG, test and staged builds only (staged builds are DEBUG), so Release keeps the framework and the helpers in
+    /// `Contents/Frameworks` by construction.
     static var isPresent: Bool {
-        isPresent(in: Bundle.main.bundleURL)
+        #if DEBUG
+        return FileManager.default.fileExists(atPath: url.appending(path: "Contents/Info.plist").path)
+        #else
+        return false
+        #endif
     }
 
     /// The folder that holds the framework and the helpers in the service's one-copy layout, or nil in the default layout.
-    static func frameworks(in app: URL) -> URL? {
-        guard isPresent(in: app) else { return nil }
-        return url(in: app).appending(path: "Contents/Frameworks", directoryHint: .isDirectory)
-    }
-
     static var frameworks: URL? {
-        frameworks(in: Bundle.main.bundleURL)
+        isPresent ? url.appending(path: "Contents/Frameworks", directoryHint: .isDirectory) : nil
     }
 
     /// The app's own CEF framework folder, from the service's copy when the app has one.

@@ -17,8 +17,10 @@ struct ChromiumServiceBundleTests {
         Bundle.main.bundleURL
     }
     private var service: URL {
-        ChromiumServiceBundle.url(in: app)
+        ChromiumServiceBundle.url
     }
+    /// The five helper apps, in the order `Tools/embed-chromium.sh` writes them.
+    private static let helperNames = ["WSurf Helper", "WSurf Helper (Alerts)", "WSurf Helper (GPU)", "WSurf Helper (Plugin)", "WSurf Helper (Renderer)"]
     private var appIdentifier: String {
         Bundle.main.bundleIdentifier ?? ""
     }
@@ -73,7 +75,7 @@ struct ChromiumServiceBundleTests {
         let apps = app.appending(path: "Contents/Frameworks")
         #expect(manager.fileExists(atPath: own.appending(path: ChromiumServiceBundle.frameworkName).path))
         #expect(!manager.fileExists(atPath: apps.appending(path: ChromiumServiceBundle.frameworkName).path), "one copy")
-        for helper in ChromiumServiceBundle.helperNames {
+        for helper in Self.helperNames {
             let executable = "\(helper).app/Contents/MacOS/\(helper)"
             #expect(manager.isExecutableFile(atPath: own.appending(path: executable).path), "\(helper) in the service")
             #expect(!manager.fileExists(atPath: apps.appending(path: "\(helper).app").path), "\(helper) is not in the app")

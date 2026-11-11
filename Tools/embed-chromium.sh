@@ -24,8 +24,13 @@ if [[ -z "$oop" ]]; then
     # The Embed Chromium phase declares the service's executable as an output, so that a change to the service seals the app
     # again (without it the app's seal goes stale). Xcode makes that path's folders before the script runs; without the service
     # they stay empty, and CodeSign refuses an .xpc with no Info.plist. Only empty folders go (rmdir), so the default app is
-    # exactly what it was.
+    # exactly what it was. A service that has an Info.plist is not a leftover but a real one, from an earlier build with the
+    # switch in the same DerivedData: it would stay, and the runtime would take its stale copy of CEF, so stop instead.
     leftover="$TARGET_BUILD_DIR/$CONTENTS_FOLDER_PATH/XPCServices/WSurf Chromium.xpc"
+    if [[ -e "$leftover/Contents/Info.plist" ]]; then
+        echo "error: $leftover is a service from a build with WSURF_CHROMIUM_OOP_BUILD=YES; use a clean DerivedData for a build without it." >&2
+        exit 1
+    fi
     for folder in "$leftover/Contents/MacOS" "$leftover/Contents" "$leftover" "${leftover%/*}"; do
         /bin/rmdir "$folder" 2>/dev/null || break
     done
