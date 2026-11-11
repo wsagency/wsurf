@@ -105,6 +105,7 @@ final class BrowserSettings {
         ?? ReaderSpeech.defaultRate
     @ObservationIgnored lazy var storedShowsFullAddress: Bool? = appDefaults.object(forKey: Key.fullAddress) as? Bool ?? false
     @ObservationIgnored lazy var storedSideButtonsNavigate: Bool? = appDefaults.object(forKey: Key.mouseSideButtons) as? Bool ?? true
+    @ObservationIgnored lazy var storedShowsPasswordsInMenuBar: Bool? = appDefaults.object(forKey: Key.passwordsMenuBar) as? Bool ?? true
     @ObservationIgnored lazy var storedWindowStyle: BrowserWindowStyle? =
         appDefaults.string(forKey: Key.windowStyle).flatMap(BrowserWindowStyle.init(rawValue:)) ?? .standard
     @ObservationIgnored lazy var storedMinimalBarEdge: MinimalBarEdge? =
@@ -124,6 +125,7 @@ final class BrowserSettings {
     @ObservationIgnored var onContentBlockingChanged: (() -> Void)?
     @ObservationIgnored var onUpdateChannelChanged: ((UpdateChannel) -> Void)?
     @ObservationIgnored var onLyricsChanged: ((Bool) -> Void)?
+    @ObservationIgnored var onPasswordsMenuBarChanged: ((Bool) -> Void)?
     @ObservationIgnored var onSleepPolicyChanged: (() -> Void)?
     @ObservationIgnored var onMediaPlayerChanged: ((Bool) -> Void)?
     @ObservationIgnored var onAutomaticPictureInPictureChanged: ((Bool) -> Void)?
@@ -699,6 +701,7 @@ final class BrowserSettings {
         readerSpeechRate = ReaderSpeech.defaultRate
         resetWindowStyle()
         sideButtonsNavigate = true
+        showsPasswordsInMenuBar = true
         onWebPreferencesChanged?()
     }
 }
