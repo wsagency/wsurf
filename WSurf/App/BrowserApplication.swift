@@ -73,6 +73,15 @@ final class BrowserApplication {
         }.first ?? windows.last { !$0.isClosed && !$0.profiles.isPrivate && !$0.isMicro }
     }
 
+    /// The external-link window when it shows `profile`, else the last regular window of that profile; nil with none, so a caller
+    /// opens a new window of the profile instead of another profile's.
+    func externalLinkTarget(for profile: Profile) -> AppCoordinator? {
+        if let target = externalLinkTarget, target.profiles.current.id == profile.id {
+            return target
+        }
+        return windows.last { !$0.isClosed && !$0.profiles.isPrivate && !$0.isMicro && $0.profiles.current.id == profile.id }
+    }
+
     /// The window a connected app, the assistant's tools and shortcuts that open app pages work in: the active window, or
     /// while a micro window is active, the regular window used last. A private window that is active, micro or not, gives
     /// nothing, so a connected app keeps being refused while one is in front.

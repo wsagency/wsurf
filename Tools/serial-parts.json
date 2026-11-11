@@ -400,6 +400,7 @@
    "PasswordAutofillFramesTests",
    "PasswordAutofillScriptTests",
    "PasswordAutofillTrackerTests",
+   "PasswordsWindowTests",
    "PaymentCardScriptTests",
    "PaymentCardTests",
    "PeekDecisionTests",

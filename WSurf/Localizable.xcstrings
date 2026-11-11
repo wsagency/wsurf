@@ -4597,6 +4597,9 @@
     "Passwords" : {
 
     },
+    "Passwords…" : {
+      "comment" : "Menu bar command in the application menu that opens the Passwords window, shortcut ⌥⌘K. Title Case with a real ellipsis."
+    },
     "Paste" : {
       "comment" : "Standard macOS Edit menu command, and the label of a button that pastes clipboard text into the ask field. Imperative verb. Use Apple’s own wording for the system Edit menu command."
     },

@@ -31,30 +31,44 @@ struct CredentialSettings: View {
     /// The Settings search result or deep link the page was opened for (`AutofillDestination`).
     private let highlight: String?
 
+    /// False in the Passwords window, which has a title bar of its own. The window anchor stays either way.
+    let showsHeader: Bool
+
     /// `openWebsite` opens an address in a new tab of the window that shows this page.
-    init(context: BrowserProfileContext, highlight: String?, openWebsite: @escaping @MainActor (URL) -> Void) {
+    init(
+        context: BrowserProfileContext, highlight: String?, showsHeader: Bool = true,
+        openWebsite: @escaping @MainActor (URL) -> Void
+    ) {
         let model = CredentialSettingsModel(profile: context.profile)
         model.websiteOpener = openWebsite
-        self.init(model: model, context: context, highlight: highlight)
+        self.init(model: model, context: context, highlight: highlight, showsHeader: showsHeader)
     }
 
     /// Test seam: a page over a model that already has its own manager, and the list state and selection a test can drive.
     init(
         model: CredentialSettingsModel, list: CredentialListState = CredentialListState(),
-        selection: CredentialSelection = CredentialSelection(), context: BrowserProfileContext? = nil, highlight: String? = nil
+        selection: CredentialSelection = CredentialSelection(), context: BrowserProfileContext? = nil, highlight: String? = nil,
+        showsHeader: Bool = true
     ) {
         _model = State(initialValue: model)
         _list = State(initialValue: list)
         _selection = State(initialValue: selection)
         self.context = context
         self.highlight = highlight
+        self.showsHeader = showsHeader
     }
 
     var body: some View {
         // Kept by every state below. On the branching `Group` the modifier applied to each child of the current branch,
         // and the weak anchor kept whichever view updated last, which could be one already removed from the window.
-        SettingsPageHeader(title: "Autofill", caption: "WSurf stores saved details on this Mac.")
-            .background(CredentialWindowAnchorView(anchor: anchor))
+        // Without the header it stays on a zero-height view: every `withWindow` action (unlock, passkeys, create or delete a vault,
+        // import, export) needs the window, and without the anchor each would only say it cannot find it.
+        if showsHeader {
+            SettingsPageHeader(title: "Autofill", caption: "WSurf stores saved details on this Mac.")
+                .background(CredentialWindowAnchorView(anchor: anchor))
+        } else {
+            Color.clear.frame(height: 0).background(CredentialWindowAnchorView(anchor: anchor))
+        }
         scratchWarnings
         Group {
             if !model.isAvailable {
@@ -882,11 +896,14 @@ private final class CredentialWindowAnchor {
     }
 }
 
+/// Named so a test can find the view the anchor reads the window from.
+final class CredentialWindowAnchorNSView: NSView {}
+
 private struct CredentialWindowAnchorView: NSViewRepresentable {
     let anchor: CredentialWindowAnchor
 
     func makeNSView(context: Context) -> NSView {
-        let view = NSView()
+        let view = CredentialWindowAnchorNSView()
         anchor.view = view
         return view
     }

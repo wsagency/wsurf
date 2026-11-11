@@ -94,6 +94,7 @@ final class MainMenu: NSObject, NSMenuItemValidation {
         menu.addItem(command("Release Notes…", #selector(showReleaseNotes)))
         menu.addItem(.separator())
         menu.addItem(command("Settings…", #selector(openSettings), key: ","))
+        menu.addItem(command("Passwords…", #selector(openPasswords), key: "k", modifiers: [.command, .option]))
         menu.addItem(.separator())
 
         let services = NSMenu(title: "Services")
@@ -323,6 +324,11 @@ final class MainMenu: NSObject, NSMenuItemValidation {
         coordinator.mainWindowForCommands().openSettings()
     }
 
+    /// Must not touch `coordinator`: that getter opens a browser window when there is none, and the vault needs none.
+    @objc private func openPasswords() {
+        PasswordsWindow.shared.show()
+    }
+
     @objc private func checkForUpdates() {
         (application?.updates ?? coordinator.updates).checkNow()
     }
@@ -365,6 +371,17 @@ final class MainMenu: NSObject, NSMenuItemValidation {
     /// ⌘W: a Peek closes first; a pin, favorite or page in a pinned folder unloads; any other tab closes like its sidebar X.
     /// In a micro window it closes the window, so Reopen Last Closed Window brings the page back as a micro window.
     @objc private func closeOrUnloadTab() {
+        // ⌘W in the Passwords window closes that window, never a tab of a browser window behind it. Before `coordinator`, which
+        // would open a browser window if there is none. With a sheet open on it (the key window is then the sheet) ⌘W
+        // does nothing but beep until the sheet is dismissed.
+        if let passwords = PasswordsWindow.passwordsWindow(key: PasswordsWindow.keyWindow()) {
+            if passwords.attachedSheet == nil {
+                passwords.performClose(nil)
+            } else {
+                NSSound.beep()
+            }
+            return
+        }
         if coordinator.closePeek() {
             return
         }
@@ -595,15 +612,34 @@ final class MainMenu: NSObject, NSMenuItemValidation {
     /// What still works with no browser window open.
     private static let withoutAWindow: Set<Selector> = [
         #selector(newWindow), #selector(newTab), #selector(newPrivateWindow), #selector(newMicroWindow),
-        #selector(openSettings), #selector(checkForUpdates), #selector(reopenClosedTab), #selector(showAbout),
+        #selector(openSettings), #selector(openPasswords), #selector(checkForUpdates), #selector(reopenClosedTab),
+        #selector(showAbout),
     ]
 
-    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {  // swiftlint:disable:this cyclomatic_complexity function_body_length
+    /// The items answered without a browser window: ⌘W in the Passwords window, Reopen Last Closed Window, and with no browser
+    /// window open everything else. `nil` leaves the item to `validateMenuItem`.
+    private func validateWithoutBrowserWindow(_ menuItem: NSMenuItem) -> Bool? {
+        // First: the no-browser-window gate below would disable ⌘W when the Passwords window is all that is open.
+        if menuItem.action == #selector(closeOrUnloadTab) {
+            if PasswordsWindow.passwordsWindow(key: PasswordsWindow.keyWindow()) != nil {
+                menuItem.title = String(localized: "Close Window")
+                return true
+            }
+            // The switch below, which sets the title for a browser window, is not reached with no browser window open.
+            menuItem.title = String(localized: "Close Tab")
+        }
         if menuItem.action == #selector(reopenClosedWindow) {
             return application?.canReopenWindow == true
         }
         if let application, application.activeCoordinator == nil {
             return menuItem.action.map(Self.withoutAWindow.contains) ?? false
+        }
+        return nil
+    }
+
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {  // swiftlint:disable:this cyclomatic_complexity
+        if let answer = validateWithoutBrowserWindow(menuItem) {
+            return answer
         }
         guard validateMicroItem(menuItem) != false else { return false }
         switch menuItem.action {

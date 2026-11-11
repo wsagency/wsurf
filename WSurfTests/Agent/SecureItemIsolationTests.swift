@@ -22,6 +22,8 @@ struct SecureItemIsolationTests {
         "autofillvaults", "credentialaccount", "autofillvaultmigration", "autofillmigration", "autofillsaveindex",
         "managerfill", "vaultitemfill", "vaultitemsuggestions", "autofilllogin", "autofillitems", "autofillcandidate",
         "autofillitempick", "autofillitemrows", "passwordhealth", "passwordreuse", "passwordweakness",
+        // The Passwords window hosts the vault page: no tool of the assistant or MCP may name it, so none can open or drive it.
+        "passwordswindow",
     ]
 
     private var repositoryRoot: URL {
