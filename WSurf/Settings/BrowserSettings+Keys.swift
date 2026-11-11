@@ -60,6 +60,7 @@ extension BrowserSettings {
         static let autoplay = "content.autoplay"
         static let mediaPlayer = "media.player"
         static let lyrics = "media.lyrics"
+        static let passwordsMenuBar = "menuBar.passwords"
         static let tabColorRefraction = "appearance.tabColorRefraction"
         static let automaticPiP = "media.automaticPiP"
         static let videoInPlayer = "experiments.videoInPlayer"

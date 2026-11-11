@@ -149,6 +149,16 @@ struct GeneralSettings: View {
                 SettingsToggle($settings.sideButtonsNavigate)
             }
             .settingsAnchor("general.mouseSideButtons")
+
+            RowSeparator()
+
+            DetailRow(
+                title: "Show Passwords in Menu Bar",
+                caption: "Show the credentials vault in the menu bar."
+            ) {
+                SettingsToggle($settings.showsPasswordsInMenuBar)
+            }
+            .settingsAnchor("general.passwordsMenuBar")
         }
 
         CommandPaletteSettings(settings: settings)
