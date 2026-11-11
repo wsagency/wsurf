@@ -7,7 +7,7 @@ extension BrowserSettings {
     // MARK: - Menu bar
 
     /// Whether WSurf shows its Passwords item in the macOS menu bar. One choice for the whole app, on by default.
-    /// `onPasswordsMenuBarChanged` is where the item will be shown or hidden; nothing sets it yet.
+    /// `onPasswordsMenuBarChanged` is where the item is shown or hidden: `PasswordsStatusItem.install` sets it.
     var showsPasswordsInMenuBar: Bool {
         get { globalValue(\.showsPasswordsInMenuBar, storage: storedShowsPasswordsInMenuBar) }
         set {

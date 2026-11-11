@@ -37,6 +37,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // the main queue once launch has drawn its windows.
             DispatchQueue.main.async {
                 AppleSpeechVoiceCatalog.shared.prepare()
+                // The Passwords item in the menu bar (Settings › General). It reads no vault until the popover opens.
+                PasswordsStatusItem.shared.install(settings: BrowserSettings.application)
             }
             #if DEBUG
             if let coordinator = application.activeCoordinator {

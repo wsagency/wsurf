@@ -421,6 +421,15 @@
     "Search %@" : {
       "comment" : "Command palette site search hint, placeholder, and result detail. %@ is the website's name and should not be translated. Search is a verb."
     },
+    "Recent" : {
+      "comment" : "Heading of the list of the other credentials in the Passwords popover in the menu bar, most recently changed first. Title Case, one word."
+    },
+    "Matching This Website" : {
+      "comment" : "Heading of the credentials of the website in the front tab, in the Passwords popover in the menu bar. Title Case."
+    },
+    "Show All in Passwords" : {
+      "comment" : "Link under the 50 credentials the Passwords popover in the menu bar lists, when more match. It opens the Passwords window. Title Case."
+    },
     "Search Credentials" : {
       "comment" : "Placeholder of the search field at the top of the Pick Credential… sheet; it searches titles, usernames and websites. Title Case."
     },
@@ -4839,6 +4848,9 @@
     },
     "Put appearance, search, privacy, websites, and downloads back to their defaults." : {
       "comment" : "Description of the Reset settings row, shown only in the Settings search results. The five nouns name Settings pages, so translate them the same way their page titles are translated. Imperative with a final full stop."
+    },
+    "Locks every vault and Input History of every profile." : {
+      "comment" : "Help text of Lock Credentials in the Passwords popover in the menu bar: it locks every vault of every profile and Input History. A sentence with a final full stop."
     },
     "Quit WSurf" : {
 
@@ -10025,6 +10037,9 @@
     "Open Input History in WSurf." : {
       "comment" : "Reason shown in the macOS Touch ID or Mac password prompt that appears when the user shows the entries of Input History (Settings > Autofill > Vault tab). Input History is the feature that remembers text typed on websites. A full sentence; WSurf is the app’s name and stays untranslated."
     },
+    "Open Passwords" : {
+      "comment" : "Item of the menu at the bottom of the Passwords popover in the menu bar. It opens the Passwords window. Title Case."
+    },
     "Open Website" : {
       "comment" : "VoiceOver action on a credential row, and an item of its right-click menu: opens the credential’s website in a new tab. Verb phrase, Title Case."
     },
@@ -11305,6 +11320,9 @@
     },
     "Unlock and Choose…" : {
       "comment" : "Default button of the first passkey alert when the vault is locked: it unlocks Credential Manager and then lets the user choose an account. Title Case, a verb phrase; the ellipsis says another step follows, keep it."
+    },
+    "Unlock…" : {
+      "comment" : "Button of the locked Passwords popover in the menu bar. It opens the Passwords window, where the vault is unlocked. Title Case with a real ellipsis."
     },
     "Unlock Credentials" : {
       "comment" : "Main button on the locked Autofill page when the profile has a single vault: unlocks it. Title Case, a command. With several vaults the button names the vault instead."
