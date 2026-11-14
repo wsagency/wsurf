@@ -22,6 +22,15 @@ public enum CefRemote {
     /// CDP ids at or above this are the service's own commands (the history check); never forwarded to WSurf.
     public static let serviceCommandBase: Int64 = 1_900_000_000
 
+    /// The URL schemes a navigation of any frame may use. WSurf's in-process Chromium client (`ChromiumClient.on_before_browse`)
+    /// and the service's `on_before_browse` both apply this one list, so the two engines cannot drift apart.
+    public static let allowedNavigationSchemes: Set<String> = ["http", "https", "file", "about", "data", "blob", "chrome-extension"]
+
+    /// Whether a navigation to `url` may go ahead as far as its scheme is concerned.
+    public static func allowsNavigation(to url: URL) -> Bool {
+        allowedNavigationSchemes.contains(url.scheme?.lowercased() ?? "")
+    }
+
     public enum Key {
         public static let op = "op"
         public static let browser = "bid"
@@ -111,6 +120,8 @@ public enum CefRemote {
         public static let handlerSets = "handlers"
         /// `browser.create`, DEBUG only: one of ``CefRemote/DebugCreate``.
         public static let debugCreate = "dbgcreate"
+        /// `debug.stats` (D4-4b review F1): how many navigations the service cancelled itself because of their scheme.
+        public static let refusedNavigations = "refused"
     }
 
     /// What `browser.create` can ask of the service in a build that has the DEBUG ops, to reach creation paths a test could not

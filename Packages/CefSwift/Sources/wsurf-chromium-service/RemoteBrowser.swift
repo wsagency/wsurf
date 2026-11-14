@@ -64,8 +64,11 @@ final class RemoteBrowser {
     func create(url: String, context: UnsafeMutablePointer<cef_request_context_t>?, debug: String) -> Bool {
         let client = RemoteClientHandlers.makeClient(for: box)
         clientPointer = client
+        #if WSURF_SERVICE_DEBUG_OPS
+        // Not in a service that is signed: the flags and their log lines are not compiled there (D4-S makes the define conditional).
         switch debug {
         case CefRemote.DebugCreate.fail:
+            // Stops before CEF's own refusal path (the references handed to CEF below), which is CEF's wrappers' to consume.
             note("browser \(id): create FAILED (debug)")
             return false
         case CefRemote.DebugCreate.hold:
@@ -74,6 +77,7 @@ final class RemoteBrowser {
         default:
             break
         }
+        #endif
         var info = cef_window_info_t()
         info.size = MemoryLayout<cef_window_info_t>.stride
         info.windowless_rendering_enabled = 1
@@ -485,18 +489,26 @@ final class RemoteBrowser {
     }
 
     private func sendDevTools(_ data: Data, host: UnsafeMutablePointer<cef_browser_host_t>) {
+        let messageID = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["id"] as? Int
+        // The ids from `serviceCommandBase` up are the service's own (its history read and collapse): a command of the host's
+        // with one would be taken for those, and its result would never reach WSurf. Refused at once, and not sent.
+        if let messageID, Int64(messageID) >= CefRemote.serviceCommandBase {
+            failDevTools(id: messageID, "The command id is reserved for the service.")
+            return
+        }
         let accepted = data.withUnsafeBytes { bytes in
             host.pointee.send_dev_tools_message?(host, bytes.baseAddress, bytes.count) ?? 0
         }
-        guard accepted == 0 else { return }
+        guard accepted == 0, let messageID else { return }
         // Rejected: answer the command so WSurf's wait ends now, not at its timeout.
-        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any], let messageID = object["id"] as? Int else {
-            return
-        }
+        failDevTools(id: messageID, "Chromium DevTools rejected the command.")
+    }
+
+    private func failDevTools(id messageID: Int, _ message: String) {
         let failed = event(CefRemote.Event.devToolsResult)
         failed.set(CefRemote.Key.identifier, Int64(messageID))
         failed.set(CefRemote.Key.success, false)
-        failed.set(CefRemote.Key.data, data: Data(#"{"message":"Chromium DevTools rejected the command."}"#.utf8))
+        failed.set(CefRemote.Key.data, data: Data(#"{"message":"\#(message)"}"#.utf8))
         send(failed)
     }
 

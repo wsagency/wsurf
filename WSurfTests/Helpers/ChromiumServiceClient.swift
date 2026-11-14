@@ -48,7 +48,8 @@ nonisolated final class ChromiumServiceClient: @unchecked Sendable {
         var events: [(op: String, message: CefRemoteMessage)] = []
     }
 
-    /// The service's pid, once a hello (or `stats`) has told.
+    /// The service's pid, once a hello (or the first `stats`, for a client that says no hello) has told. A hello names the instance
+    /// this client talks to; after that only that instance may answer `stats` (a relaunched one would answer 0 and look healthy).
     var pid: pid_t? {
         state.withLock { $0.pid }
     }
@@ -157,10 +158,21 @@ nonisolated final class ChromiumServiceClient: @unchecked Sendable {
         return reply
     }
 
+    /// `debug.stats`. The reply's pid is adopted only when the client has none yet; a reply from any other instance than the one
+    /// this client knows is an error, not a number to compare (review F6).
     func stats() throws -> CefRemoteMessage {
         let reply = try call(CefRemoteMessage(CefRemote.Op.debugStats))
         if reply.has(CefRemote.Key.pid) {
-            state.withLock { $0.pid = pid_t(reply.int(CefRemote.Key.pid)) }
+            let replied = pid_t(reply.int(CefRemote.Key.pid))
+            let known = state.withLock { state -> pid_t in
+                if state.pid == nil {
+                    state.pid = replied
+                }
+                return state.pid ?? replied
+            }
+            guard known == replied else {
+                throw Failure.setup("debug.stats came from service \(replied), not from \(known) (the instance left and a new one was started)")
+            }
         }
         return reply
     }

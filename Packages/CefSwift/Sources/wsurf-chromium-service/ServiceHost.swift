@@ -364,12 +364,14 @@ final class ServiceHost {
         let contextID = message.string(CefRemote.Key.context)
         let url = message.has(CefRemote.Key.url) ? message.string(CefRemote.Key.url) : "about:blank"
         var failure: String?
+        var duplicate = false
         if !CefRuntime.shared.isInitialized {
             failure = "CEF is not started"
         } else if !message.has(CefRemote.Key.browser) {
             failure = "a browser needs an id"
         } else if browsers[identifier] != nil || stubs[identifier] != nil {
             failure = "a browser with this id is open"
+            duplicate = true
         } else if !contextID.isEmpty && contexts[contextID] == nil {
             failure = "unknown context"
         } else if url.isEmpty {
@@ -390,7 +392,9 @@ final class ServiceHost {
                 failure = "CEF could not create the browser"
             }
         }
-        if failure != nil {
+        // A refusal because the id is already open is the reply's alone: that browser is still open and untouched, and WSurf must
+        // not hear that it closed (D4-5's registry would drop the id).
+        if failure != nil, !duplicate {
             // WSurf waits for the browser's events: tell it there will be none.
             send(CefRemoteMessage(CefRemote.Event.browserClosed, browser: identifier))
         }
@@ -616,6 +620,7 @@ final class ServiceHost {
                 answer.set(CefRemote.Key.count, openCount)
                 answer.set(CefRemote.Key.browserObjects, ServiceCounters.browsers.withLock { $0 })
                 answer.set(CefRemote.Key.handlerSets, ServiceCounters.handlerSets.withLock { $0 })
+                answer.set(CefRemote.Key.refusedNavigations, ServiceCounters.refusedNavigations.withLock { $0 })
                 answer.set(CefRemote.Key.contexts, contexts.count)
                 answer.set(CefRemote.Key.flushes, flushCount)
                 answer.set(CefRemote.Key.logFile, logFile)

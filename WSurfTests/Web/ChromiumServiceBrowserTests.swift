@@ -23,6 +23,8 @@ struct ChromiumServiceBrowserTests {
             """),
         "/posted": .html("<!doctype html><title>Posted</title><p>posted</p>"),
         "/find": .html("<!doctype html><title>Find</title><p>needle one, needle two</p>"),
+        "/frame": .html("<!doctype html><title>Frame</title><p>frame</p>"),
+        "/parent": .html("<!doctype html><title>Parent</title><iframe src=\"/frame\"></iframe>"),
     ]
 
     /// A started service with one request context, and a fixture server. `answers`: whether this host lets navigations go ahead.
@@ -102,6 +104,56 @@ struct ChromiumServiceBrowserTests {
         // The service's own commands are not WSurf's: an id from the service's range is never answered as WSurf's.
         let ids = rig.client.events(CefRemote.Event.devToolsResult).map { $0.int(CefRemote.Key.identifier) }
         #expect(ids.allSatisfy { $0 < CefRemote.serviceCommandBase }, "the service's history reads stay inside the service: \(ids)")
+    }
+
+    // MARK: Scheme allowlist (review F1)
+
+    @Test
+    func theServiceAndWSurfApplyOneSchemeAllowlist() throws {
+        for scheme in ["http", "https", "file", "about", "data", "blob", "chrome-extension", "HTTPS"] {
+            #expect(CefRemote.allowsNavigation(to: try #require(URL(string: "\(scheme)://x/y"))), "\(scheme)")
+        }
+        for url in ["chrome://version", "ftp://127.0.0.1/x", "view-source:https://x/", "javascript:alert(1)", "mailto:a@b", "x-wsurf://x"] {
+            #expect(!CefRemote.allowsNavigation(to: try #require(URL(string: url))), "\(url)")
+        }
+    }
+
+    @Test(.enabled(if: ChromiumServiceBundle.isPresent))
+    func aNavigationToASchemeOutsideTheAllowlistIsCancelledInTheServiceEvenWhenTheHostAnswersYes() async throws {
+        let rig = try await Self.rig(answers: true)
+        defer { rig.client.finish() }
+        try Self.open(rig, 1, "/one")
+        let one = try rig.url("/one")
+        let loadEnds = rig.client.events(CefRemote.Event.loadEnd).count
+        let refused = try rig.client.stats().int(CefRemote.Key.refusedNavigations)
+        // Main frame: the host would say yes to anything, and is not even asked.
+        try rig.client.load("chrome://version", browser: 1)
+        let afterMain = try rig.client.waitStats { $0.int(CefRemote.Key.refusedNavigations) > refused }
+        #expect(afterMain.int(CefRemote.Key.refusedNavigations) > refused, "the service cancelled the chrome:// navigation itself")
+        #expect(!rig.client.questionURLs.contains("chrome://version"), "a disallowed scheme costs no round trip")
+        // Sub-frames: the page's iframe is navigated by the browser (CDP `Page.navigate` with the frame's id) to a scheme outside the list.
+        let parent = try rig.url("/parent")
+        try rig.client.load(parent, browser: 1)
+        #expect(rig.client.waitEvent(CefRemote.Event.loadEnd) { $0.browser == 1 && $0.string(CefRemote.Key.url) == parent } != nil)
+        let frameTree = try #require(rig.client.devTools("Page.getFrameTree", id: 20, browser: 1))
+        let tree = try #require(try JSONSerialization.jsonObject(with: frameTree.data(CefRemote.Key.data)) as? [String: Any])
+        let children = (tree["frameTree"] as? [String: Any])?["childFrames"] as? [[String: Any]]
+        let childID = try #require((children?.first?["frame"] as? [String: Any])?["id"] as? String, "the parent page has an iframe")
+        // The iframe's own load (an allowed scheme) was not asked about: sub-frames with an allowed scheme are unchanged (D4-8 decides).
+        #expect(rig.server.lastRequestHead(for: "/frame") != nil, "a sub-frame with an allowed scheme still loads")
+        #expect(!rig.client.questionURLs.contains(try rig.url("/frame")), "and is not asked about")
+        let beforeFrame = try rig.client.stats().int(CefRemote.Key.refusedNavigations)
+        #expect(beforeFrame == afterMain.int(CefRemote.Key.refusedNavigations), "nothing else was refused so far")
+        // Chromium decides by itself which of these it hands to the browser's navigation gate; every one that gets there is refused.
+        for (offset, target) in ["ftp://127.0.0.1:9/blocked-frame", "chrome://version"].enumerated() {
+            _ = rig.client.devTools("Page.navigate", params: #"{"url":"\#(target)","frameId":"\#(childID)"}"#, id: 21 + Int64(offset), browser: 1)
+        }
+        let afterFrame = try rig.client.waitStats { $0.int(CefRemote.Key.refusedNavigations) > beforeFrame }
+        #expect(afterFrame.int(CefRemote.Key.refusedNavigations) > beforeFrame, "a sub-frame's navigation to a scheme outside the list was cancelled in the service")
+        #expect(!rig.client.questionURLs.contains { $0.hasPrefix("ftp:") || $0.hasPrefix("chrome:") }, "and not asked about, though the host answers yes")
+        // Nothing of the cancelled main-frame navigation loaded: every load.end since is the parent's.
+        let ends = rig.client.events(CefRemote.Event.loadEnd).dropFirst(loadEnds).map { $0.string(CefRemote.Key.url) }
+        #expect(ends.allSatisfy { $0 == parent }, "load.end for \(ends) (the page before was \(one))")
     }
 
     // MARK: History
@@ -299,6 +351,48 @@ struct ChromiumServiceBrowserTests {
         #expect(stats.int(CefRemote.Key.handlerSets) == 0, "and so are its handlers")
         // The id is free again, and the service still makes browsers.
         try Self.open(rig, 1, "/one")
+    }
+
+    // MARK: Create and CDP refusals (review F2, F3)
+
+    @Test(.enabled(if: ChromiumServiceBundle.isPresent))
+    func aCreateWithAnIdThatIsOpenIsRefusedAndTheOpenBrowserIsUntouched() async throws {
+        let rig = try await Self.rig()
+        defer { rig.client.finish() }
+        try Self.open(rig, 1, "/one")
+        let two = try rig.url("/two")
+        let refused = try rig.client.createBrowser(1, url: two, context: "profile")
+        #expect(!refused.bool(CefRemote.Key.success))
+        #expect(refused.string(CefRemote.Key.error) == "a browser with this id is open")
+        // Events and the reply travel in order on one connection: a `browser.closed` the refusal had sent is here already.
+        #expect(rig.client.events(CefRemote.Event.browserClosed).isEmpty, "WSurf is not told that the open browser closed")
+        let stats = try rig.client.stats()
+        #expect(stats.int(CefRemote.Key.count) == 1 && stats.int(CefRemote.Key.browserObjects) == 1 && stats.int(CefRemote.Key.handlerSets) == 1)
+        // It is the same browser, still working: a load goes through and is its own.
+        try rig.client.load(two, browser: 1)
+        #expect(rig.client.waitEvent(CefRemote.Event.loadEnd) { $0.browser == 1 && $0.string(CefRemote.Key.url) == two } != nil)
+        #expect(rig.client.events(CefRemote.Event.browserClosed).isEmpty)
+    }
+
+    @Test(.enabled(if: ChromiumServiceBundle.isPresent))
+    func aHostCDPCommandInTheServicesOwnIdRangeIsRefusedAndTheServicesHistoryReadsStillWork() async throws {
+        let rig = try await Self.rig()
+        defer { rig.client.finish() }
+        try Self.open(rig, 1, "/one")
+        // The service's first command id is exactly the base: a host command with it would be taken for the history read.
+        for id in [CefRemote.serviceCommandBase, CefRemote.serviceCommandBase + 7] {
+            let before = rig.client.events(CefRemote.Event.devToolsResult).count
+            let result = try #require(rig.client.devTools("Runtime.evaluate", params: #"{"expression":"1 + 2"}"#, id: id, browser: 1), "an answer for \(id)")
+            #expect(!result.bool(CefRemote.Key.success), "id \(id) is the service's")
+            #expect(rig.client.events(CefRemote.Event.devToolsResult).count == before + 1, "one refusal, and nothing else for id \(id)")
+        }
+        // The history read is intact: a navigation still produces its list.
+        let two = try rig.url("/two")
+        try rig.client.load(two, browser: 1)
+        #expect(rig.client.waitHistory { $0.count == 2 && $0[1].isCurrent && $0[1].url == two } != nil)
+        // An id below the range is the host's as before.
+        let fine = try #require(rig.client.devTools("Runtime.evaluate", params: #"{"expression":"1 + 2","returnByValue":true}"#, id: CefRemote.serviceCommandBase - 1, browser: 1))
+        #expect(fine.bool(CefRemote.Key.success))
     }
 
     // MARK: Ask the host

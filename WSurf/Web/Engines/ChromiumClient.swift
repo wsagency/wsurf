@@ -832,7 +832,7 @@ final class ChromiumClient {
                 guard page.navigationDecision?(
                     navigationRequest, isMain, userGesture != 0, redirect != 0, navigationType, sourceURL, sourceFrame
                 ) != false else { return 1 }
-                guard ["http", "https", "file", "about", "data", "blob", "chrome-extension"].contains(url.scheme?.lowercased() ?? "") else { return 1 }
+                guard CefRemote.allowsNavigation(to: url) else { return 1 }
                 if isMain {
                     // Before the request is sent, so before any subresource of the new document can ask.
                     client.fileScope.mainFrameNavigation(to: url)

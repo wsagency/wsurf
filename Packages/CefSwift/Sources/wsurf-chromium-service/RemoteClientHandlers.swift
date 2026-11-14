@@ -20,6 +20,8 @@ import os
 enum ServiceCounters {
     static let browsers = OSAllocatedUnfairLock(initialState: 0)
     static let handlerSets = OSAllocatedUnfairLock(initialState: 0)
+    /// Navigations the service cancelled itself, for a scheme outside ``CefRemote/allowedNavigationSchemes`` (`debug.stats`).
+    static let refusedNavigations = OSAllocatedUnfairLock(initialState: 0)
 }
 
 /// What every handler of one browser owns in place of the browser.
@@ -198,7 +200,14 @@ final class RemoteClientHandlers: @unchecked Sendable {
             Native.release(frame.map(UnsafeMutableRawPointer.init))
             let url = nativeRequest.map { Native.take($0.pointee.get_url?($0)) } ?? ""
             Native.release(nativeRequest.map(UnsafeMutableRawPointer.init))
-            // Sub-frames are not WSurf's to decide. A browser the host no longer has cancels (nobody could answer for it).
+            // Every frame passes the scheme allowlist WSurf applies in process (`ChromiumClient`), here and without a round trip:
+            // a URL that does not parse, or whose scheme is not listed, is cancelled whatever the host would answer.
+            guard let target = URL(string: url), CefRemote.allowsNavigation(to: target) else {
+                ServiceCounters.refusedNavigations.withLock { $0 += 1 }
+                return 1
+            }
+            // Sub-frames with an allowed scheme are not asked about (D4-8 decides whether they should be). A browser the host no
+            // longer has cancels (nobody could answer for it).
             guard main else { return 0 }
             guard let owner = RemoteClientHandlers.browser(handlerSelf) else { return 1 }
             let allowed = MainActor.assumeIsolated { owner.mayNavigate(to: url, isRedirect: isRedirect != 0, userGesture: userGesture != 0) }
