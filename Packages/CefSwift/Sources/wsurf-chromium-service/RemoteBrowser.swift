@@ -434,15 +434,35 @@ final class RemoteBrowser {
     /// Messages of a cross-site frame's session go to WSurf whole: CEF's parsed callbacks would drop their `sessionId`. The
     /// page's own messages are left to CEF, which then calls the result or event callback.
     private func devToolsMessage(_ message: UnsafeRawPointer, size: Int) -> Int32 {
-        let needle = "\"sessionId\""
-        let found = needle.utf8CString.withUnsafeBufferPointer { pattern in
-            memmem(message, size, pattern.baseAddress, pattern.count - 1) != nil
-        }
-        guard found else { return 0 }
+        guard Self.isSessionMessage(message, size: size) else { return 0 }
         let forwarded = event(CefRemote.Event.devToolsMessage)
         forwarded.set(CefRemote.Key.data, bytes: message, count: size)
         send(forwarded)
         return 1
+    }
+
+    /// Whether `message` is a cross-site frame session's, by its top-level `sessionId`. The text alone proves nothing: a page
+    /// controls its title and the values its scripts return, and a message that merely contains the word would be taken from CEF
+    /// (whose result callback then never runs, so the service's own history read would never end). So the search is only a
+    /// pre-filter; the message is parsed, and is claimed only when its top-level `sessionId` is a string. One that does not parse
+    /// is claimed only when it ends as Chromium ends a session's message (the ID last), as `ChromiumDevTools` does in process.
+    /// A message answering a command of the service's own is never claimed.
+    private nonisolated static func isSessionMessage(_ message: UnsafeRawPointer, size: Int) -> Bool {
+        let needle = "\"sessionId\""
+        let found = needle.utf8CString.withUnsafeBufferPointer { pattern in
+            memmem(message, size, pattern.baseAddress, pattern.count - 1) != nil
+        }
+        guard found else { return false }
+        let data = Data(bytesNoCopy: UnsafeMutableRawPointer(mutating: message), count: size, deallocator: .none)
+        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            let tail = String(decoding: data.suffix(160), as: UTF8.self)
+            return tail.range(of: #","sessionId":"[^"\\]*"\}\s*$"#, options: .regularExpression) != nil
+        }
+        guard object["sessionId"] is String else { return false }
+        if let messageID = object["id"] as? Int, Int64(messageID) >= CefRemote.serviceCommandBase {
+            return false
+        }
+        return true
     }
 
     private func devToolsResult(id messageID: Int64, success: Bool, result: UnsafeRawPointer?, size: Int) {

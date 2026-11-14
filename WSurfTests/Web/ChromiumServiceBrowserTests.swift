@@ -91,6 +91,13 @@ struct ChromiumServiceBrowserTests {
         #expect(enable.bool(CefRemote.Key.success))
         let event = rig.client.waitEvent(CefRemote.Event.devToolsEvent) { $0.string(CefRemote.Key.method) == "Runtime.executionContextCreated" }
         #expect(event != nil, "a CDP event is forwarded")
+        // A page controls what its scripts return: a value that contains the word `sessionId` unescaped (a nested object) must
+        // not make the service take the message as a cross-site frame session's. It is the page's own result, so it arrives as one.
+        let nested = try #require(rig.client.devTools("Runtime.evaluate", params: #"{"expression":"({sessionId: 'x'})","returnByValue":true}"#, id: 9, browser: 1))
+        #expect(nested.bool(CefRemote.Key.success))
+        let nestedJSON = try #require(try JSONSerialization.jsonObject(with: nested.data(CefRemote.Key.data)) as? [String: Any])
+        #expect(((nestedJSON["result"] as? [String: Any])?["value"] as? [String: Any])?["sessionId"] as? String == "x")
+        #expect(rig.client.events(CefRemote.Event.devToolsMessage).isEmpty, "a page's own message is not diverted as a session's")
         // The service's own commands are not WSurf's: an id from the service's range is never answered as WSurf's.
         let ids = rig.client.events(CefRemote.Event.devToolsResult).map { $0.int(CefRemote.Key.identifier) }
         #expect(ids.allSatisfy { $0 < CefRemote.serviceCommandBase }, "the service's history reads stay inside the service: \(ids)")
