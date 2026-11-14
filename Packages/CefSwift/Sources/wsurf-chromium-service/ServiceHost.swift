@@ -35,7 +35,6 @@ final class ServiceHost {
     private var flushCount = 0
     private var cefStartMs: Double = -1
     private var logFile = "/dev/null"
-    private var exitOnHello = false
 
     /// A browser that is not one: it counts as open and answers a close, or does not (`answersClose`).
     private struct StubBrowser {
@@ -118,6 +117,15 @@ final class ServiceHost {
             reply(to: message, on: peer) { $0.setRefusal(check) }
             return
         }
+        guard !exiting else {
+            // A hello that got `ok` from a service that is about to leave would be followed by an interruption.
+            note("hello refused: the service is leaving")
+            reply(to: message, on: peer) {
+                $0.set(CefRemote.Key.success, false)
+                $0.set(CefRemote.Key.error, "The Chromium service is leaving.")
+            }
+            return
+        }
         if let control, control !== peer {
             // One WSurf per service: a second control connection would take the first one's events.
             note("hello refused: the service already has a host")
@@ -128,7 +136,7 @@ final class ServiceHost {
             return
         }
         #if WSURF_SERVICE_DEBUG_OPS
-        if exitOnHello {
+        if Self.consumeExitOnHello(root: message.string(CefRemote.Key.rootPath)) {
             note("debug.exitOnHello: the service kills itself (SIGKILL)")
             kill(getpid(), SIGKILL)
         }
@@ -321,7 +329,8 @@ final class ServiceHost {
         // A browser that never answers must not keep the service (and its helpers) alive.
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.closeCapSeconds) {
             note("browsers did not all close in \(Self.closeCapSeconds) s: exiting without a CEF shutdown")
-            exit(0)
+            // _exit, not exit: with CEF still up, atexit handlers and static destructors would run on a live Chromium.
+            _exit(0)
         }
     }
 
@@ -382,6 +391,28 @@ final class ServiceHost {
     // MARK: DEBUG ops
 
     #if WSURF_SERVICE_DEBUG_OPS
+    private static func exitOnHelloMarker(root: String) -> URL? {
+        root.hasPrefix("/") ? URL(filePath: root, directoryHint: .isDirectory).appending(path: ".debug-exit-on-hello") : nil
+    }
+
+    private static func writeExitOnHello(root: String, count: Int) -> Bool {
+        guard let marker = exitOnHelloMarker(root: root) else { return false }
+        if count <= 0 {
+            try? FileManager.default.removeItem(at: marker)
+            return true
+        }
+        return (try? Data(String(count).utf8).write(to: marker)) != nil
+    }
+
+    /// True when the marker under `root` still holds a count: one is taken off it.
+    private static func consumeExitOnHello(root: String) -> Bool {
+        guard let marker = exitOnHelloMarker(root: root),
+              let text = try? String(contentsOf: marker, encoding: .utf8), let count = Int(text), count > 0
+        else { return false }
+        _ = writeExitOnHello(root: root, count: count - 1)
+        return true
+    }
+
     /// The ops only tests send. Not in a service that is signed (D4-S makes this conditional on something a signed build lacks).
     private func handleDebug(_ message: CefRemoteMessage, from peer: xpc_connection_t) -> Bool {
         switch message.op {
@@ -401,8 +432,10 @@ final class ServiceHost {
                 answer.set(CefRemote.Key.mockKeychain, CefRuntime.shared.configuration?.safeStorage == .mockKeychain)
             }
         case CefRemote.Op.debugExitOnHello:
-            exitOnHello = true
-            reply(to: message, on: peer) { $0.set(CefRemote.Key.success, true) }
+            // A relaunched service is a new process with no memory of this op, so the count lives in a file under the root
+            // the hellos will name, and every hello (in any instance) takes one off before it starts CEF.
+            let written = Self.writeExitOnHello(root: message.string(CefRemote.Key.rootPath), count: Int(message.int(CefRemote.Key.count)))
+            reply(to: message, on: peer) { $0.set(CefRemote.Key.success, written) }
         case CefRemote.Op.debugStubBrowser:
             browsers[message.browser] = StubBrowser(answersClose: message.bool(CefRemote.Key.flag))
             browsersChanged()

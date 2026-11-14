@@ -143,7 +143,9 @@ public enum CefRemote {
         public static let debugAbort = "debug.abort"
         /// DEBUG: the service answers with its live counts. Has a reply.
         public static let debugStats = "debug.stats"
-        /// DEBUG: the service exits when it gets the next hello (the crash-loop tests).
+        /// DEBUG: the next ``Key/count`` hellos, whichever service instance gets them, each end the service at once (SIGKILL, before
+        /// CEF starts), as a crash would: the crash-loop tests. The count is kept in a marker file under ``Key/rootPath``, which the
+        /// hellos must name too, because a relaunched service is a new process. Has a reply.
         public static let debugExitOnHello = "debug.exitOnHello"
         /// DEBUG: the service asks WSurf a question and reports how that went (`answered` or `timedOut`). Has a reply.
         public static let debugAskHost = "debug.askHost"

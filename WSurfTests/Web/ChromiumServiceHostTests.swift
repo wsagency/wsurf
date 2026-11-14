@@ -212,16 +212,25 @@ struct ChromiumServiceHostTests {
     }
 
     @Test(.enabled(if: ChromiumServiceBundle.isPresent))
-    func debugExitOnHelloEndsTheServiceAtTheNextHelloWithoutAnAnswer() throws {
+    func debugExitOnHelloKillsTheNextHellosEvenOfARelaunchedServiceAndThenAnswers() throws {
         let client = try ServiceClient()
         defer { client.finish() }
-        #expect(try client.call(CefRemoteMessage(CefRemote.Op.debugExitOnHello)).bool(CefRemote.Key.success))
+        let arm = CefRemoteMessage(CefRemote.Op.debugExitOnHello)
+        arm.set(CefRemote.Key.rootPath, client.root.path)
+        arm.set(CefRemote.Key.count, 2)
+        #expect(try client.call(arm).bool(CefRemote.Key.success))
         _ = try client.stats()
-        let pid = try #require(client.pid)
-        let hello = CefRemoteMessage.hello()
-        hello.set(CefRemote.Key.rootPath, client.root.path)
-        #expect(throws: ServiceClient.Failure.self) { _ = try client.call(hello, timeout: Self.helloTimeout) }
-        #expect(ServiceClient.secondsUntilGone(pid, within: 3) != nil)
+        let first = try #require(client.pid)
+        // Hello 1 reaches the service that was armed, and hello 2 the instance launchd starts after it: a crash loop. Neither
+        // is answered, and neither starts CEF (the connection reports the interruption).
+        #expect(throws: ServiceClient.Failure.self) { _ = try client.hello() }
+        #expect(ServiceClient.secondsUntilGone(first, within: 5) != nil)
+        #expect(throws: ServiceClient.Failure.self) { _ = try client.hello() }
+        // The marker is used up: the third instance answers.
+        let reply = try client.hello()
+        #expect(reply.bool(CefRemote.Key.success), "\(reply.string(CefRemote.Key.error))")
+        let third = try #require(client.pid)
+        #expect(third != first, "a new process")
     }
 }
 
@@ -251,11 +260,13 @@ private nonisolated final class ServiceClient: @unchecked Sendable {
     private let connection: xpc_connection_t
     private let state = OSAllocatedUnfairLock(initialState: State())
     private var closed = false
+    private let created = Date()
 
     private struct State {
         var pid: pid_t?
         var answers = false
         var questions = 0
+        var firstReplyNoted = false
         var events: [(op: String, message: CefRemoteMessage)] = []
     }
 
@@ -314,7 +325,7 @@ private nonisolated final class ServiceClient: @unchecked Sendable {
     }
 
     /// One message and its reply. The wait is on this thread; the reply comes on the client's queue.
-    func call(_ message: CefRemoteMessage, timeout: TimeInterval = 10) throws -> CefRemoteMessage {
+    func call(_ message: CefRemoteMessage, timeout: TimeInterval = 30) throws -> CefRemoteMessage {
         let done = DispatchSemaphore(value: 0)
         let box = OSAllocatedUnfairLock<Result<CefRemoteMessage, Failure>?>(initialState: nil)
         xpc_connection_send_message_with_reply(connection, message.object, queue) { answer in
@@ -329,8 +340,23 @@ private nonisolated final class ServiceClient: @unchecked Sendable {
             box.withLock { $0 = outcome }
             done.signal()
         }
-        guard done.wait(timeout: .now() + timeout) == .success else { throw Failure.noAnswer(message.op) }
+        guard done.wait(timeout: .now() + timeout) == .success else {
+            throw Failure.noAnswer(message.op)
+        }
+        noteFirstReply(to: message.op)
         return try box.withLock { try #require($0) }.get()
+    }
+
+    /// The first answer of a client comes from an instance launchd may have just started: how long it took is what D4-5's
+    /// relaunch assertion (a new hello within 2 s) has to be set against.
+    private func noteFirstReply(to op: String) {
+        let first = state.withLock { state -> Bool in
+            defer { state.firstReplyNoted = true }
+            return !state.firstReplyNoted
+        }
+        if first {
+            print("ChromiumServiceHostTests observed: first reply (\(op)) after \(Date().timeIntervalSince(created)) s")
+        }
     }
 
     // MARK: Typed calls
@@ -395,17 +421,25 @@ private nonisolated final class ServiceClient: @unchecked Sendable {
         xpc_connection_cancel(connection)
     }
 
-    /// Ends the test: closes the control connection, and unless the test expects the service to be still there, waits for it
-    /// to leave, so that the next test starts a fresh instance. A service that does not leave is recorded as an issue.
+    /// Ends the test so that no service instance outlives it (the next test must get a fresh one, and an instance that
+    /// leaves during the next test would fail it). With `expectExit` the control connection closing is what ends the
+    /// service; without it (a refused hello leaves the service with no host) the test ends the service itself, with
+    /// `debug.abort`. A service that does not leave is recorded as an issue.
     func finish(expectExit: Bool = true) {
         let known = pid
+        if !expectExit, known != nil {
+            send(CefRemoteMessage(CefRemote.Op.debugAbort))
+            usleep(100_000)
+        }
         close()
-        if ownsRoot {
+        defer {
             // The root is not removed while the service may still be using it.
-            defer { try? FileManager.default.removeItem(at: root) }
-            if expectExit, let known, Self.secondsUntilGone(known, within: 8) == nil {
-                Issue.record("the service \(known) did not leave after its connection closed")
+            if ownsRoot {
+                try? FileManager.default.removeItem(at: root)
             }
+        }
+        if let known, Self.secondsUntilGone(known, within: 8) == nil {
+            Issue.record("the service \(known) did not leave after its connection closed")
         }
     }
 
