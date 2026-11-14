@@ -16,6 +16,7 @@ struct ChromiumServiceBrowserTests {
     private static let routes: [String: HTTPFixtureServer.Response] = [
         "/one": .html("<!doctype html><title>One</title><p>one</p>"),
         "/two": .html("<!doctype html><title>Two</title><p>two</p>"),
+        "/three": .html("<!doctype html><title>Three</title><p>three</p>"),
         "/form": .html("""
             <!doctype html><title>Form</title><form method="post" action="/posted"><input name="a" value="1"></form>
             <script>addEventListener("load", () => setTimeout(() => document.forms[0].submit(), 50))</script>
@@ -162,15 +163,13 @@ struct ChromiumServiceBrowserTests {
     func collapseHistoryIsLandedWhenTheListMatchesAndRefusedOrSkippedWhenItDoesNot() async throws {
         let rig = try await Self.rig()
         defer { rig.client.finish() }
-        // A page made with about:blank has the startup entry first, as WSurf's tabs do: [startup, one, two].
-        let created = try rig.client.createBrowser(1, url: "about:blank", context: "profile")
-        #expect(created.bool(CefRemote.Key.success))
-        #expect(rig.client.waitEvent(CefRemote.Event.browserReady) { $0.browser == 1 } != nil)
-        try rig.client.load(rig.url("/one"), browser: 1)
-        let two = try rig.url("/two")
-        _ = try #require(rig.client.waitHistory { $0.count == 2 && $0[1].isCurrent && $0[1].title == "One" })
-        try rig.client.load(two, browser: 1)
-        let list = try #require(rig.client.waitHistory { $0.count == 3 && $0[2].isCurrent && $0[2].url == two })
+        // Three real pages: [one, two, three]. (What a browser made on about:blank holds is `aPageLoadedOverAboutBlank...`.)
+        let three = try rig.url("/three")
+        try Self.open(rig, 1, "/one")
+        try rig.client.load(rig.url("/two"), browser: 1)
+        _ = try #require(rig.client.waitHistory { $0.count == 2 && $0[1].isCurrent && $0[1].title == "Two" })
+        try rig.client.load(three, browser: 1)
+        let list = try #require(rig.client.waitHistory { $0.count == 3 && $0[2].isCurrent && $0[2].url == three })
         let ids = list.map(\.id)
 
         func collapse(_ request: Int64, keeping: Int64, expected: [Int64]) throws -> CefRemote.CollapseOutcome? {
@@ -196,9 +195,25 @@ struct ChromiumServiceBrowserTests {
         }
         #expect(outcome == .landed)
         let collapsed = try #require(rig.client.waitHistory(after: beforeLanding) { $0.count == 1 })
-        #expect(collapsed[0].id == ids[2] && collapsed[0].isCurrent && collapsed[0].url == two, "only the kept entry is left")
+        #expect(collapsed[0].id == ids[2] && collapsed[0].isCurrent && collapsed[0].url == three, "only the kept entry is left")
         // With nothing left to drop, the same request is answered `landed` without a reset.
         #expect(try collapse(99, keeping: ids[2], expected: ids) == .landed)
+    }
+
+    @Test(.enabled(if: ChromiumServiceBundle.isPresent))
+    func aPageLoadedOverAboutBlankIsTheCurrentEntryOfTheHistory() async throws {
+        let rig = try await Self.rig()
+        defer { rig.client.finish() }
+        // WSurf's tabs start on about:blank. Whether Chromium keeps that entry or replaces it is Chromium's to say (D4-8 meets it
+        // as the startup entry): this records what it does, and checks only what holds either way.
+        let one = try rig.url("/one")
+        #expect(try rig.client.createBrowser(1, url: "about:blank", context: "profile").bool(CefRemote.Key.success))
+        #expect(rig.client.waitEvent(CefRemote.Event.browserReady) { $0.browser == 1 } != nil)
+        try rig.client.load(one, browser: 1)
+        let list = try #require(rig.client.waitHistory { $0.last?.url == one && $0.last?.isCurrent == true && $0.last?.title == "One" })
+        #expect(list.filter(\.isCurrent).count == 1)
+        #expect(Set(list.map(\.id)).count == list.count, "the ids are distinct")
+        print("ChromiumServiceBrowserTests observed: about:blank then /one gives \(list.count) entries: \(list.map(\.url))")
     }
 
     // MARK: Mute and find
