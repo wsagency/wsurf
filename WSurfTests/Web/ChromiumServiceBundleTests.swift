@@ -144,8 +144,13 @@ struct ChromiumServiceBundleTests {
             }
             done.signal()
         }
-        // The service starts on this first message: a cold launch of the signed bundle takes well under a second.
-        #expect(done.wait(timeout: .now() + 10) == .success, "the service did not answer within 10 s")
+        // The service starts on this first message. A cold launch of the signed bundle is well under a second, but launchd defers
+        // a respawn until 10 s after the previous spawn (measured in D4-4a and D4-5), so a service another suite started just
+        // before this one leaves the reply about 10 s away. The wait is the relaunch budget the client itself uses
+        // (`ChromiumRemote.defaultHelloTimeout`, 15 s, which a test asserts is at least 12), not a guess of 10 s: this fixes a
+        // wrong assumption about launchd, it does not loosen what is asserted (the service must answer, with the right pid).
+        let budget = ChromiumRemote.defaultHelloTimeout
+        #expect(done.wait(timeout: .now() + budget) == .success, "the service did not answer within \(budget) s")
         if let failure { Issue.record("the service connection failed: \(failure)") }
         return reply
     }

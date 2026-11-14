@@ -73,9 +73,14 @@ nonisolated final class ChromiumServiceClient: @unchecked Sendable {
             self.root = root
             ownsRoot = false
         } else {
-            self.root = FileManager.default.temporaryDirectory.appending(path: "wsurf-d4-host-\(UUID().uuidString)", directoryHint: .isDirectory)
+            let made = FileManager.default.temporaryDirectory.appending(path: "wsurf-d4-host-\(UUID().uuidString)", directoryHint: .isDirectory)
+            try FileManager.default.createDirectory(at: made, withIntermediateDirectories: true)
+            // The service refuses a root with an alias in it (a temporary folder is under `/var`, which is `/private/var`), as
+            // CEF does: a host sends the canonical path, and so does this client.
+            let canonical = realpath(made.path, nil)
+            defer { free(canonical) }
+            self.root = canonical.map { URL(filePath: String(cString: $0), directoryHint: .isDirectory) } ?? made
             ownsRoot = true
-            try FileManager.default.createDirectory(at: self.root, withIntermediateDirectories: true)
         }
         let identifier = (Bundle.main.bundleIdentifier ?? "") + ".chromium"
         connection = xpc_connection_create(identifier, queue)

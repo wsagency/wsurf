@@ -153,7 +153,7 @@ final class ServiceHost {
         }
         guard !exiting else {
             note("\(message.op) refused: the service is leaving")
-            reply(to: message, on: peer) { $0.set(CefRemote.Key.error, "The Chromium service is leaving.") }
+            reply(to: message, on: peer) { $0.set(CefRemote.Key.error, CefRemote.leavingError) }
             return false
         }
         return true
@@ -178,7 +178,7 @@ final class ServiceHost {
             note("hello refused: the service is leaving")
             reply(to: message, on: peer) {
                 $0.set(CefRemote.Key.success, false)
-                $0.set(CefRemote.Key.error, "The Chromium service is leaving.")
+                $0.set(CefRemote.Key.error, CefRemote.leavingError)
             }
             return
         }
@@ -245,6 +245,11 @@ final class ServiceHost {
         let started = Clock.nowNanoseconds
         let root = message.string(CefRemote.Key.rootPath)
         guard root.hasPrefix("/") else { throw ServiceError(text: "the root cache path must be absolute") }
+        // CEF refuses a root with an alias in it (`/var` for `/private/var`, a symlink), so the host sends the canonical one, and
+        // anything else is refused here, before anything is made, with a reason that names the cause.
+        guard Self.realPath(root) == root else {
+            throw ServiceError(text: "the root cache path must exist and be canonical (no symlink or alias in it)")
+        }
         let cache = message.string(CefRemote.Key.cachePath)
         guard cache.isEmpty || Self.isInside(cache, root: root) else {
             throw ServiceError(text: "the cache path must be the root cache path or inside it")
@@ -278,10 +283,29 @@ final class ServiceHost {
         note(String(format: "CEF started in %.1f ms", cefStartMs))
     }
 
-    /// Whether `path` is `root` or below it, as CEF requires of a cache path (compared lexically, `..` resolved).
+    /// `path` with every symlink and alias resolved, for a path that may not exist yet: the nearest existing ancestor goes through
+    /// `realpath` and the components below it are appended (they do not exist, so they cannot be links). Nil for a relative path,
+    /// for one with a `.` or `..` component (which would be resolved before a link in front of it, so the result could name
+    /// somewhere else than the path does), and when no ancestor resolves.
+    private static func realPath(_ path: String) -> String? {
+        let components = (path as NSString).pathComponents
+        guard path.hasPrefix("/"), !components.contains(".."), !components.contains(".") else { return nil }
+        var existing = path
+        var below: [String] = []
+        while !FileManager.default.fileExists(atPath: existing) {
+            guard existing != "/" else { return nil }
+            below.insert((existing as NSString).lastPathComponent, at: 0)
+            existing = (existing as NSString).deletingLastPathComponent
+        }
+        guard let resolved = realpath(existing, nil) else { return nil }
+        defer { free(resolved) }
+        return ([String(cString: resolved)] + below).joined(separator: "/").replacingOccurrences(of: "//", with: "/")
+    }
+
+    /// Whether `path` is `root` (canonical) or below it, as CEF requires of a cache path. The path is resolved first, folders that
+    /// do not exist yet included, and nothing is created here: the caller makes the folder only after this says yes.
     private static func isInside(_ path: String, root: String) -> Bool {
-        let path = URL(filePath: path).standardizedFileURL.path
-        let root = URL(filePath: root).standardizedFileURL.path
+        guard let path = realPath(path) else { return false }
         return path == root || path.hasPrefix(root.hasSuffix("/") ? root : root + "/")
     }
 
@@ -330,7 +354,7 @@ final class ServiceHost {
                 failure = "not the host's process"
             }
         } else {
-            failure = exiting ? "The Chromium service is leaving." : "no host has said hello"
+            failure = exiting ? CefRemote.leavingError : "no host has said hello"
         }
         if failure == nil {
             if message.op == CefRemote.Op.inputHello {

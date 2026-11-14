@@ -169,7 +169,7 @@ final class ChromiumRemote {
 
     /// How long a hello may take. launchd spawns a service no sooner than 10 s after the previous spawn, so a hello after a young
     /// death waits that long before CEF even starts: this must stay above 12 s.
-    static let defaultHelloTimeout: TimeInterval = 15
+    nonisolated static let defaultHelloTimeout: TimeInterval = 15
     /// How long a `browser.close` waits for its `browser.closed`.
     static let closeTimeout: TimeInterval = 5
 
@@ -184,7 +184,7 @@ final class ChromiumRemote {
     private let isEnabled: () -> Bool
     private let latch: ChromiumOOP.Latch
     /// Every completion runs on the main queue: replies and interruptions come on it, and so do the timers.
-    private let requests = CefRemoteRequests<CefRemoteMessage>(schedule: cefRemoteTimer(on: .main))
+    let requests = CefRemoteRequests<CefRemoteMessage>(schedule: cefRemoteTimer(on: .main))
 
     private var control: xpc_connection_t?
     private var input: xpc_connection_t?
@@ -195,8 +195,8 @@ final class ChromiumRemote {
     private var relaunching = false
     /// `disconnect` is telling the browsers: nothing they do meanwhile reconnects.
     private var isDisconnecting = false
-    /// The hello that is waiting was refused because the service was leaving (`noteLeavingRefusal`).
-    private var helloRefusedAsLeaving = false
+    /// The hello (or a request) that is waiting was refused because the service was leaving (`noteLeavingRefusal`).
+    private var refusedAsLeaving = false
     private var policy = CefRemoteRelaunchPolicy()
     private var browsers: [Int64: any ChromiumRemoteBrowserHandle] = [:]
     /// Browser ids start at 1 and are never reused (0 is what a message with no `bid` reads as).
@@ -212,6 +212,8 @@ final class ChromiumRemote {
     private(set) var servicePID: pid_t = 0
     private(set) var helloCount = 0
     private(set) var interruptions = 0
+    /// How many requests were asked again because the service refused them as leaving (see `request`).
+    private(set) var leavingRetries = 0
     /// Milliseconds from hello to its answer (launch, the launchd throttle and CEF's start), and CEF's own start inside it.
     private(set) var helloRoundTripMs: Double = -1
     private(set) var cefStartMs: Double = -1
@@ -347,15 +349,13 @@ final class ChromiumRemote {
         guard let control else { return }
         needsHello = false
         helloCount += 1
-        helloRefusedAsLeaving = false
+        refusedAsLeaving = false
         setState(relaunching ? .relaunching : .starting)
         let message: CefRemoteMessage
         do {
+            // The root exists and is canonical, which the service requires. The cache folder below it is the service's to make: it
+            // resolves a folder that does not exist yet against the root before it creates anything.
             let directory = try Self.prepareRoot(root())
-            // The cache folder exists before the hello, so that the service compares two paths that both exist: it compares them
-            // lexically after `standardizedFileURL`, which drops a `/private` alias (a temporary folder's) only from a path that
-            // exists, so a canonical root and a cache folder that does not exist yet would not look nested.
-            _ = try Self.prepareRoot(directory.appending(path: "Global", directoryHint: .isDirectory))
             message = Self.makeHello(
                 protocolVersion: protocolVersion, root: directory, linger: linger, logFile: logFile, stageHome: Self.stageHome
             )
@@ -453,10 +453,10 @@ final class ChromiumRemote {
         !reply.bool(CefRemote.Key.success) && !reply.has(CefRemote.Key.pid) && !reply.has(CefRemote.Key.protocolVersion)
     }
 
-    /// The service answered the hello that is waiting with "I am leaving" (a linger or pressure exit that was already under way):
+    /// The service answered the hello (or request) that is waiting with "I am leaving" (a linger or pressure exit that was under way):
     /// its end is coming, and it is not a crash. See `serviceEnded`.
     func noteLeavingRefusal() {
-        helloRefusedAsLeaving = true
+        refusedAsLeaving = true
     }
 
     private func setState(_ new: ServiceState) {
@@ -546,8 +546,8 @@ final class ChromiumRemote {
         // A service that refused the waiting hello because it was leaving, with no browser of ours in it, ended as it said it
         // would: that is neither a crash (not counted toward the cap) nor a reason to give up (the hello's purpose is still
         // wanted, so the replacement is asked for, unless the cap was already reached).
-        let leftAsItSaid = helloRefusedAsLeaving && browsers.isEmpty
-        helloRefusedAsLeaving = false
+        let leftAsItSaid = refusedAsLeaving && browsers.isEmpty
+        refusedAsLeaving = false
         ChromiumOOP.log.notice("service ended (\(reason, privacy: .public)): \(self.browsers.count) browsers lost, in use \(wasInUse)")
         let lost = takeEverythingDown(keepingControl: true)
         needsHello = true
@@ -634,11 +634,54 @@ final class ChromiumRemote {
 
     /// One message and the service's reply; it ends once, on the reply, the service's end, or the timeout (default 5 s, plus the
     /// hello's while the service is not up yet: see `effectiveTimeout`). Never waits on a thread: the caller suspends.
+    ///
+    /// A service that has begun to leave refuses every op that acts on CEF with `CefRemote.leavingError` and ends a moment later.
+    /// That refusal is not an answer: the request is asked once more, on the instance that replaces it (the end that follows is
+    /// then an idle exit, which counts as no death, unless a browser of ours was in it). Once only: a second refusal is the answer.
     func request(_ message: CefRemoteMessage, timeout: TimeInterval? = nil) async -> CefRemoteReply<CefRemoteMessage> {
-        guard prepareToSend(), let control else { return .interrupted }
+        await requestTracked(message, timeout: timeout).reply
+    }
+
+    /// `request`, and the instance of the service that the last attempt was sent to (a caller that remembers what the service
+    /// has, like `ensureContext`, must compare with that one: a retry goes to a newer instance than the first attempt).
+    func requestTracked(_ message: CefRemoteMessage, timeout: TimeInterval? = nil) async -> (reply: CefRemoteReply<CefRemoteMessage>, instance: Int) {
+        let first = await requestOnce(message, timeout: timeout)
+        // A sent message is not changed: the retry goes out as a copy, made only when it is needed.
+        guard case let .value(reply) = first.reply, Self.isServiceLeavingReply(reply),
+              let spare = xpc_copy(message.object).flatMap({ CefRemoteMessage(wrapping: $0) })
+        else { return first }
+        leavingRetries += 1
+        // Its end is coming: with no browser of ours in it, that is a clean exit and not a death.
+        noteLeavingRefusal()
+        // The old instance ends within a few seconds (its own exit backstop), and the replacement is asked for then. Bounded by
+        // the hello's timeout, which is what a replacement may take.
+        guard await waitUntil(helloTimeout, { instance != first.instance }) else {
+            refusedAsLeaving = false
+            return first
+        }
+        return await requestOnce(spare, timeout: timeout)
+    }
+
+    /// Whether `reply` is the refusal of a service that is leaving (see `request`): not ok, with exactly that text.
+    nonisolated static func isServiceLeavingReply(_ reply: CefRemoteMessage) -> Bool {
+        !reply.bool(CefRemote.Key.success) && reply.string(CefRemote.Key.error) == CefRemote.leavingError
+    }
+
+    private func waitUntil(_ seconds: TimeInterval, _ condition: () -> Bool) async -> Bool {
+        let deadline = ContinuousClock.now + .seconds(seconds)
+        while !condition() {
+            guard ContinuousClock.now < deadline else { return false }
+            try? await Task.sleep(for: .milliseconds(50))
+        }
+        return true
+    }
+
+    private func requestOnce(_ message: CefRemoteMessage, timeout: TimeInterval?) async -> (reply: CefRemoteReply<CefRemoteMessage>, instance: Int) {
+        guard prepareToSend(), let control else { return (.interrupted, instance) }
         let table = requests
+        let sentTo = instance
         let wait = Self.effectiveTimeout(timeout, defaultTimeout: table.defaultTimeout, isRunning: isRunning, helloTimeout: helloTimeout)
-        return await table.request(timeout: wait) { id in
+        let answered = await table.request(timeout: wait) { id in
             message.set(CefRemote.Key.identifier, id)
             xpc_connection_send_message_with_reply(control, message.object, DispatchQueue.main) { answer in
                 // An error object is left to the connection's event (`serviceEnded`), as in the hello.
@@ -646,6 +689,7 @@ final class ChromiumRemote {
                 table.reply(id, reply)
             }
         }
+        return (answered, sentTo)
     }
 
     /// A message sent while the service is starting or relaunching is served after the hello, which launchd may hold back for
@@ -687,14 +731,13 @@ final class ChromiumRemote {
         message.set(CefRemote.Key.context, id.uuidString)
         if let cacheDirectory {
             guard let rootURL = try? Self.prepareRoot(root()), let wanted = Self.canonicalPath(of: cacheDirectory),
-                  Self.isInside(wanted, root: rootURL),
-                  // Made here, canonical, for the reason the hello's cache folder is (see `sendHello`): the service makes it too.
-                  let canonical = try? Self.prepareRoot(wanted)
+                  Self.isInside(wanted, root: rootURL)
             else { return false }
-            message.set(CefRemote.Key.cachePath, canonical.path)
+            // The folder is not made here: the service checks the path against its root and then makes it.
+            message.set(CefRemote.Key.cachePath, wanted.path)
         }
-        let asked = instance
-        guard case let .value(reply) = await request(message), reply.bool(CefRemote.Key.success), asked == instance else {
+        let (answer, answeredBy) = await requestTracked(message)
+        guard case let .value(reply) = answer, reply.bool(CefRemote.Key.success), answeredBy == instance else {
             return false
         }
         contexts.insert(id)

@@ -19,6 +19,9 @@ public enum CefRemote {
     public static let protocolVersion: Int64 = 1
     /// The service's bundle identifier is the app's plus this suffix, so a staged build's suffix carries over.
     public static let serviceSuffix = ".chromium"
+    /// The `error` of a reply to a hello or to an op that acts on CEF, when the service has begun to leave: nothing is served any more, and
+    /// the control connection ends soon. The client asks again once the replacement runs.
+    public static let leavingError = "The Chromium service is leaving."
     /// CDP ids at or above this are the service's own commands (the history check); never forwarded to WSurf.
     public static let serviceCommandBase: Int64 = 1_900_000_000
 

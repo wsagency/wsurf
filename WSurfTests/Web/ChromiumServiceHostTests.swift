@@ -104,6 +104,85 @@ struct ChromiumServiceHostTests {
         #expect(!first.expectEvent(CefRemote.Event.browserClosed), "nothing was closed under the first host")
     }
 
+    // MARK: Paths
+
+    /// The path the way Foundation gives a temporary folder (`/var/folders/…`), which is a link to the canonical
+    /// `/private/var/folders/…`. Nil when the folder is not under such an alias.
+    private static func aliased(_ canonical: URL) -> URL? {
+        guard canonical.path.hasPrefix("/private/var/") else { return nil }
+        return URL(filePath: String(canonical.path.dropFirst("/private".count)), directoryHint: .isDirectory)
+    }
+
+    @Test(.enabled(if: ChromiumServiceBundle.isPresent))
+    func aRootWithAnAliasInItIsRefusedByTheServiceAndStartsNothing() throws {
+        let client = try ChromiumServiceClient()
+        defer { client.finish(expectExit: false) }
+        let alias = try #require(Self.aliased(client.root), "the temporary folder is not under /var: \(client.root.path)")
+        #expect(FileManager.default.fileExists(atPath: alias.path), "the alias names the same folder")
+        let hello = CefRemoteMessage.hello()
+        hello.set(CefRemote.Key.rootPath, alias.path)
+        hello.set(CefRemote.Key.cachePath, alias.appending(path: "default").path)
+        let reply = try client.call(hello, timeout: Self.helloTimeout)
+        #expect(!reply.bool(CefRemote.Key.success), "a root that is not canonical must be refused")
+        #expect(reply.string(CefRemote.Key.error).contains("canonical"), "\(reply.string(CefRemote.Key.error))")
+        #expect(!(try client.stats()).bool(CefRemote.Key.started), "a refused root starts no CEF")
+    }
+
+    /// The bug of D4-5's first lane run: a canonical root and a cache folder that does not exist yet looked "outside the root" to
+    /// the service, because only an existing path lost its `/private`. The hello's cache folder (`root/default`) is such a folder.
+    @Test(.enabled(if: ChromiumServiceBundle.isPresent))
+    func aCacheFolderThatDoesNotExistYetIsInsideACanonicalRootAndTheServiceMakesIt() throws {
+        let client = try ChromiumServiceClient()
+        defer { client.finish() }
+        let alias = try #require(Self.aliased(client.root), "the temporary folder is not under /var: \(client.root.path)")
+        let reply = try client.hello()
+        #expect(reply.bool(CefRemote.Key.success), "a cache folder that is not made yet: \(reply.string(CefRemote.Key.error))")
+        // A context whose folder is below the root and not made: by its canonical path, and by one with the alias in it.
+        let canonicalFresh = client.root.appending(path: "profiles/one", directoryHint: .isDirectory)
+        let viaAlias = alias.appending(path: "profiles/two", directoryHint: .isDirectory)
+        for (name, folder) in [("one", canonicalFresh), ("two", viaAlias)] {
+            #expect(!FileManager.default.fileExists(atPath: folder.path))
+            let message = CefRemoteMessage(CefRemote.Op.createContext)
+            message.set(CefRemote.Key.context, name)
+            message.set(CefRemote.Key.cachePath, folder.path)
+            let answer = try client.call(message)
+            #expect(answer.bool(CefRemote.Key.success), "\(folder.path): \(answer.string(CefRemote.Key.error))")
+            #expect(FileManager.default.fileExists(atPath: folder.path), "the service made the folder after it checked the path")
+        }
+        #expect(try client.stats().int(CefRemote.Key.contexts) == 2)
+    }
+
+    @Test(.enabled(if: ChromiumServiceBundle.isPresent))
+    func aContextFolderOutsideTheRootIsRefusedAndNothingIsMadeThere() throws {
+        let client = try ChromiumServiceClient()
+        defer { client.finish() }
+        #expect(try client.hello().bool(CefRemote.Key.success))
+        let outside = FileManager.default.temporaryDirectory.appending(path: "wsurf-d4-outside-\(UUID().uuidString)", directoryHint: .isDirectory)
+        let target = FileManager.default.temporaryDirectory.appending(path: "wsurf-d4-link-target-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: target, withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(at: client.root.appending(path: "link"), withDestinationURL: target)
+        defer {
+            try? FileManager.default.removeItem(at: outside)
+            try? FileManager.default.removeItem(at: target)
+        }
+        let escapes = [
+            ("sibling", outside.appending(path: "a", directoryHint: .isDirectory)),
+            ("dotdot", client.root.appending(path: "../wsurf-d4-escape-\(UUID().uuidString)", directoryHint: .isDirectory)),
+            ("twin", URL(filePath: client.root.path + "-twin/a", directoryHint: .isDirectory)),
+            ("link", client.root.appending(path: "link/child", directoryHint: .isDirectory)),
+        ]
+        for (name, folder) in escapes {
+            let message = CefRemoteMessage(CefRemote.Op.createContext)
+            message.set(CefRemote.Key.context, name)
+            message.set(CefRemote.Key.cachePath, folder.path)
+            let answer = try client.call(message)
+            #expect(!answer.bool(CefRemote.Key.success), "\(name): \(folder.path)")
+            #expect(!FileManager.default.fileExists(atPath: folder.path), "\(name): nothing is made outside the root")
+        }
+        #expect(!FileManager.default.fileExists(atPath: target.appending(path: "child").path), "nothing was made through the link")
+        #expect(try client.stats().int(CefRemote.Key.contexts) == 0)
+    }
+
     // MARK: Lifecycle
 
     @Test(.enabled(if: ChromiumServiceBundle.isPresent))
