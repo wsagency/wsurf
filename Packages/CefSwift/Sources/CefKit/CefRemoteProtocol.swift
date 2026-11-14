@@ -104,7 +104,26 @@ public enum CefRemote {
         public static let mockKeychain = "mockKeychain"
         /// The reply to `debug.askHost`: one of ``CefRemote/AskHostAnswer``; ``value`` is how long the ask took, in ms.
         public static let askHostAnswer = "ask"
+        /// `debug.stats` (D4-4b): how many browser objects and how many handler sets (a client's holder of CEF handlers) are
+        /// alive in the service. Both return to 0 once every browser is closed and CEF has destroyed its clients; the handler
+        /// lifetime tests read them.
+        public static let browserObjects = "objects"
+        public static let handlerSets = "handlers"
+        /// `browser.create`, DEBUG only: one of ``CefRemote/DebugCreate``.
+        public static let debugCreate = "dbgcreate"
     }
+
+    /// What `browser.create` can ask of the service in a build that has the DEBUG ops, to reach creation paths a test could not
+    /// reach with a real CEF.
+    public enum DebugCreate {
+        /// The creation fails as CEF's own refusal would (the same code path), without calling CEF.
+        public static let fail = "fail"
+        /// CEF is never called and the browser never reaches `on_after_created`: a close before creation, made deterministic.
+        public static let hold = "hold"
+    }
+
+    /// The reply to a back or forward that native history cannot do at that moment: WSurf makes its own hop (D3b).
+    public static let noNativeEntry = "no native entry"
 
     /// How the service's `askHost` ended (`debug.askHost` reports it). A missing, late or failed answer is `timedOut`: the safe
     /// answer, which cancels.
@@ -177,7 +196,9 @@ public enum CefRemote {
         public static let loadStart = "load.start"
         public static let loadEnd = "load.end"
         public static let loadError = "load.error"
-        /// The service asks WSurf whether a navigation may go ahead (`askHost`); a missing answer means cancel.
+        /// The service asks WSurf whether a main-frame navigation may go ahead (`askHost`, `on_before_browse`). Keys: `bid`, `url`,
+        /// `redirect`, `gesture`. The answer's ``Key/value`` is true to let it go ahead; false, no answer, a late or a failed one
+        /// cancels it.
         public static let beforeBrowse = "nav.before"
         public static let address = "display.address"
         public static let title = "display.title"

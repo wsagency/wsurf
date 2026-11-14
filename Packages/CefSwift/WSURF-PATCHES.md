@@ -68,12 +68,26 @@ D4-4a (`plans/d4-phase2-plan.md`). The service now starts CEF and keeps its own 
 - **Why.** CEF's browser process lives in the service. The service never reads the keychain (mock keychain, until D4-S), and CEF's log goes to `/dev/null` unless WSurf names a file.
 - **Re-applying.** Restore the folder, the two Package.swift settings and the protocol constants.
 
+### 3. The out-of-process Chromium service (D4), part 4: windowless browsers
+
+D4-4b (`plans/d4-phase2-plan.md`). The service now makes and drives browsers.
+
+- **What.**
+  - `Sources/wsurf-chromium-service/RemoteClientHandlers.swift` (new): a browser's CEF client, its six handlers (life span, load, display, request, render for geometry only, find) and the rule for their lifetime. The handlers are made before the browser, are constants, and are released only when CEF destroys the client; each owns a `BrowserBox` that points to the browser weakly, so no path from the browser to its client leads back to it.
+  - `Sources/wsurf-chromium-service/RemoteBrowser.swift` (new): create and close, the browser ops (load, reload, back and forward when native history allows, stop, zoom, mute, find), the state events, CDP (the DevTools observer forwards results and events byte for byte; the service's own commands use ids from `CefRemote.serviceCommandBase` and never reach WSurf), `historyChanged` and the checked `collapseHistory`.
+  - `ServiceHost.swift`: browser dispatch behind the one-host gate, `on_before_browse` through `askHost` on the control connection, the input and frames connections bound to the host's process.
+  - `Native.swift`: the callback allocation helpers.
+  - `Sources/CefKit/CefRemoteProtocol.swift`: `debug.stats` keys for the live browser and handler counts, the DEBUG creation flags (`fail`, `hold`), `CefRemote.noNativeEntry`.
+- **Why.** The ids of `historyChanged` are Chromium's navigation-entry ids, which only CDP (`Page.getNavigationHistory`) carries; CEF's navigation-entry visitor has none, but is the only synchronous read and the only source of `has_post_data`. The service therefore merges the two, and checks a collapse against the last list it sent.
+- **Re-applying.** Restore the three files, the `ServiceHost` dispatch and the protocol constants.
+
 ### Outside the package
 
 - `WSurf/Web/Engines/ChromiumPage.swift`: one call to `externalBrowserDidOpen()` after the browser is created and registered (`materialize()`), one call to `externalBrowserDidClose()` where `didClose()` releases the browser.
 - `WSurfTests/Web/CefMessagePumpTests.swift`: the pump's unit tests.
 - Patch 3 (D4-2): `Tools/embed-chromium.sh` (the `.xpc`, only with `WSURF_CHROMIUM_OOP_BUILD=YES`), `Tools/check-built-identity.py`, `Tools/run-chromium-oop-tests.sh`, the Embed Chromium phase's `outputPaths` in `WSurf.xcodeproj`, `WSurf/Web/Engines/ChromiumServiceBundle.swift` and the framework and helper paths in `ChromiumRuntime.swift`, and `WSurfTests/Web/ChromiumServiceBundleTests.swift`.
 - Patch 3 (D4-4a): `WSurfTests/Web/ChromiumServiceHostTests.swift`.
+- Patch 3 (D4-4b): `WSurfTests/Web/ChromiumServiceBrowserTests.swift`, and `WSurfTests/Helpers/ChromiumServiceClient.swift` (the raw XPC test client of D4-4a's suite, moved out of it and shared).
 
 ## Updating CefSwift
 

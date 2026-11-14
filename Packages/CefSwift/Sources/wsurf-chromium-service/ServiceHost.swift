@@ -26,11 +26,16 @@ final class ServiceHost {
     /// two seconds for `cef_shutdown`. The normal exits finish well before it, so it never shortens them.
     private static let exitBackstopSeconds: TimeInterval = closeCapSeconds + flushGraceSeconds + 2
 
-    /// The connection that said hello: events go there. The input and frames connections only send (and are not served yet).
+    /// The connection that said hello: events go there. The input and frames connections (`attachSideConnection`) only send,
+    /// and carry nothing yet (input is phase 3, frames D4-7).
     private var control: xpc_connection_t?
+    private var inputConnection: xpc_connection_t?
+    private var framesConnection: xpc_connection_t?
     private var contexts: [String: UnsafeMutablePointer<cef_request_context_t>] = [:]
-    /// Browsers by id. D4-4b puts real ones here; until then only the DEBUG stub exists, so the lifecycle can be tested.
-    private var browsers: [Int64: StubBrowser] = [:]
+    /// The open browsers by id (WSurf assigns the ids), and the DEBUG stubs, which count as open browsers too so that the
+    /// lifecycle can be tested without CEF.
+    private var browsers: [Int64: RemoteBrowser] = [:]
+    private var stubs: [Int64: StubBrowser] = [:]
     private var linger: CefRemoteLinger?
     private var memoryPressure: DispatchSourceMemoryPressure?
     private var holdsTransaction = false
@@ -45,6 +50,9 @@ final class ServiceHost {
     private struct StubBrowser {
         let answersClose: Bool
     }
+
+    /// How many browsers are open, real or stub: what the linger follows.
+    private var openCount: Int { browsers.count + stubs.count }
 
     // MARK: Connections
 
@@ -71,13 +79,25 @@ final class ServiceHost {
     }
 
     private func peerGone(_ peer: xpc_connection_t) {
+        if peer === inputConnection {
+            inputConnection = nil
+        } else if peer === framesConnection {
+            framesConnection = nil
+        }
         guard peer === control else { return }
-        note("WSurf's connection ended: closing \(browsers.count) browsers and exiting")
+        note("WSurf's connection ended: closing \(openCount) browsers and exiting")
         control = nil
+        for side in [inputConnection, framesConnection] {
+            if let side {
+                xpc_connection_cancel(side)
+            }
+        }
+        inputConnection = nil
+        framesConnection = nil
         closeEverythingAndExit()
     }
 
-    private func send(_ message: CefRemoteMessage) {
+    func send(_ message: CefRemoteMessage) {
         guard let control else { return }
         xpc_connection_send_message(control, message.object)
     }
@@ -92,14 +112,25 @@ final class ServiceHost {
         case CefRemote.Op.hello:
             hello(message, from: peer)
         case CefRemote.Op.inputHello, CefRemote.Op.framesHello:
-            // Their messages arrive with D4-4b (input is phase 3, frames D4-7).
-            note("\(message.op) connection open")
+            attachSideConnection(message, from: peer)
         case CefRemote.Op.createContext:
             guard isHost(peer, for: message) else { return }
             createContext(message, from: peer)
+        case CefRemote.Op.createBrowser:
+            guard isHost(peer, for: message) else { return }
+            createBrowser(message, from: peer)
         case CefRemote.Op.close:
             guard isHost(peer, for: message) else { return }
             closeBrowser(message.browser)
+        case CefRemote.Op.load, CefRemote.Op.reload, CefRemote.Op.goBack, CefRemote.Op.goForward, CefRemote.Op.stop,
+             CefRemote.Op.zoom, CefRemote.Op.mute, CefRemote.Op.find, CefRemote.Op.stopFinding, CefRemote.Op.devTools,
+             CefRemote.Op.collapseHistory:
+            guard isHost(peer, for: message) else { return }
+            guard let browser = browsers[message.browser] else {
+                reply(to: message, on: peer) { $0.set(CefRemote.Key.error, "no such browser") }
+                return
+            }
+            browser.handle(message, from: peer)
         default:
             #if WSURF_SERVICE_DEBUG_OPS
             if handleDebug(message, from: peer) { return }
@@ -113,7 +144,7 @@ final class ServiceHost {
     /// Whether `message`, which acts on CEF (a context, a browser), may be served: only the connection that said hello is the host
     /// (a refused second host, or a connection that never said hello, has no say), and nothing new is served once the exit has
     /// begun. Not asked of `ping`, the hellos and the DEBUG ops. A refusal is answered (when the sender asked) and has no effect.
-    /// Every op D4-4b adds that acts on CEF goes through this too. (`closeEverythingAndExit` calls `closeBrowser` itself.)
+    /// Every op that acts on CEF goes through this, the browser ops too. (`closeEverythingAndExit` calls `closeBrowser` itself.)
     private func isHost(_ peer: xpc_connection_t, for message: CefRemoteMessage) -> Bool {
         guard peer === control else {
             note("\(message.op) refused: not the host")
@@ -129,7 +160,7 @@ final class ServiceHost {
     }
 
     /// Sends `fill`'s message as the answer to `request`, when the sender asked for one.
-    private func reply(to request: CefRemoteMessage, on peer: xpc_connection_t, _ fill: (CefRemoteMessage) -> Void) {
+    func reply(to request: CefRemoteMessage, on peer: xpc_connection_t, _ fill: (CefRemoteMessage) -> Void) {
         guard let answer = CefRemoteMessage(replyTo: request) else { return }
         fill(answer)
         xpc_connection_send_message(peer, answer.object)
@@ -287,25 +318,123 @@ final class ServiceHost {
         }
     }
 
+    /// The input and frames connections say which control connection they belong to by being its process's: they are accepted
+    /// only from the process of the host, only while there is one that is not leaving, and are dropped with it. (They carry
+    /// nothing in 4b.) Their hello gets an answer when the sender asked for one.
+    private func attachSideConnection(_ message: CefRemoteMessage, from peer: xpc_connection_t) {
+        var failure: String?
+        if let control, !exiting {
+            if peer === control {
+                failure = "the control connection cannot be an input or frames connection"
+            } else if xpc_connection_get_pid(peer) != xpc_connection_get_pid(control) {
+                failure = "not the host's process"
+            }
+        } else {
+            failure = exiting ? "The Chromium service is leaving." : "no host has said hello"
+        }
+        if failure == nil {
+            if message.op == CefRemote.Op.inputHello {
+                inputConnection = peer
+            } else {
+                framesConnection = peer
+            }
+            note("\(message.op) connection open")
+        } else {
+            note("\(message.op) refused: \(failure ?? "")")
+        }
+        reply(to: message, on: peer) { answer in
+            answer.set(CefRemote.Key.success, failure == nil)
+            if let failure { answer.set(CefRemote.Key.error, failure) }
+        }
+    }
+
     // MARK: Browsers and the lifecycle
 
     /// The number of open browsers changed: the linger follows it, and a service that was closing everything is done.
     private func browsersChanged() {
         if exiting {
-            if browsers.isEmpty { flushAndExit() }
+            if openCount == 0 { flushAndExit() }
             return
         }
-        linger?.browserCountChanged(browsers.count)
+        linger?.browserCountChanged(openCount)
+    }
+
+    private func createBrowser(_ message: CefRemoteMessage, from peer: xpc_connection_t) {
+        let identifier = message.browser
+        let contextID = message.string(CefRemote.Key.context)
+        let url = message.has(CefRemote.Key.url) ? message.string(CefRemote.Key.url) : "about:blank"
+        var failure: String?
+        if !CefRuntime.shared.isInitialized {
+            failure = "CEF is not started"
+        } else if !message.has(CefRemote.Key.browser) {
+            failure = "a browser needs an id"
+        } else if browsers[identifier] != nil || stubs[identifier] != nil {
+            failure = "a browser with this id is open"
+        } else if !contextID.isEmpty && contexts[contextID] == nil {
+            failure = "unknown context"
+        } else if url.isEmpty {
+            failure = "a browser needs a URL"
+        }
+        if failure == nil {
+            let browser = RemoteBrowser(id: identifier, message: message)
+            browsers[identifier] = browser
+            browsersChanged()
+            var debug = ""
+            #if WSURF_SERVICE_DEBUG_OPS
+            debug = message.string(CefRemote.Key.debugCreate)
+            #endif
+            if !browser.create(url: url, context: contextID.isEmpty ? nil : contexts[contextID], debug: debug) {
+                // The browser, its client and its handlers go with this reference: nothing else holds the browser.
+                browsers[identifier] = nil
+                browsersChanged()
+                failure = "CEF could not create the browser"
+            }
+        }
+        if failure != nil {
+            // WSurf waits for the browser's events: tell it there will be none.
+            send(CefRemoteMessage(CefRemote.Event.browserClosed, browser: identifier))
+        }
+        reply(to: message, on: peer) { answer in
+            answer.set(CefRemote.Key.success, failure == nil)
+            if let failure { answer.set(CefRemote.Key.error, failure) }
+        }
+    }
+
+    /// A browser reached the end of its life (`on_before_close`, or it never was made): WSurf is told, and the host lets it go.
+    func browserDidClose(_ id: Int64) {
+        guard browsers.removeValue(forKey: id) != nil else { return }
+        send(CefRemoteMessage(CefRemote.Event.browserClosed, browser: id))
+        browsersChanged()
+    }
+
+    /// `on_before_browse`'s question (plan §1.3): true lets the navigation go ahead. A service that has no host or is leaving
+    /// has nobody to ask and cancels at once; otherwise the control connection is asked, and a missing answer cancels.
+    func askNavigation(browser: Int64, url: String, isRedirect: Bool, userGesture: Bool) -> Bool {
+        guard let control, !exiting else { return false }
+        let question = CefRemoteMessage(CefRemote.Event.beforeBrowse, browser: browser)
+        question.set(CefRemote.Key.url, url)
+        question.set(CefRemote.Key.isRedirect, isRedirect)
+        question.set(CefRemote.Key.userGesture, userGesture)
+        guard let answer = Self.askHost(question, on: control, timeout: 1) else {
+            note("browser \(browser): WSurf did not answer in time: navigation cancelled")
+            return false
+        }
+        return answer.bool(CefRemote.Key.value)
     }
 
     private func closeBrowser(_ id: Int64) {
-        guard let browser = browsers[id] else {
+        if let browser = browsers[id] {
+            // The answer is `browser.closed`, sent when CEF has closed it (`browserDidClose`).
+            browser.requestClose()
+            return
+        }
+        guard let stub = stubs[id] else {
             // A close for a browser that never was: WSurf still waits for its answer.
             send(CefRemoteMessage(CefRemote.Event.browserClosed, browser: id))
             return
         }
-        guard browser.answersClose else { return }
-        browsers[id] = nil
+        guard stub.answersClose else { return }
+        stubs[id] = nil
         send(CefRemoteMessage(CefRemote.Event.browserClosed, browser: id))
         browsersChanged()
     }
@@ -344,19 +473,22 @@ final class ServiceHost {
     private func closeEverythingAndExit() {
         guard !exiting else { return }
         beginExit()
-        guard !browsers.isEmpty else {
+        guard openCount > 0 else {
             flushAndExit()
             return
         }
         // The stores are asked for now, so they have the whole wait (up to the cap) to reach the disk: a browser that never
         // answers its close ends this wait with the cap, which skips the flush `flushAndExit` does after the last one.
         flushCookies()
-        for id in browsers.keys {
+        for id in Array(browsers.keys) + Array(stubs.keys) {
             closeBrowser(id)
         }
-        // A browser that never answers must not keep the service (and its helpers) alive.
+        // A browser that never answers must not keep the service (and its helpers) alive. Real browsers close asynchronously, so
+        // the last one can answer just before the cap: an exit that is already scheduled (`flushAndExit`, which shuts CEF down)
+        // is not cut off, and the backstop (`beginExit`) covers it if that hangs.
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.closeCapSeconds) {
             MainActor.assumeIsolated {
+                guard !ServiceHost.shared.exitScheduled else { return }
                 note("browsers did not all close in \(Self.closeCapSeconds) s: exiting without a CEF shutdown")
                 ServiceHost.shared.endTransaction()
                 // _exit, not exit: with CEF still up, atexit handlers and static destructors would run on a live Chromium.
@@ -481,7 +613,9 @@ final class ServiceHost {
                 answer.set(CefRemote.Key.pid, Int64(getpid()))
                 answer.set(CefRemote.Key.started, CefRuntime.shared.isInitialized)
                 answer.set(CefRemote.Key.startMs, cefStartMs)
-                answer.set(CefRemote.Key.count, browsers.count)
+                answer.set(CefRemote.Key.count, openCount)
+                answer.set(CefRemote.Key.browserObjects, ServiceCounters.browsers.withLock { $0 })
+                answer.set(CefRemote.Key.handlerSets, ServiceCounters.handlerSets.withLock { $0 })
                 answer.set(CefRemote.Key.contexts, contexts.count)
                 answer.set(CefRemote.Key.flushes, flushCount)
                 answer.set(CefRemote.Key.logFile, logFile)
@@ -493,9 +627,9 @@ final class ServiceHost {
             let written = Self.writeExitOnHello(root: message.string(CefRemote.Key.rootPath), count: Int(message.int(CefRemote.Key.count)))
             reply(to: message, on: peer) { $0.set(CefRemote.Key.success, written) }
         case CefRemote.Op.debugStubBrowser:
-            browsers[message.browser] = StubBrowser(answersClose: message.bool(CefRemote.Key.flag))
+            stubs[message.browser] = StubBrowser(answersClose: message.bool(CefRemote.Key.flag))
             browsersChanged()
-            reply(to: message, on: peer) { $0.set(CefRemote.Key.count, browsers.count) }
+            reply(to: message, on: peer) { $0.set(CefRemote.Key.count, openCount) }
         case CefRemote.Op.debugHangExit:
             // Bounded, so that a service whose backstop is broken still ends (late) and leaves nothing behind a failed test.
             reply(to: message, on: peer) { $0.set(CefRemote.Key.success, true) }

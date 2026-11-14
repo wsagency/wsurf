@@ -53,7 +53,7 @@ let package = Package(
             name: "wsurf-chromium-service",
             dependencies: ["CefKit", "CCef", "CCefAppKit"],
             // ponytail: Tools/embed-chromium.sh builds the service in release, where `#if DEBUG` is false, so the debug ops
-            // (abort, stats, exitOnHello, askHost, memoryPressure, stubBrowser, hangExit) have their own define, always on in phase 2. D4-S, which
+            // (abort, stats, exitOnHello, askHost, memoryPressure, stubBrowser, hangExit, and `browser.create`'s DEBUG creation flags) have their own define, always on in phase 2. D4-S, which
             // lets the service be signed, must make it conditional so no signed service has them.
             swiftSettings: [.swiftLanguageMode(.v5), .define("WSURF_SERVICE_DEBUG_OPS")],
             linkerSettings: [.linkedFramework("AppKit")]

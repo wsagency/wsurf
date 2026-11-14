@@ -319,6 +319,7 @@
    "ChromiumFrameSinkTests",
    "ChromiumPopupAllowlistTests",
    "ChromiumRemoteProtocolTests",
+   "ChromiumServiceBrowserTests",
    "ChromiumServiceBundleTests",
    "ChromiumServiceHostTests",
    "DownloadFilenameTests",
