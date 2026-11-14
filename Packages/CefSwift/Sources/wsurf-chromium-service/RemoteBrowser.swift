@@ -396,17 +396,17 @@ final class RemoteBrowser {
         let observer = Native.allocate(cef_dev_tools_message_observer_t.self, owner: box)
         observer.pointee.on_dev_tools_message = { observerSelf, browser, message, size in
             Native.release(browser.map(UnsafeMutableRawPointer.init))
-            guard let message, size > 0, let owner = Self.owner(observerSelf) else { return 0 }
+            guard let message, size > 0, let owner = RemoteBrowser.owner(observerSelf) else { return 0 }
             return MainActor.assumeIsolated { owner.devToolsMessage(message, size: size) }
         }
         observer.pointee.on_dev_tools_method_result = { observerSelf, browser, messageID, success, result, size in
             Native.release(browser.map(UnsafeMutableRawPointer.init))
-            guard let owner = Self.owner(observerSelf) else { return }
+            guard let owner = RemoteBrowser.owner(observerSelf) else { return }
             MainActor.assumeIsolated { owner.devToolsResult(id: Int64(messageID), success: success != 0, result: result, size: size) }
         }
         observer.pointee.on_dev_tools_event = { observerSelf, browser, method, params, size in
             Native.release(browser.map(UnsafeMutableRawPointer.init))
-            guard let owner = Self.owner(observerSelf) else { return }
+            guard let owner = RemoteBrowser.owner(observerSelf) else { return }
             let name = Native.string(method)
             MainActor.assumeIsolated { owner.devToolsEvent(method: name, params: params, size: size) }
         }
@@ -415,7 +415,7 @@ final class RemoteBrowser {
         }
         observer.pointee.on_dev_tools_agent_detached = { observerSelf, browser in
             Native.release(browser.map(UnsafeMutableRawPointer.init))
-            guard let owner = Self.owner(observerSelf) else { return }
+            guard let owner = RemoteBrowser.owner(observerSelf) else { return }
             MainActor.assumeIsolated { owner.send(owner.event(CefRemote.Event.devToolsDetached)) }
         }
         observerPointer = observer
@@ -434,7 +434,7 @@ final class RemoteBrowser {
     /// Messages of a cross-site frame's session go to WSurf whole: CEF's parsed callbacks would drop their `sessionId`. The
     /// page's own messages are left to CEF, which then calls the result or event callback.
     private func devToolsMessage(_ message: UnsafeRawPointer, size: Int) -> Int32 {
-        guard Self.isSessionMessage(message, size: size) else { return 0 }
+        guard RemoteBrowser.isSessionMessage(message, size: size) else { return 0 }
         let forwarded = event(CefRemote.Event.devToolsMessage)
         forwarded.set(CefRemote.Key.data, bytes: message, count: size)
         send(forwarded)
@@ -574,7 +574,7 @@ final class RemoteBrowser {
             entries.append(CefRemote.HistoryEntry(id: Int64(entryID), url: url, title: item["title"] as? String ?? "", isCurrent: index == current))
         }
         let native = readNativeEntries()
-        if let native, Self.agree(native, with: entries) {
+        if let native, RemoteBrowser.agree(native, with: entries) {
             for index in entries.indices {
                 entries[index].hasPostData = native[index].hasPostData
                 if !native[index].title.isEmpty {
@@ -610,7 +610,7 @@ final class RemoteBrowser {
         func answer(_ outcome: CefRemote.CollapseOutcome) {
             send(CefRemoteMessage.historyCollapsed(browser: id, request: request, outcome: outcome))
         }
-        guard let known = lastHistory, let native = readNativeEntries(), Self.agree(native, with: known) else {
+        guard let known = lastHistory, let native = readNativeEntries(), RemoteBrowser.agree(native, with: known) else {
             // The list WSurf's ids come from is not the list Chromium holds now: nothing can be said about the ids.
             answer(.refused)
             refreshHistory()

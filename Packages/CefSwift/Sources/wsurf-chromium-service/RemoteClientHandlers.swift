@@ -38,12 +38,12 @@ final class RemoteClientHandlers: @unchecked Sendable {
     let find: UnsafeMutablePointer<cef_find_handler_t>
 
     init(box: BrowserBox) {
-        lifeSpan = Self.makeLifeSpan(box)
-        load = Self.makeLoad(box)
-        display = Self.makeDisplay(box)
-        request = Self.makeRequest(box)
-        render = Self.makeRender(box)
-        find = Self.makeFind(box)
+        lifeSpan = RemoteClientHandlers.makeLifeSpan(box)
+        load = RemoteClientHandlers.makeLoad(box)
+        display = RemoteClientHandlers.makeDisplay(box)
+        request = RemoteClientHandlers.makeRequest(box)
+        render = RemoteClientHandlers.makeRender(box)
+        find = RemoteClientHandlers.makeFind(box)
         ServiceCounters.handlerSets.withLock { $0 += 1 }
     }
 
@@ -60,12 +60,12 @@ final class RemoteClientHandlers: @unchecked Sendable {
     static func makeClient(for box: BrowserBox) -> UnsafeMutablePointer<cef_client_t> {
         let handlers = RemoteClientHandlers(box: box)
         let client = Native.allocate(cef_client_t.self, owner: handlers)
-        client.pointee.get_life_span_handler = { clientSelf in handler(clientSelf) { $0.lifeSpan } }
-        client.pointee.get_load_handler = { clientSelf in handler(clientSelf) { $0.load } }
-        client.pointee.get_display_handler = { clientSelf in handler(clientSelf) { $0.display } }
-        client.pointee.get_request_handler = { clientSelf in handler(clientSelf) { $0.request } }
-        client.pointee.get_render_handler = { clientSelf in handler(clientSelf) { $0.render } }
-        client.pointee.get_find_handler = { clientSelf in handler(clientSelf) { $0.find } }
+        client.pointee.get_life_span_handler = { clientSelf in RemoteClientHandlers.handler(clientSelf) { $0.lifeSpan } }
+        client.pointee.get_load_handler = { clientSelf in RemoteClientHandlers.handler(clientSelf) { $0.load } }
+        client.pointee.get_display_handler = { clientSelf in RemoteClientHandlers.handler(clientSelf) { $0.display } }
+        client.pointee.get_request_handler = { clientSelf in RemoteClientHandlers.handler(clientSelf) { $0.request } }
+        client.pointee.get_render_handler = { clientSelf in RemoteClientHandlers.handler(clientSelf) { $0.render } }
+        client.pointee.get_find_handler = { clientSelf in RemoteClientHandlers.handler(clientSelf) { $0.find } }
         return client
     }
 
@@ -96,7 +96,7 @@ final class RemoteClientHandlers: @unchecked Sendable {
         life.pointee.on_after_created = { handlerSelf, browser in
             guard let browser else { return }
             defer { Native.release(UnsafeMutableRawPointer(browser)) }
-            guard let owner = Self.browser(handlerSelf) else {
+            guard let owner = RemoteClientHandlers.browser(handlerSelf) else {
                 // The host dropped this browser before CEF made it (a close before creation): nobody will close it, so close it now.
                 if let host = browser.pointee.get_host?(browser) {
                     host.pointee.close_browser?(host, 1)
@@ -112,7 +112,7 @@ final class RemoteClientHandlers: @unchecked Sendable {
         }
         life.pointee.on_before_close = { handlerSelf, browser in
             Native.release(browser.map(UnsafeMutableRawPointer.init))
-            guard let owner = Self.browser(handlerSelf) else { return }
+            guard let owner = RemoteClientHandlers.browser(handlerSelf) else { return }
             MainActor.assumeIsolated { owner.didClose() }
         }
         life.pointee.on_before_popup = { _, browser, frame, _, _, _, _, _, _, _, popupClient, _, extraInfo, _ in
@@ -132,31 +132,31 @@ final class RemoteClientHandlers: @unchecked Sendable {
         let load = Native.allocate(cef_load_handler_t.self, owner: box)
         load.pointee.on_loading_state_change = { handlerSelf, browser, loading, back, forward in
             Native.release(browser.map(UnsafeMutableRawPointer.init))
-            guard let owner = Self.browser(handlerSelf) else { return }
+            guard let owner = RemoteClientHandlers.browser(handlerSelf) else { return }
             MainActor.assumeIsolated { owner.loadingStateChanged(loading: loading != 0, canGoBack: back != 0, canGoForward: forward != 0) }
         }
         load.pointee.on_load_start = { handlerSelf, browser, frame, _ in
             Native.release(browser.map(UnsafeMutableRawPointer.init))
-            let main = Self.isMain(frame)
+            let main = RemoteClientHandlers.isMain(frame)
             Native.release(frame.map(UnsafeMutableRawPointer.init))
-            guard main, let owner = Self.browser(handlerSelf) else { return }
+            guard main, let owner = RemoteClientHandlers.browser(handlerSelf) else { return }
             MainActor.assumeIsolated { owner.loadStarted() }
         }
         load.pointee.on_load_end = { handlerSelf, browser, frame, status in
             Native.release(browser.map(UnsafeMutableRawPointer.init))
-            let main = Self.isMain(frame)
+            let main = RemoteClientHandlers.isMain(frame)
             let url = frame.map { Native.take($0.pointee.get_url?($0)) } ?? ""
             Native.release(frame.map(UnsafeMutableRawPointer.init))
-            guard main, let owner = Self.browser(handlerSelf) else { return }
+            guard main, let owner = RemoteClientHandlers.browser(handlerSelf) else { return }
             MainActor.assumeIsolated { owner.loadEnded(url: url, status: Int64(status)) }
         }
         load.pointee.on_load_error = { handlerSelf, browser, frame, code, text, failedURL in
             Native.release(browser.map(UnsafeMutableRawPointer.init))
-            let main = Self.isMain(frame)
+            let main = RemoteClientHandlers.isMain(frame)
             Native.release(frame.map(UnsafeMutableRawPointer.init))
             let message = Native.string(text)
             let url = Native.string(failedURL)
-            guard main, let owner = Self.browser(handlerSelf) else { return }
+            guard main, let owner = RemoteClientHandlers.browser(handlerSelf) else { return }
             MainActor.assumeIsolated { owner.loadFailed(code: Int64(code.rawValue), text: message, url: url) }
         }
         return load
@@ -168,21 +168,21 @@ final class RemoteClientHandlers: @unchecked Sendable {
         let display = Native.allocate(cef_display_handler_t.self, owner: box)
         display.pointee.on_address_change = { handlerSelf, browser, frame, url in
             Native.release(browser.map(UnsafeMutableRawPointer.init))
-            let main = Self.isMain(frame)
+            let main = RemoteClientHandlers.isMain(frame)
             Native.release(frame.map(UnsafeMutableRawPointer.init))
             let address = Native.string(url)
-            guard main, let owner = Self.browser(handlerSelf) else { return }
+            guard main, let owner = RemoteClientHandlers.browser(handlerSelf) else { return }
             MainActor.assumeIsolated { owner.addressChanged(address) }
         }
         display.pointee.on_title_change = { handlerSelf, browser, title in
             Native.release(browser.map(UnsafeMutableRawPointer.init))
             let text = Native.string(title)
-            guard let owner = Self.browser(handlerSelf) else { return }
+            guard let owner = RemoteClientHandlers.browser(handlerSelf) else { return }
             MainActor.assumeIsolated { owner.titleChanged(text) }
         }
         display.pointee.on_loading_progress_change = { handlerSelf, browser, progress in
             Native.release(browser.map(UnsafeMutableRawPointer.init))
-            guard let owner = Self.browser(handlerSelf) else { return }
+            guard let owner = RemoteClientHandlers.browser(handlerSelf) else { return }
             MainActor.assumeIsolated { owner.progressChanged(progress) }
         }
         return display
@@ -194,13 +194,13 @@ final class RemoteClientHandlers: @unchecked Sendable {
         let request = Native.allocate(cef_request_handler_t.self, owner: box)
         request.pointee.on_before_browse = { handlerSelf, browser, frame, nativeRequest, userGesture, isRedirect in
             Native.release(browser.map(UnsafeMutableRawPointer.init))
-            let main = Self.isMain(frame)
+            let main = RemoteClientHandlers.isMain(frame)
             Native.release(frame.map(UnsafeMutableRawPointer.init))
             let url = nativeRequest.map { Native.take($0.pointee.get_url?($0)) } ?? ""
             Native.release(nativeRequest.map(UnsafeMutableRawPointer.init))
             // Sub-frames are not WSurf's to decide. A browser the host no longer has cancels (nobody could answer for it).
             guard main else { return 0 }
-            guard let owner = Self.browser(handlerSelf) else { return 1 }
+            guard let owner = RemoteClientHandlers.browser(handlerSelf) else { return 1 }
             let allowed = MainActor.assumeIsolated { owner.mayNavigate(to: url, isRedirect: isRedirect != 0, userGesture: userGesture != 0) }
             return allowed ? 0 : 1
         }
@@ -212,7 +212,7 @@ final class RemoteClientHandlers: @unchecked Sendable {
         }
         request.pointee.on_render_process_terminated = { handlerSelf, browser, status, code, _ in
             Native.release(browser.map(UnsafeMutableRawPointer.init))
-            guard let owner = Self.browser(handlerSelf) else { return }
+            guard let owner = RemoteClientHandlers.browser(handlerSelf) else { return }
             MainActor.assumeIsolated { owner.renderProcessTerminated(status: Int64(status.rawValue), code: Int64(code)) }
         }
         return request
@@ -225,12 +225,12 @@ final class RemoteClientHandlers: @unchecked Sendable {
         render.pointee.get_view_rect = { handlerSelf, browser, rect in
             Native.release(browser.map(UnsafeMutableRawPointer.init))
             guard let rect else { return }
-            let size = Self.browser(handlerSelf).map { owner in MainActor.assumeIsolated { owner.sizeDIP } } ?? CGSize(width: 1, height: 1)
+            let size = RemoteClientHandlers.browser(handlerSelf).map { owner in MainActor.assumeIsolated { owner.sizeDIP } } ?? CGSize(width: 1, height: 1)
             rect.pointee = cef_rect_t(x: 0, y: 0, width: Int32(max(1, size.width.rounded())), height: Int32(max(1, size.height.rounded())))
         }
         render.pointee.get_screen_info = { handlerSelf, browser, info in
             Native.release(browser.map(UnsafeMutableRawPointer.init))
-            guard let info, let owner = Self.browser(handlerSelf) else { return 0 }
+            guard let info, let owner = RemoteClientHandlers.browser(handlerSelf) else { return 0 }
             let (scale, size) = MainActor.assumeIsolated { (owner.scale, owner.sizeDIP) }
             info.pointee.device_scale_factor = Float(scale)
             info.pointee.depth = 24
@@ -250,7 +250,7 @@ final class RemoteClientHandlers: @unchecked Sendable {
         let find = Native.allocate(cef_find_handler_t.self, owner: box)
         find.pointee.on_find_result = { handlerSelf, browser, identifier, count, _, active, final in
             Native.release(browser.map(UnsafeMutableRawPointer.init))
-            guard let owner = Self.browser(handlerSelf) else { return }
+            guard let owner = RemoteClientHandlers.browser(handlerSelf) else { return }
             MainActor.assumeIsolated {
                 owner.findResult(identifier: Int64(identifier), count: Int64(count), active: Int64(active), final: final != 0)
             }
