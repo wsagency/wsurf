@@ -78,6 +78,32 @@ struct ChromiumServiceHostTests {
         #expect(try first.stats().int(CefRemote.Key.pid) == Int64(try #require(first.pid)))
     }
 
+    @Test(.enabled(if: ChromiumServiceBundle.isPresent))
+    func aSecondConnectionCannotActOnTheFirstHostsBrowsersOrContexts() throws {
+        let first = try ServiceClient()
+        defer { first.finish() }
+        #expect(try first.hello().bool(CefRemote.Key.success))
+        try first.stubBrowser(1)
+        let second = try ServiceClient(root: first.root)
+        defer { second.close() }
+        // The second connection never says hello (or its hello is refused: both leave it no host), and sends what only the host may.
+        let hello = CefRemoteMessage.hello()
+        hello.set(CefRemote.Key.rootPath, first.root.path)
+        #expect(!(try second.call(hello)).bool(CefRemote.Key.success))
+        second.send(CefRemoteMessage(CefRemote.Op.close, browser: 1))
+        let context = CefRemoteMessage(CefRemote.Op.createContext)
+        context.set(CefRemote.Key.context, "intruder")
+        context.set(CefRemote.Key.cachePath, first.root.appending(path: "intruder").path)
+        // Messages of one connection are served in order: the answer to this one means the `browser.close` before it was served.
+        let refused = try second.call(context)
+        #expect(!refused.bool(CefRemote.Key.success), "a context asked for by a connection that is not the host")
+        #expect(!refused.string(CefRemote.Key.error).isEmpty)
+        let stats = try first.stats()
+        #expect(stats.int(CefRemote.Key.count) == 1, "the first host's browser is still open")
+        #expect(stats.int(CefRemote.Key.contexts) == 0, "no context was created for the second connection")
+        #expect(!first.expectEvent(CefRemote.Event.browserClosed), "nothing was closed under the first host")
+    }
+
     // MARK: Lifecycle
 
     @Test(.enabled(if: ChromiumServiceBundle.isPresent))
@@ -94,13 +120,16 @@ struct ChromiumServiceHostTests {
     func aBrowserHoldsTheServiceUpPastItsLingerAndTheLastCloseStartsItAgain() throws {
         let client = try ServiceClient()
         defer { client.finish() }
-        _ = try client.hello(linger: 1)
+        // The linger starts with the hello, so the stub has to be registered before it ends: 2 s leave a loaded machine room for
+        // that (a lost race would make the service leave under the test and fail it for the wrong reason). The window of the
+        // first wait ends 1.5 s after the linger would have, as it did at 1 s, and the second leaves 3 s for the exit.
+        _ = try client.hello(linger: 2)
         let pid = try #require(client.pid)
         try client.stubBrowser(1)
-        #expect(ServiceClient.secondsUntilGone(pid, within: 2.5) == nil, "a browser is open: the linger must not run")
+        #expect(ServiceClient.secondsUntilGone(pid, within: 3.5) == nil, "a browser is open: the linger must not run")
         #expect(try client.stats().int(CefRemote.Key.count) == 1)
         try client.closeBrowser(1)
-        #expect(ServiceClient.secondsUntilGone(pid, within: 4) != nil, "the last browser closed: the linger runs and the service leaves")
+        #expect(ServiceClient.secondsUntilGone(pid, within: 5) != nil, "the last browser closed: the linger runs and the service leaves")
     }
 
     @Test(.enabled(if: ChromiumServiceBundle.isPresent))
@@ -119,11 +148,25 @@ struct ChromiumServiceHostTests {
         defer { client.finish() }
         _ = try client.hello()
         let pid = try #require(client.pid)
+        try client.context("profile")
         try client.stubBrowser(7, answersClose: false)
+        // A second connection to the same service, to read what the control connection can no longer ask for.
+        let observer = try ServiceClient(root: client.root)
+        defer { observer.close() }
+        _ = try observer.stats()
+        let closed = Date()
         client.close()
-        let took = try #require(ServiceClient.secondsUntilGone(pid, within: 4.5), "a stuck browser kept the service up past its 3 s cap")
-        #expect(took >= 2.5, "the service should have given the browser its time to close first (left after \(took) s)")
-    }
+        // The cookie stores are asked for when the close begins, not after the last browser (which here never comes).
+        var flushes: Int64 = 0
+        let deadline = Date().addingTimeInterval(2)
+        while flushes == 0, Date() < deadline {
+            flushes = (try? observer.stats())?.int(CefRemote.Key.flushes) ?? 0
+            usleep(50_000)
+        }
+        #expect(flushes >= 1, "the cookies must be flushed before the service waits for its browsers")
+        _ = try #require(ServiceClient.secondsUntilGone(pid, within: 4.5), "a stuck browser kept the service up past its 3 s cap")
+        let took = Date().timeIntervalSince(closed)
+        #expect(took >= 2.5, "the service should have given the browser its time to close first (left after \(took) s)")    }
 
     @Test(.enabled(if: ChromiumServiceBundle.isPresent))
     func aBrowserThatClosesWhenAskedDoesNotMakeTheServiceWaitForTheCap() throws {
@@ -135,6 +178,20 @@ struct ChromiumServiceHostTests {
         client.close()
         let took = try #require(ServiceClient.secondsUntilGone(pid, within: 4))
         #expect(took < 2.5, "a browser that closes at once does not make the service wait for the cap (left after \(took) s)")
+    }
+
+    @Test(.enabled(if: ChromiumServiceBundle.isPresent))
+    func anExitWhoseMainThreadIsStuckIsEndedByTheBackstop() throws {
+        let client = try ServiceClient()
+        defer { client.finish() }
+        _ = try client.hello()
+        let pid = try #require(client.pid)
+        // The service begins its exit and then blocks its main thread for 15 s (what a hung cef_shutdown does). Nothing queued
+        // on the main thread can run: the 5.5 s backstop, which has a queue of its own, is the only way out before the 15 s.
+        #expect(try client.call(CefRemoteMessage(CefRemote.Op.debugHangExit)).bool(CefRemote.Key.success))
+        let took = ServiceClient.secondsUntilGone(pid, within: 9)
+        #expect(took != nil, "a stuck exit was not forced within 9 s: the service waited for its own main thread")
+        print("ChromiumServiceHostTests observed: stuck exit, service gone after \(took ?? -1) s")
     }
 
     // MARK: Memory pressure

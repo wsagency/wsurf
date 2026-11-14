@@ -156,6 +156,10 @@ public enum CefRemote {
         /// everything) can be tested before real browsers exist. ``Key/flag`` says whether it answers a close (`browser.close`
         /// or the service's own) by going away; one that does not stays until the service gives up on it.
         public static let debugStubBrowser = "debug.stubBrowser"
+        /// DEBUG: answers, begins the service's exit (as the end of the control connection does) and then blocks the main thread
+        /// for 15 s, as a hung `cef_shutdown` would. Only the exit's backstop, which runs on another queue, can end the service
+        /// sooner. Has a reply (sent before the block).
+        public static let debugHangExit = "debug.hangExit"
     }
 
     /// Events from the service to WSurf.

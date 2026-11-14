@@ -22,6 +22,9 @@ final class ServiceHost {
     private static let closeCapSeconds: TimeInterval = 3
     /// How long the cookie flush gets to finish on CEF's own threads before CEF is shut down.
     private static let flushGraceSeconds: TimeInterval = 0.5
+    /// When a deliberate exit that has begun is forced, whatever the main thread is doing: after the cap, the flush grace and
+    /// two seconds for `cef_shutdown`. The normal exits finish well before it, so it never shortens them.
+    private static let exitBackstopSeconds: TimeInterval = closeCapSeconds + flushGraceSeconds + 2
 
     /// The connection that said hello: events go there. The input and frames connections only send (and are not served yet).
     private var control: xpc_connection_t?
@@ -32,6 +35,8 @@ final class ServiceHost {
     private var memoryPressure: DispatchSourceMemoryPressure?
     private var holdsTransaction = false
     private var exiting = false
+    private var backstopArmed = false
+    private var exitScheduled = false
     private var flushCount = 0
     private var cefStartMs: Double = -1
     private var logFile = "/dev/null"
@@ -90,8 +95,10 @@ final class ServiceHost {
             // Their messages arrive with D4-4b (input is phase 3, frames D4-7).
             note("\(message.op) connection open")
         case CefRemote.Op.createContext:
+            guard isHost(peer, for: message) else { return }
             createContext(message, from: peer)
         case CefRemote.Op.close:
+            guard isHost(peer, for: message) else { return }
             closeBrowser(message.browser)
         default:
             #if WSURF_SERVICE_DEBUG_OPS
@@ -101,6 +108,24 @@ final class ServiceHost {
             note("no handler for \(message.op)")
             reply(to: message, on: peer) { $0.set(CefRemote.Key.error, "unknown op") }
         }
+    }
+
+    /// Whether `message`, which acts on CEF (a context, a browser), may be served: only the connection that said hello is the host
+    /// (a refused second host, or a connection that never said hello, has no say), and nothing new is served once the exit has
+    /// begun. Not asked of `ping`, the hellos and the DEBUG ops. A refusal is answered (when the sender asked) and has no effect.
+    /// Every op D4-4b adds that acts on CEF goes through this too. (`closeEverythingAndExit` calls `closeBrowser` itself.)
+    private func isHost(_ peer: xpc_connection_t, for message: CefRemoteMessage) -> Bool {
+        guard peer === control else {
+            note("\(message.op) refused: not the host")
+            reply(to: message, on: peer) { $0.set(CefRemote.Key.error, "not the host") }
+            return false
+        }
+        guard !exiting else {
+            note("\(message.op) refused: the service is leaving")
+            reply(to: message, on: peer) { $0.set(CefRemote.Key.error, "The Chromium service is leaving.") }
+            return false
+        }
+        return true
     }
 
     /// Sends `fill`'s message as the answer to `request`, when the sender asked for one.
@@ -318,20 +343,48 @@ final class ServiceHost {
     /// WSurf's control connection ended, or launchd is about to end the service: close every browser, then exit.
     private func closeEverythingAndExit() {
         guard !exiting else { return }
-        exiting = true
+        beginExit()
         guard !browsers.isEmpty else {
             flushAndExit()
             return
         }
+        // The stores are asked for now, so they have the whole wait (up to the cap) to reach the disk: a browser that never
+        // answers its close ends this wait with the cap, which skips the flush `flushAndExit` does after the last one.
+        flushCookies()
         for id in browsers.keys {
             closeBrowser(id)
         }
         // A browser that never answers must not keep the service (and its helpers) alive.
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.closeCapSeconds) {
-            note("browsers did not all close in \(Self.closeCapSeconds) s: exiting without a CEF shutdown")
-            // _exit, not exit: with CEF still up, atexit handlers and static destructors would run on a live Chromium.
+            MainActor.assumeIsolated {
+                note("browsers did not all close in \(Self.closeCapSeconds) s: exiting without a CEF shutdown")
+                ServiceHost.shared.endTransaction()
+                // _exit, not exit: with CEF still up, atexit handlers and static destructors would run on a live Chromium.
+                _exit(0)
+            }
+        }
+    }
+
+    /// Every deliberate exit (a linger or pressure exit, the control connection's end, `TERMINATION_IMMINENT`) starts here. The
+    /// service stops serving new ops, and a backstop is armed on a queue of its own: the main thread is where a stuck exit would
+    /// be stuck (`cef_shutdown`, a CEF callback, `askHost`'s wait), so nothing scheduled on it can be the last resort. The
+    /// backstop does not end the transaction: a service that had to be forced stays recorded as having exited dirty.
+    private func beginExit() {
+        exiting = true
+        guard !backstopArmed else { return }
+        backstopArmed = true
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + Self.exitBackstopSeconds) {
             _exit(0)
         }
+    }
+
+    /// Tells launchd the work is done, right before a deliberate exit: a service that exits with its transaction open is
+    /// recorded as having exited dirty. Held from the first hello (`hello`) so that launchd cannot end the service as idle
+    /// during the linger.
+    private func endTransaction() {
+        guard holdsTransaction else { return }
+        holdsTransaction = false
+        xpc_transaction_end()
     }
 
     /// Asks Chromium to write every cookie store to disk; it finishes on its own threads.
@@ -347,7 +400,9 @@ final class ServiceHost {
 
     /// Writes every cookie store, shuts CEF down (its helpers end with it) and exits.
     private func flushAndExit() {
-        exiting = true
+        beginExit()
+        guard !exitScheduled else { return }
+        exitScheduled = true
         flushCookies()
         let finish: @Sendable () -> Void = {
             MainActor.assumeIsolated {
@@ -360,6 +415,7 @@ final class ServiceHost {
                     CefRuntime.shared.shutdown()
                 }
                 note("exit")
+                host.endTransaction()
                 exit(0)
             }
         }
@@ -440,6 +496,11 @@ final class ServiceHost {
             browsers[message.browser] = StubBrowser(answersClose: message.bool(CefRemote.Key.flag))
             browsersChanged()
             reply(to: message, on: peer) { $0.set(CefRemote.Key.count, browsers.count) }
+        case CefRemote.Op.debugHangExit:
+            // Bounded, so that a service whose backstop is broken still ends (late) and leaves nothing behind a failed test.
+            reply(to: message, on: peer) { $0.set(CefRemote.Key.success, true) }
+            closeEverythingAndExit()
+            Thread.sleep(forTimeInterval: 15)
         case CefRemote.Op.debugMemoryPressure:
             // An exit the handler decides on runs later (the linger's onExit hops to the main queue), so the answer still goes.
             memoryPressureChanged(isUnder: message.bool(CefRemote.Key.flag))
