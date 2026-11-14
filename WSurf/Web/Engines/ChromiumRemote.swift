@@ -199,6 +199,8 @@ final class ChromiumRemote {
     private(set) var generation = 0
     private var needsHello = true
     private var relaunching = false
+    /// The hello that is waiting was refused because the service was leaving (`noteLeavingRefusal`).
+    private var helloRefusedAsLeaving = false
     private var policy = CefRemoteRelaunchPolicy()
     private var browsers: [Int64: any ChromiumRemoteBrowserHandle] = [:]
     /// Browser ids start at 1 and are never reused (0 is what a message with no `bid` reads as).
@@ -336,6 +338,7 @@ final class ChromiumRemote {
         guard let control else { return }
         needsHello = false
         helloCount += 1
+        helloRefusedAsLeaving = false
         setState(relaunching ? .relaunching : .starting)
         let message: CefRemoteMessage
         do {
@@ -354,14 +357,17 @@ final class ChromiumRemote {
             MainActor.assumeIsolated { self?.helloEnded(reply, sentAt: sent, generation: current) }
         }
         let table = requests
-        xpc_connection_send_message_with_reply(control, message.object, DispatchQueue.main) { answer in
+        xpc_connection_send_message_with_reply(control, message.object, DispatchQueue.main) { [weak self] answer in
             // An error object (the connection ended) is left to the control connection's own event, which ends every request
             // (`serviceEnded`); ending them here too could end a request of the next instance. The timeout is the backstop.
             guard let reply = CefRemoteMessage(wrapping: answer) else { return }
             // A service that is leaving refuses the hello without a pid or a version, and then ends: the hello stays waiting, so
             // that the interruption that follows is a death with a hello pending and the replacement is asked for. (If the
             // service never ends, as one that already has another host, the hello's timeout ends it.)
-            guard !Self.isLeavingRefusal(reply) else { return }
+            if Self.isLeavingRefusal(reply) {
+                MainActor.assumeIsolated { self?.noteLeavingRefusal() }
+                return
+            }
             table.reply(id, reply)
         }
         ChromiumOOP.log.notice("hello sent to \(self.serviceName, privacy: .public) (hello \(self.helloCount))")
@@ -423,6 +429,12 @@ final class ChromiumRemote {
     /// A refusal a leaving (or already hosted) service gives: not ok, and neither a pid nor a protocol version.
     nonisolated static func isLeavingRefusal(_ reply: CefRemoteMessage) -> Bool {
         !reply.bool(CefRemote.Key.success) && !reply.has(CefRemote.Key.pid) && !reply.has(CefRemote.Key.protocolVersion)
+    }
+
+    /// The service answered the hello that is waiting with "I am leaving" (a linger or pressure exit that was already under way):
+    /// its end is coming, and it is not a crash. See `serviceEnded`.
+    func noteLeavingRefusal() {
+        helloRefusedAsLeaving = true
     }
 
     private func setState(_ new: ServiceState) {
@@ -509,6 +521,11 @@ final class ChromiumRemote {
         // Asked before anything is cleared: a browser in the service, or a request (a hello, a browser being created) that was
         // waiting on it, makes this a death; with neither it is an idle exit, which is not relaunched and not counted.
         let wasInUse = !browsers.isEmpty || requests.pendingCount > 0
+        // A service that refused the waiting hello because it was leaving, with no browser of ours in it, ended as it said it
+        // would: that is neither a crash (not counted toward the cap) nor a reason to give up (the hello's purpose is still
+        // wanted, so the replacement is asked for, unless the cap was already reached).
+        let leftAsItSaid = helloRefusedAsLeaving && browsers.isEmpty
+        helloRefusedAsLeaving = false
         ChromiumOOP.log.notice("service ended (\(reason, privacy: .public)): \(self.browsers.count) browsers lost, in use \(wasInUse)")
         let lost = takeEverythingDown(keepingControl: true)
         needsHello = true
@@ -516,6 +533,12 @@ final class ChromiumRemote {
         requests.interruptAll()
         for handle in lost {
             handle.remoteServiceEnded()
+        }
+        if leftAsItSaid, !policy.isCrashLooping {
+            relaunching = true
+            setState(.relaunching)
+            connect()
+            return
         }
         switch policy.recordDeath(at: clock(), serviceWasInUse: wasInUse) {
         case .relaunch:
@@ -676,14 +699,20 @@ final class ChromiumRemote {
 
     private func openFrames() {
         guard frames == nil else { return }
-        let sink = sink
+        frames = Self.makeFramesConnection(serviceName: serviceName, sink: sink)
+    }
+
+    /// The frames connection, which delivers on the sink's queue. Built outside the main actor on purpose: a handler made in a
+    /// main-actor method could be treated as main-actor code, and its executor check would trap when it runs on the frames queue
+    /// (every cancel delivers an invalidation there).
+    nonisolated private static func makeFramesConnection(serviceName: String, sink: ChromiumFrameSink) -> xpc_connection_t {
         let connection = xpc_connection_create(serviceName, sink.framesQueue)
         xpc_connection_set_event_handler(connection) { event in
-            Self.deliverFrame(event, to: sink)
+            deliverFrame(event, to: sink)
         }
         xpc_connection_activate(connection)
         xpc_connection_send_message(connection, CefRemoteMessage(CefRemote.Op.framesHello).object)
-        frames = connection
+        return connection
     }
 
     /// On the frames queue: decodes a frame or a popup event and hands it to the sink. Anything else is ignored.

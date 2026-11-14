@@ -441,23 +441,46 @@ struct ChromiumRemoteClientTests {
     }
 
     @Test
-    func aCloseSentToAServiceThatIsExitingIsAnsweredByTheConnectionDropping() async {
+    func aCloseSentToAServiceThatIsExitingIsAnsweredByTheConnectionDroppingNotByTheTimeout() async {
         let remote = makeRemote()
         defer { remote.disconnect() }
         let handle = Handle()
         let id = remote.makeBrowser(handle)
         remote.connect()
         let generation = remote.generation
+        let started = ContinuousClock.now
         let closing = Task { @MainActor in
             await remote.closeBrowser(id)
         }
-        await Task.yield()
-        // The service is leaving: it gets no `browser.closed` to send. Its end is the answer. (If the connection to the service
-        // name that does not exist reported its own end first, that is the same answer.)
+        // Until the close is registered the interruption below would only make `closeBrowser` return early, which proves nothing:
+        // the hello is one pending request, the close the second.
+        #expect(await waitUntil(2) { remote.pendingRequestCount >= 2 }, "the close registered its wait")
+        // The service is leaving: it has no `browser.closed` to send. The dropped connection is the answer.
         remote.receive(.interrupted, generation: generation)
         await closing.value
+        let took = ContinuousClock.now - started
+        #expect(took < .seconds(1), "the close waited for something other than the connection dropping (\(took)); its own timeout is \(ChromiumRemote.closeTimeout) s")
+        #expect(handle.endedCount == 1, "the browser is told its service ended")
         #expect(remote.browserCount == 0)
-        #expect(handle.endedCount + handle.events.count(where: { $0 == CefRemote.Event.browserClosed }) >= 1)
+    }
+
+    @Test
+    func aHelloRefusedBecauseTheServiceIsLeavingIsRelaunchedWithoutCountingTowardTheCrashLoop() {
+        let remote = makeRemote()
+        defer { remote.disconnect() }
+        remote.connect()
+        for round in 1...6 {
+            remote.noteLeavingRefusal()
+            remote.receive(.interrupted, generation: remote.generation)
+            #expect(remote.state == .relaunching, "round \(round)")
+        }
+        #expect(remote.helloCount == 7, "every end got its replacement, and none counted as a death")
+        // A real death after them is the first one: it relaunches too (the cap is three).
+        remote.receive(.interrupted, generation: remote.generation)
+        #expect(remote.state == .relaunching)
+        remote.receive(.interrupted, generation: remote.generation)
+        remote.receive(.interrupted, generation: remote.generation)
+        #expect(remote.state == .crashLooping, "three real deaths still trip the cap")
     }
 
     // MARK: The real service
@@ -465,20 +488,24 @@ struct ChromiumRemoteClientTests {
     /// Asks the service to count down `count` hellos that kill it (`debug.exitOnHello`) on a connection of its own, before the
     /// client says hello: the instance that answers is then the armed one, and so are the next `count - 1`.
     private func arm(count: Int, root: URL) async -> Bool {
-        let queue = DispatchQueue(label: "ChromiumRemoteClientTests.arm")
-        let connection = xpc_connection_create((Bundle.main.bundleIdentifier ?? "") + CefRemote.serviceSuffix, queue)
-        xpc_connection_set_event_handler(connection) { _ in }
-        xpc_connection_activate(connection)
         let message = CefRemoteMessage(CefRemote.Op.debugExitOnHello)
         message.set(CefRemote.Key.rootPath, root.path)
         message.set(CefRemote.Key.count, count)
+        let connection = Self.makeArmConnection()
         let armed: Bool = await withCheckedContinuation { continuation in
-            xpc_connection_send_message_with_reply(connection, message.object, queue) { answer in
+            xpc_connection_send_message_with_reply(connection, message.object, DispatchQueue.main) { answer in
                 continuation.resume(returning: CefRemoteMessage(wrapping: answer)?.bool(CefRemote.Key.success) ?? false)
             }
         }
         xpc_connection_cancel(connection)
         return armed
+    }
+
+    nonisolated private static func makeArmConnection() -> xpc_connection_t {
+        let connection = xpc_connection_create((Bundle.main.bundleIdentifier ?? "") + CefRemote.serviceSuffix, DispatchQueue.global())
+        xpc_connection_set_event_handler(connection) { _ in }
+        xpc_connection_activate(connection)
+        return connection
     }
 
     /// A first hello may wait out launchd's 10 s throttle, then the launch and a cold CEF start, on a loaded machine: the timeout
@@ -701,24 +728,22 @@ struct ChromiumRemoteClientTests {
         await finish(remote, pid: pid)
     }
 
-    /// The last test of the suite to touch the process's own latch: it decides out of process for the rest of the host.
+    /// The only test that touches the process's own latch (the others use latches of their own): it decides out of process for
+    /// the rest of the host, which is why this suite runs in invocations with no in-process Chromium suite. No service is
+    /// launched: the latch and the refusal are what is tested.
     @Test(.enabled(if: ChromiumServiceBundle.isPresent))
-    func theProcessLatchesOutOfProcessAndThenRefusesAnInProcessStart() async throws {
+    func theProcessLatchesOutOfProcessAndThenRefusesAnInProcessStart() {
         #if DEBUG
         ChromiumOOP.testOverride = true
-        let remote = ChromiumRemote.shared
-        _ = remote.connect()
-        #expect(ChromiumOOP.latch.mode == .outOfProcess)
-        // An in-process start now refuses, before it creates a folder or loads CEF.
+        #expect(ChromiumOOP.isEnabled, "a test host with the service in the app and the override on")
+        // The first Chromium start decides. It refuses here, before it makes a folder or loads CEF.
         #expect(throws: ChromiumError.self) { try ChromiumRuntime.shared.ensureInitialized() }
+        #expect(ChromiumOOP.latch.mode == .outOfProcess)
         #expect(!ChromiumRuntime.shared.isInitialized, "CEF was never started in this process")
-        let up = await waitUntil(40) { remote.isRunning }
-        #expect(up, "state \(remote.state)")
-        var pid: pid_t?
-        if case let .running(running) = remote.state {
-            pid = running
-        }
-        await finish(remote, pid: pid)
+        // Whatever is asked afterwards, the decision stays (and no in-process start is attempted from here on).
+        ChromiumOOP.testOverride = false
+        #expect(ChromiumOOP.resolveMode() == .outOfProcess)
+        ChromiumOOP.testOverride = nil
         #endif
     }
 }
