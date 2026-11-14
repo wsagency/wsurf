@@ -779,8 +779,8 @@ final class ChromiumRemote {
     // MARK: The hello
 
     /// The Chromium switches the service may be given: exactly the ones WSurf's own Chromium has (`ChromiumRuntime`), with the
-    /// values it gives them. Anything else a caller asks for (`no-sandbox`, a remote-debugging port, `disable-web-security`, a
-    /// profile directory) is dropped here, so no hello, whoever builds it, can loosen the service.
+    /// values it gives them. Anything else a caller asks for (`no-sandbox`, a remote-debugging port, a switch that turns off the
+    /// same-origin policy, a profile directory) is dropped here, so no hello, whoever builds it, can loosen the service.
     nonisolated static func allowedSwitches(_ requested: [String: String?]) -> [String: String?] {
         requested.filter { name, value in
             guard let allowed = ChromiumRuntime.extraCommandLineSwitches[name] else { return false }
