@@ -40,6 +40,8 @@ struct ChromiumRemoteClientTests {
         var events: [String] = []
         var endedCount = 0
         var allowsNavigation = true
+        /// What a page proxy might do when its browser is gone: the test's stand-in for it runs inside the callback.
+        var onEnded: (() -> Void)?
 
         func remoteEvent(_ message: CefRemoteMessage) {
             events.append(message.op)
@@ -47,6 +49,7 @@ struct ChromiumRemoteClientTests {
 
         func remoteServiceEnded() {
             endedCount += 1
+            onEnded?()
         }
 
         func remoteAllowsNavigation(to url: String) -> Bool {
@@ -493,6 +496,155 @@ struct ChromiumRemoteClientTests {
         #expect(remote.state == .crashLooping, "three real deaths still trip the cap")
     }
 
+    @Test
+    func aBrowserThatSendsFromItsEndedCallbackDuringTheThirdDeathDoesNotLaunchAFourthServiceAndTheStateStaysCrashLooping() {
+        let clock = FakeNow()
+        let remote = makeRemote(clock: clock)
+        let handle = Handle()
+        // A page proxy that makes its browser again and talks to the service as soon as it hears the old one is gone.
+        handle.onEnded = { [unowned remote, unowned handle] in
+            _ = remote.makeBrowser(handle)
+            _ = remote.send(CefRemoteMessage(CefRemote.Op.debugStats))
+        }
+        defer {
+            handle.onEnded = nil
+            remote.disconnect()
+        }
+        _ = remote.makeBrowser(handle)
+        remote.connect()
+        for second in [0.0, 10.0, 20.0] {
+            clock.now = 1000 + second
+            remote.receive(.interrupted, generation: remote.generation)
+        }
+        #expect(handle.endedCount == 3)
+        #expect(remote.helloCount == 3, "the third death is the cap: the callback's message launches nothing")
+        #expect(remote.state == .crashLooping)
+    }
+
+    @Test
+    func aBrowserThatSendsFromItsEndedCallbackDuringARelaunchIsFoldedIntoTheOneReplacementHello() {
+        let remote = makeRemote()
+        let handle = Handle()
+        handle.onEnded = { [unowned remote] in
+            _ = remote.send(CefRemoteMessage(CefRemote.Op.debugStats))
+        }
+        defer {
+            handle.onEnded = nil
+            remote.disconnect()
+        }
+        _ = remote.makeBrowser(handle)
+        remote.connect()
+        remote.receive(.interrupted, generation: remote.generation)
+        #expect(remote.state == .relaunching)
+        #expect(remote.helloCount == 2, "one replacement hello, not one for the callback and one for the relaunch")
+        #expect(remote.pendingRequestCount == 1, "the replacement's hello, which the callback's request did not interrupt")
+    }
+
+    @Test
+    func aBrowserThatSendsWhileDisconnectIsTellingItDoesNotBringTheConnectionBack() {
+        let remote = makeRemote()
+        let handle = Handle()
+        handle.onEnded = { [unowned remote] in
+            _ = remote.send(CefRemoteMessage(CefRemote.Op.debugStats))
+        }
+        defer { handle.onEnded = nil }
+        _ = remote.makeBrowser(handle)
+        remote.connect()
+        remote.disconnect()
+        #expect(handle.endedCount == 1)
+        #expect(remote.state == .stopped)
+        #expect(remote.helloCount == 1, "no new hello from the callback")
+        #expect(remote.pendingRequestCount == 0)
+    }
+
+    @Test
+    func aHelloAnswerThatArrivesInACrashLoopOrAfterARefusalIsIgnored() {
+        let clock = FakeNow()
+        let remote = makeRemote(clock: clock)
+        defer { remote.disconnect() }
+        remote.connect()
+        for second in [0.0, 1.0, 2.0] {
+            clock.now = 1000 + second
+            remote.receive(.interrupted, generation: remote.generation)
+        }
+        #expect(remote.state == .crashLooping)
+        let answer = CefRemoteMessage("reply")
+        answer.set(CefRemote.Key.success, true)
+        answer.set(CefRemote.Key.pid, 4242)
+        remote.helloEnded(.value(answer), sentAt: clock.now, generation: remote.generation)
+        #expect(remote.state == .crashLooping, "an instance launched too late is not run on")
+        #expect(remote.servicePID == 0)
+        #expect(!remote.hasFramesConnection)
+    }
+
+    @Test
+    func aPidOutsideInt32IsClampedNotATrap() {
+        let remote = makeRemote()
+        defer { remote.disconnect() }
+        remote.connect()
+        let answer = CefRemoteMessage("reply")
+        answer.set(CefRemote.Key.success, true)
+        answer.set(CefRemote.Key.pid, Int64.max)
+        remote.helloEnded(.value(answer), sentAt: 1000, generation: remote.generation)
+        #expect(remote.servicePID == Int32.max)
+    }
+
+    @Test
+    func aRequestWaitsForTheHelloTooUnlessTheServiceIsUp() {
+        typealias Remote = ChromiumRemote
+        #expect(Remote.effectiveTimeout(nil, defaultTimeout: 5, isRunning: true, helloTimeout: 15) == 5)
+        #expect(Remote.effectiveTimeout(1, defaultTimeout: 5, isRunning: true, helloTimeout: 15) == 1)
+        // Starting or relaunching: the request is served after the hello, which launchd may hold back for about 10 s.
+        #expect(Remote.effectiveTimeout(nil, defaultTimeout: 5, isRunning: false, helloTimeout: 15) == 20)
+        #expect(Remote.effectiveTimeout(1, defaultTimeout: 5, isRunning: false, helloTimeout: 15) == 16)
+        // 5 s is not enough for a relaunch after a young death (about 10 s); the allowance covers it.
+        #expect(Remote.effectiveTimeout(nil, defaultTimeout: 5, isRunning: false, helloTimeout: Remote.defaultHelloTimeout) > 10)
+    }
+
+    @Test
+    func aCacheDirectoryOutsideTheRootIsRefusedBeforeAnythingIsMade() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "wsurf-d4-client-\(UUID().uuidString)", directoryHint: .isDirectory)
+        let sibling = FileManager.default.temporaryDirectory.appending(path: "wsurf-d4-outside-\(UUID().uuidString)", directoryHint: .isDirectory)
+        let remote = makeRemote(root: root)
+        defer {
+            remote.disconnect()
+            try? FileManager.default.removeItem(at: root)
+            try? FileManager.default.removeItem(at: sibling)
+        }
+        // A folder next to the root, one that leaves it by `..`, one whose name only starts like the root's, and one through a
+        // link inside the root that points out.
+        let canonicalRoot = try ChromiumRemote.prepareRoot(root)
+        let twin = URL(filePath: canonicalRoot.path + "-twin", directoryHint: .isDirectory)
+        defer { try? FileManager.default.removeItem(at: twin) }
+        try FileManager.default.createDirectory(at: sibling, withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(at: root.appending(path: "link"), withDestinationURL: sibling)
+        let escapes = [
+            sibling.appending(path: "a", directoryHint: .isDirectory),
+            root.appending(path: "../wsurf-d4-escape-\(UUID().uuidString)", directoryHint: .isDirectory),
+            twin.appending(path: "a", directoryHint: .isDirectory),
+            root.appending(path: "link/child", directoryHint: .isDirectory),
+        ]
+        for path in escapes {
+            #expect(!(await remote.ensureContext(id: UUID(), cacheDirectory: path)), "\(path.path)")
+        }
+        #expect(!FileManager.default.fileExists(atPath: sibling.appending(path: "a").path))
+        #expect(!FileManager.default.fileExists(atPath: sibling.appending(path: "child").path), "nothing was made through the link")
+        #expect(!FileManager.default.fileExists(atPath: twin.path))
+        #expect(remote.helloCount == 0, "refused on the client: no service was asked, none was launched")
+    }
+
+    @Test
+    func theCanonicalPathOfAFolderThatDoesNotExistYetKeepsTheAliasOutAndMakesNothing() throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "wsurf-d4-client-\(UUID().uuidString)", directoryHint: .isDirectory)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let canonicalRoot = try ChromiumRemote.prepareRoot(root)
+        let wanted = try #require(ChromiumRemote.canonicalPath(of: root.appending(path: "Profiles/one", directoryHint: .isDirectory)))
+        #expect(wanted.path == canonicalRoot.path + "/Profiles/one")
+        #expect(ChromiumRemote.isInside(wanted, root: canonicalRoot))
+        #expect(ChromiumRemote.isInside(canonicalRoot, root: canonicalRoot))
+        #expect(!FileManager.default.fileExists(atPath: canonicalRoot.appending(path: "Profiles").path), "made nothing")
+    }
+
     // MARK: The real service
 
     /// Asks the service to count down `count` hellos that kill it (`debug.exitOnHello`) on a connection of its own, before the
@@ -680,11 +832,38 @@ struct ChromiumRemoteClientTests {
         #expect(await remote.ensureContext(id: profile, cacheDirectory: raw.appending(path: profile.uuidString, directoryHint: .isDirectory)))
         let stats = await remote.statistics()
         #expect(stats?.int(CefRemote.Key.contexts) == 2)
-        // A cache directory outside the root is refused by the service, and the client does not remember it as made.
+        // A cache directory outside the root is refused (by the client, before the service is asked), and nothing is made there.
         let outside = FileManager.default.temporaryDirectory.appending(path: "wsurf-d4-outside-\(UUID().uuidString)", directoryHint: .isDirectory)
         #expect(!(await remote.ensureContext(id: UUID(), cacheDirectory: outside)))
-        try? FileManager.default.removeItem(at: outside)
+        #expect(!FileManager.default.fileExists(atPath: outside.path), "a refused folder is not created")
         await finish(remote, pid: pid)
+    }
+
+    /// The request of a page that is being created while the service relaunches: it queues behind the replacement's hello, which
+    /// launchd holds back about 10 s after the spawn of the instance that died, so the 5 s a request gets by default would end it
+    /// before the service could answer.
+    @Test(.enabled(if: ChromiumServiceBundle.isPresent))
+    func aContextAskedForWhileTheServiceRelaunchesAfterAYoungDeathIsCreatedNotTimedOut() async throws {
+        let (remote, root) = try #require(realRemote())
+        #expect(await arm(count: 1, root: root))
+        let started = ProcessInfo.processInfo.systemUptime
+        _ = remote.connect()
+        // The armed instance dies at its hello: a young death, so the replacement is about 10 s away.
+        guard await waitUntil(30, { remote.state == .relaunching }) else {
+            Issue.record("the armed service did not die at its hello: \(remote.state): \(remote.lastRefusalText)")
+            await finish(remote, pid: nil)
+            return
+        }
+        let asked = ProcessInfo.processInfo.systemUptime
+        let created = await remote.ensureContext(id: UUID(), cacheDirectory: nil)
+        let took = ProcessInfo.processInfo.systemUptime - asked
+        #expect(created, "state \(remote.state) after \(took) s")
+        print("ChromiumRemoteClientTests observed: a context asked for while relaunching was created after \(took) s (\(ProcessInfo.processInfo.systemUptime - started) s after the start)")
+        if case let .running(pid) = remote.state {
+            await finish(remote, pid: pid)
+        } else {
+            await finish(remote, pid: nil)
+        }
     }
 
     @Test(.enabled(if: ChromiumServiceBundle.isPresent))

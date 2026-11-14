@@ -138,12 +138,6 @@ protocol ChromiumRemoteBrowserHandle: AnyObject {
     func remoteAllowsNavigation(to url: String) -> Bool
 }
 
-extension ChromiumRemoteBrowserHandle {
-    func remoteAllowsNavigation(to url: String) -> Bool {
-        true
-    }
-}
-
 @MainActor
 final class ChromiumRemote {
     static let shared = ChromiumRemote()
@@ -199,6 +193,8 @@ final class ChromiumRemote {
     private(set) var generation = 0
     private var needsHello = true
     private var relaunching = false
+    /// `disconnect` is telling the browsers: nothing they do meanwhile reconnects.
+    private var isDisconnecting = false
     /// The hello that is waiting was refused because the service was leaving (`noteLeavingRefusal`).
     private var helloRefusedAsLeaving = false
     private var policy = CefRemoteRelaunchPolicy()
@@ -282,6 +278,13 @@ final class ChromiumRemote {
         default:
             break
         }
+        guard !isDisconnecting else { return state }
+        #if !DEBUG
+        // Only a DEBUG build may inject its own guard and latch (the tests'): a Release caller that passed `isEnabled: { true }`
+        // and a fresh latch would otherwise get past both.
+        setState(.failed(.notEnabled))
+        return state
+        #else
         // The first Chromium start decides the process's path: a process that took the other one refuses here.
         guard latch.resolve(wantsOutOfProcess: isEnabled) == .outOfProcess else {
             setState(.failed(.notEnabled))
@@ -294,6 +297,7 @@ final class ChromiumRemote {
             sendHello()
         }
         return state
+        #endif
     }
 
     /// The person reloaded a page: a crash loop or a refusal is given up, and the service is asked for again.
@@ -317,6 +321,9 @@ final class ChromiumRemote {
         relaunching = false
         servicePID = 0
         setState(.stopped)
+        // A handle that sends from `remoteServiceEnded` must not bring the connection back.
+        isDisconnecting = true
+        defer { isDisconnecting = false }
         requests.interruptAll()
         for handle in lost {
             handle.remoteServiceEnded()
@@ -379,8 +386,16 @@ final class ChromiumRemote {
         ChromiumOOP.log.notice("hello sent to \(self.serviceName, privacy: .public) (hello \(self.helloCount))")
     }
 
-    private func helloEnded(_ reply: CefRemoteReply<CefRemoteMessage>, sentAt: TimeInterval, generation sentGeneration: Int) {
+    func helloEnded(_ reply: CefRemoteReply<CefRemoteMessage>, sentAt: TimeInterval, generation sentGeneration: Int) {
         guard sentGeneration == generation else { return }
+        // Nothing undoes a crash loop or a refusal but `userReload`: an answer that still arrives (from an instance launched
+        // before the state was decided) is not an instance to run on.
+        switch state {
+        case .crashLooping, .failed:
+            return
+        default:
+            break
+        }
         switch reply {
         case .interrupted:
             // `serviceEnded` handles the end, and it decides whether this was a death.
@@ -393,7 +408,7 @@ final class ChromiumRemote {
                 refused(message)
                 return
             }
-            servicePID = pid_t(message.int(CefRemote.Key.pid))
+            servicePID = pid_t(clamping: message.int(CefRemote.Key.pid))
             cefStartMs = message.double(CefRemote.Key.startMs)
             helloRoundTripMs = (clock() - sentAt) * 1000
             relaunching = false
@@ -537,30 +552,35 @@ final class ChromiumRemote {
         let lost = takeEverythingDown(keepingControl: true)
         needsHello = true
         servicePID = 0
+        // Decide first and set the state, and only then tell anyone: a browser (or a request's completion) that sends from its
+        // callback must see the new state, so that a crash loop refuses it instead of launching one more service.
+        let relaunch: Bool
+        if leftAsItSaid, !policy.isCrashLooping {
+            relaunch = true
+        } else {
+            switch policy.recordDeath(at: clock(), serviceWasInUse: wasInUse) {
+            case .relaunch:
+                relaunch = true
+            case .crashLooping, .idleExit:
+                relaunch = false
+            }
+        }
+        relaunching = relaunch
+        if relaunch {
+            setState(.relaunching)
+        } else {
+            // An end that arrives after the cap was reached (nothing is in the service then) must not undo the crash state.
+            setState(policy.isCrashLooping ? .crashLooping : .stopped)
+        }
         requests.interruptAll()
         for handle in lost {
             handle.remoteServiceEnded()
         }
-        if leftAsItSaid, !policy.isCrashLooping {
-            relaunching = true
-            setState(.relaunching)
-            connect()
-            return
-        }
-        switch policy.recordDeath(at: clock(), serviceWasInUse: wasInUse) {
-        case .relaunch:
+        if relaunch {
             // At once, not at the next message. launchd decides when the replacement starts (not before 10 s after the spawn of
-            // the one that died), and the hello waits for it with a timeout that allows for that.
-            relaunching = true
-            setState(.relaunching)
+            // the one that died), and the hello waits for it with a timeout that allows for that. After the callbacks, so that the
+            // hello is not interrupted with the requests above; a callback that sent already made the hello, and this is a no-op.
             connect()
-        case .crashLooping:
-            relaunching = false
-            setState(.crashLooping)
-        case .idleExit:
-            // An end that arrives after the cap was reached (nothing is in the service then) must not undo the crash state.
-            relaunching = false
-            setState(policy.isCrashLooping ? .crashLooping : .stopped)
         }
     }
 
@@ -612,12 +632,13 @@ final class ChromiumRemote {
         return true
     }
 
-    /// One message and the service's reply; it ends once, on the reply, the service's end, or the timeout (default 5 s). Never
-    /// waits on a thread: the caller suspends.
+    /// One message and the service's reply; it ends once, on the reply, the service's end, or the timeout (default 5 s, plus the
+    /// hello's while the service is not up yet: see `effectiveTimeout`). Never waits on a thread: the caller suspends.
     func request(_ message: CefRemoteMessage, timeout: TimeInterval? = nil) async -> CefRemoteReply<CefRemoteMessage> {
         guard prepareToSend(), let control else { return .interrupted }
         let table = requests
-        return await table.request(timeout: timeout) { id in
+        let wait = Self.effectiveTimeout(timeout, defaultTimeout: table.defaultTimeout, isRunning: isRunning, helloTimeout: helloTimeout)
+        return await table.request(timeout: wait) { id in
             message.set(CefRemote.Key.identifier, id)
             xpc_connection_send_message_with_reply(control, message.object, DispatchQueue.main) { answer in
                 // An error object is left to the connection's event (`serviceEnded`), as in the hello.
@@ -625,6 +646,15 @@ final class ChromiumRemote {
                 table.reply(id, reply)
             }
         }
+    }
+
+    /// A message sent while the service is starting or relaunching is served after the hello, which launchd may hold back for
+    /// about 10 s (`defaultHelloTimeout`): its own timeout starts after that wait, or the page would see an error during a
+    /// relaunch that is not one. The wait is bounded: the hello's timeout or the service's end ends every queued request.
+    nonisolated static func effectiveTimeout(
+        _ timeout: TimeInterval?, defaultTimeout: TimeInterval, isRunning: Bool, helloTimeout: TimeInterval
+    ) -> TimeInterval {
+        (timeout ?? defaultTimeout) + (isRunning ? 0 : helloTimeout)
     }
 
     /// Input goes on its own connection, so a multi-megabyte DevTools reply never holds a keystroke back. (Input is phase 3.)
@@ -648,7 +678,7 @@ final class ChromiumRemote {
     /// Creates the profile's request context in the service (a disk profile when `cacheDirectory` is given, which must be a child
     /// of the root). True when the service has it. The service compares the cache path with the root it was given (the hello's,
     /// which is canonical), so a path built from a root that has an alias in it (`/var` for `/private/var`) is made canonical here
-    /// first, the way the hello's root is.
+    /// first, the way the hello's root is. A path that is not the root or under it is refused here, before anything is made.
     func ensureContext(id: UUID, cacheDirectory: URL?) async -> Bool {
         if contexts.contains(id) {
             return true
@@ -656,8 +686,11 @@ final class ChromiumRemote {
         let message = CefRemoteMessage(CefRemote.Op.createContext)
         message.set(CefRemote.Key.context, id.uuidString)
         if let cacheDirectory {
-            // Made here, canonical, for the reason the hello's cache folder is (see `sendHello`): the service makes it too.
-            guard let canonical = try? Self.prepareRoot(cacheDirectory) else { return false }
+            guard let rootURL = try? Self.prepareRoot(root()), let wanted = Self.canonicalPath(of: cacheDirectory),
+                  Self.isInside(wanted, root: rootURL),
+                  // Made here, canonical, for the reason the hello's cache folder is (see `sendHello`): the service makes it too.
+                  let canonical = try? Self.prepareRoot(wanted)
+            else { return false }
             message.set(CefRemote.Key.cachePath, canonical.path)
         }
         let asked = instance
@@ -827,6 +860,29 @@ final class ChromiumRemote {
         message.set(CefRemote.Key.logFile, validatedLogPath(logFile, stageHome: stageHome))
         message.set(CefRemote.Key.switches, strings: allowedSwitches(switches))
         return message
+    }
+
+    /// The canonical form of a path that may not exist yet, made without creating anything: `..` and `.` are resolved, then the
+    /// nearest existing ancestor goes through `realpath` (so a symlink or a `/var` alias in it is resolved) and the components
+    /// below it, which cannot be links, are appended. Nil when no ancestor resolves.
+    nonisolated static func canonicalPath(of url: URL) -> URL? {
+        var existing = url.standardizedFileURL.path
+        var below: [String] = []
+        while !FileManager.default.fileExists(atPath: existing) {
+            guard existing != "/" else { return nil }
+            below.insert((existing as NSString).lastPathComponent, at: 0)
+            existing = (existing as NSString).deletingLastPathComponent
+        }
+        guard let resolved = realpath(existing, nil) else { return nil }
+        defer { free(resolved) }
+        return URL(filePath: String(cString: resolved), directoryHint: .isDirectory).appending(path: below.joined(separator: "/"))
+    }
+
+    /// Whether `path` is `root` or below it, component by component (`/a/bc` is not inside `/a/b`). Both are canonical.
+    nonisolated static func isInside(_ path: URL, root: URL) -> Bool {
+        let inner = path.pathComponents
+        let outer = root.pathComponents
+        return inner.count >= outer.count && Array(inner.prefix(outer.count)) == outer
     }
 
     /// The root as CEF needs it: it exists, and it is the canonical path (Foundation keeps `/tmp` aliases; CEF refuses them).
