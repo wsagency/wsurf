@@ -318,6 +318,7 @@
    "ChromiumFileDialogFilterTests",
    "ChromiumFrameSinkTests",
    "ChromiumPopupAllowlistTests",
+   "ChromiumRemoteClientTests",
    "ChromiumRemoteProtocolTests",
    "ChromiumServiceBrowserTests",
    "ChromiumServiceBundleTests",

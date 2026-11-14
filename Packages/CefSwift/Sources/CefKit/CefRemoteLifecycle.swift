@@ -181,8 +181,10 @@ public struct CefRemoteRelaunchPolicy: Sendable {
 
     /// The service ended at `now`. `serviceWasInUse` is whether WSurf had a browser in it or a request pending; false makes it
     /// an idle exit (`.idleExit`, nothing recorded, the crash-loop state untouched). A death while already crash-looping stays
-    /// a crash loop.
-    public mutating func recordDeath(at now: TimeInterval, serviceWasInUse: Bool = true) -> Decision {
+    /// a crash loop. There is no default for `serviceWasInUse`: neither value is safe to assume, so the caller decides. A hello or
+    /// a browser creation that has been sent and not answered counts as in use: a service that dies while it is being started is a
+    /// death, and a crash at launch must reach the cap rather than be taken for an idle exit.
+    public mutating func recordDeath(at now: TimeInterval, serviceWasInUse: Bool) -> Decision {
         guard serviceWasInUse else { return .idleExit }
         recentDeaths.removeAll { now - $0 >= window }
         recentDeaths.append(now)

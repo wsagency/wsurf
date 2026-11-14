@@ -110,3 +110,12 @@ custom_rules:
       - comment
       - doccomment
       - string
+  no_sync_xpc_reply:
+    name: "No synchronous XPC reply in WSurf"
+    message: "WSurf never waits on the Chromium service (D4 plan §1.1): send with xpc_connection_send_message_with_reply and handle the answer when it arrives, or go through CefRemoteRequests. Only the service (Packages/CefSwift, which is not linted) may wait"
+    regex: 'xpc_connection_send_message_with_reply_sync'
+    included: '.*/WSurf/.*\.swift'
+    excluded_match_kinds:
+      - comment
+      - doccomment
+      - string

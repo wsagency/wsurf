@@ -46,6 +46,8 @@ public final class CefRemoteRequests<Value: Sendable>: Sendable {
     }
 
     private struct State {
+        // Ids start at 1 and never wrap in practice, so a message with no `id` (which reads 0) never matches a request. Browser
+        // ids (`Key.browser`) follow the same rule for the same reason: the client must never assign 0.
         var next: Int64 = 1
         var pending: [Int64: Pending] = [:]
     }

@@ -84,7 +84,10 @@ public enum CefRemote {
         public static let progress = "progress"
         /// `historyChanged`: the whole native list, an array of ``CefRemote/HistoryEntry`` dictionaries.
         public static let entries = "entries"
-        /// One history entry: its id, committed URL, title, whether it was made by a POST, and whether it is the current one.
+        /// One history entry: its id, committed URL, title, whether it was made by a POST, and whether it is the current one. CEF's
+        /// navigation entries carry no id (`cef_navigation_entry_t` has url, title, transition, post data, time, status and ssl
+        /// only), so the service takes the id from CDP's `Page.getNavigationHistory` (`entries[].id`), read in the same UI-thread
+        /// turn as the visitor that confirms the list. An index is not an id: index 0 always exists.
         public static let entryID = "eid"
         public static let hasPostData = "post"
         public static let isCurrent = "current"
@@ -294,9 +297,10 @@ public enum CefRemote {
 }
 
 /// A libxpc dictionary with typed accessors. Reads of a missing or wrong-typed key give the type's empty value, and every
-/// number read as a `Double` is finite (NaN and infinities from a peer read as 0). Ranges are the consumer's job: clamp the
-/// double to the target range first, then convert with `Int32(clamping:)` (an integer API), never `Int32(_:)` on a peer's
-/// number, which traps outside the range. Build a message, then send it; do not mutate it after sending.
+/// number read as a `Double` is finite (NaN and infinities from a peer read as 0). Ranges are the consumer's job: clamp a double
+/// to the target type's range, then convert it with `Int32(x.rounded())`; for a peer's integer use `Int32(clamping:)` (an
+/// integer API: it does not take a double). Never convert a peer's number with a bare `Int32(_:)`, which traps outside the
+/// range. Build a message, then send it; do not mutate it after sending.
 public struct CefRemoteMessage: @unchecked Sendable {
     public let object: xpc_object_t
 

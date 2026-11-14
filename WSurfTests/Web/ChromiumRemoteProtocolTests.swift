@@ -668,10 +668,10 @@ struct ChromiumRemoteProtocolTests {
     @Test func theFirstDeathsRelaunchAndTheThirdWithinThirtySecondsIsACrashLoop() {
         var policy = CefRemoteRelaunchPolicy()
 
-        #expect(policy.recordDeath(at: 100) == .relaunch)
-        #expect(policy.recordDeath(at: 110) == .relaunch)
+        #expect(policy.recordDeath(at: 100, serviceWasInUse: true) == .relaunch)
+        #expect(policy.recordDeath(at: 110, serviceWasInUse: true) == .relaunch)
         #expect(!policy.isCrashLooping)
-        #expect(policy.recordDeath(at: 120) == .crashLooping)
+        #expect(policy.recordDeath(at: 120, serviceWasInUse: true) == .crashLooping)
         #expect(policy.isCrashLooping)
     }
 
@@ -681,60 +681,60 @@ struct ChromiumRemoteProtocolTests {
         #expect(policy.window == 30)
 
         var twoOnly = policy
-        #expect(twoOnly.recordDeath(at: 0) == .relaunch)
-        #expect(twoOnly.recordDeath(at: 29) == .relaunch)
+        #expect(twoOnly.recordDeath(at: 0, serviceWasInUse: true) == .relaunch)
+        #expect(twoOnly.recordDeath(at: 29, serviceWasInUse: true) == .relaunch)
 
         var three = policy
-        _ = three.recordDeath(at: 0)
-        _ = three.recordDeath(at: 1)
-        #expect(three.recordDeath(at: 2) == .crashLooping)
+        _ = three.recordDeath(at: 0, serviceWasInUse: true)
+        _ = three.recordDeath(at: 1, serviceWasInUse: true)
+        #expect(three.recordDeath(at: 2, serviceWasInUse: true) == .crashLooping)
     }
 
     @Test func aDeathAfterTheWindowRelaunchesBecauseTheOldOnesNoLongerCount() {
         var policy = CefRemoteRelaunchPolicy()
-        _ = policy.recordDeath(at: 0)
-        _ = policy.recordDeath(at: 10)
+        _ = policy.recordDeath(at: 0, serviceWasInUse: true)
+        _ = policy.recordDeath(at: 10, serviceWasInUse: true)
 
-        #expect(policy.recordDeath(at: 35) == .relaunch)
+        #expect(policy.recordDeath(at: 35, serviceWasInUse: true) == .relaunch)
         #expect(policy.recentDeaths == [10, 35])
         #expect(!policy.isCrashLooping)
     }
 
     @Test func aDeathExactlyThirtySecondsAfterTheFirstIsOutsideTheWindow() {
         var policy = CefRemoteRelaunchPolicy()
-        _ = policy.recordDeath(at: 0)
-        _ = policy.recordDeath(at: 10)
-        #expect(policy.recordDeath(at: 30) == .relaunch)
+        _ = policy.recordDeath(at: 0, serviceWasInUse: true)
+        _ = policy.recordDeath(at: 10, serviceWasInUse: true)
+        #expect(policy.recordDeath(at: 30, serviceWasInUse: true) == .relaunch)
 
         var inside = CefRemoteRelaunchPolicy()
-        _ = inside.recordDeath(at: 0)
-        _ = inside.recordDeath(at: 10)
-        #expect(inside.recordDeath(at: 29.9) == .crashLooping)
+        _ = inside.recordDeath(at: 0, serviceWasInUse: true)
+        _ = inside.recordDeath(at: 10, serviceWasInUse: true)
+        #expect(inside.recordDeath(at: 29.9, serviceWasInUse: true) == .crashLooping)
     }
 
     @Test func aCrashLoopStaysOneEvenWhenLaterDeathsComeFarApartUntilThePersonReloads() {
         var policy = CefRemoteRelaunchPolicy()
-        _ = policy.recordDeath(at: 0)
-        _ = policy.recordDeath(at: 1)
-        #expect(policy.recordDeath(at: 2) == .crashLooping)
+        _ = policy.recordDeath(at: 0, serviceWasInUse: true)
+        _ = policy.recordDeath(at: 1, serviceWasInUse: true)
+        #expect(policy.recordDeath(at: 2, serviceWasInUse: true) == .crashLooping)
 
-        #expect(policy.recordDeath(at: 500) == .crashLooping)
+        #expect(policy.recordDeath(at: 500, serviceWasInUse: true) == .crashLooping)
 
         policy.userReload()
         #expect(!policy.isCrashLooping)
         #expect(policy.recentDeaths.isEmpty)
-        #expect(policy.recordDeath(at: 501) == .relaunch)
+        #expect(policy.recordDeath(at: 501, serviceWasInUse: true) == .relaunch)
     }
 
     @Test func aReloadStartsTheCountOver() {
         var policy = CefRemoteRelaunchPolicy()
-        _ = policy.recordDeath(at: 0)
-        _ = policy.recordDeath(at: 1)
+        _ = policy.recordDeath(at: 0, serviceWasInUse: true)
+        _ = policy.recordDeath(at: 1, serviceWasInUse: true)
         policy.userReload()
 
-        #expect(policy.recordDeath(at: 2) == .relaunch)
-        #expect(policy.recordDeath(at: 3) == .relaunch)
-        #expect(policy.recordDeath(at: 4) == .crashLooping)
+        #expect(policy.recordDeath(at: 2, serviceWasInUse: true) == .relaunch)
+        #expect(policy.recordDeath(at: 3, serviceWasInUse: true) == .relaunch)
+        #expect(policy.recordDeath(at: 4, serviceWasInUse: true) == .crashLooping)
     }
 
     @Test func anEndWithNoBrowserAndNoRequestIsAnIdleExitNotADeath() {
@@ -746,10 +746,10 @@ struct ChromiumRemoteProtocolTests {
         #expect(policy.recentDeaths.isEmpty)
         #expect(!policy.isCrashLooping)
         // Idle exits did not count: the first real deaths still relaunch.
-        #expect(policy.recordDeath(at: 11) == .relaunch)
-        #expect(policy.recordDeath(at: 12) == .relaunch)
+        #expect(policy.recordDeath(at: 11, serviceWasInUse: true) == .relaunch)
+        #expect(policy.recordDeath(at: 12, serviceWasInUse: true) == .relaunch)
         // And one during a crash loop neither relaunches nor clears it.
-        #expect(policy.recordDeath(at: 13) == .crashLooping)
+        #expect(policy.recordDeath(at: 13, serviceWasInUse: true) == .crashLooping)
         #expect(policy.recordDeath(at: 14, serviceWasInUse: false) == .idleExit)
         #expect(policy.isCrashLooping)
         #expect(policy.recentDeaths == [11, 12, 13])
@@ -757,11 +757,11 @@ struct ChromiumRemoteProtocolTests {
 
     @Test func theCapAndTheWindowAreParameters() {
         var strict = CefRemoteRelaunchPolicy(maxDeaths: 2, window: 5)
-        #expect(strict.recordDeath(at: 0) == .relaunch)
-        #expect(strict.recordDeath(at: 4) == .crashLooping)
+        #expect(strict.recordDeath(at: 0, serviceWasInUse: true) == .relaunch)
+        #expect(strict.recordDeath(at: 4, serviceWasInUse: true) == .crashLooping)
 
         var slow = CefRemoteRelaunchPolicy(maxDeaths: 2, window: 5)
-        _ = slow.recordDeath(at: 0)
-        #expect(slow.recordDeath(at: 5) == .relaunch)
+        _ = slow.recordDeath(at: 0, serviceWasInUse: true)
+        #expect(slow.recordDeath(at: 5, serviceWasInUse: true) == .relaunch)
     }
 }

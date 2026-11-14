@@ -96,9 +96,20 @@ final class ChromiumRuntime {
         }
     }
 
+    /// The error of an in-process start in a process that latched out of process; nil when in-process is the process's path.
+    nonisolated static func inProcessStartRefusal(mode: ChromiumOOP.Mode) -> ChromiumError? {
+        // DEBUG, test and staged processes only (`ChromiumOOP.isAllowed`), so the existing "could not open" text is enough.
+        mode == .inProcess ? nil : .unavailable(String(localized: "Chromium could not open this tab."))
+    }
+
     func ensureInitialized() throws {
         guard !hasShutdown else { throw ChromiumError.closed }
         guard !isInitialized else { return }
+        // The first Chromium start of the process decides where Chromium runs (`ChromiumOOP`); a process that took the service
+        // never starts CEF here, because CEF holds a process-singleton lock on its root cache path.
+        if let refusal = Self.inProcessStartRefusal(mode: ChromiumOOP.resolveMode()) {
+            throw refusal
+        }
         try FileManager.default.createDirectory(at: rootDirectory, withIntermediateDirectories: true)
         // Foundation preserves /tmp aliases; CEF requires canonical filesystem paths.
         guard let canonical = realpath(rootDirectory.path, nil) else {
