@@ -184,7 +184,7 @@ final class ChromiumRemote {
     private let isEnabled: () -> Bool
     private let latch: ChromiumOOP.Latch
     /// Every completion runs on the main queue: replies and interruptions come on it, and so do the timers.
-    let requests = CefRemoteRequests<CefRemoteMessage>(schedule: cefRemoteTimer(on: .main))
+    private let requests = CefRemoteRequests<CefRemoteMessage>(schedule: cefRemoteTimer(on: .main))
 
     private var control: xpc_connection_t?
     private var input: xpc_connection_t?
@@ -205,7 +205,7 @@ final class ChromiumRemote {
     /// The request that waits for each browser's `browser.closed`.
     private var closing: [Int64: Int64] = [:]
     /// Bumped each time the service ends: an answer that comes back after it belongs to the instance that died.
-    private var instance = 0
+    private(set) var instance = 0
 
     private(set) var state = ServiceState.stopped
     /// The service's process, once it answered a hello.
@@ -642,10 +642,17 @@ final class ChromiumRemote {
         await requestTracked(message, timeout: timeout).reply
     }
 
+    /// What one send of a request came to: the reply, and the instance of the service it went to.
+    typealias Attempt = (reply: CefRemoteReply<CefRemoteMessage>, instance: Int)
+
     /// `request`, and the instance of the service that the last attempt was sent to (a caller that remembers what the service
-    /// has, like `ensureContext`, must compare with that one: a retry goes to a newer instance than the first attempt).
-    func requestTracked(_ message: CefRemoteMessage, timeout: TimeInterval? = nil) async -> (reply: CefRemoteReply<CefRemoteMessage>, instance: Int) {
-        let first = await requestOnce(message, timeout: timeout)
+    /// has, like `ensureContext`, must compare with that one: a retry goes to a newer instance than the first attempt). `sending`
+    /// replaces the send itself, for a test that scripts the replies.
+    func requestTracked(
+        _ message: CefRemoteMessage, timeout: TimeInterval? = nil, sending: (@MainActor (CefRemoteMessage) async -> Attempt)? = nil
+    ) async -> Attempt {
+        let send: @MainActor (CefRemoteMessage) async -> Attempt = sending ?? { [self] in await requestOnce($0, timeout: timeout) }
+        let first = await send(message)
         // A sent message is not changed: the retry goes out as a copy, made only when it is needed.
         guard case let .value(reply) = first.reply, Self.isServiceLeavingReply(reply),
               let spare = xpc_copy(message.object).flatMap({ CefRemoteMessage(wrapping: $0) })
@@ -659,7 +666,7 @@ final class ChromiumRemote {
             refusedAsLeaving = false
             return first
         }
-        return await requestOnce(spare, timeout: timeout)
+        return await send(spare)
     }
 
     /// Whether `reply` is the refusal of a service that is leaving (see `request`): not ok, with exactly that text.
@@ -676,7 +683,7 @@ final class ChromiumRemote {
         return true
     }
 
-    private func requestOnce(_ message: CefRemoteMessage, timeout: TimeInterval?) async -> (reply: CefRemoteReply<CefRemoteMessage>, instance: Int) {
+    private func requestOnce(_ message: CefRemoteMessage, timeout: TimeInterval?) async -> Attempt {
         guard prepareToSend(), let control else { return (.interrupted, instance) }
         let table = requests
         let sentTo = instance

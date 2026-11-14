@@ -272,49 +272,62 @@ struct ChromiumRemoteClientTests {
         return message
     }
 
-    /// Drives one request through a refusal as leaving, the old instance's end, and the retry, with no service: the table's ids are
-    /// the order of the sends (the hello is 1, the request 2, the replacement's hello 3, the retry 4).
-    private func requestRefusedAsLeaving(secondReply: CefRemoteMessage) async -> (outcome: CefRemoteReply<CefRemoteMessage>, instance: Int, remote: ChromiumRemote) {
+    /// Drives one request through a refusal as leaving, the old instance's end, and the retry, with the sends scripted: the first
+    /// is refused, the end of the instance comes while the request waits for it (a task made in the first send runs when the wait
+    /// first yields), and the second answers `secondReply`. No connection exists while anything yields (a connection to a service
+    /// that does not exist reports itself invalid at the next turn of the main queue, which would end the instance on its own).
+    private func requestRefusedAsLeaving(secondReply: CefRemoteMessage) async -> LeavingRun {
         let remote = makeRemote()
-        _ = remote.connect()
-        let task = Task { await remote.requestTracked(CefRemoteMessage(CefRemote.Op.debugStats)) }
-        #expect(await waitUntil(2) { remote.pendingRequestCount == 2 }, "the hello and the request are waiting")
-        #expect(remote.requests.reply(2, Self.reply(success: false, error: CefRemote.leavingError)))
-        #expect(await waitUntil(2) { remote.leavingRetries == 1 }, "the refusal is not the answer: the request waits for the old instance to end")
-        #expect(remote.interruptions == 0, "nothing is asked again while the old instance is still there")
-        remote.receive(.interrupted, generation: remote.generation)
-        #expect(await waitUntil(2) { remote.helloCount == 2 && remote.pendingRequestCount == 2 }, "the replacement's hello and the retry")
-        #expect(remote.requests.reply(4, secondReply))
-        let answered = await task.value
-        return (answered.reply, answered.instance, remote)
+        var attempts = 0
+        let answered = await remote.requestTracked(CefRemoteMessage(CefRemote.Op.debugStats), sending: { _ in
+            attempts += 1
+            let sentTo = remote.instance
+            if attempts == 1 {
+                Task { remote.receive(.interrupted, generation: remote.generation) }
+                return (.value(Self.reply(success: false, error: CefRemote.leavingError)), sentTo)
+            }
+            return (.value(secondReply), sentTo)
+        })
+        return LeavingRun(outcome: answered.reply, instance: answered.instance, attempts: attempts, remote: remote)
+    }
+
+    private struct LeavingRun {
+        let outcome: CefRemoteReply<CefRemoteMessage>
+        let instance: Int
+        let attempts: Int
+        let remote: ChromiumRemote
     }
 
     @Test
     func aRequestRefusedBecauseTheServiceIsLeavingIsAskedAgainOnceItHasEndedAndGetsTheSecondAnswer() async {
-        let (outcome, instance, remote) = await requestRefusedAsLeaving(secondReply: Self.reply(success: true))
+        let run = await requestRefusedAsLeaving(secondReply: Self.reply(success: true))
+        let (outcome, instance, attempts, remote) = (run.outcome, run.instance, run.attempts, run.remote)
         defer { remote.disconnect() }
         guard case let .value(answer) = outcome else {
             Issue.record("the retry's reply was not delivered: \(outcome)")
             return
         }
         #expect(answer.bool(CefRemote.Key.success))
+        #expect(attempts == 2)
         #expect(instance == 1, "answered by the instance after the one that refused")
         #expect(remote.leavingRetries == 1)
+        #expect(remote.interruptions == 1)
         #expect(remote.state == .relaunching, "a leaving service that ends is relaunched, and the state says so")
-        #expect(remote.helloCount == 2, "one replacement, not one per attempt")
+        #expect(remote.helloCount == 1, "the relaunch asked for its replacement once")
     }
 
     @Test
     func aSecondRefusalAsLeavingIsTheAnswerAndIsNotAskedAgain() async {
-        let (outcome, _, remote) = await requestRefusedAsLeaving(secondReply: Self.reply(success: false, error: CefRemote.leavingError))
+        let run = await requestRefusedAsLeaving(secondReply: Self.reply(success: false, error: CefRemote.leavingError))
+        let (outcome, attempts, remote) = (run.outcome, run.attempts, run.remote)
         defer { remote.disconnect() }
         guard case let .value(answer) = outcome else {
             Issue.record("the retry's reply was not delivered: \(outcome)")
             return
         }
         #expect(ChromiumRemote.isServiceLeavingReply(answer))
-        #expect(remote.leavingRetries == 1, "once only")
-        #expect(remote.pendingRequestCount == 1, "only the replacement's hello is left: no third send")
+        #expect(attempts == 2, "once only")
+        #expect(remote.leavingRetries == 1)
     }
 
     @Test
