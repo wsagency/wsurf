@@ -440,28 +440,38 @@ struct ChromiumRemoteClientTests {
         #expect(remote.browserCount == 0)
     }
 
+    private final class Flag {
+        var raised = false
+    }
+
     @Test
-    func aCloseSentToAServiceThatIsExitingIsAnsweredByTheConnectionDroppingNotByTheTimeout() async {
+    func aCloseSentToAServiceThatIsExitingIsAnsweredByTheConnectionDroppingNotByTheTimeout() {
         let remote = makeRemote()
         defer { remote.disconnect() }
         let handle = Handle()
         let id = remote.makeBrowser(handle)
         remote.connect()
         let generation = remote.generation
-        let started = ContinuousClock.now
-        let closing = Task { @MainActor in
-            await remote.closeBrowser(id)
-        }
-        // Until the close is registered the interruption below would only make `closeBrowser` return early, which proves nothing:
-        // the hello is one pending request, the close the second.
-        #expect(await waitUntil(2) { remote.pendingRequestCount >= 2 }, "the close registered its wait")
+        let closed = Flag()
+        // Everything here happens in one turn: nothing is delivered to the client in between, so the order is the test's own.
+        remote.beginClose(id) { closed.raised = true }
+        #expect(!closed.raised, "a close waits for its browser.closed, the connection ending, or the timeout")
+        #expect(remote.pendingRequestCount == 2, "the hello and the close")
         // The service is leaving: it has no `browser.closed` to send. The dropped connection is the answer.
         remote.receive(.interrupted, generation: generation)
-        await closing.value
-        let took = ContinuousClock.now - started
-        #expect(took < .seconds(1), "the close waited for something other than the connection dropping (\(took)); its own timeout is \(ChromiumRemote.closeTimeout) s")
+        #expect(closed.raised, "the connection dropping ended the close, not its 5 s timeout")
         #expect(handle.endedCount == 1, "the browser is told its service ended")
         #expect(remote.browserCount == 0)
+        #expect(remote.pendingRequestCount == 1, "only the replacement's hello is left; the close ended once")
+    }
+
+    @Test
+    func aCloseOfABrowserThatNoLongerExistsEndsAtOnce() {
+        let remote = makeRemote()
+        let closed = Flag()
+        remote.beginClose(99) { closed.raised = true }
+        #expect(closed.raised)
+        #expect(remote.pendingRequestCount == 0)
     }
 
     @Test
@@ -537,7 +547,7 @@ struct ChromiumRemoteClientTests {
         let (remote, _) = try #require(realRemote())
         _ = remote.connect()
         let up = await waitUntil(40) { remote.isRunning }
-        #expect(up, "state \(remote.state)")
+        #expect(up, "state \(remote.state): \(remote.lastRefusalText)")
         guard case let .running(pid) = remote.state else {
             await finish(remote, pid: nil)
             return
@@ -566,7 +576,7 @@ struct ChromiumRemoteClientTests {
         remote.onStateChange = { seen.append($0) }
         _ = remote.connect()
         guard await waitUntil(40, { remote.isRunning }), case let .running(first) = remote.state else {
-            Issue.record("no first hello: \(remote.state)")
+            Issue.record("no first hello: \(remote.state): \(remote.lastRefusalText)")
             await finish(remote, pid: nil)
             return
         }
@@ -600,7 +610,7 @@ struct ChromiumRemoteClientTests {
         let (remote, _) = try #require(realRemote())
         _ = remote.connect()
         guard await waitUntil(40, { remote.isRunning }), case let .running(pid) = remote.state else {
-            Issue.record("no first hello: \(remote.state)")
+            Issue.record("no first hello: \(remote.state): \(remote.lastRefusalText)")
             await finish(remote, pid: nil)
             return
         }
@@ -638,7 +648,7 @@ struct ChromiumRemoteClientTests {
         // The person reloads: the marker is used up, so this one answers.
         remote.userReload()
         let answered = await waitUntil(40) { remote.isRunning }
-        #expect(answered, "state \(remote.state)")
+        #expect(answered, "state \(remote.state): \(remote.lastRefusalText)")
         if case let .running(pid) = remote.state {
             await finish(remote, pid: pid)
         } else {
@@ -658,7 +668,7 @@ struct ChromiumRemoteClientTests {
         )
         _ = remote.connect()
         guard await waitUntil(40, { remote.isRunning }), case let .running(pid) = remote.state else {
-            Issue.record("no first hello: \(remote.state)")
+            Issue.record("no first hello: \(remote.state): \(remote.lastRefusalText)")
             await finish(remote, pid: nil)
             return
         }
@@ -673,6 +683,7 @@ struct ChromiumRemoteClientTests {
         // A cache directory outside the root is refused by the service, and the client does not remember it as made.
         let outside = FileManager.default.temporaryDirectory.appending(path: "wsurf-d4-outside-\(UUID().uuidString)", directoryHint: .isDirectory)
         #expect(!(await remote.ensureContext(id: UUID(), cacheDirectory: outside)))
+        try? FileManager.default.removeItem(at: outside)
         await finish(remote, pid: pid)
     }
 
@@ -681,7 +692,7 @@ struct ChromiumRemoteClientTests {
         let (remote, _) = try #require(realRemote())
         _ = remote.connect()
         guard await waitUntil(40, { remote.isRunning }), case let .running(pid) = remote.state else {
-            Issue.record("no first hello: \(remote.state)")
+            Issue.record("no first hello: \(remote.state): \(remote.lastRefusalText)")
             await finish(remote, pid: nil)
             return
         }
@@ -712,7 +723,7 @@ struct ChromiumRemoteClientTests {
         let id = remote.makeBrowser(handle)
         _ = remote.connect()
         guard await waitUntil(40, { remote.isRunning }), case let .running(pid) = remote.state else {
-            Issue.record("no first hello: \(remote.state)")
+            Issue.record("no first hello: \(remote.state): \(remote.lastRefusalText)")
             await finish(remote, pid: nil)
             return
         }

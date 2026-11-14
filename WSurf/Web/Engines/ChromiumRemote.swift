@@ -219,6 +219,8 @@ final class ChromiumRemote {
     /// Milliseconds from hello to its answer (launch, the launchd throttle and CEF's start), and CEF's own start inside it.
     private(set) var helloRoundTripMs: Double = -1
     private(set) var cefStartMs: Double = -1
+    /// The service's own sentence about the last refused hello, for logs and tests only: the tab's text never shows it.
+    private(set) var lastRefusalText = ""
     var onStateChange: ((ServiceState) -> Void)?
 
     init(
@@ -343,6 +345,10 @@ final class ChromiumRemote {
         let message: CefRemoteMessage
         do {
             let directory = try Self.prepareRoot(root())
+            // The cache folder exists before the hello, so that the service compares two paths that both exist: it compares them
+            // lexically after `standardizedFileURL`, which drops a `/private` alias (a temporary folder's) only from a path that
+            // exists, so a canonical root and a cache folder that does not exist yet would not look nested.
+            _ = try Self.prepareRoot(directory.appending(path: "Global", directoryHint: .isDirectory))
             message = Self.makeHello(
                 protocolVersion: protocolVersion, root: directory, linger: linger, logFile: logFile, stageHome: Self.stageHome
             )
@@ -399,6 +405,7 @@ final class ChromiumRemote {
 
     /// The tab's error text is WSurf's own, built from this: the service's `error` sentence is never shown as it is.
     private func refused(_ message: CefRemoteMessage) {
+        lastRefusalText = message.string(CefRemote.Key.error)
         fail(Self.failure(forRefusedHello: message, ourVersion: protocolVersion))
     }
 
@@ -641,7 +648,7 @@ final class ChromiumRemote {
     /// Creates the profile's request context in the service (a disk profile when `cacheDirectory` is given, which must be a child
     /// of the root). True when the service has it. The service compares the cache path with the root it was given (the hello's,
     /// which is canonical), so a path built from a root that has an alias in it (`/var` for `/private/var`) is made canonical here
-    /// first, the way the hello's root is: its parent, which exists, is resolved and the last component is appended.
+    /// first, the way the hello's root is.
     func ensureContext(id: UUID, cacheDirectory: URL?) async -> Bool {
         if contexts.contains(id) {
             return true
@@ -649,8 +656,9 @@ final class ChromiumRemote {
         let message = CefRemoteMessage(CefRemote.Op.createContext)
         message.set(CefRemote.Key.context, id.uuidString)
         if let cacheDirectory {
-            guard let parent = try? Self.prepareRoot(cacheDirectory.deletingLastPathComponent()) else { return false }
-            message.set(CefRemote.Key.cachePath, parent.appending(path: cacheDirectory.lastPathComponent, directoryHint: .isDirectory).path)
+            // Made here, canonical, for the reason the hello's cache folder is (see `sendHello`): the service makes it too.
+            guard let canonical = try? Self.prepareRoot(cacheDirectory) else { return false }
+            message.set(CefRemote.Key.cachePath, canonical.path)
         }
         let asked = instance
         guard case let .value(reply) = await request(message), reply.bool(CefRemote.Key.success), asked == instance else {
@@ -675,24 +683,43 @@ final class ChromiumRemote {
         browsers[id] = nil
     }
 
-    /// Closes a browser and returns when it is closed as far as WSurf is concerned: the service said so (`browser.closed`), the
-    /// service ended (the dropped connection means every browser closed), or it did not answer in `closeTimeout`, in which
-    /// case WSurf lets go of it. A service that is leaving answers no `browser.close`, so none of the three is waited on for ever.
+    /// Closes a browser and returns when it is closed as far as WSurf is concerned (`beginClose`).
     func closeBrowser(_ id: Int64) async {
-        guard browsers[id] != nil else { return }
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            beginClose(id) { continuation.resume() }
+        }
+    }
+
+    /// Asks the service to close a browser; `completion` runs once, when the browser is closed as far as WSurf is concerned: the
+    /// service said so (`browser.closed`), the service ended (the dropped connection means every browser closed), or it did not
+    /// answer in `closeTimeout`, in which case WSurf lets go of the browser. A service that is leaving answers no `browser.close`,
+    /// so none of the three is waited on for ever. Registered at once, not on a later turn.
+    func beginClose(_ id: Int64, completion: @escaping @MainActor () -> Void) {
+        guard browsers[id] != nil else {
+            completion()
+            return
+        }
         // A browser asked for while the service is still starting exists there once the hello has been served, so it is closed
         // there too; every way the service can fail to answer (its end, a refused hello, the timeout) ends the wait.
-        if isServiceExpected {
-            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-                let request = requests.begin(timeout: Self.closeTimeout) { _ in continuation.resume() }
-                closing[id] = request
-                send(CefRemoteMessage(CefRemote.Op.close, browser: id))
+        guard isServiceExpected else {
+            finishClose(id)
+            completion()
+            return
+        }
+        let request = requests.begin(timeout: Self.closeTimeout) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.finishClose(id)
+                completion()
             }
         }
-        if let handle = browsers.removeValue(forKey: id) {
-            closing[id] = nil
-            handle.remoteEvent(CefRemoteMessage(CefRemote.Event.browserClosed, browser: id))
-        }
+        closing[id] = request
+        send(CefRemoteMessage(CefRemote.Op.close, browser: id))
+    }
+
+    /// WSurf lets go of the browser: the page hears `browser.closed` (once) if the service did not say it.
+    private func finishClose(_ id: Int64) {
+        closing[id] = nil
+        browsers.removeValue(forKey: id)?.remoteEvent(CefRemoteMessage(CefRemote.Event.browserClosed, browser: id))
     }
 
     // MARK: Frames
