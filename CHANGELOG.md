@@ -5,6 +5,27 @@ This file preserves release notes inherited from the upstream
 describe upstream Linen releases, not releases published by WSurf. New WSurf
 release notes will be added above this provenance record.
 
+## 0.1.27 (build 27) — 2026-11-14
+
+Everything since 0.1.26 (build 26). None of the screens and prompts below has been checked by hand.
+
+### Passwords
+
+- **Passwords window.** WSurf › Passwords… (⌥⌘K) opens the credentials page in its own small window, without opening a browser window. ⌘W closes it; with a sheet open on it, ⌘W does nothing and never closes a browser tab behind it. Links from it open in a window of its own profile.
+- **Passwords in the menu bar.** A key icon in the menu bar opens a popover with the credentials that match the front tab’s website, recent ones and a search. While the vault is locked it shows only “Credentials are locked” and Unlock…, which opens the Passwords window. Copying a password or verification code asks for Touch ID or your Mac password and the clipboard is cleared after 60 seconds. Lock Now locks every vault. Settings › General › Browsing › Show Passwords in Menu Bar turns the icon off; it is on by default.
+- **Pick Credential… in the Edit menu (⌃⌘P)** picks a login for the focused field, for sites that cancel or replace the right-click menu. It is enabled only where the context-menu item would be offered, and beeps when no field is focused.
+- When Pick Credential… is not offered in a field’s context menu because the page is not fully secure or an AI app is using the tab, the menu now shows a greyed-out item that says so. Nothing is loosened: it cannot be chosen.
+
+### Chromium tabs
+
+- No visible change: this build carries the first internal pieces of running Chromium outside WSurf’s own process (message protocol, service bundle layout and frame display). Nothing uses them yet, and the default app is built exactly as before.
+
+### Known issues
+
+- The menu-bar popover and the Passwords window have not been tried in the running app. Whether a click on the menu-bar icon while WSurf is hidden brings the windows back is not known, and neither is how long the popover takes to open with a very large vault.
+- Pick Credential… (⌃⌘P) has not been tried in a Chromium tab.
+- The known issues of 0.1.26 are unchanged.
+
 ## 0.1.26 (build 26) — 2026-11-10
 
 Everything since 0.1.25 (build 25). None of the screens and prompts below has been checked by hand.
