@@ -57,11 +57,23 @@ Part 1 (the shared protocol) is a separate entry; this is the bundle part, D4-2.
 - **Why.** CEF's browser process moves out of WSurf's process into `WSurf Chromium.xpc` (the D4 plan). `Tools/embed-chromium.sh` builds the product like `cef-helper` and assembles the `.xpc`, only for a build with `WSURF_CHROMIUM_OOP_BUILD=YES`.
 - **Re-applying.** Add the product and target back to `Package.swift`, restore the `Sources/wsurf-chromium-service/` folder, and add the one property and its two lines in `CefRuntime.swift` (`set` and `clear`).
 
+### 3. The out-of-process Chromium service (D4), part 3: CEF in the service
+
+D4-4a (`plans/d4-phase2-plan.md`). The service now starts CEF and keeps its own lifecycle.
+
+- **What.**
+  - `Package.swift`: the service depends on `CefKit` and `CCef` now, and compiles with the define `WSURF_SERVICE_DEBUG_OPS`. `Tools/embed-chromium.sh` builds the service in release, where `#if DEBUG` is off, so the debug ops (`debug.abort`, `stats`, `exitOnHello`, `askHost`, `memoryPressure`, `stubBrowser`) have their own define. It is always on in phase 2, which builds only ad hoc and never Release. D4-S, which lets the service be signed, must make it conditional so that no signed service has the ops.
+  - `Sources/wsurf-chromium-service/`: `main.swift` (the stub is gone; connections go to `ServiceHost`), new `ServiceHost.swift` (hello with the protocol check, CEF start, request contexts, the linger and memory pressure through `CefRemoteLinger`, closing everything on a lost control connection, `askHost`) and new `Native.swift`.
+  - `Sources/CefKit/CefRemoteProtocol.swift`: the `debug.memoryPressure` and `debug.stubBrowser` ops, and the keys and answer words of `debug.stats` and `debug.askHost`.
+- **Why.** CEF's browser process lives in the service. The service never reads the keychain (mock keychain, until D4-S), and CEF's log goes to `/dev/null` unless WSurf names a file.
+- **Re-applying.** Restore the folder, the two Package.swift settings and the protocol constants.
+
 ### Outside the package
 
 - `WSurf/Web/Engines/ChromiumPage.swift`: one call to `externalBrowserDidOpen()` after the browser is created and registered (`materialize()`), one call to `externalBrowserDidClose()` where `didClose()` releases the browser.
 - `WSurfTests/Web/CefMessagePumpTests.swift`: the pump's unit tests.
 - Patch 3 (D4-2): `Tools/embed-chromium.sh` (the `.xpc`, only with `WSURF_CHROMIUM_OOP_BUILD=YES`), `Tools/check-built-identity.py`, `Tools/run-chromium-oop-tests.sh`, the Embed Chromium phase's `outputPaths` in `WSurf.xcodeproj`, `WSurf/Web/Engines/ChromiumServiceBundle.swift` and the framework and helper paths in `ChromiumRuntime.swift`, and `WSurfTests/Web/ChromiumServiceBundleTests.swift`.
+- Patch 3 (D4-4a): `WSurfTests/Web/ChromiumServiceHostTests.swift`.
 
 ## Updating CefSwift
 

@@ -51,8 +51,11 @@ let package = Package(
         // later phases add readable; everything in it runs on the service's main thread, which is CEF's UI thread.
         .executableTarget(
             name: "wsurf-chromium-service",
-            dependencies: ["CCefAppKit"],
-            swiftSettings: [.swiftLanguageMode(.v5)],
+            dependencies: ["CefKit", "CCef", "CCefAppKit"],
+            // ponytail: Tools/embed-chromium.sh builds the service in release, where `#if DEBUG` is false, so the debug ops
+            // (abort, stats, exitOnHello, askHost, memoryPressure) have their own define, always on in phase 2. D4-S, which
+            // lets the service be signed, must make it conditional so no signed service has them.
+            swiftSettings: [.swiftLanguageMode(.v5), .define("WSURF_SERVICE_DEBUG_OPS")],
             linkerSettings: [.linkedFramework("AppKit")]
         ),
         // `swift package cef <download|bundle|info|clean>`

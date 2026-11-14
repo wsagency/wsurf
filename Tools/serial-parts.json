@@ -320,6 +320,7 @@
    "ChromiumPopupAllowlistTests",
    "ChromiumRemoteProtocolTests",
    "ChromiumServiceBundleTests",
+   "ChromiumServiceHostTests",
    "DownloadFilenameTests",
    "ErrorPageTests",
    "ExtensionConsentTests",

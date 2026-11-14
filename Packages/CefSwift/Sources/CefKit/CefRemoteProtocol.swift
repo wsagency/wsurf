@@ -95,6 +95,22 @@ public enum CefRemote {
         public static let findNext = "next"
         public static let outcome = "outcome"
         public static let stats = "stats"
+        /// `debug.stats` (D4-4a): whether CEF is started in the service, how many request contexts it holds, and how many
+        /// cookie-store flushes it has asked of CEF. The browser count is ``count``.
+        public static let started = "started"
+        public static let contexts = "contexts"
+        public static let flushes = "flushes"
+        /// `debug.stats`: whether the service runs CEF with the mock keychain (always, until D4-S).
+        public static let mockKeychain = "mockKeychain"
+        /// The reply to `debug.askHost`: one of ``CefRemote/AskHostAnswer``; ``value`` is how long the ask took, in ms.
+        public static let askHostAnswer = "ask"
+    }
+
+    /// How the service's `askHost` ended (`debug.askHost` reports it). A missing, late or failed answer is `timedOut`: the safe
+    /// answer, which cancels.
+    public enum AskHostAnswer {
+        public static let answered = "answered"
+        public static let timedOut = "timedOut"
     }
 
     /// Messages from WSurf to the service.
@@ -131,6 +147,13 @@ public enum CefRemote {
         public static let debugExitOnHello = "debug.exitOnHello"
         /// DEBUG: the service asks WSurf a question and reports how that went (`answered` or `timedOut`). Has a reply.
         public static let debugAskHost = "debug.askHost"
+        /// DEBUG: runs the handler the system's memory-pressure source runs, with ``Key/flag`` as "under pressure". Has a reply
+        /// (sent before any exit it causes) that carries ``Key/flushes``.
+        public static let debugMemoryPressure = "debug.memoryPressure"
+        /// DEBUG: registers a browser that is not one, under ``Key/browser``, so the lifecycle (linger, memory pressure, closing
+        /// everything) can be tested before real browsers exist. ``Key/flag`` says whether it answers a close (`browser.close`
+        /// or the service's own) by going away; one that does not stays until the service gives up on it.
+        public static let debugStubBrowser = "debug.stubBrowser"
     }
 
     /// Events from the service to WSurf.
