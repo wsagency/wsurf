@@ -481,12 +481,16 @@ struct ChromiumRemoteClientTests {
         return armed
     }
 
+    /// A first hello may wait out launchd's 10 s throttle, then the launch and a cold CEF start, on a loaded machine: the timeout
+    /// of these tests is the host tests' 30 s (the production default, tested above, is shorter and stays).
+    private static let realHelloTimeout: TimeInterval = 30
+
     private func realRemote() -> (remote: ChromiumRemote, root: URL)? {
         let root = FileManager.default.temporaryDirectory.appending(path: "wsurf-d4-client-\(UUID().uuidString)", directoryHint: .isDirectory)
         guard let canonical = try? ChromiumRemote.prepareRoot(root) else { return nil }
         let remote = ChromiumRemote(
-            sink: ChromiumFrameSink(), root: { canonical }, clock: { ProcessInfo.processInfo.systemUptime },
-            latch: ChromiumOOP.Latch(), isEnabled: { true }
+            sink: ChromiumFrameSink(), root: { canonical }, helloTimeout: Self.realHelloTimeout,
+            clock: { ProcessInfo.processInfo.systemUptime }, latch: ChromiumOOP.Latch(), isEnabled: { true }
         )
         return (remote, canonical)
     }
@@ -613,6 +617,36 @@ struct ChromiumRemoteClientTests {
         } else {
             await finish(remote, pid: nil)
         }
+    }
+
+    /// The path of production: D4-8 asks for `ChromiumRuntime.shared.cacheDirectory(profileID:)`, which is built from the root as
+    /// the runtime holds it, with the temporary folder's `/var` alias in it, while the hello carries the canonical root.
+    @Test(.enabled(if: ChromiumServiceBundle.isPresent))
+    func aContextForACacheDirectoryBuiltFromANonCanonicalRootIsCreated() async throws {
+        let raw = FileManager.default.temporaryDirectory.appending(path: "wsurf-d4-client-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: raw, withIntermediateDirectories: true)
+        let remote = ChromiumRemote(
+            sink: ChromiumFrameSink(), root: { raw }, helloTimeout: Self.realHelloTimeout,
+            clock: { ProcessInfo.processInfo.systemUptime }, latch: ChromiumOOP.Latch(), isEnabled: { true }
+        )
+        _ = remote.connect()
+        guard await waitUntil(40, { remote.isRunning }), case let .running(pid) = remote.state else {
+            Issue.record("no first hello: \(remote.state)")
+            await finish(remote, pid: nil)
+            return
+        }
+        let profile = UUID()
+        let created = await remote.ensureContext(id: profile, cacheDirectory: raw.appending(path: profile.uuidString, directoryHint: .isDirectory))
+        #expect(created, "a profile's cache directory, built from the root the runtime holds, is inside the service's root")
+        let memory = await remote.ensureContext(id: UUID(), cacheDirectory: nil)
+        #expect(memory, "an in-memory (private) context")
+        #expect(await remote.ensureContext(id: profile, cacheDirectory: raw.appending(path: profile.uuidString, directoryHint: .isDirectory)))
+        let stats = await remote.statistics()
+        #expect(stats?.int(CefRemote.Key.contexts) == 2)
+        // A cache directory outside the root is refused by the service, and the client does not remember it as made.
+        let outside = FileManager.default.temporaryDirectory.appending(path: "wsurf-d4-outside-\(UUID().uuidString)", directoryHint: .isDirectory)
+        #expect(!(await remote.ensureContext(id: UUID(), cacheDirectory: outside)))
+        await finish(remote, pid: pid)
     }
 
     @Test(.enabled(if: ChromiumServiceBundle.isPresent))

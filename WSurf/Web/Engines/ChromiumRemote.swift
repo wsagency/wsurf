@@ -616,7 +616,9 @@ final class ChromiumRemote {
     }
 
     /// Creates the profile's request context in the service (a disk profile when `cacheDirectory` is given, which must be a child
-    /// of the root). True when the service has it.
+    /// of the root). True when the service has it. The service compares the cache path with the root it was given (the hello's,
+    /// which is canonical), so a path built from a root that has an alias in it (`/var` for `/private/var`) is made canonical here
+    /// first, the way the hello's root is: its parent, which exists, is resolved and the last component is appended.
     func ensureContext(id: UUID, cacheDirectory: URL?) async -> Bool {
         if contexts.contains(id) {
             return true
@@ -624,7 +626,8 @@ final class ChromiumRemote {
         let message = CefRemoteMessage(CefRemote.Op.createContext)
         message.set(CefRemote.Key.context, id.uuidString)
         if let cacheDirectory {
-            message.set(CefRemote.Key.cachePath, cacheDirectory.path)
+            guard let parent = try? Self.prepareRoot(cacheDirectory.deletingLastPathComponent()) else { return false }
+            message.set(CefRemote.Key.cachePath, parent.appending(path: cacheDirectory.lastPathComponent, directoryHint: .isDirectory).path)
         }
         let asked = instance
         guard case let .value(reply) = await request(message), reply.bool(CefRemote.Key.success), asked == instance else {
