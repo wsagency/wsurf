@@ -96,6 +96,12 @@ final class RemoteBrowser {
         let started = Native.withString(url) { cef_browser_host_create_browser(&info, client, $0, &settings, nil, context) }
         creationPending = started == 1
         note("browser \(id): create \(started == 1 ? "started" : "FAILED") \(Int(sizeDIP.width))x\(Int(sizeDIP.height))@\(scale)")
+        #if WSURF_SERVICE_DEBUG_OPS
+        if started == 1, debug == CefRemote.DebugCreate.closeFirst {
+            // CEF makes the browser in a later task (`on_after_created`), so this close always comes first.
+            requestClose()
+        }
+        #endif
         return started == 1
     }
 

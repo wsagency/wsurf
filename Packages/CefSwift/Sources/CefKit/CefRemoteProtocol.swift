@@ -131,6 +131,9 @@ public enum CefRemote {
         public static let fail = "fail"
         /// CEF is never called and the browser never reaches `on_after_created`: a close before creation, made deterministic.
         public static let hold = "hold"
+        /// CEF is asked, and a close is taken at once, before CEF has made the browser: the close then has to wait for
+        /// `on_after_created`. A real close can only win that race against the first browser of a fresh disk context.
+        public static let closeFirst = "closeFirst"
     }
 
     /// The reply to a back or forward that native history cannot do at that moment: WSurf makes its own hop (D3b).

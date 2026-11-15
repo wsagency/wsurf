@@ -17,6 +17,7 @@ nonisolated final class ChromiumServiceClient: @unchecked Sendable {
     enum Failure: Error, CustomStringConvertible {
         case noAnswer(String)
         case connection(String)
+        case serviceEnded(String)
         case setup(String)
 
         var description: String {
@@ -25,6 +26,8 @@ nonisolated final class ChromiumServiceClient: @unchecked Sendable {
                 "no answer to \(op)"
             case let .connection(text):
                 "the connection failed: \(text)"
+            case let .serviceEnded(text):
+                "the service ended during the test (a crash? see ~/Library/Logs/DiagnosticReports/WSurf Chromium-*.ips): \(text)"
             case let .setup(text):
                 text
             }
@@ -45,6 +48,8 @@ nonisolated final class ChromiumServiceClient: @unchecked Sendable {
         var questions = 0
         var questionURLs: [String] = []
         var firstReplyNoted = false
+        /// `XPC_ERROR_CONNECTION_INTERRUPTED` events: the instance this connection talked to ended (exited or crashed).
+        var interruptions = 0
         var events: [(op: String, message: CefRemoteMessage)] = []
     }
 
@@ -86,6 +91,10 @@ nonisolated final class ChromiumServiceClient: @unchecked Sendable {
     /// An event or a question from the service. A question (`nav.before` is the one `debug.askHost` sends) has a reply the
     /// service waits for; a host that "never answers" leaves it unanswered.
     private func handle(_ event: xpc_object_t) {
+        if event === XPC_ERROR_CONNECTION_INTERRUPTED {
+            state.withLock { $0.interruptions += 1 }
+            return
+        }
         guard let message = CefRemoteMessage(wrapping: event) else { return }
         let answer = state.withLock { state -> Bool in
             state.events.append((message.op, message))
@@ -113,10 +122,13 @@ nonisolated final class ChromiumServiceClient: @unchecked Sendable {
     func call(_ message: CefRemoteMessage, timeout: TimeInterval = 30) throws -> CefRemoteMessage {
         let done = DispatchSemaphore(value: 0)
         let box = OSAllocatedUnfairLock<Result<CefRemoteMessage, Failure>?>(initialState: nil)
+        let op = message.op
         xpc_connection_send_message_with_reply(connection, message.object, queue) { answer in
             let outcome: Result<CefRemoteMessage, Failure>
             if let reply = CefRemoteMessage(wrapping: answer) {
                 outcome = .success(reply)
+            } else if answer === XPC_ERROR_CONNECTION_INTERRUPTED {
+                outcome = .failure(.serviceEnded("\(op) was interrupted"))
             } else {
                 let text = xpc_copy_description(answer)
                 defer { free(text) }
@@ -164,14 +176,15 @@ nonisolated final class ChromiumServiceClient: @unchecked Sendable {
         let reply = try call(CefRemoteMessage(CefRemote.Op.debugStats))
         if reply.has(CefRemote.Key.pid) {
             let replied = pid_t(reply.int(CefRemote.Key.pid))
-            let known = state.withLock { state -> pid_t in
+            let (known, interruptions) = state.withLock { state -> (pid_t, Int) in
                 if state.pid == nil {
                     state.pid = replied
                 }
-                return state.pid ?? replied
+                return (state.pid ?? replied, state.interruptions)
             }
             guard known == replied else {
-                throw Failure.setup("debug.stats came from service \(replied), not from \(known) (the instance left and a new one was started)")
+                // The instance this client knows is gone: libxpc started a new one for this message.
+                throw Failure.serviceEnded("service \(known) is gone (\(interruptions) interruptions seen); debug.stats was answered by a new instance, \(replied)")
             }
         }
         return reply
