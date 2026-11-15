@@ -151,8 +151,8 @@ public enum CefRemote {
         /// CEF is asked, and a close is taken at once, before CEF has made the browser: the close then has to wait for
         /// `on_after_created`. A real close can only win that race against the first browser of a fresh disk context.
         public static let closeFirst = "closeFirst"
-        /// The browser is made without a shared texture, so CEF paints into memory (`on_paint`): the CPU path of D4-7's frames,
-        /// which a real GPU-less session would use.
+        /// The browser is made without a shared texture, so CEF paints into memory (`on_paint`): the CPU path of D4-7's frames
+        /// (still copied into a ring surface, which needs a Metal device to be made).
         public static let cpuPaint = "cpuPaint"
     }
 

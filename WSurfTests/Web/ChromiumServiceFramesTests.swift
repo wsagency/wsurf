@@ -83,10 +83,23 @@ struct ChromiumServiceFramesTests {
         rig.frames.events(CefRemote.Event.frame).filter { $0.browser == browser && $0.bool(CefRemote.Key.flag) == popup }
     }
 
-    private struct Pixel: Equatable {
+    /// A pixel's colour by dominance, not by exact value: the page's `#f00` and `#00f` may come out of the compositor with a
+    /// colour-space conversion, and what the tests ask is only which of the two the centre of the frame is.
+    private struct Pixel {
         let red: UInt8
         let green: UInt8
         let blue: UInt8
+
+        func matches(_ colour: Colour) -> Bool {
+            switch colour {
+            case .red: red > 200 && green < 80 && blue < 80
+            case .blue: blue > 200 && red < 80 && green < 80
+            }
+        }
+    }
+
+    private enum Colour {
+        case red, blue
     }
 
     /// The surface a `frame` event carries, and its pixel at the centre (BGRA or RGBA, as its pixel format says).
@@ -111,15 +124,12 @@ struct ChromiumServiceFramesTests {
         }
     }
 
-    private static let red = Pixel(red: 255, green: 0, blue: 0)
-    private static let blue = Pixel(red: 0, green: 0, blue: 255)
-
     /// The first frame of `browser`, after the first `after` of them, whose centre pixel is `colour`, received now or within `timeout`.
-    private static func waitFrame(_ rig: Rig, _ browser: Int64, after: Int = 0, colour: Pixel, timeout: TimeInterval = 15) -> CefRemoteMessage? {
+    private static func waitFrame(_ rig: Rig, _ browser: Int64, after: Int = 0, colour: Colour, timeout: TimeInterval = 15) -> CefRemoteMessage? {
         let deadline = Date().addingTimeInterval(timeout)
         func found() -> CefRemoteMessage? {
             frames(rig, browser).dropFirst(after).first { frame in
-                surface(of: frame).flatMap(centre(of:)) == colour
+                surface(of: frame).flatMap(centre(of:))?.matches(colour) == true
             }
         }
         repeat {
@@ -162,7 +172,7 @@ struct ChromiumServiceFramesTests {
         defer { rig.finish() }
         #expect(try rig.attachFrames(), "the host's own process may attach a frames connection")
         try Self.open(rig, 1, "/red")
-        let frame = try #require(Self.waitFrame(rig, 1, colour: Self.red), "a frame whose centre is red")
+        let frame = try #require(Self.waitFrame(rig, 1, colour: .red), "a frame whose centre is red")
         let surface = try #require(Self.surface(of: frame))
         // The 800 x 600 view at scale 1 (`ChromiumServiceClient.createBrowser`).
         #expect(IOSurfaceGetWidth(surface) == 800)
@@ -185,7 +195,7 @@ struct ChromiumServiceFramesTests {
         defer { rig.finish() }
         try rig.attachFrames()
         try Self.open(rig, 1, "/animated")
-        let first = try #require(Self.waitFrame(rig, 1, colour: Self.blue), "a blue frame")
+        let first = try #require(Self.waitFrame(rig, 1, colour: .blue), "a blue frame")
         #expect(Self.surface(of: first) != nil)
         // Frames keep coming, and they are copies from a ring that is reused: more frames than surfaces.
         var sent = 0
@@ -211,7 +221,7 @@ struct ChromiumServiceFramesTests {
         defer { rig.finish() }
         try rig.attachFrames()
         try Self.open(rig, 1, "/animated")
-        _ = try #require(Self.waitFrame(rig, 1, colour: Self.blue))
+        _ = try #require(Self.waitFrame(rig, 1, colour: .blue))
         #expect(try Self.stats(rig.client, 1).int(CefRemote.Key.ringSurfaces) >= 1, "frames built the ring")
         // was_hidden: the ring goes, every surface of it.
         let hidden = try rig.client.command(CefRemote.Op.visibility, browser: 1) { $0.set(CefRemote.Key.hidden, true) }
@@ -228,7 +238,7 @@ struct ChromiumServiceFramesTests {
         let shown = try rig.client.command(CefRemote.Op.visibility, browser: 1) { $0.set(CefRemote.Key.hidden, false) }
         #expect(shown.bool(CefRemote.Key.success))
         let after = Self.frames(rig, 1).count
-        #expect(Self.waitFrame(rig, 1, after: after, colour: Self.blue) != nil || Self.waitFrame(rig, 1, after: after, colour: Self.red) != nil,
+        #expect(Self.waitFrame(rig, 1, after: after, colour: .blue) != nil || Self.waitFrame(rig, 1, after: after, colour: .red) != nil,
                 "frames did not resume after the browser was shown")
         let rebuilt = try Self.ringSurfaces(rig, 1, until: { $0 >= 1 })
         #expect(rebuilt >= 1 && rebuilt <= CefRemote.frameRingSize, "rebuilt ring \(rebuilt)")
@@ -240,13 +250,13 @@ struct ChromiumServiceFramesTests {
         defer { rig.finish() }
         try rig.attachFrames()
         try Self.open(rig, 1, "/red")
-        _ = try #require(Self.waitFrame(rig, 1, colour: Self.red))
+        _ = try #require(Self.waitFrame(rig, 1, colour: .red))
         _ = try rig.client.command(CefRemote.Op.visibility, browser: 1) { $0.set(CefRemote.Key.hidden, true) }
         #expect(try Self.ringSurfaces(rig, 1, until: { $0 == 0 }) == 0)
         let before = Self.frames(rig, 1).count
         _ = try rig.client.command(CefRemote.Op.visibility, browser: 1) { $0.set(CefRemote.Key.hidden, false) }
         // A page that does not change paints nothing of its own: the frame is the service's invalidate.
-        #expect(Self.waitFrame(rig, 1, after: before, colour: Self.red, timeout: 5) != nil, "no frame after the page was shown")
+        #expect(Self.waitFrame(rig, 1, after: before, colour: .red, timeout: 5) != nil, "no frame after the page was shown")
     }
 
     @Test(.enabled(if: ChromiumServiceBundle.isPresent))
@@ -267,7 +277,7 @@ struct ChromiumServiceFramesTests {
         #expect(Self.frames(rig, 1).isEmpty, "a hidden browser sent frames")
         #expect(try Self.stats(rig.client, 1).int(CefRemote.Key.ringSurfaces) == 0)
         _ = try rig.client.command(CefRemote.Op.visibility, browser: 1) { $0.set(CefRemote.Key.hidden, false) }
-        #expect(Self.waitFrame(rig, 1, colour: Self.red) != nil, "no frame once shown")
+        #expect(Self.waitFrame(rig, 1, colour: .red) != nil, "no frame once shown")
     }
 
     @Test(.enabled(if: ChromiumServiceBundle.isPresent))
@@ -276,7 +286,7 @@ struct ChromiumServiceFramesTests {
         defer { rig.finish() }
         try rig.attachFrames()
         try Self.open(rig, 1, "/animated")
-        _ = try #require(Self.waitFrame(rig, 1, colour: Self.blue))
+        _ = try #require(Self.waitFrame(rig, 1, colour: .blue))
         _ = try rig.client.command(CefRemote.Op.visibility, browser: 1) { $0.set(CefRemote.Key.parked, true) }
         usleep(500_000)
         let whileParked = Self.frames(rig, 1).count
@@ -284,7 +294,7 @@ struct ChromiumServiceFramesTests {
         #expect(Self.frames(rig, 1).count == whileParked, "frames kept coming while parked")
         #expect(try Self.stats(rig.client, 1).int(CefRemote.Key.framesDropped) >= 1)
         _ = try rig.client.command(CefRemote.Op.visibility, browser: 1) { $0.set(CefRemote.Key.parked, false) }
-        #expect(Self.waitFrame(rig, 1, after: whileParked, colour: Self.blue) != nil || Self.waitFrame(rig, 1, after: whileParked, colour: Self.red) != nil)
+        #expect(Self.waitFrame(rig, 1, after: whileParked, colour: .blue) != nil || Self.waitFrame(rig, 1, after: whileParked, colour: .red) != nil)
     }
 
     // MARK: CPU fallback
@@ -295,7 +305,7 @@ struct ChromiumServiceFramesTests {
         defer { rig.finish() }
         try rig.attachFrames()
         try Self.open(rig, 1, "/red", debug: CefRemote.DebugCreate.cpuPaint)
-        let frame = try #require(Self.waitFrame(rig, 1, colour: Self.red), "a CPU frame whose centre is red")
+        let frame = try #require(Self.waitFrame(rig, 1, colour: .red), "a CPU frame whose centre is red")
         #expect(IOSurfaceGetWidth(try #require(Self.surface(of: frame))) == 800)
         let stats = try Self.stats(rig.client, 1)
         #expect(stats.int(CefRemote.Key.cpuFrames) >= 1, "on_paint ran")
@@ -356,7 +366,7 @@ struct ChromiumServiceFramesTests {
         #expect(before.int(CefRemote.Key.framesDropped) >= 1, "frames were painted and dropped")
         // The connection attaches after the page painted: a still page paints nothing more, so the service asks for a frame.
         try rig.attachFrames()
-        #expect(Self.waitFrame(rig, 1, colour: Self.red) != nil, "the frame the attach asked for")
+        #expect(Self.waitFrame(rig, 1, colour: .red) != nil, "the frame the attach asked for")
     }
 
     @Test(.enabled(if: ChromiumServiceBundle.isPresent))
@@ -365,7 +375,7 @@ struct ChromiumServiceFramesTests {
         defer { rig.finish() }
         try rig.attachFrames()
         try Self.open(rig, 1, "/animated")
-        _ = try #require(Self.waitFrame(rig, 1, colour: Self.blue))
+        _ = try #require(Self.waitFrame(rig, 1, colour: .blue))
         let second = try ChromiumServiceClient(root: rig.client.root)
         defer { second.close() }
         #expect(try second.call(CefRemoteMessage(CefRemote.Op.framesHello)).bool(CefRemote.Key.success))
