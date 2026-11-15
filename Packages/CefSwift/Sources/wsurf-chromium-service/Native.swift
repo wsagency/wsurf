@@ -39,6 +39,22 @@ enum Native {
         _ = base.pointee.release?(base)
     }
 
+    /// Closes `browser` in a later turn of the main queue (CEF's UI thread), holding a reference of its own until then. For a
+    /// close decided in `on_after_created`: CEF goes on using the browser after that callback returns
+    /// (`AlloyBrowserHostImpl::CreateInternal` calls its platform delegate), and a forced close of a windowless browser made
+    /// inside the callback can destroy that delegate first, which crashed the service (a null dereference).
+    static func closeLater(_ browser: UnsafeMutablePointer<cef_browser_t>) {
+        retain(UnsafeMutableRawPointer(browser))
+        let address = UInt(bitPattern: browser)
+        DispatchQueue.main.async {
+            guard let browser = UnsafeMutablePointer<cef_browser_t>(bitPattern: address) else { return }
+            defer { Native.release(UnsafeMutableRawPointer(browser)) }
+            guard let host = browser.pointee.get_host?(browser) else { return }
+            host.pointee.close_browser?(host, 1)
+            Native.release(UnsafeMutableRawPointer(host))
+        }
+    }
+
     static func string(_ value: UnsafePointer<cef_string_t>?) -> String {
         guard let value, let characters = value.pointee.str, value.pointee.length > 0 else { return "" }
         return String(decoding: UnsafeBufferPointer(start: characters, count: value.pointee.length), as: UTF16.self)

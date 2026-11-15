@@ -99,11 +99,9 @@ final class RemoteClientHandlers: @unchecked Sendable {
             guard let browser else { return }
             defer { Native.release(UnsafeMutableRawPointer(browser)) }
             guard let owner = RemoteClientHandlers.browser(handlerSelf) else {
-                // The host dropped this browser before CEF made it (a close before creation): nobody will close it, so close it now.
-                if let host = browser.pointee.get_host?(browser) {
-                    host.pointee.close_browser?(host, 1)
-                    Native.release(UnsafeMutableRawPointer(host))
-                }
+                // The host dropped this browser before CEF made it (a close before creation): nobody will close it, so close it
+                // (after this callback: `Native.closeLater`).
+                Native.closeLater(browser)
                 return
             }
             MainActor.assumeIsolated { owner.didCreate(browser) }

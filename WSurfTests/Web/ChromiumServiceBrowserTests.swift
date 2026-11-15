@@ -336,6 +336,27 @@ struct ChromiumServiceBrowserTests {
         #expect(stats.int(CefRemote.Key.handlerSets) == 0)
     }
 
+    /// The test above with its race always lost: the close is taken before CEF has made the browser (the DEBUG `closeFirst`), as
+    /// happens to the first browser of a fresh disk context. CEF goes on using the browser after `on_after_created` returns, so
+    /// a close made inside that callback crashed the service (`AlloyBrowserHostImpl::CreateInternal`, a null platform
+    /// delegate); the service then ends, and `stats` says so. Three in a row, in one instance.
+    @Test(.enabled(if: ChromiumServiceBundle.isPresent))
+    func aBrowserWhoseCloseCameBeforeCEFMadeItIsClosedWithoutCrashingTheService() async throws {
+        let rig = try await Self.rig()
+        defer { rig.client.finish() }
+        for id in Int64(1) ... 3 {
+            let created = try rig.client.createBrowser(id, url: rig.url("/one"), context: "profile", debug: CefRemote.DebugCreate.closeFirst)
+            #expect(created.bool(CefRemote.Key.success))
+            #expect(rig.client.waitEvent(CefRemote.Event.browserClosed) { $0.browser == id } != nil, "browser.closed \(id)")
+            let stats = try rig.client.waitStats { $0.int(CefRemote.Key.browserObjects) == 0 && $0.int(CefRemote.Key.handlerSets) == 0 }
+            #expect(stats.int(CefRemote.Key.count) == 0)
+            #expect(stats.int(CefRemote.Key.browserObjects) == 0)
+            #expect(stats.int(CefRemote.Key.handlerSets) == 0)
+        }
+        // The service still makes browsers.
+        try Self.open(rig, 4, "/one")
+    }
+
     @Test(.enabled(if: ChromiumServiceBundle.isPresent))
     func aCreationThatFailsFreesEverythingAndTellsWSurf() async throws {
         let rig = try await Self.rig()
