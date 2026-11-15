@@ -23,6 +23,20 @@ enum ServiceCounters {
     static let handlerSets = OSAllocatedUnfairLock(initialState: 0)
     /// Navigations the service cancelled itself, for a scheme outside ``CefRemote/allowedNavigationSchemes`` (`debug.stats`).
     static let refusedNavigations = OSAllocatedUnfairLock(initialState: 0)
+    /// `nav.external` events the rate limit (or the address's size) kept back (D4-8; `debug.stats`).
+    static let droppedExternalSchemes = OSAllocatedUnfairLock(initialState: 0)
+    /// The service's own history reads it gave up on, because no answer came (D4-8, review F8; `debug.stats`).
+    static let historyTimeouts = OSAllocatedUnfairLock(initialState: 0)
+}
+
+/// A main-frame navigation as `on_before_browse` saw it, beyond its address: the question to WSurf carries it (D4-8).
+struct NavigationDetails: Sendable {
+    var method = ""
+    /// The address of the page that started it (the request's referrer), or empty.
+    var source = ""
+    /// CEF's `cef_transition_type_t`.
+    var transition: Int64 = 0
+    var hasPostData = false
 }
 
 /// What every handler of one browser owns in place of the browser.
@@ -90,6 +104,21 @@ final class RemoteClientHandlers: @unchecked Sendable {
 
     private static func isMain(_ frame: UnsafeMutablePointer<cef_frame_t>?) -> Bool {
         frame?.pointee.is_main?(frame) == 1
+    }
+
+    /// What WSurf's navigation gate needs besides the address (`ChromiumClient.on_before_browse` reads the same from the request).
+    /// The request is borrowed: the caller releases it.
+    private static func navigationDetails(of request: UnsafeMutablePointer<cef_request_t>) -> NavigationDetails {
+        var details = NavigationDetails()
+        details.method = Native.take(request.pointee.get_method?(request))
+        details.source = Native.take(request.pointee.get_referrer_url?(request))
+        details.transition = Int64(request.pointee.get_transition_type?(request).rawValue ?? 0)
+        if let post = request.pointee.get_post_data?(request) {
+            // Only presence matters to the gate (a submitted request is never replayed in another engine); CEF keeps the bytes.
+            details.hasPostData = (post.pointee.get_element_count?(post) ?? 0) > 0
+            Native.release(UnsafeMutableRawPointer(post))
+        }
+        return details
     }
 
     // MARK: Life span
@@ -198,18 +227,28 @@ final class RemoteClientHandlers: @unchecked Sendable {
             let main = RemoteClientHandlers.isMain(frame)
             Native.release(frame.map(UnsafeMutableRawPointer.init))
             let url = nativeRequest.map { Native.take($0.pointee.get_url?($0)) } ?? ""
+            let details = nativeRequest.map { RemoteClientHandlers.navigationDetails(of: $0) } ?? NavigationDetails()
             Native.release(nativeRequest.map(UnsafeMutableRawPointer.init))
             // Every frame passes the scheme allowlist WSurf applies in process (`ChromiumClient`), here and without a round trip:
-            // a URL that does not parse, or whose scheme is not listed, is cancelled whatever the host would answer.
+            // a URL that does not parse, or whose scheme is not listed, is cancelled whatever the host would answer. WSurf is told
+            // (one way, rate limited) so that it can still offer the app that handles `mailto:` or `tel:` (D4-8, review D1).
             guard let target = URL(string: url), CefRemote.allowsNavigation(to: target) else {
                 ServiceCounters.refusedNavigations.withLock { $0 += 1 }
+                if let owner = RemoteClientHandlers.browser(handlerSelf) {
+                    MainActor.assumeIsolated {
+                        owner.refusedScheme(url: url, isMain: main, userGesture: userGesture != 0, source: details.source)
+                    }
+                }
                 return 1
             }
-            // Sub-frames with an allowed scheme are not asked about (D4-8 decides whether they should be). A browser the host no
-            // longer has cancels (nobody could answer for it).
+            // Sub-frames with an allowed scheme are not asked about: the page's own scripts and ads load their frames, and a wait on
+            // WSurf for each would cost the service up to a second apiece. (The scheme gate above still applies to them.) A browser
+            // the host no longer has cancels (nobody could answer for it).
             guard main else { return 0 }
             guard let owner = RemoteClientHandlers.browser(handlerSelf) else { return 1 }
-            let allowed = MainActor.assumeIsolated { owner.mayNavigate(to: url, isRedirect: isRedirect != 0, userGesture: userGesture != 0) }
+            let allowed = MainActor.assumeIsolated {
+                owner.mayNavigate(to: url, isRedirect: isRedirect != 0, userGesture: userGesture != 0, details: details)
+            }
             return allowed ? 0 : 1
         }
         request.pointee.on_open_urlfrom_tab = { _, browser, frame, _, _, _ in

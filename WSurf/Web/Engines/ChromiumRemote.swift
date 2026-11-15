@@ -136,6 +136,15 @@ protocol ChromiumRemoteBrowserHandle: AnyObject {
     func remoteServiceEnded()
     /// The service asks (`askHost`) whether a main-frame navigation may go ahead; it cancels if it hears nothing for a second.
     func remoteAllowsNavigation(to url: String) -> Bool
+    /// The same question with everything the service knows of the navigation (method, whether it submits a body, transition type,
+    /// the page that started it). A page proxy answers from this; the default asks only about the address.
+    func remoteAllowsNavigation(question: CefRemoteMessage) -> Bool
+}
+
+extension ChromiumRemoteBrowserHandle {
+    func remoteAllowsNavigation(question: CefRemoteMessage) -> Bool {
+        remoteAllowsNavigation(to: question.string(CefRemote.Key.url))
+    }
 }
 
 @MainActor
@@ -533,7 +542,7 @@ final class ChromiumRemote {
 
     private func answerBeforeBrowse(_ message: CefRemoteMessage) {
         guard let control, let reply = CefRemoteMessage(replyTo: message) else { return }
-        let allowed = browsers[message.browser]?.remoteAllowsNavigation(to: message.string(CefRemote.Key.url)) ?? false
+        let allowed = browsers[message.browser]?.remoteAllowsNavigation(question: message) ?? false
         reply.set(CefRemote.Key.value, allowed)
         xpc_connection_send_message(control, reply.object)
     }

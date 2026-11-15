@@ -21,8 +21,12 @@ extension ChromiumPage {
     /// `ensureReady`; retaining the guard here also makes direct callers safe.
     func applySettings(_ settings: BrowserSettings) async throws {
         try await ensureReady()
-        guard !isClosed, let client else { throw ChromiumError.closed }
-        client.updateSettings(settings)
+        guard !isClosed else { throw ChromiumError.closed }
+        // The tracker policy lives in the client, which a page in the service has none of (phase 4 mirrors it there).
+        if remote == nil {
+            guard let client else { throw ChromiumError.closed }
+            client.updateSettings(settings)
+        }
 
         let version = try await command("Browser.getVersion")
         guard let genuineUserAgent = version["userAgent"] as? String, !genuineUserAgent.isEmpty else {
@@ -69,6 +73,8 @@ extension ChromiumPage {
         case .block:
             autoplayValue = CEF_CONTENT_SETTING_VALUE_BLOCK
         }
+        // The autoplay content setting belongs to a request context in this process: the service's is not set from here yet.
+        guard remote == nil else { return }
         try ChromiumRuntime.shared.withContext(for: context) { context in
             context.pointee.set_content_setting?(
                 context,

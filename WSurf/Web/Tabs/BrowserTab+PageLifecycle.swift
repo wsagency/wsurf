@@ -213,6 +213,10 @@ extension BrowserTab {
 
     private func offerChromiumExternalApp(_ url: URL, sourceURL: URL?, sourceFrame: BrowserFrame?) {
         let view = page
+        if let chromium = view.chromium, chromium.remote != nil {
+            offerExternalApp(url, fromServicePage: chromium, in: view)
+            return
+        }
         guard let chromium = view.chromium, let client = chromium.client else {
             ExternalApp.noteDropped(url, .stale)
             return
@@ -249,6 +253,26 @@ extension BrowserTab {
             }
             await ExternalApp.offerToOpen(url, from: origin, policy: externalApps, in: view.window, isCurrent: {
                 requestIsCurrent() && !self.isClosed && self.liveView === view && self.committedNavigation === document
+            })
+        }
+    }
+
+    /// The same offer for a page in the Chromium service, which has no `ChromiumClient` and so no native documents to prove a source
+    /// frame against: the request names no site (nothing is remembered, the person is asked each time), and it is current while no
+    /// newer main-frame navigation has started and the DevTools frames are the ones it was made against.
+    private func offerExternalApp(_ url: URL, fromServicePage chromium: ChromiumPage, in view: BrowserPage) {
+        let document = committedNavigation
+        let generation = chromium.mainFrameGeneration
+        let snapshot = chromium.devTools.frameSnapshot()
+        Task { [weak self, weak view, weak chromium] in
+            guard let self, !isClosed, let view, liveView === view else {
+                ExternalApp.noteDropped(url, .tabClosed)
+                return
+            }
+            await ExternalApp.offerToOpen(url, from: "", policy: externalApps, in: view.window, isCurrent: {
+                guard let chromium else { return false }
+                return chromium.mainFrameGeneration == generation && chromium.devTools.isCurrent(snapshot: snapshot)
+                    && !self.isClosed && self.liveView === view && self.committedNavigation === document
             })
         }
     }

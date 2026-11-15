@@ -151,7 +151,7 @@ extension BrowserApplication {
                 let permissions = ProfileStore.shared.profiles.map { BrowserProfileContext.shared(for: $0).sitePermissions }
                 return ChromiumPrewarm.sessionUsesChromium(models: windows.filter { !$0.isClosed }.map(\.browser), permissions: permissions)
             },
-            isStarted: { ChromiumRuntime.shared.isInitialized },
+            isStarted: { ChromiumRuntime.shared.hasStartedChromium },
             start: { ChromiumRuntime.shared.startEarly() }
         )
         chromiumPrewarm = prewarm

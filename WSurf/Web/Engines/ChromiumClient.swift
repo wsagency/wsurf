@@ -244,7 +244,7 @@ final class ChromiumClient {
         ChromiumInterop.string(value)
     }
 
-    private nonisolated static func navigationType(
+    nonisolated static func navigationType(
         _ transition: cef_transition_type_t
     ) -> WKNavigationType {
         let raw = transition.rawValue

@@ -9,6 +9,8 @@ import WebKit
 final class ChromiumDevTools {
     weak var page: ChromiumPage?
     private var host: UnsafeMutablePointer<cef_browser_host_t>?
+    /// D4: the same pipe to a browser in the Chromium service (`ChromiumDevTools+Remote`). Exactly one of `host` and `remote` is set.
+    private(set) var remote: ChromiumRemoteBrowser?
     private var observer: UnsafeMutablePointer<cef_dev_tools_message_observer_t>?
     private var registration: UnsafeMutablePointer<cef_registration_t>?
     private var nextMessageID = 1
@@ -32,21 +34,6 @@ final class ChromiumDevTools {
     /// Sees every command as it is sent, for tests.
     var commandObserver: ((String, [String: Any]) -> Void)?
 
-    /// What this connection has spent on protocol traffic, as counters: the page's session counts for the frame sessions under it.
-    /// They cost an addition per event; tests and the Chromium load benchmark read them.
-    struct LoadStatistics: Equatable {
-        /// Events CEF handed to the page's session.
-        var eventsReceived = 0
-        /// Of those, the ones whose parameters were parsed as JSON.
-        var eventsParsed = 0
-        /// Messages of a cross-site frame session, which are always parsed whole.
-        var sessionMessagesParsed = 0
-        /// Cross-site frames held until their session had registered its scripts: how many, the sum and the longest hold
-        /// (from the frame's attach to the answer of the command that lets it run).
-        var framePauses = 0
-        var framePauseTotal: Duration = .zero
-        var framePauseMax: Duration = .zero
-    }
     var loadStatistics = LoadStatistics()
     private(set) var prepared = false
     private var preparing = false
@@ -209,6 +196,14 @@ final class ChromiumDevTools {
         self.registration = registration
     }
 
+    /// Attaches to a browser in the Chromium service (D4). Its messages arrive through `receiveRemote`
+    /// (`ChromiumDevTools+Remote`), split the way CEF splits them in process.
+    func attach(remote: ChromiumRemoteBrowser) throws {
+        guard !closed else { throw ChromiumError.closed }
+        guard host == nil, self.remote == nil else { return }
+        self.remote = remote
+    }
+
     /// `marksNewDocuments`: the session of a pop-up, whose first document predates its scripts (`runScriptsInEarlierDocuments`).
     func prepare(marksNewDocuments: Bool = false) async throws {
         guard !closed else { throw ChromiumError.closed }
@@ -285,7 +280,9 @@ final class ChromiumDevTools {
         prepareParameters: (@MainActor @Sendable () throws -> [String: Any])?
     ) async throws -> [String: Any] {
         guard !closed else { throw ChromiumError.closed }
-        guard let host else { throw ChromiumError.unavailable("Chromium DevTools is not attached.") }
+        let host = self.host
+        let remote = self.remote
+        guard host != nil || remote != nil else { throw ChromiumError.unavailable("Chromium DevTools is not attached.") }
         if prepareParameters == nil, !JSONSerialization.isValidJSONObject(baseParams) {
             throw ChromiumError.protocolFailure("DevTools parameters are not JSON serializable.")
         }
@@ -320,7 +317,7 @@ final class ChromiumDevTools {
                         throw ChromiumError.protocolFailure("DevTools parameters are not JSON serializable: \(error.localizedDescription)")
                     }
                     try dispatchCheck?()
-                    guard !closed, self.host == host else { throw ChromiumError.closed }
+                    guard !closed, self.host == host, self.remote === remote else { throw ChromiumError.closed }
                     commandObserver?(method, params)
                     pending[id] = PendingCommand(continuation: continuation, result: result)
                     pendingSessions[id] = session
@@ -329,8 +326,14 @@ final class ChromiumDevTools {
                         guard let self else { return }
                         self.finishFailure(id: id, error: ChromiumError.unavailable("Chromium DevTools command timed out."))
                     }
-                    let accepted = data.withUnsafeBytes { bytes in
-                        host.pointee.send_dev_tools_message?(host, bytes.baseAddress, data.count) ?? 0
+                    let accepted: Int32
+                    if let host {
+                        accepted = data.withUnsafeBytes { bytes in
+                            host.pointee.send_dev_tools_message?(host, bytes.baseAddress, data.count) ?? 0
+                        }
+                    } else {
+                        // Queued to the service, which answers a command Chromium rejects by itself.
+                        accepted = remote?.sendDevTools(data) == true ? 1 : 0
                     }
                     if accepted == 0 {
                         self.finishFailure(id: id, error: ChromiumError.unavailable("Chromium DevTools rejected the command."))
@@ -371,6 +374,7 @@ final class ChromiumDevTools {
             ChromiumInterop.release(UnsafeMutableRawPointer(host))
             self.host = nil
         }
+        remote = nil
         framesByID.removeAll()
         mainFrameAddress = nil
         contextsByUniqueID.removeAll()
@@ -652,7 +656,7 @@ final class ChromiumDevTools {
         handlers.removeValue(forKey: HandlerKey(name: name, worldName: worldName(world)))
     }
 
-    private func receiveResult(id: Int, success: Bool, pointer: UnsafeRawPointer?, size: Int) {
+    func receiveResult(id: Int, success: Bool, pointer: UnsafeRawPointer?, size: Int) {
         guard !closed, isPending(id, in: nil) else { return }
 
         guard size <= 8 * 1_048_576 else {
@@ -873,7 +877,7 @@ final class ChromiumDevTools {
         }
     }
 
-    private func failAll(_ error: Error) {
+    func failAll(_ error: Error) {
         let values = pending
         pending.removeAll()
         pendingSessions.removeAll()

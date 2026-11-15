@@ -18,15 +18,18 @@ final class ChromiumPage: NSView {
         context.profile.isPrivate
     }
     weak var owner: BrowserPage?
-    private(set) var browserID: Int32 = -1
+    var browserID: Int32 = -1
     private(set) var isClosed = false
-    private var raw: UnsafeMutablePointer<cef_browser_t>?
+    private(set) var raw: UnsafeMutablePointer<cef_browser_t>?
     private(set) var client: ChromiumClient?
-    private(set) lazy var devTools = ChromiumDevTools(page: self)
-    private var preparation: Task<Void, Error>?
-    private var pendingLoad: Task<Void, Never>?
+    lazy var devTools = ChromiumDevTools(page: self)
+    /// D4: the page's browser when it runs in the Chromium service (`ChromiumPage+Remote`); nil for a page in process. Exactly one of
+    /// this and `raw` is set once the page has a browser.
+    var remote: ChromiumRemoteBrowser?
+    var preparation: Task<Void, Error>?
+    var pendingLoad: Task<Void, Never>?
     private var closeWaiters: [CheckedContinuation<Void, Never>] = []
-    private var closing = false
+    private(set) var closing = false
     private var nativeView: NSView? {
         withHost { host in
             host.pointee.get_window_handle?(host).map {
@@ -38,7 +41,7 @@ final class ChromiumPage: NSView {
     private(set) var navigation: PageNavigation? {
         didSet { client?.documentResponses.reset() }
     }
-    private(set) var history = PageHistoryList()
+    var history = PageHistoryList()
     private var requestedURL: URL?
     var awaitingNativeNavigation = false
     /// The address of a same-document move the engine reported before it reported the address.
@@ -46,29 +49,27 @@ final class ChromiumPage: NSView {
     /// Set while the awaited native navigation may stay inside the document, so it never reaches `willNavigate`.
     var sameDocumentWait: SameDocumentWait?
     var navigationStarted = false
-    private var initialDocument = true
+    var initialDocument = true
     /// Chromium records the startup about:blank as a real history entry. The first commit starts the reset that drops it.
     /// Until a reset has dropped it, it stays Chromium's first entry and Back never goes there (`nativeCanGoBack`,
     /// `loadHistory`). `kept`: no reset dropped it, because none landed or the history grew before one could.
     enum StartupEntry {
         case inHistory, resetting, dropped, kept
     }
-    private(set) var startupEntry = StartupEntry.inHistory
+    var startupEntry = StartupEntry.inHistory
     /// Moves on when a main-frame navigation is requested, starts or commits, or the renderer is lost (`load`,
     /// `willNavigate`, `didStartLoad`, `didTerminate`). It proves a request made before the tab committed any document.
     private(set) var mainFrameGeneration: UInt64 = 0
-    private static let startupResetAttempts = 10
-    private static let startupResetRetryDelay: Duration = .milliseconds(100)
     /// Test seam: runs in place of the `Page.resetNavigationHistory` command; a throw is a refused reset.
     var startupResetCommand: (@MainActor () async throws -> Void)?
     /// Times `closeTimeout` (ChromiumPage+Close.swift). Test seams: a clock, and losing CEF's `on_before_close`.
     var closeClock: any Clock<Duration> = ContinuousClock()
     var dropsCloseAnswerForTesting = false
     private(set) var htmlDocumentURL: URL?
-    private var hasAppliedInitialSettings = false
+    var hasAppliedInitialSettings = false
     /// Whether `applySettings` left a user agent override in place, so a later return to the engine's own string clears it.
     var hasUserAgentOverride = false
-    private var zoom: CGFloat = 1
+    var zoom: CGFloat = 1
     var navigationDecision: ((URLRequest, Bool, Bool, Bool, WKNavigationType, URL?, BrowserFrame?) -> Bool)?
     /// A link the person opened in a new tab (middle-click, Command-click): a plain tab, with no opener.
     var openWindow: ((URL, Bool, URL?, BrowserFrame?, ClickDisposition) -> Void)?
@@ -140,6 +141,10 @@ final class ChromiumPage: NSView {
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
+        // Out of process the service makes the browser, and nothing here waits for it or for a window.
+        if materializeRemoteOnAttach() {
+            return
+        }
         guard window != nil, raw == nil, !awaitsPopup, !closing, !isClosed else { return }
         do {
             defer {
@@ -162,6 +167,10 @@ final class ChromiumPage: NSView {
     }
 
     func materialize() throws {
+        if runsRemotely {
+            try materializeRemote()
+            return
+        }
         guard !closing, !isClosed else { throw ChromiumError.closed }
         guard raw == nil else { return }
         guard window != nil else {
@@ -238,14 +247,20 @@ final class ChromiumPage: NSView {
 
     func ensureReady() async throws {
         guard !isClosed, !closing else { throw ChromiumError.closed }
-        if raw == nil, awaitsPopup {
-            await withCheckedContinuation { popupWaiters.append($0) }
-            guard !isClosed, !closing else { throw ChromiumError.closed }
-        }
-        if raw == nil {
-            try await ChromiumRuntime.shared.prepareContext(for: context)
-            guard !isClosed, !closing else { throw ChromiumError.closed }
-            try materialize()
+        if runsRemotely {
+            if remote == nil {
+                try materializeRemote()
+            }
+        } else {
+            if raw == nil, awaitsPopup {
+                await withCheckedContinuation { popupWaiters.append($0) }
+                guard !isClosed, !closing else { throw ChromiumError.closed }
+            }
+            if raw == nil {
+                try await ChromiumRuntime.shared.prepareContext(for: context)
+                guard !isClosed, !closing else { throw ChromiumError.closed }
+                try materialize()
+            }
         }
         guard let preparation else { throw ChromiumError.closed }
         try await preparation.value
@@ -266,11 +281,18 @@ final class ChromiumPage: NSView {
     /// The engine's own mute of the page: every frame and every kind of sound, a frame of another site (which no WSurf script
     /// reaches) and Web Audio included. It stays across navigations, like the tab's mute does.
     func setAudioMuted(_ muted: Bool) {
+        if let remote {
+            remote.setMuted(muted)
+            return
+        }
         withHost { $0.pointee.set_audio_muted?($0, muted ? 1 : 0) }
     }
 
     var isAudioMuted: Bool {
-        withHost { ($0.pointee.is_audio_muted?($0) ?? 0) != 0 } ?? false
+        if let remote {
+            return remote.isMuted
+        }
+        return withHost { ($0.pointee.is_audio_muted?($0) ?? 0) != 0 } ?? false
     }
 
     func command(_ method: String, params: [String: Any] = [:]) async throws -> [String: Any] {
@@ -297,7 +319,7 @@ final class ChromiumPage: NSView {
             guard let self else { return }
             do {
                 // Loads may be requested before SwiftUI attaches the view. Attachment starts preparation.
-                if window == nil {
+                if window == nil, !runsRemotely {
                     await withCheckedContinuation { continuation in
                         attachmentWaiters.append(continuation)
                     }
@@ -320,7 +342,7 @@ final class ChromiumPage: NSView {
         return next
     }
 
-    private var attachmentWaiters: [CheckedContinuation<Void, Never>] = []
+    var attachmentWaiters: [CheckedContinuation<Void, Never>] = []
 
     private typealias RequestFactories = (
         request: @convention(c) () -> UnsafeMutablePointer<cef_request_t>?,
@@ -353,6 +375,21 @@ final class ChromiumPage: NSView {
     }
 
     private func loadNative(_ request: URLRequest) throws {
+        if let remote, let url = request.url {
+            // The service has no per-file scope yet (phase 4): said here, so the tab shows it (`remoteNavigationDecision` is the floor
+            // for a page's own moves).
+            guard !url.isFileURL else {
+                throw ChromiumError.unavailable("Chromium cannot open a local file in this build yet.")
+            }
+            // A plain GET only: a request with a body or headers needs the service to build it (phase 4), and is refused here, never
+            // turned into a GET.
+            guard (request.httpMethod ?? "GET").uppercased() == "GET", request.httpBody == nil, request.httpBodyStream == nil,
+                  request.allHTTPHeaderFields?.isEmpty != false else {
+                throw ChromiumError.unavailable("Chromium cannot send a request with a body or headers in this build yet.")
+            }
+            guard remote.send(CefRemote.Op.load, { $0.set(CefRemote.Key.url, url.absoluteString) }) else { throw ChromiumError.closed }
+            return
+        }
         guard let raw, let frame = raw.pointee.get_main_frame?(raw), let url = request.url else {
             throw ChromiumError.closed
         }
@@ -435,13 +472,14 @@ final class ChromiumPage: NSView {
 
     @discardableResult
     func reload(ignoreCache: Bool = false) -> PageNavigation? {
-        guard raw != nil, !isClosed, !closing else {
+        guard raw != nil || remote != nil, !isClosed, !closing else {
             return requestedURL.flatMap { load(URLRequest(url: $0)) }
         }
         let next = PageNavigation()
         navigation = next
         awaitLoad(of: nil)
         navigationStarted = false
+        remote?.send(CefRemote.Op.reload) { $0.set(CefRemote.Key.flag, ignoreCache) }
         withBrowser { browser in
             if ignoreCache {
                 browser.pointee.reload_ignore_cache?(browser)
@@ -458,6 +496,7 @@ final class ChromiumPage: NSView {
         navigation = PageNavigation()
         awaitHistoryMove()
         navigationStarted = false
+        remote?.send(CefRemote.Op.goBack)
         withBrowser { $0.pointee.go_back?($0) }
         return navigation
     }
@@ -468,6 +507,7 @@ final class ChromiumPage: NSView {
         navigation = PageNavigation()
         awaitHistoryMove()
         navigationStarted = false
+        remote?.send(CefRemote.Op.goForward)
         withBrowser { $0.pointee.go_forward?($0) }
         return navigation
     }
@@ -489,6 +529,7 @@ final class ChromiumPage: NSView {
     func stopLoading() {
         pendingLoad?.cancel()
         client?.documentResponses.reset()
+        remote?.send(CefRemote.Op.stop)
         withBrowser { $0.pointee.stop_load?($0) }
     }
 
@@ -496,7 +537,9 @@ final class ChromiumPage: NSView {
         get { zoom }
         set {
             zoom = newValue
-            withHost { $0.pointee.set_zoom_level?($0, log(Double(newValue)) / log(1.2)) }
+            let level = log(Double(newValue)) / log(1.2)
+            remote?.send(CefRemote.Op.zoom) { $0.set(CefRemote.Key.value, level) }
+            withHost { $0.pointee.set_zoom_level?($0, level) }
         }
     }
 
@@ -670,6 +713,11 @@ final class ChromiumPage: NSView {
     }
     func didChangeTitle() {
         guard !closing, !isClosed else { return }
+        if let remote {
+            // The visible entry's title, which the service sends with its events.
+            owner?.title = remote.title
+            return
+        }
         // The display callback substitutes a URL for an untitled document.
         // The navigation entry retains its actual (possibly empty) title.
         owner?.title = withHost { host in
@@ -719,147 +767,10 @@ final class ChromiumPage: NSView {
         updateNativeSecurity()
     }
 
-    /// Back must never reach the startup page. The reset keeps only the committed entry, so it may run only while the history
-    /// is exactly the startup page and that entry: once the page added an entry (`pushState`) or a later page committed, it
-    /// would drop real Back entries. Chromium refuses it while the first commit is still swapping renderers, which the DevTools
-    /// session waits out; a refusal of another kind is retried here. A reset that does not land leaves the startup entry hidden from Back.
-    private func dropStartupEntry() {
-        guard raw != nil, !closing, !isClosed else { return }
-        Task { [weak self] in
-            guard let self else { return }
-            var outcome = StartupReset.refused
-            for attempt in 1...Self.startupResetAttempts {
-                outcome = await resetNavigationHistory()
-                guard outcome == .refused, attempt < Self.startupResetAttempts else { break }
-                try? await Task.sleep(for: Self.startupResetRetryDelay)
-                guard !closing, !isClosed else { return }
-            }
-            guard !closing, !isClosed else { return }
-            startupEntry = outcome == .landed ? .dropped : .kept
-            owner?.canGoBack = nativeCanGoBack()
-            await loadHistory()
-        }
-    }
-
-    private enum StartupReset {
-        case landed, refused, skipped
-    }
-
-    private struct StartupResetBlocked: Error {
-        let outcome: StartupReset
-    }
-
-    /// The history check runs in the same synchronous turn that sends the reset, and Chromium applies the reset while it is
-    /// sent, so no entry can arrive in between. The test seam replaces only the command.
-    private func resetNavigationHistory() async -> StartupReset {
-        do {
-            if let startupResetCommand {
-                if let outcome = startupResetBlocker() {
-                    return outcome
-                }
-                try await startupResetCommand()
-            } else {
-                _ = try await devTools.command("Page.resetNavigationHistory", dispatchCheck: { [weak self] in
-                    guard let self else { throw StartupResetBlocked(outcome: .refused) }
-                    if let outcome = startupResetBlocker() {
-                        throw StartupResetBlocked(outcome: outcome)
-                    }
-                })
-            }
-            return .landed
-        } catch let blocked as StartupResetBlocked {
-            return blocked.outcome
-        } catch {
-            return .refused
-        }
-    }
-
-    /// Nil while Chromium's history is exactly the startup page and the committed entry, the one state in which the reset
-    /// drops nothing else; otherwise the outcome to report instead. The commit event can arrive before Chromium records the
-    /// entry, so a history of the startup page alone is retried like a refusal.
-    private func startupResetBlocker() -> StartupReset? {
-        guard let native = nativeHistory() else { return .refused }
-        if native.first != "about:blank" {
-            return .landed
-        }
-        if native.count > 2 {
-            return .skipped
-        }
-        return native.count == 2 && native.current == 1 ? nil : .refused
-    }
-
-    /// Back is possible to an entry other than the startup page, from Chromium's history as it is now.
-    private func nativeCanGoBack() -> Bool {
-        guard let native = nativeHistory() else { return false }
-        let floor = startupEntry != .dropped && native.first == "about:blank" ? 1 : 0
-        return native.current > floor
-    }
-
-    /// Chromium's entry count, current index and first URL. The visitor runs before the call returns on the UI thread, so
-    /// the answer is current in the same turn.
-    private func nativeHistory() -> (count: Int, current: Int, first: String)? {
-        let reader = NavigationEntryReader()
-        let visitor = ChromiumInterop.allocate(cef_navigation_entry_visitor_t.self, owner: reader)
-        visitor.pointee.visit = { visitorSelf, entry, current, index, total in
-            // Callback object arguments arrive with a reference.
-            let url = entry.map { ChromiumInterop.takeString($0.pointee.get_url?($0)) } ?? ""
-            if let entry {
-                ChromiumInterop.release(UnsafeMutableRawPointer(entry))
-            }
-            guard let visitorSelf,
-                  let reader = ChromiumInterop.owner(NavigationEntryReader.self, of: UnsafeMutableRawPointer(visitorSelf)) else { return 0 }
-            MainActor.assumeIsolated {
-                reader.record(url: url, isCurrent: current != 0, index: Int(index), total: Int(total))
-            }
-            return 1
-        }
-        defer { ChromiumInterop.release(UnsafeMutableRawPointer(visitor)) }
-        // The call consumes the reference it is given.
-        ChromiumInterop.retain(UnsafeMutableRawPointer(visitor))
-        let visited = withHost { host -> Bool in
-            guard let entries = host.pointee.get_navigation_entries else { return false }
-            entries(host, visitor, 0)
-            return true
-        } ?? false
-        if !visited {
-            ChromiumInterop.release(UnsafeMutableRawPointer(visitor))
-        }
-        guard let total = reader.total, let first = reader.first else { return nil }
-        return (total, reader.current, first)
-    }
-
-    private func refreshHistory() {
-        guard raw != nil, !closing, !isClosed else { return }
-        Task { [weak self] in
-            await self?.loadHistory()
-        }
-    }
-
-    /// Reads Chromium's history into `history`. False when the read fails.
-    @discardableResult
-    private func loadHistory() async -> Bool {
-        guard raw != nil, !closing, !isClosed, let response = try? await command("Page.getNavigationHistory"),
-              let index = response["currentIndex"] as? Int,
-              let entries = response["entries"] as? [[String: Any]] else { return false }
-        let items = entries.enumerated().compactMap { position, entry -> (Int, PageHistoryItem)? in
-            guard let id = entry["id"] as? Int, let address = entry["url"] as? String,
-                  let url = URL(string: address) else { return nil }
-            return (position, PageHistoryItem(url: url, title: entry["title"] as? String, chromiumIndex: id))
-        }
-        // Until a reset drops it, Chromium's first entry is the startup page, which Back never reaches.
-        let hidden = startupEntry != .dropped && entries.first?["url"] as? String == "about:blank" ? 0 : -1
-        history = PageHistoryList(
-            backList: items.filter { $0.0 < index && $0.0 != hidden }.map(\.1),
-            forwardList: items.filter { $0.0 > index }.map(\.1),
-            currentItem: items.first { $0.0 == index }?.1)
-        owner?.onHistoryChanged?()
-        return true
-    }
-
     func close() async {
         guard !isClosed else { return }
         client?.documentResponses.reset()
-        if raw == nil {
+        if raw == nil && remote == nil {
             didClose()
             return
         }
@@ -895,6 +806,8 @@ final class ChromiumPage: NSView {
             CefRuntime.shared.externalBrowserDidClose()
         }
         raw = nil
+        remote?.page = nil
+        remote = nil
         ChromiumRuntime.shared.unregister(self)
         for waiter in attachmentWaiters {
             waiter.resume()

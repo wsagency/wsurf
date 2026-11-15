@@ -487,12 +487,17 @@ final class ServiceHost {
 
     /// `on_before_browse`'s question (plan §1.3): true lets the navigation go ahead. A service that has no host or is leaving
     /// has nobody to ask and cancels at once; otherwise the control connection is asked, and a missing answer cancels.
-    func askNavigation(browser: Int64, url: String, isRedirect: Bool, userGesture: Bool) -> Bool {
+    func askNavigation(browser: Int64, url: String, isRedirect: Bool, userGesture: Bool, details: NavigationDetails = NavigationDetails()) -> Bool {
         guard let control, !exiting else { return false }
         let question = CefRemoteMessage(CefRemote.Event.beforeBrowse, browser: browser)
         question.set(CefRemote.Key.url, url)
         question.set(CefRemote.Key.isRedirect, isRedirect)
         question.set(CefRemote.Key.userGesture, userGesture)
+        // What WSurf's gate needs to treat a submitted request, a reload or a Back as it does in process (D4-8).
+        question.set(CefRemote.Key.method, details.method)
+        question.set(CefRemote.Key.hasPostData, details.hasPostData)
+        question.set(CefRemote.Key.transition, details.transition)
+        question.set(CefRemote.Key.sourceURL, details.source)
         guard let answer = Self.askHost(question, on: control, timeout: 1) else {
             note("browser \(browser): WSurf did not answer in time: navigation cancelled")
             return false
@@ -695,6 +700,8 @@ final class ServiceHost {
                 answer.set(CefRemote.Key.browserObjects, ServiceCounters.browsers.withLock { $0 })
                 answer.set(CefRemote.Key.handlerSets, ServiceCounters.handlerSets.withLock { $0 })
                 answer.set(CefRemote.Key.refusedNavigations, ServiceCounters.refusedNavigations.withLock { $0 })
+                answer.set(CefRemote.Key.droppedExternal, ServiceCounters.droppedExternalSchemes.withLock { $0 })
+                answer.set(CefRemote.Key.historyTimeouts, ServiceCounters.historyTimeouts.withLock { $0 })
                 answer.set(CefRemote.Key.contexts, contexts.count)
                 answer.set(CefRemote.Key.flushes, flushCount)
                 answer.set(CefRemote.Key.logFile, logFile)
@@ -717,6 +724,11 @@ final class ServiceHost {
             reply(to: message, on: peer) { $0.set(CefRemote.Key.success, true) }
             closeEverythingAndExit()
             Thread.sleep(forTimeInterval: 15)
+        case CefRemote.Op.debugHoldHistory:
+            // The F8 case on demand: the browser's next history reads are sent to nobody, as one whose renderer is gone would be.
+            let known = browsers[message.browser]
+            known?.holdHistoryReads(Int(message.int(CefRemote.Key.count)), delay: message.double(CefRemote.Key.value))
+            reply(to: message, on: peer) { $0.set(CefRemote.Key.success, known != nil) }
         case CefRemote.Op.debugMemoryPressure:
             // An exit the handler decides on runs later (the linger's onExit hops to the main queue), so the answer still goes.
             memoryPressureChanged(isUnder: message.bool(CefRemote.Key.flag))

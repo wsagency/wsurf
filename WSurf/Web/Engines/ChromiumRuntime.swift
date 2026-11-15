@@ -86,6 +86,11 @@ final class ChromiumRuntime {
 
     /// Starts CEF ahead of the first Chromium tab (`ChromiumPrewarm`). A failure is kept for that tab to show.
     func startEarly() {
+        if ChromiumOOP.resolveMode() == .outOfProcess {
+            // The service starts CEF, not this process: the early start launches it, and WSurf's main thread sends one message.
+            ChromiumRemote.shared.connect()
+            return
+        }
         isStartingEarly = true
         defer { isStartingEarly = false }
         do {
@@ -102,7 +107,21 @@ final class ChromiumRuntime {
         mode == .inProcess ? nil : .unavailable(String(localized: "Chromium could not open this tab."))
     }
 
+    /// Whether Chromium has been started for this process: CEF is up here, or the service has been asked for.
+    var hasStartedChromium: Bool {
+        ChromiumOOP.latch.mode == .outOfProcess ? ChromiumRemote.shared.state != .stopped : isInitialized
+    }
+
+    #if DEBUG
+    /// How many times `ensureInitialized` was asked to start CEF in this process, refusals included: a page that runs in the service
+    /// must never reach it (`ChromiumOOPPageTests`).
+    private(set) var ensureInitializedCalls = 0
+    #endif
+
     func ensureInitialized() throws {
+        #if DEBUG
+        ensureInitializedCalls += 1
+        #endif
         guard !hasShutdown else { throw ChromiumError.closed }
         guard !isInitialized else { return }
         // The first Chromium start of the process decides where Chromium runs (`ChromiumOOP`); a process that took the service
@@ -503,6 +522,17 @@ final class ChromiumRuntime {
     }
 
     func shutdown() async {
+        if ChromiumOOP.latch.mode == .outOfProcess {
+            // The service owns CEF, its cookie stores and the root: it writes them when the control connection ends, and a
+            // temporary root is left to it.
+            for page in pages.allObjects {
+                await page.close()
+            }
+            privateOrigins.removeAll()
+            ChromiumRemote.shared.disconnect()
+            hasShutdown = true
+            return
+        }
         guard isInitialized else { return }
         for page in pages.allObjects {
             await page.close()
