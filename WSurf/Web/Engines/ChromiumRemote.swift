@@ -682,7 +682,9 @@ final class ChromiumRemote {
             // now, and the retry does not wait 50 ms of real time for it (a replacement that is itself short-lived would be asked
             // for, and could end, in that gap).
             await Task.yield()
-            if condition() { break }
+            if condition() {
+                break
+            }
             try? await Task.sleep(for: .milliseconds(50))
         }
         return true
