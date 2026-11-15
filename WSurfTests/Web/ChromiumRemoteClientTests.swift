@@ -331,6 +331,23 @@ struct ChromiumRemoteClientTests {
     }
 
     @Test
+    func aBrowserBoundRequestRefusedBecauseTheServiceIsLeavingIsNotAskedAgainAndIsInterrupted() async {
+        let remote = makeRemote()
+        defer { remote.disconnect() }
+        var attempts = 0
+        let answered = await remote.requestTracked(CefRemoteMessage(CefRemote.Op.debugStats, browser: 7), sending: { _ in
+            attempts += 1
+            return (.value(Self.reply(success: false, error: CefRemote.leavingError)), remote.instance)
+        })
+        guard case .interrupted = answered.reply else {
+            Issue.record("the browser-bound request was not interrupted: \(answered.reply)")
+            return
+        }
+        #expect(attempts == 1, "a browser.create asked again would leave an orphan browser in the replacement")
+        #expect(remote.leavingRetries == 0)
+    }
+
+    @Test
     func aFrameEventOnTheFramesConnectionReachesTheSinkAndAPopupEventMovesThePopup() throws {
         let sink = ChromiumFrameSink()
         let page = CALayer()

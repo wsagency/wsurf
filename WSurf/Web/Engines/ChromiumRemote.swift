@@ -638,6 +638,8 @@ final class ChromiumRemote {
     /// A service that has begun to leave refuses every op that acts on CEF with `CefRemote.leavingError` and ends a moment later.
     /// That refusal is not an answer: the request is asked once more, on the instance that replaces it (the end that follows is
     /// then an idle exit, which counts as no death, unless a browser of ours was in it). Once only: a second refusal is the answer.
+    /// Only for a request that names no browser (`ensureContext`, the debug ops): one that does (`browser.create` included) is
+    /// not asked again and ends as `.interrupted`.
     func request(_ message: CefRemoteMessage, timeout: TimeInterval? = nil) async -> CefRemoteReply<CefRemoteMessage> {
         await requestTracked(message, timeout: timeout).reply
     }
@@ -654,9 +656,12 @@ final class ChromiumRemote {
         let send: @MainActor (CefRemoteMessage) async -> Attempt = sending ?? { [self] in await requestOnce($0, timeout: timeout) }
         let first = await send(message)
         // A sent message is not changed: the retry goes out as a copy, made only when it is needed.
-        guard case let .value(reply) = first.reply, Self.isServiceLeavingReply(reply),
-              let spare = xpc_copy(message.object).flatMap({ CefRemoteMessage(wrapping: $0) })
-        else { return first }
+        guard case let .value(reply) = first.reply, Self.isServiceLeavingReply(reply) else { return first }
+        // A request that names a browser is not asked again: that browser ends with the instance, and a retried browser.create
+        // would make an orphan in the replacement that nobody closes. It ends as `.interrupted`, like any request that the end
+        // of the service cuts off (the caller then hears `remoteServiceEnded`).
+        guard message.browser == 0 else { return (.interrupted, first.instance) }
+        guard let spare = xpc_copy(message.object).flatMap({ CefRemoteMessage(wrapping: $0) }) else { return first }
         leavingRetries += 1
         // Its end is coming: with no browser of ours in it, that is a clean exit and not a death.
         noteLeavingRefusal()
