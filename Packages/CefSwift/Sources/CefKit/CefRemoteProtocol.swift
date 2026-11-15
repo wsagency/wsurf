@@ -139,6 +139,13 @@ public enum CefRemote {
         public static let acceleratedFrames = "accel"
         public static let cpuFrames = "cpu"
         public static let framesDropped = "dropped"
+        /// `debug.stats` with a ``browser``: how many of ``ringSurfaces`` are the popup's; how many frames were written into a
+        /// surface that was still in use (no free copy); how many accelerated frames came from a CEF surface with and without a
+        /// colour-space tag (the tag is copied to the ring surface).
+        public static let popupRingSurfaces = "pring"
+        public static let ringOverwrites = "overwrites"
+        public static let colourTagged = "cstag"
+        public static let colourUntagged = "csnone"
     }
 
     /// What `browser.create` can ask of the service in a build that has the DEBUG ops, to reach creation paths a test could not

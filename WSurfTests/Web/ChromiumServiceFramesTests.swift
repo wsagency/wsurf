@@ -189,6 +189,13 @@ struct ChromiumServiceFramesTests {
         #expect(stats.int(CefRemote.Key.framesSent) >= 1)
         let ring = stats.int(CefRemote.Key.ringSurfaces)
         #expect(ring >= 1 && ring <= CefRemote.frameRingSize, "ring \(ring)")
+        // Review S1: every accelerated frame either carries CEF's colour-space tag to its copy or is counted as untagged. What CEF's
+        // surface really carries is recorded in the log, not asserted.
+        let tagged = stats.int(CefRemote.Key.colourTagged)
+        let untagged = stats.int(CefRemote.Key.colourUntagged)
+        print("ChromiumServiceFramesTests colour tag: tagged \(tagged), untagged \(untagged)")
+        #expect(tagged + untagged >= 1, "no frame was counted for its colour space")
+        #expect((IOSurfaceCopyValue(surface, kIOSurfaceColorSpace) != nil) == (untagged == 0), "the copy's tag does not follow the source's")
     }
 
     @Test(.enabled(if: ChromiumServiceBundle.isPresent))
@@ -208,6 +215,7 @@ struct ChromiumServiceFramesTests {
         }
         #expect(sent >= 12, "\(sent) frames")
         let stats = try Self.stats(rig.client, 1)
+        print("ChromiumServiceFramesTests ring overwrites: \(stats.int(CefRemote.Key.ringOverwrites)) in \(stats.int(CefRemote.Key.framesSent)) frames")
         let ring = stats.int(CefRemote.Key.ringSurfaces)
         #expect(ring >= 1 && ring <= CefRemote.frameRingSize, "ring \(ring) of at most \(CefRemote.frameRingSize)")
         // The surfaces that arrived are few and distinct from CEF's pool: the service never sends CEF's own surface.
@@ -236,6 +244,13 @@ struct ChromiumServiceFramesTests {
         usleep(1_000_000)
         #expect(Self.frames(rig, 1).count == whileHidden, "frames kept coming while hidden")
         #expect(try Self.stats(rig.client, 1).int(CefRemote.Key.ringSurfaces) == 0)
+        // Chromium itself stopped painting (`was_hidden`): the presenter drops frames while hidden, so only Chromium's own paint
+        // count, which is taken before that drop, tells. A page that animates at 30 fps would paint about 30 times here; a few
+        // paints already in flight are allowed (review M1).
+        let paintsBefore = try Self.stats(rig.client, 1).int(CefRemote.Key.acceleratedFrames)
+        usleep(1_000_000)
+        let paintsAfter = try Self.stats(rig.client, 1).int(CefRemote.Key.acceleratedFrames)
+        #expect(paintsAfter - paintsBefore <= 3, "Chromium kept painting while hidden: \(paintsAfter - paintsBefore) paints in 1 s")
         // Shown again: frames resume, and the ring is built by the first of them.
         let shown = try rig.client.command(CefRemote.Op.visibility, browser: 1) { $0.set(CefRemote.Key.hidden, false) }
         #expect(shown.bool(CefRemote.Key.success))
@@ -267,7 +282,8 @@ struct ChromiumServiceFramesTests {
         defer { rig.finish() }
         try rig.attachFrames()
         let message = CefRemoteMessage(CefRemote.Op.createBrowser, browser: 1)
-        message.set(CefRemote.Key.url, try rig.url("/red"))
+        // An animated page: Chromium would paint it about 30 times a second if `was_hidden(1)` did not reach it.
+        message.set(CefRemote.Key.url, try rig.url("/animated"))
         message.set(CefRemote.Key.context, "profile")
         message.set(CefRemote.Key.width, 800.0)
         message.set(CefRemote.Key.height, 600.0)
@@ -277,9 +293,12 @@ struct ChromiumServiceFramesTests {
         #expect(rig.client.waitEvent(CefRemote.Event.browserReady) { $0.browser == 1 } != nil)
         usleep(1_500_000)
         #expect(Self.frames(rig, 1).isEmpty, "a hidden browser sent frames")
+        // `was_hidden(1)` at creation: Chromium made no (or hardly any) paint, not just a presenter that dropped them (review M1).
+        let paints = try Self.stats(rig.client, 1).int(CefRemote.Key.acceleratedFrames)
+        #expect(paints <= 3, "a browser created hidden painted \(paints) times")
         #expect(try Self.stats(rig.client, 1).int(CefRemote.Key.ringSurfaces) == 0)
         _ = try rig.client.command(CefRemote.Op.visibility, browser: 1) { $0.set(CefRemote.Key.hidden, false) }
-        #expect(Self.waitFrame(rig, 1, colour: .red) != nil, "no frame once shown")
+        #expect(Self.waitFrame(rig, 1, colour: .red) != nil || Self.waitFrame(rig, 1, colour: .blue) != nil, "no frame once shown")
     }
 
     @Test(.enabled(if: ChromiumServiceBundle.isPresent))
@@ -292,8 +311,13 @@ struct ChromiumServiceFramesTests {
         _ = try rig.client.command(CefRemote.Op.visibility, browser: 1) { $0.set(CefRemote.Key.parked, true) }
         usleep(500_000)
         let whileParked = Self.frames(rig, 1).count
+        let paintsBefore = try Self.stats(rig.client, 1).int(CefRemote.Key.acceleratedFrames)
         usleep(1_000_000)
         #expect(Self.frames(rig, 1).count == whileParked, "frames kept coming while parked")
+        // The contrast to the hidden test: a parked page is still visible to Chromium, which keeps painting (the presenter drops
+        // those), so the counter the hidden test bounds is live.
+        let paintsAfter = try Self.stats(rig.client, 1).int(CefRemote.Key.acceleratedFrames)
+        #expect(paintsAfter - paintsBefore >= 5, "a parked page painted only \(paintsAfter - paintsBefore) times in 1 s")
         #expect(try Self.stats(rig.client, 1).int(CefRemote.Key.framesDropped) >= 1)
         _ = try rig.client.command(CefRemote.Op.visibility, browser: 1) { $0.set(CefRemote.Key.parked, false) }
         #expect(Self.waitFrame(rig, 1, after: whileParked, colour: .blue) != nil || Self.waitFrame(rig, 1, after: whileParked, colour: .red) != nil)
@@ -349,11 +373,17 @@ struct ChromiumServiceFramesTests {
         #expect(!Self.frames(rig, 1, popup: true).isEmpty, "the popup's own frames arrived")
         let ring = try Self.stats(rig.client, 1).int(CefRemote.Key.ringSurfaces)
         #expect(ring >= 2 && ring <= 2 * CefRemote.frameRingSize, "the popup has its own ring: \(ring)")
+        let popupRing = try Self.stats(rig.client, 1).int(CefRemote.Key.popupRingSurfaces)
+        #expect(popupRing >= 1 && popupRing <= CefRemote.frameRingSize, "the popup's ring: \(popupRing)")
         // A click elsewhere closes it, and the service says so on the same connection; its ring goes with it.
         mouse("mousePressed", 700, 500, id: 32)
         mouse("mouseReleased", 700, 500, id: 33)
         let hidden = rig.frames.waitEvent(CefRemote.Event.popup, timeout: 10) { !$0.bool(CefRemote.Key.flag) }
         #expect(hidden != nil, "the popup was hidden")
+        // Its ring was freed before the event was sent, and a late popup paint does not build it again (review S4).
+        #expect(try Self.stats(rig.client, 1).int(CefRemote.Key.popupRingSurfaces) == 0, "the popup's ring outlived the popup")
+        usleep(500_000)
+        #expect(try Self.stats(rig.client, 1).int(CefRemote.Key.popupRingSurfaces) == 0, "the popup's ring was built again after it was hidden")
     }
 
     // MARK: Which connection frames go to

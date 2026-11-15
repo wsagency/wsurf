@@ -13,7 +13,7 @@
 // Everything runs on the main thread, which is CEF's UI thread (the paint callbacks are called there).
 
 import CefKit
-import CefKit
+import CoreGraphics
 import Foundation
 import IOSurface
 import Metal
@@ -62,6 +62,12 @@ final class FramePresenter {
     private(set) var acceleratedFrames = 0
     private(set) var cpuFrames = 0
     private(set) var framesDropped = 0
+    /// Frames written into a surface the render server may still have been reading (every copy was in use): `acquire`.
+    private(set) var ringOverwrites = 0
+    /// Accelerated frames whose CEF surface carried a colour-space tag (copied to the ring surface) and that carried none.
+    private(set) var taggedSources = 0
+    private(set) var untaggedSources = 0
+    private var loggedUnknownFormat = false
 
     init(browser: Int64) {
         self.browser = browser
@@ -86,6 +92,10 @@ final class FramePresenter {
     /// The counts `debug.stats` reports for this browser.
     func statistics(into message: CefRemoteMessage) {
         message.set(CefRemote.Key.ringSurfaces, ringSurfaces)
+        message.set(CefRemote.Key.popupRingSurfaces, popupRing.count)
+        message.set(CefRemote.Key.ringOverwrites, ringOverwrites)
+        message.set(CefRemote.Key.colourTagged, taggedSources)
+        message.set(CefRemote.Key.colourUntagged, untaggedSources)
         message.set(CefRemote.Key.framesSent, framesSent)
         message.set(CefRemote.Key.acceleratedFrames, acceleratedFrames)
         message.set(CefRemote.Key.cpuFrames, cpuFrames)
@@ -97,13 +107,17 @@ final class FramePresenter {
     /// `on_accelerated_paint`. `entry`: mach nanoseconds when CEF's callback was entered.
     func present(surface source: IOSurfaceRef, element: Element, entry: UInt64) {
         acceleratedFrames += 1
-        guard shouldSend else {
+        guard shouldSend, element == .view || popupVisible else {
             framesDropped += 1
             return
         }
         let width = IOSurfaceGetWidth(source)
         let height = IOSurfaceGetHeight(source)
         let format = IOSurfaceGetPixelFormat(source)
+        if Self.metalFormat(format) == nil, !loggedUnknownFormat {
+            loggedUnknownFormat = true
+            note("browser \(browser): frames dropped, unsupported pixel format \(format)")
+        }
         guard let queue = Self.queue, let device = Self.device, let pixelFormat = Self.metalFormat(format),
               let slot = acquire(element: element, width: width, height: height, format: format, device: device),
               let sourceTexture = Self.texture(device: device, surface: source, width: width, height: height, format: pixelFormat,
@@ -121,13 +135,20 @@ final class FramePresenter {
         commands.commit()
         // CEF reuses its surface once this callback returns, so the copy must have read it by then.
         commands.waitUntilCompleted()
+        // Chromium tags its surfaces with a colour space: the copy carries the same tag, or WSurf's layer would show it unmatched.
+        if let tag = IOSurfaceCopyValue(source, kIOSurfaceColorSpace) {
+            IOSurfaceSetValue(slot.surface, kIOSurfaceColorSpace, tag)
+            taggedSources += 1
+        } else {
+            untaggedSources += 1
+        }
         send(slot.surface, element: element, entry: entry)
     }
 
     /// `on_paint`, the CPU path: BGRA rows, top-left origin.
     func present(pixels: UnsafeRawPointer, width: Int, height: Int, element: Element, entry: UInt64) {
         cpuFrames += 1
-        guard shouldSend else {
+        guard shouldSend, element == .view || popupVisible else {
             framesDropped += 1
             return
         }
@@ -136,13 +157,20 @@ final class FramePresenter {
             framesDropped += 1
             return
         }
-        IOSurfaceLock(slot.surface, [], nil)
+        guard IOSurfaceLock(slot.surface, [], nil) == kIOReturnSuccess else {
+            framesDropped += 1
+            return
+        }
         let destination = IOSurfaceGetBaseAddress(slot.surface)
         let destinationRow = IOSurfaceGetBytesPerRow(slot.surface)
         for row in 0..<height {
             memcpy(destination + row * destinationRow, pixels + row * width * 4, width * 4)
         }
         IOSurfaceUnlock(slot.surface, [], nil)
+        // `on_paint` gives sRGB pixels.
+        if let srgb = CGColorSpace(name: CGColorSpace.sRGB), let list = srgb.copyPropertyList() {
+            IOSurfaceSetValue(slot.surface, kIOSurfaceColorSpace, list)
+        }
         send(slot.surface, element: element, entry: entry)
     }
 
@@ -185,8 +213,11 @@ final class FramePresenter {
             slot = made
         }
         if slot == nil {
-            // Every copy is still in use: the oldest that is not the one last sent is written again.
-            slot = slots.first { $0.surface !== current && $0.width == width && $0.height == height }
+            // Every copy is still in use (or the ring cannot grow): the first one in allocation order (not send order) that is
+            // not the one last sent is written again, possibly while the render server reads it. Dropping the frame instead
+            // could leave a still page stale. Counted (`ringOverwrites`).
+            slot = slots.first { $0.surface !== current }
+            if slot != nil { ringOverwrites += 1 }
         }
         if element == .view {
             ring = slots
