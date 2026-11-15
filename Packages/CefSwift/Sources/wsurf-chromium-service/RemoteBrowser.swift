@@ -107,22 +107,20 @@ final class RemoteBrowser {
 
     func didCreate(_ browser: UnsafeMutablePointer<cef_browser_t>) {
         creationPending = false
+        // This runs inside `on_after_created`: a close is never made here, only after it (`Native.closeLater`).
         guard !hasClosed else {
-            if let host = browser.pointee.get_host?(browser) {
-                host.pointee.close_browser?(host, 1)
-                Native.release(UnsafeMutableRawPointer(host))
-            }
+            Native.closeLater(browser)
             return
         }
         Native.retain(UnsafeMutableRawPointer(browser))
         raw = browser
-        guard let host = hostReference() else { return }
-        defer { Native.release(UnsafeMutableRawPointer(host)) }
         if isClosing {
-            // A close arrived while CEF was still making the browser: it is closed now, and `didClose` ends it.
-            host.pointee.close_browser?(host, 1)
+            // A close arrived while CEF was still making the browser: it is closed next, and `didClose` ends it.
+            Native.closeLater(browser)
             return
         }
+        guard let host = hostReference() else { return }
+        defer { Native.release(UnsafeMutableRawPointer(host)) }
         attachDevTools(host)
         let queued = pending
         pending.removeAll()
@@ -382,7 +380,9 @@ final class RemoteBrowser {
 
     /// WSurf decides whether a main-frame navigation goes ahead (`askHost`, plan §1.3): no answer within a second cancels it.
     func mayNavigate(to url: String, isRedirect: Bool, userGesture: Bool) -> Bool {
-        ServiceHost.shared.askNavigation(browser: id, url: url, isRedirect: isRedirect, userGesture: userGesture)
+        // A browser being closed goes nowhere (its first load starts before a close taken during its creation is made).
+        guard !isClosing else { return false }
+        return ServiceHost.shared.askNavigation(browser: id, url: url, isRedirect: isRedirect, userGesture: userGesture)
     }
 
     /// The visible entry's title and SSL status, pushed with the event instead of read by WSurf (plan §1.5).
