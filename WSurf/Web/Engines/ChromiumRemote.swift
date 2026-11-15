@@ -214,6 +214,8 @@ final class ChromiumRemote {
     private(set) var interruptions = 0
     /// How many requests were asked again because the service refused them as leaving (see `request`).
     private(set) var leavingRetries = 0
+    /// How many input or frames hellos the service refused (and the connections dropped for it).
+    private(set) var sideRefusals = 0
     /// Milliseconds from hello to its answer (launch, the launchd throttle and CEF's start), and CEF's own start inside it.
     private(set) var helloRoundTripMs: Double = -1
     private(set) var cefStartMs: Double = -1
@@ -262,6 +264,11 @@ final class ChromiumRemote {
 
     var hasFramesConnection: Bool {
         frames != nil
+    }
+
+    /// Which connection that is, for a test that refuses it.
+    var framesConnectionID: ObjectIdentifier? {
+        frames.map(ObjectIdentifier.init)
     }
 
     var pendingRequestCount: Int {
@@ -730,7 +737,7 @@ final class ChromiumRemote {
             let connection = xpc_connection_create(serviceName, DispatchQueue.main)
             xpc_connection_set_event_handler(connection) { _ in }
             xpc_connection_activate(connection)
-            xpc_connection_send_message(connection, CefRemoteMessage(CefRemote.Op.inputHello).object)
+            sendSideHello(CefRemote.Op.inputHello, on: connection)
             input = connection
         }
         if let input {
@@ -821,7 +828,39 @@ final class ChromiumRemote {
 
     private func openFrames() {
         guard frames == nil else { return }
-        frames = Self.makeFramesConnection(serviceName: serviceName, sink: sink)
+        let connection = Self.makeFramesConnection(serviceName: serviceName, sink: sink)
+        frames = connection
+        sendSideHello(CefRemote.Op.framesHello, on: connection)
+    }
+
+    /// The hello of an input or frames connection, sent with a reply: the service refuses it unless it is from the host's process
+    /// and after a hello that got `ok` (review F8b). A refused connection is not attached whatever the client believes, so it is
+    /// dropped (`hasFramesConnection` goes false) and made again after the next successful hello (frames) or the next send (input).
+    private func sendSideHello(_ op: String, on connection: xpc_connection_t) {
+        let current = generation
+        // The handler is Sendable and the connection is not: its identity crosses, not the object.
+        let identity = ObjectIdentifier(connection)
+        xpc_connection_send_message_with_reply(connection, CefRemoteMessage(op).object, DispatchQueue.main) { [weak self] answer in
+            // An error object (the connection ended) is the control connection's business (`serviceEnded`), as for the hello.
+            guard let reply = CefRemoteMessage(wrapping: answer), !reply.bool(CefRemote.Key.success) else { return }
+            MainActor.assumeIsolated { self?.sideHelloRefused(op, connection: identity, generation: current) }
+        }
+    }
+
+    /// Only the connection that was refused is dropped: one made since (after a drop or a relaunch) is another one's.
+    func sideHelloRefused(_ op: String, connection refused: ObjectIdentifier, generation sentGeneration: Int) {
+        guard sentGeneration == generation else { return }
+        if let frames, ObjectIdentifier(frames) == refused {
+            xpc_connection_cancel(frames)
+            self.frames = nil
+        } else if let input, ObjectIdentifier(input) == refused {
+            xpc_connection_cancel(input)
+            self.input = nil
+        } else {
+            return
+        }
+        sideRefusals += 1
+        ChromiumOOP.log.error("\(op, privacy: .public) refused by the service: the connection is dropped")
     }
 
     /// The frames connection, which delivers on the sink's queue. Built outside the main actor on purpose: a handler made in a
@@ -833,7 +872,6 @@ final class ChromiumRemote {
             deliverFrame(event, to: sink)
         }
         xpc_connection_activate(connection)
-        xpc_connection_send_message(connection, CefRemoteMessage(CefRemote.Op.framesHello).object)
         return connection
     }
 

@@ -12,6 +12,7 @@ import AppKit
 import CCef
 import CCefAppKit
 import CefKit
+import IOSurface
 @preconcurrency import XPC
 
 @MainActor
@@ -26,8 +27,8 @@ final class ServiceHost {
     /// two seconds for `cef_shutdown`. The normal exits finish well before it, so it never shortens them.
     private static let exitBackstopSeconds: TimeInterval = closeCapSeconds + flushGraceSeconds + 2
 
-    /// The connection that said hello: events go there. The input and frames connections (`attachSideConnection`) only send,
-    /// and carry nothing yet (input is phase 3, frames D4-7).
+    /// The connection that said hello: events go there. The input connection (`attachSideConnection`) carries nothing yet (input
+    /// is phase 3); the frames connection carries every browser's frames (D4-7).
     private var control: xpc_connection_t?
     private var inputConnection: xpc_connection_t?
     private var framesConnection: xpc_connection_t?
@@ -45,6 +46,8 @@ final class ServiceHost {
     private var flushCount = 0
     private var cefStartMs: Double = -1
     private var logFile = "/dev/null"
+    /// The control connection's hello was answered "ok" (CEF is up): only then may the input and frames connections attach.
+    private var hostReady = false
 
     /// A browser that is not one: it counts as open and answers a close, or does not (`answersClose`).
     private struct StubBrowser {
@@ -79,14 +82,17 @@ final class ServiceHost {
     }
 
     private func peerGone(_ peer: xpc_connection_t) {
+        // Independent: one connection may be both (the host's process may use one for each, or one for both).
         if peer === inputConnection {
             inputConnection = nil
-        } else if peer === framesConnection {
+        }
+        if peer === framesConnection {
             framesConnection = nil
         }
         guard peer === control else { return }
         note("WSurf's connection ended: closing \(openCount) browsers and exiting")
         control = nil
+        hostReady = false
         for side in [inputConnection, framesConnection] {
             if let side {
                 xpc_connection_cancel(side)
@@ -124,7 +130,7 @@ final class ServiceHost {
             closeBrowser(message.browser)
         case CefRemote.Op.load, CefRemote.Op.reload, CefRemote.Op.goBack, CefRemote.Op.goForward, CefRemote.Op.stop,
              CefRemote.Op.zoom, CefRemote.Op.mute, CefRemote.Op.find, CefRemote.Op.stopFinding, CefRemote.Op.devTools,
-             CefRemote.Op.collapseHistory:
+             CefRemote.Op.collapseHistory, CefRemote.Op.visibility:
             guard isHost(peer, for: message) else { return }
             guard let browser = browsers[message.browser] else {
                 reply(to: message, on: peer) { $0.set(CefRemote.Key.error, "no such browser") }
@@ -222,6 +228,9 @@ final class ServiceHost {
             note("CEF start failed: \(error)")
             failure = "\(error)"
         }
+        // The side connections may attach only after a hello that got `ok`: a refused one (a root that is not canonical, a CEF that
+        // would not start) leaves a service with a control connection and no CEF, which must not be given frames or input.
+        hostReady = failure == nil
         // With no browser the linger starts now, so a service whose CEF failed to start leaves too.
         linger?.start()
         startMemoryPressureSource()
@@ -343,11 +352,13 @@ final class ServiceHost {
     }
 
     /// The input and frames connections say which control connection they belong to by being its process's: they are accepted
-    /// only from the process of the host, only while there is one that is not leaving, and are dropped with it. (They carry
-    /// nothing in 4b.) Their hello gets an answer when the sender asked for one.
+    /// only after a hello that got `ok` (CEF is up), only from the process of the host, only while the service is not leaving,
+    /// and are dropped with the control connection (review F8b, pr123 C3). The same peer may be both. A second hello of one kind
+    /// replaces the first connection, which is cancelled. Their hello gets an answer: a refusal is how the client learns that
+    /// the connection it holds is not attached.
     private func attachSideConnection(_ message: CefRemoteMessage, from peer: xpc_connection_t) {
         var failure: String?
-        if let control, !exiting {
+        if let control, hostReady, !exiting {
             if peer === control {
                 failure = "the control connection cannot be an input or frames connection"
             } else if xpc_connection_get_pid(peer) != xpc_connection_get_pid(control) {
@@ -358,11 +369,23 @@ final class ServiceHost {
         }
         if failure == nil {
             if message.op == CefRemote.Op.inputHello {
+                if let old = inputConnection, old !== peer, old !== framesConnection {
+                    xpc_connection_cancel(old)
+                }
                 inputConnection = peer
             } else {
+                if let old = framesConnection, old !== peer, old !== inputConnection {
+                    xpc_connection_cancel(old)
+                }
                 framesConnection = peer
             }
             note("\(message.op) connection open")
+            if message.op == CefRemote.Op.framesHello {
+                // Whatever was painted before the connection attached went nowhere: every shown page paints again.
+                for browser in browsers.values {
+                    browser.requestFrame()
+                }
+            }
         } else {
             note("\(message.op) refused: \(failure ?? "")")
         }
@@ -370,6 +393,33 @@ final class ServiceHost {
             answer.set(CefRemote.Key.success, failure == nil)
             if let failure { answer.set(CefRemote.Key.error, failure) }
         }
+    }
+
+    /// Whether a frames connection is attached: with none, the browsers copy and send nothing.
+    var hasFramesConnection: Bool { framesConnection != nil }
+
+    /// One frame to WSurf's frames connection. The IOSurface travels as a Mach port; WSurf puts it in a layer from its frames
+    /// queue, never its main thread. `entry`: when CEF entered the paint callback, on the mach clock the two processes share.
+    func sendFrame(browser id: Int64, surface: IOSurfaceRef, popup: Bool, entry: UInt64) {
+        guard let framesConnection else { return }
+        let message = CefRemoteMessage(CefRemote.Event.frame, browser: id)
+        xpc_dictionary_set_value(message.object, CefRemote.Key.surface, IOSurfaceCreateXPCObject(surface))
+        message.set(CefRemote.Key.flag, popup)
+        message.set(CefRemote.Key.timestamp, Double(entry) / 1e9)
+        xpc_connection_send_message(framesConnection, message.object)
+    }
+
+    /// The popup widget was shown, moved or hidden: on the frames connection, so it is ordered with the popup's frames. The
+    /// rectangle is in view points, top-left origin.
+    func sendPopup(browser id: Int64, visible: Bool, rect: CGRect) {
+        guard let framesConnection else { return }
+        let message = CefRemoteMessage(CefRemote.Event.popup, browser: id)
+        message.set(CefRemote.Key.flag, visible)
+        message.set(CefRemote.Key.originX, Double(rect.minX))
+        message.set(CefRemote.Key.originY, Double(rect.minY))
+        message.set(CefRemote.Key.width, Double(rect.width))
+        message.set(CefRemote.Key.height, Double(rect.height))
+        xpc_connection_send_message(framesConnection, message.object)
     }
 
     // MARK: Browsers and the lifecycle
@@ -649,6 +699,9 @@ final class ServiceHost {
                 answer.set(CefRemote.Key.flushes, flushCount)
                 answer.set(CefRemote.Key.logFile, logFile)
                 answer.set(CefRemote.Key.mockKeychain, CefRuntime.shared.configuration?.safeStorage == .mockKeychain)
+                if message.has(CefRemote.Key.browser) {
+                    browsers[message.browser]?.presenter.statistics(into: answer)
+                }
             }
         case CefRemote.Op.debugExitOnHello:
             // A relaunched service is a new process with no memory of this op, so the count lives in a file under the root

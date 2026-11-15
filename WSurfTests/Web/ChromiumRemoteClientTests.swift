@@ -737,4 +737,28 @@ struct ChromiumRemoteClientTests {
         #expect(ChromiumRemote.isInside(canonicalRoot, root: canonicalRoot))
         #expect(!FileManager.default.fileExists(atPath: canonicalRoot.appending(path: "Profiles").path), "made nothing")
     }
+
+    // MARK: Side connections (D4-7, review pr123 C3)
+
+    @Test
+    func aFramesHelloTheServiceRefusesDropsThatConnectionAndOnlyThatOne() throws {
+        let remote = makeRemote()
+        defer { remote.disconnect() }
+        remote.connect()
+        let answer = CefRemoteMessage("reply")
+        answer.set(CefRemote.Key.success, true)
+        answer.set(CefRemote.Key.pid, 4242)
+        remote.helloEnded(.value(answer), sentAt: 0, generation: remote.generation)
+        #expect(remote.hasFramesConnection)
+        let attached = try #require(remote.framesConnectionID)
+        // A refusal for a connection that is no longer the current one (it was dropped and made again) is not this one's.
+        remote.sideHelloRefused(CefRemote.Op.framesHello, connection: ObjectIdentifier(remote), generation: remote.generation)
+        #expect(remote.hasFramesConnection, "another connection's refusal")
+        // One from before a relaunch is another instance's.
+        remote.sideHelloRefused(CefRemote.Op.framesHello, connection: attached, generation: remote.generation - 1)
+        #expect(remote.hasFramesConnection, "a stale generation")
+        remote.sideHelloRefused(CefRemote.Op.framesHello, connection: attached, generation: remote.generation)
+        #expect(!remote.hasFramesConnection, "a refused frames connection is not one: hasFramesConnection must not claim it")
+        #expect(remote.sideRefusals == 1)
+    }
 }
