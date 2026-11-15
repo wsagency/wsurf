@@ -96,7 +96,7 @@ final class RemoteBrowser {
         info.runtime_style = CEF_RUNTIME_STYLE_ALLOY
         var settings = cef_browser_settings_t()
         settings.size = MemoryLayout<cef_browser_settings_t>.stride
-        settings.windowless_frame_rate = 60
+        settings.windowless_frame_rate = 30
         // Opaque white, as a windowed browser paints: a windowless one is transparent by default.
         settings.background_color = 0xFFFF_FFFF
         // CEF takes ownership of one reference to each object it is given, and gives it up if it refuses.
