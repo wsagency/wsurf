@@ -128,6 +128,15 @@ public enum CefRemote {
         public static let debugCreate = "dbgcreate"
         /// `debug.stats` (D4-4b review F1): how many navigations the service cancelled itself because of their scheme.
         public static let refusedNavigations = "refused"
+        /// `nav.before` and `nav.external` (D4-8): the navigation's transition type (CEF's `cef_transition_type_t`, as an integer) and
+        /// the address of the page that started it (the request's referrer). `nav.before` also carries ``method`` and
+        /// ``hasPostData``: WSurf must never replay a submitted request in another engine.
+        public static let transition = "trans"
+        public static let sourceURL = "src"
+        /// `debug.stats` (D4-8, review F8): how many of the service's own history reads it gave up on because no answer came.
+        public static let historyTimeouts = "histtimeouts"
+        /// `debug.stats` (D4-8): the `nav.external` events the service's rate limit kept back.
+        public static let droppedExternal = "droppedext"
     }
 
     /// What `browser.create` can ask of the service in a build that has the DEBUG ops, to reach creation paths a test could not
@@ -199,6 +208,10 @@ public enum CefRemote {
         /// for 15 s, as a hung `cef_shutdown` would. Only the exit's backstop, which runs on another queue, can end the service
         /// sooner. Has a reply (sent before the block).
         public static let debugHangExit = "debug.hangExit"
+        /// DEBUG: the next ``Key/count`` history reads of one browser are held back: with no ``Key/value`` they get no answer, as a read
+        /// whose renderer went away would (the F8 case: the service must give up on it and go on); with one, they are answered after
+        /// that many seconds (a slow read, which a collapse must wait for: F5). Has a reply.
+        public static let debugHoldHistory = "debug.holdHistory"
     }
 
     /// Events from the service to WSurf.
@@ -220,6 +233,10 @@ public enum CefRemote {
         /// `redirect`, `gesture`. The answer's ``Key/value`` is true to let it go ahead; false, no answer, a late or a failed one
         /// cancels it.
         public static let beforeBrowse = "nav.before"
+        /// One way (D4-8, review D1): the service cancelled a navigation of a scheme WSurf does not load itself (`mailto:`, `tel:`, an
+        /// app's scheme), so that WSurf can still offer the app. Keys: `bid`, `url`, `main`, `gesture`, `src`. Rate limited by the
+        /// service (``CefRemoteRateLimit``): a page can trigger it as often as it likes.
+        public static let externalScheme = "nav.external"
         public static let address = "display.address"
         public static let title = "display.title"
         public static let progress = "display.progress"

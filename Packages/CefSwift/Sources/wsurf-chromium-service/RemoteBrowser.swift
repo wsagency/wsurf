@@ -41,8 +41,30 @@ final class RemoteBrowser {
     private var historyCommand: Int64?
     private var historyDirty = false
     private var historyMismatches = 0
+    /// A read that disagreed with the visitor is to be made again in a moment (the 50 ms wait in `historyResult`).
+    private var historyRetryPending = false
+    /// Ends the wait for the read in flight if Chromium never answers it (review F8).
+    private var historyTimer: DispatchWorkItem?
+    private var consecutiveHistoryTimeouts = 0
+    private static let historyReadTimeout: TimeInterval = 2
     /// The last list sent, ids included: what a `collapseHistory` is checked against (and the native list against it).
     private var lastHistory: [CefRemote.HistoryEntry]?
+
+    private struct ParkedCollapse {
+        let request: Int64
+        let keep: Int64
+        let expected: [Int64]
+    }
+
+    /// Collapse requests that arrived while the cached list might be stale: they run when it is fresh (review F5).
+    private var parkedCollapses: [ParkedCollapse] = []
+    #if WSURF_SERVICE_DEBUG_OPS
+    /// How many of the next history reads are held back (`debug.holdHistory`): sent to nobody (delay 0, as a read whose renderer went
+    /// away), or answered only after `heldHistoryDelay` seconds (a read that is slow).
+    private var heldHistoryReads = 0
+    private var heldHistoryDelay: TimeInterval = 0
+    private var delayNextResult: TimeInterval = 0
+    #endif
 
     init(id: Int64, message: CefRemoteMessage) {
         self.id = id
@@ -156,6 +178,9 @@ final class RemoteBrowser {
         guard !hasClosed else { return }
         hasClosed = true
         pending.removeAll()
+        historyTimer?.cancel()
+        historyTimer = nil
+        answerParkedCollapses(.refused)
         if let registration {
             Native.release(UnsafeMutableRawPointer(registration))
             self.registration = nil
@@ -254,6 +279,11 @@ final class RemoteBrowser {
             } else {
                 raw.pointee.go_forward?(raw)
             }
+            // A move between two entries that leaves the loading state as it was (both flags unchanged, one address) reports nothing
+            // else (review F9): read the list again once it has had time to commit. A read that finds the same list sends nothing.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+                MainActor.assumeIsolated { self?.refreshHistory() }
+            }
         case CefRemote.Op.stop:
             accepted()
             withBrowserLater { $0.pointee.stop_load?($0) }
@@ -315,9 +345,9 @@ final class RemoteBrowser {
         message.set(CefRemote.Key.canGoBack, canGoBack)
         message.set(CefRemote.Key.canGoForward, canGoForward)
         send(message)
-        if !loading {
-            refreshHistory()
-        }
+        // Both ways, not only when loading ends (review F9): a move between two entries of one address that stays in the document
+        // may report no address change and no end of loading, and only the start of its loading state says that the list moved.
+        refreshHistory()
     }
 
     func loadStarted() {
@@ -352,6 +382,9 @@ final class RemoteBrowser {
     func titleChanged(_ title: String) {
         let message = event(CefRemote.Event.title)
         message.set(CefRemote.Key.title, title)
+        // The visible entry's own title wins over the display title (which is the address for an untitled page), as WSurf reads it
+        // in process, and its SSL status comes with it.
+        addVisibleState(to: message)
         send(message)
         refreshHistory()
     }
@@ -363,6 +396,8 @@ final class RemoteBrowser {
     }
 
     func renderProcessTerminated(status: Int64, code: Int64) {
+        // A read that the lost renderer was to answer never will be.
+        abandonHistoryRead()
         let message = event(CefRemote.Event.renderTerminated)
         message.set(CefRemote.Key.status, status)
         message.set(CefRemote.Key.code, code)
@@ -379,11 +414,31 @@ final class RemoteBrowser {
     }
 
     /// WSurf decides whether a main-frame navigation goes ahead (`askHost`, plan §1.3): no answer within a second cancels it.
-    func mayNavigate(to url: String, isRedirect: Bool, userGesture: Bool) -> Bool {
+    func mayNavigate(to url: String, isRedirect: Bool, userGesture: Bool, details: NavigationDetails = NavigationDetails()) -> Bool {
         // A browser being closed goes nowhere (its first load starts before a close taken during its creation is made).
         guard !isClosing else { return false }
-        return ServiceHost.shared.askNavigation(browser: id, url: url, isRedirect: isRedirect, userGesture: userGesture)
+        return ServiceHost.shared.askNavigation(browser: id, url: url, isRedirect: isRedirect, userGesture: userGesture, details: details)
     }
+
+    /// A navigation to a scheme WSurf does not load (`mailto:`, `tel:`, an app's own) was cancelled here. WSurf is told, one way, so
+    /// that it can offer the app that handles it, as it does for a tab in process (review D1). A page can trigger this as often as it
+    /// likes, so at most `externalLimit` events go out in `externalWindow` seconds per browser, and an address over `maxExternalURL`
+    /// bytes is not sent at all. The cancel does not depend on any of this.
+    func refusedScheme(url: String, isMain: Bool, userGesture: Bool, source: String) {
+        guard !isClosing, url.utf8.count <= Self.maxExternalURL, externalRate.allow(at: Double(Clock.nowNanoseconds) / 1e9) else {
+            ServiceCounters.droppedExternalSchemes.withLock { $0 += 1 }
+            return
+        }
+        let message = event(CefRemote.Event.externalScheme)
+        message.set(CefRemote.Key.url, url)
+        message.set(CefRemote.Key.isMain, isMain)
+        message.set(CefRemote.Key.userGesture, userGesture)
+        message.set(CefRemote.Key.sourceURL, source)
+        send(message)
+    }
+
+    private static let maxExternalURL = 8192
+    private var externalRate = CefRemoteRateLimit(maxEvents: 3, window: 10)
 
     /// The visible entry's title and SSL status, pushed with the event instead of read by WSurf (plan §1.5).
     private func addVisibleState(to message: CefRemoteMessage) {
@@ -426,7 +481,7 @@ final class RemoteBrowser {
         observer.pointee.on_dev_tools_agent_detached = { observerSelf, browser in
             Native.release(browser.map(UnsafeMutableRawPointer.init))
             guard let owner = RemoteBrowser.owner(observerSelf) else { return }
-            MainActor.assumeIsolated { owner.send(owner.event(CefRemote.Event.devToolsDetached)) }
+            MainActor.assumeIsolated { owner.devToolsAgentDetached() }
         }
         observerPointer = observer
         // The call takes a reference to the observer.
@@ -492,6 +547,11 @@ final class RemoteBrowser {
         forwarded.set(CefRemote.Key.method, method)
         forwarded.set(CefRemote.Key.data, bytes: params, count: size)
         send(forwarded)
+        // A same-document move (`pushState`, or Back between two entries of one address) is what no address or loading callback
+        // may report (review F9); the page's own DevTools session (`Page.enable`) does.
+        if method == "Page.navigatedWithinDocument" {
+            refreshHistory()
+        }
     }
 
     private func sendDevTools(_ data: Data, host: UnsafeMutablePointer<cef_browser_host_t>) {
@@ -539,8 +599,20 @@ final class RemoteBrowser {
 
     private func serviceResult(id commandID: Int64, success: Bool, result: UnsafeRawPointer?, size: Int) {
         if commandID == historyCommand {
+            let data = result.map { Data(bytes: $0, count: size) } ?? Data()
+            #if WSURF_SERVICE_DEBUG_OPS
+            if delayNextResult > 0 {
+                // A slow read (`debug.holdHistory` with a delay): the command stays in flight, and its result comes late.
+                let delay = delayNextResult
+                delayNextResult = 0
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                    MainActor.assumeIsolated { self?.lateHistoryResult(commandID, success: success, data: data) }
+                }
+                return
+            }
+            #endif
             historyCommand = nil
-            historyResult(success: success, data: result.map { Data(bytes: $0, count: size) } ?? Data())
+            historyResult(success: success, data: data)
         } else if let request = collapses.removeValue(forKey: commandID) {
             send(CefRemoteMessage.historyCollapsed(browser: id, request: request, outcome: success ? .landed : .refused))
             refreshHistory()
@@ -566,15 +638,98 @@ final class RemoteBrowser {
         }
         withHost { [weak self] host in
             guard let self, historyCommand == nil else { return }
-            _ = sendServiceCommand("Page.getNavigationHistory", host: host, track: { self.historyCommand = $0 }, untrack: { _ in self.historyCommand = nil })
+            #if WSURF_SERVICE_DEBUG_OPS
+            if heldHistoryReads > 0 {
+                heldHistoryReads -= 1
+                if heldHistoryDelay <= 0 {
+                    // Sent to nobody: the read has a command id and no answer will ever come, as for a renderer that went away.
+                    historyCommand = nextServiceCommand
+                    nextServiceCommand += 1
+                    armHistoryTimer()
+                    return
+                }
+                delayNextResult = heldHistoryDelay
+            }
+            #endif
+            let sent = sendServiceCommand(
+                "Page.getNavigationHistory", host: host, track: { self.historyCommand = $0 }, untrack: { _ in self.historyCommand = nil })
+            if sent {
+                armHistoryTimer()
+            } else {
+                // Chromium would not take the read: nothing will answer what waits for it.
+                answerParkedCollapses(.refused)
+            }
         }
     }
 
+    #if WSURF_SERVICE_DEBUG_OPS
+    func holdHistoryReads(_ count: Int, delay: TimeInterval) {
+        heldHistoryReads = max(0, count)
+        heldHistoryDelay = max(0, delay)
+    }
+    #endif
+
+    /// A read that is not answered must not stop `historyChanged` for good (review F8): `historyCommand` is what folds every later
+    /// refresh into "dirty", and only its result cleared it. So the wait has an end.
+    private func armHistoryTimer() {
+        historyTimer?.cancel()
+        guard let command = historyCommand else { return }
+        let timer = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated { self?.historyReadTimedOut(command) }
+        }
+        historyTimer = timer
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.historyReadTimeout, execute: timer)
+    }
+
+    private func historyReadTimedOut(_ command: Int64) {
+        guard historyCommand == command else { return }
+        note("browser \(id): the history read got no answer in \(Self.historyReadTimeout) s: given up")
+        ServiceCounters.historyTimeouts.withLock { $0 += 1 }
+        consecutiveHistoryTimeouts += 1
+        abandonHistoryRead(readAgain: consecutiveHistoryTimeouts < 3)
+    }
+
+    /// Gives up on the read in flight (no answer will come: the renderer or the agent is gone, or the wait ran out). What waited on
+    /// it is answered `refused`, and the next refresh reads again. With `readAgain` one is made now, because the list is unknown
+    /// until one lands; a browser whose reads keep failing is left alone until its next event (the caller's cap).
+    private func abandonHistoryRead(readAgain: Bool = false) {
+        historyTimer?.cancel()
+        historyTimer = nil
+        historyCommand = nil
+        historyRetryPending = false
+        historyDirty = false
+        answerParkedCollapses(.refused)
+        if readAgain {
+            refreshHistory()
+        }
+    }
+
+    /// The agent behind the observer is gone (a navigation swapped it, or the renderer died): a read in flight is lost.
+    func devToolsAgentDetached() {
+        abandonHistoryRead()
+        send(event(CefRemote.Event.devToolsDetached))
+    }
+
+    /// The result of a read that `debug.holdHistory` delayed, unless the read was given up meanwhile.
+    private func lateHistoryResult(_ commandID: Int64, success: Bool, data: Data) {
+        guard historyCommand == commandID else { return }
+        historyCommand = nil
+        historyResult(success: success, data: data)
+    }
+
     private func historyResult(success: Bool, data: Data) {
+        historyTimer?.cancel()
+        historyTimer = nil
+        // The list is the one Chromium holds now, and nothing asked for a newer one meanwhile: parked collapses may run on it.
+        var settled = false
         defer {
             if historyDirty {
                 historyDirty = false
                 refreshHistory()
+            } else if settled {
+                runParkedCollapses()
+            } else if !historyRetryPending {
+                answerParkedCollapses(.refused)
             }
         }
         guard !hasClosed, !isClosing else { return }
@@ -591,6 +746,7 @@ final class RemoteBrowser {
             }
             entries.append(CefRemote.HistoryEntry(id: Int64(entryID), url: url, title: item["title"] as? String ?? "", isCurrent: index == current))
         }
+        consecutiveHistoryTimeouts = 0
         let native = readNativeEntries()
         if let native, RemoteBrowser.agree(native, with: entries) {
             for index in entries.indices {
@@ -603,16 +759,51 @@ final class RemoteBrowser {
         } else if historyMismatches < 3 {
             // Chromium's two lists were read in different turns and the list moved between them: read again shortly.
             historyMismatches += 1
+            historyRetryPending = true
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
-                MainActor.assumeIsolated { self?.refreshHistory() }
+                MainActor.assumeIsolated {
+                    self?.historyRetryPending = false
+                    self?.refreshHistory()
+                }
             }
             return
         } else {
             historyMismatches = 0
         }
+        settled = true
         guard entries != lastHistory else { return }
         lastHistory = entries
         send(CefRemoteMessage.historyChanged(browser: id, entries: entries))
+    }
+
+    // MARK: Collapse that waits for a fresh list
+
+    /// Whether `lastHistory`, which a collapse is checked against, may be older than what Chromium holds: a read is in flight, or
+    /// asked for, or due again in a moment, or there is no list yet.
+    private var historyMayBeStale: Bool {
+        historyCommand != nil || historyDirty || historyRetryPending || lastHistory == nil || !collapses.isEmpty
+    }
+
+    /// Runs the parked collapses on the list that was just confirmed, each in this one turn (check and reset together). One that
+    /// finds the cache and Chromium disagreeing stays parked for the read it asks for.
+    private func runParkedCollapses() {
+        guard !parkedCollapses.isEmpty else { return }
+        let waiting = parkedCollapses
+        parkedCollapses.removeAll()
+        withHost { [weak self] host in
+            guard let self else { return }
+            for parked in waiting {
+                collapseHistory(request: parked.request, keeping: parked.keep, expected: parked.expected, host: host, wasParked: true)
+            }
+        }
+    }
+
+    private func answerParkedCollapses(_ outcome: CefRemote.CollapseOutcome) {
+        let waiting = parkedCollapses
+        parkedCollapses.removeAll()
+        for parked in waiting {
+            send(CefRemoteMessage.historyCollapsed(browser: id, request: parked.request, outcome: outcome))
+        }
     }
 
     /// Whether the visitor's list is the same list as `entries`: same length, same current entry, same URL at every position.
@@ -624,13 +815,31 @@ final class RemoteBrowser {
 
     /// "Collapse to `keeping` if the native list is exactly `expected`", checked and sent in one turn (the caller's, on the UI
     /// thread), so no entry can arrive between the check and the reset.
-    private func collapseHistory(request: Int64, keeping: Int64, expected: [Int64], host: UnsafeMutablePointer<cef_browser_host_t>) {
+    private func collapseHistory(
+        request: Int64, keeping: Int64, expected: [Int64], host: UnsafeMutablePointer<cef_browser_host_t>, wasParked: Bool = false
+    ) {
         func answer(_ outcome: CefRemote.CollapseOutcome) {
             send(CefRemoteMessage.historyCollapsed(browser: id, request: request, outcome: outcome))
         }
+        // The cache the ids come from may be older than Chromium's list (a commit's read has not landed yet): wait for it instead of
+        // refusing, because a refusal has no retry trigger when the re-read turns out identical (review F5). The wait ends with the
+        // read (`historyResult`), its timeout, or the browser's close.
+        if historyMayBeStale {
+            parkedCollapses.append(ParkedCollapse(request: request, keep: keeping, expected: expected))
+            if historyCommand == nil, !historyRetryPending {
+                refreshHistory()
+            }
+            return
+        }
         guard let known = lastHistory, let native = readNativeEntries(), RemoteBrowser.agree(native, with: known) else {
-            // The list WSurf's ids come from is not the list Chromium holds now: nothing can be said about the ids.
-            answer(.refused)
+            // The list WSurf's ids come from is not the list Chromium holds now: nothing can be said about the ids. Asked for the
+            // first time, it waits for the read this starts; one that already waited has had its read, and is refused (its caller
+            // asks again), so a list that never agrees cannot keep it parked.
+            if wasParked {
+                answer(.refused)
+            } else {
+                parkedCollapses.append(ParkedCollapse(request: request, keep: keeping, expected: expected))
+            }
             refreshHistory()
             return
         }

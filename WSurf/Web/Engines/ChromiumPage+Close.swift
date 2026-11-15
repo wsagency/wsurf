@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 
 import CCef
+import CefKit
 import Foundation
 import os
 
@@ -15,6 +16,11 @@ extension ChromiumPage {
     func requestBrowserClose(timingOut: Bool = false) {
         if timingOut {
             closeUnanswered(after: Self.closeTimeout)
+        }
+        if let remote {
+            // The service closes the browser and says so (`browser.closed`); a service that cannot say it is the connection ending.
+            remote.requestClose()
+            return
         }
         withHost { $0.pointee.close_browser?($0, 1) }
     }

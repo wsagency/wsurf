@@ -217,6 +217,11 @@ final class BrowserPage: NSView {
         if let webKit {
             return window?.makeFirstResponder(webKit) == true
         }
+        if let chromium, chromium.remote != nil {
+            // A page that runs in the Chromium service is the text input client itself, as a web view is: it is the first responder
+            // (the keys and text it gets are phase 3's).
+            return window?.makeFirstResponder(chromium) == true
+        }
         return chromium?.becomeFirstResponder() == true
     }
 

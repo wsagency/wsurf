@@ -256,7 +256,7 @@ extension ChromiumRuntime {
         for directory in [cacheDirectory(profileID: profile.id), catalogDirectory(profileID: profile.id)] {
             try? FileManager.default.removeItem(at: directory)
         }
-        if !isInitialized {
+        if !hasStartedChromium {
             removeErasedProfiles()
         }
     }
