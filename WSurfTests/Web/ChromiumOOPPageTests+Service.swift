@@ -215,6 +215,50 @@ extension ChromiumOOPPageTests {
         }
     }
 
+    // MARK: Letting go of a browser
+
+    /// Review M1: a page that lost its browser (here closed under it) keeps the scripts and message handlers WSurf installed, and its
+    /// next browser runs them again.
+    @Test(.enabled(if: ChromiumServiceBundle.isPresent), .boundedWebViews)
+    func theScriptsAndHandlersWSurfInstalledSurviveTheBrowserGoingAway() async throws {
+        try await withLive { live in
+            let world = WKContentWorld.world(name: "WSurfOOPKept")
+            var messages: [String] = []
+            live.page.installScript("globalThis.__kept = location.pathname", in: world, injectionTime: .atDocumentStart, forMainFrameOnly: true)
+            live.page.addScriptMessageHandler(name: "kept", in: world) { messages.append($0.body as? String ?? "") }
+            _ = try await loaded(live, "/one")
+            #expect(try await live.page.evaluateJavaScript("globalThis.__kept", in: nil, contentWorld: world) as? String == "/one")
+            let first = try #require(live.native.remote)
+            first.requestClose()
+            #expect(await waitUntil { live.native.remote == nil }, "the page let go of the browser the service closed")
+            _ = try await loaded(live, "/two")
+            #expect(live.native.remote != nil && live.native.remote !== first)
+            #expect(try await live.page.evaluateJavaScript("globalThis.__kept", in: nil, contentWorld: world) as? String == "/two",
+                    "the installed script ran in the new browser")
+            _ = try await live.page.evaluateJavaScript("__wsurfSend('kept', 'again')", in: nil, contentWorld: world)
+            #expect(await waitUntil { messages.contains("again") }, "the message handler is still there: \(messages)")
+        }
+    }
+
+    /// Review M2: a browser the service could not make reports through the load that waited for it. The tab does not keep loading.
+    @Test(.enabled(if: ChromiumServiceBundle.isPresent), .boundedWebViews)
+    func aBrowserThatCouldNotBeMadeFailsTheLoadAndTheNextLoadMakesANewOne() async throws {
+        ChromiumRemoteBrowser.debugCreate = CefRemote.DebugCreate.fail
+        defer { ChromiumRemoteBrowser.debugCreate = nil }
+        try await withLive { live in
+            var failures: [Error] = []
+            live.page.onNavigationFailed = { _, error in failures.append(error) }
+            live.page.load(URLRequest(url: try live.url("/one")))
+            #expect(await waitUntil { !failures.isEmpty }, "the load reports why")
+            #expect((failures.first as? ChromiumError)?.errorDescription == String(localized: "Chromium could not open this tab."))
+            #expect(!live.page.isLoading, "the tab is not left loading")
+            #expect(live.native.remote == nil)
+            ChromiumRemoteBrowser.debugCreate = nil
+            _ = try await loaded(live, "/one")
+            #expect(live.native.remote != nil)
+        }
+    }
+
     // MARK: The latch and the close
 
     @Test(.enabled(if: ChromiumServiceBundle.isPresent), .boundedWebViews)

@@ -73,18 +73,31 @@ extension ChromiumPage {
     /// The page lets go of a browser that could not be made or prepared; the service is told to close it if it has it.
     private func abandonRemoteBrowser(_ browser: ChromiumRemoteBrowser) {
         guard remote === browser, !closing, !isClosed else { return }
-        forgetRemoteBrowser()
+        // The load that waited for this browser reports the failure (its error page, and the end of its loading): it is not cancelled.
+        forgetRemoteBrowser(cancelLoad: false)
         browser.requestClose()
     }
 
-    /// Back to a page with no browser: the next load makes a new one. The address, the history WSurf keeps and the page's owner stay.
-    private func forgetRemoteBrowser() {
+    /// Back to a page with no browser: the next load makes a new one. The address, the history WSurf keeps and the page's owner stay,
+    /// and so do the scripts and message handlers WSurf installed (they were registered once, at the tab's setup, and live only in
+    /// the DevTools object): the new browser gets them from its own preparation, as the first did.
+    private func forgetRemoteBrowser(cancelLoad: Bool = true) {
         remote = nil
-        pendingLoad?.cancel()
+        if cancelLoad {
+            pendingLoad?.cancel()
+        }
         preparation?.cancel()
         preparation = nil
+        let scripts = devTools.scripts.map { script in
+            var script = script
+            script.identifier = nil
+            return script
+        }
+        let handlers = devTools.handlers
         devTools.close()
         devTools = ChromiumDevTools(page: self)
+        devTools.scripts = scripts
+        devTools.handlers = handlers
         // A new browser starts on about:blank again.
         startupEntry = .inHistory
         initialDocument = true

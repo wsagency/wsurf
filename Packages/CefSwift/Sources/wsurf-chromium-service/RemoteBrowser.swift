@@ -279,11 +279,6 @@ final class RemoteBrowser {
             } else {
                 raw.pointee.go_forward?(raw)
             }
-            // A move between two entries that leaves the loading state as it was (both flags unchanged, one address) reports nothing
-            // else (review F9): read the list again once it has had time to commit. A read that finds the same list sends nothing.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
-                MainActor.assumeIsolated { self?.refreshHistory() }
-            }
         case CefRemote.Op.stop:
             accepted()
             withBrowserLater { $0.pointee.stop_load?($0) }
@@ -345,8 +340,9 @@ final class RemoteBrowser {
         message.set(CefRemote.Key.canGoBack, canGoBack)
         message.set(CefRemote.Key.canGoForward, canGoForward)
         send(message)
-        // Both ways, not only when loading ends (review F9): a move between two entries of one address that stays in the document
-        // may report no address change and no end of loading, and only the start of its loading state says that the list moved.
+        // Both ways, not only when loading ends: a collapse that arrives while a read of an unchanged list is in flight must wait for
+        // that read's result (`aCollapseThatArrivesWhileAReadOfAnUnchangedListIsInFlightWaitsForItsResult`, review F5), and the read
+        // that is in flight is the one this loading start asks for.
         refreshHistory()
     }
 

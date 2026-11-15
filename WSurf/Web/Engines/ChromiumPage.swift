@@ -372,6 +372,11 @@ final class ChromiumPage: NSView {
 
     private func loadNative(_ request: URLRequest) throws {
         if let remote, let url = request.url {
+            // The service has no per-file scope yet (phase 4): said here, so the tab shows it (`remoteNavigationDecision` is the floor
+            // for a page's own moves).
+            guard !url.isFileURL else {
+                throw ChromiumError.unavailable("Chromium cannot open a local file in this build yet.")
+            }
             // A plain GET only: a request with a body or headers needs the service to build it (phase 4), and is refused here, never
             // turned into a GET.
             guard (request.httpMethod ?? "GET").uppercased() == "GET", request.httpBody == nil, request.httpBodyStream == nil,

@@ -54,6 +54,11 @@ final class ChromiumRemoteBrowser: ChromiumRemoteBrowserHandle {
     var outgoing: ((CefRemoteMessage) -> Bool)?
     /// Replaces the close request: a test keeps the page closing with no answer, as it is when the service is gone.
     var closeSeam: (() -> Void)?
+    #if DEBUG
+    /// One of ``CefRemote/DebugCreate``, sent with every `browser.create` (the service honours it only in a debug-ops build): a test
+    /// reaches the failed-create path of a real page.
+    static var debugCreate: String?
+    #endif
     /// Collapse requests sent to the service.
     private(set) var collapsesSent = 0
 
@@ -132,6 +137,11 @@ final class ChromiumRemoteBrowser: ChromiumRemoteBrowserHandle {
         message.set(CefRemote.Key.width, Double(max(1, size.width)))
         message.set(CefRemote.Key.height, Double(max(1, size.height)))
         message.set(CefRemote.Key.scale, Double(max(1, scale)))
+        #if DEBUG
+        if let flag = Self.debugCreate {
+            message.set(CefRemote.Key.debugCreate, flag)
+        }
+        #endif
         guard case let .value(reply) = await connection.request(message), reply.bool(CefRemote.Key.success) else { throw failure }
         markCreated()
     }

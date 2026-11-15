@@ -473,6 +473,18 @@ struct ChromiumOOPPageTests {
         await rig.end()
     }
 
+    /// Review S3: a `file:` load is refused where it starts, with the tab's error (the service has no file scope yet).
+    @Test func aFileLoadIsRefusedWithAnErrorTheTabShows() async {
+        let rig = makeRig()
+        var failed: [Error] = []
+        rig.page.onNavigationFailed = { _, error in failed.append(error) }
+        rig.page.load(URLRequest(url: URL(fileURLWithPath: "/tmp/x.html")))
+        #expect(await waitUntil { !failed.isEmpty })
+        #expect(!rig.page.isLoading)
+        #expect(rig.recorder.sent(CefRemote.Op.load).isEmpty, "nothing was sent")
+        await rig.end()
+    }
+
     // MARK: The pieces that need no page
 
     @Test func theRateLimitLetsABurstThroughAndThenOneAsTheWindowMoves() {
