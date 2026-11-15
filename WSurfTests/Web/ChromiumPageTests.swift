@@ -484,32 +484,44 @@ struct ChromiumPageTests {
 
     /// CEF calls `on_after_created` for a pop-up whose page closed meanwhile: closing the browser inside the callback is what
     /// crashed the out-of-process service (CEF uses the browser again as the callback returns). The close comes a turn later,
-    /// once, and the browser is held until then; CEF's objects are freed after it.
+    /// once, and the browser is held until then; CEF's objects are freed after it. The page is held only by the opener's
+    /// `pendingPopups` (as in the app, once its tab is gone), so `adoptPopup` drops its last reference: in process that page owns
+    /// CEF's host view, whose dealloc destroys the browser, so it must outlive the callback too. The fake host answers as a
+    /// windowless browser does (`on_before_close` on the first close); a windowed one only calls `do_close` and waits for the view,
+    /// which is why the page's lifetime is asserted on its own.
     @Test func aPopupWhosePageClosedBeforeCEFMadeItIsClosedAfterTheCallback() async throws {
         let context = BrowserProfileContext(profile: .privateBrowsing())
         let opener = ChromiumPage(context: context)
-        let popup = ChromiumPage(context: context, popup: URL(string: "https://popup.test/"))
-        var info = cef_window_info_t()
-        let hosted = try #require(popup.hostPopup(id: 1, opener: opener, in: &info))
+        let hosted: UnsafeMutablePointer<cef_client_t>
+        let client: ChromiumClient
+        weak var weakPopup: ChromiumPage?
+        do {
+            let popup = ChromiumPage(context: context, popup: URL(string: "https://popup.test/"))
+            weakPopup = popup
+            var info = cef_window_info_t()
+            hosted = try #require(popup.hostPopup(id: 1, opener: opener, in: &info))
+            client = try #require(popup.client)
+            #expect(popup.awaitsPopup)
+            await popup.close()
+            #expect(popup.isClosed)
+        }
         defer { ChromiumInterop.release(UnsafeMutableRawPointer(hosted)) }
-        let client = try #require(popup.client)
         defer { client.close() }
-        #expect(popup.awaitsPopup)
-        await popup.close()
-        #expect(popup.isClosed)
+        #expect(weakPopup != nil, "the opener's pendingPopups holds the page")
 
         let record = PopupRecord()
         let browser = fakePopupBrowser(record, client: hosted)
-        popup.adoptPopup(browser)
-        popup.adoptPopup(browser) // CEF calls it once; a second call must not close again
+        weakPopup?.adoptPopup(browser)
+        weakPopup?.adoptPopup(browser) // CEF calls it once; a second call must not close again
         ChromiumInterop.release(UnsafeMutableRawPointer(browser)) // the callback's own reference, dropped as it returns
+        #expect(weakPopup != nil, "the page (and its host view) outlives on_after_created")
         #expect(record.closes == 0, "the close must not happen inside on_after_created")
         #expect(!record.browserFreed, "the browser is held until the deferred close ran")
-        #expect(!popup.awaitsPopup)
         #expect(!client.isClosed)
 
         try #require(await waitUntil { record.closes > 0 }, "the deferred close")
         #expect(record.closes == 1)
+        try #require(await waitUntil { weakPopup == nil }, "the page is freed after the deferred close")
         try #require(await waitUntil { record.browserFreed && record.hostFreed }, "CEF's objects are freed after the close")
         #expect(client.isClosed, "the handler's lifetime ended with on_before_close")
         try? await Task.sleep(for: .milliseconds(100))

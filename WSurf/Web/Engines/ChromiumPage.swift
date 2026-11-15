@@ -949,14 +949,14 @@ extension ChromiumPage {
     }
 
     /// CEF made the pop-up's browser (`on_after_created`, whose reference stays the callback's). A page closed meanwhile closes it,
-    /// but not inside the callback: CEF still uses the browser when it returns (`ChromiumInterop.closeLater`).
+    /// but not inside the callback: CEF uses the browser when it returns, and this page (the view's owner) may be freed there.
     func adoptPopup(_ browser: UnsafeMutablePointer<cef_browser_t>) {
         guard let creation = popupInCreation, raw == nil else { return }
         popupInCreation = nil
         creation.release()
         defer { resumePopupWaiters() }
         guard !closing, !isClosed else {
-            ChromiumInterop.closeLater(browser)
+            ChromiumInterop.closeLater(browser, keeping: self)
             return
         }
         ChromiumInterop.retain(UnsafeMutableRawPointer(browser))
