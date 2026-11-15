@@ -225,7 +225,11 @@ final class ChromiumPage: NSView {
                 pageZoom = zoom
             }
         } catch {
-            withHost { $0.pointee.close_browser?($0, 1) }
+            if popup {
+                ChromiumInterop.closeLater(browser)
+            } else {
+                withHost { $0.pointee.close_browser?($0, 1) }
+            }
             throw error
         }
         nativeView?.frame = bounds
@@ -944,16 +948,15 @@ extension ChromiumPage {
         return pointer
     }
 
-    /// CEF made the pop-up's browser (`on_after_created`, whose reference stays the callback's). A page closed meanwhile closes it.
+    /// CEF made the pop-up's browser (`on_after_created`, whose reference stays the callback's). A page closed meanwhile closes it,
+    /// but not inside the callback: CEF still uses the browser when it returns (`ChromiumInterop.closeLater`).
     func adoptPopup(_ browser: UnsafeMutablePointer<cef_browser_t>) {
         guard let creation = popupInCreation, raw == nil else { return }
         popupInCreation = nil
         creation.release()
         defer { resumePopupWaiters() }
         guard !closing, !isClosed else {
-            let host = browser.pointee.get_host?(browser)
-            host?.pointee.close_browser?(host, 1)
-            ChromiumInterop.release(host.map(UnsafeMutableRawPointer.init))
+            ChromiumInterop.closeLater(browser)
             return
         }
         ChromiumInterop.retain(UnsafeMutableRawPointer(browser))

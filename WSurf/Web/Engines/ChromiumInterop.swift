@@ -57,6 +57,23 @@ nonisolated enum ChromiumInterop {
         _ = base.pointee.release?(base)
     }
 
+    /// Closes `browser` (forced) in a later turn of the main queue, holding a reference of its own until then. For a close decided
+    /// inside `on_after_created`: CEF goes on using the browser when that callback returns (`AlloyBrowserHostImpl::CreateInternal`
+    /// calls its platform delegate), and a close made inside the callback can destroy that delegate first (the out-of-process
+    /// service crashed that way). The block may run after the browser closed another way; the reference it holds makes that safe,
+    /// and a second `close_browser` of a closed browser does nothing. Twin of the service's `Native.closeLater`.
+    static func closeLater(_ browser: UnsafeMutablePointer<cef_browser_t>) {
+        retain(UnsafeMutableRawPointer(browser))
+        let address = UInt(bitPattern: browser)
+        DispatchQueue.main.async {
+            guard let browser = UnsafeMutablePointer<cef_browser_t>(bitPattern: address) else { return }
+            defer { release(UnsafeMutableRawPointer(browser)) }
+            guard let host = browser.pointee.get_host?(browser) else { return }
+            defer { release(UnsafeMutableRawPointer(host)) }
+            host.pointee.close_browser?(host, 1)
+        }
+    }
+
     static func allocate<T>(_ type: T.Type, owner: AnyObject) -> UnsafeMutablePointer<T> {
         let retained = Unmanaged.passRetained(owner).toOpaque()
         guard let memory = ccef_object_alloc(MemoryLayout<T>.stride, retained, { object in
