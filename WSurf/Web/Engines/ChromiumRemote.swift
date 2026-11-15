@@ -678,6 +678,11 @@ final class ChromiumRemote {
         let deadline = ContinuousClock.now + .seconds(seconds)
         while !condition() {
             guard ContinuousClock.now < deadline else { return false }
+            // One turn of the main actor before the sleep: an end that is already queued (the control connection's event) is seen
+            // now, and the retry does not wait 50 ms of real time for it (a replacement that is itself short-lived would be asked
+            // for, and could end, in that gap).
+            await Task.yield()
+            if condition() { break }
             try? await Task.sleep(for: .milliseconds(50))
         }
         return true
