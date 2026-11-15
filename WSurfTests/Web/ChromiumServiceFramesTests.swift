@@ -92,8 +92,10 @@ struct ChromiumServiceFramesTests {
 
         func matches(_ colour: Colour) -> Bool {
             switch colour {
-            case .red: red > 200 && green < 80 && blue < 80
-            case .blue: blue > 200 && red < 80 && green < 80
+            case .red:
+                red > 200 && green < 80 && blue < 80
+            case .blue:
+                blue > 200 && red < 80 && green < 80
             }
         }
     }
