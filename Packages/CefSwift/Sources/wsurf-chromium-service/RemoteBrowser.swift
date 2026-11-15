@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: BUSL-1.1
 
 // D4-4b: one windowless browser in the service. WSurf keeps every policy: this class forwards what its page does as events,
-// does what WSurf asks, and keeps what must be answered at once to a safe default. Frames (D4-7), geometry changes (D4-9) and
-// input (phase 3) are not here. Everything runs on the main thread, which is CEF's UI thread.
+// does what WSurf asks, and keeps what must be answered at once to a safe default. Its frames go through `FramePresenter`
+// (D4-7). Geometry changes (D4-9) and input (phase 3) are not here. Everything runs on the main thread, which is CEF's UI thread.
 //
 // Memory: see `RemoteClientHandlers.swift`. The browser holds one reference on its client, given up in `deinit`, and its
 // handlers reach it only through a weak box.
@@ -34,6 +34,7 @@ final class RemoteBrowser {
 
     private(set) var sizeDIP: CGSize
     private(set) var scale: CGFloat
+    let presenter: FramePresenter
 
     private var nextServiceCommand = CefRemote.serviceCommandBase
     /// The service's own `Page.resetNavigationHistory`, by its CDP id: WSurf's request id.
@@ -48,6 +49,8 @@ final class RemoteBrowser {
         self.id = id
         sizeDIP = CGSize(width: max(1, message.double(CefRemote.Key.width)), height: max(1, message.double(CefRemote.Key.height)))
         scale = max(1, message.double(CefRemote.Key.scale))
+        presenter = FramePresenter(browser: id)
+        presenter.hidden = message.bool(CefRemote.Key.hidden)
         ServiceCounters.browsers.withLock { $0 += 1 }
         box.browser = self
     }
@@ -81,11 +84,19 @@ final class RemoteBrowser {
         var info = cef_window_info_t()
         info.size = MemoryLayout<cef_window_info_t>.stride
         info.windowless_rendering_enabled = 1
+        // Frames arrive as IOSurfaces (`on_accelerated_paint`), which `FramePresenter` copies; the DEBUG `cpuPaint` asks for the
+        // memory path (`on_paint`) instead, which is what a session without a GPU path would take.
+        info.shared_texture_enabled = 1
+        #if WSURF_SERVICE_DEBUG_OPS
+        if debug == CefRemote.DebugCreate.cpuPaint {
+            info.shared_texture_enabled = 0
+        }
+        #endif
         info.bounds = cef_rect_t(x: 0, y: 0, width: Int32(sizeDIP.width.rounded()), height: Int32(sizeDIP.height.rounded()))
         info.runtime_style = CEF_RUNTIME_STYLE_ALLOY
         var settings = cef_browser_settings_t()
         settings.size = MemoryLayout<cef_browser_settings_t>.stride
-        settings.windowless_frame_rate = 30
+        settings.windowless_frame_rate = 60
         // Opaque white, as a windowed browser paints: a windowless one is transparent by default.
         settings.background_color = 0xFFFF_FFFF
         // CEF takes ownership of one reference to each object it is given, and gives it up if it refuses.
@@ -122,6 +133,9 @@ final class RemoteBrowser {
         guard let host = hostReference() else { return }
         defer { Native.release(UnsafeMutableRawPointer(host)) }
         attachDevTools(host)
+        if presenter.hidden {
+            host.pointee.was_hidden?(host, 1)
+        }
         let queued = pending
         pending.removeAll()
         for work in queued {
@@ -149,6 +163,7 @@ final class RemoteBrowser {
         note("browser \(id): closed before CEF made it")
         hasClosed = true
         pending.removeAll()
+        presenter.freeRing()
         ServiceHost.shared.browserDidClose(id)
     }
 
@@ -156,6 +171,7 @@ final class RemoteBrowser {
         guard !hasClosed else { return }
         hasClosed = true
         pending.removeAll()
+        presenter.freeRing()
         if let registration {
             Native.release(UnsafeMutableRawPointer(registration))
             self.registration = nil
@@ -288,6 +304,11 @@ final class RemoteBrowser {
             let data = message.data(CefRemote.Key.data)
             accepted()
             withHost { [weak self] host in self?.sendDevTools(data, host: host) }
+        case CefRemote.Op.visibility:
+            let hidden = message.bool(CefRemote.Key.hidden)
+            let parked = message.bool(CefRemote.Key.parked)
+            accepted()
+            setVisibility(hidden: hidden, parked: parked)
         case CefRemote.Op.collapseHistory:
             let request = message.int(CefRemote.Key.identifier)
             let keep = message.collapseKeep
@@ -299,6 +320,32 @@ final class RemoteBrowser {
             note("browser \(id): unknown op \(message.op)")
             reply { $0.set(CefRemote.Key.error, "unknown op") }
         }
+    }
+
+    /// `hidden`: Chromium stops painting (`was_hidden`) and the ring is freed; it is built again by the first frame after the page
+    /// is shown. `parked`: the page is visible to itself but not to the person, so its frames are dropped.
+    private func setVisibility(hidden newHidden: Bool, parked newParked: Bool) {
+        let wasShown = !presenter.hidden && !presenter.parked
+        let hiddenChanged = newHidden != presenter.hidden
+        presenter.hidden = newHidden
+        presenter.parked = newParked
+        let shown = !newHidden && !newParked
+        withHost { host in
+            if hiddenChanged {
+                host.pointee.was_hidden?(host, newHidden ? 1 : 0)
+            }
+            if shown, !wasShown {
+                // A still page sends no frame of its own after it comes back: ask for one.
+                host.pointee.invalidate?(host, PET_VIEW)
+            }
+        }
+    }
+
+    /// Asks Chromium for a frame of the whole view, when the page is shown: a frames connection that attaches after a still page
+    /// painted would otherwise wait for the page's next change.
+    func requestFrame() {
+        guard !presenter.hidden, !presenter.parked else { return }
+        withHost { $0.pointee.invalidate?($0, PET_VIEW) }
     }
 
     private func load(_ url: String) {

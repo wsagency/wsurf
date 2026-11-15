@@ -81,6 +81,19 @@ D4-4b (`plans/d4-phase2-plan.md`). The service now makes and drives browsers.
 - **Why.** The ids of `historyChanged` are Chromium's navigation-entry ids, which only CDP (`Page.getNavigationHistory`) carries; CEF's navigation-entry visitor has none, but is the only synchronous read and the only source of `has_post_data`. The service therefore merges the two, and checks a collapse against the last list it sent.
 - **Re-applying.** Restore the three files, the `ServiceHost` dispatch and the protocol constants.
 
+### 3. The out-of-process Chromium service (D4), part 5: frames
+
+D4-7 (`plans/d4-phase2-plan.md`). The service's windowless browsers now put their frames on WSurf's frames connection.
+
+- **What.**
+  - `Sources/wsurf-chromium-service/FramePresenter.swift` (new): one per browser. `on_accelerated_paint` copies CEF's pooled IOSurface on the GPU (Metal blit) into a ring of `CefRemote.frameRingSize` (3) surfaces per element (page, popup), and the copy, never CEF's own surface, goes out with `IOSurfaceCreateXPCObject` and the entry timestamp. `on_paint` (the CPU path) fills a ring surface the same way. The ring is built by the first frame and **freed while the browser is hidden** (`browser.visibility`), and while no frames connection is attached nothing is copied.
+  - `RemoteBrowser.swift`: the shared-texture window info (`shared_texture_enabled`), `browser.visibility` (hidden: `was_hidden` and the ring freed; parked: frames dropped; shown again: an invalidate, because a still page paints nothing of its own), `hidden` at creation, the ring freed at close, 60 fps like the in-process browser.
+  - `RemoteClientHandlers.swift`: the render handler's `on_paint`, `on_accelerated_paint`, `on_popup_show`, `on_popup_size`.
+  - `ServiceHost.swift`: `sendFrame` and `sendPopup` on the frames connection; the input and frames connections attach only after a hello that got `ok` (a refused hello, as a non-canonical root, leaves no host for them), from the host's process, replace an earlier connection of their kind (which is cancelled), and drop with the control connection; a frames connection that attaches makes every shown browser paint again (`requestFrame`).
+  - `Sources/CefKit/CefRemoteProtocol.swift`: `Key.timestamp`, the `debug.stats` keys of a browser's ring and frame counts, `DebugCreate.cpuPaint` (DEBUG: the memory path), `CefRemote.frameRingSize`, and the popup event's rectangle keys.
+- **Why.** The spike's ring kept up to 4 surfaces of about 17 MB for every tab, hidden ones included (about 93 MB a tab); the plan frees it while hidden. A frames connection that was refused must not look attached to WSurf: the client sends the frames and input hellos with a reply and drops a refused connection (`ChromiumRemote.sideHelloRefused`, `sideRefusals`).
+- **Re-applying.** Restore the presenter, the render handler's paint and popup callbacks, `visibility`, `sendFrame`/`sendPopup`, the side-connection rules and the protocol constants.
+
 ### Outside the package
 
 - `WSurf/Web/Engines/ChromiumPage.swift`: one call to `externalBrowserDidOpen()` after the browser is created and registered (`materialize()`), one call to `externalBrowserDidClose()` where `didClose()` releases the browser.
@@ -89,6 +102,7 @@ D4-4b (`plans/d4-phase2-plan.md`). The service now makes and drives browsers.
 - Patch 3 (D4-4a): `WSurfTests/Web/ChromiumServiceHostTests.swift`.
 - Patch 3 (D4-4b): `WSurfTests/Web/ChromiumServiceBrowserTests.swift`, and `WSurfTests/Helpers/ChromiumServiceClient.swift` (the raw XPC test client of D4-4a's suite, moved out of it and shared).
 - Patch 3 (D4-5): `WSurf/Web/Engines/ChromiumRemote.swift` (`ChromiumOOP`: the guard and the per-process latch; `ChromiumRemote`: the connections, the hello, relaunch and the crash-loop cap), the latch check in `ChromiumRuntime.ensureInitialized`, the SwiftLint rule `no_sync_xpc_reply` in `.swiftlint.yml`, and `WSurfTests/Web/ChromiumRemoteClientTests.swift`. In CefKit only comments changed, and `CefRemoteRelaunchPolicy.recordDeath(at:serviceWasInUse:)` has no default for `serviceWasInUse` any more. In the service, `ServiceHost` refuses a hello whose root is not canonical (`realpath(root) == root`) and compares a context's or the hello's cache path as the `realpath` of its nearest existing ancestor plus the components below it, before it creates anything (`isInside`); `CefRemote.leavingError` is the one text of its "leaving" refusals.
+- Patch 3 (D4-7): `WSurfTests/Web/ChromiumServiceFramesTests.swift`; `WSurf/Web/Engines/ChromiumRemote.swift` sends the frames and input hellos with a reply and drops a connection the service refused (`sideHelloRefused`), with its unit test and one gated test in `ChromiumRemoteClientTests`.
 
 ## Updating CefSwift
 

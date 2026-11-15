@@ -128,6 +128,17 @@ public enum CefRemote {
         public static let debugCreate = "dbgcreate"
         /// `debug.stats` (D4-4b review F1): how many navigations the service cancelled itself because of their scheme.
         public static let refusedNavigations = "refused"
+        /// A `frame` event: when CEF entered its paint callback, in seconds of the mach clock (`mach_absolute_time` in nanoseconds,
+        /// divided by 1e9), which the service and WSurf share: the start of the frame's output leg.
+        public static let timestamp = "ts"
+        /// `debug.stats` with a ``browser``, D4-7: how many surfaces the browser's copy ring (the popup's included) holds right now,
+        /// how many frames it sent on the frames connection, how many paint callbacks it had by each path, and how many frames it
+        /// dropped (hidden, or no frames connection).
+        public static let ringSurfaces = "ring"
+        public static let framesSent = "sent"
+        public static let acceleratedFrames = "accel"
+        public static let cpuFrames = "cpu"
+        public static let framesDropped = "dropped"
     }
 
     /// What `browser.create` can ask of the service in a build that has the DEBUG ops, to reach creation paths a test could not
@@ -140,7 +151,15 @@ public enum CefRemote {
         /// CEF is asked, and a close is taken at once, before CEF has made the browser: the close then has to wait for
         /// `on_after_created`. A real close can only win that race against the first browser of a fresh disk context.
         public static let closeFirst = "closeFirst"
+        /// The browser is made without a shared texture, so CEF paints into memory (`on_paint`): the CPU path of D4-7's frames,
+        /// which a real GPU-less session would use.
+        public static let cpuPaint = "cpuPaint"
     }
+
+    /// How many copies of its frames the service keeps per browser and element (the page, the popup). Three cover the one WSurf
+    /// shows, the one the render server may still read, and the one being written. A knob, not a protocol value: the ring is the
+    /// service's own, and is freed while the browser is hidden.
+    public static let frameRingSize = 3
 
     /// The reply to a back or forward that native history cannot do at that moment: WSurf makes its own hop (D3b).
     public static let noNativeEntry = "no native entry"
@@ -204,11 +223,12 @@ public enum CefRemote {
     /// Events from the service to WSurf.
     public enum Event {
         public static let browserCreated = "browser.created"
-        /// One frame of a browser, its IOSurface as an XPC object, on the frames connection.
+        /// One frame of a browser, on the frames connection. Keys: ``Key/surface`` (the IOSurface, an XPC object, a copy the service
+        /// made: CEF's own surface is never sent), ``Key/flag`` (true for the popup widget's frame) and ``Key/timestamp``.
         public static let frame = "frame"
         /// A popup widget (a `<select>` list) was shown, moved or hidden; on the frames connection, so it is ordered with the
         /// popup's frames. Keys: `flag` (visible) and the popup's rectangle in view points, top-left origin; the rectangle's
-        /// keys are defined with the frame transport (D4-7).
+        /// keys are `originX`, `originY`, `width` and `height` (doubles).
         public static let popup = "popup"
         public static let browserReady = "browser.ready"
         public static let browserClosed = "browser.closed"

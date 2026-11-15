@@ -91,6 +91,24 @@ extension ChromiumRemoteClientTests {
     }
 
     @Test(.enabled(if: ChromiumServiceBundle.isPresent))
+    func theFramesConnectionTheServiceAcceptedStaysAttachedAndNoSideHelloWasRefused() async throws {
+        let (remote, _) = try #require(realRemote())
+        _ = remote.connect()
+        guard await waitUntil(40, { remote.isRunning }), case let .running(pid) = remote.state else {
+            Issue.record("no hello: \(remote.state): \(remote.lastRefusalText)")
+            await finish(remote, pid: nil)
+            return
+        }
+        // The frames hello has a reply now: a refusal (not the host's process, no hello yet) would drop the connection.
+        let stats = await remote.statistics()
+        #expect(stats?.int(CefRemote.Key.pid) == Int64(pid), "a round trip after the frames hello")
+        try await Task.sleep(for: .milliseconds(500))
+        #expect(remote.hasFramesConnection)
+        #expect(remote.sideRefusals == 0)
+        await finish(remote, pid: pid)
+    }
+
+    @Test(.enabled(if: ChromiumServiceBundle.isPresent))
     func aKilledServiceThatRanElevenSecondsIsRelaunchedWithinTwoSecondsOfTheKill() async throws {
         let (remote, _) = try #require(realRemote())
         let handle = Handle()

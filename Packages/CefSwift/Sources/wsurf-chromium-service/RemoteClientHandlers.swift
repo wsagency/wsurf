@@ -14,6 +14,7 @@
 import CCef
 import CefKit
 import Foundation
+import IOSurface
 import os
 
 /// How many browsers and handler sets are alive: `debug.stats` reports them, so a test can see that every path frees both.
@@ -225,7 +226,7 @@ final class RemoteClientHandlers: @unchecked Sendable {
         return request
     }
 
-    // MARK: Render (geometry only: frames arrive with D4-7)
+    // MARK: Render (geometry, and the frames of D4-7)
 
     private static func makeRender(_ box: BrowserBox) -> UnsafeMutablePointer<cef_render_handler_t> {
         let render = Native.allocate(cef_render_handler_t.self, owner: box)
@@ -247,6 +248,38 @@ final class RemoteClientHandlers: @unchecked Sendable {
             info.pointee.rect = rect
             info.pointee.available_rect = rect
             return 1
+        }
+        render.pointee.on_popup_show = { handlerSelf, browser, show in
+            Native.release(browser.map(UnsafeMutableRawPointer.init))
+            guard let owner = RemoteClientHandlers.browser(handlerSelf) else { return }
+            MainActor.assumeIsolated { owner.presenter.setPopup(visible: show != 0) }
+        }
+        render.pointee.on_popup_size = { handlerSelf, browser, rect in
+            Native.release(browser.map(UnsafeMutableRawPointer.init))
+            guard let rect, let owner = RemoteClientHandlers.browser(handlerSelf) else { return }
+            let frame = CGRect(x: CGFloat(rect.pointee.x), y: CGFloat(rect.pointee.y),
+                               width: CGFloat(rect.pointee.width), height: CGFloat(rect.pointee.height))
+            MainActor.assumeIsolated { owner.presenter.setPopup(rect: frame) }
+        }
+        render.pointee.on_paint = { handlerSelf, browser, type, _, _, buffer, width, height in
+            let entry = Clock.nowNanoseconds
+            Native.release(browser.map(UnsafeMutableRawPointer.init))
+            guard let buffer, let owner = RemoteClientHandlers.browser(handlerSelf) else { return }
+            MainActor.assumeIsolated {
+                owner.presenter.present(pixels: buffer, width: Int(width), height: Int(height),
+                                        element: type == PET_POPUP ? .popup : .view, entry: entry)
+            }
+        }
+        render.pointee.on_accelerated_paint = { handlerSelf, browser, type, _, _, info in
+            let entry = Clock.nowNanoseconds
+            Native.release(browser.map(UnsafeMutableRawPointer.init))
+            guard let info, let pointer = info.pointee.shared_texture_io_surface,
+                  let owner = RemoteClientHandlers.browser(handlerSelf) else { return }
+            // CEF's surface is borrowed for this callback only (CEF reuses it after): the presenter copies it before it returns.
+            let surface = Unmanaged<IOSurfaceRef>.fromOpaque(pointer).takeUnretainedValue()
+            MainActor.assumeIsolated {
+                owner.presenter.present(surface: surface, element: type == PET_POPUP ? .popup : .view, entry: entry)
+            }
         }
         return render
     }
