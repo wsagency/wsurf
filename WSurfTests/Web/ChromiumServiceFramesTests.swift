@@ -332,12 +332,14 @@ struct ChromiumServiceFramesTests {
         }
         mouse("mousePressed", 100, 35, id: 30)
         mouse("mouseReleased", 100, 35, id: 31)
-        let shown = rig.frames.waitEvent(CefRemote.Event.popup, timeout: 10) { $0.bool(CefRemote.Key.flag) }
-        let popup = try #require(shown, "the popup was shown")
-        #expect(popup.double(CefRemote.Key.width) > 0 && popup.double(CefRemote.Key.height) > 0, "a popup with a size")
+        // CEF shows the popup first (`on_popup_show`, no rectangle yet) and then sizes it (`on_popup_size`): the event that says
+        // visible with a size is the second one, and both ride the frames connection.
+        let shown = rig.frames.waitEvent(CefRemote.Event.popup, timeout: 10) {
+            $0.bool(CefRemote.Key.flag) && $0.double(CefRemote.Key.width) > 0 && $0.double(CefRemote.Key.height) > 0
+        }
+        #expect(shown != nil, "the popup was shown, with a rectangle")
+        #expect(rig.frames.events(CefRemote.Event.popup).first?.bool(CefRemote.Key.flag) == true, "the first popup event is the show")
         // Its own frames, flagged as the popup's, and not the page's.
-        let popupRects = rig.frames.events(CefRemote.Event.popup).filter { $0.bool(CefRemote.Key.flag) }
-        #expect(popupRects.contains { $0.double(CefRemote.Key.width) > 0 }, "the rectangle arrived with the popup")
         let deadline = Date().addingTimeInterval(10)
         while Self.frames(rig, 1, popup: true).isEmpty, Date() < deadline {
             usleep(50_000)
