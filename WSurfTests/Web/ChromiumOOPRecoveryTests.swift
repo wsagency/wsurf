@@ -108,8 +108,9 @@ struct ChromiumOOPRecoveryTests {
         let rig = await makeRig()
         rig.reloadLikeTheTab()
         rig.remote.remoteServiceEnded()
-        #expect(rig.native.recovery == .none)
-        #expect(await waitUntil { rig.native.remote != nil && rig.native.remote !== rig.remote }, "a new browser was asked for")
+        // Checked in the turn of the end, not later: a connection that has no service ends the browser it is asked for again.
+        #expect(rig.native.heldReload == nil)
+        #expect(rig.native.pendingLoad != nil, "the tab's reload was not held: the load began")
         #expect(rig.native.requestedURL == Self.address)
         await rig.end()
     }
@@ -125,9 +126,10 @@ struct ChromiumOOPRecoveryTests {
         #expect(rig.native.heldReload?.url == Self.address, "the tab's reload is held, not dropped")
         await settle()
         #expect(rig.native.remote == nil, "no browser is made for a page nobody sees")
+        #expect(rig.native.pendingLoad == nil)
         rig.page.isHidden = false
-        #expect(await waitUntil { rig.native.remote != nil }, "shown: its browser is asked for")
-        #expect(rig.native.recovery == .none && rig.native.heldReload == nil)
+        #expect(await waitUntil { rig.native.pendingLoad != nil }, "shown: the held load began")
+        #expect(rig.native.heldReload == nil)
         #expect(rig.native.requestedURL == Self.address)
         await rig.end()
     }

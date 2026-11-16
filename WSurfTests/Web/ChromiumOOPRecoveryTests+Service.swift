@@ -224,6 +224,8 @@ extension ChromiumOOPRecoveryTests {
         guard let env = try await env(linger: 1) else { return }
         let first = Tab(env)
         try await first.load(try env.url("/one"))
+        // The environment's own hello may have been preceded by one that found the last test's service leaving: count from here.
+        let hellos = env.connection.helloCount
         await first.finish()
         let closed = ProcessInfo.processInfo.systemUptime
         let gone = await waitUntil(timeout: .seconds(3)) { kill(env.pid, 0) == -1 && errno == ESRCH }
@@ -231,11 +233,11 @@ extension ChromiumOOPRecoveryTests {
         #expect(gone, "the service \(env.pid) was still there 3 s after the last tab closed")
         print("ChromiumOOPRecoveryTests observed: last tab closed, linger 1 s, the service was gone after \(took) s")
         #expect(await waitUntil(timeout: .seconds(3)) { env.connection.state == .stopped }, "an idle exit is not relaunched: \(env.connection.state)")
-        #expect(env.connection.helloCount == 1 && env.connection.browserCount == 0)
+        #expect(env.connection.helloCount == hellos && env.connection.browserCount == 0, "no relaunch: hello \(env.connection.helloCount) after \(hellos)")
         // The next tab asks for the service again (launchd may hold the spawn back until 10 s after the first one).
         let second = Tab(env)
         try await second.load(try env.url("/two"))
-        #expect(env.connection.helloCount == 2, "a new hello")
+        #expect(env.connection.helloCount == hellos + 1, "a new hello")
         guard case let .running(pid) = env.connection.state else {
             Issue.record("the service is not running: \(env.connection.state)")
             await second.finish()
