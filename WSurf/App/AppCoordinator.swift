@@ -632,7 +632,7 @@ final class AppCoordinator {
 
     @discardableResult
     func openNewTab(url: URL? = nil) -> BrowserTab {
-        let tab = browser.newTab(url: url)
+        let tab = browser.newTab(url: url, byPerson: true)
         if url == nil {
             focusAddressBar()
         }

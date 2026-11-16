@@ -156,11 +156,70 @@ extension ChromiumOOPRecoveryTests {
         await end(env)
     }
 
+    // MARK: A crash loop with real tabs (review of #130, F1 and F2)
+
+    /// The real thing: the service killed three times within 30 s (each instance 11 s old, as launchd allows) with a shown and a hidden
+    /// `BrowserTab` in it. The tabs' own reloads and error paths run at each death, at the pace of launchd; nothing launches the
+    /// service again for 26 s (longer than two throttles), and showing the hidden tab changes nothing. A person's Reload of the shown
+    /// tab brings the service back and loads it; the hidden tab waits for a load of its own.
+    @Test(.enabled(if: ChromiumServiceBundle.isPresent), .boundedWebViews)
+    func aServiceKilledThreeTimesStaysDownWithRealTabsOpenUntilAPersonReloads() async throws {
+        guard let env = try await env() else { return }
+        let connection = env.connection
+        let shown = RealTab(connection), hidden = RealTab(connection)
+        let one = try env.url("/one"), two = try env.url("/two")
+        shown.tab.load(one, byPerson: true)
+        hidden.tab.load(two, byPerson: true)
+        #expect(await waitUntil(timeout: .seconds(30)) { shown.finished > 0 && hidden.finished > 0 && !shown.tab.page.isLoading && !hidden.tab.page.isLoading })
+        hidden.tab.page.isHidden = true
+        #expect(await waitUntil { hidden.native.remote?.sentHidden == true }, "the service was told the page is hidden")
+        var up = env.up
+        for death in 1...3 {
+            // 10.5 s, not 11: the three deaths have to fall within the policy's 30 s, and launchd needs only 10 s between spawns.
+            let wait = 10.5 - (ProcessInfo.processInfo.systemUptime - up)
+            if wait > 0 {
+                try await Task.sleep(for: .seconds(wait))
+            }
+            let before = shown.finished
+            connection.abortService()
+            if death < 3 {
+                let back = await waitUntil(timeout: .seconds(40)) { connection.isRunning && shown.finished > before && !shown.tab.page.isLoading }
+                #expect(back, "death \(death): the shown tab was not loaded again (state \(connection.state))")
+                up = ProcessInfo.processInfo.systemUptime
+            }
+        }
+        #expect(await waitUntil(timeout: .seconds(20)) { connection.state == .crashLooping }, "state \(connection.state)")
+        #expect(shown.native.recovery == .waitingForPerson)
+        let hellos = connection.helloCount
+        let held = shown.finished
+        hidden.tab.page.isHidden = false
+        try await Task.sleep(for: .seconds(26))
+        for tab in [shown, hidden] {
+            #expect(tab.native.remote == nil && !tab.tab.page.isLoading && !tab.tab.isShowingError, "a tab in the loop is blank and quiet")
+        }
+        #expect(connection.helloCount == hellos && connection.state == .crashLooping && connection.servicePID == 0, "nothing launched the service again in 26 s")
+        #expect(shown.finished == held)
+        // The person reloads the shown tab: the service comes back and the page loads; the hidden tab waits for a load of its own.
+        shown.tab.reload(byPerson: true)
+        #expect(await waitUntil(timeout: .seconds(40)) { connection.isRunning && shown.finished > held && !shown.tab.page.isLoading }, "state \(connection.state)")
+        #expect(shown.tab.page.url == one)
+        #expect(hidden.native.remote == nil, "the hidden tab was not loaded by the other's Reload")
+        let hiddenBefore = hidden.finished
+        hidden.tab.reload(byPerson: true)
+        #expect(await waitUntil(timeout: .seconds(40)) { hidden.finished > hiddenBefore && !hidden.tab.page.isLoading })
+        #expect(hidden.tab.page.url == two)
+        print("ChromiumOOPRecoveryTests observed: three kills, crash loop with two real tabs, no hello for 26 s, the person's Reload loaded the shown tab and then the other")
+        await shown.end()
+        await hidden.end()
+        await end(env)
+    }
+
     // MARK: The screen the page sees
 
     /// What the page reads of the screen (`screen.width`, `screen.height`, `devicePixelRatio`), through DevTools, once it has the
-    /// window's: the service tells CEF with `notify_screen_info_changed`, and a browser made again after a relaunch is told as
-    /// soon as it exists (review of #129, F1 and F2). Waits for the values to settle: the notification is asynchronous.
+    /// window's: WSurf sends the screen with the size (`browser.resize`), the service tells CEF (`notify_screen_info_changed`, then
+    /// `was_resized`), and a browser made again after a relaunch is told as soon as it exists (review of #129, F1 and F2). Waits for
+    /// the values to settle: the notification is asynchronous.
     private func pageScreen(_ tab: Tab, matching screen: NSScreen) async -> [Double] {
         let want = [Double(screen.frame.width), Double(screen.frame.height), Double(screen.backingScaleFactor)]
         var seen: [Double] = []
@@ -192,7 +251,9 @@ extension ChromiumOOPRecoveryTests {
         env.connection.abortService()
         #expect(await waitUntil(timeout: .seconds(Self.reloadBudget + 10)) { tab.finished > before && !tab.page.isLoading }, "reloaded")
         #expect(await pageScreen(tab, matching: screen) == want, "after the relaunch reload")
-        // A screen that changes with no change of size: CEF is told by `notify_screen_info_changed` and nothing else.
+        // A screen that changes with no change of size: the service treats it as a change (`screenChanged`) and tells CEF. This proves
+        // that path (mutation M8: a service that ignores a screen-only change fails here). It does not prove that
+        // `notify_screen_info_changed` alone is needed: `was_resized` follows it in the service and CEF re-reads the screen there (M7).
         let remote = try #require(tab.native.remote)
         remote.send(CefRemote.Op.resize) {
             $0.set(CefRemote.Key.width, Double(remote.sentSize.width))

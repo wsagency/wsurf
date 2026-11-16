@@ -25,7 +25,9 @@ extension BrowserTab {
         awaitsVisit = false
     }
 
-    func reload() {
+    /// `byPerson`: the person's Reload (menu, ⌘R, toolbar, palette). Only that gives a Chromium service that keeps dying another try; an
+    /// automatic reload never does (`ChromiumPage.holdsForRecovery`).
+    func reload(byPerson: Bool = false) {
         let wasStopped = stoppedNavigation
         if wasStopped && page.isLoading && extensionBaseURL == nil
             && URL(string: urlString) != nil {
@@ -35,10 +37,10 @@ extension BrowserTab {
         stoppedNavigation = false
         if let url = URL(string: urlString),
            page.backForwardList.currentItem == nil || (wasStopped && url != committedURL) {
-            load(url, transition: .reload)
+            load(url, transition: .reload, byPerson: byPerson)
             return
         }
-        if page.reload() == nil, extensionBaseURL == nil {
+        if page.reload(byPerson: byPerson) == nil, extensionBaseURL == nil {
             restartPage()
         }
     }
@@ -61,8 +63,13 @@ extension BrowserTab {
         page.stopLoading()
     }
 
+    /// `byPerson` is the explicit statement that a person asked for this load: an address typed or picked (bookmark, history,
+    /// favourite, start page), a Reload, a tab the person opened. It is false unless the caller says so: `startedByUser` and
+    /// `transition` are not that (agent and MCP loads use their defaults), and an automatic load (the tab's own reload, an error
+    /// page, a start page, prewarm) never says it. Only a page in the Chromium service reads it, to end a crash loop
+    /// (`ChromiumPage.holdsForRecovery`); a WebKit or in-process page ignores it.
     @discardableResult
-    func load(_ url: URL, transition: HistoryStore.Transition = .typed, startedByUser: Bool = true) -> PageNavigation? {
+    func load(_ url: URL, transition: HistoryStore.Transition = .typed, startedByUser: Bool = true, byPerson: Bool = false) -> PageNavigation? {
         guard !isClosed else { return nil }
         noteNavigation(to: url, startedByUser: startedByUser)
         pendingNavigationTask?.cancel()
@@ -80,13 +87,13 @@ extension BrowserTab {
                 if let left {
                     pageBeforeEngineSwitch = left
                 }
-                let result = loadDirect(url)
+                let result = loadDirect(url, byPerson: byPerson)
                 lastRequestedNavigation = result
                 return result
             }
             return nil
         }
-        let result = loadDirect(url)
+        let result = loadDirect(url, byPerson: byPerson)
         lastRequestedNavigation = result
         return result
     }
@@ -114,7 +121,7 @@ extension BrowserTab {
         }
     }
 
-    func loadDirect(_ url: URL) -> PageNavigation? {
+    func loadDirect(_ url: URL, byPerson: Bool = false) -> PageNavigation? {
         discardDeferredSession()
         autofillSave.clear()
         stopUncommittedStartPage()
@@ -123,7 +130,7 @@ extension BrowserTab {
             // Typed, dragged, opened from Finder or from Downloads: a downloaded file reads only itself, the person's own file its folder.
             return page.loadFileURL(url, allowingReadAccessTo: FileAccessScope.readAccess(for: url))
         }
-        return page.load(URLRequest(url: url))
+        return page.load(URLRequest(url: url), byPerson: byPerson)
     }
 
     func waitForPendingNavigation() async -> PageNavigation? {

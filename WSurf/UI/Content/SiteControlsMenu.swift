@@ -355,7 +355,7 @@ private struct SiteSafetySection: View {
                             isOn: !tab.context.contentBlocker.isExempt(blockableHost),
                             set: { blocks in
                                 tab.context.contentBlocker.setExempt(!blocks, for: blockableHost)
-                                tab.page.reload()
+                                tab.page.reload(byPerson: true)
                             }
                         )
                     }

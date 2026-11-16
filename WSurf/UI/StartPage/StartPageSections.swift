@@ -133,7 +133,7 @@ private struct StartPageFrequentSitesSection: View {
 
     private func open(_ address: String) {
         guard let url = URL(string: address) else { return }
-        browser.ensureActiveTab().load(url)
+        browser.ensureActiveTab().load(url, byPerson: true)
     }
 }
 
@@ -170,12 +170,12 @@ private struct StartPageHistorySection: View {
 
     private func open(_ address: String) {
         guard let url = URL(string: address) else { return }
-        browser.ensureActiveTab().load(url)
+        browser.ensureActiveTab().load(url, byPerson: true)
     }
 
     private func openInNewTab(_ address: String, activate: Bool) {
         guard let url = URL(string: address) else { return }
-        browser.newTab(url: url, activate: activate, after: browser.activeTab)
+        browser.newTab(url: url, activate: activate, after: browser.activeTab, byPerson: true)
     }
 }
 

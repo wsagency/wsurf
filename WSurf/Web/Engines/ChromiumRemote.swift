@@ -318,7 +318,22 @@ final class ChromiumRemote {
         #endif
     }
 
-    /// The person reloaded a page: a crash loop or a refusal is given up, and the service is asked for again.
+    /// The service is given up: it keeps dying, or its hello failed for good. Only a person's action asks for it again (`userReload`);
+    /// nothing automatic does (a tab's reload, its error page, a fallback). `.notEnabled` is not this: it is this process's choice of
+    /// path, and no action of a person changes it.
+    var isGivenUp: Bool {
+        switch state {
+        case .crashLooping:
+            true
+        case let .failed(failure):
+            failure != .notEnabled
+        default:
+            false
+        }
+    }
+
+    /// A person's action (a Reload, a load typed or picked: `ChromiumPage.holdsForRecovery`) gives a crash loop or a refusal up, and the
+    /// service is asked for again.
     func userReload() {
         policy.userReload()
         switch state {

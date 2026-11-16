@@ -129,6 +129,13 @@ extension BrowserTab {
         releasePageColorHold()
         refreshPageColor(from: page)
         if !ErrorPage.isSilent(error) {
+            // A Chromium service that is given up cannot make the error document, and making it must not ask for the service (an
+            // automatic load never ends a crash loop): the tab stays blank and not loading until a person reloads. No alert either:
+            // a background tab has no window to hang it on.
+            if page.chromium?.remoteConnection.isGivenUp == true {
+                refreshChrome()
+                return
+            }
             if isLoadingErrorPage {
                 isLoadingErrorPage = false
                 let failedPage = page

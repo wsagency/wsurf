@@ -295,14 +295,16 @@ final class BrowserPage: NSView {
         dialogs?.cancelAll()
     }
 
+    /// `byPerson`: a person asked for this load (see `BrowserTab.load(byPerson:)`). Only a page in the Chromium service reads it
+    /// (it ends a crash loop there); a WebKit or in-process page ignores it.
     @discardableResult
-    func load(_ request: URLRequest) -> PageNavigation? {
+    func load(_ request: URLRequest, byPerson: Bool = false) -> PageNavigation? {
         guard !closed else { return nil }
         leave()
         if let webKit {
             return navigation(for: webKit.load(request))
         }
-        return chromium?.load(request)
+        return chromium?.load(request, byPerson: byPerson)
     }
 
     /// Chromium has no read-access parameter: `ChromiumFileScope` holds a `file:` page to the same scope, frame by frame.
@@ -327,21 +329,21 @@ final class BrowserPage: NSView {
     }
 
     @discardableResult
-    func reload() -> PageNavigation? {
+    func reload(byPerson: Bool = false) -> PageNavigation? {
         leave()
         if let webKit {
             return navigation(for: webKit.reload())
         }
-        return chromium?.reload()
+        return chromium?.reload(byPerson: byPerson)
     }
 
     @discardableResult
-    func reloadFromOrigin() -> PageNavigation? {
+    func reloadFromOrigin(byPerson: Bool = false) -> PageNavigation? {
         leave()
         if let webKit {
             return navigation(for: webKit.reloadFromOrigin())
         }
-        return chromium?.reload(ignoreCache: true)
+        return chromium?.reload(ignoreCache: true, byPerson: byPerson)
     }
 
     @discardableResult

@@ -219,7 +219,7 @@ final class BrowserModel {
         }
         tab.onOpenInNewTab = { [weak self, weak tab] url, activate in
             guard let self else { return }
-            let opened = newTab(url: url, activate: activate, after: tab, transition: .link)
+            let opened = newTab(url: url, activate: activate, after: tab, transition: .link, byPerson: true)
             if let tab {
                 noteOpened(opened, by: tab)
             }
@@ -468,7 +468,8 @@ final class BrowserModel {
         adoptingPage: BrowserPage? = nil,
         after opener: BrowserTab? = nil,
         transition: HistoryStore.Transition = .typed,
-        engine: BrowserEngine? = nil
+        engine: BrowserEngine? = nil,
+        byPerson: Bool = false
     ) -> BrowserTab {
         let tab = makeTab(for: url, adopting: adopting, adoptingPage: adoptingPage)
         tab.engineOverride = engine
@@ -480,7 +481,7 @@ final class BrowserModel {
             activeTabID = tab.id
         }
         if let url {
-            tab.load(url, transition: transition)
+            tab.load(url, transition: transition, byPerson: byPerson)
         }
         if transition != .agent {
             revealWhenAddressed(tab, hasAddress: url != nil || adopting != nil || adoptingPage != nil)

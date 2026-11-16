@@ -338,9 +338,9 @@ final class ChromiumPage: NSView {
     }
 
     @discardableResult
-    func load(_ request: URLRequest) -> PageNavigation? {
+    func load(_ request: URLRequest, byPerson: Bool = false) -> PageNavigation? {
         guard !isClosed, !closing, let url = request.url else { return nil }
-        guard !holdsForRecovery(request) else { return nil }
+        guard !holdsForRecovery(request, byPerson: byPerson) else { return nil }
         pendingLoad?.cancel()
         mainFrameGeneration &+= 1
         let next = PageNavigation()
@@ -501,15 +501,18 @@ final class ChromiumPage: NSView {
         let source = escaped.map { "<base href=\"\($0)\">" + html } ?? html
         let dataURL = URL(string: "data:text/html;charset=utf-8;base64," + Data(source.utf8).base64EncodedString())
         guard let dataURL else { return nil }
+        // An error document (the tab's) cannot be made while the service is given up, and making it must not ask for the service:
+        // the page waits for a person's load, and `requestedURL` stays the address that person reloads.
+        guard !remoteConnection.isGivenUp else { return nil }
         let next = load(URLRequest(url: dataURL))
         htmlDocumentURL = dataURL
         return next
     }
 
     @discardableResult
-    func reload(ignoreCache: Bool = false) -> PageNavigation? {
+    func reload(ignoreCache: Bool = false, byPerson: Bool = false) -> PageNavigation? {
         guard raw != nil || remote != nil, !isClosed, !closing else {
-            return requestedURL.flatMap { load(URLRequest(url: $0)) }
+            return requestedURL.flatMap { load(URLRequest(url: $0), byPerson: byPerson) }
         }
         let next = PageNavigation()
         navigation = next

@@ -362,7 +362,7 @@ private struct AgentTaskTraceView: View {
     private func open(_ url: URL) {
         guard let tab = browser.tabs.first(where: { $0.id == tabID }) else { return }
         browser.activate(tab)
-        tab.load(url)
+        tab.load(url, byPerson: true)
     }
 
     private func copy(_ text: String) {
@@ -948,7 +948,7 @@ private struct AgentActivityLinkRow: View {
         Button {
             guard let tab = browser.tabs.first(where: { $0.id == tabID }) else { return }
             browser.activate(tab)
-            tab.load(link.url)
+            tab.load(link.url, byPerson: true)
         } label: {
             HStack(spacing: 9) {
                 Image(systemName: "arrow.up.right")

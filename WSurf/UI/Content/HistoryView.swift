@@ -331,12 +331,12 @@ struct HistoryView: View {
 
     private func open(_ url: String) {
         guard let parsed = URL(string: url) else { return }
-        browser.ensureActiveTab().load(parsed)
+        browser.ensureActiveTab().load(parsed, byPerson: true)
     }
 
     private func openInNewTab(_ url: String, activate: Bool) {
         guard let parsed = URL(string: url) else { return }
-        browser.newTab(url: parsed, activate: activate, after: browser.activeTab)
+        browser.newTab(url: parsed, activate: activate, after: browser.activeTab, byPerson: true)
     }
 
     private func remove(_ row: Row) {

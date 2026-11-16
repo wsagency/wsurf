@@ -115,7 +115,7 @@ struct ContentNavBar: View {
         .onDrop(of: [.url, .fileURL], isTargeted: nil) { providers in
             Self.openDropped(providers) { url in
                 if let tab = browser.activeTab {
-                    tab.load(url)
+                    tab.load(url, byPerson: true)
                 } else {
                     coordinator.openNewTab(url: url)
                 }
@@ -204,7 +204,7 @@ struct ToolbarNavigationControls: View {
                 if tab.isLoading {
                     tab.stopLoading()
                 } else {
-                    tab.reload()
+                    tab.reload(byPerson: true)
                 }
             }
             .accessibilityLabel(Text(reloadHelp))

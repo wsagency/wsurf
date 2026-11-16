@@ -428,10 +428,10 @@ final class MainMenu: NSObject, NSMenuItemValidation {
         coordinator.mainWindowForCommands().showHistory()
     }
     @objc private func reload() {
-        coordinator.pageCommandTab?.reload()
+        coordinator.pageCommandTab?.reload(byPerson: true)
     }
     @objc private func hardReload() {
-        coordinator.pageCommandTab?.page.reloadFromOrigin()
+        coordinator.pageCommandTab?.page.reloadFromOrigin(byPerson: true)
     }
     @objc private func pickCredential() {
         coordinator.pageCommandTab?.pickFocusedCredential()

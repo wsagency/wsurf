@@ -24,7 +24,8 @@ extension ChromiumPage {
     /// window. True when the page runs there (and nothing in process may follow).
     func materializeRemoteOnAttach() -> Bool {
         guard runsRemotely else { return false }
-        if window != nil, remote == nil, !awaitsPopup, !closing, !isClosed {
+        // A service that is given up is asked for by a person's load, not by a page being attached (a new tab, a move to a window).
+        if window != nil, remote == nil, !awaitsPopup, !closing, !isClosed, !remoteConnection.isGivenUp {
             do {
                 try materializeRemote()
             } catch {
@@ -154,19 +155,18 @@ extension ChromiumPage {
         case none
         /// Hidden pages come back when they are shown, not before: a service that died with twenty tabs in it does not start twenty.
         case waitingForActivation
-        /// The service keeps dying (or refused the hello): nothing launches it again until the person reloads (`userReload`).
+        /// The service keeps dying (or refused the hello): nothing launches it again until a person acts (`userReload`).
         case waitingForPerson
     }
 
     /// The page told its tab that its content is gone (`didTerminate`), and the tab reloads the address it committed: at once for a
     /// page that is shown (the load waits in order for the relaunched service's hello, which the connection asked for as the service
-    /// ended), and not yet for a hidden one: that reload is held (`holdsForRecovery`). In a crash loop it runs and fails, which is the
-    /// crash state the tab shows until the person reloads.
+    /// ended), and not yet for a hidden one: that reload is held (`holdsForRecovery`). In a crash loop the reload is held as well, for
+    /// shown and hidden pages alike: the tab is blank and not loading (an error document needs a service) until a person acts.
     private func recoverAfterLoss() {
-        switch remoteConnection.state {
-        case .crashLooping, .failed:
+        if remoteConnection.isGivenUp {
             recovery = .waitingForPerson
-        default:
+        } else {
             recovery = remoteVisibility().hidden ? .waitingForActivation : .none
         }
         heldReload = nil
@@ -175,19 +175,35 @@ extension ChromiumPage {
         isRecovering = false
     }
 
-    /// Whether this load is the tab's automatic reload and has to wait (`recovery`). Any other load of the page ends the wait: a
-    /// person's reload also gives a crash loop up (`ChromiumRemote.userReload`).
-    func holdsForRecovery(_ request: URLRequest) -> Bool {
+    /// Whether this load has to wait (`recovery`, or a service that is given up). `byPerson` is the tab's explicit statement that a
+    /// person asked for it (a Reload, an address typed or picked: `BrowserTab.load(byPerson:)`); nothing else says so, and the
+    /// default of every load is that no person did (an agent's, the tab's own reload, an error document, a fallback, the start page).
+    ///
+    /// - A person's load ends a crash loop or a refusal (`ChromiumRemote.userReload`), whatever page it is for, and goes on.
+    /// - While the service is given up, any other load is held: it never asks for the service, so nothing automatic ends the loop,
+    ///   and nothing fails into the tab's error page (which would load a document, and show an alert for a page with no window).
+    /// - A tab's reload of a hidden page waits until the page is shown.
+    func holdsForRecovery(_ request: URLRequest, byPerson: Bool = false) -> Bool {
+        if byPerson {
+            if remoteConnection.isGivenUp {
+                remoteConnection.userReload()
+            }
+            recovery = .none
+            heldReload = nil
+            return false
+        }
+        if remoteConnection.isGivenUp {
+            // The address stays the one a person's reload loads.
+            requestedURL = request.url
+            heldReload = nil
+            return true
+        }
         guard recovery != .none else { return false }
         if isRecovering {
-            // A crash loop lets the tab's own reload run: it fails (the connection refuses the browser) and the tab shows that.
             guard recovery == .waitingForActivation else { return false }
             requestedURL = request.url
             heldReload = request
             return true
-        }
-        if recovery == .waitingForPerson {
-            remoteConnection.userReload()
         }
         recovery = .none
         heldReload = nil

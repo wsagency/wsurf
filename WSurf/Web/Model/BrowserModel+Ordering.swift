@@ -189,7 +189,7 @@ extension BrowserModel {
     func returnToPin(_ tab: BrowserTab) {
         guard let url = tab.pinnedURL else { return }
         activeTabID = tab.id
-        tab.load(url)
+        tab.load(url, byPerson: true)
     }
 
     // MARK: - Split view

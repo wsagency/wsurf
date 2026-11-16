@@ -484,11 +484,11 @@ extension BrowserModel {
         let tab = ensureActiveTab()
 
         if text.contains("://"), let url = URL(string: text) {
-            tab.load(url)
+            tab.load(url, byPerson: true)
         } else if Self.looksLikeLocation(text), let url = URL(string: "https://\(text)") {
-            tab.load(url)
+            tab.load(url, byPerson: true)
         } else {
-            tab.load(SearchURLBuilder.searchURL(for: text, settings: context.settings))
+            tab.load(SearchURLBuilder.searchURL(for: text, settings: context.settings), byPerson: true)
         }
     }
 }

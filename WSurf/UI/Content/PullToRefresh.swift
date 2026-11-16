@@ -294,7 +294,7 @@ final class PullToRefreshMonitor {
                   let probe = answer.flatMap(PullStartProbe.decode),
                   Self.canBeginPull(probe)
             else { return }
-            page.reload()
+            page.reload(byPerson: true)
         }
     }
 

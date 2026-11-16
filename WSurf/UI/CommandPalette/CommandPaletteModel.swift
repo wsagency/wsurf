@@ -715,7 +715,7 @@ final class CommandPaletteModel {
     }
 
     private func openCurrent(_ url: URL) {
-        browser.ensureActiveTab().load(url)
+        browser.ensureActiveTab().load(url, byPerson: true)
         dismiss()
     }
 
@@ -808,9 +808,9 @@ final class CommandPaletteModel {
                 browser.activateTab(at: index)
             }
         case .reload:
-            page?.reload()
+            page?.reload(byPerson: true)
         case .hardReload:
-            page?.page.reloadFromOrigin()
+            page?.page.reloadFromOrigin(byPerson: true)
         case .stopLoading:
             page?.stopLoading()
         case .goBack:

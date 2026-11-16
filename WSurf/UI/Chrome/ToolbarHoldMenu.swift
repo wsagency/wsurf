@@ -24,7 +24,7 @@ enum NavigationHoldMenu {
         let menu = NSMenu()
         if !tab.isLoading {
             menu.addItem(title: "Reload Page", image: symbol("arrow.clockwise"), key: "r") { [weak tab] in
-                tab?.reload()
+                tab?.reload(byPerson: true)
             }
             menu.addItem(
                 title: "Reload Page from Origin",
@@ -32,7 +32,7 @@ enum NavigationHoldMenu {
                 key: "r",
                 modifiers: [.command, .shift]
             ) { [weak tab] in
-                tab?.page.reloadFromOrigin()
+                tab?.page.reloadFromOrigin(byPerson: true)
             }
         }
         if tab.extensionBaseURL == nil {

@@ -134,8 +134,10 @@ struct ChromiumOOPRecoveryTests {
         await rig.end()
     }
 
+    /// The crash state of a page in a stand-in tab (no `BrowserTab`: see `aTabInACrashLoop...` for the real path): the tab's reload
+    /// is held, so nothing fails, nothing is shown and nothing launches the service, until a person reloads.
     @Test(.enabled(if: ChromiumServiceBundle.isPresent))
-    func aServiceThatKeepsDyingLeavesTheCrashStateUntilThePersonReloads() async {
+    func aServiceThatKeepsDyingHoldsTheTabsReloadUntilThePersonReloads() async {
         let rig = await makeRig()
         var failures: [Error] = []
         rig.page.onNavigationFailed = { _, error in failures.append(error) }
@@ -154,15 +156,219 @@ struct ChromiumOOPRecoveryTests {
         #expect(connection.state == .crashLooping)
         #expect(rig.native.recovery == .waitingForPerson)
         let hellos = connection.helloCount
-        #expect(await waitUntil { !failures.isEmpty }, "the tab's own reload fails, and that is the crash state it shows")
+        await settle()
+        #expect(failures.isEmpty, "the tab's reload is held: nothing fails into an error page")
         #expect(!rig.page.isLoading)
         #expect(connection.helloCount == hellos && connection.state == .crashLooping, "nothing launched the service again")
-        // The person reloads: the loop is given up, the service is asked for, and the page loads.
+        // Not a person's: a load of the page, a reload.
+        rig.page.load(URLRequest(url: Self.address))
         rig.page.reload()
+        #expect(connection.helloCount == hellos && connection.state == .crashLooping, "an automatic load does not end the loop")
+        // The person reloads: the loop is given up, the service is asked for, and the page loads.
+        rig.page.reload(byPerson: true)
         #expect(rig.native.recovery == .none)
         #expect(connection.state != .crashLooping)
         #expect(connection.helloCount == hellos + 1)
         await rig.end()
+    }
+
+    // MARK: A crash loop with real tabs (review of #130, F1 and F2)
+
+    /// A real `BrowserTab` around a Chromium page on `connection`, in a window of its own.
+    @MainActor
+    final class RealTab {
+        let tab: BrowserTab
+        let native: ChromiumPage
+        let window: NSWindow
+        /// Finished loads (the tab's `onNavigationFinished`).
+        private(set) var finished = 0
+
+        /// `withBrowser`: a page that was already in the service (a recorded browser, as `makeRig`); without it the page has none, as a
+        /// new tab, or one that was not open when a crash loop began.
+        init(_ connection: ChromiumRemote, withBrowser: Bool = false, address: URL = ChromiumOOPRecoveryTests.address) {
+            tab = BrowserTab(opensBlank: false, context: BrowserProfileContext(profile: .privateBrowsing()))
+            tab.engineOverride = .chromium
+            native = ChromiumPage(context: tab.context)
+            native.remoteConnection = connection
+            tab.adopt(BrowserPage(chromium: native))
+            tab.urlString = address.absoluteString
+            tab.onNavigationFinished = { [weak self] _ in self?.finished += 1 }
+            if withBrowser {
+                let remote = ChromiumRemoteBrowser(page: native, connection: connection)
+                remote.outgoing = { _ in true }
+                native.remote = remote
+                native.preparation = Task<Void, Error> {}
+                native.hasAppliedInitialSettings = true
+                remote.markCreated()
+            }
+            window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 800, height: 600), styleMask: .borderless, backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false
+            window.contentView = tab.page
+            window.orderBack(nil)
+        }
+
+        func end() async {
+            tab.detach()
+            window.contentView = nil
+            window.close()
+            await tab.waitForRetirement()
+        }
+    }
+
+    func makeConnection() -> ChromiumRemote {
+        ChromiumRemote(
+            serviceName: ChromiumRemoteClientTests.noSuchService, sink: ChromiumFrameSink(),
+            root: { FileManager.default.temporaryDirectory.appending(path: "wsurf-d4-recovery-\(UUID().uuidString)", directoryHint: .isDirectory) },
+            latch: ChromiumOOP.Latch(), isEnabled: { true })
+    }
+
+    /// Three deaths of the service with a browser of each tab in it, with no await between them (so that nothing made in between
+    /// reaches a service): the third trips the cap.
+    func crashLoop(_ connection: ChromiumRemote, with tabs: [RealTab]) {
+        for _ in 0..<3 {
+            for tab in tabs where tab.native.remote == nil {
+                tab.native.remote = ChromiumRemoteBrowser(page: tab.native, connection: connection)
+            }
+            connection.receive(.interrupted, generation: connection.generation)
+        }
+    }
+
+    /// F1: in a crash loop the tab's own error page used to call `userReload()` (through the document's load) and relaunch the
+    /// service every launchd throttle. Nothing automatic ends the loop: not the tab's reload, not its error path, not an error
+    /// document, not a hidden tab being shown; a tab with no window raises no alert.
+    @Test(.enabled(if: ChromiumServiceBundle.isPresent))
+    func aTabInACrashLoopShowsNoErrorPageAndNothingAutomaticLaunchesTheService() async {
+        let connection = makeConnection()
+        let shown = RealTab(connection, withBrowser: true), hidden = RealTab(connection, withBrowser: true)
+        hidden.tab.page.isHidden = true
+        await settle()
+        crashLoop(connection, with: [shown, hidden])
+        #expect(connection.state == .crashLooping)
+        #expect(shown.native.recovery == .waitingForPerson && hidden.native.recovery == .waitingForPerson)
+        let hellos = connection.helloCount
+        let failure = URLError(.cannotConnectToHost, userInfo: [NSURLErrorFailingURLErrorKey: Self.address])
+        // The tab's real error path, twice (the second would raise an alert if the first had started an error document), and the
+        // loads the tab and its error page make by themselves.
+        for tab in [shown, hidden] {
+            tab.tab.navigationFailed(nil, error: failure)
+            tab.tab.navigationFailed(nil, error: failure)
+            tab.tab.page.loadHTMLString("<p>error</p>", baseURL: Self.address)
+            tab.tab.page.load(URLRequest(url: Self.address))
+            #expect(!tab.tab.isShowingError && !tab.tab.isLoadingErrorPage, "no error document was started")
+        }
+        hidden.tab.page.isHidden = false
+        await settle()
+        for tab in [shown, hidden] {
+            #expect(tab.native.remote == nil && !tab.tab.page.isLoading, "no browser was asked for, nothing is loading")
+            #expect(tab.native.requestedURL == Self.address, "the address a person's reload loads is kept")
+        }
+        #expect(connection.helloCount == hellos && connection.state == .crashLooping, "nothing launched the service again")
+        // Longer than two launchd pacings (10 s each) and the 15 s a hello may take: a relaunch that came later than the loads
+        // above (a timer, a deferred error page) would show here as a hello, or as a state that is no longer the crash loop.
+        try? await Task.sleep(for: .seconds(26))
+        #expect(connection.helloCount == hellos && connection.state == .crashLooping, "still no launch after 26 s")
+        #expect(shown.native.remote == nil && hidden.native.remote == nil && !shown.tab.page.isLoading && !hidden.tab.page.isLoading)
+        await shown.end()
+        await hidden.end()
+        connection.disconnect()
+    }
+
+    /// The same for a hello that failed for good (no answer in time): the pages wait for a person, and the tab's error path does not
+    /// send a new hello; a person's load does.
+    @Test(.enabled(if: ChromiumServiceBundle.isPresent))
+    func aHelloThatFailedForGoodIsNotSentAgainByTheTabsErrorPage() async {
+        let connection = makeConnection()
+        let tab = RealTab(connection, withBrowser: true)
+        connection.connect()
+        // The hello's timer, run by hand: the connection has no service to be silent.
+        connection.helloEnded(.timedOut, sentAt: 0, generation: connection.generation)
+        #expect(connection.state == .failed(.noAnswer))
+        #expect(tab.native.recovery == .waitingForPerson)
+        let hellos = connection.helloCount
+        let failure = URLError(.cannotConnectToHost, userInfo: [NSURLErrorFailingURLErrorKey: Self.address])
+        tab.tab.navigationFailed(nil, error: failure)
+        tab.tab.page.loadHTMLString("<p>error</p>", baseURL: Self.address)
+        tab.tab.page.load(URLRequest(url: Self.address))
+        try? await Task.sleep(for: .seconds(1))
+        #expect(connection.helloCount == hellos && connection.isGivenUp, "no hello was sent again")
+        tab.tab.load(Self.address, byPerson: true)
+        #expect(connection.helloCount == hellos + 1, "a person's load sends one")
+        connection.disconnect()
+        await tab.end()
+    }
+
+    /// F2: a new tab, made while the loop is going, is ended by a person's load in it, not by an agent's.
+    @Test(.enabled(if: ChromiumServiceBundle.isPresent))
+    func anAgentsLoadInANewTabDuringACrashLoopDoesNotEndIt() async {
+        let connection = makeConnection()
+        let old = RealTab(connection, withBrowser: true)
+        crashLoop(connection, with: [old])
+        #expect(connection.state == .crashLooping)
+        let hellos = connection.helloCount
+        let fresh = RealTab(connection)
+        // As `MCPBrowserSession` and the agent load a page: `transition: .agent`, with `startedByUser` left at its default (true).
+        fresh.tab.load(Self.address, transition: .agent)
+        fresh.tab.load(Self.address, transition: .agent, startedByUser: true)
+        fresh.tab.reload()
+        #expect(connection.state == .crashLooping && connection.helloCount == hellos, "an agent's load, or an automatic reload, does not end the loop")
+        #expect(fresh.native.remote == nil && !fresh.tab.page.isLoading)
+        connection.disconnect()
+        await fresh.end()
+        await old.end()
+    }
+
+    @Test(.enabled(if: ChromiumServiceBundle.isPresent))
+    func aPersonsLoadInANewTabDuringACrashLoopEndsItAndLoads() async {
+        let connection = makeConnection()
+        let old = RealTab(connection, withBrowser: true)
+        crashLoop(connection, with: [old])
+        #expect(connection.state == .crashLooping)
+        let hellos = connection.helloCount
+        let fresh = RealTab(connection)
+        fresh.tab.load(Self.address, byPerson: true)
+        // Read before anything else runs, then ended before a service that is not there answers (the connection has none).
+        #expect(connection.state != .crashLooping, "the person's load gave the loop up")
+        #expect(connection.helloCount == hellos + 1, "and asked for the service")
+        #expect(fresh.tab.page.isLoading, "and the page loads")
+        connection.disconnect()
+        await fresh.end()
+        await old.end()
+    }
+
+    @Test(.enabled(if: ChromiumServiceBundle.isPresent))
+    func aPersonsReloadOfATabThatWasNotOpenWhenTheLoopBeganEndsIt() async {
+        let connection = makeConnection()
+        let old = RealTab(connection, withBrowser: true)
+        crashLoop(connection, with: [old])
+        #expect(connection.state == .crashLooping)
+        let hellos = connection.helloCount
+        let late = RealTab(connection)
+        late.tab.reload()
+        #expect(connection.state == .crashLooping && connection.helloCount == hellos, "an automatic reload does not end the loop")
+        late.tab.reload(byPerson: true)
+        #expect(connection.state != .crashLooping && connection.helloCount == hellos + 1, "the person's Reload does")
+        connection.disconnect()
+        await late.end()
+        await old.end()
+    }
+
+    /// A page that is not in the service is not touched by any of it (the WebKit and in-process paths ignore `byPerson`).
+    @Test
+    func aPersonsLoadChangesNothingForAPageWhoseServiceIsNotGivenUp() async {
+        let connection = makeConnection()
+        let native = ChromiumPage(context: BrowserProfileContext(profile: .privateBrowsing()))
+        native.remoteConnection = connection
+        #expect(!connection.isGivenUp)
+        #expect(!native.holdsForRecovery(URLRequest(url: Self.address), byPerson: true))
+        #expect(!native.holdsForRecovery(URLRequest(url: Self.address)))
+        #expect(connection.helloCount == 0 && connection.state == .stopped && native.recovery == .none)
+        // A process that took the other path is not "given up": no action of a person changes its choice.
+        let refused = ChromiumRemote(
+            serviceName: ChromiumRemoteClientTests.noSuchService, sink: ChromiumFrameSink(),
+            root: { FileManager.default.temporaryDirectory }, latch: ChromiumOOP.Latch(), isEnabled: { false })
+        refused.connect()
+        #expect(refused.state == .failed(.notEnabled) && !refused.isGivenUp)
+        await BrowserPage(chromium: native).close()
     }
 
     /// Review of #129, F1: a browser made again for a page that is already in its window is told the screen it is on.

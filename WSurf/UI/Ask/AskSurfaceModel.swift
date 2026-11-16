@@ -383,7 +383,7 @@ final class AskSurfaceModel {
     }
 
     func open(_ url: URL) {
-        browser.ensureActiveTab().load(url)
+        browser.ensureActiveTab().load(url, byPerson: true)
         finishEditing()
     }
 
