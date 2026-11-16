@@ -130,7 +130,7 @@ final class ServiceHost {
             closeBrowser(message.browser)
         case CefRemote.Op.load, CefRemote.Op.reload, CefRemote.Op.goBack, CefRemote.Op.goForward, CefRemote.Op.stop,
              CefRemote.Op.zoom, CefRemote.Op.mute, CefRemote.Op.find, CefRemote.Op.stopFinding, CefRemote.Op.devTools,
-             CefRemote.Op.collapseHistory, CefRemote.Op.visibility:
+             CefRemote.Op.collapseHistory, CefRemote.Op.visibility, CefRemote.Op.resize:
             guard isHost(peer, for: message) else { return }
             guard let browser = browsers[message.browser] else {
                 reply(to: message, on: peer) { $0.set(CefRemote.Key.error, "no such browser") }
@@ -708,6 +708,7 @@ final class ServiceHost {
                 answer.set(CefRemote.Key.mockKeychain, CefRuntime.shared.configuration?.safeStorage == .mockKeychain)
                 if message.has(CefRemote.Key.browser) {
                     browsers[message.browser]?.presenter.statistics(into: answer)
+                    browsers[message.browser]?.geometry(into: answer)
                 }
             }
         case CefRemote.Op.debugExitOnHello:

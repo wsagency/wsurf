@@ -1,8 +1,10 @@
 // SPDX-FileCopyrightText: 2026 WSurf Agency
 // SPDX-License-Identifier: BUSL-1.1
 
+import AppKit
 import CefKit
 import Foundation
+import QuartzCore
 
 // D4 (out-of-process Chromium), phase 2, PR D4-8: one browser in `WSurf Chromium.xpc`, as the page that holds it sees it.
 //
@@ -46,6 +48,54 @@ final class ChromiumRemoteBrowser: ChromiumRemoteBrowserHandle {
     var nativeHistory: (count: Int, current: Int, first: String)? {
         guard let history, let first = history.first else { return nil }
         return (history.count, history.firstIndex(where: \.isCurrent) ?? -1, first.url)
+    }
+
+    // MARK: Display (D4-9, `ChromiumPage+Display`)
+
+    /// The layer the frame sink shows this browser's frames in (registered with the sink while the browser lives).
+    private(set) var pageLayer: CALayer?
+    /// What the service was last told: its view size in points, the backing scale, the screen's size, and whether the browser is
+    /// hidden or parked. A new browser is shown at the size it was created with.
+    var sentSize = CGSize.zero
+    var sentScale: CGFloat = 0
+    var sentScreen = CGSize.zero
+    var sentHidden = false
+    var sentParked = false
+    /// A visibility update is queued for the end of the run-loop turn (`ChromiumPage.updateRemoteVisibility`).
+    var visibilityUpdatePending = false
+    /// The window's `didChangeScreenNotification` observer (`ChromiumPage.observeScreenChanges`).
+    var screenObserver: (any NSObjectProtocol)?
+    private(set) var resizesSent = 0
+    private(set) var visibilityMessagesSent = 0
+
+    func countResize() {
+        resizesSent += 1
+    }
+
+    func countVisibility() {
+        visibilityMessagesSent += 1
+    }
+
+    /// Registers the page's frame layer with the sink (main thread): the frames connection's queue sets its `contents`.
+    func attachFrameLayer(_ layer: CALayer) {
+        detachFrameLayer()
+        pageLayer = layer
+        connection.sink.register(browser: id, pageLayer: layer)
+    }
+
+    /// Takes the layer and its pop-up layer out of the tree. What the browser's frames still in flight say is dropped.
+    func stopObservingScreen() {
+        if let screenObserver {
+            NotificationCenter.default.removeObserver(screenObserver)
+        }
+        screenObserver = nil
+    }
+
+    func detachFrameLayer() {
+        stopObservingScreen()
+        guard pageLayer != nil else { return }
+        pageLayer = nil
+        connection.sink.unregister(browser: id)
     }
 
     // MARK: Seams and counters (tests)
@@ -125,7 +175,7 @@ final class ChromiumRemoteBrowser: ChromiumRemoteBrowserHandle {
     /// Makes the browser in the service: the profile's request context first, then the browser. Both go out in this order on the one
     /// control connection, so a DevTools command sent after this returns finds its browser (the service holds what arrives before
     /// CEF has made it). Throws when the service cannot be reached, refuses, or does not answer.
-    func create(context: BrowserProfileContext, size: CGSize, scale: CGFloat) async throws {
+    func create(context: BrowserProfileContext, size: CGSize, scale: CGFloat, hidden: Bool = false) async throws {
         let cache = context.profile.isPrivate ? nil : ChromiumRuntime.shared.cacheDirectory(profileID: context.profile.id)
         let failure = ChromiumError.unavailable(String(localized: "Chromium could not open this tab."))
         guard await connection.ensureContext(id: context.contextID, cacheDirectory: cache) else { throw failure }
@@ -137,6 +187,9 @@ final class ChromiumRemoteBrowser: ChromiumRemoteBrowserHandle {
         message.set(CefRemote.Key.width, Double(max(1, size.width)))
         message.set(CefRemote.Key.height, Double(max(1, size.height)))
         message.set(CefRemote.Key.scale, Double(max(1, scale)))
+        if hidden {
+            message.set(CefRemote.Key.hidden, true)
+        }
         #if DEBUG
         if let flag = Self.debugCreate {
             message.set(CefRemote.Key.debugCreate, flag)
@@ -197,6 +250,7 @@ final class ChromiumRemoteBrowser: ChromiumRemoteBrowserHandle {
             }
         case CefRemote.Event.browserClosed:
             isClosed = true
+            detachFrameLayer()
             collapses.interruptAll()
             page?.remoteBrowserClosed(self)
         default:
@@ -207,6 +261,7 @@ final class ChromiumRemoteBrowser: ChromiumRemoteBrowserHandle {
     func remoteServiceEnded() {
         let wasClosed = isClosed
         isClosed = true
+        detachFrameLayer()
         collapses.interruptAll()
         guard !wasClosed else { return }
         page?.remoteServiceEnded(self)

@@ -34,6 +34,10 @@ final class RemoteBrowser {
 
     private(set) var sizeDIP: CGSize
     private(set) var scale: CGFloat
+    /// The screen the page is on, as WSurf last said (`browser.resize`); nil until it did, and then `get_screen_info` describes the view.
+    private(set) var screenDIP: CGRect?
+    /// `browser.visibility` messages received (`debug.stats`).
+    private var visibilityMessages = 0
     let presenter: FramePresenter
 
     private var nextServiceCommand = CefRemote.serviceCommandBase
@@ -329,10 +333,14 @@ final class RemoteBrowser {
             let data = message.data(CefRemote.Key.data)
             accepted()
             withHost { [weak self] host in self?.sendDevTools(data, host: host) }
+        case CefRemote.Op.resize:
+            accepted()
+            resize(message)
         case CefRemote.Op.visibility:
             let hidden = message.bool(CefRemote.Key.hidden)
             let parked = message.bool(CefRemote.Key.parked)
             accepted()
+            visibilityMessages += 1
             setVisibility(hidden: hidden, parked: parked)
         case CefRemote.Op.collapseHistory:
             let request = message.int(CefRemote.Key.identifier)
@@ -345,6 +353,40 @@ final class RemoteBrowser {
             note("browser \(id): unknown op \(message.op)")
             reply { $0.set(CefRemote.Key.error, "unknown op") }
         }
+    }
+
+    /// `browser.resize`: the view's size in points, the backing scale and the screen. The values are taken now, so that CEF's next
+    /// `get_view_rect` and `get_screen_info` (on this thread) answer with them; CEF is told in the browser's own turn (or once the
+    /// browser exists): `was_resized` for a new size, `notify_screen_info_changed` for a new scale or screen.
+    private func resize(_ message: CefRemoteMessage) {
+        let size = CGSize(width: max(1, message.double(CefRemote.Key.width)), height: max(1, message.double(CefRemote.Key.height)))
+        let newScale = max(1, message.double(CefRemote.Key.scale))
+        let screen = message.has(CefRemote.Key.screenWidth)
+            ? CGRect(x: message.double(CefRemote.Key.screenX), y: message.double(CefRemote.Key.screenY),
+                     width: max(1, message.double(CefRemote.Key.screenWidth)), height: max(1, message.double(CefRemote.Key.screenHeight)))
+            : nil
+        let sizeChanged = size != sizeDIP
+        let screenChanged = newScale != scale || screen != screenDIP
+        sizeDIP = size
+        scale = newScale
+        screenDIP = screen
+        guard sizeChanged || screenChanged else { return }
+        withHost { host in
+            if screenChanged {
+                host.pointee.notify_screen_info_changed?(host)
+            }
+            if sizeChanged || screenChanged {
+                host.pointee.was_resized?(host)
+            }
+        }
+    }
+
+    /// What `debug.stats` reports of the geometry: the view's size in points and the backing scale, as CEF is told them.
+    func geometry(into message: CefRemoteMessage) {
+        message.set(CefRemote.Key.width, Double(sizeDIP.width))
+        message.set(CefRemote.Key.height, Double(sizeDIP.height))
+        message.set(CefRemote.Key.scale, Double(scale))
+        message.set(CefRemote.Key.visibilityMessages, visibilityMessages)
     }
 
     /// `hidden`: Chromium stops painting (`was_hidden`) and the ring is freed; it is built again by the first frame after the page

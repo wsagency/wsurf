@@ -166,6 +166,34 @@ final class ChromiumPage: NSView {
         nativeView?.frame = bounds
     }
 
+    // D4: a page in the Chromium service tells it its size, scale, screen and visibility (`ChromiumPage+Display`). Each is a no-op for
+    // a page in process.
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        updateRemoteGeometry()
+    }
+
+    override func viewDidChangeBackingProperties() {
+        super.viewDidChangeBackingProperties()
+        updateRemoteGeometry()
+    }
+
+    override func viewDidMoveToSuperview() {
+        super.viewDidMoveToSuperview()
+        updateRemoteGeometry()
+        updateRemoteVisibility()
+    }
+
+    override func viewDidHide() {
+        super.viewDidHide()
+        updateRemoteVisibility()
+    }
+
+    override func viewDidUnhide() {
+        super.viewDidUnhide()
+        updateRemoteVisibility()
+    }
+
     func materialize() throws {
         if runsRemotely {
             try materializeRemote()
@@ -807,6 +835,7 @@ final class ChromiumPage: NSView {
         }
         raw = nil
         remote?.page = nil
+        remote?.detachFrameLayer()
         remote = nil
         ChromiumRuntime.shared.unregister(self)
         for waiter in attachmentWaiters {

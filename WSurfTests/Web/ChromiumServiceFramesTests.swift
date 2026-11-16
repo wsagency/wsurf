@@ -261,6 +261,63 @@ struct ChromiumServiceFramesTests {
         #expect(rebuilt >= 1 && rebuilt <= CefRemote.frameRingSize, "rebuilt ring \(rebuilt)")
     }
 
+    /// D4-9 carry (D2): with every copy still in use (this client keeps the surfaces it received, as the measured 10 overwrites in
+    /// 13 frames show), the copy written again is the LEAST RECENTLY SENT one. The first in allocation order alternated between two
+    /// copies and never touched the third: after enough overwrites a ring of three has had all three written.
+    @Test(.enabled(if: ChromiumServiceBundle.isPresent))
+    func aRingWithEveryCopyInUseOverwritesTheLeastRecentlySentOneSoAllThreeAreReached() async throws {
+        let rig = try await Self.rig()
+        defer { rig.finish() }
+        try rig.attachFrames()
+        try Self.open(rig, 1, "/animated")
+        let deadline = Date().addingTimeInterval(30)
+        var stats = try Self.stats(rig.client, 1)
+        while stats.int(CefRemote.Key.ringOverwrites) < 9, Date() < deadline {
+            usleep(200_000)
+            stats = try Self.stats(rig.client, 1)
+        }
+        let overwrites = stats.int(CefRemote.Key.ringOverwrites)
+        print("ChromiumServiceFramesTests ring fallback: \(overwrites) overwrites in \(stats.int(CefRemote.Key.framesSent)) frames, slots reached \(stats.int(CefRemote.Key.overwrittenSlots))")
+        #expect(overwrites >= 9, "the animated page did not fill the ring and overwrite: \(overwrites)")
+        #expect(stats.int(CefRemote.Key.ringSurfaces) == CefRemote.frameRingSize)
+        #expect(stats.int(CefRemote.Key.overwrittenSlots) == CefRemote.frameRingSize, "the fallback reached \(stats.int(CefRemote.Key.overwrittenSlots)) of the ring's copies")
+    }
+
+    /// D4-9 (the scale-2 carry of the pr126 review): `browser.resize` gives the browser a new size in points and a backing scale; CEF
+    /// then paints the size times the scale in pixels (a Retina window), and `debug.stats` shows what the service was told.
+    @Test(.enabled(if: ChromiumServiceBundle.isPresent))
+    func aResizeToAnotherSizeAtScaleTwoMakesFramesOfThePixelSize() async throws {
+        let rig = try await Self.rig()
+        defer { rig.finish() }
+        try rig.attachFrames()
+        try Self.open(rig, 1, "/red")
+        _ = try #require(Self.waitFrame(rig, 1, colour: .red))
+        let before = Self.frames(rig, 1).count
+        _ = try rig.client.command(CefRemote.Op.resize, browser: 1) {
+            $0.set(CefRemote.Key.width, 600.0)
+            $0.set(CefRemote.Key.height, 400.0)
+            $0.set(CefRemote.Key.scale, 2.0)
+            $0.set(CefRemote.Key.screenX, 0.0)
+            $0.set(CefRemote.Key.screenY, 0.0)
+            $0.set(CefRemote.Key.screenWidth, 1512.0)
+            $0.set(CefRemote.Key.screenHeight, 982.0)
+        }
+        let stats = try Self.stats(rig.client, 1)
+        #expect(stats.double(CefRemote.Key.width) == 600 && stats.double(CefRemote.Key.height) == 400 && stats.double(CefRemote.Key.scale) == 2)
+        var sized: CefRemoteMessage?
+        let deadline = Date().addingTimeInterval(15)
+        while sized == nil, Date() < deadline {
+            sized = Self.frames(rig, 1).dropFirst(before).first { frame in
+                Self.surface(of: frame).map { IOSurfaceGetWidth($0) == 1200 && IOSurfaceGetHeight($0) == 800 } == true
+            }
+            if sized == nil {
+                usleep(50_000)
+            }
+        }
+        let frame = try #require(sized, "no 1200 x 800 frame after a 600 x 400 resize at scale 2")
+        #expect(Self.surface(of: frame).flatMap(Self.centre(of:))?.matches(.red) == true)
+    }
+
     @Test(.enabled(if: ChromiumServiceBundle.isPresent))
     func aStillPageShownAgainSendsAFrameAtOnceBecauseTheServiceInvalidatesIt() async throws {
         let rig = try await Self.rig()
