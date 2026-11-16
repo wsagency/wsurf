@@ -5,6 +5,25 @@ This file preserves release notes inherited from the upstream
 describe upstream Linen releases, not releases published by WSurf. New WSurf
 release notes will be added above this provenance record.
 
+## 0.1.28 (build 28) — 2026-11-16
+
+Everything since 0.1.27 (build 27). None of the screens and prompts below has been checked by hand.
+
+### Passwords
+
+- **Menu-bar popover focuses its search field.** Clicking the key icon puts the cursor in the search field at once, so typing filters straight away, also when the vault unlocks while the popover is open.
+- **One confirmation, then 30 seconds to copy.** Copying a stored password or verification code asks for Touch ID or your Mac password once; copies of a username, password or code from the popover or the Passwords window in the next 30 seconds do not ask again. The window does not extend, and Lock Now, auto-lock, sleep, screen lock, a profile switch and quit all end it. Showing, exporting, health checks, cards and editing ask exactly as before. The clipboard is still cleared after 60 seconds.
+
+### Chromium tabs
+
+- **Pop-up close safety.** A pop-up window whose page was already closed by the time Chromium finished creating it is now closed one turn later instead of inside Chromium's own callback, which Chromium is still using at that moment.
+- No visible change: this build carries more groundwork for running Chromium outside WSurf's own process (the service, its connection, display, recovery after a crash, and resize handling). It is off by default and not part of the signed app.
+
+### Known issues
+
+- The Touch ID sheet over the menu-bar popover and the search focus on click have not been tried in the running app (tests host the popover in a test window).
+- The known issues of 0.1.27 are unchanged.
+
 ## 0.1.27 (build 27) — 2026-11-14
 
 Everything since 0.1.26 (build 26). None of the screens and prompts below has been checked by hand.
