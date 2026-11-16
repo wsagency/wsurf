@@ -16,7 +16,7 @@ extension BrowserModel {
         }
     }
 
-    func restoreClosedTab(_ record: ClosedTab) {
+    func restoreClosedTab(_ record: ClosedTab, byPerson: Bool = false) {
         guard tabsByID[record.id] == nil else { return }
         let tab = makeTab(for: URL(string: record.url), id: record.id, restoring: true)
         tab.pageTitle = record.pageTitle
@@ -41,9 +41,12 @@ extension BrowserModel {
         sidebarDidChange()
         onTabOpened?(tab)
         if !sidebarUndoManager.isUndoing || record.wasActive {
+            // Showing the tab loads it: Reopen Closed Tab is the person's, so is that load.
+            tab.deferredLoadByPerson = byPerson
             activeTabID = tab.id
+            tab.deferredLoadByPerson = false
         } else if isVisibleInSplit(tab) {
-            tab.realizeDeferredSession()
+            tab.realizeDeferredSession(byPerson: byPerson)
         }
         // Reopen Last Closed Tab and undoing a close both bring a tab back that may not be on screen.
         revealInSidebar(tab)

@@ -218,11 +218,10 @@ final class BrowserModel {
             self?.noteOpened(opened, by: tab)
         }
         tab.onOpenInNewTab = { [weak self, weak tab] url, activate in
-            guard let self else { return }
-            let opened = newTab(url: url, activate: activate, after: tab, transition: .link, byPerson: true)
-            if let tab {
-                noteOpened(opened, by: tab)
-            }
+            self?.openLinkedTab(url, activate: activate, from: tab, byPerson: true)
+        }
+        tab.onOpenScriptTab = { [weak self, weak tab] url in
+            self?.openLinkedTab(url, activate: false, from: tab, byPerson: false)
         }
         tab.onOpenInNewWindow = { [weak self, weak tab] url, isPrivate in
             guard let tab, !tab.isClosed else { return }
@@ -323,6 +322,14 @@ final class BrowserModel {
     private var heldInPageMove: [UUID: String] = [:]
 
     /// A page opened `opened`: the tab continues that page's visit, and the page is remembered as its opener.
+    /// A link or page that asked for a tab of its own. `byPerson`: a click or menu item did (a script's window does not).
+    private func openLinkedTab(_ url: URL, activate: Bool, from tab: BrowserTab?, byPerson: Bool) {
+        let opened = newTab(url: url, activate: activate, after: tab, transition: .link, byPerson: byPerson)
+        if let tab {
+            noteOpened(opened, by: tab)
+        }
+    }
+
     private func noteOpened(_ opened: BrowserTab, by tab: BrowserTab) {
         openerByTab[opened.id] = tab.id
         if let origin = lastVisitID[tab.id] {
@@ -540,7 +547,7 @@ final class BrowserModel {
         let tab = makeTab(for: url)
         tab.onOpenInPeek = nil
         tab.onSummarizeLink = nil
-        tab.load(url, transition: .link)
+        tab.load(url, transition: .link, byPerson: true)
         return tab
     }
 
@@ -605,7 +612,7 @@ final class BrowserModel {
         copy.customTitle = tab.customTitle
         copy.urlString = tab.urlString
         copy.deferRestore(state: tab.sessionState, url: URL(string: tab.urlString))
-        copy.realizeDeferredSession()
+        copy.realizeDeferredSession(byPerson: true)
         copy.pinnedURL = tab.pinnedURL
         copy.pinnedTitle = tab.pinnedTitle
         copy.spaceID = tab.spaceID

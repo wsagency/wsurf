@@ -290,7 +290,7 @@ final class PasswordsStatusItem: NSObject, NSPopoverDelegate {
         let model = CredentialSettingsModel(profile: profile)
         model.websiteOpener = { url in
             let target = PasswordsWindowContent.linkTarget(in: BrowserApplication.shared, for: profile)
-            target.browser.newTab(url: url, activate: true, after: target.browser.activeTab)
+            target.browser.newTab(url: url, activate: true, after: target.browser.activeTab, byPerson: true)
             target.showBrowser()
         }
         return model

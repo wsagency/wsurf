@@ -282,6 +282,9 @@ final class BrowserTab: Identifiable {
     /// A Chromium page's pop-up: the page that will host it, and whether to show it.
     var onNewChromiumPopup: ((BrowserPage, Bool) -> Void)?
     var onOpenInNewTab: ((URL, Bool) -> Void)?
+    /// A tab a page's script asked for with no click behind it (`window.open` the pop-up blocker lets through): opened in the
+    /// background, and never a person's action.
+    var onOpenScriptTab: ((URL) -> Void)?
     var onOpenInNewWindow: ((URL, Bool) -> Void)?
     var onOpenInPeek: ((URL, CGPoint) -> Void)?
     var onSummarizeLink: ((URL, CGPoint) -> Void)?
@@ -513,6 +516,7 @@ final class BrowserTab: Identifiable {
         onNewWindow = nil
         onNewChromiumPopup = nil
         onOpenInNewTab = nil
+        onOpenScriptTab = nil
         onOpenInNewWindow = nil
         onOpenInPeek = nil
         onSummarizeLink = nil
@@ -677,9 +681,15 @@ final class BrowserTab: Identifiable {
         sessionStateGeneration &+= 1
     }
 
-    func realizeDeferredSession() {
+    /// The person asked for this deferred page (Load Tab, Reopen Closed Tab): its load, made when the tab is shown, is theirs
+    /// (`load(byPerson:)`). Showing a tab does not say so by itself: a session restore shows tabs too.
+    var deferredLoadByPerson = false
+
+    /// `byPerson`: Duplicate Tab. Otherwise the restore is the person's only if `deferredLoadByPerson` says so.
+    func realizeDeferredSession(byPerson: Bool = false) {
         // The page a micro window row stands for is live in the micro window; loading it here would make a second one.
         guard isDeferred, microTabID == nil else { return }
+        let byPerson = byPerson || deferredLoadByPerson
         let state = deferredState
         let url = deferredURL
         processState.beginReload()
@@ -692,14 +702,14 @@ final class BrowserTab: Identifiable {
             pendingNavigationTask = Task { [weak self] in
                 await retirement.value
                 guard let self, !isClosed, !Task.isCancelled else { return nil }
-                return restoreDeferredState(state, url: url)
+                return restoreDeferredState(state, url: url, byPerson: byPerson)
             }
         } else {
-            lastRequestedNavigation = restoreDeferredState(state, url: url)
+            lastRequestedNavigation = restoreDeferredState(state, url: url, byPerson: byPerson)
         }
     }
 
-    private func restoreDeferredState(_ state: Data?, url: URL?) -> PageNavigation? {
+    private func restoreDeferredState(_ state: Data?, url: URL?, byPerson: Bool) -> PageNavigation? {
         permitSystemPage(url)
         if let url {
             urlString = url.absoluteString
@@ -710,7 +720,7 @@ final class BrowserTab: Identifiable {
             return nil
         }
         if let url {
-            return loadDirect(url)
+            return loadDirect(url, byPerson: byPerson)
         }
         isRestoring = false
         return nil
@@ -723,6 +733,7 @@ final class BrowserTab: Identifiable {
 
     private func clearDeferredSession() {
         isDeferred = false
+        deferredLoadByPerson = false
         loadedDeferredState = nil
         deferredStateLoader = nil
         deferredURL = nil

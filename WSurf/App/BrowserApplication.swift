@@ -743,7 +743,8 @@ final class BrowserApplication {
         let initialTabs = coordinator.browser.tabs.filter { $0.pinID == nil }
         var hasRequestedTab = !urls.isEmpty
         for url in urls.reversed() {
-            coordinator.openNewTab(url: url)
+            // An extension's window is not a person's action: it must not end a Chromium crash loop (`ChromiumPage.holdsForRecovery`).
+            coordinator.browser.newTab(url: url)
         }
         for adapter in requested {
             guard let oldOwner = adapter.browser, let tab = adapter.tab else { continue }

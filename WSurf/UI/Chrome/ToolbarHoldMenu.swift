@@ -37,7 +37,7 @@ enum NavigationHoldMenu {
         }
         if tab.extensionBaseURL == nil {
             menu.addItem(title: "Restart Page", image: symbol("arrow.triangle.2.circlepath")) { [weak tab] in
-                tab?.restartPage()
+                tab?.restartPage(byPerson: true)
             }
         }
         return menu

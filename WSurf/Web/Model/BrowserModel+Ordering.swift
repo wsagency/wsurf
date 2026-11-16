@@ -462,7 +462,7 @@ extension BrowserModel {
 
     func reopenLastClosedTab() {
         guard let record = closedTabs.popLast() else { return }
-        restoreClosedTab(record)
+        restoreClosedTab(record, byPerson: true)
     }
 
     func activateTab(at index: Int) {

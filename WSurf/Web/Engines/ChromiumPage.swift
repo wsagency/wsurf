@@ -28,7 +28,19 @@ final class ChromiumPage: NSView {
     var remote: ChromiumRemoteBrowser?
     /// The connection a page in the service runs through (the process's own; a test gives one of its own). D4-10 recovery state:
     /// see `ChromiumPage+Remote`.
-    var remoteConnection: ChromiumRemote = .shared
+    var remoteConnection: ChromiumRemote = ChromiumPage.initialConnection
+    #if DEBUG
+    /// A test's connection for the pages made while it is set (nil: the process's own), so a test can drive the tabs of a whole window
+    /// through a connection that has no real service.
+    static var testConnection: ChromiumRemote?
+    private static var initialConnection: ChromiumRemote {
+        testConnection ?? .shared
+    }
+    #else
+    private static var initialConnection: ChromiumRemote {
+        .shared
+    }
+    #endif
     var recovery = RemoteRecovery.none
     var heldReload: URLRequest?
     var isRecovering = false

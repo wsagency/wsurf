@@ -75,7 +75,7 @@ extension BrowserModel {
     func restore(_ entry: TabArchive.Entry) -> BrowserTab? {
         guard let url = URL(string: entry.url) else { return nil }
         tabArchive.remove(entry)
-        let tab = newTab(url: url, after: activeTab)
+        let tab = newTab(url: url, after: activeTab, byPerson: true)
         tab.title = entry.title
         return tab
     }

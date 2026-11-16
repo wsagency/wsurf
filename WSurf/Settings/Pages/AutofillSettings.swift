@@ -36,7 +36,7 @@ struct AutofillSettings: View {
         VStack(alignment: .leading, spacing: SettingsMetrics.sectionSpacing) {
             CredentialSettings(context: coordinator.context, highlight: highlight) { url in
                 // The window this page is in: the same profile, so a private window never opens a normal one.
-                coordinator.browser.newTab(url: url, activate: true, after: coordinator.browser.activeTab)
+                coordinator.browser.newTab(url: url, activate: true, after: coordinator.browser.activeTab, byPerson: true)
             }
         }
         .environment(\.settingsDescriptionLineLimit, 1)

@@ -592,7 +592,10 @@ struct SidebarTabActionButton: View {
                     coordinator.unloadTab(tab)
                 }
             case .load:
+                // Showing the tab loads it; the flag makes that load the person's, and does not outlive the click.
+                tab.deferredLoadByPerson = true
                 coordinator.openTab(tab)
+                tab.deferredLoadByPerson = false
             }
         }
         .disabled(action == .unload && tab.isDeferred)

@@ -156,7 +156,7 @@ final class CloudTabs {
     @discardableResult
     func open(_ node: SessionNode, in browser: BrowserModel) -> Bool {
         guard let url = node.webURL else { return false }
-        browser.newTab(url: url, activate: true, after: browser.activeTab)
+        browser.newTab(url: url, activate: true, after: browser.activeTab, byPerson: true)
         return true
     }
 

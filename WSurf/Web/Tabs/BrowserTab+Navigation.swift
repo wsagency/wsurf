@@ -31,7 +31,7 @@ extension BrowserTab {
         let wasStopped = stoppedNavigation
         if wasStopped && page.isLoading && extensionBaseURL == nil
             && URL(string: urlString) != nil {
-            restartPage()
+            restartPage(byPerson: byPerson)
             return
         }
         stoppedNavigation = false
@@ -41,19 +41,20 @@ extension BrowserTab {
             return
         }
         if page.reload(byPerson: byPerson) == nil, extensionBaseURL == nil {
-            restartPage()
+            restartPage(byPerson: byPerson)
         }
     }
 
-    /// Recreate an unresponsive page in its selected engine and existing profile.
-    func restartPage() {
+    /// Recreate an unresponsive page in its selected engine and existing profile. `byPerson`: Page ▸ Restart Page, or the person's Reload
+    /// that fell back to it (see `load(byPerson:)`).
+    func restartPage(byPerson: Bool = false) {
         guard !isClosed, extensionBaseURL == nil, let url = URL(string: urlString) else { return }
         pendingNavigationTask?.cancel()
         pendingNavigationTask = Task { [weak self] in
             guard let self else { return nil }
             onContentProcessTerminated?()
             guard await replaceEngine(with: engine, force: true), !Task.isCancelled else { return nil }
-            return loadDirect(url)
+            return loadDirect(url, byPerson: byPerson)
         }
     }
 

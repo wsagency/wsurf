@@ -157,7 +157,7 @@ enum DevModeMenu {
 
         menu.addItem(.separator())
         menu.addItem(title: String(localized: "Restart Page"), image: symbol("arrow.trianglehead.2.clockwise")) { [weak tab] in
-            tab?.restartPage()
+            tab?.restartPage(byPerson: true)
         }
         menu.addItem(title: String(localized: "Clear Website Data…"), image: symbol("trash")) { [weak tab, weak coordinator] in
             guard let tab, let coordinator else { return }

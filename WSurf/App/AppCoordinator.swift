@@ -447,7 +447,9 @@ final class AppCoordinator {
         }
         showBrowser()
         for url in web {
-            openNewTab(url: url)
+            // Another app may be a script (`open https://…` in a loop): not a person's action, so it never ends a crash loop. The
+            // tab keeps the address and the person's Reload loads it.
+            openNewTab(url: url, byPerson: false)
         }
     }
 
@@ -523,7 +525,7 @@ final class AppCoordinator {
         showBrowser()
         if let standing = peek.tab, peek.ownerID == owner?.id {
             peek.aim(at: origin)
-            standing.load(url, transition: .link)
+            standing.load(url, transition: .link, byPerson: true)
             applyHoverShield()
             return
         }
@@ -631,8 +633,8 @@ final class AppCoordinator {
     }
 
     @discardableResult
-    func openNewTab(url: URL? = nil) -> BrowserTab {
-        let tab = browser.newTab(url: url, byPerson: true)
+    func openNewTab(url: URL? = nil, byPerson: Bool = true) -> BrowserTab {
+        let tab = browser.newTab(url: url, byPerson: byPerson)
         if url == nil {
             focusAddressBar()
         }

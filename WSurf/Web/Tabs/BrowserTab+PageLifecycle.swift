@@ -131,8 +131,10 @@ extension BrowserTab {
         if !ErrorPage.isSilent(error) {
             // A Chromium service that is given up cannot make the error document, and making it must not ask for the service (an
             // automatic load never ends a crash loop): the tab stays blank and not loading until a person reloads. No alert either:
-            // a background tab has no window to hang it on.
+            // a background tab has no window to hang it on. An error document that was loading is gone with the service: the flag
+            // would otherwise turn the person's next failed load into an alert instead of the error page.
             if page.chromium?.remoteConnection.isGivenUp == true {
+                isLoadingErrorPage = false
                 refreshChrome()
                 return
             }
@@ -542,7 +544,7 @@ extension BrowserTab {
         // as before, and the page gets no window. One with no site of its own (about:blank) stays with its opener.
         let origin = SitePermissions.origin(for: url)
         guard let onNewChromiumPopup, origin.isEmpty || sitePermissions.engine(for: origin) == .chromium else {
-            onOpenInNewTab?(url, userGesture && click != .backgroundTab)
+            openTabForChromiumWindow(url, userGesture: userGesture, click: click)
             return nil
         }
         // Reserved for CEF's browser before its tab can show it: a page shown first would make a browser of its own.
@@ -568,7 +570,17 @@ extension BrowserTab {
             noteBlockedPopup(url)
             return
         }
-        onOpenInNewTab?(url, userGesture && click != .backgroundTab)
+        openTabForChromiumWindow(url, userGesture: userGesture, click: click)
+    }
+
+    /// A tab for a Chromium window request. A click or menu item is a person's (`onOpenInNewTab`); a script's own `window.open` the
+    /// blocker lets through is not, so it never ends a Chromium crash loop (`onOpenScriptTab`).
+    private func openTabForChromiumWindow(_ url: URL, userGesture: Bool, click: ChromiumPage.ClickDisposition) {
+        if userGesture {
+            onOpenInNewTab?(url, click != .backgroundTab)
+        } else {
+            onOpenScriptTab?(url)
+        }
     }
 
     /// Shift-click on a link, which the engine reports as a window: a Peek, as in WebKit (`TabNavigationDelegate`). Only the person's

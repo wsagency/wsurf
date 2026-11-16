@@ -314,6 +314,7 @@ struct ChromiumContextMenuTests {
         tab.popups.pageChanged(url: page)
         let opened = Opened()
         tab.onOpenInNewTab = { opened.tabs.append(($0, $1)) }
+        tab.onOpenScriptTab = { opened.tabs.append(($0, false)) }
         tab.onOpenInPeek = { url, _ in opened.peeks.append(url) }
         return (tab, opened)
     }

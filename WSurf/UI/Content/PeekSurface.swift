@@ -119,7 +119,7 @@ private struct PeekPageMenu: View {
     var body: some View {
         Menu {
             Button {
-                tab.page.reload()
+                tab.page.reload(byPerson: true)
             } label: {
                 Label("Reload", systemImage: "arrow.clockwise")
             }
@@ -249,7 +249,7 @@ struct PeekRowBadge: View {
         .contextMenu {
             Button(toggleLabel) { coordinator.togglePeekVisibility() }
             Divider()
-            Button("Reload", systemImage: "arrow.clockwise") { tab.page.reload() }
+            Button("Reload", systemImage: "arrow.clockwise") { tab.page.reload(byPerson: true) }
             Button("Back", systemImage: "chevron.left") { tab.goBack() }
                 .disabled(!tab.canGoBack)
             Button("Forward", systemImage: "chevron.right") { tab.goForward() }

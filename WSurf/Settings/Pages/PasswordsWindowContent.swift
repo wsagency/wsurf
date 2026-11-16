@@ -18,7 +18,7 @@ struct PasswordsWindowContent: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: SettingsMetrics.sectionSpacing) {
                     CredentialSettings(context: context, highlight: nil, showsHeader: false) { url in
-                        openInBrowser { $0.browser.newTab(url: url, activate: true, after: $0.browser.activeTab) }
+                        openInBrowser { $0.browser.newTab(url: url, activate: true, after: $0.browser.activeTab, byPerson: true) }
                     }
                 }
                 .frame(maxWidth: SettingsMetrics.detailWidth, alignment: .leading)

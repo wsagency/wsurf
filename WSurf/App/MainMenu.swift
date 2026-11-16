@@ -440,7 +440,7 @@ final class MainMenu: NSObject, NSMenuItemValidation {
         coordinator.pageCommandTab?.showWebInspector()
     }
     @objc private func restartPage() {
-        coordinator.pageCommandTab?.restartPage()
+        coordinator.pageCommandTab?.restartPage(byPerson: true)
     }
     @objc private func toggleDevMode(_ sender: NSMenuItem) {
         // The item named a website when it was validated; a page that moved on since is not the one the person chose.
