@@ -773,6 +773,11 @@ extension BrowserTab {
         }
         if !processState.shouldReloadAfterUnexpectedTermination() {
             Pipeline.log.error("web content process died twice; leaving the tab alone")
+            // A service that is given up shows no frame of a page that is not coming (`ChromiumPage.recoverAfterLoss`): the page the tab
+            // kept uncovered for the wait is blank now, and is covered like any other until a person's reload presents a document.
+            if page.chromium?.remoteConnection.isGivenUp == true {
+                hasPresentedContent = false
+            }
             return
         }
         Pipeline.log.notice("web content process died; reloading the tab")

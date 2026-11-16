@@ -183,8 +183,9 @@ struct ChromiumOOPDisplayTests {
             print("ChromiumOOPDisplayTests observed: 120 sizes in a live resize: \(made) new ring surfaces, \(frames) frames sent, \(dropped) dropped,"
                 + " \(remote.resizesSent - sent) resize messages (the exit gate measured 106 new surfaces before the service held sizes back)")
             // The service takes a changing size at most every 100 ms (`FramePresenter.maxWait`), and the final one fills its ring: the budget
-            // follows the drag's duration, not the number of sizes. A service that paints every size made 106.
-            let budget = min(Int(seconds / 0.1) + 15, 80)
+            // follows the drag's duration, not the number of sizes (26-32 measured over about 2 s). A service that paints every size made
+            // 69-70 (106 at the exit gate), so a fixed cap of 60 keeps that regression visible however long a loaded machine takes.
+            let budget = 60
             #expect(made <= budget, "\(made) new ring surfaces for 120 sizes over \(seconds) s (budget \(budget))")
             #expect(frames >= 5, "the page still repainted during the drag: \(frames) frames")
             #expect(remote.pageLayer?.frame.size == live.native.bounds.size)

@@ -220,6 +220,45 @@ struct ChromiumOOPRecoveryTests {
         await rig.end()
     }
 
+    /// The hidden twin: a hidden page keeps its frame for its activation (the tab's reload, if it held one, is what would replace it),
+    /// but the tab held none (it died twice within 5 s, or has no address), so when the page is shown nothing is coming and the frame
+    /// goes, as it does for a shown page (review of #131, F1). A page that looked live, loaded nothing and had no browser was the result.
+    @Test(.enabled(if: ChromiumServiceBundle.isPresent))
+    func aHiddenPageThatIsNotLoadedAgainLetsGoOfItsLastFrameWhenItIsShown() async throws {
+        let rig = await makeRig()
+        _ = try showFrame(rig)
+        let layer = try #require(rig.remote.pageLayer)
+        rig.page.isHidden = true
+        await settle()
+        rig.page.onContentProcessTerminated = nil
+        rig.remote.remoteServiceEnded()
+        #expect(rig.native.recovery == .waitingForActivation)
+        #expect(rig.native.retainedPreview === layer && layer.superlayer === rig.native.layer, "hidden: the frame waits for its activation")
+        rig.page.isHidden = false
+        await settle()
+        #expect(rig.native.recovery == .none)
+        #expect(rig.native.retainedPreview == nil, "shown, with no load held: nothing replaces it")
+        #expect(layer.superlayer == nil && layer.contents == nil, "so it is gone")
+        #expect(rig.native.remote == nil && rig.native.pendingLoad == nil, "and no browser was asked for")
+        await rig.end()
+    }
+
+    /// A page closed while it waits for its replacement lets go of its frame (`didClose`).
+    @Test
+    func aPageClosedWhileItWaitsForItsReplacementLetsGoOfItsLastFrame() async throws {
+        let rig = await makeRig()
+        _ = try showFrame(rig)
+        let layer = try #require(rig.remote.pageLayer)
+        rig.page.isHidden = true
+        await settle()
+        rig.remote.remoteServiceEnded()
+        #expect(rig.native.retainedPreview === layer && layer.superlayer === rig.native.layer, "the hidden page waits with its frame")
+        await rig.page.close()
+        #expect(rig.native.retainedPreview == nil)
+        #expect(layer.superlayer == nil && layer.contents == nil, "closed: the frame is gone")
+        await rig.end()
+    }
+
     /// A hidden page keeps its frame through the service's end, as it does while the service lives, and waits for its activation. If
     /// the service is given up before that (a crash loop that other tabs ran into), the crash state shows no frame of a page that is not
     /// coming: the held load that begins when the page is shown lets go of it, and no browser is asked for.
@@ -267,6 +306,27 @@ struct ChromiumOOPRecoveryTests {
         connection.disconnect()
         await framed.end()
         await bare.end()
+    }
+
+    /// A page that kept its frame stays uncovered for the wait; if the service is given up during it, no frame of that page is shown any
+    /// more and the tab covers it again (review of #131, N1), as a page with no frame to keep is covered by its reload.
+    @Test(.enabled(if: ChromiumServiceBundle.isPresent))
+    func aTabCoversAPageWhoseKeptFrameGoesWhenTheServiceIsGivenUp() async throws {
+        let connection = makeConnection()
+        let framed = RealTab(connection, withBrowser: true)
+        framed.native.attachRemoteFrameLayer(to: try #require(framed.native.remote))
+        let id = try #require(framed.native.remote).id
+        let frame = try frameSurface()
+        connection.sink.framesQueue.sync { connection.sink.apply(surface: frame, browser: id, popup: false) }
+        framed.tab.hasPresentedContent = true
+        // Three deaths with no await between them: the first leaves the frame and the tab loading, the second (within 5 s) finds the tab
+        // leaving the page alone, the third gives the service up.
+        crashLoop(connection, with: [framed])
+        #expect(connection.state == .crashLooping)
+        #expect(framed.native.retainedPreview == nil, "no frame of a page that is not coming")
+        #expect(!framed.tab.hasPresentedContent, "the tab covers the blank page")
+        connection.disconnect()
+        await framed.end()
     }
 
     /// The crash state of a page in a stand-in tab (no `BrowserTab`: see `aTabInACrashLoop...` for the real path): the tab's reload

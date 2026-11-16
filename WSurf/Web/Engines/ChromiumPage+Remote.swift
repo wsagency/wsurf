@@ -251,6 +251,9 @@ extension ChromiumPage {
         heldReload = nil
         if let request {
             load(request)
+        } else {
+            // The tab held no reload (it died twice within 5 s, or has no address): nothing is coming to replace the kept frame.
+            dropRetainedPreview()
         }
     }
 
