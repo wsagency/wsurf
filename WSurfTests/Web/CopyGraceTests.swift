@@ -197,7 +197,118 @@ struct CopyGraceTests {
         }
     }
 
+    /// The auto-lock timeout (`.timeout`) with the popover closed and nobody watching: the vault locks itself and the window goes with
+    /// it, by name. The window's own clock is not advanced, so only the lock can have ended it. A shortened auto-lock time that has
+    /// already passed locks through the same `lock(reason: .timeout)` the lease timer calls (the timer itself sleeps on the real clock).
+    @Test func theAutoLockTimeoutEndsTheWindowWhileThePopoverIsClosed() async throws {
+        let vault = try await VaultManagerFixture.standalone()
+        defer { ProfileSettingsStore.forget(vault.profile.id) }
+        do {
+            let (prompt, graceClock) = (Prompt(), TestClock())
+            let grace = CopyGrace(now: { graceClock.now })
+            let account = VaultFixtures.account(password: "pw-secret")
+            try await VaultManagerFixture.save([account], in: vault.vault)
+            let pasteboard = NSPasteboard(name: NSPasteboard.Name("io.wsagency.wsurf.tests.\(UUID().uuidString)"))
+            defer { pasteboard.releaseGlobally() }
+            let model = CredentialSettingsModel(
+                profile: vault.profile, pasteboard: pasteboard, manager: vault.manager, verifyUser: { try await prompt.verify($0) },
+                clock: graceClock
+            )
+            model.copyGrace = grace
+            await model.load()
+            try await model.copy(.password, of: .stored(account.id))
+            #expect(prompt.calls == 1 && grace.holds(vault.vault.vaultID))
+
+            // The popover is closed: no model call, no copy. Time passes on the manager's clock and the one minute chosen runs out.
+            vault.clock.advance(by: .seconds(60))
+            try vault.manager.setAutoLock(.oneMinute)
+
+            #expect(!vault.manager.isUnlocked)
+            #expect(vault.manager.lastLockReason == .timeout)
+            #expect(!grace.holds(vault.vault.vaultID), "the timeout lock cancels the window, it is not left to run out")
+
+            // Unlocked again, the next copy is a new confirmation.
+            try await VaultManagerFixture.unlock(vault.vault)
+            await model.load()
+            try await model.copy(.password, of: .stored(account.id))
+            #expect(prompt.calls == 2)
+        } catch {
+            await vault.cleanup()
+            throw error
+        }
+        await vault.cleanup()
+    }
+
+    /// A lease past its deadline whose timer has not locked the vault yet: the window is still there and unexpired by its own clock,
+    /// but the vault no longer has an authorization epoch, so nothing is copied and nothing is asked.
+    @Test func aLeasePastItsDeadlineCopiesNothingBeforeTheTimerLocks() async throws {
+        let vault = try await VaultManagerFixture.standalone()
+        defer { ProfileSettingsStore.forget(vault.profile.id) }
+        do {
+            let (prompt, graceClock) = (Prompt(), TestClock())
+            let grace = CopyGrace(now: { graceClock.now })
+            let account = VaultFixtures.account(password: "pw-secret")
+            try await VaultManagerFixture.save([account], in: vault.vault)
+            let pasteboard = NSPasteboard(name: NSPasteboard.Name("io.wsagency.wsurf.tests.\(UUID().uuidString)"))
+            defer { pasteboard.releaseGlobally() }
+            let model = CredentialSettingsModel(
+                profile: vault.profile, pasteboard: pasteboard, manager: vault.manager, verifyUser: { try await prompt.verify($0) },
+                clock: graceClock
+            )
+            model.copyGrace = grace
+            await model.load()
+            try await model.copy(.password, of: .stored(account.id))
+            pasteboard.clearContents()
+
+            vault.clock.advance(by: .seconds(301))
+            #expect(vault.manager.authorizationEpoch == nil)
+
+            await #expect(throws: CredentialVaultError.unauthorized) { try await model.copy(.password, of: .stored(account.id)) }
+            #expect(prompt.calls == 1, "an expired lease is refused without a prompt")
+            #expect(pasteboard.string(forType: .string) == nil)
+        } catch {
+            await vault.cleanup()
+            throw error
+        }
+        await vault.cleanup()
+    }
+
     // MARK: Where it begins and where it does not apply
+
+    /// The window is a vault's own: a confirmation in vault A leaves vault B asking, and locking A leaves B's window running.
+    @Test func aConfirmationInOneVaultDoesNotOpenTheWindowForAnother() async throws {
+        try await VaultManagerFixture.with(vaults: [.unlocked, .unlocked]) { profile, _, vaults in
+            let (prompt, clock) = (Prompt(), TestClock())
+            let grace = CopyGrace(now: { clock.now })
+            let accounts = [VaultFixtures.account(password: "pw-in-a"), VaultFixtures.account(password: "pw-in-b")]
+            var models: [CredentialSettingsModel] = []
+            var pasteboards: [NSPasteboard] = []
+            for (vault, account) in zip(vaults, accounts) {
+                try await VaultManagerFixture.save([account], in: vault)
+                let pasteboard = NSPasteboard(name: NSPasteboard.Name("io.wsagency.wsurf.tests.\(UUID().uuidString)"))
+                pasteboards.append(pasteboard)
+                let model = CredentialSettingsModel(
+                    profile: profile, pasteboard: pasteboard, manager: vault.manager, verifyUser: { try await prompt.verify($0) }, clock: clock
+                )
+                model.copyGrace = grace
+                await model.load()
+                models.append(model)
+            }
+            defer { pasteboards.forEach { $0.releaseGlobally() } }
+
+            try await models[0].copy(.password, of: .stored(accounts[0].id))
+            #expect(prompt.calls == 1 && grace.holds(vaults[0].vaultID) && !grace.holds(vaults[1].vaultID))
+
+            clock.advance(by: .seconds(5))
+            try await models[1].copy(.password, of: .stored(accounts[1].id))
+            #expect(prompt.calls == 2, "vault B asks although vault A was confirmed 5 s ago")
+            #expect(pasteboards[1].string(forType: .string) == "pw-in-b")
+            #expect(grace.holds(vaults[1].vaultID))
+
+            vaults[0].manager.lock(reason: .manual)
+            #expect(!grace.holds(vaults[0].vaultID) && grace.holds(vaults[1].vaultID), "locking A does not end B's window")
+        }
+    }
 
     @Test func aSuccessfulUnlockInThePasswordsUIIsTheConfirmation() async throws {
         try await withRig(unlocked: false) { rig, _ in

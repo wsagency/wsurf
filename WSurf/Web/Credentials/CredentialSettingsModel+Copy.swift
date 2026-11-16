@@ -28,8 +28,8 @@ extension CredentialSettingsModel {
             bound = live.epoch
             editor = live.editor
         }
-        // A password or a code asks first: from the list every time, in the editor and its History once per editor. An earlier
-        // version yields no code, so it asks for none.
+        // A password or a code asks first: from the list once, then not again for the 30 s `CopyGrace` window of a model that has one
+        // (otherwise every time), in the editor and its History once per editor. An earlier version yields no code, so it asks for none.
         switch (part, source) {
         case (.password, .stored):
             bound = try await verifyOwnerForCopy(String(localized: "copy a saved password"))

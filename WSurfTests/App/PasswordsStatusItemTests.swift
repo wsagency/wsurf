@@ -310,7 +310,7 @@ struct PasswordsStatusItemTests {
 
     // MARK: Copy
 
-    @Test func copyingAPasswordAsksEveryTimeAndAFailedAskLeavesTheClipboardAlone() async throws {
+    @Test func copyingAPasswordAsksUnderTheRigsModelAndAFailedAskLeavesTheClipboardAlone() async throws {
         let account = login("pw-secret")
         try await withVault(accounts: [account]) { rig, _ in
             let model = try #require(rig.model)
@@ -336,7 +336,7 @@ struct PasswordsStatusItemTests {
         }
     }
 
-    @Test func copyingAVerificationCodeAsksEveryTimeAndAFailedAskLeavesTheClipboardAlone() async throws {
+    @Test func copyingAVerificationCodeAsksUnderTheRigsModelAndAFailedAskLeavesTheClipboardAlone() async throws {
         var account = login()
         account.totp = TOTPGenerator(
             secret: Data("12345678901234567890".utf8), algorithm: .sha1, period: 30, digits: 8, issuer: "Example", userName: "ada"

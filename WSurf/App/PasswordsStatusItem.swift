@@ -83,7 +83,8 @@ final class SystemPasswordsStatusItem: NSObject, PasswordsStatusItemHandle {
 ///
 /// - It never unlocks. "Unlock…" opens the Passwords window, and the unlock (Touch ID, passkey) runs there, where it has a window to
 ///   anchor to. A transient popover is no place for a system sheet.
-/// - Everything it copies goes through `CredentialSettingsModel.copy`: Touch ID on every password and code, `SecretClipboard`.
+/// - Everything it copies goes through `CredentialSettingsModel.copy`: Touch ID for a password or code, then
+///   the vault's 30 s `CopyGrace` window in which further copies ask nothing, `SecretClipboard`.
 /// - It holds no model until the first open, and drops it, with the popover's content, when the popover closes: SwiftUI's
 ///   `onDisappear` does not reliably run for a popover, and it is what forgets an unlocked session.
 /// - It is native and outside every tab, so no page, assistant or connected app can open or read it.
