@@ -24,7 +24,8 @@ extension ChromiumPage {
         // What the browser is made with is what the service has been told so far (`browser.create`'s size, scale and `hidden`).
         browser.sentSize = CGSize(width: max(1, bounds.width), height: max(1, bounds.height))
         browser.sentScale = max(1, window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2)
-        browser.sentScreen = window?.screen?.frame.size ?? .zero
+        // `browser.create` carries no screen: it goes with the first resize, which the attach (or this page's first window) sends.
+        browser.sentScreen = .zero
         browser.sentHidden = remoteVisibility().hidden
         browser.sentParked = false
         wantsLayer = true
