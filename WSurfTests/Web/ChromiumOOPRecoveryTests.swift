@@ -192,7 +192,6 @@ struct ChromiumOOPRecoveryTests {
             native.remoteConnection = connection
             tab.adopt(BrowserPage(chromium: native))
             tab.urlString = address.absoluteString
-            tab.onNavigationFinished = { [weak self] _ in self?.finished += 1 }
             if withBrowser {
                 let remote = ChromiumRemoteBrowser(page: native, connection: connection)
                 remote.outgoing = { _ in true }
@@ -205,6 +204,7 @@ struct ChromiumOOPRecoveryTests {
             window.isReleasedWhenClosed = false
             window.contentView = tab.page
             window.orderBack(nil)
+            tab.onNavigationFinished = { [weak self] _ in self?.finished += 1 }
         }
 
         func end() async {
