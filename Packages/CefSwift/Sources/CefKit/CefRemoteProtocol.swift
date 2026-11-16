@@ -160,6 +160,9 @@ public enum CefRemote {
         public static let historyTimeouts = "histtimeouts"
         /// `debug.stats` (D4-8): the `nav.external` events the service's rate limit kept back.
         public static let droppedExternal = "droppedext"
+        /// `debug.stats` with a ``browser`` (D4 exit-gate follow-up): how many ring surfaces (IOSurfaces) the browser's presenter has
+        /// ever allocated, the popup's included. A live resize allocates a ring for every size it sends.
+        public static let slotsMade = "slotsmade"
     }
 
     /// What `browser.create` can ask of the service in a build that has the DEBUG ops, to reach creation paths a test could not

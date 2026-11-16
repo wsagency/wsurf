@@ -63,6 +63,8 @@ final class ChromiumRemoteBrowser: ChromiumRemoteBrowserHandle {
     var sentParked = false
     /// A visibility update is queued for the end of the run-loop turn (`ChromiumPage.updateRemoteVisibility`).
     var visibilityUpdatePending = false
+    /// A `browser.resize` is queued for the end of the run-loop turn (`ChromiumPage.updateRemoteGeometry`).
+    var geometryUpdatePending = false
     /// The window's `didChangeScreenNotification` observer (`ChromiumPage.observeScreenChanges`).
     var screenObserver: (any NSObjectProtocol)?
     private(set) var resizesSent = 0
@@ -91,11 +93,15 @@ final class ChromiumRemoteBrowser: ChromiumRemoteBrowserHandle {
         screenObserver = nil
     }
 
-    func detachFrameLayer() {
+    /// With `keepingPreview` the page's layer stays in the tree with its last frame and is returned: the page shows it until the
+    /// replacement browser's first frame (`ChromiumPage.retainedPreview`). Only the pop-up layer goes then.
+    @discardableResult
+    func detachFrameLayer(keepingPreview: Bool = false) -> CALayer? {
         stopObservingScreen()
-        guard pageLayer != nil else { return }
+        guard let layer = pageLayer else { return nil }
         pageLayer = nil
-        connection.sink.unregister(browser: id)
+        connection.sink.unregister(browser: id, keepingPageLayer: keepingPreview)
+        return keepingPreview ? layer : nil
     }
 
     // MARK: Seams and counters (tests)
@@ -133,6 +139,10 @@ final class ChromiumRemoteBrowser: ChromiumRemoteBrowserHandle {
     func send(_ message: CefRemoteMessage) -> Bool {
         guard !isClosed else { return false }
         guard isCreated else {
+            // Only the last size matters to a browser that does not exist yet: the queue does not grow with every resize.
+            if message.op == CefRemote.Op.resize {
+                held.removeAll { $0.op == CefRemote.Op.resize }
+            }
             held.append(message)
             return true
         }
@@ -264,10 +274,11 @@ final class ChromiumRemoteBrowser: ChromiumRemoteBrowserHandle {
     func remoteServiceEnded() {
         let wasClosed = isClosed
         isClosed = true
-        detachFrameLayer()
+        // A shown page waits for its replacement with the last frame in its layer; the page decides, and takes the layer.
+        let preview = detachFrameLayer(keepingPreview: !wasClosed && page?.keepsPreviewWhenServiceEnds(self) == true)
         collapses.interruptAll()
-        guard !wasClosed else { return }
-        page?.remoteServiceEnded(self)
+        guard !wasClosed, let page else { return }
+        page.remoteServiceEnded(self, preview: preview)
     }
 
     func remoteAllowsNavigation(to url: String) -> Bool {

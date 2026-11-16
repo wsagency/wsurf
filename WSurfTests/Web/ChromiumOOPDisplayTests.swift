@@ -150,6 +150,48 @@ struct ChromiumOOPDisplayTests {
         }
     }
 
+    /// The exit gate's F4: 120 sizes, one every 16 ms (programmatic `setFrame`s, the closest a test gets to a drag), on a page that
+    /// repaints on every frame. Before the service held a new size back until it was stable (or 100 ms old), every size that
+    /// painted allocated a ring surface: 106 new IOSurfaces for 120 sizes. The count is `slotsMade` of `debug.stats`.
+    @Test(.enabled(if: ChromiumServiceBundle.isPresent), .boundedWebViews)
+    func aLiveResizeOf120SizesAllocatesAFewSurfacesAndThePageEndsAtItsFinalSize() async throws {
+        try await withLive("/animated") { live in
+            let scale = live.window.backingScaleFactor
+            let remote = try #require(live.native.remote)
+            #expect(await waitUntil(timeout: .seconds(10)) { Self.surface(of: remote.pageLayer) != nil })
+            try await Task.sleep(for: .milliseconds(500))
+            let before = try #require(await live.stats())
+            let start = live.window.contentView?.frame.size ?? CGSize(width: 800, height: 600)
+            // Down by 4 points a step to 240 points narrower, and back: 120 sizes.
+            var widths: [CGFloat] = (1...60).map { start.width - 4 * CGFloat($0) }
+            widths += (0..<60).map { start.width - 240 + 4 * CGFloat($0 + 1) }
+            let sent = remote.resizesSent
+            let began = ContinuousClock.now
+            for width in widths {
+                live.window.setContentSize(CGSize(width: width, height: start.height))
+                try await Task.sleep(for: .milliseconds(16))
+            }
+            let seconds = Double((ContinuousClock.now - began).components.seconds) + Double((ContinuousClock.now - began).components.attoseconds) / 1e18
+            let final = CGSize(width: widths.last ?? start.width, height: start.height)
+            #expect(await waitUntil(timeout: .seconds(10)) {
+                Self.surface(of: remote.pageLayer).map { IOSurfaceGetWidth($0) == Int(final.width * scale) && IOSurfaceGetHeight($0) == Int(final.height * scale) } == true
+            }, "the page layer never showed a \(final) frame: the final size gets its frame")
+            let after = try #require(await live.stats())
+            let made = after.int(CefRemote.Key.slotsMade) - before.int(CefRemote.Key.slotsMade)
+            let frames = after.int(CefRemote.Key.framesSent) - before.int(CefRemote.Key.framesSent)
+            let dropped = after.int(CefRemote.Key.framesDropped) - before.int(CefRemote.Key.framesDropped)
+            print("ChromiumOOPDisplayTests observed: 120 sizes in a live resize: \(made) new ring surfaces, \(frames) frames sent, \(dropped) dropped,"
+                + " \(remote.resizesSent - sent) resize messages (the exit gate measured 106 new surfaces before the service held sizes back)")
+            // The service takes a changing size at most every 100 ms (`FramePresenter.maxWait`), and the final one fills its ring: the budget
+            // follows the drag's duration, not the number of sizes (26-32 measured over about 2 s). A service that paints every size made
+            // 69-70 (106 at the exit gate), so a fixed cap of 60 keeps that regression visible however long a loaded machine takes.
+            let budget = 60
+            #expect(made <= budget, "\(made) new ring surfaces for 120 sizes over \(seconds) s (budget \(budget))")
+            #expect(frames >= 5, "the page still repainted during the drag: \(frames) frames")
+            #expect(remote.pageLayer?.frame.size == live.native.bounds.size)
+        }
+    }
+
     // MARK: Frames in the layer
 
     @Test(.enabled(if: ChromiumServiceBundle.isPresent), .boundedWebViews)

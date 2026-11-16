@@ -24,8 +24,10 @@ extension ChromiumPage {
     /// window. True when the page runs there (and nothing in process may follow).
     func materializeRemoteOnAttach() -> Bool {
         guard runsRemotely else { return false }
-        // A service that is given up is asked for by a person's load, not by a page being attached (a new tab, a move to a window).
-        if window != nil, remote == nil, !awaitsPopup, !closing, !isClosed, !remoteConnection.isGivenUp {
+        // A service that is given up is asked for by a person's load, not by a page being attached (a new tab, a move to a window). A
+        // hidden or parked page that waits for its activation (`recovery`) is loaded when it is shown, not made a browser by a move
+        // between windows or onto the shelf.
+        if window != nil, remote == nil, !awaitsPopup, !closing, !isClosed, !remoteConnection.isGivenUp, recovery != .waitingForActivation {
             do {
                 try materializeRemote()
             } catch {
@@ -124,14 +126,29 @@ extension ChromiumPage {
     /// The service ended with this page's browser in it (a crash, a kill, its own exit): the browser, and the native history with
     /// it, are gone. A page that was being closed is closed (the dropped connection means every browser closed); any other is left
     /// as after a renderer crash, which the tab handles by loading it again (`recoverAfterLoss`).
-    func remoteServiceEnded(_ browser: ChromiumRemoteBrowser) {
+    ///
+    /// `preview`: the browser's frame layer with its last frame, when the page asked to keep it (`keepsPreviewWhenServiceEnds`). A page
+    /// waits for its replacement with that frame on screen (a shown one with its tab loading); the layer is the replacement browser's own as
+    /// soon as it is made (`attachRemoteFrameLayer`), so its first frame is the first thing that changes it.
+    func remoteServiceEnded(_ browser: ChromiumRemoteBrowser, preview: CALayer? = nil) {
         guard remote === browser else { return }
         if closing {
             didClose()
             return
         }
+        if let preview {
+            // A browser that died before its first frame leaves the older frame in place (`retainedPreview`).
+            dropRetainedPreview()
+            retainedPreview = preview
+        }
+        let before = pendingLoad
         forgetRemoteBrowser()
         recoverAfterLoss()
+        // The tab did not load the page again (it died twice within 5 s: "leaving the tab alone"), and the page is not waiting to be
+        // shown either: nothing is coming to replace the frame.
+        if pendingLoad == before, recovery != .waitingForActivation {
+            dropRetainedPreview()
+        }
     }
 
     /// `browser.closed`: asked for by this page (its close), or not. A browser that was never made (the service refused the create, or
@@ -161,13 +178,16 @@ extension ChromiumPage {
 
     /// The page told its tab that its content is gone (`didTerminate`), and the tab reloads the address it committed: at once for a
     /// page that is shown (the load waits in order for the relaunched service's hello, which the connection asked for as the service
-    /// ended), and not yet for a hidden one: that reload is held (`holdsForRecovery`). In a crash loop the reload is held as well, for
+    /// ended), and not yet for a hidden or parked one (the person does not see it: twenty recently visited tabs do not start twenty
+    /// pages): that reload is held (`holdsForRecovery`). In a crash loop the reload is held as well, for
     /// shown and hidden pages alike: the tab is blank and not loading (an error document needs a service) until a person acts.
     private func recoverAfterLoss() {
         if remoteConnection.isGivenUp {
             recovery = .waitingForPerson
+            dropRetainedPreview()
         } else {
-            recovery = remoteVisibility().hidden ? .waitingForActivation : .none
+            let visibility = remoteVisibility()
+            recovery = visibility.hidden || visibility.parked ? .waitingForActivation : .none
         }
         heldReload = nil
         isRecovering = true
@@ -193,7 +213,8 @@ extension ChromiumPage {
             return false
         }
         if remoteConnection.isGivenUp {
-            // The address stays the one a person's reload loads.
+            // The address stays the one a person's reload loads, and the crash state shows no frame of the page that is not coming.
+            dropRetainedPreview()
             requestedURL = request.url
             heldReload = nil
             return true
@@ -210,8 +231,9 @@ extension ChromiumPage {
         return false
     }
 
-    /// The page was shown (a window, an unhide: `updateRemoteVisibility`): a hidden page that waited loads what it held. The check
-    /// is made at the end of the turn, like the visibility message, because a tab switch hides and shows within one.
+    /// The page was shown (a window, an unhide, a return from the shelf: `updateRemoteVisibility`): a hidden or parked page that waited
+    /// loads what it held. The check is made at the end of the turn, like the visibility message, because a tab switch hides and shows
+    /// within one.
     func resumeRecoveryWhenShown() {
         guard recovery == .waitingForActivation, !recoveryCheckPending, !isClosed else { return }
         recoveryCheckPending = true
@@ -222,12 +244,16 @@ extension ChromiumPage {
 
     private func resumeRecovery() {
         recoveryCheckPending = false
-        guard recovery == .waitingForActivation, !isClosed, !closing, !remoteVisibility().hidden else { return }
+        let visibility = remoteVisibility()
+        guard recovery == .waitingForActivation, !isClosed, !closing, !visibility.hidden, !visibility.parked else { return }
         let request = heldReload
         recovery = .none
         heldReload = nil
         if let request {
             load(request)
+        } else {
+            // The tab held no reload (it died twice within 5 s, or has no address): nothing is coming to replace the kept frame.
+            dropRetainedPreview()
         }
     }
 

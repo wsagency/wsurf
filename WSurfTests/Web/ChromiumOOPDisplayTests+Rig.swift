@@ -89,6 +89,8 @@ extension ChromiumOOPDisplayTests {
         let scale = rig.window.backingScaleFactor
         for size in [CGSize(width: 900, height: 640), CGSize(width: 1300, height: 860)] {
             rig.native.setFrameSize(size)
+            #expect(rig.remote.pageLayer?.frame.size == size, "the frame layer follows the view at once")
+            await settle()
             let last = rig.recorder.sent(CefRemote.Op.resize).last
             #expect(last?.double(CefRemote.Key.width) == Double(size.width))
             #expect(last?.double(CefRemote.Key.height) == Double(size.height))
@@ -96,14 +98,71 @@ extension ChromiumOOPDisplayTests {
             if rig.window.screen != nil {
                 #expect(last?.double(CefRemote.Key.screenWidth) ?? 0 >= 1, "the screen goes with it")
             }
-            #expect(rig.remote.pageLayer?.frame.size == size, "the frame layer follows the view")
         }
         #expect(rig.recorder.sent(CefRemote.Op.resize).count == 2)
         rig.native.setFrameSize(CGSize(width: 1300, height: 860))
         rig.native.viewDidChangeBackingProperties()
         rig.native.updateRemoteGeometry()
+        await settle()
         #expect(rig.recorder.sent(CefRemote.Op.resize).count == 2, "a size and scale the service already has are not sent again")
         #expect(rig.remote.pageLayer?.contentsScale == scale)
+        await rig.end()
+    }
+
+    /// The exit gate's F4: a drag (or a layout pass) changes the size many times in one turn; the service is told once, with the last.
+    @Test func manySizeChangesInOneTurnSendExactlyOneResizeWithTheFinalSize() async {
+        let rig = await makeRig()
+        let final = CGSize(width: 1111, height: 777)
+        let sentBefore = rig.remote.resizesSent
+        for step in 0..<120 {
+            rig.native.setFrameSize(CGSize(width: 900 + CGFloat(step), height: 640))
+        }
+        rig.native.setFrameSize(final)
+        #expect(rig.recorder.sent(CefRemote.Op.resize).isEmpty, "nothing is sent inside the turn")
+        #expect(rig.remote.pageLayer?.frame.size == final, "the layer is the view's size, whatever was sent")
+        await settle()
+        let messages = rig.recorder.sent(CefRemote.Op.resize)
+        #expect(messages.count == 1, "one message for the turn, not one for each size: \(messages.count)")
+        #expect(messages.first?.double(CefRemote.Key.width) == Double(final.width))
+        #expect(messages.first?.double(CefRemote.Key.height) == Double(final.height))
+        #expect(rig.remote.resizesSent - sentBefore == 1)
+        await rig.end()
+    }
+
+    /// The exit gate's second F4 point: a browser that does not exist yet holds what is sent to it. Resizes while it is made are one.
+    @Test func resizesSentBeforeTheBrowserExistsAreHeldAsOneWithTheLastSize() {
+        let context = BrowserProfileContext(profile: .privateBrowsing())
+        let native = ChromiumPage(context: context)
+        let connection = ChromiumRemote(
+            serviceName: ChromiumRemoteClientTests.noSuchService, sink: ChromiumFrameSink(),
+            root: { FileManager.default.temporaryDirectory }, latch: ChromiumOOP.Latch(), isEnabled: { true })
+        let remote = ChromiumRemoteBrowser(page: native, connection: connection)
+        let recorder = Recorder()
+        remote.outgoing = { message in
+            recorder.messages.append(message)
+            return true
+        }
+        for width in 1...200 {
+            remote.send(CefRemote.Op.resize) {
+                $0.set(CefRemote.Key.width, Double(width))
+                $0.set(CefRemote.Key.height, 600.0)
+            }
+            remote.send(CefRemote.Op.mute) { $0.set(CefRemote.Key.flag, width.isMultiple(of: 2)) }
+        }
+        remote.markCreated()
+        let resizes = recorder.sent(CefRemote.Op.resize)
+        #expect(resizes.count == 1 && resizes.first?.double(CefRemote.Key.width) == 200, "one resize, the last: \(resizes.count)")
+        #expect(recorder.sent(CefRemote.Op.mute).count == 200, "the other messages are all kept, in order")
+        connection.disconnect()
+    }
+
+    @Test func aTurnThatEndsAtTheSizeItBeganAtSendsNoResize() async {
+        let rig = await makeRig()
+        let size = rig.native.bounds.size
+        rig.native.setFrameSize(CGSize(width: size.width + 40, height: size.height + 40))
+        rig.native.setFrameSize(size)
+        await settle()
+        #expect(rig.recorder.sent(CefRemote.Op.resize).isEmpty)
         await rig.end()
     }
 
@@ -203,5 +262,26 @@ extension ChromiumOOPDisplayTests {
         #expect(layer.contents == nil)
         #expect(rig.sink.framesDropped == 1)
         await rig.end()
+    }
+
+    // MARK: Memory that no process footprint shows (exit gate F5)
+
+    @Test func aHiddenPagesPreviewAndBrowserAreCountedWhereNoProcessFootprintSeesThem() async throws {
+        let rig = await makeRig()
+        ChromiumRuntime.shared.register(rig.native)
+        let frame = try surface()
+        rig.sink.framesQueue.sync { rig.sink.apply(surface: frame, browser: rig.remote.id, popup: false) }
+        let shown = ChromiumRuntime.shared.remoteMemory
+        #expect(shown.previews >= 1 && shown.browsers >= 1)
+        #expect(rig.native.previewBytes == frame.allocationSize && frame.allocationSize > 0)
+        let hiddenBefore = shown.hiddenBrowsers
+        rig.window.contentView = nil
+        await settle()
+        let hidden = ChromiumRuntime.shared.remoteMemory
+        #expect(hidden.hiddenBrowsers >= hiddenBefore + 1, "the hidden browser is counted")
+        #expect(hidden.previewBytes >= frame.allocationSize, "and its preview stays in the count: hiding frees nothing in WSurf")
+        #expect(rig.native.previewBytes == frame.allocationSize)
+        await rig.end()
+        #expect(!ChromiumRuntime.shared.livePages.contains { $0 === rig.native }, "a closed page leaves the count")
     }
 }

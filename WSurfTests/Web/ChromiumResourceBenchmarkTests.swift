@@ -31,9 +31,9 @@ struct ChromiumResourceBenchmarkTests {
             @MainActor func record(_ label: String) {
                 let stage = ResourceProbe.stage(label)
                 print(String(
-                    format: "%@ case=R8-lifecycle step=%@ hostMB=%.1f hostWakeups=%llu helperCount=%d helperMB=%.1f webKitWebContent=%d totalMB=%.1f procs=%d",
+                    format: "%@ case=R8-lifecycle step=%@ hostMB=%.1f hostWakeups=%llu helperCount=%d helperMB=%.1f webKitWebContent=%d totalMB=%.1f procs=%d previewMB=%.1f hiddenBrowsers=%d",
                     Self.prefix, label, stage.host, stage.hostWakeups, stage.otherCount, stage.other, stage.webContentCount,
-                    stage.total, stage.count
+                    stage.total, stage.count, stage.previewMB, stage.hiddenBrowsers
                 ))
             }
             record("before-cef")

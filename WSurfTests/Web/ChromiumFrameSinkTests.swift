@@ -264,4 +264,35 @@ struct ChromiumFrameSinkTests {
         #expect(second.superlayer == nil)
         #expect(other.sublayers?.count == 1)
     }
+
+    /// A page that waits for its replacement keeps the layer and its last frame (the pop-up goes); a browser registered later with the
+    /// same layer shows in it.
+    @Test
+    func unregisteringWithThePageLayerKeptLeavesItsFrameAndTheNextBrowserTakesTheLayerOver() throws {
+        let sink = ChromiumFrameSink()
+        let host = CALayer()
+        let page = Self.makePage()
+        host.addSublayer(page)
+        let first = try Self.makeSurface()
+        sink.register(browser: browser, pageLayer: page)
+        let popup = try #require(sink.popupLayer(for: browser))
+        Self.onFramesQueue(sink) { sink.apply(surface: first, browser: browser, popup: false) }
+        #expect(sink.previewBytes(for: browser) == first.allocationSize && first.allocationSize > 0)
+
+        sink.unregister(browser: browser, keepingPageLayer: true)
+        #expect(page.superlayer === host && (page.contents as AnyObject?) === first, "the page layer keeps its frame")
+        #expect(popup.superlayer == nil, "the pop-up layer goes")
+        #expect(!sink.isRegistered(browser: browser))
+        let late = try Self.makeSurface()
+        Self.onFramesQueue(sink) { sink.apply(surface: late, browser: browser, popup: false) }
+        #expect((page.contents as AnyObject?) === first && sink.framesDropped == 1, "a frame of the old browser is dropped")
+
+        sink.register(browser: 8, pageLayer: page)
+        let next = try Self.makeSurface()
+        Self.onFramesQueue(sink) { sink.apply(surface: next, browser: 8, popup: false) }
+        #expect((page.contents as AnyObject?) === next, "the next browser's first frame replaces it")
+
+        sink.unregister(browser: 8)
+        #expect(page.superlayer == nil && page.contents == nil, "the default is as before: layer and frame go")
+    }
 }

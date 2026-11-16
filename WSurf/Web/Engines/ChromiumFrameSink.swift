@@ -67,6 +67,15 @@ nonisolated final class ChromiumFrameSink: @unchecked Sendable {
         state.withLock { $0.entries[browser] != nil }
     }
 
+    /// The size in bytes of the surface the browser's page layer shows (read under the lock the frames queue writes it under): the
+    /// preview a hidden page keeps, which is in no process's footprint. 0 when there is none.
+    func previewBytes(for browser: Browser) -> Int {
+        state.withLockUnchecked { state in
+            guard let contents = state.entries[browser]?.page.contents, CFGetTypeID(contents as AnyObject) == IOSurfaceGetTypeID() else { return 0 }
+            return IOSurfaceGetAllocSize(unsafeBitCast(contents as AnyObject, to: IOSurfaceRef.self))
+        }
+    }
+
     /// The browser's popup layer, for tests and for the page's layout code.
     func popupLayer(for browser: Browser) -> CALayer? {
         state.withLockUnchecked { $0.entries[browser]?.popup }
@@ -93,10 +102,12 @@ nonisolated final class ChromiumFrameSink: @unchecked Sendable {
     }
 
     /// Removes the browser's page and popup layers from the tree and drops their contents. Frames that arrive afterwards are dropped.
+    /// With `keepingPageLayer` the page layer stays in the tree with its contents (the last frame, shown until the page's next
+    /// browser registers it again); only the pop-up layer goes.
     @MainActor
-    func unregister(browser: Browser) {
+    func unregister(browser: Browser, keepingPageLayer: Bool = false) {
         guard let entry = state.withLockUnchecked({ $0.entries.removeValue(forKey: browser) }) else { return }
-        Self.detach(entry)
+        Self.detach(entry, keepingPage: keepingPageLayer)
     }
 
     @MainActor

@@ -136,22 +136,44 @@ enum PerfProbe {
         return unsafeBitCast(symbol, to: Responsible.self)
     }()
 
-    /// This host, its children (CEF helpers) and the WebKit XPC processes it is responsible for.
+    /// This host, its children (CEF helpers), the WebKit XPC processes it is responsible for and, out of process, the Chromium
+    /// service with everything below it (its helpers and renderers). The service is launched by launchd, so it is nobody's child; it is
+    /// found by its path under this host's `Contents/XPCServices`. Without it a hidden Chromium renderer (about 49 MB a tab) is in no
+    /// total (D4 exit gate, F5).
     static func family() -> [(pid: pid_t, name: String)] {
         let me = getpid()
+        let services = Bundle.main.bundlePath + "/Contents/XPCServices/"
         var all = [pid_t](repeating: 0, count: 8_192)
         let bytes = proc_listallpids(&all, Int32(all.count * MemoryLayout<pid_t>.size))
         let count = max(0, Int(bytes)) / MemoryLayout<pid_t>.size
         var result: [(pid: pid_t, name: String)] = [(me, "host")]
+        var parents: [pid_t: pid_t] = [:]
+        var serviceTree = Set<pid_t>()
         for pid in all.prefix(count) where pid > 0 && pid != me {
             var info = proc_bsdinfo()
             guard proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, Int32(MemoryLayout<proc_bsdinfo>.size)) > 0 else { continue }
+            parents[pid] = pid_t(info.pbi_ppid)
             let path = path(of: pid)
             let name = (path as NSString).lastPathComponent
             if info.pbi_ppid == UInt32(me) {
                 result.append((pid, name))
+            } else if path.hasPrefix(services) {
+                result.append((pid, name))
+                serviceTree.insert(pid)
             } else if path.contains("WebKit"), let responsible, responsible(pid) == me {
                 result.append((pid, name))
+            }
+        }
+        // Whatever is below the service and not under its path (a helper started from elsewhere), by parent, until nothing more joins.
+        var grew = true
+        while grew {
+            grew = false
+            for (pid, parent) in parents where serviceTree.contains(parent) && !serviceTree.contains(pid) {
+                serviceTree.insert(pid)
+                grew = true
+                if !result.contains(where: { $0.pid == pid }) {
+                    result.append((pid, (path(of: pid) as NSString).lastPathComponent))
+                }
             }
         }
         return result

@@ -79,6 +79,7 @@ final class RemoteBrowser {
         presenter.hidden = message.bool(CefRemote.Key.hidden)
         ServiceCounters.browsers.withLock { $0 += 1 }
         box.browser = self
+        presenter.repaint = { [weak self] in self?.requestFrame() }
     }
 
     deinit {

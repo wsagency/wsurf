@@ -67,6 +67,10 @@ final class ChromiumRuntime {
         pages.allObjects.contains { !$0.isClosed }
     }
 
+    var livePages: [ChromiumPage] {
+        pages.allObjects.filter { !$0.isClosed }
+    }
+
     /// The Chromium profile of a regular WSurf profile: its cookies, site storage, cache and Chromium's own preferences,
     /// kept across launches. A direct child of the root, which CEF requires of a disk profile: it makes any other path an
     /// in-memory profile that is gone at quit.
