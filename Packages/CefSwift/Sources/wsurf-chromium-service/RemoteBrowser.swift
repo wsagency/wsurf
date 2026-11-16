@@ -118,6 +118,9 @@ final class RemoteBrowser {
         if debug == CefRemote.DebugCreate.cpuPaint {
             info.shared_texture_enabled = 0
         }
+        if debug == CefRemote.DebugCreate.smallSourceCache {
+            presenter.sourceTextureLimit = 1
+        }
         #endif
         info.bounds = cef_rect_t(x: 0, y: 0, width: Int32(sizeDIP.width.rounded()), height: Int32(sizeDIP.height.rounded()))
         info.runtime_style = CEF_RUNTIME_STYLE_ALLOY
