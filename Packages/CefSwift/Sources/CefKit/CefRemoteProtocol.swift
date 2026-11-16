@@ -145,6 +145,11 @@ public enum CefRemote {
         public static let popupRingSurfaces = "pring"
         public static let ringOverwrites = "overwrites"
         public static let colourTagged = "cstag"
+        /// `debug.stats` with a ``browser``, D4-9: how many different surfaces of the ring were ever written while in use (the
+        /// least recently sent one is chosen, so a ring of 3 under load overwrites all 3; the first in allocation order never
+        /// touched the third), and how many `browser.visibility` messages the browser received.
+        public static let overwrittenSlots = "owslots"
+        public static let visibilityMessages = "visn"
         public static let colourUntagged = "csnone"
         /// `nav.before` and `nav.external` (D4-8): the navigation's transition type (CEF's `cef_transition_type_t`, as an integer) and
         /// the address of the page that started it (the request's referrer). `nav.before` also carries ``method`` and

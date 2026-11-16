@@ -278,14 +278,19 @@ final class RemoteClientHandlers: @unchecked Sendable {
         render.pointee.get_screen_info = { handlerSelf, browser, info in
             Native.release(browser.map(UnsafeMutableRawPointer.init))
             guard let info, let owner = RemoteClientHandlers.browser(handlerSelf) else { return 0 }
-            let (scale, size) = MainActor.assumeIsolated { (owner.scale, owner.sizeDIP) }
+            let (scale, size, screen) = MainActor.assumeIsolated { (owner.scale, owner.sizeDIP, owner.screenDIP) }
             info.pointee.device_scale_factor = Float(scale)
             info.pointee.depth = 24
             info.pointee.depth_per_component = 8
             info.pointee.is_monochrome = 0
             let rect = cef_rect_t(x: 0, y: 0, width: Int32(max(1, size.width.rounded())), height: Int32(max(1, size.height.rounded())))
-            info.pointee.rect = rect
-            info.pointee.available_rect = rect
+            // The screen the page is on once WSurf has said (the origin is the screen's own, so a window on a second display shows the
+            // same size); before that the view stands for it.
+            let screenRect = screen.map {
+                cef_rect_t(x: Int32($0.minX.rounded()), y: Int32($0.minY.rounded()), width: Int32($0.width.rounded()), height: Int32($0.height.rounded()))
+            } ?? rect
+            info.pointee.rect = screenRect
+            info.pointee.available_rect = screenRect
             return 1
         }
         render.pointee.on_popup_show = { handlerSelf, browser, show in

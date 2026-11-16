@@ -31,6 +31,10 @@ extension ChromiumPage {
                 owner?.onNavigationFailed?(navigation, error)
             }
         }
+        // The window brings a scale and a screen, and the page may be shown or hidden now.
+        observeScreenChanges()
+        updateRemoteGeometry()
+        updateRemoteVisibility()
         for waiter in attachmentWaiters {
             waiter.resume()
         }
@@ -56,10 +60,16 @@ extension ChromiumPage {
         ChromiumRuntime.shared.register(self)
         let size = bounds.size
         let scale = window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2
+        attachRemoteFrameLayer(to: browser)
+        let hidden = browser.sentHidden
+        // A browser made again for a page that is already in its window (after the service ended) is not told by an attach: parked
+        // or hidden, and the screen it is on, reach the service as soon as the browser exists.
+        observeScreenChanges()
+        updateRemoteVisibility()
         preparation = Task { [weak self, weak browser] in
             guard let self, let browser else { throw ChromiumError.closed }
             do {
-                try await browser.create(context: context, size: size, scale: scale)
+                try await browser.create(context: context, size: size, scale: scale, hidden: hidden)
                 guard remote === browser, !closing, !isClosed else { throw ChromiumError.closed }
                 try await devTools.prepare(marksNewDocuments: false)
                 pageZoom = zoom
@@ -82,6 +92,7 @@ extension ChromiumPage {
     /// and so do the scripts and message handlers WSurf installed (they were registered once, at the tab's setup, and live only in
     /// the DevTools object): the new browser gets them from its own preparation, as the first did.
     private func forgetRemoteBrowser(cancelLoad: Bool = true) {
+        remote?.detachFrameLayer()
         remote = nil
         if cancelLoad {
             pendingLoad?.cancel()

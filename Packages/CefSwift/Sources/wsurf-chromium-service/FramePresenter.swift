@@ -36,6 +36,8 @@ final class FramePresenter {
         let width: Int
         let height: Int
         let format: OSType
+        /// When this copy was last sent (`sendSequence`); 0 while it never was.
+        var lastSent: UInt64 = 0
     }
 
     private let browser: Int64
@@ -45,6 +47,8 @@ final class FramePresenter {
     private var shown: IOSurfaceRef?
     private var popupShown: IOSurfaceRef?
     private var popupVisible = false
+    /// Counts the frames sent: a copy's `lastSent`, so that a ring with every copy in use writes the least recently sent one.
+    private var sendSequence: UInt64 = 0
     private var popupRect = CGRect.zero
 
     /// The page is not shown to the person but still visible to itself: frames are dropped (`RemoteBrowser.setVisibility`).
@@ -67,6 +71,8 @@ final class FramePresenter {
     /// Accelerated frames whose CEF surface carried a colour-space tag (copied to the ring surface) and that carried none.
     private(set) var taggedSources = 0
     private(set) var untaggedSources = 0
+    /// The ring surfaces that were overwritten while in use, by identity (`debug.stats`: which copies the fallback reaches).
+    private var overwrittenSurfaces = Set<ObjectIdentifier>()
     private var loggedUnknownFormat = false
 
     init(browser: Int64) {
@@ -80,6 +86,7 @@ final class FramePresenter {
     func freeRing() {
         ring.removeAll()
         popupRing.removeAll()
+        overwrittenSurfaces.removeAll()
         shown = nil
         popupShown = nil
     }
@@ -94,6 +101,7 @@ final class FramePresenter {
         message.set(CefRemote.Key.ringSurfaces, ringSurfaces)
         message.set(CefRemote.Key.popupRingSurfaces, popupRing.count)
         message.set(CefRemote.Key.ringOverwrites, ringOverwrites)
+        message.set(CefRemote.Key.overwrittenSlots, overwrittenSurfaces.count)
         message.set(CefRemote.Key.colourTagged, taggedSources)
         message.set(CefRemote.Key.colourUntagged, untaggedSources)
         message.set(CefRemote.Key.framesSent, framesSent)
@@ -180,6 +188,12 @@ final class FramePresenter {
         case .popup: popupShown = surface
         }
         framesSent += 1
+        sendSequence += 1
+        if let index = ring.firstIndex(where: { $0.surface === surface }) {
+            ring[index].lastSent = sendSequence
+        } else if let index = popupRing.firstIndex(where: { $0.surface === surface }) {
+            popupRing[index].lastSent = sendSequence
+        }
         ServiceHost.shared.sendFrame(browser: browser, surface: surface, popup: element == .popup, entry: entry)
     }
 
@@ -207,17 +221,21 @@ final class FramePresenter {
         var slots = element == .view ? ring : popupRing
         let current = element == .view ? shown : popupShown
         slots.removeAll { ($0.width != width || $0.height != height || $0.format != format) && $0.surface !== current }
-        var slot = slots.first { $0.surface !== current && !IOSurfaceIsInUse($0.surface) }
+        var slot = slots.filter { $0.surface !== current && !IOSurfaceIsInUse($0.surface) }.min { $0.lastSent < $1.lastSent }
         if slot == nil, slots.count < Self.ringSize, let made = Self.makeSlot(device: device, width: width, height: height, format: format) {
             slots.append(made)
             slot = made
         }
         if slot == nil {
-            // Every copy is still in use (or the ring cannot grow): the first one in allocation order (not send order) that is
-            // not the one last sent is written again, possibly while the render server reads it. Dropping the frame instead
+            // Every copy is still in use (or the ring cannot grow): the LEAST RECENTLY SENT one that is not the one last sent is
+            // written again, possibly while the render server reads it: the one the render server is most likely done with. (The
+            // first in allocation order alternated between two copies and never touched the third.) Dropping the frame instead
             // could leave a still page stale. Counted (`ringOverwrites`).
-            slot = slots.first { $0.surface !== current }
-            if slot != nil { ringOverwrites += 1 }
+            slot = slots.filter { $0.surface !== current }.min { $0.lastSent < $1.lastSent }
+            if let slot {
+                ringOverwrites += 1
+                overwrittenSurfaces.insert(ObjectIdentifier(slot.surface))
+            }
         }
         if element == .view {
             ring = slots

@@ -261,6 +261,28 @@ struct ChromiumServiceFramesTests {
         #expect(rebuilt >= 1 && rebuilt <= CefRemote.frameRingSize, "rebuilt ring \(rebuilt)")
     }
 
+    /// D4-9 carry (D2): with every copy still in use (this client keeps the surfaces it received, as the measured 10 overwrites in
+    /// 13 frames show), the copy written again is the LEAST RECENTLY SENT one. The first in allocation order alternated between two
+    /// copies and never touched the third: after enough overwrites a ring of three has had all three written.
+    @Test(.enabled(if: ChromiumServiceBundle.isPresent))
+    func aRingWithEveryCopyInUseOverwritesTheLeastRecentlySentOneSoAllThreeAreReached() async throws {
+        let rig = try await Self.rig()
+        defer { rig.finish() }
+        try rig.attachFrames()
+        try Self.open(rig, 1, "/animated")
+        let deadline = Date().addingTimeInterval(30)
+        var stats = try Self.stats(rig.client, 1)
+        while stats.int(CefRemote.Key.ringOverwrites) < 9, Date() < deadline {
+            usleep(200_000)
+            stats = try Self.stats(rig.client, 1)
+        }
+        let overwrites = stats.int(CefRemote.Key.ringOverwrites)
+        print("ChromiumServiceFramesTests ring fallback: \(overwrites) overwrites in \(stats.int(CefRemote.Key.framesSent)) frames, slots reached \(stats.int(CefRemote.Key.overwrittenSlots))")
+        #expect(overwrites >= 9, "the animated page did not fill the ring and overwrite: \(overwrites)")
+        #expect(stats.int(CefRemote.Key.ringSurfaces) == CefRemote.frameRingSize)
+        #expect(stats.int(CefRemote.Key.overwrittenSlots) == CefRemote.frameRingSize, "the fallback reached \(stats.int(CefRemote.Key.overwrittenSlots)) of the ring's copies")
+    }
+
     @Test(.enabled(if: ChromiumServiceBundle.isPresent))
     func aStillPageShownAgainSendsAFrameAtOnceBecauseTheServiceInvalidatesIt() async throws {
         let rig = try await Self.rig()
