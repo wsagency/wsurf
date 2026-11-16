@@ -26,10 +26,10 @@ extension ChromiumOOPRecoveryTests {
             try? await Task.sleep(for: .seconds(1))
             return connection.isGivenUp && connection.helloCount == hellos
         }
-        /// A person's action gave the loop up and asked for the service (`userReload`, then a hello). A connection with no service
-        /// fails that hello soon after, so the count is read, not the state.
+        /// A person's action gave the loop up (`userReload`) or asked for the service. A connection with no service fails its hello
+        /// soon after (and may be given up again), so either sign counts.
         func loopWasEnded() async -> Bool {
-            await waitUntil(timeout: .seconds(10)) { connection.helloCount > hellos }
+            await waitUntil(timeout: .seconds(10)) { !connection.isGivenUp || connection.helloCount > hellos }
         }
         /// The tab has its Chromium page: its site is set to Chromium, so what the test is about is the service.
         func hasChromiumPage(_ tab: BrowserTab) async -> Bool {
