@@ -310,7 +310,9 @@ struct ChromiumServiceFramesTests {
             sized = Self.frames(rig, 1).dropFirst(before).first { frame in
                 Self.surface(of: frame).map { IOSurfaceGetWidth($0) == 1200 && IOSurfaceGetHeight($0) == 800 } == true
             }
-            if sized == nil { usleep(50_000) }
+            if sized == nil {
+                usleep(50_000)
+            }
         }
         let frame = try #require(sized, "no 1200 x 800 frame after a 600 x 400 resize at scale 2")
         #expect(Self.surface(of: frame).flatMap(Self.centre(of:))?.matches(.red) == true)
