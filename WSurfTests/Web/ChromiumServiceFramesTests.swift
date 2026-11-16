@@ -388,7 +388,7 @@ struct ChromiumServiceFramesTests {
         var most: Int64 = 0
         var sent = Self.frames(rig, 1).count
         let deadline = Date().addingTimeInterval(15)
-        while (sent < 60 || most == 0), Date() < deadline {
+        while sent < 60 || most == 0, Date() < deadline {
             most = try max(most, Self.sourceTextures(rig, 1))
             usleep(50_000)
             sent = Self.frames(rig, 1).count
@@ -426,7 +426,9 @@ struct ChromiumServiceFramesTests {
             }
             most = try max(most, Self.sourceTextures(rig, 1))
             stale = try max(stale, Self.staleSourceTextures(rig, 1))
-            if final == nil { usleep(50_000) }
+            if final == nil {
+                usleep(50_000)
+            }
         }
         _ = try #require(final, "no 640 x 480 frame after the storm")
         // The page keeps painting at the final size: the cache holds that size's surfaces only, within the limit.
