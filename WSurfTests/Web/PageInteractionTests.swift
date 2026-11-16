@@ -946,6 +946,7 @@ extension PageInteractionTests {
             try #require(await waitUntil { view.url?.path == "/pushed" }, "engine \(engine): Forward never landed")
             #expect(await waitUntil(timeout: .seconds(5)) { !view.isLoading }, "engine \(engine): isLoading stuck after Forward")
 
+            try #require(await waitUntil { !view.backForwardList.backList.isEmpty }, "engine \(engine): the back list stayed empty after Forward")
             let start = try #require(view.backForwardList.backList.first)
             view.go(to: start)
             try #require(await waitUntil { view.url?.path == "/" }, "engine \(engine): the history jump never landed")
@@ -975,6 +976,7 @@ extension PageInteractionTests {
             view.goForward()
             try #require(await waitUntil { view.url?.fragment == "x" }, "engine \(engine): Forward never landed")
             #expect(await settles(), "engine \(engine): isLoading stuck after Forward to a fragment-only entry")
+            try #require(await waitUntil { !view.backForwardList.backList.isEmpty }, "engine \(engine): the back list stayed empty after Forward")
             let start = try #require(view.backForwardList.backList.first)
             view.go(to: start)
             try #require(await waitUntil { view.url?.fragment == nil }, "engine \(engine): the jump never landed")
