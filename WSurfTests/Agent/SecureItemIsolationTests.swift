@@ -26,6 +26,8 @@ struct SecureItemIsolationTests {
         "passwordswindow",
         // So do the menu bar item and its popover (`PasswordsStatusItem`, `PasswordsStatusBar`, `PasswordsMenuView`, `PasswordsMenuList`, …).
         "passwordsstatus", "passwordsmenu",
+        // The 30 s after one confirmation in which the Passwords UI copies without asking (`CopyGrace`): nothing of the agent side may name it.
+        "copygrace",
     ]
 
     private var repositoryRoot: URL {

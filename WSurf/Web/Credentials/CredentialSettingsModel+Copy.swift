@@ -32,9 +32,9 @@ extension CredentialSettingsModel {
         // version yields no code, so it asks for none.
         switch (part, source) {
         case (.password, .stored):
-            bound = try await verifyOwner(String(localized: "copy a saved password"))
+            bound = try await verifyOwnerForCopy(String(localized: "copy a saved password"))
         case (.code, .stored):
-            bound = try await verifyOwner(String(localized: "copy a verification code"))
+            bound = try await verifyOwnerForCopy(String(localized: "copy a verification code"))
         case (.password, .draft), (.code, .draft), (.password, .version):
             try await verifyEditor()
         default:

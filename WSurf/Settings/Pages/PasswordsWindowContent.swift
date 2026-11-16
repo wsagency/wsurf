@@ -17,7 +17,7 @@ struct PasswordsWindowContent: View {
         ScrollViewReader { proxy in
             ScrollView {
                 VStack(alignment: .leading, spacing: SettingsMetrics.sectionSpacing) {
-                    CredentialSettings(context: context, highlight: nil, showsHeader: false) { url in
+                    CredentialSettings(context: context, highlight: nil, showsHeader: false, copyGrace: .shared) { url in
                         openInBrowser { $0.browser.newTab(url: url, activate: true, after: $0.browser.activeTab, byPerson: true) }
                     }
                 }

@@ -29,6 +29,28 @@ extension CredentialSettingsModel {
         return epoch
     }
 
+    /// `verifyOwner` for a copy of a stored password or code from the list, which a recent confirmation covers: when this model has a
+    /// `copyGrace` and the vault is still under the unlock its window began under, nothing is asked. A confirmation that does ask
+    /// begins the window. The one reader of the window: Show, export, health, cards and the editor use `verifyOwner` and ask as before.
+    func verifyOwnerForCopy(_ reason: String) async throws -> UInt64 {
+        try Task.checkCancellation()
+        if let copyGrace, let manager, let open = copyGrace.openEpoch(for: manager) {
+            return open
+        }
+        let epoch = try await verifyOwner(reason)
+        if let copyGrace, let manager {
+            copyGrace.begin(for: manager, epoch: epoch)
+        }
+        return epoch
+    }
+
+    /// A successful unlock of the vault is itself a confirmation (passkey with user verification), so it begins the window too.
+    func beginCopyGraceAfterUnlock() {
+        if let copyGrace, let manager, let epoch = manager.authorizationEpoch {
+            copyGrace.begin(for: manager, epoch: epoch)
+        }
+    }
+
     /// Whether the open editor shows its verification code and lets its password field show what it holds.
     var editorIsVerified: Bool {
         live?.editorIsVerified ?? false

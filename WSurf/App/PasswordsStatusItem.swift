@@ -196,6 +196,51 @@ final class PasswordsStatusItem: NSObject, NSPopoverDelegate {
             NSApp.activate()
             popover.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: .minY)
         }
+        focusSearchWhenReady()
+    }
+
+    // MARK: Search focus
+
+    /// Where the search field is looked for, and how long, after the popover opens or its vault is unlocked: the field exists only
+    /// once the vault is read, which is after the popover appears, and SwiftUI's own `@FocusState` is dropped when it is set on a
+    /// field that is not in its window yet.
+    private(set) var focusTask: Task<Void, Never>?
+    private static let focusAttempts = 40
+    private static let focusInterval: Duration = .milliseconds(25)
+
+    /// Makes the popover's window key and its search field the first responder as soon as the field exists, so typing filters at once.
+    /// Safe to ask again (the view asks when the phase becomes content, e.g. after an unlock): a field already focused is left alone.
+    func focusSearchWhenReady() {
+        focusTask?.cancel()
+        focusTask = Task { [weak self] in
+            for _ in 0..<Self.focusAttempts {
+                guard !Task.isCancelled, let self else { return }
+                if let window = popover?.contentViewController?.view.window, Self.focusSearchField(in: window) { return }
+                try? await Task.sleep(for: Self.focusInterval)
+            }
+        }
+    }
+
+    /// Makes `window` key and its editable text field the first responder. False while the field is not there yet.
+    @discardableResult
+    static func focusSearchField(in window: NSWindow) -> Bool {
+        guard let field = searchField(in: window.contentView) else { return false }
+        if !window.isKeyWindow {
+            window.makeKey()
+        }
+        if field.currentEditor() == nil || window.firstResponder !== field.currentEditor() {
+            window.makeFirstResponder(field)
+        }
+        return field.currentEditor() != nil && window.firstResponder === field.currentEditor()
+    }
+
+    /// The popover's one editable text field.
+    static func searchField(in view: NSView?) -> NSTextField? {
+        guard let view else { return nil }
+        if let field = view as? NSTextField, field.isEditable {
+            return field
+        }
+        return view.subviews.lazy.compactMap { searchField(in: $0) }.first
     }
 
     func closePopover() {
@@ -214,6 +259,8 @@ final class PasswordsStatusItem: NSObject, NSPopoverDelegate {
 
     /// The popover's content is dropped now; the model is closed now, or when the copy in flight ends.
     private func finishClose() {
+        focusTask?.cancel()
+        focusTask = nil
         popover?.contentViewController = nil
         popover = nil
         releaseModelUnlessCopying()
@@ -288,6 +335,7 @@ final class PasswordsStatusItem: NSObject, NSPopoverDelegate {
 
     static func makeSystemModel(for profile: Profile) -> CredentialSettingsModel {
         let model = CredentialSettingsModel(profile: profile)
+        model.copyGrace = .shared
         model.websiteOpener = { url in
             let target = PasswordsWindowContent.linkTarget(in: BrowserApplication.shared, for: profile)
             target.browser.newTab(url: url, activate: true, after: target.browser.activeTab, byPerson: true)

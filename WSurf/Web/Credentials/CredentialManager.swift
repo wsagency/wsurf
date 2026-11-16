@@ -851,6 +851,7 @@ final class CredentialManager {
         VaultFilePreviewFolder.shared.removeAll()
         // A password, code or value copied from this vault leaves the clipboard with the lease, if it is still there.
         SecretClipboard.vaultLocked(profile: profile.id, vault: vaultID)
+        CopyGrace.vaultLocked(vaultID)
         VaultStateChanges.shared.note(profile.id)
         let store = store
         Task { for access in revoked { await store.lock(ifUsing: access) } }

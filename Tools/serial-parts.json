@@ -111,6 +111,7 @@
    "ContactAutofillScriptTests",
    "ContentBlockerTests",
    "ConversationMicrophoneTests",
+   "CopyGraceTests",
    "CredentialAccountSelectionTests",
    "CredentialAutoLockTests",
    "CredentialBulkTrashTests",
