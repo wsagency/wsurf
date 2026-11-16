@@ -254,7 +254,10 @@ final class ChromiumRemoteBrowser: ChromiumRemoteBrowserHandle {
             collapses.interruptAll()
             page?.remoteBrowserClosed(self)
         default:
-            page?.receiveRemote(message)
+            // A late event of a browser the page let go of (its preparation failed, or the service closed it under the page) is not
+            // the page's: ids restart in the page's next DevTools, so a late reply could match a command of the new browser.
+            guard let page, page.remote === self else { return }
+            page.receiveRemote(message)
         }
     }
 
@@ -274,7 +277,7 @@ final class ChromiumRemoteBrowser: ChromiumRemoteBrowserHandle {
     }
 
     func remoteAllowsNavigation(question: CefRemoteMessage) -> Bool {
-        guard !isClosed, let page else { return false }
+        guard !isClosed, let page, page.remote === self else { return false }
         return page.remoteNavigationDecision(question)
     }
 

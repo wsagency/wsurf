@@ -53,7 +53,7 @@ extension ChromiumPage {
         guard !awaitsPopup else {
             throw ChromiumError.unavailable("Chromium cannot open a pop-up window in this build yet.")
         }
-        let browser = ChromiumRemoteBrowser(page: self)
+        let browser = ChromiumRemoteBrowser(page: self, connection: remoteConnection)
         remote = browser
         browserID = Int32(truncatingIfNeeded: browser.id)
         try devTools.attach(remote: browser)
@@ -96,6 +96,8 @@ extension ChromiumPage {
         remote = nil
         if cancelLoad {
             pendingLoad?.cancel()
+            // The cancelled load reports nothing, and nothing else ends this loading when the tab does not reload (it died twice).
+            owner?.isLoading = false
         }
         preparation?.cancel()
         preparation = nil
@@ -118,7 +120,7 @@ extension ChromiumPage {
 
     /// The service ended with this page's browser in it (a crash, a kill, its own exit): the browser, and the native history with
     /// it, are gone. A page that was being closed is closed (the dropped connection means every browser closed); any other is left
-    /// as after a renderer crash, which the tab handles by loading it again (D4-10 makes that immediate).
+    /// as after a renderer crash, which the tab handles by loading it again (`recoverAfterLoss`).
     func remoteServiceEnded(_ browser: ChromiumRemoteBrowser) {
         guard remote === browser else { return }
         if closing {
@@ -126,7 +128,7 @@ extension ChromiumPage {
             return
         }
         forgetRemoteBrowser()
-        didTerminate()
+        recoverAfterLoss()
     }
 
     /// `browser.closed`: asked for by this page (its close), or not. A browser that was never made (the service refused the create, or
@@ -140,7 +142,75 @@ extension ChromiumPage {
         }
         guard browser.isCreated else { return }
         forgetRemoteBrowser()
+        recoverAfterLoss()
+    }
+
+    // MARK: Recovery (D4-10)
+
+    /// What a page that lost its browser waits for before it loads again.
+    enum RemoteRecovery {
+        case none
+        /// Hidden pages come back when they are shown, not before: a service that died with twenty tabs in it does not start twenty.
+        case waitingForActivation
+        /// The service keeps dying (or refused the hello): nothing launches it again until the person reloads (`userReload`).
+        case waitingForPerson
+    }
+
+    /// The page told its tab that its content is gone (`didTerminate`), and the tab reloads the address it committed: at once for a
+    /// page that is shown (the load waits in order for the relaunched service's hello, which the connection asked for as the service
+    /// ended), and not yet for a hidden one: that reload is held (`holdsForRecovery`). In a crash loop it runs and fails, which is the
+    /// crash state the tab shows until the person reloads.
+    private func recoverAfterLoss() {
+        switch remoteConnection.state {
+        case .crashLooping, .failed:
+            recovery = .waitingForPerson
+        default:
+            recovery = remoteVisibility().hidden ? .waitingForActivation : .none
+        }
+        heldReload = nil
+        isRecovering = true
         didTerminate()
+        isRecovering = false
+    }
+
+    /// Whether this load is the tab's automatic reload and has to wait (`recovery`). Any other load of the page ends the wait: a
+    /// person's reload also gives a crash loop up (`ChromiumRemote.userReload`).
+    func holdsForRecovery(_ request: URLRequest) -> Bool {
+        guard recovery != .none else { return false }
+        if isRecovering {
+            // A crash loop lets the tab's own reload run: it fails (the connection refuses the browser) and the tab shows that.
+            guard recovery == .waitingForActivation else { return false }
+            requestedURL = request.url
+            heldReload = request
+            return true
+        }
+        if recovery == .waitingForPerson {
+            remoteConnection.userReload()
+        }
+        recovery = .none
+        heldReload = nil
+        return false
+    }
+
+    /// The page was shown (a window, an unhide: `updateRemoteVisibility`): a hidden page that waited loads what it held. The check
+    /// is made at the end of the turn, like the visibility message, because a tab switch hides and shows within one.
+    func resumeRecoveryWhenShown() {
+        guard recovery == .waitingForActivation, !recoveryCheckPending, !isClosed else { return }
+        recoveryCheckPending = true
+        RunLoop.main.perform(inModes: [.common]) { [weak self] in
+            MainActor.assumeIsolated { self?.resumeRecovery() }
+        }
+    }
+
+    private func resumeRecovery() {
+        recoveryCheckPending = false
+        guard recovery == .waitingForActivation, !isClosed, !closing, !remoteVisibility().hidden else { return }
+        let request = heldReload
+        recovery = .none
+        heldReload = nil
+        if let request {
+            load(request)
+        }
     }
 
     // MARK: Events

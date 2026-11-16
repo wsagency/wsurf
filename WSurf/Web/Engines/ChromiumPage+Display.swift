@@ -115,6 +115,7 @@ extension ChromiumPage {
     /// (or on the shelf) in one turn, and only where it ends up is the service's business. A `was_hidden` flap would make the
     /// renderer hide and redraw.
     func updateRemoteVisibility() {
+        resumeRecoveryWhenShown()
         guard let remote, !isClosed, !remote.visibilityUpdatePending else { return }
         remote.visibilityUpdatePending = true
         RunLoop.main.perform(inModes: [.common]) { [weak self, weak remote] in

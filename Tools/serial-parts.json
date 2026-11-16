@@ -319,6 +319,7 @@
    "ChromiumFrameSinkTests",
    "ChromiumOOPDisplayTests",
    "ChromiumOOPPageTests",
+   "ChromiumOOPRecoveryTests",
    "ChromiumPopupAllowlistTests",
    "ChromiumRemoteClientTests",
    "ChromiumRemoteProtocolTests",

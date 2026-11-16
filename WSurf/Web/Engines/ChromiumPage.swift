@@ -26,6 +26,13 @@ final class ChromiumPage: NSView {
     /// D4: the page's browser when it runs in the Chromium service (`ChromiumPage+Remote`); nil for a page in process. Exactly one of
     /// this and `raw` is set once the page has a browser.
     var remote: ChromiumRemoteBrowser?
+    /// The connection a page in the service runs through (the process's own; a test gives one of its own). D4-10 recovery state:
+    /// see `ChromiumPage+Remote`.
+    var remoteConnection: ChromiumRemote = .shared
+    var recovery = RemoteRecovery.none
+    var heldReload: URLRequest?
+    var isRecovering = false
+    var recoveryCheckPending = false
     var preparation: Task<Void, Error>?
     var pendingLoad: Task<Void, Never>?
     private var closeWaiters: [CheckedContinuation<Void, Never>] = []
@@ -42,7 +49,7 @@ final class ChromiumPage: NSView {
         didSet { client?.documentResponses.reset() }
     }
     var history = PageHistoryList()
-    private var requestedURL: URL?
+    var requestedURL: URL?
     var awaitingNativeNavigation = false
     /// The address of a same-document move the engine reported before it reported the address.
     private var awaitedMoveAddress: URL?
@@ -333,6 +340,7 @@ final class ChromiumPage: NSView {
     @discardableResult
     func load(_ request: URLRequest) -> PageNavigation? {
         guard !isClosed, !closing, let url = request.url else { return nil }
+        guard !holdsForRecovery(request) else { return nil }
         pendingLoad?.cancel()
         mainFrameGeneration &+= 1
         let next = PageNavigation()
