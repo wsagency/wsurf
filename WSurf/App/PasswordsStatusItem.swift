@@ -215,7 +215,9 @@ final class PasswordsStatusItem: NSObject, NSPopoverDelegate {
         focusTask = Task { [weak self] in
             for _ in 0..<Self.focusAttempts {
                 guard !Task.isCancelled, let self else { return }
-                if let window = popover?.contentViewController?.view.window, Self.focusSearchField(in: window) { return }
+                if let window = popover?.contentViewController?.view.window, Self.focusSearchField(in: window) {
+                    return
+                }
                 try? await Task.sleep(for: Self.focusInterval)
             }
         }
