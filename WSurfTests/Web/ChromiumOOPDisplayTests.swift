@@ -132,10 +132,10 @@ struct ChromiumOOPDisplayTests {
                 live.window.setContentSize(size)
                 #expect(await waitUntil(timeout: .seconds(10)) {
                     let stats = await live.stats()
-                    return stats?.double(CefRemote.Key.width) == size.width && stats?.double(CefRemote.Key.height) == size.height
+                    return stats?.double(CefRemote.Key.width) == Double(size.width) && stats?.double(CefRemote.Key.height) == Double(size.height)
                 }, "the service's view rect did not become \(size)")
                 let stats = try #require(await live.stats())
-                #expect(stats.double(CefRemote.Key.scale) == scale, "the service's scale follows the window's backing scale")
+                #expect(stats.double(CefRemote.Key.scale) == Double(scale), "the service's scale follows the window's backing scale")
                 // The frames follow: CEF paints the new size in pixels, and the layer shows such a frame.
                 #expect(await waitUntil(timeout: .seconds(10)) {
                     Self.surface(of: remote.pageLayer).map { IOSurfaceGetWidth($0) == Int(size.width * scale) && IOSurfaceGetHeight($0) == Int(size.height * scale) } == true
@@ -161,9 +161,7 @@ struct ChromiumOOPDisplayTests {
             #expect(await waitUntil(timeout: .seconds(10)) { sink.framesShown > shownBefore && Self.surface(of: remote.pageLayer) != nil }, "the sink counted no frame of this page")
             #expect(sink.isRegistered(browser: live.browser))
             let surface = try #require(Self.surface(of: remote.pageLayer))
-            // The surface's rows are top-first (the first row is the top of the page). How the layer displays them inside the flipped
-            // view is the spike's layout (a plain sublayer at the view's bounds) and is not checked on screen: the render below is
-            // information only.
+            // The surface's rows are top-first (the first row is the top of the page).
             #expect(await waitUntil(timeout: .seconds(10)) {
                 guard let top = Self.surface(of: remote.pageLayer).flatMap({ Self.pixel(of: $0, fractionDown: 0.25) }),
                       let bottom = Self.surface(of: remote.pageLayer).flatMap({ Self.pixel(of: $0, fractionDown: 0.75) })
@@ -177,24 +175,54 @@ struct ChromiumOOPDisplayTests {
             print("ChromiumOOPDisplayTests observed: colour tag on frames shown: tagged \(tagged), untagged \(untagged)")
             #expect(tagged + untagged >= 1)
             #expect((IOSurfaceCopyValue(surface, kIOSurfaceColorSpace) != nil) == (untagged == 0), "the layer's surface does not carry the service's tag")
-            // What the compositor draws, as far as a layer render shows it (information only: a render of a layer outside the window
-            // server is not the screen).
-            if let layer = live.window.contentView?.layer {
-                let width = Int(layer.bounds.width), height = Int(layer.bounds.height)
-                if let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
-                                           space: CGColorSpace(name: CGColorSpace.sRGB)!,
-                                           bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue),
-                   let data = context.data {
-                    layer.render(in: context)
-                    let bytes = data.assumingMemoryBound(to: UInt8.self)
-                    func rgb(_ row: Int) -> String {
-                        let at = bytes + row * width * 4 + (width / 2) * 4
-                        return "\(at[0]),\(at[1]),\(at[2])"
-                    }
-                    print("ChromiumOOPDisplayTests observed: layer render, first bitmap row \(rgb(0)), last row \(rgb(height - 1))")
-                }
-            }
+            // Which way up the layer shows the surface, against what AppKit itself shows: a flipped view of the same size and parent
+            // that draws the same two halves (top red, bottom blue). Both are rendered the same way into a bitmap, so whatever the
+            // render does to a flipped hierarchy (it does not undo the flip as the window server does) happens to both.
+            let reference = UprightReference(frame: live.native.frame)
+            live.page.addSubview(reference)
+            reference.wantsLayer = true
+            reference.display()
+            let shown = Self.halves(of: live.native.layer), expected = Self.halves(of: reference.layer)
+            print("ChromiumOOPDisplayTests observed: layer render (top, bottom): page \(shown?.top ?? "-"), \(shown?.bottom ?? "-");"
+                + " reference view \(expected?.top ?? "-"), \(expected?.bottom ?? "-")")
+            #expect(expected != nil && expected?.top != expected?.bottom, "the reference view did not render")
+            #expect(shown?.top == expected?.top && shown?.bottom == expected?.bottom, "the page layer shows the frame the other way up than a flipped AppKit view shows it")
+            reference.removeFromSuperview()
         }
+    }
+
+    /// A flipped view that draws the `/split` page's two halves: red on top, blue below.
+    private final class UprightReference: NSView {
+        override var isFlipped: Bool {
+            true
+        }
+
+        override func draw(_ dirtyRect: NSRect) {
+            NSColor(srgbRed: 1, green: 0, blue: 0, alpha: 1).setFill()
+            NSRect(x: 0, y: 0, width: bounds.width, height: bounds.height / 2).fill()
+            NSColor(srgbRed: 0, green: 0, blue: 1, alpha: 1).setFill()
+            NSRect(x: 0, y: bounds.height / 2, width: bounds.width, height: bounds.height / 2).fill()
+        }
+    }
+
+    /// The colour (by dominance) a layer renders at a quarter and three quarters of the way down the bitmap rows, or nil.
+    private static func halves(of layer: CALayer?) -> (top: String, bottom: String)? {
+        guard let layer, let space = CGColorSpace(name: CGColorSpace.sRGB) else { return nil }
+        let width = Int(layer.bounds.width), height = Int(layer.bounds.height)
+        guard width > 0, height > 0,
+              let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4, space: space,
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue),
+              let data = context.data
+        else { return nil }
+        layer.render(in: context)
+        let bytes = data.assumingMemoryBound(to: UInt8.self)
+        func name(_ row: Int) -> String {
+            let at = bytes + row * width * 4 + (width / 2) * 4
+            if at[0] > 200, at[2] < 80 { return "red" }
+            if at[2] > 200, at[0] < 80 { return "blue" }
+            return "other(\(at[0]),\(at[1]),\(at[2]))"
+        }
+        return (name(height / 4), name(height * 3 / 4))
     }
 
     // MARK: Exit-gate measurement

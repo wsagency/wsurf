@@ -90,9 +90,9 @@ extension ChromiumOOPDisplayTests {
         for size in [CGSize(width: 900, height: 640), CGSize(width: 1300, height: 860)] {
             rig.native.setFrameSize(size)
             let last = rig.recorder.sent(CefRemote.Op.resize).last
-            #expect(last?.double(CefRemote.Key.width) == size.width)
-            #expect(last?.double(CefRemote.Key.height) == size.height)
-            #expect(last?.double(CefRemote.Key.scale) == scale)
+            #expect(last?.double(CefRemote.Key.width) == Double(size.width))
+            #expect(last?.double(CefRemote.Key.height) == Double(size.height))
+            #expect(last?.double(CefRemote.Key.scale) == Double(scale))
             if rig.window.screen != nil {
                 #expect(last?.double(CefRemote.Key.screenWidth) ?? 0 >= 1, "the screen goes with it")
             }
