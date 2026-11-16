@@ -477,6 +477,48 @@ struct CredentialPickerTests {
         }
     }
 
+    private nonisolated final class MenuCount: @unchecked Sendable {
+        var menus = 0
+    }
+
+    /// A page that cancels `contextmenu` gets no native menu, so the context-menu item cannot be reached there (the right-click is
+    /// seen by the page and by the picker's script, and no menu begins to track); Edit ▸ Pick Credential… is the way in, and fills
+    /// the focused field. `PickCredentialRealMenuTests` shows the same absence of a menu in both engines.
+    @Test(.boundedWebViews) func onAPageThatCancelsTheRightClickNoMenuOpensAndTheMenuCommandStillPicks() async throws {
+        try await withFlow { flow, vaults in
+            let ada = account("ada", password: "dummy-secret-1")
+            try await VaultManagerFixture.save([ada], in: vaults[0])
+            try await flow.load(Self.login)
+            CredentialPicker.answersForTesting[flow.profile.id] = { rows in
+                flow.offered.append(rows)
+                return rows.first { $0.accountID == ada.id && $0.fill == .login }.map { .row($0.id) }
+            }
+            _ = try await flow.page.callAsyncJavaScript(
+                "addEventListener('contextmenu', event => { globalThis.__cancelled = event.defaultPrevented; });", arguments: [:], in: nil,
+                contentWorld: PasswordAutofill.world
+            )
+            let tracking = MenuCount()
+            let observer = NotificationCenter.default.addObserver(forName: NSMenu.didBeginTrackingNotification, object: nil, queue: nil) { _ in
+                tracking.menus += 1
+            }
+            defer { NotificationCenter.default.removeObserver(observer) }
+
+            _ = try await flow.rightClick("bu")
+            try await Task.sleep(for: .milliseconds(700))
+            let cancelled = try await flow.page.callAsyncJavaScript(
+                "return globalThis.__cancelled === true;", arguments: [:], in: nil, contentWorld: PasswordAutofill.world
+            ) as? Bool
+            #expect(cancelled == true, "the page cancelled the right-click")
+            #expect(tracking.menus == 0, "so no native menu opened, and the context-menu item had nothing to be added to")
+            #expect(try await flow.values(["bu", "bp"]) == ["", ""])
+
+            try await flow.focus("bu")
+            CredentialPicker.shared.pickFocused(in: flow.page) { true }
+            #expect(await waitUntil { (try? await flow.values(["bu", "bp"])) == ["ada", "dummy-secret-1"] }, "the menu command fills the focused form")
+            #expect(tracking.menus == 0)
+        }
+    }
+
     /// With focus outside the page (the address bar, the sidebar) a document keeps its last field as its active element: the command
     /// does nothing. A test window in the background is never key, so WebKit really reports the document without focus here, and
     /// `document.hasFocus` is left as it is.

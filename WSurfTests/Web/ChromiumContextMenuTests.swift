@@ -213,9 +213,7 @@ struct ChromiumContextMenuTests {
 
     /// What `offerCredentialPicker` does to a hand-built `cef_menu_model_t` (no engine needed): the callbacks record into a process
     /// global (`PickerMenuProbe`), so these tests run in this serialized suite.
-    private func offerPicker(
-        editable: Bool, offered: Bool, refusal: CredentialPicker.Refusal?, existingItems: Int = 3
-    ) async -> PickerOutcome {
+    private func recordingModel(existingItems: Int) -> cef_menu_model_t {
         PickerMenuProbe.menu = PickerMenuRecord()
         PickerMenuProbe.count = existingItems
         var model = cef_menu_model_t()
@@ -235,6 +233,13 @@ struct ChromiumContextMenuTests {
             PickerMenuProbe.menu.separators.append(Int(index))
             return 1
         }
+        return model
+    }
+
+    private func offerPicker(
+        editable: Bool, offered: Bool, refusal: CredentialPicker.Refusal?, existingItems: Int = 3
+    ) async -> PickerOutcome {
+        var model = recordingModel(existingItems: existingItems)
         let context = BrowserProfileContext(profile: .privateBrowsing())
         let page = ChromiumPage(context: context)
         let client = ChromiumClient(page: page)
@@ -288,6 +293,48 @@ struct ChromiumContextMenuTests {
 
         #expect(result.menu.items.map(\.title) == [String(localized: "Pick Credential…")] && result.menu.disabled.isEmpty)
         #expect(result.remembered && result.picked == 1)
+    }
+
+    /// The engine's own callbacks, with the params of a click that `is_editable` says landed in a field or did not: the decision is
+    /// made from `params.is_editable` inside `on_before_context_menu`, and the item that results runs through
+    /// `on_context_menu_command`. The params are hand-built, so no engine runs. A password field is the same click to the engine
+    /// (`is_editable`, and no more), so the real-engine cases are in `PickCredentialRealMenuTests`.
+    @Test(arguments: [true, false])
+    func theEnginesCallbackOffersItWhereTheEngineSaysTheClickWasEditable(editable: Bool) async {
+        var model = recordingModel(existingItems: 3)
+        PickerMenuProbe.editable = editable
+        var params = cef_context_menu_params_t()
+        params.is_editable = { _ in PickerMenuProbe.editable ? 1 : 0 }
+        params.get_type_flags = { _ in PickerMenuProbe.editable ? CM_TYPEFLAG_EDITABLE : CM_TYPEFLAG_NONE }
+        params.get_media_type = { _ in CM_MEDIATYPE_NONE }
+        let context = BrowserProfileContext(profile: .privateBrowsing())
+        let page = ChromiumPage(context: context)
+        let client = ChromiumClient(page: page)
+        var picked = 0
+        page.canPickCredential = { true }
+        page.onPickCredential = { _ in picked += 1 }
+        client.makeContextMenuHandler()
+        var ran: Int32?
+        if let handler = client.contextMenuPointer {
+            withUnsafeMutablePointer(to: &params) { clicked in
+                withUnsafeMutablePointer(to: &model) { shown in
+                    handler.pointee.on_before_context_menu?(handler, nil, nil, clicked, shown)
+                    return
+                }
+                ran = handler.pointee.on_context_menu_command?(
+                    handler, nil, nil, clicked, ChromiumClient.pickCredentialCommand, EVENTFLAG_NONE
+                )
+            }
+        }
+
+        #expect(client.contextMenuPointer != nil)
+        #expect(PickerMenuProbe.menu.items.map(\.title) == (editable ? [String(localized: "Pick Credential…")] : []))
+        #expect(PickerMenuProbe.menu.items.map(\.command) == (editable ? [ChromiumClient.pickCredentialCommand] : []))
+        #expect(PickerMenuProbe.menu.separators == (editable ? [1] : []))
+        #expect(ran == (editable ? 1 : 0) && picked == (editable ? 1 : 0), "the command runs the picker only for an item that was offered")
+        withExtendedLifetime(page) {}
+        client.close()
+        await context.endPrivateSession()
     }
 
     // MARK: - Clicks
@@ -436,4 +483,5 @@ private struct PickerOutcome {
 private nonisolated enum PickerMenuProbe {
     nonisolated(unsafe) static var menu = PickerMenuRecord()
     nonisolated(unsafe) static var count = 0
+    nonisolated(unsafe) static var editable = false
 }

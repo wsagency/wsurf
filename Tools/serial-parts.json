@@ -304,6 +304,7 @@
    "PDFSavingTests",
    "PasswordsMenuBarSettingTests",
    "PasswordsMenuListTests",
+   "PickCredentialRealMenuTests",
    "SecretClipboardTests",
    "SettingsRowAccessibilityTests",
    "SidebarListHeightTests",
