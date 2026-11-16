@@ -101,7 +101,6 @@ extension ChromiumPage {
         remote = nil
         if cancelLoad {
             pendingLoad?.cancel()
-            pendingLoad = nil
             // The cancelled load reports nothing, and nothing else ends this loading when the tab does not reload (it died twice).
             owner?.isLoading = false
         }
@@ -142,11 +141,12 @@ extension ChromiumPage {
             dropRetainedPreview()
             retainedPreview = preview
         }
+        let before = pendingLoad
         forgetRemoteBrowser()
         recoverAfterLoss()
         // The tab did not load the page again (it died twice within 5 s: "leaving the tab alone"), and the page is not waiting to be
         // shown either: nothing is coming to replace the frame.
-        if pendingLoad == nil, recovery != .waitingForActivation {
+        if pendingLoad == before, recovery != .waitingForActivation {
             dropRetainedPreview()
         }
     }

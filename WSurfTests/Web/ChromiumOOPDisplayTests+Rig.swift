@@ -113,6 +113,7 @@ extension ChromiumOOPDisplayTests {
     @Test func manySizeChangesInOneTurnSendExactlyOneResizeWithTheFinalSize() async {
         let rig = await makeRig()
         let final = CGSize(width: 1111, height: 777)
+        let sentBefore = rig.remote.resizesSent
         for step in 0..<120 {
             rig.native.setFrameSize(CGSize(width: 900 + CGFloat(step), height: 640))
         }
@@ -124,7 +125,7 @@ extension ChromiumOOPDisplayTests {
         #expect(messages.count == 1, "one message for the turn, not one for each size: \(messages.count)")
         #expect(messages.first?.double(CefRemote.Key.width) == Double(final.width))
         #expect(messages.first?.double(CefRemote.Key.height) == Double(final.height))
-        #expect(rig.remote.resizesSent == 1)
+        #expect(rig.remote.resizesSent - sentBefore == 1)
         await rig.end()
     }
 
