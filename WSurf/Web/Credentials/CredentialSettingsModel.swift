@@ -74,6 +74,8 @@ final class CredentialSettingsModel {
     @ObservationIgnored var healthTask: Task<Void, Never>?
     /// Opens an address in a new tab of the window that shows this page (`openWebsite`); `nil` where there is none, such as a test.
     @ObservationIgnored var websiteOpener: (@MainActor (URL) -> Void)?
+    /// The 30 s after one confirmation in which a copy from the list asks for none (`+PasswordPrivacy`); `nil` asks every time.
+    @ObservationIgnored var copyGrace: CopyGrace?
     /// Where decrypted copies of vault files go for Quick Look and Open With; a seam so a test keeps them in its own folder.
     @ObservationIgnored var previewFolder = VaultFilePreviewFolder.shared
     /// The last removal of an editor's unsaved files, kept so a test can wait for it.
@@ -674,6 +676,7 @@ final class CredentialSettingsModel {
             }
         }
         if await perform({ try await $0.unlock(in: anchor(), confirmMigration: confirmMigration, verifying: report) }) {
+            beginCopyGraceAfterUnlock()
             // An upgraded vault is a new state of the store: read it again before the page offers anything from the old one.
             if store != nil, openState?.isProvisional != true {
                 await discoverVault()

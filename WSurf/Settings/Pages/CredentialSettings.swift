@@ -36,11 +36,12 @@ struct CredentialSettings: View {
 
     /// `openWebsite` opens an address in a new tab of the window that shows this page.
     init(
-        context: BrowserProfileContext, highlight: String?, showsHeader: Bool = true,
+        context: BrowserProfileContext, highlight: String?, showsHeader: Bool = true, copyGrace: CopyGrace? = nil,
         openWebsite: @escaping @MainActor (URL) -> Void
     ) {
         let model = CredentialSettingsModel(profile: context.profile)
         model.websiteOpener = openWebsite
+        model.copyGrace = copyGrace
         self.init(model: model, context: context, highlight: highlight, showsHeader: showsHeader)
     }
 

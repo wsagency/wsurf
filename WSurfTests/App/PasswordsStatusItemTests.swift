@@ -379,6 +379,40 @@ struct PasswordsStatusItemTests {
         }
     }
 
+    /// What the owner asked for: a login needs two copies, and one confirmation covers both. The popover's real model shares the
+    /// process-wide window with the Passwords window's (`CopyGrace.shared`); here the rig's model has one of its own on the rig's clock.
+    @Test func oneConfirmationCoversTheNextCopiesOfThePopoverForThirtySeconds() async throws {
+        var account = login("pw-secret")
+        account.totp = TOTPGenerator(
+            secret: Data("12345678901234567890".utf8), algorithm: .sha1, period: 30, digits: 8, issuer: "Example", userName: "ada"
+        )
+        try await withVault(accounts: [account]) { rig, _ in
+            let model = try #require(rig.model)
+            model.copyGrace = CopyGrace(now: { rig.clock.now })
+            rig.controller.open()
+            let summary = try #require(model.summaries.first)
+
+            rig.controller.perform(.copyPassword, on: summary)
+            await finishCopy(rig)
+            rig.controller.perform(.copyUsername, on: summary)
+            await finishCopy(rig)
+            #expect(rig.text == "ada")
+            rig.controller.perform(.copyCode, on: summary)
+            await finishCopy(rig)
+            #expect(rig.text?.count == 8 && rig.isConcealed, "a code is still a concealed secret")
+            #expect(rig.prompt.calls == 1, "one prompt for the password, the username and the code")
+
+            rig.clock.advance(by: .seconds(31))
+            rig.controller.perform(.copyPassword, on: summary)
+            await finishCopy(rig)
+            #expect(rig.prompt.calls == 2 && rig.text == "pw-secret", "31 s later it asks again")
+        }
+    }
+
+    @Test func theModelsOfThePopoverAndTheWindowShareTheProcessWideWindow() {
+        #expect(PasswordsStatusItem.makeSystemModel(for: .privateBrowsing()).copyGrace === CopyGrace.shared)
+    }
+
     @Test func aLockWhileThePromptIsUpCopiesNothing() async throws {
         let account = login("late-secret")
         try await withVault(accounts: [account]) { rig, vault in
@@ -396,6 +430,60 @@ struct PasswordsStatusItemTests {
 
             #expect(rig.text == sentinel, "the answer was given under an unlock that is gone")
             #expect(!rig.isConcealed)
+        }
+    }
+
+    // MARK: Search focus
+
+    /// The popover's content in a window of its own (a test has no status item to hang the popover from), so the focus the
+    /// controller asks for lands on a real field.
+    private func host(_ rig: Rig) throws -> NSWindow {
+        let popover = try #require(rig.controller.popover)
+        let view = try #require(popover.contentViewController?.view)
+        let window = NSWindow(
+            contentRect: NSRect(origin: .zero, size: PasswordsStatusItem.popoverSize), styleMask: [.titled], backing: .buffered, defer: false
+        )
+        window.isReleasedWhenClosed = false
+        window.contentView = view
+        window.orderFrontRegardless()
+        view.layoutSubtreeIfNeeded()
+        return window
+    }
+
+    private func searchEditor(in window: NSWindow) -> NSText? {
+        PasswordsStatusItem.searchField(in: window.contentView)?.currentEditor()
+    }
+
+    /// Opening the popover puts the keyboard in the search field with no click, so typing filters at once.
+    @Test func openingThePopoverFocusesTheSearchFieldAndTypingReachesIt() async throws {
+        try await withVault(accounts: [login(displayName: "Work"), login(displayName: "Home")]) { rig, _ in
+            rig.controller.open()
+            let window = try host(rig)
+            defer { window.close() }
+
+            #expect(await waitUntil { window.firstResponder != nil && window.firstResponder === searchEditor(in: window) })
+            let editor = try #require(searchEditor(in: window) as? NSTextView)
+            editor.insertText("wor", replacementRange: NSRange(location: 0, length: 0))
+            #expect(PasswordsStatusItem.searchField(in: window.contentView)?.stringValue == "wor", "typing lands in the field")
+        }
+    }
+
+    /// A vault that unlocks while the popover is up: the field appears then, and takes the keyboard.
+    @Test func afterAnUnlockTheSearchFieldTakesTheFocus() async throws {
+        try await withVault(unlocked: false, accounts: [login()]) { rig, vault in
+            rig.controller.open()
+            let window = try host(rig)
+            defer { window.close() }
+            #expect(rig.controller.model?.menuPhase == .locked)
+            #expect(PasswordsStatusItem.searchField(in: window.contentView) == nil, "locked: no field")
+            // The opening search for the field has given up by the time a slow unlock ends.
+            rig.controller.focusTask?.cancel()
+
+            try await VaultManagerFixture.unlock(vault)
+            try await VaultManagerFixture.save([login()], in: vault)
+            await rig.model?.load()
+
+            #expect(await waitUntil { window.firstResponder != nil && window.firstResponder === searchEditor(in: window) })
         }
     }
 

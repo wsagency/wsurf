@@ -42,8 +42,13 @@ struct PasswordsMenuView: View {
             }
         }
         // The field exists only once the vault is read, which is after the popover appears: focus it when it does.
+        // That includes the moment an unlock turns the locked state into the list. The controller's AppKit focus is the one that holds:
+        // SwiftUI drops a focus request made before the field is in its window.
         .task(id: model.menuPhase) {
             searchFocused = model.menuPhase == .content
+            if model.menuPhase == .content {
+                actions.focusSearchWhenReady()
+            }
         }
         .onExitCommand { actions.closePopover() }
     }
