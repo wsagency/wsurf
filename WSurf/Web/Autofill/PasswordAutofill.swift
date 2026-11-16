@@ -68,6 +68,9 @@ final class PasswordAutofill {
             applyPolicy(in: message.page, frame: message.frameInfo)
         } else if let body = message.body as? [String: Any], body["action"] as? String == "context" {
             CredentialPicker.shared.noteContext(message)
+        } else if let body = message.body as? [String: Any], body["action"] as? String == "skip" {
+            // Why the frame's script gave a login field no offer: logged by its fixed reason only (`AutofillDiagnostics.pageSkipped`).
+            AutofillDiagnostics.pageSkipped(body["reason"], by: message.page)
         } else {
             AutofillSuggestions.shared.receive(message, kind: .password, world: Self.world, bridge: "__wsurfPasswords")
         }

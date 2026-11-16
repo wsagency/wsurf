@@ -14,10 +14,14 @@ struct PasswordAutofillScriptTests {
     private final class Sink: NSObject, WKScriptMessageHandler {
         var body: [String: Any]?
         var selections: [[String: Any]] = []
+        var skips: [[String: Any]] = []
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
             body = message.body as? [String: Any]
             if let body, body["action"] as? String == "select" {
                 selections.append(body)
+            }
+            if let body, body["action"] as? String == "skip" {
+                skips.append(body)
             }
         }
     }
@@ -113,6 +117,64 @@ struct PasswordAutofillScriptTests {
         _ = try await view.callAsyncJavaScript("password.focus();", arguments: [:], in: nil, contentWorld: PasswordAutofill.world)
         #expect(try await fill(UUID().uuidString, in: view) == 0)
         #expect(sink.body?["token"] as? String == nil)
+    }
+
+    /// Focuses a field and returns the skips the script posts once its selection gives up (after about a second), after waiting a
+    /// little longer for a second one that must not come.
+    private func skips(
+        afterFocusing id: String = "password", waiting: Duration = .seconds(5), in view: BrowserPage, sink: Sink
+    ) async throws -> [[String: Any]] {
+        _ = try await view.callAsyncJavaScript("document.getElementById(id).focus();", arguments: ["id": id], in: nil, contentWorld: PasswordAutofill.world)
+        _ = await waitUntil(timeout: waiting) { !sink.skips.isEmpty }
+        _ = try await view.callAsyncJavaScript("await new Promise(resolve => setTimeout(resolve, 600));", arguments: [:], in: nil, contentWorld: PasswordAutofill.world)
+        return sink.skips
+    }
+
+    /// What a skip may carry: its action and one fixed reason, nothing of the page (no name, value, label or address).
+    private func expectOnlyReason(_ reason: String, in skips: [[String: Any]]) {
+        #expect(skips.count == 1)
+        #expect(Set(skips.first?.keys.map { $0 } ?? []) == ["action", "reason"])
+        #expect(skips.first?["action"] as? String == "skip")
+        #expect(skips.first?["reason"] as? String == reason)
+    }
+
+    @Test(.boundedWebViews) func aRefusedUnsafeFormPostsOneSkipWithReasonFormUnsafe() async throws {
+        let (view, sink) = try await load(#"""
+        <form action="https://other.example/post" id="secret-form-name"><input id="username" name="ada@example.test" autocomplete="username" value="dummy-user">
+        <input id="password" type="password" value="dummy-secret" placeholder="dummy-placeholder"></form>
+        """#)
+        let skips = try await skips(in: view, sink: sink)
+        expectOnlyReason("formUnsafe", in: skips)
+        #expect(sink.selections.isEmpty)
+    }
+
+    @Test(.boundedWebViews) func aLoginFieldOfTheWrongShapePostsFormShape() async throws {
+        let (view, sink) = try await load(#"""
+        <form><input id="username" autocomplete="username"><input id="password" type="password" autocomplete="new-password"></form>
+        """#)
+        expectOnlyReason("formShape", in: try await skips(in: view, sink: sink))
+        #expect(sink.selections.isEmpty)
+    }
+
+    @Test(.boundedWebViews) func aLoginFieldWhilePasswordFillingIsOffPostsDisabled() async throws {
+        let (view, sink) = try await load(#"<form><input id="username" autocomplete="username"><input id="password" type="password"></form>"#)
+        _ = try await view.callAsyncJavaScript("globalThis.__wsurfPasswords.setEnabled(false);", arguments: [:], in: nil, contentWorld: PasswordAutofill.world)
+        expectOnlyReason("disabled", in: try await skips(in: view, sink: sink))
+    }
+
+    @Test(.boundedWebViews) func aFieldThatNeverBecomesReadyPostsNotVisible() async throws {
+        let (view, sink) = try await load(#"<form><input id="username" autocomplete="username"><input id="password" type="password" style="opacity:0"></form>"#)
+        expectOnlyReason("notVisible", in: try await skips(in: view, sink: sink))
+    }
+
+    @Test(.boundedWebViews) func anOrdinaryFieldAndAnOfferedLoginPostNoSkip() async throws {
+        let (view, sink) = try await load(#"""
+        <input id="search" type="text" name="q"><form><input id="username" autocomplete="username"><input id="password" type="password"></form>
+        """#)
+        #expect(try await skips(afterFocusing: "search", waiting: .seconds(1.5), in: view, sink: sink).isEmpty)
+        _ = try await select(in: view, sink: sink)
+        _ = try await view.callAsyncJavaScript("await new Promise(resolve => setTimeout(resolve, 1400));", arguments: [:], in: nil, contentWorld: PasswordAutofill.world)
+        #expect(sink.skips.isEmpty, "a field that was offered a dropdown reports no refusal")
     }
 
     @Test(.boundedWebViews, arguments: [##"action="#x""##, ""])
