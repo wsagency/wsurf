@@ -163,6 +163,20 @@ struct ChromiumOOPRecoveryTests {
         await rig.end()
     }
 
+    /// Review of #129, F1: a browser made again for a page that is already in its window is told the screen it is on.
+    @Test
+    func aBrowserMadeAgainForAPageInItsWindowIsToldTheScreen() async throws {
+        let rig = await makeRig()
+        guard rig.window.screen != nil else { await rig.end(); return }
+        rig.remote.remoteServiceEnded()
+        #expect(rig.native.remote == nil)
+        try rig.native.materializeRemote()
+        let made = try #require(rig.native.remote)
+        #expect(made.sentScreen == rig.window.screen?.frame.size, "the screen is sent (held until the browser is made), not left unknown")
+        #expect(made.sentScreen != .zero)
+        await rig.end()
+    }
+
     // MARK: A cancelled load does not leave the tab loading (carried from the D4-8 delta review)
 
     /// The tab does not reload a page that died twice in five seconds ("leaving the tab alone"): nothing else ends its loading.

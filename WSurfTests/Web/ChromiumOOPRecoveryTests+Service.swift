@@ -156,6 +156,65 @@ extension ChromiumOOPRecoveryTests {
         await end(env)
     }
 
+    // MARK: The screen the page sees
+
+    /// What the page reads of the screen (`screen.width`, `screen.height`, `devicePixelRatio`), through DevTools, once it has the
+    /// window's: the service tells CEF with `notify_screen_info_changed`, and a browser made again after a relaunch is told as
+    /// soon as it exists (review of #129, F1 and F2). Waits for the values to settle: the notification is asynchronous.
+    private func pageScreen(_ tab: Tab, matching screen: NSScreen) async -> [Double] {
+        let want = [Double(screen.frame.width), Double(screen.frame.height), Double(screen.backingScaleFactor)]
+        var seen: [Double] = []
+        _ = await waitUntil(timeout: .seconds(8)) {
+            let value = try? await tab.page.evaluateJavaScript("[screen.width, screen.height, devicePixelRatio]") as? [NSNumber]
+            seen = value?.map(\.doubleValue) ?? []
+            return seen == want
+        }
+        return seen
+    }
+
+    @Test(.enabled(if: ChromiumServiceBundle.isPresent), .boundedWebViews)
+    func theScreenThePageReadsIsTheWindowsScreenAfterTheCreateAndAfterARelaunchReload() async throws {
+        guard let env = try await env() else { return }
+        let tab = Tab(env)
+        guard let screen = tab.window.screen else {
+            await end(env)
+            return
+        }
+        let want = [Double(screen.frame.width), Double(screen.frame.height), Double(screen.backingScaleFactor)]
+        let one = try env.url("/one")
+        try await tab.load(one)
+        #expect(await pageScreen(tab, matching: screen) == want, "after the create")
+        let wait = 11 - (ProcessInfo.processInfo.systemUptime - env.up)
+        if wait > 0 {
+            try await Task.sleep(for: .seconds(wait))
+        }
+        let before = tab.finished
+        env.connection.abortService()
+        #expect(await waitUntil(timeout: .seconds(Self.reloadBudget + 10)) { tab.finished > before && !tab.page.isLoading }, "reloaded")
+        #expect(await pageScreen(tab, matching: screen) == want, "after the relaunch reload")
+        // A screen that changes with no change of size: CEF is told by `notify_screen_info_changed` and nothing else.
+        let remote = try #require(tab.native.remote)
+        remote.send(CefRemote.Op.resize) {
+            $0.set(CefRemote.Key.width, Double(remote.sentSize.width))
+            $0.set(CefRemote.Key.height, Double(remote.sentSize.height))
+            $0.set(CefRemote.Key.scale, Double(remote.sentScale))
+            $0.set(CefRemote.Key.screenX, 0.0)
+            $0.set(CefRemote.Key.screenY, 0.0)
+            $0.set(CefRemote.Key.screenWidth, 1111.0)
+            $0.set(CefRemote.Key.screenHeight, 777.0)
+        }
+        var changed: [Double] = []
+        let followed = await waitUntil(timeout: .seconds(8)) {
+            let value = try? await tab.page.evaluateJavaScript("[screen.width, screen.height]") as? [NSNumber]
+            changed = value?.map(\.doubleValue) ?? []
+            return changed == [1111, 777]
+        }
+        #expect(followed, "a screen that changed with no change of size reaches the page: \(changed)")
+        print("ChromiumOOPRecoveryTests observed: screen \(want), the page reads it after the create and after the relaunch, and follows a change of screen alone")
+        await tab.finish()
+        await end(env)
+    }
+
     // MARK: The idle exit
 
     /// The last tab closed: the service leaves after its linger (1 s here) and is not relaunched; the next new tab launches it again

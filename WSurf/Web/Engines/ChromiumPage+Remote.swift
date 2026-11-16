@@ -62,9 +62,11 @@ extension ChromiumPage {
         let scale = window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2
         attachRemoteFrameLayer(to: browser)
         let hidden = browser.sentHidden
-        // A browser made again for a page that is already in its window (after the service ended) is not told by an attach: parked
-        // or hidden, and the screen it is on, reach the service as soon as the browser exists.
+        // A browser made again for a page that is already in its window (after the service ended, or a create that failed) is not told
+        // by an attach: the screen goes now (held, in order, until the browser is made), and so do parked and hidden. Without it the
+        // service's screen is the view's rect until the next resize.
         observeScreenChanges()
+        updateRemoteGeometry()
         updateRemoteVisibility()
         preparation = Task { [weak self, weak browser] in
             guard let self, let browser else { throw ChromiumError.closed }
