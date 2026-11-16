@@ -777,7 +777,11 @@ extension BrowserTab {
         }
         Pipeline.log.notice("web content process died; reloading the tab")
         guard let url = URL(string: urlString), !urlString.isEmpty else { return }
-        hasPresentedContent = false
+        // A Chromium page that kept its last frame for the relaunch (`ChromiumPage.retainedPreview`) stays shown: the cover would
+        // hide that frame behind the window's background until the new document commits.
+        if page.chromium?.retainedPreview == nil {
+            hasPresentedContent = false
+        }
         page.load(URLRequest(url: url))
     }
 

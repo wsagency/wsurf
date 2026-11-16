@@ -541,13 +541,19 @@ enum ResourceProbe {
         var total = 0.0
         var count = 0
         var hostWakeups: UInt64 = 0
+        /// Chromium's frames kept in WSurf's layers (their IOSurfaces are in no process's footprint) and the browsers the service was told
+        /// are hidden (`ChromiumRuntime.remoteMemory`). Not in `total`.
+        var previewMB = 0.0
+        var previewCount = 0
+        var hiddenBrowsers = 0
 
         func report(_ name: String) {
             PerfProbe.report(
                 "\(name) step=\(label)",
                 String(
-                    format: "hostMB=%.1f webContentCount=%d webContentMB=%.1f gpuMB=%.1f networkingMB=%.1f otherCount=%d otherMB=%.1f totalMB=%.1f procs=%d",
-                    host, webContentCount, webContent, gpu, networking, otherCount, other, total, count
+                    format: "hostMB=%.1f webContentCount=%d webContentMB=%.1f gpuMB=%.1f networkingMB=%.1f otherCount=%d otherMB=%.1f "
+                        + "totalMB=%.1f procs=%d previewMB=%.1f previews=%d hiddenBrowsers=%d",
+                    host, webContentCount, webContent, gpu, networking, otherCount, other, total, count, previewMB, previewCount, hiddenBrowsers
                 )
             )
         }
@@ -576,6 +582,10 @@ enum ResourceProbe {
                 stage.otherCount += 1
             }
         }
+        let remote = ChromiumRuntime.shared.remoteMemory
+        stage.previewMB = Double(remote.previewBytes) / megabyte
+        stage.previewCount = remote.previews
+        stage.hiddenBrowsers = remote.hiddenBrowsers
         return stage
     }
 

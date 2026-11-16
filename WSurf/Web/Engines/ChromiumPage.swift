@@ -45,6 +45,9 @@ final class ChromiumPage: NSView {
     var heldReload: URLRequest?
     var isRecovering = false
     var recoveryCheckPending = false
+    /// The frame layer of a browser the service took with it, with its last frame: shown while a shown page waits for its replacement
+    /// (`ChromiumPage+Display`).
+    var retainedPreview: CALayer?
     var preparation: Task<Void, Error>?
     var pendingLoad: Task<Void, Never>?
     private var closeWaiters: [CheckedContinuation<Void, Never>] = []
@@ -859,6 +862,7 @@ final class ChromiumPage: NSView {
         raw = nil
         remote?.page = nil
         remote?.detachFrameLayer()
+        dropRetainedPreview()
         remote = nil
         ChromiumRuntime.shared.unregister(self)
         for waiter in attachmentWaiters {

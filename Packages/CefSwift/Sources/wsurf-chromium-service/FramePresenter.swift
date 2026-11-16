@@ -10,6 +10,13 @@
 // hidden (`hidden`): the spike kept up to 4 of them per tab, hidden tabs included. WSurf's layer keeps the last frame on screen
 // by holding its own reference to the surface it was sent, so freeing the ring costs the page nothing.
 //
+// A live resize: every size Chromium paints would allocate a new ring (the exit gate measured 106 new surfaces for 120 sizes sent
+// 16 ms apart, 2.4 MB each; about 18 MB each at 1300x860 @2x). A frame at a size other than the one being shown is only taken once
+// that size has been stable for one frame interval (`settleInterval`), or when `maxWait` has passed since the last change was taken
+// (a long drag still repaints, ten times a second at most). The frames before that are dropped: WSurf's layer keeps the old-size copy and
+// shows it stretched, as it does between two frames. A repaint is asked for when the wait is over, so the final size always gets its
+// frame. A size change after a quiet time is taken at once.
+//
 // Everything runs on the main thread, which is CEF's UI thread (the paint callbacks are called there).
 
 import CefKit
@@ -51,6 +58,22 @@ final class FramePresenter {
     private var sendSequence: UInt64 = 0
     private var popupRect = CGRect.zero
 
+    /// A size that differs from the one being shown is taken after it has been stable this long: one frame interval at the 30 frames a
+    /// second the service paints at.
+    static let settleInterval: TimeInterval = 1.0 / 30
+    /// The longest a size that keeps changing waits for its frame.
+    static let maxWait: TimeInterval = 0.1
+    /// The pixel size of the last view frame taken; nil while there is none (the first frame is always taken).
+    private var shownSize: (width: Int, height: Int)?
+    /// The size of the dropped frames that wait, and when it was first seen.
+    private var pendingSize: (width: Int, height: Int)?
+    private var pendingSince: TimeInterval = 0
+    /// When (system uptime) a frame of a size other than the previous one was last taken.
+    private var lastSizeChange: TimeInterval = 0
+    private var repaintScheduled = false
+    /// Asks Chromium for a frame of the whole view (`RemoteBrowser.requestFrame`): after frames were dropped for their size.
+    var repaint: (() -> Void)?
+
     /// The page is not shown to the person but still visible to itself: frames are dropped (`RemoteBrowser.setVisibility`).
     var parked = false
 
@@ -68,6 +91,8 @@ final class FramePresenter {
     private(set) var framesDropped = 0
     /// Frames written into a surface the render server may still have been reading (every copy was in use): `acquire`.
     private(set) var ringOverwrites = 0
+    /// Ring surfaces ever allocated (`debug.stats`): a size that keeps changing allocates new ones.
+    private(set) var slotsMade = 0
     /// Accelerated frames whose CEF surface carried a colour-space tag (copied to the ring surface) and that carried none.
     private(set) var taggedSources = 0
     private(set) var untaggedSources = 0
@@ -89,6 +114,41 @@ final class FramePresenter {
         overwrittenSurfaces.removeAll()
         shown = nil
         popupShown = nil
+        shownSize = nil
+        pendingSize = nil
+    }
+
+    /// Whether a view frame of this size is taken now (see the top of the file); one that is not asks for its repaint when it may be.
+    private func admitsSize(_ element: Element, width: Int, height: Int) -> Bool {
+        guard element == .view else { return true }
+        let size = (width: width, height: height)
+        guard let current = shownSize, current != size else {
+            shownSize = size
+            pendingSize = nil
+            return true
+        }
+        let now = ProcessInfo.processInfo.systemUptime
+        if pendingSize.map({ $0 != size }) ?? true {
+            pendingSize = size
+            pendingSince = now
+        }
+        let ready = min(pendingSince + Self.settleInterval, lastSizeChange + Self.maxWait)
+        guard now < ready else {
+            shownSize = size
+            pendingSize = nil
+            lastSizeChange = now
+            return true
+        }
+        if !repaintScheduled {
+            repaintScheduled = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + max(ready - now, 0.005)) { [weak self] in
+                MainActor.assumeIsolated {
+                    self?.repaintScheduled = false
+                    self?.repaint?()
+                }
+            }
+        }
+        return false
     }
 
     /// With nobody to send to, nothing is copied and no ring is built.
@@ -101,6 +161,7 @@ final class FramePresenter {
         message.set(CefRemote.Key.ringSurfaces, ringSurfaces)
         message.set(CefRemote.Key.popupRingSurfaces, popupRing.count)
         message.set(CefRemote.Key.ringOverwrites, ringOverwrites)
+        message.set(CefRemote.Key.slotsMade, slotsMade)
         message.set(CefRemote.Key.overwrittenSlots, overwrittenSurfaces.count)
         message.set(CefRemote.Key.colourTagged, taggedSources)
         message.set(CefRemote.Key.colourUntagged, untaggedSources)
@@ -122,6 +183,10 @@ final class FramePresenter {
         let width = IOSurfaceGetWidth(source)
         let height = IOSurfaceGetHeight(source)
         let format = IOSurfaceGetPixelFormat(source)
+        guard admitsSize(element, width: width, height: height) else {
+            framesDropped += 1
+            return
+        }
         if Self.metalFormat(format) == nil, !loggedUnknownFormat {
             loggedUnknownFormat = true
             note("browser \(browser): frames dropped, unsupported pixel format \(format)")
@@ -160,7 +225,8 @@ final class FramePresenter {
             framesDropped += 1
             return
         }
-        guard let device = Self.device, let slot = acquire(element: element, width: width, height: height, format: Self.bgra, device: device)
+        guard admitsSize(element, width: width, height: height), let device = Self.device,
+              let slot = acquire(element: element, width: width, height: height, format: Self.bgra, device: device)
         else {
             framesDropped += 1
             return
@@ -225,6 +291,7 @@ final class FramePresenter {
         if slot == nil, slots.count < Self.ringSize, let made = Self.makeSlot(device: device, width: width, height: height, format: format) {
             slots.append(made)
             slot = made
+            slotsMade += 1
         }
         if slot == nil {
             // Every copy is still in use (or the ring cannot grow): the LEAST RECENTLY SENT one that is not the one last sent is

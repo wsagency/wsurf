@@ -30,26 +30,58 @@ extension ChromiumPage {
         browser.sentParked = false
         wantsLayer = true
         guard let host = layer else { return }
-        let frames = CALayer()
+        // A page that waited for this browser has its last frame in the layer it kept: the first frame of the new browser replaces it.
+        let frames = retainedPreview ?? CALayer()
+        retainedPreview = nil
         frames.anchorPoint = .zero
         frames.contentsGravity = .resize
         frames.contentsScale = window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2
-        frames.frame = bounds
         CATransaction.begin()
         CATransaction.setDisableActions(true)
+        frames.frame = bounds
         host.addSublayer(frames)
         CATransaction.commit()
         browser.attachFrameLayer(frames)
     }
 
+    // MARK: The preview that waits for a relaunch
+
+    /// Whether this page keeps its last frame when the service ends (asked by the browser, before it lets go of its layer): any page
+    /// that will load again, shown or waiting for its person (a hidden page keeps its preview as it does while its service lives, and
+    /// comes back with it), and has a frame to keep. A crash loop shows no frame of a page that is not coming.
+    func keepsPreviewWhenServiceEnds(_ browser: ChromiumRemoteBrowser) -> Bool {
+        remote === browser && !closing && !isClosed && !remoteConnection.isGivenUp && browser.pageLayer?.contents != nil
+    }
+
+    /// The page's last frame is let go of: it was not wanted after all (the tab did not load the page again, or the page closed).
+    func dropRetainedPreview() {
+        guard let preview = retainedPreview else { return }
+        retainedPreview = nil
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        preview.removeFromSuperlayer()
+        preview.contents = nil
+        CATransaction.commit()
+    }
+
     // MARK: Geometry
 
-    /// Size, scale and screen, sent when one of them changed since the service was last told. Called from the view's size and
-    /// backing-property callbacks and when the page joins a window.
+    /// Size, scale and screen. The layer follows at once; the service is told when one of them changed since it was last told, at
+    /// the end of the run-loop turn (like visibility: a drag or a layout pass calls this many times in one), with the final values.
+    /// A live resize is still one message per turn: the service limits what it allocates for the sizes of a drag
+    /// (`FramePresenter`: a new size waits for its frame until it is stable, and a drag is painted ten times a second at most).
+    /// Called from the view's size and backing-property callbacks and when the page joins a window.
     func updateRemoteGeometry() {
-        guard let remote, !isClosed else { return }
-        let size = CGSize(width: max(1, bounds.width), height: max(1, bounds.height))
-        let scale = max(1, window?.backingScaleFactor ?? remote.sentScale)
+        guard let remote, !isClosed else {
+            if let preview = retainedPreview, preview.frame != bounds {
+                CATransaction.begin()
+                CATransaction.setDisableActions(true)
+                preview.frame = bounds
+                CATransaction.commit()
+            }
+            return
+        }
+        let (size, scale, screen) = remoteGeometry(of: remote)
         if let frames = remote.pageLayer {
             CATransaction.begin()
             CATransaction.setDisableActions(true)
@@ -62,7 +94,24 @@ extension ChromiumPage {
             remote.connection.sink.popupLayer(for: remote.id)?.contentsScale = scale
             CATransaction.commit()
         }
-        let screen = window?.screen?.frame.size ?? remote.sentScreen
+        guard size != remote.sentSize || scale != remote.sentScale || screen != remote.sentScreen, !remote.geometryUpdatePending else { return }
+        remote.geometryUpdatePending = true
+        RunLoop.main.perform(inModes: [.common]) { [weak self, weak remote] in
+            MainActor.assumeIsolated {
+                remote?.geometryUpdatePending = false
+                self?.sendRemoteGeometry()
+            }
+        }
+    }
+
+    private func remoteGeometry(of remote: ChromiumRemoteBrowser) -> (size: CGSize, scale: CGFloat, screen: CGSize) {
+        (CGSize(width: max(1, bounds.width), height: max(1, bounds.height)), max(1, window?.backingScaleFactor ?? remote.sentScale),
+         window?.screen?.frame.size ?? remote.sentScreen)
+    }
+
+    private func sendRemoteGeometry() {
+        guard let remote, !isClosed else { return }
+        let (size, scale, screen) = remoteGeometry(of: remote)
         guard size != remote.sentSize || scale != remote.sentScale || screen != remote.sentScreen else { return }
         remote.sentSize = size
         remote.sentScale = scale

@@ -4,6 +4,7 @@
 import AppKit
 import Darwin
 import Foundation
+import QuartzCore
 import Testing
 import WebKit
 
@@ -153,6 +154,49 @@ extension ChromiumOOPRecoveryTests {
         #expect(env.connection.browserCount == 2)
         await shown.finish()
         await hidden.finish()
+        await end(env)
+    }
+
+    // MARK: The relaunch throttle: a young service that dies
+
+    /// launchd starts a replacement no sooner than 10 s after the spawn of the service that died (measured by the exit gate: "spawn
+    /// deferred by 6 seconds due to throttle"), so a service that dies young leaves a shown page waiting about that long. The page
+    /// keeps its last frame on screen and its tab keeps loading the whole time; the replacement's first frame replaces the old one.
+    /// No `Task.sleep` for the 11 s of the other tests: the kill comes soon after the hello, which is what makes the throttle bite.
+    @Test(.enabled(if: ChromiumServiceBundle.isPresent), .boundedWebViews)
+    func aServiceThatDiesYoungLeavesTheShownPageItsLastFrameAndLoadingUntilTheReplacementPaints() async throws {
+        guard let env = try await env() else { return }
+        let tab = Tab(env)
+        let one = try env.url("/one")
+        try await tab.load(one)
+        let remote = try #require(tab.native.remote)
+        #expect(await waitUntil(timeout: .seconds(10)) { remote.pageLayer?.contents != nil }, "a frame to keep")
+        let layer = try #require(remote.pageLayer)
+        let old = layer.contents as AnyObject?
+        let finishedBefore = tab.finished
+        let age = ProcessInfo.processInfo.systemUptime - env.up
+        env.connection.abortService()
+        let killed = ProcessInfo.processInfo.systemUptime
+        #expect(await waitUntil(timeout: .seconds(5)) { env.connection.state == .relaunching }, "state \(env.connection.state)")
+        var samples = 0, kept = 0, loading = 0, inTree = 0
+        while env.connection.state == .relaunching, ProcessInfo.processInfo.systemUptime - killed < 20 {
+            samples += 1
+            kept += layer.contents as AnyObject? === old ? 1 : 0
+            loading += tab.page.isLoading ? 1 : 0
+            inTree += layer.superlayer === tab.native.layer ? 1 : 0
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        let waited = ProcessInfo.processInfo.systemUptime - killed
+        print("ChromiumOOPRecoveryTests observed: service killed \(age) s after its hello, the shown page waited \(waited) s for the replacement:"
+            + " \(samples) samples, last frame kept in \(kept), loading in \(loading), layer in the tree in \(inTree)")
+        #expect(samples >= 3, "the replacement came at once: no throttle to wait for (\(samples) samples)")
+        #expect(kept == samples, "the old frame stayed in the layer for the whole wait")
+        #expect(loading == samples, "the tab was loading for the whole wait")
+        #expect(inTree == samples, "and the layer stayed in the tree")
+        #expect(await waitUntil(timeout: .seconds(30)) { tab.finished > finishedBefore && !tab.page.isLoading }, "the page loaded again")
+        #expect(await waitUntil(timeout: .seconds(10)) { layer.contents as AnyObject? !== old }, "the replacement's first frame replaced the old one")
+        #expect(tab.native.remote?.pageLayer === layer, "in the same layer")
+        await tab.finish()
         await end(env)
     }
 
