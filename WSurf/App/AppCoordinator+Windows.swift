@@ -116,7 +116,7 @@ extension AppCoordinator {
     /// Writes `menuBarHost` into the menu bar when this is the window in front.
     func refreshSiteMenu() {
         guard isKeyWindow else { return }
-        (application?.menu ?? mainMenu)?.refreshSiteItem()
+        (application?.mainMenu ?? mainMenu)?.refreshSiteItem()
     }
 
     var otherWindows: [AppCoordinator] {
@@ -156,7 +156,7 @@ extension AppCoordinator {
         application?.focus(self)
         activation.setSuspended(false)
         updateWindowAppearance()
-        (application?.menu ?? mainMenu)?.refreshSiteItem()
+        (application?.mainMenu ?? mainMenu)?.refreshSiteItem()
     }
 
     func windowDidResignKey() {

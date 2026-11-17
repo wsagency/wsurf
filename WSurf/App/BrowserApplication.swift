@@ -44,8 +44,7 @@ final class BrowserApplication {
     private static let lastWindowKey = "browser.lastFocusedWindow"
     /// Profile and window of the last regular window the user closed, kept until another regular window opens.
     static let closedAsLastKey = "browser.windowClosedAsLast"
-    private var mainMenu: MainMenu?
-    var menu: MainMenu? { mainMenu }
+    private(set) var mainMenu: MainMenu?
 
     init(defaults: UserDefaults? = nil, notifications: NotificationCenter = .default, ownsSession: Bool = AppDatabase.ownsSession) {
         self.ownsSession = ownsSession

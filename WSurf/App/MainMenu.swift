@@ -37,11 +37,11 @@ enum ShortcutPriority {
 
 @MainActor
 final class MainMenu: NSObject, NSMenuItemValidation {
-    private let fallbackCoordinator: AppCoordinator?
-    private weak var application: BrowserApplication?
+    let fallbackCoordinator: AppCoordinator?
+    weak var application: BrowserApplication?
     /// The menu after Help named for the site in front; built once, hidden unless Show Site in Menu Bar is on.
-    private var siteMenuItem: NSMenuItem?
-    private var coordinator: AppCoordinator {
+    var siteMenuItem: NSMenuItem?
+    var coordinator: AppCoordinator {
         if let application {
             return application.ensureActiveWindow()
         }
@@ -253,53 +253,6 @@ final class MainMenu: NSObject, NSMenuItemValidation {
         return menu
     }
 
-    private func siteMenu() -> NSMenuItem {
-        let menu = NSMenu()
-        let address = NSMenuItem(title: "", action: #selector(showSiteAddress), keyEquivalent: "")
-        address.target = self
-        menu.addItem(address)
-        menu.addItem(.separator())
-        // No shortcuts here: Edit and File own ⇧⌘C and ⌘L, and one chord must not sit in two menus.
-        menu.addItem(command("Copy Link", #selector(copyPageURL)))
-        menu.addItem(command("Open Location…", #selector(openLocation)))
-        let holder = NSMenuItem(title: "", action: nil, keyEquivalent: "")
-        holder.submenu = menu
-        holder.isHidden = true
-        siteMenuItem = holder
-        return holder
-    }
-
-    /// The coordinator whose site the menu names: the window in front, unless a window that is not a browser window is key.
-    private var siteCoordinator: AppCoordinator? {
-        if let key = PasswordsWindow.keyWindow() {
-            let window = key.sheetParent ?? key
-            let windows = application?.windows ?? fallbackCoordinator.map { [$0] } ?? []
-            guard windows.contains(where: { $0.nativeWindow === window }) else { return nil }
-        }
-        return application?.activeCoordinator ?? fallbackCoordinator
-    }
-
-    /// Hides the site menu, or names it for the front window's site. The menu bar draws the submenu's title, so both are
-    /// written; each only when it changed, since AppKit redraws the menu bar for every write.
-    func refreshSiteItem() {
-        guard let item = siteMenuItem else { return }
-        let host = siteCoordinator?.menuBarHost
-        if item.isHidden != (host == nil) {
-            item.isHidden = host == nil
-        }
-        guard let host else { return }
-        if item.title != host {
-            item.title = host
-        }
-        if item.submenu?.title != host {
-            item.submenu?.title = host
-        }
-    }
-
-    @objc private func someWindowBecameKey(_ notification: Notification) {
-        refreshSiteItem()
-    }
-
     private func splitViewMenu() -> NSMenu {
         let menu = NSMenu()
         let rightArrow = String(UnicodeScalar(NSRightArrowFunctionKey)!)
@@ -464,16 +417,10 @@ final class MainMenu: NSObject, NSMenuItemValidation {
             coordinator.browser.reopenLastClosedTab()
         }
     }
-    @objc private func openLocation() {
+    @objc func openLocation() {
         coordinator.focusAddressBar()
     }
-    @objc private func toggleSiteInMenuBar() {
-        coordinator.settings.showsSiteInMenuBar.toggle()
-        refreshSiteItem()
-    }
-    /// Only carries the address in the site menu; it has nothing to do.
-    @objc private func showSiteAddress() {}
-    @objc private func copyPageURL() {
+    @objc func copyPageURL() {
         coordinator.copyCurrentURL()
     }
 
@@ -705,6 +652,7 @@ final class MainMenu: NSObject, NSMenuItemValidation {
         if let answer = validateWithoutBrowserWindow(menuItem) {
             return answer
         }
+        if let answer = validateSiteItem(menuItem) { return answer }
         guard validateMicroItem(menuItem) != false else { return false }
         switch menuItem.action {
         case #selector(goBack):
@@ -713,11 +661,6 @@ final class MainMenu: NSObject, NSMenuItemValidation {
             return coordinator.pageCommandTab?.canGoForward ?? false
         case #selector(actualSize):
             return coordinator.pageCommandTab?.isZoomed ?? false
-        case #selector(toggleSiteInMenuBar):
-            menuItem.state = coordinator.settings.showsSiteInMenuBar ? .on : .off
-            return true
-        case #selector(showSiteAddress):
-            return validateSiteAddress(menuItem)
         case #selector(copyPageURL):
             guard let tab = coordinator.pageCommandTab else { return false }
             return coordinator.linkURL(for: tab) != nil
@@ -834,14 +777,6 @@ final class MainMenu: NSObject, NSMenuItemValidation {
         return true
     }
 
-    /// The site menu's first row, the page's whole address as the address bar draws it (`AddressText`), cut in the middle
-    /// when long. Set when the menu opens, not on every navigation; always disabled, it is a label.
-    private func validateSiteAddress(_ menuItem: NSMenuItem) -> Bool {
-        let text = AddressText(coordinator.pageCommandTab.flatMap { coordinator.linkURL(for: $0) })?.text ?? ""
-        menuItem.title = text.count > 80 ? String(text.prefix(40)) + "…" + String(text.suffix(39)) : text
-        return false
-    }
-
     /// What a micro window changes: Float on Top, shown only there, Move to Micro Window and back, and the items it has no use
     /// for. false refuses the item; anything else leaves it to `validateMenuItem`.
     private func validateMicroItem(_ menuItem: NSMenuItem) -> Bool? {
@@ -928,7 +863,7 @@ final class MainMenu: NSObject, NSMenuItemValidation {
         return holder
     }
 
-    private func command(
+    func command(
         _ title: LocalizedStringResource,
         _ action: Selector,
         key: String = "",

@@ -75,8 +75,11 @@ struct SiteMenuTests {
 
     @Test func pagesThatAreNotWebsitesShowNothing() {
         withSiteSetting {
-            for address in ["about:blank", "file:///Users/someone/secret.html", "data:text/html,hi", "wsurf://settings",
-                            "javascript:alert(1)", "not a url", ""] {
+            let addresses = [
+                "about:blank", "file:///Users/someone/secret.html", "data:text/html,hi", "wsurf://settings",
+                "javascript:alert(1)", "not a url", "",
+            ]
+            for address in addresses {
                 #expect(host(of: address) == nil, "\(address)")
             }
             #expect(coordinator(showing: nil).menuBarHost == nil, "no tab")
@@ -243,7 +246,7 @@ struct SiteMenuTests {
                 rig.first.windowDidBecomeKey()
                 let address = try #require(item.submenu?.items.first)
                 _ = rig.menu.validateMenuItem(address)
-                #expect(!address.title.contains("bank.com"), address.title)
+                #expect(!address.title.contains("bank.com"), "\(address.title)")
                 #expect(address.title.contains("evil.com"))
             }
         }
