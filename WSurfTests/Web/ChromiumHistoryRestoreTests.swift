@@ -141,12 +141,11 @@ struct ChromiumHistoryRestoreTests {
         return (tab, mark)
     }
 
-    /// Waits until `tab` shows WSurf's error document for `url` with these lists around it.
-    private func showsError(_ tab: BrowserTab, for url: URL, back: [String], forward: [String]) async -> Bool {
+    /// Waits until `tab` shows WSurf's error document with these lists around it.
+    private func showsError(_ tab: BrowserTab, back: [String], forward: [String]) async -> Bool {
         await waitUntil(timeout: .seconds(30)) {
             let list = tab.page.backForwardList
-            return !tab.page.isLoading && tab.isShowingError && tab.urlString == url.absoluteString
-                && list.backList.map(\.url.path) == back && list.forwardList.map(\.url.path) == forward
+            return !tab.page.isLoading && tab.isShowingError && list.backList.map(\.url.path) == back && list.forwardList.map(\.url.path) == forward
         }
     }
 
@@ -331,7 +330,8 @@ struct ChromiumHistoryRestoreTests {
             try #require(await settles(tab, at: "/c", back: ["/a", "/dead"], forward: []), "\(lists(tab))")
 
             tab.goBack()
-            #expect(await showsError(tab, for: dead, back: ["/a"], forward: ["/c"]), "\(lists(tab))")
+            #expect(await showsError(tab, back: ["/a"], forward: ["/c"]), "\(lists(tab))")
+            #expect(tab.urlString == dead.absoluteString, "the tab's address (saved as its current entry) is the failed one: \(tab.urlString)")
             #expect(tab.page.canGoBack && tab.page.canGoForward)
             tab.goBack()
             #expect(await settles(tab, at: "/a", back: [], forward: ["/dead", "/c"]), "\(lists(tab))")
@@ -351,7 +351,8 @@ struct ChromiumHistoryRestoreTests {
             try #require(await settles(tab, at: "/a", back: [], forward: ["/dead", "/c"]), "\(lists(tab))")
 
             tab.goForward()
-            #expect(await showsError(tab, for: dead, back: ["/a"], forward: ["/c"]), "\(lists(tab))")
+            #expect(await showsError(tab, back: ["/a"], forward: ["/c"]), "\(lists(tab))")
+            #expect(tab.urlString == dead.absoluteString, "the tab's address (saved as its current entry) is the failed one: \(tab.urlString)")
             tab.goForward()
             #expect(await settles(tab, at: "/c", back: ["/a", "/dead"], forward: []), "\(lists(tab))")
 
