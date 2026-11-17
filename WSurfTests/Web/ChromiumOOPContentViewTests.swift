@@ -123,6 +123,8 @@ struct ChromiumOOPContentViewTests {
         let rig = makeRig()
         let view = rig.remote.contentView
         #expect(view != nil)
+        // The attach gave the view the keys already (F1 of #142); let go of them so that the page's own forward is what is tested.
+        #expect(rig.window.makeFirstResponder(nil))
         #expect(rig.window.makeFirstResponder(rig.page))
         #expect(rig.window.firstResponder === view, "the first responder is \(String(describing: rig.window.firstResponder))")
         #expect(rig.page.ownsResponder(rig.window.firstResponder), "the page still owns its content view's keys")

@@ -53,10 +53,13 @@ extension ChromiumRemoteBrowser {
         case CefRemote.Event.statusMessage:
             page?.didHoverLink(URL(string: message.string(CefRemote.Key.text)))
         case CefRemote.Event.unhandledKey:
-            view.redispatchUnhandledKey(nativeKeyCode: UInt16(truncatingIfNeeded: message.int(CefRemote.Key.nativeKeyCode)),
-                                        type: message.int(CefRemote.Key.keyType))
+            view.redispatchUnhandledKey(
+                nativeKeyCode: UInt16(truncatingIfNeeded: message.int(CefRemote.Key.nativeKeyCode)),
+                type: message.int(CefRemote.Key.keyType), modifiers: message.int(CefRemote.Key.modifiers))
         case CefRemote.Event.takeFocus:
             view.passFocusOn(forward: message.bool(CefRemote.Key.flag))
+        case CefRemote.Event.textInput:
+            view.editableFocused = message.bool(CefRemote.Key.flag)
         default:
             break
         }

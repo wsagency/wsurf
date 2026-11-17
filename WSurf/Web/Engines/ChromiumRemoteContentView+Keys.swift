@@ -37,6 +37,14 @@ extension ChromiumRemoteContentView {
 
     // MARK: Keys
 
+    /// A chord that WSurf offers to the page before its menu (`ShortcutPriority.pageFirst`: ⌘←, ⌘A, ⌘F and the rest) goes to the page,
+    /// as a web view answers it in process; the page may keep it (⌘← moves the caret) or not, and a chord it does not handle comes
+    /// back and goes to the menu once (`redispatchUnhandledKey`). Every other key equivalent is the menu's, and is not claimed.
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        guard window?.firstResponder === self, ShortcutPriority.pageAnswersFirst(event) else { return false }
+        return deliver(event)
+    }
+
     override func keyDown(with event: NSEvent) {
         deliver(event)
     }
@@ -53,32 +61,66 @@ extension ChromiumRemoteContentView {
     /// page is hidden): a caller that reports "delivered" (the MCP key press) must not when the page never received it.
     @discardableResult
     func deliver(_ event: NSEvent) -> Bool {
+        guard event !== redispatching else { return false }
+        let line = lineKey(for: event)
         guard event.type == .keyDown else {
-            return sendKey(event, type: KEYEVENT_KEYUP)
+            return sendKey(event, type: KEYEVENT_KEYUP, as: line)
         }
-        guard sendKey(event, type: KEYEVENT_KEYDOWN) else { return false }
+        guard sendKey(event, type: KEYEVENT_KEYDOWN, as: line) else { return false }
+        // Home and End are the page's own: it takes them, and they never come back as a key to hand on.
+        guard line == nil else { return true }
         sentKeyDowns.append(event)
         if sentKeyDowns.count > Self.unansweredKeyLimit {
             sentKeyDowns.removeFirst()
         }
-        sendKey(event, type: KEYEVENT_CHAR)
+        // Not for a key with no text (a dead key, an arrow: its character is a private-use code), and not for a command chord (⌘A is not
+        // the letter a): there is no character to type.
+        if let character = event.characters?.utf16.first, !(0xF700...0xF8FF).contains(character),
+           !event.modifierFlags.contains(.command) {
+            sendKey(event, type: KEYEVENT_CHAR)
+        }
         return true
     }
 
     /// A key-down the page never answered is dropped from the queue after this many newer ones (the page handled it).
     private static let unansweredKeyLimit = 16
 
+    /// ⌘← and ⌘→ with an editable field focused are "go to the start / end of the line", which in process the text system does for a
+    /// web view. Out of process nothing does until D4-13 (text input), so the page gets the Home or End key, with Shift if it is down
+    /// (a selection). Without a field they are the menu's (Back and Forward, `ShortcutPriority`).
+    private func lineKey(for event: NSEvent) -> (nativeKeyCode: Int64, windowsKeyCode: Int64)? {
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask).subtracting([.capsLock, .numericPad, .function])
+        guard editableFocused, flags == .command || flags == [.command, .shift],
+              let key = event.charactersIgnoringModifiers?.utf16.first else { return nil }
+        switch Int(key) {
+        case NSLeftArrowFunctionKey:
+            return (115, 0x24)
+        case NSRightArrowFunctionKey:
+            return (119, 0x23)
+        default:
+            return nil
+        }
+    }
+
     @discardableResult
-    private func sendKey(_ event: NSEvent, type: cef_key_event_type_t) -> Bool {
+    private func sendKey(_ event: NSEvent, type: cef_key_event_type_t, as line: (nativeKeyCode: Int64, windowsKeyCode: Int64)? = nil) -> Bool {
         browser?.sendInput(CefRemote.Op.key) { message in
             var modifiers = Self.modifiers(event.modifierFlags)
+            if line != nil {
+                modifiers &= ~Int64(EVENTFLAG_COMMAND_DOWN.rawValue)
+            }
             if Self.isKeyPad(event) {
                 modifiers |= Int64(EVENTFLAG_IS_KEY_PAD.rawValue)
             }
+            if event.type != .flagsChanged, event.isARepeat {
+                modifiers |= Int64(EVENTFLAG_IS_REPEAT.rawValue)
+            }
             message.set(CefRemote.Key.keyType, Int64(type.rawValue))
             message.set(CefRemote.Key.modifiers, modifiers)
-            message.set(CefRemote.Key.nativeKeyCode, Int64(event.keyCode))
-            if event.type == .keyDown || event.type == .keyUp {
+            message.set(CefRemote.Key.nativeKeyCode, line?.nativeKeyCode ?? Int64(event.keyCode))
+            if let line {
+                message.set(CefRemote.Key.windowsKeyCode, line.windowsKeyCode)
+            } else if event.type == .keyDown || event.type == .keyUp {
                 message.set(
                     CefRemote.Key.windowsKeyCode,
                     Int64(CefRemote.windowsKeyCode(forMacKeyCode: event.keyCode, characters: event.charactersIgnoringModifiers)))
@@ -88,14 +130,30 @@ extension ChromiumRemoteContentView {
         } ?? false
     }
 
-    /// `key.unhandled`: the page did not handle a key-down. The event WSurf made it from goes on in the app, to the responder after
-    /// this view, exactly as if the view had not taken it. Keys it handled are never reported, so the ones before it in the queue
-    /// were handled (or are not coming back) and are let go of.
-    func redispatchUnhandledKey(nativeKeyCode: UInt16, type: Int64) {
+    /// The four modifier bits a report is matched on (the others, such as caps lock or the key pad, are not what tells two keys apart).
+    private static let matchedModifiers = Int64(
+        EVENTFLAG_SHIFT_DOWN.rawValue | EVENTFLAG_CONTROL_DOWN.rawValue | EVENTFLAG_ALT_DOWN.rawValue | EVENTFLAG_COMMAND_DOWN.rawValue)
+
+    /// `key.unhandled`: the page did not handle a key-down. The event WSurf made it from goes on in the app exactly as if the view had
+    /// not taken it: a chord of `ShortcutPriority.pageFirst` to the menu (once), any other key to the responder after this view.
+    /// It is matched by key code and modifiers (Shift-Tab is not Tab). Keys the page handled are never reported, so the ones before
+    /// it in the queue were handled (or are not coming back) and are let go of. A report that arrives after the person has gone
+    /// elsewhere (a field, the address bar) is dropped: a late Tab or Escape must not drive another field's key loop. Whatever the app
+    /// does with the event (`redispatching`) it never reaches the page again.
+    func redispatchUnhandledKey(nativeKeyCode: UInt16, type: Int64, modifiers: Int64) {
         guard type == Int64(KEYEVENT_RAWKEYDOWN.rawValue) || type == Int64(KEYEVENT_KEYDOWN.rawValue),
-              let index = sentKeyDowns.firstIndex(where: { $0.keyCode == nativeKeyCode }) else { return }
+              let index = sentKeyDowns.firstIndex(where: {
+                  $0.keyCode == nativeKeyCode
+                      && Self.modifiers($0.modifierFlags) & Self.matchedModifiers == modifiers & Self.matchedModifiers
+              }) else { return }
         let event = sentKeyDowns[index]
         sentKeyDowns.removeFirst(index + 1)
+        guard window?.firstResponder === self else { return }
+        redispatching = event
+        defer { redispatching = nil }
+        if ShortcutPriority.pageAnswersFirst(event), NSApp.mainMenu?.performKeyEquivalent(with: event) == true {
+            return
+        }
         nextResponder?.keyDown(with: event)
     }
 

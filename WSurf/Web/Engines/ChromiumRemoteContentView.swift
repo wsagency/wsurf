@@ -26,6 +26,11 @@ final class ChromiumRemoteContentView: NSView {
     /// The key-down events sent to the page that it has not answered, oldest first: the page reports a key it did not handle by its
     /// key code only, and the event that goes on in the app is the one made for it (`+Keys`).
     var sentKeyDowns: [NSEvent] = []
+    /// The key-down this view handed on to the app (`redispatchUnhandledKey`) while the hand-on runs. Whatever the app does with it, it
+    /// never comes back to the page: the view neither sends it again nor claims it as a key equivalent.
+    var redispatching: NSEvent?
+    /// An editable field of the page has the focus (`text.input`): see `lineKey(for:)`.
+    var editableFocused = false
 
     override init(frame: NSRect) {
         super.init(frame: frame)

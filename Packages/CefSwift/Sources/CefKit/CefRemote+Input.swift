@@ -34,6 +34,9 @@ extension CefRemote.Event {
     public static let unhandledKey = "key.unhandled"
     /// Focus leaves the page (Tab from its last field, or Shift-Tab from its first): ``CefRemote/Key/flag`` is true for "next".
     public static let takeFocus = "focus.take"
+    /// An editable field took or lost the focus (`on_virtual_keyboard_requested`): ``CefRemote/Key/flag`` is true while one has it. WSurf
+    /// sends ⌘← and ⌘→ to the page as Home and End then, and does not let an unhandled one go to the menu as Back or Forward.
+    public static let textInput = "text.input"
     /// The page took focus (`on_got_focus`).
     public static let gotFocus = "focus.got"
 }
@@ -61,6 +64,8 @@ extension CefRemote.Key {
     public static let inputLegMaxMs = "inlegmax"
     /// `debug.stats` with a browser (D4-12): the last `set_focus` the browser was given (0 or 1), and -1 before any.
     public static let inputFocus = "infocus"
+    /// `debug.stats` with a browser (D4-12, review F4): the context menus the service emptied instead of showing.
+    public static let inputMenusCleared = "inmenus"
 }
 
 extension CefRemote {
@@ -75,7 +80,8 @@ extension CefRemote {
 
     /// The Windows (DOM) virtual key code CEF expects in `cef_key_event_t.windows_key_code`, from a macOS key code
     /// (`NSEvent.keyCode`). The table covers the keys whose code is not their character (CefSwift's `CefKeyCodes`, which lives in
-    /// CefSwiftUI and cannot be imported); a printable key is its upper-cased ASCII code, as Chromium's own conversion does.
+    /// CefSwiftUI and cannot be imported) and the punctuation keys, whose VK_OEM codes are not their ASCII (`.` is 0x2E, which is
+    /// VK_DELETE); a letter or a digit is its upper-cased ASCII code.
     public static func windowsKeyCode(forMacKeyCode keyCode: UInt16, characters: String?) -> Int {
         if let mapped = windowsKeyCodes[keyCode] {
             return mapped
@@ -91,6 +97,8 @@ extension CefRemote {
         0x7D: 0x28, 0x7E: 0x26, 0x73: 0x24, 0x77: 0x23, 0x74: 0x21, 0x79: 0x22, 0x38: 0x10, 0x3C: 0x10, 0x3B: 0x11,
         0x3E: 0x11, 0x3A: 0x12, 0x3D: 0x12, 0x37: 0x5B, 0x36: 0x5C, 0x39: 0x14, 0x7A: 0x70, 0x78: 0x71, 0x63: 0x72,
         0x76: 0x73, 0x60: 0x74, 0x61: 0x75, 0x62: 0x76, 0x64: 0x77, 0x65: 0x78, 0x6D: 0x79, 0x67: 0x7A, 0x6F: 0x7B,
+        // Punctuation, by the key's place on an ANSI layout: ; = , - . / ` [ \ ] '
+        0x29: 0xBA, 0x18: 0xBB, 0x2B: 0xBC, 0x1B: 0xBD, 0x2F: 0xBE, 0x2C: 0xBF, 0x32: 0xC0, 0x21: 0xDB, 0x2A: 0xDC, 0x1E: 0xDD, 0x27: 0xDE,
     ]
 }
 

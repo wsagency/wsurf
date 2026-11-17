@@ -55,6 +55,7 @@ final class RemoteClientHandlers: @unchecked Sendable {
     let find: UnsafeMutablePointer<cef_find_handler_t>
     let keyboard: UnsafeMutablePointer<cef_keyboard_handler_t>
     let focus: UnsafeMutablePointer<cef_focus_handler_t>
+    let contextMenu: UnsafeMutablePointer<cef_context_menu_handler_t>
 
     init(box: BrowserBox) {
         lifeSpan = RemoteClientHandlers.makeLifeSpan(box)
@@ -65,6 +66,7 @@ final class RemoteClientHandlers: @unchecked Sendable {
         find = RemoteClientHandlers.makeFind(box)
         keyboard = RemoteClientHandlers.makeKeyboard(box)
         focus = RemoteClientHandlers.makeFocus(box)
+        contextMenu = RemoteClientHandlers.makeContextMenu(box)
         ServiceCounters.handlerSets.withLock { $0 += 1 }
     }
 
@@ -72,7 +74,7 @@ final class RemoteClientHandlers: @unchecked Sendable {
     deinit {
         for pointer in [UnsafeMutableRawPointer(lifeSpan), UnsafeMutableRawPointer(load), UnsafeMutableRawPointer(display),
                         UnsafeMutableRawPointer(request), UnsafeMutableRawPointer(render), UnsafeMutableRawPointer(find),
-                        UnsafeMutableRawPointer(keyboard), UnsafeMutableRawPointer(focus)] {
+                        UnsafeMutableRawPointer(keyboard), UnsafeMutableRawPointer(focus), UnsafeMutableRawPointer(contextMenu)] {
             Native.release(pointer)
         }
         ServiceCounters.handlerSets.withLock { $0 -= 1 }
@@ -90,6 +92,7 @@ final class RemoteClientHandlers: @unchecked Sendable {
         client.pointee.get_find_handler = { clientSelf in RemoteClientHandlers.handler(clientSelf) { $0.find } }
         client.pointee.get_keyboard_handler = { clientSelf in RemoteClientHandlers.handler(clientSelf) { $0.keyboard } }
         client.pointee.get_focus_handler = { clientSelf in RemoteClientHandlers.handler(clientSelf) { $0.focus } }
+        client.pointee.get_context_menu_handler = { clientSelf in RemoteClientHandlers.handler(clientSelf) { $0.contextMenu } }
         return client
     }
 
@@ -301,6 +304,7 @@ final class RemoteClientHandlers: @unchecked Sendable {
             info.pointee.available_rect = screenRect
             return 1
         }
+        addTextInputCallback(to: render)
         // Asked for only while accessibility is on (D4-40).
         render.pointee.get_accessibility_handler = { handlerSelf in RemoteClientHandlers.makeAccessibility(handlerSelf) }
         render.pointee.on_popup_show = { handlerSelf, browser, show in

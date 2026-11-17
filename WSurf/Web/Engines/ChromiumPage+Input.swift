@@ -43,6 +43,12 @@ extension ChromiumPage {
         try await send("mouseReleased", last, button: "left", buttons: 0, checked: false)
     }
 
+    /// Whether the page is on screen for the person (not hidden, not parked on the shelf): a page that is not does not touch the cursor.
+    var isShownToPerson: Bool {
+        let visibility = remoteVisibility()
+        return !visibility.hidden && !visibility.parked
+    }
+
     // MARK: First responder and keys (moved from `ChromiumPage.swift`, which is at its line limit; `sendKeyEvent` is D4-12's)
 
     func selectAll() {

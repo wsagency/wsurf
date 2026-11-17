@@ -16,6 +16,8 @@ struct InputStatistics {
     var legMaxMs = 0.0
     /// The last `set_focus` given to the browser; -1 before any.
     var focus = -1
+    /// Context menus CEF offered that the service emptied (`makeContextMenu`): until D4-15 none is shown.
+    var menusCleared = 0
 }
 
 extension RemoteBrowser {
@@ -100,6 +102,7 @@ extension RemoteBrowser {
         message.set(CefRemote.Key.inputLegSumMs, inputStats.legSumMs)
         message.set(CefRemote.Key.inputLegMaxMs, inputStats.legMaxMs)
         message.set(CefRemote.Key.inputFocus, inputStats.focus)
+        message.set(CefRemote.Key.inputMenusCleared, inputStats.menusCleared)
     }
 }
 

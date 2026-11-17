@@ -91,7 +91,8 @@ extension ChromiumRemoteContentView {
     func setRemoteCursor(_ type: CefCursorType) {
         remoteCursor = type.nsCursor ?? .arrow
         window?.invalidateCursorRects(for: self)
-        guard let window, bounds.contains(convert(window.mouseLocationOutsideOfEventStream, from: nil)) else { return }
+        guard let window, owningPage?.isShownToPerson == true,
+              bounds.contains(convert(window.mouseLocationOutsideOfEventStream, from: nil)) else { return }
         remoteCursor.set()
     }
 
@@ -142,18 +143,13 @@ extension ChromiumRemoteContentView {
         sendMouse(CefRemote.MouseKind.up, event, button: 2)
     }
 
-    /// The thumb buttons (3 and 4) are Back and Forward, as for a page in process (`CefMetalHostView.otherMouseDown`); the press is
-    /// the edge and the release is swallowed. Any other button is a middle click. (The window takes the thumb buttons first when the
-    /// setting `sideButtonsNavigate` is on: `BrowserWindow.sendEvent`.)
+    /// The thumb buttons (3 and 4) are the window's: with the setting `sideButtonsNavigate` on, `BrowserWindow.sendEvent` takes them
+    /// before any view and the tab goes Back or Forward; with it off the person left them to the website, which this view cannot
+    /// do (`cef_mouse_button_type_t` has no buttons 3 and 4). So both edges are swallowed here, and nothing is sent or navigated.
+    /// Any other button is a middle click.
     override func otherMouseDown(with event: NSEvent) {
-        switch event.buttonNumber {
-        case 3:
-            _ = owningPage?.owner?.goBack()
-        case 4:
-            _ = owningPage?.owner?.goForward()
-        default:
-            sendMouse(CefRemote.MouseKind.down, event, button: 1)
-        }
+        guard event.buttonNumber != 3, event.buttonNumber != 4 else { return }
+        sendMouse(CefRemote.MouseKind.down, event, button: 1)
     }
 
     override func otherMouseUp(with event: NSEvent) {
