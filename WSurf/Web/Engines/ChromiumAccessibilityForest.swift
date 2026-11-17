@@ -232,23 +232,33 @@ nonisolated struct ChromiumAccessibilityForest: Sendable {
 
     /// Children for VoiceOver: nodes that are not elements give way to theirs; leaves have none.
     func visibleChildren(of key: Key) -> [Key] {
-        guard let node = node(key), !Self.leafRoles.contains(node.role) else { return [] }
+        visibleChildren(of: key, depth: 0)
+    }
+
+    /// The updates come from a renderer: child lists that loop, or nest without end, must cost a bounded walk and nothing else.
+    private func visibleChildren(of key: Key, depth: Int) -> [Key] {
+        guard depth < Self.maxDepth, let node = node(key), !Self.leafRoles.contains(node.role) else { return [] }
         var result: [Key] = []
         for child in children(of: key) {
             guard let childNode = self.node(child) else { continue }
             if isElement(childNode, key: child) {
                 result.append(child)
             } else {
-                result += visibleChildren(of: child)
+                result += visibleChildren(of: child, depth: depth + 1)
             }
         }
         return result
     }
 
+    /// How far a walk goes up or down through nodes that are not elements (deeper than any page's markup, and a cycle never ends).
+    private static let maxDepth = 256
+
     func visibleParent(of key: Key) -> Key? {
         var parent = node(key)?.parent
-        while let current = parent, let node = node(current), !isElement(node, key: current) {
+        var steps = 0
+        while let current = parent, let node = node(current), !isElement(node, key: current), steps < Self.maxDepth {
             parent = node.parent
+            steps += 1
         }
         return parent
     }
@@ -272,11 +282,13 @@ nonisolated struct ChromiumAccessibilityForest: Sendable {
 
     private func leafAncestorRole(of node: Node) -> String {
         var parent = node.parent
-        while let current = parent, let parentNode = self.node(current) {
+        var steps = 0
+        while let current = parent, let parentNode = self.node(current), steps < Self.maxDepth {
             if Self.leafRoles.contains(parentNode.role) {
                 return parentNode.role
             }
             parent = parentNode.parent
+            steps += 1
         }
         return ""
     }
@@ -345,7 +357,8 @@ nonisolated struct ChromiumAccessibilityForest: Sendable {
         case let number as Int:
             number
         case let number as Double:
-            number.isFinite ? Int(number) : nil
+            // Ids and levels are small whole numbers; a huge or fractional value from a renderer is not one (`Int(_:)` would trap).
+            abs(number) < 1e15 ? Int(exactly: number) : nil
         case let string as String:
             Int(string)
         default:
