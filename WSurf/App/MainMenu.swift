@@ -39,8 +39,7 @@ enum ShortcutPriority {
 final class MainMenu: NSObject, NSMenuItemValidation {
     let fallbackCoordinator: AppCoordinator?
     weak var application: BrowserApplication?
-    /// The menu after Help named for the site in front; built once, hidden unless Show Site in Menu Bar is on.
-    var siteMenuItem: NSMenuItem?
+    var site = SiteMenuState()
     var coordinator: AppCoordinator {
         if let application {
             return application.ensureActiveWindow()
@@ -58,6 +57,10 @@ final class MainMenu: NSObject, NSMenuItemValidation {
         fallbackCoordinator = nil
         self.application = application
         super.init()
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
     }
 
     func install() {
@@ -80,10 +83,7 @@ final class MainMenu: NSObject, NSMenuItemValidation {
         NSApp.windowsMenu = window
         NSApp.helpMenu = help
 
-        // A window that is not a browser window (Passwords, Settings, About) takes the site menu away while it is key.
-        NotificationCenter.default.addObserver(
-            self, selector: #selector(someWindowBecameKey), name: NSWindow.didBecomeKeyNotification, object: nil
-        )
+        watchSiteWindows()
         refreshSiteItem()
 
         let coordinators = application?.windows ?? fallbackCoordinator.map { [$0] } ?? []
@@ -649,7 +649,7 @@ final class MainMenu: NSObject, NSMenuItemValidation {
     }
 
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {  // swiftlint:disable:this cyclomatic_complexity
-        if let answer = validateWithoutBrowserWindow(menuItem) ?? validateSiteItem(menuItem) {
+        if let answer = validateSiteItem(menuItem) ?? validateWithoutBrowserWindow(menuItem) {
             return answer
         }
         guard validateMicroItem(menuItem) != false else { return false }

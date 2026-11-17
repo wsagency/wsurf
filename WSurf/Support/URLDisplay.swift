@@ -4,6 +4,7 @@
 // Linen portions: Apache-2.0; WSurf modifications: BUSL-1.1. See NOTICE.
 
 import Foundation
+import WSurfVault
 
 extension URL {
     var displayHost: String? {
@@ -80,5 +81,29 @@ nonisolated struct AddressText: Equatable {
             }
         }
         return drawn
+    }
+
+    /// `host` shortened to `limit` characters for a place with little room (the menu bar). Only whole labels go, from the left, and
+    /// a "…" stands in front when any did: a cut through a label would show a tail that reads as another name, and a name cut at the
+    /// front reads as the bank it imitates. The registrable domain (public suffix plus one label, as `RelyingPartyPolicy` reads
+    /// the bundled Public Suffix List: `evil.co.uk`, never just `co.uk`) always stays whole, even when it alone is longer than the
+    /// limit; then as many labels in front of it as fit. An address (IPv4 or a bracketed IPv6 literal) is never cut. A trailing
+    /// dot is kept. The port is not part of `host`, so it does not count.
+    nonisolated static func shortened(host: String, to limit: Int) -> String {
+        guard host.count > limit, !host.contains(":"), !host.allSatisfy({ $0.isNumber || $0 == "." }) else { return host }
+        let dot = host.hasSuffix(".")
+        let name = dot ? String(host.dropLast()) : host
+        let room = dot ? limit - 1 : limit
+        let labels = name.split(separator: ".", omittingEmptySubsequences: false).map(String.init)
+        // ponytail: a name the list cannot place (a label over 63 characters, which no DNS resolves) keeps its last label only.
+        let owned = RelyingPartyPolicy.registrableDomain(of: name)
+            .map { $0.split(separator: ".", omittingEmptySubsequences: false).count } ?? 1
+        var first = labels.count - min(owned, labels.count)
+        var kept = labels[first...].joined(separator: ".")
+        while first > 0, labels[first - 1].count + 1 + kept.count + (first > 1 ? 1 : 0) <= room {
+            first -= 1
+            kept = labels[first] + "." + kept
+        }
+        return (first > 0 ? "…" : "") + kept + (dot ? "." : "")
     }
 }

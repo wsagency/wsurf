@@ -5847,6 +5847,12 @@
     "Show Sidebar" : {
       "comment" : "Menu bar command under View, shortcut ⌃⌘S, which reveals the tab sidebar. The same item reads Hide Sidebar when the sidebar is already showing, so the two should stay parallel. Title Case, Show is a verb."
     },
+    "Site: %@" : {
+      "comment" : "VoiceOver label of the menu after Help named for the website in front, which is read as a menu bar item. %@ is the website’s name, for example “github.com” (ASCII; an international name arrives as punycode, “xn--…”, spelled out as is). Short; the colon is read as a pause."
+    },
+    "Address: %@" : {
+      "comment" : "VoiceOver label of the first row of the menu named for the website in front, a disabled row that shows the page’s address. %@ is the address as the address bar draws it, for example “https://github.com/wsagency”. Short; the colon is read as a pause."
+    },
     "Show Site in Menu Bar" : {
       "comment" : "Menu bar command under View, with a checkmark while on. Turns on a menu after Help whose title is the website of the page in front, for example “github.com”. Title Case, Show is a verb. Pairs with the sentence case Settings row “Show site in menu bar”."
     },
