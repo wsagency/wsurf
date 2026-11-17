@@ -404,6 +404,25 @@ struct ChromiumHistoryRestoreTests {
         }
     }
 
+    /// The shared rule behind the live test above, whatever the engine: only the error document's own start keeps the flag that
+    /// waits for it; any other navigation that starts ends the wait and takes the address.
+    @Test func aNavigationThatIsNotTheErrorDocumentEndsTheWaitForIt() {
+        let tab = BrowserModel(database: AppDatabase.temporary()).newTab()
+        let document = PageNavigation()
+        let url = URL(string: "https://example.com/next")
+        tab.isShowingError = true
+        tab.isLoadingErrorPage = true
+        tab.errorDocumentNavigation = document
+
+        tab.navigationStarted(document, url: url)
+        #expect(tab.isLoadingErrorPage && tab.isShowingError, "the error document's own start")
+        #expect(tab.urlString != url?.absoluteString)
+
+        tab.navigationStarted(PageNavigation(), url: url)
+        #expect(!tab.isLoadingErrorPage && !tab.isShowingError)
+        #expect(tab.urlString == url?.absoluteString)
+    }
+
     // MARK: Engine switches
 
     /// Chromium → WebKit → Back: the Chromium page comes back with its list, loading only its own address.
