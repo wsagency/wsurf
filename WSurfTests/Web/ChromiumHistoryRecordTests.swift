@@ -297,6 +297,32 @@ struct ChromiumHistoryRecordTests {
         #expect(record.floorIndex(in: record.native) == 2, "the first load's entry is hidden with the page the hop left")
     }
 
+    /// A failed hop retargeted after its error document had committed, that fails again: it lands only on the error document that is
+    /// current, never on the earlier one (the same `data:` address) that Chromium's newer error entry follows.
+    @Test func aRetargetedFailedHopLandsOnlyOnItsCurrentErrorDocument() throws {
+        var record = seeded(back: ["a", "b"], forward: [])
+        _ = record.update(native: [native(1, "c", current: true)], navigation: nil)
+        let hop = PageNavigation()
+        record.startHop(to: try #require(record.back.last).id, window: [native(-1, "c", current: true)], current: 0, navigation: hop)
+        record.noteCommit(URL(string: "chrome-error://chromewebdata/"), navigation: hop)
+        let errorDocument = PageNavigation()
+        record.failedHop(hop, errorDocument: errorDocument)
+        let again = PageNavigation()
+        record.retargetHop(to: try #require(record.entryFromHop(-1)).index, navigation: again)
+        let secondErrorDocument = PageNavigation()
+        record.failedHop(again, errorDocument: secondErrorDocument)
+
+        let url = "data:text/html;base64,eA=="
+        let earlier = CefRemote.HistoryEntry(id: 3, url: url, title: "")
+        #expect(record.update(native: [native(1, "c"), native(2, "b"), earlier, native(4, "b", current: true)], navigation: secondErrorDocument)
+                == .unchanged, "the earlier error document does not land it")
+        let document = CefRemote.HistoryEntry(id: 5, url: url, title: "", isCurrent: true)
+        #expect(record.update(native: [native(1, "c"), native(2, "b"), earlier, native(4, "b"), document], navigation: secondErrorDocument)
+                == .collapse(keeping: url, count: 5))
+        #expect(paths(record.back) == ["a"] && paths(record.forward) == ["c"])
+        #expect(record.floorIndex(in: record.native) == 4)
+    }
+
     @Test func aFailedForwardHopKeepsTheForwardEntries() throws {
         var record = seeded(back: [], forward: ["b", "c"])
         _ = record.update(native: [native(1, "a", current: true)], navigation: nil)

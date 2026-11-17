@@ -451,6 +451,26 @@ struct ChromiumHistoryRestoreTests {
         }
     }
 
+    /// The same for Forward: a second Forward while the error document of a failed Forward hop loads restarts that hop, and the
+    /// forward list keeps its order with no entry twice.
+    @Test func aSecondForwardWhileTheErrorDocumentLoadsRestartsTheFailedHop() async throws {
+        try await withRig { rig, log in
+            let (dead, _) = try await closedPort(log: log)
+            let (tab, _) = try await wake(at: "/a", from: state(back: [], forward: [dead, rig.server.url("/c")]), in: rig, log: log)
+            try #require(await settles(tab, at: "/a", back: [], forward: ["/dead", "/c"]), "\(lists(tab))")
+
+            let mark = log.count
+            onceAfterFailure(of: tab) { [weak tab] in tab?.goForward() }
+            tab.goForward()
+            #expect(await showsError(tab, back: ["/a"], forward: ["/c"]), "\(lists(tab))")
+            #expect(await showsOwnErrorPage(tab), "\(tab.page.title ?? "-")")
+            #expect(tab.urlString == dead.absoluteString, "\(tab.urlString)")
+            tab.goForward()
+            #expect(await settles(tab, at: "/c", back: ["/a", "/dead"], forward: []), "\(lists(tab))")
+            #expect(await requests(log, since: mark, are: ["GET /c"]), "\(log.since(mark))")
+        }
+    }
+
     // MARK: Engine switches
 
     /// Chromium → WebKit → Back: the Chromium page comes back with its list, loading only its own address.
