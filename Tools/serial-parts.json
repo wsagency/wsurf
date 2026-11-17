@@ -213,6 +213,7 @@
    "ColourChooserDismissalTests",
    "CredentialListLifetimeTests",
    "CrossSiteFramePasskeyTests",
+   "ExtensionTabEventTests",
    "FrameAudioTests",
    "FrameStartScriptTests",
    "FreeMemoryTests",
