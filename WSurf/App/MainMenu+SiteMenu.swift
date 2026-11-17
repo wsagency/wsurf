@@ -60,8 +60,9 @@ extension MainMenu {
     /// Only carries the address in the site menu; it has nothing to do.
     @objc func showSiteAddress() {}
 
-    /// The answer for the two items of this menu's own making, nil for any other. The address row is the page's whole address
-    /// as the address bar draws it (`AddressText`), cut in the middle when long; it is set when the menu opens, not on every
+    /// The answer for the two items of this menu's own making, nil for any other. The address row is the page's address as the
+    /// address bar draws it (`AddressText`). Like the bar, it shortens only what follows the website and never the website: a
+    /// cut through a long name would hide the domain that owns the page. It is set when the menu opens, not on every
     /// navigation, and is always disabled: a label.
     func validateSiteItem(_ menuItem: NSMenuItem) -> Bool? {
         switch menuItem.action {
@@ -69,8 +70,9 @@ extension MainMenu {
             menuItem.state = coordinator.settings.showsSiteInMenuBar ? .on : .off
             return true
         case #selector(showSiteAddress):
-            let text = coordinator.menuBarAddress?.text ?? ""
-            menuItem.title = text.count > 80 ? String(text.prefix(40)) + "…" + String(text.suffix(39)) : text
+            let address = coordinator.menuBarAddress
+            let rest = address?.rest ?? ""
+            menuItem.title = (address.map { $0.scheme + $0.host } ?? "") + (rest.count > 48 ? String(rest.prefix(47)) + "…" : rest)
             return false
         default:
             return nil

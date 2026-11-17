@@ -112,10 +112,11 @@ extension AppCoordinator {
         return address
     }
 
-    /// The name that menu shows: the website only, never path or query, at most 32 characters.
+    /// The name that menu shows: the website only, never path or query, at most 32 characters. A longer name keeps its end,
+    /// where the domain that owns the page is: cut at the front, `bank.com.long-made-up-name.evil.com` would read as the bank.
     var menuBarHost: String? {
         guard let name = menuBarAddress?.name else { return nil }
-        return name.count > 32 ? String(name.prefix(31)) + "…" : name
+        return name.count > 32 ? "…" + String(name.suffix(31)) : name
     }
 
     /// Writes `menuBarHost` into the menu bar when this is the window in front.

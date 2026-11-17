@@ -64,11 +64,13 @@ struct SiteMenuTests {
         }
     }
 
-    @Test func aLongNameIsCutAtThirtyTwoCharacters() throws {
+    /// A long name is cut at the front: the end is the domain that owns the page, and a made-up name in front must not pose as it.
+    @Test func aLongNameIsCutAtThirtyTwoCharactersAndKeepsItsEnd() throws {
         try withSiteSetting {
-            let long = String(repeating: "a", count: 40) + ".example"
+            let long = "accounts.bank.com." + String(repeating: "a", count: 30) + ".evil.example"
             let name = try #require(host(of: "https://\(long)/"))
-            #expect(name.count == 32 && name.hasSuffix("…"))
+            #expect(name.count == 32 && name.hasPrefix("…") && name.hasSuffix(".evil.example"), "\(name)")
+            #expect(!name.contains("bank.com"), "\(name)")
             #expect(host(of: "https://\(String(repeating: "b", count: 27)).com/")?.count == 31, "short enough stays whole")
         }
     }
@@ -248,6 +250,21 @@ struct SiteMenuTests {
                 _ = rig.menu.validateMenuItem(address)
                 #expect(!address.title.contains("bank.com"), "\(address.title)")
                 #expect(address.title.contains("evil.com"))
+            }
+        }
+    }
+
+    /// A long address loses the end of its path, never a part of the website: a cut through the name would hide who owns the page.
+    @Test func theAddressRowShortensThePathAndNeverTheWebsite() throws {
+        let site = "bank.com." + String(repeating: "a", count: 60) + ".evil.example"
+        let path = "/" + String(repeating: "x", count: 100)
+        try withSiteSetting {
+            try withMenu(firstAddress: "https://\(site)\(path)") { rig, item in
+                rig.first.windowDidBecomeKey()
+                let address = try #require(item.submenu?.items.first)
+                _ = rig.menu.validateMenuItem(address)
+                #expect(address.title.hasPrefix("https://\(site)/x"), "the website is whole: \(address.title)")
+                #expect(address.title.hasSuffix("x…") && address.title.count == "https://\(site)".count + 48, "\(address.title)")
             }
         }
     }
