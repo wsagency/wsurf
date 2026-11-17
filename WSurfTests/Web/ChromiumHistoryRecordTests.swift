@@ -37,8 +37,10 @@ struct ChromiumHistoryRecordTests {
 
     @Test func onlyWebAddressesThatNoFormMadeAreSaved() throws {
         var record = ChromiumHistoryRecord()
-        let other = ["about:blank", "data:text/html,x", "chrome://settings", "chrome-error://chromewebdata/", "devtools://devtools/x",
-                     "javascript:void(0)", "blob:https://a.test/1", "file:///Users/x/a.html", "wsurf://start"]
+        let other = [
+            "about:blank", "data:text/html,x", "chrome://settings", "chrome-error://chromewebdata/", "devtools://devtools/x",
+            "javascript:void(0)", "blob:https://a.test/1", "file:///Users/x/a.html", "wsurf://start",
+        ]
         var window = other.enumerated().map { CefRemote.HistoryEntry(id: Int64(100 + $0.offset), url: $0.element, title: "x") }
         window.insert(native(1, "a"), at: 2)
         window.append(native(2, "result", post: true))
@@ -125,9 +127,9 @@ struct ChromiumHistoryRecordTests {
         _ = traversal.update(native: [native(1, "a"), native(2, "b", current: true)], navigation: nil)
         #expect(traversal.update(native: [native(1, "a", current: true), native(2, "b")], navigation: nil) == .unchanged)
         #expect(traversal.update(native: [native(1, "a"), native(2, "b", current: true)], navigation: nil) == .unchanged)
-        #expect(traversal.update(native: [native(1, "a"), native(2, "b"),
-                                          CefRemote.HistoryEntry(id: 3, url: "data:text/html;base64,eA==", title: "", isCurrent: true)],
-                                 navigation: nil) == .unchanged, "WSurf's own error document")
+        let errorDocument = CefRemote.HistoryEntry(id: 3, url: "data:text/html;base64,eA==", title: "", isCurrent: true)
+        #expect(traversal.update(native: [native(1, "a"), native(2, "b"), errorDocument], navigation: nil) == .unchanged,
+                "WSurf's own error document")
         #expect(paths(traversal.forward) == ["z"])
     }
 
@@ -229,4 +231,3 @@ struct ChromiumHistoryRecordTests {
         #expect(record.back.isEmpty && paths(record.forward) == ["b"])
     }
 }
-

@@ -3,6 +3,7 @@
 
 import Foundation
 import Testing
+import WebKit
 
 @testable import WSurf
 
