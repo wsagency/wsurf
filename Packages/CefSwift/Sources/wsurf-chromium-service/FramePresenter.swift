@@ -19,7 +19,7 @@
 //
 // Source textures: wrapping CEF's surface in a texture is most of the copy's CPU cost (595 of 1,000 us a frame). Chromium cycles a
 // handful of surfaces, so a texture is kept per CEF surface (`sourceTextures`, keyed by `IOSurfaceGetID` and checked against the
-// surface itself, its size and its format, since an ID can be reused once a surface is freed) and the command buffer does not retain
+// size and format; the ID, not the surface object, which Chromium makes anew for every frame) and the command buffer does not retain
 // what it uses. That is safe only because `present` waits for the copy before it returns: CEF takes its surface back then. The cache
 // is capped (least recently used goes first), because a stale entry keeps a dropped surface alive (18 MB at 1300x860 @2x), and it is
 // emptied with the size or format, with the ring (hidden, closed) and when the browser is parked. The popup's frames are not cached.
@@ -81,6 +81,8 @@ final class FramePresenter {
     /// The view's CEF surfaces as textures, least recently used first, all of `sourceKey`'s size and format.
     private var sourceTextures: [(id: IOSurfaceID, texture: MTLTexture)] = []
     private var sourceKey: (width: Int, height: Int, format: OSType)?
+    /// Frames of the view whose texture had to be made (`debug.stats`): about one in a hundred once the page has cycled Chromium's surfaces.
+    private var sourceTextureMisses = 0
 
     /// A size that differs from the one being shown is taken after it has been stable this long: one frame interval at the 30 frames a
     /// second the service paints at.
@@ -198,6 +200,7 @@ final class FramePresenter {
         message.set(CefRemote.Key.ringOverwrites, ringOverwrites)
         message.set(CefRemote.Key.slotsMade, slotsMade)
         message.set(CefRemote.Key.sourceTextures, sourceTextures.count)
+        message.set(CefRemote.Key.sourceTextureMisses, sourceTextureMisses)
         let key = sourceKey
         message.set(CefRemote.Key.staleSourceTextures, sourceTextures.filter {
             $0.texture.width != key?.width || $0.texture.height != key?.height
@@ -275,13 +278,17 @@ final class FramePresenter {
         }
         sourceKey = (width, height, format)
         let id = IOSurfaceGetID(source)
+        // The key is the surface's ID, not the `IOSurfaceRef` object: Chromium hands over a new object for the same surface every frame, so
+        // the object never matches. The ID is safe because a cached texture holds its surface, which therefore cannot be freed (and its ID
+        // given to another surface) while the entry exists; the size and format are checked all the same.
         if let index = sourceTextures.firstIndex(where: { $0.id == id }) {
             let entry = sourceTextures.remove(at: index)
-            if entry.texture.iosurface === source {
+            if entry.texture.width == width, entry.texture.height == height, entry.texture.pixelFormat == metalFormat {
                 sourceTextures.append(entry)
                 return entry.texture
             }
         }
+        sourceTextureMisses += 1
         guard let made = Self.texture(device: device, surface: source, width: width, height: height, format: metalFormat, usage: .shaderRead)
         else { return nil }
         sourceTextures.append((id, made))

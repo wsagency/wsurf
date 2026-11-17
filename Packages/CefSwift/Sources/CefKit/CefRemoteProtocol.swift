@@ -166,6 +166,8 @@ public enum CefRemote {
         /// `debug.stats` with a ``browser`` (D4 frames cache): how many of CEF's surfaces the presenter holds a source texture for right
         /// now (at most four; none while the browser is hidden or parked).
         public static let sourceTextures = "srctex"
+        /// `debug.stats` with a ``browser``: how many view frames had to make their source texture (the cache did not hold it).
+        public static let sourceTextureMisses = "srcmiss"
         /// `debug.stats` with a ``browser``: how many of ``sourceTextures`` are not of the size and pixel format the cache is for. An
         /// invariant that is always 0: a size or format change empties the cache before its first new entry.
         public static let staleSourceTextures = "srcstale"

@@ -369,6 +369,12 @@ struct ChromiumServiceFramesTests {
         let stats = try Self.stats(rig.client, 1)
         print("ChromiumServiceFramesTests source textures: at most \(most) in 20 s, \(stats.int(CefRemote.Key.framesSent)) frames sent")
         #expect(seen == ["red", "blue"], "colours seen \(seen.sorted())")
+        // The cache is used: after Chromium's few surfaces have each been seen once, a frame finds its texture (a cache that never hit
+        // made one per frame, as the code did before it).
+        let misses = stats.int(CefRemote.Key.sourceTextureMisses)
+        let paints = stats.int(CefRemote.Key.acceleratedFrames)
+        print("ChromiumServiceFramesTests source textures: \(misses) made for \(paints) paints")
+        #expect(paints >= 100 && misses * 10 <= paints, "\(misses) source textures made for \(paints) paints")
         #expect(most >= 1 && most <= Int64(CefRemote.sourceTextureLimit), "source textures at most \(most)")
         #expect(stats.int(CefRemote.Key.colourTagged) + stats.int(CefRemote.Key.colourUntagged) == stats.int(CefRemote.Key.acceleratedFrames) - stats.int(CefRemote.Key.framesDropped),
                 "every frame that was copied was counted for its colour tag")
