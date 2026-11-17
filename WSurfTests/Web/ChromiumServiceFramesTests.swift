@@ -160,6 +160,27 @@ struct ChromiumServiceFramesTests {
         return count
     }
 
+    private static func sourceTextures(_ rig: Rig, _ browser: Int64) throws -> Int64 {
+        try stats(rig.client, browser).int(CefRemote.Key.sourceTextures)
+    }
+
+    private static func staleSourceTextures(_ rig: Rig, _ browser: Int64) throws -> Int64 {
+        try stats(rig.client, browser).int(CefRemote.Key.staleSourceTextures)
+    }
+
+    /// `browser.resize` to a size in points at scale 1, as WSurf sends it.
+    private static func resize(_ rig: Rig, _ browser: Int64, width: Double, height: Double) throws {
+        _ = try rig.client.command(CefRemote.Op.resize, browser: browser) {
+            $0.set(CefRemote.Key.width, width)
+            $0.set(CefRemote.Key.height, height)
+            $0.set(CefRemote.Key.scale, 1.0)
+            $0.set(CefRemote.Key.screenX, 0.0)
+            $0.set(CefRemote.Key.screenY, 0.0)
+            $0.set(CefRemote.Key.screenWidth, 1512.0)
+            $0.set(CefRemote.Key.screenHeight, 982.0)
+        }
+    }
+
     private static func machSeconds() -> Double {
         var info = mach_timebase_info_data_t()
         mach_timebase_info(&info)
@@ -189,6 +210,8 @@ struct ChromiumServiceFramesTests {
         #expect(stats.int(CefRemote.Key.framesSent) >= 1)
         let ring = stats.int(CefRemote.Key.ringSurfaces)
         #expect(ring >= 1 && ring <= CefRemote.frameRingSize, "ring \(ring)")
+        let cached = stats.int(CefRemote.Key.sourceTextures)
+        #expect(cached >= 1 && cached <= Int64(CefRemote.sourceTextureLimit), "source textures \(cached)")
         // Review S1: every accelerated frame either carries CEF's colour-space tag to its copy or is counted as untagged. What CEF's
         // surface really carries is recorded in the log, not asserted.
         let tagged = stats.int(CefRemote.Key.colourTagged)
@@ -233,11 +256,13 @@ struct ChromiumServiceFramesTests {
         try Self.open(rig, 1, "/animated")
         _ = try #require(Self.waitFrame(rig, 1, colour: .blue))
         #expect(try Self.stats(rig.client, 1).int(CefRemote.Key.ringSurfaces) >= 1, "frames built the ring")
-        // was_hidden: the ring goes, every surface of it.
+        #expect(try Self.sourceTextures(rig, 1) >= 1, "frames cached CEF's surfaces")
+        // was_hidden: the ring goes, every surface of it, and the source textures that kept CEF's surfaces alive.
         let hidden = try rig.client.command(CefRemote.Op.visibility, browser: 1) { $0.set(CefRemote.Key.hidden, true) }
         #expect(hidden.bool(CefRemote.Key.success))
         let freed = try Self.ringSurfaces(rig, 1, until: { $0 == 0 })
         #expect(freed == 0, "a hidden browser holds \(freed) surfaces")
+        #expect(try Self.sourceTextures(rig, 1) == 0, "a hidden browser holds source textures")
         // No frames while hidden: the count stops growing.
         usleep(500_000)
         let whileHidden = Self.frames(rig, 1).count
@@ -259,6 +284,7 @@ struct ChromiumServiceFramesTests {
                 "frames did not resume after the browser was shown")
         let rebuilt = try Self.ringSurfaces(rig, 1, until: { $0 >= 1 })
         #expect(rebuilt >= 1 && rebuilt <= CefRemote.frameRingSize, "rebuilt ring \(rebuilt)")
+        #expect(try Self.sourceTextures(rig, 1) >= 1, "the cache is built again by the first frame after the page is shown")
     }
 
     /// D4-9 carry (D2): with every copy still in use (this client keeps the surfaces it received, as the measured 10 overwrites in
@@ -318,6 +344,113 @@ struct ChromiumServiceFramesTests {
         #expect(Self.surface(of: frame).flatMap(Self.centre(of:))?.matches(.red) == true)
     }
 
+    // MARK: Source textures (the copy's cache of CEF's surfaces)
+
+    /// The copy reads CEF's surface through a cached texture and an unretained command buffer: the frames must still be the page's
+    /// (both colours of an animated page arrive, tagged as before), and the cache stays within its limit however long the page paints.
+    @Test(.enabled(if: ChromiumServiceBundle.isPresent))
+    func anAnimatedPageKeepsGivingBothOfItsColoursAndTheSourceTexturesStayWithinTheirLimit() async throws {
+        let rig = try await Self.rig()
+        defer { rig.finish() }
+        try rig.attachFrames()
+        try Self.open(rig, 1, "/animated")
+        var seen = Set<String>()
+        var most: Int64 = 0
+        let deadline = Date().addingTimeInterval(20)
+        while Date() < deadline {
+            most = try max(most, Self.sourceTextures(rig, 1))
+            for frame in Self.frames(rig, 1).suffix(8) {
+                guard let pixel = Self.surface(of: frame).flatMap(Self.centre(of:)) else { continue }
+                if pixel.matches(.red) { seen.insert("red") }
+                if pixel.matches(.blue) { seen.insert("blue") }
+            }
+            usleep(100_000)
+        }
+        let stats = try Self.stats(rig.client, 1)
+        print("ChromiumServiceFramesTests source textures: at most \(most) in 20 s, \(stats.int(CefRemote.Key.framesSent)) frames sent")
+        #expect(seen == ["red", "blue"], "colours seen \(seen.sorted())")
+        // The cache is used: after Chromium's few surfaces have each been seen once, a frame finds its texture (a cache that never hit
+        // made one per frame, as the code did before it).
+        let misses = stats.int(CefRemote.Key.sourceTextureMisses)
+        let paints = stats.int(CefRemote.Key.acceleratedFrames)
+        print("ChromiumServiceFramesTests source textures: \(misses) made for \(paints) paints")
+        #expect(paints >= 100 && misses * 10 <= paints, "\(misses) source textures made for \(paints) paints")
+        #expect(most >= 1 && most <= Int64(CefRemote.sourceTextureLimit), "source textures at most \(most)")
+        #expect(stats.int(CefRemote.Key.colourTagged) + stats.int(CefRemote.Key.colourUntagged) == stats.int(CefRemote.Key.acceleratedFrames) - stats.int(CefRemote.Key.framesDropped),
+                "every frame that was copied was counted for its colour tag")
+        let last = try #require(Self.frames(rig, 1).last.flatMap(Self.surface(of:)))
+        #expect((IOSurfaceCopyValue(last, kIOSurfaceColorSpace) != nil) == (stats.int(CefRemote.Key.colourUntagged) == 0), "the copy's tag does not follow the source's")
+    }
+
+    /// The cache evicts: asked to keep one texture (the DEBUG `smallSourceCache`), an animated page that cycles about three of CEF's
+    /// surfaces never leaves more than one in it. At the real limit of four no page reaches the cap, so this is its only test.
+    @Test(.enabled(if: ChromiumServiceBundle.isPresent))
+    func aCacheLimitedToOneSourceTextureEvictsWhileAnAnimatedPagePaintsAndStillGivesFrames() async throws {
+        let rig = try await Self.rig()
+        defer { rig.finish() }
+        try rig.attachFrames()
+        try Self.open(rig, 1, "/animated", debug: CefRemote.DebugCreate.smallSourceCache)
+        _ = try #require(Self.waitFrame(rig, 1, colour: .blue))
+        var most: Int64 = 0
+        var sent = Self.frames(rig, 1).count
+        let deadline = Date().addingTimeInterval(15)
+        while sent < 60 || most == 0, Date() < deadline {
+            most = try max(most, Self.sourceTextures(rig, 1))
+            usleep(50_000)
+            sent = Self.frames(rig, 1).count
+        }
+        #expect(sent >= 60, "\(sent) frames")
+        #expect(most == 1, "a cache limited to one texture held at most \(most)")
+        #expect(Self.waitFrame(rig, 1, after: sent, colour: .blue) != nil || Self.waitFrame(rig, 1, after: sent, colour: .red) != nil)
+    }
+
+    /// A size change empties the cache (the old size's surfaces go with it), and a resize storm never holds more than the limit.
+    @Test(.enabled(if: ChromiumServiceBundle.isPresent))
+    func aResizeStormNeverHoldsMoreSourceTexturesThanTheirLimitAndEndsWithTheFinalSizesOwn() async throws {
+        let rig = try await Self.rig()
+        defer { rig.finish() }
+        try rig.attachFrames()
+        try Self.open(rig, 1, "/animated")
+        _ = try #require(Self.waitFrame(rig, 1, colour: .blue))
+        var most = try Self.sourceTextures(rig, 1)
+        var stale: Int64 = 0
+        #expect(most >= 1, "frames cached CEF's surfaces")
+        // 80 sizes, 16 ms apart, 400 to 800 points wide: the service takes a changing size at most every 100 ms.
+        for step in 0..<80 {
+            try Self.resize(rig, 1, width: 400 + Double((step * 37) % 400), height: 300 + Double((step * 23) % 300))
+            most = try max(most, Self.sourceTextures(rig, 1))
+            stale = try max(stale, Self.staleSourceTextures(rig, 1))
+            usleep(16_000)
+        }
+        try Self.resize(rig, 1, width: 640, height: 480)
+        let before = Self.frames(rig, 1).count
+        var final: CefRemoteMessage?
+        let deadline = Date().addingTimeInterval(15)
+        while final == nil, Date() < deadline {
+            final = Self.frames(rig, 1).dropFirst(before).first { frame in
+                Self.surface(of: frame).map { IOSurfaceGetWidth($0) == 640 && IOSurfaceGetHeight($0) == 480 } == true
+            }
+            most = try max(most, Self.sourceTextures(rig, 1))
+            stale = try max(stale, Self.staleSourceTextures(rig, 1))
+            if final == nil {
+                usleep(50_000)
+            }
+        }
+        _ = try #require(final, "no 640 x 480 frame after the storm")
+        // The page keeps painting at the final size: the cache holds that size's surfaces only, within the limit.
+        for _ in 0..<20 {
+            most = try max(most, Self.sourceTextures(rig, 1))
+            stale = try max(stale, Self.staleSourceTextures(rig, 1))
+            usleep(50_000)
+        }
+        let stats = try Self.stats(rig.client, 1)
+        print("ChromiumServiceFramesTests resize storm: source textures at most \(most), \(stats.int(CefRemote.Key.slotsMade)) ring surfaces made")
+        #expect(most <= Int64(CefRemote.sourceTextureLimit), "source textures reached \(most) in a resize storm")
+        #expect(stale == 0, "a size change left \(stale) textures of another size in the cache")
+        let ending = stats.int(CefRemote.Key.sourceTextures)
+        #expect(ending >= 1 && ending <= Int64(CefRemote.sourceTextureLimit), "source textures after the storm \(ending)")
+    }
+
     @Test(.enabled(if: ChromiumServiceBundle.isPresent))
     func aStillPageShownAgainSendsAFrameAtOnceBecauseTheServiceInvalidatesIt() async throws {
         let rig = try await Self.rig()
@@ -354,6 +487,7 @@ struct ChromiumServiceFramesTests {
         let paints = try Self.stats(rig.client, 1).int(CefRemote.Key.acceleratedFrames)
         #expect(paints <= 3, "a browser created hidden painted \(paints) times")
         #expect(try Self.stats(rig.client, 1).int(CefRemote.Key.ringSurfaces) == 0)
+        #expect(try Self.sourceTextures(rig, 1) == 0, "a browser created hidden holds source textures")
         _ = try rig.client.command(CefRemote.Op.visibility, browser: 1) { $0.set(CefRemote.Key.hidden, false) }
         #expect(Self.waitFrame(rig, 1, colour: .red) != nil || Self.waitFrame(rig, 1, colour: .blue) != nil, "no frame once shown")
     }
@@ -365,7 +499,9 @@ struct ChromiumServiceFramesTests {
         try rig.attachFrames()
         try Self.open(rig, 1, "/animated")
         _ = try #require(Self.waitFrame(rig, 1, colour: .blue))
+        #expect(try Self.sourceTextures(rig, 1) >= 1, "frames cached CEF's surfaces")
         _ = try rig.client.command(CefRemote.Op.visibility, browser: 1) { $0.set(CefRemote.Key.parked, true) }
+        #expect(try Self.sourceTextures(rig, 1) == 0, "a parked browser holds source textures")
         usleep(500_000)
         let whileParked = Self.frames(rig, 1).count
         let paintsBefore = try Self.stats(rig.client, 1).int(CefRemote.Key.acceleratedFrames)

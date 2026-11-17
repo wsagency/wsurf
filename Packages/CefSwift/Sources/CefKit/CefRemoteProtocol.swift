@@ -163,6 +163,14 @@ public enum CefRemote {
         /// `debug.stats` with a ``browser`` (D4 exit-gate follow-up): how many ring surfaces (IOSurfaces) the browser's presenter has
         /// ever allocated, the popup's included. A live resize allocates a ring for every size it sends.
         public static let slotsMade = "slotsmade"
+        /// `debug.stats` with a ``browser`` (D4 frames cache): how many of CEF's surfaces the presenter holds a source texture for right
+        /// now (at most four; none while the browser is hidden or parked).
+        public static let sourceTextures = "srctex"
+        /// `debug.stats` with a ``browser``: how many view frames had to make their source texture (the cache did not hold it).
+        public static let sourceTextureMisses = "srcmiss"
+        /// `debug.stats` with a ``browser``: how many of ``sourceTextures`` are not of the size and pixel format the cache is for. An
+        /// invariant that is always 0: a size or format change empties the cache before its first new entry.
+        public static let staleSourceTextures = "srcstale"
     }
 
     /// What `browser.create` can ask of the service in a build that has the DEBUG ops, to reach creation paths a test could not
@@ -178,12 +186,20 @@ public enum CefRemote {
         /// The browser is made without a shared texture, so CEF paints into memory (`on_paint`): the CPU path of D4-7's frames
         /// (still copied into a ring surface, which needs a Metal device to be made).
         public static let cpuPaint = "cpuPaint"
+        /// The browser's frame copy keeps one source texture instead of ``CefRemote/sourceTextureLimit``. Chromium cycles about three
+        /// surfaces at one size and a size change empties the cache, so the real cap is not reached by a page; this one is, by any
+        /// animated page, and a test can tell a cache that evicts from one that does not.
+        public static let smallSourceCache = "smallSourceCache"
     }
 
     /// How many copies of its frames the service keeps per browser and element (the page, the popup). Three cover the one WSurf
     /// shows, the one the render server may still read, and the one being written. A knob, not a protocol value: the ring is the
     /// service's own, and is freed while the browser is hidden.
     public static let frameRingSize = 3
+
+    /// How many of CEF's surfaces the service keeps a texture for, per browser (the frame copy's cache): Chromium keeps two spare
+    /// surfaces besides the ones in flight, and each is about 18 MB at 1300x860 @2x, so the cache must not outgrow them.
+    public static let sourceTextureLimit = 4
 
     /// The reply to a back or forward that native history cannot do at that moment: WSurf makes its own hop (D3b).
     public static let noNativeEntry = "no native entry"

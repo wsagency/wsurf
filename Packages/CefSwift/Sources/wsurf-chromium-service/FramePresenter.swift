@@ -17,6 +17,14 @@
 // shows it stretched, as it does between two frames. A repaint is asked for when the wait is over, so the final size always gets its
 // frame. A size change after a quiet time is taken at once.
 //
+// Source textures: wrapping CEF's surface in a texture is most of the copy's CPU cost (595 of 1,000 us a frame). Chromium cycles a
+// handful of surfaces, so a texture is kept per CEF surface (`sourceTextures`, keyed by `IOSurfaceGetID` and checked against the
+// size and format; the ID, not the surface object, which Chromium makes anew for every frame) and the command buffer does not retain
+// what it uses. That is safe only because `present` waits for the copy before it returns: CEF takes its surface back then. The cache
+// is capped (least recently used goes first), because a stale entry keeps a dropped surface alive (18 MB at 1300x860 @2x), and it is
+// emptied with the size or format, with the ring (hidden, closed) and when the browser is parked. The popup's frames are not cached and
+// use a command buffer that retains its resources.
+//
 // Everything runs on the main thread, which is CEF's UI thread (the paint callbacks are called there).
 
 import CefKit
@@ -37,7 +45,8 @@ final class FramePresenter {
     private static let device: MTLDevice? = MTLCreateSystemDefaultDevice()
     private static let queue: MTLCommandQueue? = device?.makeCommandQueue()
 
-    private struct Slot {
+    /// A class: `lastSent` and the colour tag are written through the ring's arrays.
+    private final class Slot {
         let surface: IOSurfaceRef
         let texture: MTLTexture
         let width: Int
@@ -45,7 +54,20 @@ final class FramePresenter {
         let format: OSType
         /// When this copy was last sent (`sendSequence`); 0 while it never was.
         var lastSent: UInt64 = 0
+        /// The colour-space tag written to `surface` last; the tag is written again only when CEF's differs.
+        var colourTag: CFTypeRef?
+
+        init(surface: IOSurfaceRef, texture: MTLTexture, width: Int, height: Int, format: OSType) {
+            self.surface = surface
+            self.texture = texture
+            self.width = width
+            self.height = height
+            self.format = format
+        }
     }
+
+    /// Source textures kept at most (`sourceTextures`); the DEBUG `smallSourceCache` makes it 1.
+    var sourceTextureLimit = CefRemote.sourceTextureLimit
 
     private let browser: Int64
     private var ring: [Slot] = []
@@ -57,6 +79,12 @@ final class FramePresenter {
     /// Counts the frames sent: a copy's `lastSent`, so that a ring with every copy in use writes the least recently sent one.
     private var sendSequence: UInt64 = 0
     private var popupRect = CGRect.zero
+    /// The view's CEF surfaces as textures, least recently used first, all of `sourceKey`'s size and format.
+    /// `surface` is WSurf's own reference to CEF's surface, which keeps it (and so its ID) alive while the entry exists.
+    private var sourceTextures: [(id: IOSurfaceID, surface: IOSurfaceRef, texture: MTLTexture)] = []
+    private var sourceKey: (width: Int, height: Int, format: OSType)?
+    /// Frames of the view whose texture had to be made (`debug.stats`): about one in a hundred once the page has cycled Chromium's surfaces.
+    private var sourceTextureMisses = 0
 
     /// A size that differs from the one being shown is taken after it has been stable this long: one frame interval at the 30 frames a
     /// second the service paints at.
@@ -75,7 +103,12 @@ final class FramePresenter {
     var repaint: (() -> Void)?
 
     /// The page is not shown to the person but still visible to itself: frames are dropped (`RemoteBrowser.setVisibility`).
-    var parked = false
+    var parked = false {
+        didSet {
+            guard parked, !oldValue else { return }
+            dropSourceTextures()
+        }
+    }
 
     /// `was_hidden(true)`: CEF sends no frames, and the ring is freed with everything in it.
     var hidden = false {
@@ -109,6 +142,7 @@ final class FramePresenter {
 
     /// Gives every copy back. WSurf's layer keeps what it was last sent.
     func freeRing() {
+        dropSourceTextures()
         ring.removeAll()
         popupRing.removeAll()
         overwrittenSurfaces.removeAll()
@@ -116,6 +150,11 @@ final class FramePresenter {
         popupShown = nil
         shownSize = nil
         pendingSize = nil
+    }
+
+    private func dropSourceTextures() {
+        sourceTextures.removeAll()
+        sourceKey = nil
     }
 
     /// Whether a view frame of this size is taken now (see the top of the file); one that is not asks for its repaint when it may be.
@@ -162,6 +201,13 @@ final class FramePresenter {
         message.set(CefRemote.Key.popupRingSurfaces, popupRing.count)
         message.set(CefRemote.Key.ringOverwrites, ringOverwrites)
         message.set(CefRemote.Key.slotsMade, slotsMade)
+        message.set(CefRemote.Key.sourceTextures, sourceTextures.count)
+        message.set(CefRemote.Key.sourceTextureMisses, sourceTextureMisses)
+        let key = sourceKey
+        message.set(CefRemote.Key.staleSourceTextures, sourceTextures.filter {
+            $0.texture.width != key?.width || $0.texture.height != key?.height
+                || $0.texture.iosurface.map { IOSurfaceGetPixelFormat($0) } != key?.format
+        }.count)
         message.set(CefRemote.Key.overwrittenSlots, overwrittenSurfaces.count)
         message.set(CefRemote.Key.colourTagged, taggedSources)
         message.set(CefRemote.Key.colourUntagged, untaggedSources)
@@ -193,9 +239,10 @@ final class FramePresenter {
         }
         guard let queue = Self.queue, let device = Self.device, let pixelFormat = Self.metalFormat(format),
               let slot = acquire(element: element, width: width, height: height, format: format, device: device),
-              let sourceTexture = Self.texture(device: device, surface: source, width: width, height: height, format: pixelFormat,
-                                               usage: .shaderRead),
-              let commands = queue.makeCommandBuffer(), let blit = commands.makeBlitCommandEncoder()
+              let sourceTexture = cachedTexture(of: source, element: element, device: device, width: width, height: height,
+                                                  format: format, metalFormat: pixelFormat),
+              let commands = element == .view ? queue.makeCommandBufferWithUnretainedReferences() : queue.makeCommandBuffer(),
+              let blit = commands.makeBlitCommandEncoder()
         else {
             // CEF's own surface is never sent: it is overwritten as soon as this callback returns.
             framesDropped += 1
@@ -206,16 +253,54 @@ final class FramePresenter {
                   destinationLevel: 0, destinationOrigin: MTLOrigin(x: 0, y: 0, z: 0))
         blit.endEncoding()
         commands.commit()
-        // CEF reuses its surface once this callback returns, so the copy must have read it by then.
+        // CEF reuses its surface once this callback returns, so the copy must have read it by then. The view's command buffer does not
+        // retain what it uses, which the wait makes safe: its source texture is held by the cache and its destination by the ring, both
+        // untouched until the wait is over. The popup's source texture is made for the frame and only a local holds it, so the popup uses
+        // a command buffer that retains its resources.
         commands.waitUntilCompleted()
         // Chromium tags its surfaces with a colour space: the copy carries the same tag, or WSurf's layer would show it unmatched.
+        // The tag is written when it differs from the one the copy carries (the same one nearly always).
         if let tag = IOSurfaceCopyValue(source, kIOSurfaceColorSpace) {
-            IOSurfaceSetValue(slot.surface, kIOSurfaceColorSpace, tag)
+            if slot.colourTag.map({ !CFEqual($0, tag) }) ?? true {
+                IOSurfaceSetValue(slot.surface, kIOSurfaceColorSpace, tag)
+                slot.colourTag = tag
+            }
             taggedSources += 1
         } else {
             untaggedSources += 1
         }
         send(slot.surface, element: element, entry: entry)
+    }
+
+    /// CEF's surface as a texture: the view's are kept per surface (see the top of the file), the popup's are made for the frame.
+    private func cachedTexture(of source: IOSurfaceRef, element: Element, device: MTLDevice, width: Int, height: Int, format: OSType,
+                               metalFormat: MTLPixelFormat) -> MTLTexture? {
+        guard element == .view else {
+            return Self.texture(device: device, surface: source, width: width, height: height, format: metalFormat, usage: .shaderRead)
+        }
+        if let key = sourceKey, key.width != width || key.height != height || key.format != format {
+            sourceTextures.removeAll()
+        }
+        sourceKey = (width, height, format)
+        let id = IOSurfaceGetID(source)
+        // The key is the surface's ID, not the `IOSurfaceRef` object: Chromium hands over a new object for the same surface every frame, so
+        // the object never matches. The ID is safe because the entry holds its own reference to the surface, which therefore cannot be
+        // freed (and its ID given to another surface) while the entry exists; the size and format are checked all the same.
+        if let index = sourceTextures.firstIndex(where: { $0.id == id }) {
+            let entry = sourceTextures.remove(at: index)
+            if entry.texture.width == width, entry.texture.height == height, entry.texture.pixelFormat == metalFormat {
+                sourceTextures.append(entry)
+                return entry.texture
+            }
+        }
+        sourceTextureMisses += 1
+        guard let made = Self.texture(device: device, surface: source, width: width, height: height, format: metalFormat, usage: .shaderRead)
+        else { return nil }
+        sourceTextures.append((id, source, made))
+        if sourceTextures.count > sourceTextureLimit {
+            sourceTextures.removeFirst(sourceTextures.count - sourceTextureLimit)
+        }
+        return made
     }
 
     /// `on_paint`, the CPU path: BGRA rows, top-left origin.
@@ -244,6 +329,7 @@ final class FramePresenter {
         // `on_paint` gives sRGB pixels.
         if let srgb = CGColorSpace(name: CGColorSpace.sRGB), let list = srgb.copyPropertyList() {
             IOSurfaceSetValue(slot.surface, kIOSurfaceColorSpace, list)
+            slot.colourTag = list
         }
         send(slot.surface, element: element, entry: entry)
     }
@@ -255,11 +341,8 @@ final class FramePresenter {
         }
         framesSent += 1
         sendSequence += 1
-        if let index = ring.firstIndex(where: { $0.surface === surface }) {
-            ring[index].lastSent = sendSequence
-        } else if let index = popupRing.firstIndex(where: { $0.surface === surface }) {
-            popupRing[index].lastSent = sendSequence
-        }
+        let slot = ring.first { $0.surface === surface } ?? popupRing.first { $0.surface === surface }
+        slot?.lastSent = sendSequence
         ServiceHost.shared.sendFrame(browser: browser, surface: surface, popup: element == .popup, entry: entry)
     }
 
