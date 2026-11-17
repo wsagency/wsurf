@@ -382,26 +382,33 @@ struct FloatingToolbarTests {
     @Test func theKeyboardMovingBetweenTheWindowAndItsPanelIsNotNews() {
         var unit = KeyUnit()
 
-        #expect(unit.becameKey(), "the window became key: the app is told")
-        #expect(!unit.becameKey(), "the panel became key as well: the unit was key already")
-        #expect(!unit.resigned(windowIsKey: false, panelIsKey: true),
-                "the window resigned, the panel has the keyboard: the unit still does")
+        let first = unit.becameKey()
+        #expect(first, "the window became key: the app is told")
+        let second = unit.becameKey()
+        #expect(!second, "the panel became key as well: the unit was key already")
+        let toPanel = unit.resigned(windowIsKey: false, panelIsKey: true)
+        #expect(!toPanel, "the window resigned, the panel has the keyboard: the unit still does")
         #expect(unit.isKey)
-        #expect(unit.resigned(windowIsKey: false, panelIsKey: false), "neither has it: the unit resigned")
+        let gone = unit.resigned(windowIsKey: false, panelIsKey: false)
+        #expect(gone, "neither has it: the unit resigned")
         #expect(!unit.isKey)
-        #expect(!unit.resigned(windowIsKey: false, panelIsKey: false), "once")
-        #expect(unit.becameKey())
+        let again = unit.resigned(windowIsKey: false, panelIsKey: false)
+        #expect(!again, "once")
+        let back = unit.becameKey()
+        #expect(back)
     }
 
     @Test func aWindowThatIsStillKeyDoesNotResignTheUnit() {
         var unit = KeyUnit()
         _ = unit.becameKey()
 
-        #expect(!unit.resigned(windowIsKey: true, panelIsKey: false))
+        let stillKey = unit.resigned(windowIsKey: true, panelIsKey: false)
+        #expect(!stillKey)
         #expect(unit.isKey)
         unit.seed(isKey: false)
         #expect(!unit.isKey)
-        #expect(!unit.resigned(windowIsKey: false, panelIsKey: false), "a unit that was not key has nothing to resign")
+        let nothing = unit.resigned(windowIsKey: false, panelIsKey: false)
+        #expect(!nothing, "a unit that was not key has nothing to resign")
     }
 
     private final class KeyedWindow: NSWindow {
