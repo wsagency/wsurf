@@ -584,13 +584,6 @@ final class ChromiumPage: NSView {
         return next
     }
 
-    func stopLoading() {
-        pendingLoad?.cancel()
-        client?.documentResponses.reset()
-        remote?.send(CefRemote.Op.stop)
-        withBrowser { $0.pointee.stop_load?($0) }
-    }
-
     var pageZoom: CGFloat {
         get { zoom }
         set {

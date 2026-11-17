@@ -196,4 +196,70 @@ struct TabRecoveryTests {
         #expect(tab.page !== retired)
         #expect(retired.isClosed)
     }
+
+    // MARK: Stop, then Reload keeps the page and its Back/Forward list
+
+    /// `BrowserTab.reload` takes "stopped, yet the page still loading" for a hung page and restarts it, which builds a new page with an
+    /// empty history. A Chromium load that WSurf started and Chromium had not begun used to stay loading after Stop, so that Reload
+    /// restarted a healthy page.
+    private static let stopReloadPages: [String: HTTPFixtureServer.Response] = [
+        "/a": .html("<title>A</title><p>A</p>"),
+        "/b": .html("<title>B</title><p>B</p>"),
+        "/c": .html("<title>C</title><p>C</p>"),
+    ]
+
+    /// Opens `/a`, then `/b`, and returns the page both are in.
+    private func openAThenBForStop(_ rig: LiveWindowRig) async throws -> (tab: BrowserTab, page: BrowserPage) {
+        let tab = try await rig.open("/a")
+        let b = try rig.server.url("/b")
+        tab.load(b)
+        try #require(await waitUntil { tab.page.url == b && !tab.page.isLoading })
+        return (tab, tab.page)
+    }
+
+    /// Reload after Stop, then the checks both tests share: the same page (no restart) and a history that still starts `/a`, `/b`. The
+    /// current entry may end as B (reloaded in place) or C (the stopped address, loaded again): neither is asserted.
+    private func reloadAndExpectHistoryKept(_ tab: BrowserTab, _ before: BrowserPage, _ engine: BrowserEngine) async throws {
+        tab.reload(byPerson: true)
+        #expect(tab.page === before, "\(engine): Reload after Stop restarted the page")
+        _ = await tab.waitForPendingNavigation()
+        try #require(await waitUntil { tab.page.url != nil && !tab.page.isLoading })
+        #expect(tab.page === before, "\(engine): the page was replaced while it reloaded")
+        let list = tab.page.backForwardList
+        let paths = list.backList.map(\.url.path) + [list.currentItem?.url.path].compactMap { $0 }
+        #expect(paths.starts(with: ["/a", "/b"]), "\(engine): Back and Forward are \(paths)")
+    }
+
+    /// The window in which Chromium has not begun a load WSurf started: Stop lands in the same turn as the load.
+    @Test(arguments: [BrowserEngine.webKit, .chromium])
+    func reloadAfterStoppingALoadTheEngineHasNotBegunKeepsTheHistory(engine: BrowserEngine) async throws {
+        try await LiveWindowRig.with(engine: engine, routes: Self.stopReloadPages) { rig in
+            let (tab, before) = try await openAThenBForStop(rig)
+            tab.load(try rig.server.url("/c"), byPerson: true)
+            tab.stopLoading()
+            let ended = await waitUntil(timeout: .seconds(3)) { !tab.page.isLoading }
+            #expect(ended, "\(engine): the page still reports loading after Stop")
+            try await reloadAndExpectHistoryKept(tab, before, engine)
+        }
+    }
+
+    /// The usual case, which already held: the server has the request when Stop comes.
+    @Test(arguments: [BrowserEngine.webKit, .chromium])
+    func reloadAfterStoppingALoadTheServerIsAnsweringKeepsTheHistory(engine: BrowserEngine) async throws {
+        let gate = ResponseGate()
+        defer { gate.open() }
+        var routes = Self.stopReloadPages
+        routes["/slow"] = .html("<title>Slow</title><p>Slow</p>", gate: gate)
+        try await LiveWindowRig.with(engine: engine, routes: routes) { rig in
+            let (tab, before) = try await openAThenBForStop(rig)
+            tab.load(try rig.server.url("/slow"), byPerson: true)
+            try #require(await waitUntil(timeout: .seconds(30)) { gate.requestCount > 0 }, "\(engine): the server never saw the request")
+            tab.stopLoading()
+            let ended = await waitUntil(timeout: .seconds(3)) { !tab.page.isLoading }
+            #expect(ended, "\(engine): the page still reports loading after Stop")
+            // The stopped address may load again on Reload; it must not wait for an answer that was held back.
+            gate.open()
+            try await reloadAndExpectHistoryKept(tab, before, engine)
+        }
+    }
 }
