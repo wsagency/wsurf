@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: 2026 WSurf Agency
 // SPDX-License-Identifier: BUSL-1.1
 
+import CCef
+import CefKit
 import Foundation
 
 extension ChromiumPage {
