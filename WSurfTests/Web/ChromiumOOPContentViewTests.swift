@@ -49,7 +49,10 @@ struct ChromiumOOPContentViewTests {
         #expect(native.remote == nil)
         #expect(Self.contentViews(of: native).isEmpty)
         #expect(window.makeFirstResponder(page))
-        #expect(window.firstResponder === page, "the page is the first responder, as it was before the content view existed")
+        // As before: the page hands focus to CEF's own view, which lives inside it. Never to a content view.
+        let responder = window.firstResponder
+        #expect(!(responder is ChromiumRemoteContentView))
+        #expect(page.ownsResponder(responder), "the first responder is the page's own: \(String(describing: responder))")
         #expect(native.becomeFirstResponder(), "an in-process page still accepts focus itself")
         #expect(Self.contentViews(of: native).isEmpty)
         window.contentView = nil
