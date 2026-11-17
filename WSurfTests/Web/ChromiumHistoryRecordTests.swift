@@ -279,7 +279,7 @@ struct ChromiumHistoryRecordTests {
         record.startHop(to: try #require(record.back.last).id, window: [native(-1, "c", current: true)], current: 0, navigation: hop)
         record.noteCommit(URL(string: "https://a.test/b"), navigation: hop)
         #expect(record.hopHasMoved(navigation: hop) && !record.hopHasMoved(navigation: PageNavigation()))
-        #expect(record.entryFromHop(1)?.index == nil, "nothing after the entry it started at")
+        #expect(record.entryFromHop(1)?.url.absoluteString == "https://a.test/c", "nothing after it: the entry it started at, so it still lands")
 
         let restart = try #require(record.entryFromHop(-1))
         #expect(restart.url.absoluteString == "https://a.test/b")

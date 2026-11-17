@@ -190,16 +190,19 @@ struct ChromiumHistoryRecord {
         return hop.committedURL != nil || hop.failed
     }
 
-    /// The nearest kept entry `step` away (-1 Back, 1 Forward) from where the hop on its way started, with its place in the hop's list.
-    /// A second Back during a Back hop is its own target again (S5).
+    /// The nearest kept entry `step` away (-1 Back, 1 Forward) from where the hop on its way started, with its place in the hop's list:
+    /// a second Back during a Back hop is its own target again (S5). With nothing that way, the entry it started at (else its target),
+    /// so the hop still lands and its entry in Chromium's list is never left behind.
     func entryFromHop(_ step: Int) -> (index: Int, url: URL)? {
         guard let hop else { return nil }
         var index = hop.start + step
-        while hop.logical.indices.contains(index) {
+        while hop.logical.indices.contains(index), hop.logical[index] == nil {
+            index += step
+        }
+        for index in [index, hop.start, hop.target] where hop.logical.indices.contains(index) {
             if let url = hop.logical[index].flatMap({ URL(string: $0.url) }) {
                 return (index, url)
             }
-            index += step
         }
         return nil
     }

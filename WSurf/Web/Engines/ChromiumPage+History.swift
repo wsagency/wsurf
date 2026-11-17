@@ -210,6 +210,10 @@ extension ChromiumPage {
     private func setHistory(_ list: [CefRemote.HistoryEntry]) {
         if remote == nil {
             applyToRecord(list)
+            // A hop's entry is in this list but not applied: the list it started from stays, which Back and Forward move in (`rehop`).
+            if historyRecord.hopHasMoved(navigation: navigation) {
+                return
+            }
         }
         let index = list.firstIndex(where: \.isCurrent) ?? -1
         let items = list.enumerated().compactMap { position, entry -> (Int, PageHistoryItem)? in
@@ -315,7 +319,7 @@ extension ChromiumPage {
     }
 
     /// Back (`step` -1) or Forward (1) while a hop has moved Chromium's list unapplied: the entry next to the one the hop started at, by GET, in the hop's own
-    /// list (`ChromiumHistoryRecord.entryFromHop`), so two quick Backs move one step (S5). Nothing when there is no entry that way.
+    /// list (`ChromiumHistoryRecord.entryFromHop`), so two quick Backs move one step (S5).
     private func rehop(_ step: Int) -> PageNavigation? {
         guard let entry = historyRecord.entryFromHop(step), let next = load(URLRequest(url: entry.url)) else { return nil }
         historyRecord.retargetHop(to: entry.index, navigation: next)
