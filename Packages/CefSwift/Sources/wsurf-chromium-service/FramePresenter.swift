@@ -22,7 +22,8 @@
 // size and format; the ID, not the surface object, which Chromium makes anew for every frame) and the command buffer does not retain
 // what it uses. That is safe only because `present` waits for the copy before it returns: CEF takes its surface back then. The cache
 // is capped (least recently used goes first), because a stale entry keeps a dropped surface alive (18 MB at 1300x860 @2x), and it is
-// emptied with the size or format, with the ring (hidden, closed) and when the browser is parked. The popup's frames are not cached.
+// emptied with the size or format, with the ring (hidden, closed) and when the browser is parked. The popup's frames are not cached and
+// use a command buffer that retains its resources.
 //
 // Everything runs on the main thread, which is CEF's UI thread (the paint callbacks are called there).
 
@@ -79,7 +80,8 @@ final class FramePresenter {
     private var sendSequence: UInt64 = 0
     private var popupRect = CGRect.zero
     /// The view's CEF surfaces as textures, least recently used first, all of `sourceKey`'s size and format.
-    private var sourceTextures: [(id: IOSurfaceID, texture: MTLTexture)] = []
+    /// `surface` is WSurf's own reference to CEF's surface, which keeps it (and so its ID) alive while the entry exists.
+    private var sourceTextures: [(id: IOSurfaceID, surface: IOSurfaceRef, texture: MTLTexture)] = []
     private var sourceKey: (width: Int, height: Int, format: OSType)?
     /// Frames of the view whose texture had to be made (`debug.stats`): about one in a hundred once the page has cycled Chromium's surfaces.
     private var sourceTextureMisses = 0
@@ -239,7 +241,8 @@ final class FramePresenter {
               let slot = acquire(element: element, width: width, height: height, format: format, device: device),
               let sourceTexture = cachedTexture(of: source, element: element, device: device, width: width, height: height,
                                                   format: format, metalFormat: pixelFormat),
-              let commands = queue.makeCommandBufferWithUnretainedReferences(), let blit = commands.makeBlitCommandEncoder()
+              let commands = element == .view ? queue.makeCommandBufferWithUnretainedReferences() : queue.makeCommandBuffer(),
+              let blit = commands.makeBlitCommandEncoder()
         else {
             // CEF's own surface is never sent: it is overwritten as soon as this callback returns.
             framesDropped += 1
@@ -250,8 +253,10 @@ final class FramePresenter {
                   destinationLevel: 0, destinationOrigin: MTLOrigin(x: 0, y: 0, z: 0))
         blit.endEncoding()
         commands.commit()
-        // CEF reuses its surface once this callback returns, so the copy must have read it by then. The wait also makes the command
-        // buffer's unretained references safe: the textures live in this frame's locals and the cache until it is over.
+        // CEF reuses its surface once this callback returns, so the copy must have read it by then. The view's command buffer does not
+        // retain what it uses, which the wait makes safe: its source texture is held by the cache and its destination by the ring, both
+        // untouched until the wait is over. The popup's source texture is made for the frame and only a local holds it, so the popup uses
+        // a command buffer that retains its resources.
         commands.waitUntilCompleted()
         // Chromium tags its surfaces with a colour space: the copy carries the same tag, or WSurf's layer would show it unmatched.
         // The tag is written when it differs from the one the copy carries (the same one nearly always).
@@ -279,8 +284,8 @@ final class FramePresenter {
         sourceKey = (width, height, format)
         let id = IOSurfaceGetID(source)
         // The key is the surface's ID, not the `IOSurfaceRef` object: Chromium hands over a new object for the same surface every frame, so
-        // the object never matches. The ID is safe because a cached texture holds its surface, which therefore cannot be freed (and its ID
-        // given to another surface) while the entry exists; the size and format are checked all the same.
+        // the object never matches. The ID is safe because the entry holds its own reference to the surface, which therefore cannot be
+        // freed (and its ID given to another surface) while the entry exists; the size and format are checked all the same.
         if let index = sourceTextures.firstIndex(where: { $0.id == id }) {
             let entry = sourceTextures.remove(at: index)
             if entry.texture.width == width, entry.texture.height == height, entry.texture.pixelFormat == metalFormat {
@@ -291,7 +296,7 @@ final class FramePresenter {
         sourceTextureMisses += 1
         guard let made = Self.texture(device: device, surface: source, width: width, height: height, format: metalFormat, usage: .shaderRead)
         else { return nil }
-        sourceTextures.append((id, made))
+        sourceTextures.append((id, source, made))
         if sourceTextures.count > sourceTextureLimit {
             sourceTextures.removeFirst(sourceTextures.count - sourceTextureLimit)
         }
