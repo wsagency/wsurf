@@ -355,7 +355,8 @@ struct ChromiumOOPAccessibilityTransportTests {
             ((try? JSONSerialization.jsonObject(with: update.data(CefRemote.Key.data))) as? [String: Any])
                 .flatMap { ($0["updates"] as? [[String: Any]])?.compactMap { $0["root_id"] as? Int }.first }
         }
-        print("ChromiumOOPAccessibilityTransportTests observed: the first tree \(first) updates / \(firstNodes) nodes; after off and on, \(updates.count) updates / \(again.count) nodes, roots \(roots), names \(named)")
+        let before = "the first tree \(first) updates / \(firstNodes) nodes"
+        print("ChromiumOOPAccessibilityTransportTests observed: \(before); after off and on, \(updates.count) updates / \(again.count) nodes, roots \(roots), names \(named)")
         #expect(!updates.isEmpty, "no update at all after turning it on again")
         #expect(again.count >= firstNodes, "the whole tree again: \(again.count) nodes, \(firstNodes) the first time")
         #expect(named.contains("Press") && again.contains { $0["role"] as? String == "heading" }, "the page's own nodes: \(named)")

@@ -521,7 +521,9 @@ struct ChromiumOOPAccessibilityTests {
             live.page.isHidden = false
             #expect(await waitUntil { state.sentOn })
             let rebuilt = await waitUntil(timeout: .seconds(30)) { !state.mirror.isEmpty }
-            #expect(rebuilt, "shown again, the tree is rebuilt: \(state.mirror.summary), delivered \(live.connection.accessibility.delivered), dropped \(live.connection.accessibility.droppedUpdates), sentOn \(state.sentOn), enables \(state.enableMessagesSent)")
+            let accessibility = live.connection.accessibility
+            let counts = "delivered \(accessibility.delivered), dropped \(accessibility.droppedUpdates), sentOn \(state.sentOn), enables \(state.enableMessagesSent)"
+            #expect(rebuilt, "shown again, the tree is rebuilt: \(state.mirror.summary), \(counts)")
         }
     }
 
