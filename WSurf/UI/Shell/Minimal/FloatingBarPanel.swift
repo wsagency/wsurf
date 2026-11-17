@@ -44,13 +44,20 @@ class FloatingBarPanel: NSPanel {
     /// keep the keyboard with nothing to give it to: Space and the arrow keys would go nowhere until the page is clicked. The
     /// window's own first responder (the page) was never touched, so handing the keyboard back is all the page needs.
     override func makeFirstResponder(_ responder: NSResponder?) -> Bool {
+        // Ending one edit to start another asks again from inside the first call: only the outer call decides, from where the
+        // keyboard ended up.
+        guard !isChangingResponder else { return super.makeFirstResponder(responder) }
+        isChangingResponder = true
         let wasEditing = firstResponder is NSTextView
         let accepted = super.makeFirstResponder(responder)
-        if accepted, wasEditing, !(responder is NSTextView || responder is NSTextField), isKeyWindow {
+        isChangingResponder = false
+        if accepted, wasEditing, !(firstResponder is NSTextView), isKeyWindow {
             parent?.makeKey()
         }
         return accepted
     }
+
+    private var isChangingResponder = false
 
     /// `super` returns when the mouse is released.
     override func performDrag(with event: NSEvent) {

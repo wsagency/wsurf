@@ -76,9 +76,13 @@ nonisolated enum MinimalBarPlacement: String, CaseIterable, Identifiable {
     /// The stored place of the floating bar, `{x, y}` as `NSStringFromPoint` writes it. Anything else, or none, is no saved
     /// place (an empty string is how a reset writes it).
     static func offset(stored: String?) -> CGPoint? {
-        guard let stored, stored.hasPrefix("{"), stored.contains(",") else { return nil }
-        let point = NSPointFromString(stored)
-        return point.x.isFinite && point.y.isFinite ? point : nil
+        guard let stored, stored.hasPrefix("{"), stored.hasSuffix("}") else { return nil }
+        let parts = stored.dropFirst().dropLast().split(separator: ",", omittingEmptySubsequences: false)
+        guard parts.count == 2,
+              let x = Double(parts[0].trimmingCharacters(in: .whitespaces)),
+              let y = Double(parts[1].trimmingCharacters(in: .whitespaces)),
+              x.isFinite, y.isFinite else { return nil }
+        return CGPoint(x: x, y: y)
     }
 }
 
