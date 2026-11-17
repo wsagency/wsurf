@@ -39,6 +39,8 @@ final class RemoteBrowser {
     /// `browser.visibility` messages received (`debug.stats`).
     private var visibilityMessages = 0
     let presenter: FramePresenter
+    /// What `debug.stats` reports of the input this browser was given (`RemoteBrowser+Input`).
+    var inputStats = InputStatistics()
 
     var nextServiceCommand = CefRemote.serviceCommandBase
     /// The service's own `Page.resetNavigationHistory`, by its CDP id: WSurf's request id.
@@ -237,7 +239,7 @@ final class RemoteBrowser {
         body(host)
     }
 
-    private func withBrowserLater(_ body: @escaping (UnsafeMutablePointer<cef_browser_t>) -> Void) {
+    func withBrowserLater(_ body: @escaping (UnsafeMutablePointer<cef_browser_t>) -> Void) {
         withHost { [weak self] _ in
             guard let raw = self?.raw else { return }
             body(raw)

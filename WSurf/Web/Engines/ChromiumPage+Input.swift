@@ -42,4 +42,30 @@ extension ChromiumPage {
         }
         try await send("mouseReleased", last, button: "left", buttons: 0, checked: false)
     }
+
+    // MARK: First responder and keys (moved from `ChromiumPage.swift`, which is at its line limit; `sendKeyEvent` is D4-12's)
+
+    func selectAll() {
+        guard let responder = window?.firstResponder, responder !== self, ownsResponder(responder) else { return }
+        responder.selectAll(nil)
+    }
+
+    func ownsResponder(_ responder: NSResponder?) -> Bool {
+        responder === self || (responder as? NSView)?.isDescendant(of: self) == true
+    }
+
+    /// Gives `event` to the page's first responder. For a page in the service that is its content view, which sends the key to the
+    /// service and says whether it did: a key the page never received (the page is hidden, or no service runs) is not "delivered".
+    func sendKeyEvent(_ event: NSEvent) -> Bool {
+        guard let responder = window?.firstResponder, responder !== self, ownsResponder(responder) else { return false }
+        if let view = responder as? ChromiumRemoteContentView {
+            return view.deliver(event)
+        }
+        if event.type == .keyUp {
+            responder.keyUp(with: event)
+        } else {
+            responder.keyDown(with: event)
+        }
+        return true
+    }
 }

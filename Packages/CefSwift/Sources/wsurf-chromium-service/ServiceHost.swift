@@ -27,8 +27,8 @@ final class ServiceHost {
     /// two seconds for `cef_shutdown`. The normal exits finish well before it, so it never shortens them.
     private static let exitBackstopSeconds: TimeInterval = closeCapSeconds + flushGraceSeconds + 2
 
-    /// The connection that said hello: events go there. The input connection (`attachSideConnection`) carries nothing yet (input
-    /// is phase 3); the frames connection carries every browser's frames (D4-7).
+    /// The connection that said hello: events go there. The input connection (`attachSideConnection`) carries the input of
+    /// every browser (D4-12); the frames connection carries every browser's frames (D4-7).
     private var control: xpc_connection_t?
     private var inputConnection: xpc_connection_t?
     private var framesConnection: xpc_connection_t?
@@ -136,6 +136,8 @@ final class ServiceHost {
                 $0.set(CefRemote.Key.success, refusal == nil)
                 if let refusal { $0.set(CefRemote.Key.error, refusal) }
             }
+        case CefRemote.Op.mouse, CefRemote.Op.key, CefRemote.Op.focus, CefRemote.Op.edit:
+            routeInput(message, from: peer)
         case CefRemote.Op.createContext:
             guard isHost(peer, for: message) else { return }
             createContext(message, from: peer)
@@ -419,6 +421,14 @@ final class ServiceHost {
             answer.set(CefRemote.Key.success, failure == nil)
             if let failure { answer.set(CefRemote.Key.error, failure) }
         }
+    }
+
+    /// D4-12: input comes on the input connection, in the order the person produced it (the control connection carries it only before
+    /// the input connection exists: WSurf's `sendInput` falls back to it while no service runs). It has no reply, and none of it is
+    /// served from any other peer or once the exit has begun.
+    private func routeInput(_ message: CefRemoteMessage, from peer: xpc_connection_t) {
+        guard peer === inputConnection || peer === control, !exiting else { return }
+        browsers[message.browser]?.handleInput(message)
     }
 
     /// Whether a frames connection is attached: with none, the browsers copy and send nothing.
@@ -773,6 +783,7 @@ final class ServiceHost {
                 if message.has(CefRemote.Key.browser) {
                     browsers[message.browser]?.presenter.statistics(into: answer)
                     browsers[message.browser]?.geometry(into: answer)
+                    browsers[message.browser]?.inputStatistics(into: answer)
                 }
             }
         case CefRemote.Op.debugExitOnHello:

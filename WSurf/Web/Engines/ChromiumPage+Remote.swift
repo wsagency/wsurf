@@ -293,6 +293,9 @@ extension ChromiumPage {
             remoteHistoryChanged()
         case CefRemote.Event.externalScheme:
             remoteExternalScheme(message)
+        case CefRemote.Event.cursor, CefRemote.Event.tooltip, CefRemote.Event.statusMessage, CefRemote.Event.unhandledKey,
+             CefRemote.Event.takeFocus:
+            remote?.receiveInput(message)
         default:
             // `browser.ready` and the mute are in the mirror and need no call.
             break

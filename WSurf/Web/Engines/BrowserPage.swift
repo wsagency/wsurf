@@ -220,7 +220,7 @@ final class BrowserPage: NSView {
         if let chromium, let remote = chromium.remote {
             // A page that runs in the Chromium service takes the keys and text through its content view (D4-11), as a web view does
             // itself: that view is the first responder, never the page.
-            guard let view = remote.contentView else { return false }
+            guard let view = remote.contentView else { return true }
             return window?.makeFirstResponder(view) == true
         }
         return chromium?.becomeFirstResponder() == true

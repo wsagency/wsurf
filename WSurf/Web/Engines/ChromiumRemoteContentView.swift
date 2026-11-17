@@ -3,16 +3,30 @@
 
 import AppKit
 
-// D4 (out-of-process Chromium), phase 3, PR D4-11: the view a person's keyboard, pointer and text input will reach for a page that runs
-// in the Chromium service. A page in process hosts CEF's own view, which is the first responder and the text input client; here nothing
-// of CEF is in WSurf's process, so this transparent view stands where that view would. It is made by `materializeRemote` and by nothing
-// else, so a page in process never has one. It draws nothing and has no layer of its own: the page's frames are the frame sink's layer.
+// D4 (out-of-process Chromium), phase 3: the view a person's keyboard, pointer and text input reach for a page that runs in the Chromium
+// service. A page in process hosts CEF's own view, which is the first responder and the text input client; here nothing of CEF is in
+// WSurf's process, so this transparent view stands where that view would. It is made by `materializeRemote` and by nothing else, so a
+// page in process never has one. It draws nothing and has no layer of its own: the page's frames are the frame sink's layer.
 //
-// Input (D4-12), text input (D4-13) and the rest of phase 3 are not here yet. All of it lands on this view, never on `ChromiumPage`,
-// whose responder behaviour in process must not change (plan C1).
+// Pointer, wheel and cursor are in `+Pointer` (D4-12), keys and focus in `+Keys` (D4-12). Text input (D4-13) and the rest of phase 3
+// land on this view too, never on `ChromiumPage`, whose responder behaviour in process must not change (plan C1).
 
 @MainActor
 final class ChromiumRemoteContentView: NSView {
+    /// The page's browser in the service, set when the view is installed (`attachRemoteFrameLayer`); nothing is sent without it.
+    weak var browser: ChromiumRemoteBrowser?
+
+    // The pointer (`+Pointer`).
+    var trackingArea: NSTrackingArea?
+    var remoteCursor = NSCursor.arrow
+    var scrollResidual = CGPoint.zero
+    /// A test's own point for an event that cannot carry a window location (a wheel or thumb-button event made from a CGEvent).
+    var eventPoint: ((NSEvent) -> CGPoint)?
+
+    /// The key-down events sent to the page that it has not answered, oldest first: the page reports a key it did not handle by its
+    /// key code only, and the event that goes on in the app is the one made for it (`+Keys`).
+    var sentKeyDowns: [NSEvent] = []
+
     override init(frame: NSRect) {
         super.init(frame: frame)
         autoresizingMask = [.width, .height]
@@ -20,6 +34,10 @@ final class ChromiumRemoteContentView: NSView {
 
     required init?(coder: NSCoder) {
         nil
+    }
+
+    var owningPage: ChromiumPage? {
+        browser?.page
     }
 
     override var isFlipped: Bool {
