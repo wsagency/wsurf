@@ -217,6 +217,31 @@ struct HistoryWriteTests {
         #expect(!store.hasPendingTitles)
     }
 
+    /// A failed reload shows the error page under the failed address (both engines): its headline is not that page's title, so it
+    /// does not rename the page's History entries. The page's own title after a later good load still does (delta review N1).
+    @Test func anErrorPageDoesNotRenameThePageThatFailed() throws {
+        let database = AppDatabase.temporary()
+        let model = BrowserModel(database: database)
+        let tab = model.newTab()
+        let url = "https://example.com/down"
+        tab.noteNavigationStarted()
+        tab.urlString = url
+        tab.pageTitle = "Report"
+        tab.onNavigationFinished?(false)
+
+        tab.isShowingError = true
+        tab.pageTitle = "Can’t reach this website"
+        model.history.flushPendingTitles()
+        #expect(try storedTitle(of: url, in: database) == "Report")
+        #expect(model.history.visits.first?.title == "Report")
+        #expect(!model.history.hasPendingTitles)
+
+        tab.isShowingError = false
+        tab.pageTitle = "Report, back"
+        model.history.flushPendingTitles()
+        #expect(try storedTitle(of: url, in: database) == "Report, back")
+    }
+
     // MARK: - Tab close and quit
 
     @Test func closingATabWritesTheTitleItGaveItsLastVisit() throws {

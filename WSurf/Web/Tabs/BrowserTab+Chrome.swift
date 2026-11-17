@@ -58,7 +58,8 @@ extension BrowserTab {
                 favicon = nil
             }
         } else {
-            if let url, !(isShowingError && page.chromium?.htmlDocumentURL == url) {
+            // Chromium's own error page commits as chrome-error://chromewebdata/ before WSurf's replaces it; the failed address stays.
+            if let url, url.scheme != "chrome-error", !(isShowingError && page.chromium?.htmlDocumentURL == url) {
                 urlString = url.absoluteString
             }
             if let pageTitle = page.title, !pageTitle.isEmpty {
