@@ -39,6 +39,8 @@ enum ShortcutPriority {
 final class MainMenu: NSObject, NSMenuItemValidation {
     private let fallbackCoordinator: AppCoordinator?
     private weak var application: BrowserApplication?
+    /// The menu after Help named for the site in front; built once, hidden unless Show Site in Menu Bar is on.
+    private var siteMenuItem: NSMenuItem?
     private var coordinator: AppCoordinator {
         if let application {
             return application.ensureActiveWindow()
@@ -72,9 +74,17 @@ final class MainMenu: NSObject, NSMenuItemValidation {
         let help = NSMenu(title: "Help")
         root.addItem(submenu(help, titled: "Help"))
 
+        root.addItem(siteMenu())
+
         NSApp.mainMenu = root
         NSApp.windowsMenu = window
         NSApp.helpMenu = help
+
+        // A window that is not a browser window (Passwords, Settings, About) takes the site menu away while it is key.
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(someWindowBecameKey), name: NSWindow.didBecomeKeyNotification, object: nil
+        )
+        refreshSiteItem()
 
         let coordinators = application?.windows ?? fallbackCoordinator.map { [$0] } ?? []
         for coordinator in coordinators {
@@ -232,6 +242,7 @@ final class MainMenu: NSObject, NSMenuItemValidation {
         menu.addItem(submenu(playerCornerMenu(), titled: "Move Player to Corner"))
         // ⌃⌘M: ⌘M minimizes, ⇧⌘M is the window style and ⌥⌘M is the system's Minimize All; ⌃⌘M was free.
         menu.addItem(command("Mute WSurf", #selector(toggleWSurfMute), key: "m", modifiers: [.command, .control]))
+        menu.addItem(command("Show Site in Menu Bar", #selector(toggleSiteInMenuBar)))
         menu.addItem(.separator())
         let developer = NSMenu()
         developer.addItem(command("Show Web Inspector", #selector(showWebInspector), key: "i", modifiers: [.command, .option]))
@@ -240,6 +251,53 @@ final class MainMenu: NSObject, NSMenuItemValidation {
         developer.addItem(command("Developer Mode for This Website", #selector(toggleDevMode(_:))))
         menu.addItem(submenu(developer, titled: "Developer"))
         return menu
+    }
+
+    private func siteMenu() -> NSMenuItem {
+        let menu = NSMenu()
+        let address = NSMenuItem(title: "", action: #selector(showSiteAddress), keyEquivalent: "")
+        address.target = self
+        menu.addItem(address)
+        menu.addItem(.separator())
+        // No shortcuts here: Edit and File own ⇧⌘C and ⌘L, and one chord must not sit in two menus.
+        menu.addItem(command("Copy Link", #selector(copyPageURL)))
+        menu.addItem(command("Open Location…", #selector(openLocation)))
+        let holder = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+        holder.submenu = menu
+        holder.isHidden = true
+        siteMenuItem = holder
+        return holder
+    }
+
+    /// The coordinator whose site the menu names: the window in front, unless a window that is not a browser window is key.
+    private var siteCoordinator: AppCoordinator? {
+        if let key = PasswordsWindow.keyWindow() {
+            let window = key.sheetParent ?? key
+            let windows = application?.windows ?? fallbackCoordinator.map { [$0] } ?? []
+            guard windows.contains(where: { $0.nativeWindow === window }) else { return nil }
+        }
+        return application?.activeCoordinator ?? fallbackCoordinator
+    }
+
+    /// Hides the site menu, or names it for the front window's site. The menu bar draws the submenu's title, so both are
+    /// written; each only when it changed, since AppKit redraws the menu bar for every write.
+    func refreshSiteItem() {
+        guard let item = siteMenuItem else { return }
+        let host = siteCoordinator?.menuBarHost
+        if item.isHidden != (host == nil) {
+            item.isHidden = host == nil
+        }
+        guard let host else { return }
+        if item.title != host {
+            item.title = host
+        }
+        if item.submenu?.title != host {
+            item.submenu?.title = host
+        }
+    }
+
+    @objc private func someWindowBecameKey(_ notification: Notification) {
+        refreshSiteItem()
     }
 
     private func splitViewMenu() -> NSMenu {
@@ -409,6 +467,12 @@ final class MainMenu: NSObject, NSMenuItemValidation {
     @objc private func openLocation() {
         coordinator.focusAddressBar()
     }
+    @objc private func toggleSiteInMenuBar() {
+        coordinator.settings.showsSiteInMenuBar.toggle()
+        refreshSiteItem()
+    }
+    /// Only carries the address in the site menu; it has nothing to do.
+    @objc private func showSiteAddress() {}
     @objc private func copyPageURL() {
         coordinator.copyCurrentURL()
     }
@@ -649,6 +713,11 @@ final class MainMenu: NSObject, NSMenuItemValidation {
             return coordinator.pageCommandTab?.canGoForward ?? false
         case #selector(actualSize):
             return coordinator.pageCommandTab?.isZoomed ?? false
+        case #selector(toggleSiteInMenuBar):
+            menuItem.state = coordinator.settings.showsSiteInMenuBar ? .on : .off
+            return true
+        case #selector(showSiteAddress):
+            return validateSiteAddress(menuItem)
         case #selector(copyPageURL):
             guard let tab = coordinator.pageCommandTab else { return false }
             return coordinator.linkURL(for: tab) != nil
@@ -763,6 +832,14 @@ final class MainMenu: NSObject, NSMenuItemValidation {
     private func validateMuteItem(_ menuItem: NSMenuItem) -> Bool {
         menuItem.title = AudioIndicator.help(isMuted: coordinator.isWSurfMuted)
         return true
+    }
+
+    /// The site menu's first row, the page's whole address as the address bar draws it (`AddressText`), cut in the middle
+    /// when long. Set when the menu opens, not on every navigation; always disabled, it is a label.
+    private func validateSiteAddress(_ menuItem: NSMenuItem) -> Bool {
+        let text = AddressText(coordinator.pageCommandTab.flatMap { coordinator.linkURL(for: $0) })?.text ?? ""
+        menuItem.title = text.count > 80 ? String(text.prefix(40)) + "…" + String(text.suffix(39)) : text
+        return false
     }
 
     /// What a micro window changes: Float on Top, shown only there, Move to Micro Window and back, and the items it has no use

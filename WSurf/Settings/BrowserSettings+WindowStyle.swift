@@ -215,6 +215,16 @@ extension BrowserSettings {
         }
     }
 
+    /// A menu after Help titled with the website of the page in front, for a glance at where you are. App-wide, off by
+    /// default; the title is the address bar's own display name, never the raw address (see `AppCoordinator.menuBarHost`).
+    var showsSiteInMenuBar: Bool {
+        get { globalValue(\.showsSiteInMenuBar, storage: storedShowsSiteInMenuBar) }
+        set {
+            setGlobal(\BrowserSettings.showsSiteInMenuBar, storage: \BrowserSettings.storedShowsSiteInMenuBar,
+                      value: newValue, key: Key.siteInMenuBar)
+        }
+    }
+
     /// The drop shadow of every window, and the thin outline macOS draws with it: off gives a flat window with no outline.
     /// App-wide, on by default.
     var windowShadow: Bool {
@@ -265,6 +275,7 @@ extension BrowserSettings {
         minimalBarEdge = .bottom
         minimalBarHiding = .whileScrolling
         keepsMinimalSidebarOpen = false
+        showsSiteInMenuBar = false
         windowShadow = true
         fastTransitions = false
         windowBorder = .none

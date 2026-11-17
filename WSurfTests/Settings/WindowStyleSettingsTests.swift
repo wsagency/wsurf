@@ -193,6 +193,26 @@ struct WindowStyleSettingsTests {
         }
     }
 
+    @Test func showingTheSiteInTheMenuBarIsOffByDefaultAppWideAndResets() throws {
+        try withSettings { settings, defaults in
+            #expect(!settings.showsSiteInMenuBar, "nothing changes for anyone who never turns it on")
+            #expect(defaults.object(forKey: BrowserSettings.Key.siteInMenuBar) == nil, "reading the default writes nothing")
+
+            let profile = BrowserSettings(defaults: defaults, appliesAppearanceGlobally: false, application: settings)
+            profile.showsSiteInMenuBar = true
+            #expect(settings.showsSiteInMenuBar, "a profile writes the app-wide value")
+            #expect(defaults.object(forKey: BrowserSettings.Key.siteInMenuBar) as? Bool == true)
+            #expect(BrowserSettings.Key.siteInMenuBar == "appearance.siteInMenuBar")
+
+            let reopened = BrowserSettings(defaults: defaults, appliesAppearanceGlobally: false)
+            #expect(reopened.showsSiteInMenuBar)
+
+            settings.resetToDefaults()
+            #expect(!settings.showsSiteInMenuBar && !profile.showsSiteInMenuBar)
+            #expect(defaults.object(forKey: BrowserSettings.Key.siteInMenuBar) as? Bool == false)
+        }
+    }
+
     @Test func anUnknownStoredStyleFallsBackToStandard() throws {
         try withSettings { _, defaults in
             defaults.set("floating", forKey: BrowserSettings.Key.windowStyle)

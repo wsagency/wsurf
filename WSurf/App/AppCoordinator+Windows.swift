@@ -99,6 +99,26 @@ extension AppCoordinator {
             : String(localized: "\(title) — \(profiles.current.name)")
     }
 
+    /// The name the “site” menu after Help shows: the front page's website as the address bar draws it (`AddressText`, so
+    /// sign-in details, look-alike letters and the path never reach the menu bar), at most 32 characters. Nil when the
+    /// setting is off, which is checked first so nothing about a navigation is read or observed then, and for a private
+    /// window, a system, internal or extension page, an empty tab, and any address that is not an http(s) website.
+    var menuBarHost: String? {
+        guard settings.showsSiteInMenuBar, !profiles.isPrivate, let tab = browser.activeTab,
+              !tab.isPrivate, tab.extensionBaseURL == nil, !tab.isShowingSystemPage,
+              let address = AddressText(URL(string: tab.urlString)),
+              address.scheme == "https://" || address.scheme == "http://", !address.host.isEmpty
+        else { return nil }
+        let name = address.name
+        return name.count > 32 ? String(name.prefix(31)) + "…" : name
+    }
+
+    /// Writes `menuBarHost` into the menu bar when this is the window in front.
+    func refreshSiteMenu() {
+        guard isKeyWindow else { return }
+        (application?.menu ?? mainMenu)?.refreshSiteItem()
+    }
+
     var otherWindows: [AppCoordinator] {
         application?.windows.filter { $0 !== self && $0.browser.context === browser.context } ?? []
     }
@@ -136,6 +156,7 @@ extension AppCoordinator {
         application?.focus(self)
         activation.setSuspended(false)
         updateWindowAppearance()
+        (application?.menu ?? mainMenu)?.refreshSiteItem()
     }
 
     func windowDidResignKey() {
