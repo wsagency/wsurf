@@ -64,6 +64,7 @@ final class ChromiumPage: NSView {
         didSet { client?.documentResponses.reset() }
     }
     var history = PageHistoryList()
+    var historyRecord = ChromiumHistoryRecord()
     var requestedURL: URL?
     var awaitingNativeNavigation = false
     /// The address of a same-document move the engine reported before it reported the address.
@@ -72,9 +73,8 @@ final class ChromiumPage: NSView {
     var sameDocumentWait: SameDocumentWait?
     var navigationStarted = false
     var initialDocument = true
-    /// Chromium records the startup about:blank as a real history entry. The first commit starts the reset that drops it.
-    /// Until a reset has dropped it, it stays Chromium's first entry and Back never goes there (`nativeCanGoBack`,
-    /// `loadHistory`). `kept`: no reset dropped it, because none landed or the history grew before one could.
+    /// Chromium records the startup about:blank as a real history entry. The first commit starts the reset that drops it. Until a reset has dropped
+    /// it, it stays Chromium's first entry and Back never goes there (`nativeCanGoBack`, `loadHistory`). `kept`: no reset dropped it (none landed, or the history grew first).
     enum StartupEntry {
         case inHistory, resetting, dropped, kept
     }
@@ -721,8 +721,8 @@ final class ChromiumPage: NSView {
         }
         updateNativeSecurity()
         owner?.onNavigationCommitted?(navigation)
+        historyRecord.noteCommit(frame.request.url, navigation: navigation)
         if startupEntry == .inHistory {
-            startupEntry = .resetting
             dropStartupEntry()
         } else {
             refreshHistory()
@@ -782,7 +782,7 @@ final class ChromiumPage: NSView {
         owner?.url = url
         requestedURL = url
         // A same-document entry (`pushState`) can make Back possible without a loading change.
-        owner?.canGoBack = nativeCanGoBack()
+        owner?.canGoBack = logicalCanGoBack()
         refreshHistory()
         if let url, awaitedMoveAddress == url {
             awaitedMoveAddress = nil
@@ -803,8 +803,8 @@ final class ChromiumPage: NSView {
     func didChangeLoading(_ loading: Bool, canGoBack: Bool, canGoForward: Bool) {
         guard !closing, !isClosed, !initialDocument else { return }
         // Chromium counts the startup page while it is in the history, and reports it on every loading change.
-        owner?.canGoBack = canGoBack && nativeCanGoBack()
-        owner?.canGoForward = canGoForward
+        owner?.canGoBack = canGoBack && nativeCanGoBack() || !historyRecord.back.isEmpty
+        owner?.canGoForward = canGoForward || !historyRecord.forward.isEmpty
         sameDocumentWait?.held = loading
         guard !awaitingNativeNavigation || loading else { return }
         owner?.isLoading = loading

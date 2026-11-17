@@ -247,7 +247,7 @@ final class BrowserTab: Identifiable {
     var pinnedEngine: (origin: String, engine: BrowserEngine)?
     var signInEngine: BrowserEngine?  // Holds a Google sign-in's redirect chain in WebKit (`noteNavigation`).
     /// The page a load left when it moved the tab to the other engine, whose history starts empty: Back from its first page
-    /// returns there (`goBackAcrossEngines`), with WebKit's whole history; a Chromium page comes back by its address.
+    /// returns there (`goBackAcrossEngines`), with its engine's saved history.
     var pageBeforeEngineSwitch: (url: URL, state: Data?)?
     /// For a tab a page opened: whether that page's tab is still open in the window, and going back to it, which closes this
     /// tab. Back ends there once the tab's own history is spent, as in Safari (`BrowserModel.bindCallbacks`).
@@ -720,6 +720,10 @@ final class BrowserTab: Identifiable {
             return nil
         }
         if let url {
+            if let state {
+                // A Chromium state: its Back and Forward entries, which load only when visited, then the address alone.
+                page.seedHistory(from: state)
+            }
             return loadDirect(url, byPerson: byPerson)
         }
         isRestoring = false
@@ -745,4 +749,6 @@ final class BrowserTab: Identifiable {
 
     var isShowingError = false
     var isLoadingErrorPage = false
+    /// The navigation of the error document that `isLoadingErrorPage` waits for. Any other navigation that starts replaces it.
+    var errorDocumentNavigation: PageNavigation?
 }

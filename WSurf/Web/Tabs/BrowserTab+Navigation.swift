@@ -79,7 +79,8 @@ extension BrowserTab {
         urlString = url.absoluteString
         if liveView.map({ $0.engine != desired }) == true || retirement != nil || engineSwitchTask != nil {
             lastRequestedNavigation = nil
-            let left = liveView.flatMap { $0.engine != desired ? committedURL : nil }
+            // A Chromium hop back through restored entries leaves a page that is ahead of the new one: Back must not return there.
+            let left = liveView.flatMap { $0.engine != desired && $0.chromium?.hopsBackward != true ? committedURL : nil }
                 .map { (url: $0, state: page.interactionState as? Data) }
             pendingNavigationTask = Task { [weak self] in
                 guard let self else { return nil }
@@ -115,6 +116,9 @@ extension BrowserTab {
             if let state = left.state, BrowserPage.canRestore(state, using: desired) {
                 page.interactionState = state
                 return nil
+            }
+            if let state = left.state {
+                page.seedHistory(from: state)
             }
             let result = loadDirect(left.url)
             lastRequestedNavigation = result

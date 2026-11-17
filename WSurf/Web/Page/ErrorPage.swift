@@ -72,11 +72,10 @@ nonisolated enum ErrorPage {
 
     @discardableResult
     @MainActor
-    static func show(_ error: any Error, in page: BrowserPage, fallbackURL: URL?) -> URL? {
+    static func show(_ error: any Error, in page: BrowserPage, fallbackURL: URL?) -> PageNavigation? {
         guard !isSilent(error), let url = failedURL(from: error, fallback: fallbackURL) else { return nil }
         let (headline, detail) = explain(error)
-        page.loadHTMLString(html(headline: String(localized: headline), detail: detail, url: url), baseURL: url)
-        return url
+        return page.loadHTMLString(html(headline: String(localized: headline), detail: detail, url: url), baseURL: url)
     }
 
     static func html(headline: String, detail: String, url: URL) -> String {
