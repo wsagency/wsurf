@@ -207,7 +207,7 @@ struct AssistantComposer: View {
     }
 
     private var effectiveTextOnly: Bool {
-        !ModelImageSupport.acceptsImages(for: coordinator.selectedProvider, model: coordinator.selectedModel)
+        coordinator.attachmentTextOnly
     }
 
     private func send() {
@@ -216,7 +216,7 @@ struct AssistantComposer: View {
         do {
             try AttachmentRequest.validate(
                 attachments.files, message: message, textOnly: effectiveTextOnly,
-                windowTokens: ContextWindow.tokens(for: coordinator.selectedProvider, model: coordinator.selectedModel),
+                windowTokens: coordinator.attachmentWindowTokens,
                 imageTokens: AttachmentRequest.imageTokens(for: coordinator.selectedProvider)
             )
         } catch {

@@ -49,6 +49,7 @@
    "AssistantTextEditorTests",
    "AssistantToolSettingsTests",
    "AttachmentTests",
+   "AttachmentTextOnlyTests",
    "AudioFrameEngineTests",
    "AudioIndicatorTests",
    "AudioIndicatorViewTests",
