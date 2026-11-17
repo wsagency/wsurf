@@ -199,12 +199,21 @@ struct ChromiumHistoryRecord {
         while hop.logical.indices.contains(index), hop.logical[index] == nil {
             index += step
         }
-        for index in [index, hop.start, hop.target] where hop.logical.indices.contains(index) {
-            if let url = hop.logical[index].flatMap({ URL(string: $0.url) }) {
-                return (index, url)
+        for candidate in [index, hop.start, hop.target] where hop.logical.indices.contains(candidate) {
+            if let url = hop.logical[candidate].flatMap({ URL(string: $0.url) }) {
+                return (candidate, url)
             }
         }
         return nil
+    }
+
+    /// The place of the restored entry `id` in the list of the hop on its way (a pick from the list while the hop has moved).
+    func indexInHop(of id: Int) -> Int? {
+        guard let hop else { return nil }
+        if let index = back.firstIndex(where: { $0.id == id }) {
+            return index
+        }
+        return forward.firstIndex { $0.id == id }.map { hop.logical.count - forward.count + $0 }
     }
 
     /// The hop on its way now goes to `index` of its list, loaded with `navigation`. Once the replaced load has committed (its page or

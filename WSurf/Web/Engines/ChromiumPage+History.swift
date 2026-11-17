@@ -309,6 +309,12 @@ extension ChromiumPage {
     /// (cancelled, blocked, moved to the other engine) moves nothing.
     private func hop(to id: Int) -> PageNavigation? {
         guard let url = historyRecord.address(of: id), let read = nativeEntries() else { return nil }
+        // A pick while a hop has moved Chromium's list: in that hop's list, as Back and Forward then are (`rehop`).
+        if historyRecord.hopHasMoved(navigation: navigation) {
+            guard let index = historyRecord.indexInHop(of: id), let next = load(URLRequest(url: url)) else { return nil }
+            historyRecord.retargetHop(to: index, navigation: next)
+            return next
+        }
         let reachable = firstReachable(firstAddress: read.entries.first?.url, in: historyRecord.native)
         let window = read.entries.dropFirst(reachable).map {
             CefRemote.HistoryEntry(id: -1, url: $0.url, title: $0.title, hasPostData: $0.hasPostData)
@@ -318,8 +324,8 @@ extension ChromiumPage {
         return next
     }
 
-    /// Back (`step` -1) or Forward (1) while a hop has moved Chromium's list unapplied: the entry next to the one the hop started at, by GET, in the hop's own
-    /// list (`ChromiumHistoryRecord.entryFromHop`), so two quick Backs move one step (S5).
+    /// Back (`step` -1) or Forward (1) while a hop has moved Chromium's list unapplied: the entry next to the one the hop started at, by GET, in the hop's
+    /// own list (`ChromiumHistoryRecord.entryFromHop`), so two quick Backs move one step (S5).
     private func rehop(_ step: Int) -> PageNavigation? {
         guard let entry = historyRecord.entryFromHop(step), let next = load(URLRequest(url: entry.url)) else { return nil }
         historyRecord.retargetHop(to: entry.index, navigation: next)

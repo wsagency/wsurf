@@ -297,6 +297,23 @@ struct ChromiumHistoryRecordTests {
         #expect(record.floorIndex(in: record.native) == 2, "the first load's entry is hidden with the page the hop left")
     }
 
+    /// A pick from the list while a hop has moved goes to the picked entry's place in that hop's list.
+    @Test func aPickWhileAHopHasMovedFindsTheEntryInTheHopsList() throws {
+        var record = seeded(back: ["a"], forward: ["d", "e"])
+        _ = record.update(native: [native(1, "b"), native(2, "c", current: true)], navigation: nil)
+        let hop = PageNavigation()
+        let window = [native(-1, "b"), native(-1, "c", current: true)]
+        record.startHop(to: try #require(record.forward.first).id, window: window, current: 1, navigation: hop)
+        record.noteCommit(URL(string: "https://a.test/d"), navigation: hop)
+        #expect(record.indexInHop(of: try #require(record.back.first).id) == 0)
+        #expect(record.indexInHop(of: try #require(record.forward.last).id) == 4, "a, b, c, d, e")
+        let again = PageNavigation()
+        record.retargetHop(to: 4, navigation: again)
+        record.noteCommit(URL(string: "https://a.test/e"), navigation: again)
+        _ = record.update(native: [native(1, "b"), native(2, "c"), native(3, "d"), native(4, "e", current: true)], navigation: again)
+        #expect(paths(record.back) == ["a", "b", "c", "d"] && record.forward.isEmpty)
+    }
+
     /// A failed hop retargeted after its error document had committed, that fails again: it lands only on the error document that is
     /// current, never on the earlier one (the same `data:` address) that Chromium's newer error entry follows.
     @Test func aRetargetedFailedHopLandsOnlyOnItsCurrentErrorDocument() throws {
