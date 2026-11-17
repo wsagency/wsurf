@@ -142,16 +142,21 @@ extension ChromiumRemoteContentView {
     /// elsewhere (a field, the address bar) is dropped: a late Tab or Escape must not drive another field's key loop. Whatever the app
     /// does with the event (`redispatching`) it never reaches the page again.
     func redispatchUnhandledKey(nativeKeyCode: UInt16, type: Int64, modifiers: Int64) {
-        guard type == Int64(KEYEVENT_RAWKEYDOWN.rawValue) || type == Int64(KEYEVENT_KEYDOWN.rawValue),
-              let index = sentKeyDowns.firstIndex(where: {
-                  $0.event.keyCode == nativeKeyCode
-                      && Self.modifiers($0.event.modifierFlags) & Self.matchedModifiers == modifiers & Self.matchedModifiers
-              }) else { return }
+        guard type == Int64(KEYEVENT_RAWKEYDOWN.rawValue) || type == Int64(KEYEVENT_KEYDOWN.rawValue) else { return }
+        let matching = sentKeyDowns.indices.filter {
+            sentKeyDowns[$0].event.keyCode == nativeKeyCode
+                && Self.modifiers(sentKeyDowns[$0].event.modifierFlags) & Self.matchedModifiers == modifiers & Self.matchedModifiers
+        }
+        guard let index = matching.first, let last = matching.last else { return }
         let sent = sentKeyDowns[index]
         let event = sent.event
-        sentKeyDowns.removeFirst(index + 1)
+        // The report names a chord, not the key-down it answers. When an agent's key-down of the same chord is queued, the report may be
+        // the agent's: it is dropped, so that an agent's key can never run a menu item as a person's (R1). The cost is a person's key
+        // lost when it is queued together with an agent's identical one.
+        let ambiguous = matching.contains { !sentKeyDowns[$0].fromPerson }
+        sentKeyDowns.removeFirst(ambiguous ? last + 1 : index + 1)
         // An agent's key never reaches WSurf's menu or its responders (R1): an MCP ⌘Z must not run Undo, nor ⌘← Back.
-        guard sent.fromPerson, window?.firstResponder === self else { return }
+        guard !ambiguous, sent.fromPerson, window?.firstResponder === self else { return }
         redispatching = event
         defer { redispatching = nil }
         if ShortcutPriority.pageAnswersFirst(event), NSApp.mainMenu?.performKeyEquivalent(with: event) == true {

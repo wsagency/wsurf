@@ -314,6 +314,13 @@ struct ChromiumOOPInputTests {
             #expect(rig.view.performKeyEquivalent(with: try Self.key(left, code: 123, flags: .command, in: rig.window)))
             rig.remote.remoteEvent(unhandled(rig, code: 123, modifiers: ChromiumRemoteContentView.modifiers(.command)))
             #expect(hits.hits == ["back"], "a person's ⌘← goes Back: \(hits.hits)")
+            // The report names a chord, not the key-down it answers: with a person's ⌘Z and an agent's ⌘Z both waiting, a report could
+            // be the agent's, so it is dropped (fail closed) and no menu item runs.
+            #expect(rig.view.performKeyEquivalent(with: try Self.key("z", code: 6, flags: .command, in: rig.window)))
+            #expect(rig.native.sendKeyEvent(try Self.key("z", code: 6, flags: .command, in: rig.window)))
+            rig.remote.remoteEvent(unhandled(rig, code: 6, modifiers: ChromiumRemoteContentView.modifiers(.command)))
+            #expect(hits.hits == ["back"], "an ambiguous report runs nothing: \(hits.hits)")
+            #expect(rig.view.sentKeyDowns.isEmpty)
         }
         await rig.end()
     }
