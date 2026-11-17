@@ -156,6 +156,7 @@ final class ChromiumRemoteBrowser: ChromiumRemoteBrowserHandle {
     func markCreated() {
         guard !isCreated, !isClosed else { return }
         isCreated = true
+        connection.accessibilityBrowserCreated(id)
         let waiting = held
         held.removeAll()
         for message in waiting {
@@ -260,6 +261,7 @@ final class ChromiumRemoteBrowser: ChromiumRemoteBrowserHandle {
             }
         case CefRemote.Event.browserClosed:
             isClosed = true
+            connection.accessibilityBrowserClosed(id)
             detachFrameLayer()
             collapses.interruptAll()
             page?.remoteBrowserClosed(self)

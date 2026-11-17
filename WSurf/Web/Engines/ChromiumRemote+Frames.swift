@@ -12,6 +12,14 @@ import os
 // `ChromiumRemote.swift` to keep it under the file-length limit. The connections themselves are state of `ChromiumRemote`.
 
 extension ChromiumRemote {
+    var hasInputConnection: Bool {
+        input != nil
+    }
+
+    var hasFramesConnection: Bool {
+        frames != nil
+    }
+
     // MARK: Frames
 
     func openFrames() {

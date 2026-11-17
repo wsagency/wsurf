@@ -224,7 +224,7 @@ final class RemoteBrowser {
     }
 
     /// Runs `body` with the host now, or once CEF has made the browser.
-    private func withHost(_ body: @escaping (UnsafeMutablePointer<cef_browser_host_t>) -> Void) {
+    func withHost(_ body: @escaping (UnsafeMutablePointer<cef_browser_host_t>) -> Void) {
         guard !hasClosed else { return }
         guard let host = hostReference() else {
             pending.append(body)

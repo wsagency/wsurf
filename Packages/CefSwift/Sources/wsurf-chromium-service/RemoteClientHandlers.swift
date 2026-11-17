@@ -293,6 +293,8 @@ final class RemoteClientHandlers: @unchecked Sendable {
             info.pointee.available_rect = screenRect
             return 1
         }
+        // Asked for only while accessibility is on (D4-40).
+        render.pointee.get_accessibility_handler = { handlerSelf in RemoteClientHandlers.makeAccessibility(handlerSelf) }
         render.pointee.on_popup_show = { handlerSelf, browser, show in
             Native.release(browser.map(UnsafeMutableRawPointer.init))
             guard let owner = RemoteClientHandlers.browser(handlerSelf) else { return }
