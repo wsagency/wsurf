@@ -749,4 +749,6 @@ final class BrowserTab: Identifiable {
 
     var isShowingError = false
     var isLoadingErrorPage = false
+    /// The navigation of the error document that `isLoadingErrorPage` waits for. Any other navigation that starts replaces it.
+    var errorDocumentNavigation: PageNavigation?
 }

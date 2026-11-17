@@ -33,6 +33,11 @@ extension BrowserTab {
 
     func navigationStarted(_ navigation: PageNavigation?, url: URL?) {
         pendingPDFOpening = nil
+        // A Back, Reload or typed address that stops the error document while it loads reports nothing for it, so the flag would
+        // outlive it: only the error document's own start (the one `navigationFailed` made) keeps it.
+        if isLoadingErrorPage, navigation !== errorDocumentNavigation {
+            isLoadingErrorPage = false
+        }
         if !isLoadingErrorPage {
             isShowingError = false
         }
@@ -160,7 +165,7 @@ extension BrowserTab {
             if ErrorPage.failedURL(from: error, fallback: fallback) != nil {
                 isShowingError = true
                 isLoadingErrorPage = true
-                ErrorPage.show(error, in: page, fallbackURL: fallback)
+                errorDocumentNavigation = ErrorPage.show(error, in: page, fallbackURL: fallback)
                 // A Back or Forward to a restored Chromium entry that failed keeps its place in the list (D3b).
                 page.chromium?.keepHopThroughErrorDocument(failed: navigation)
             }

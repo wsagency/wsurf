@@ -365,6 +365,62 @@ struct ChromiumHistoryRestoreTests {
         }
     }
 
+    /// Runs `action` once, right after the tab has handled the next failed load: the error document has just started loading, and
+    /// what `action` starts replaces it, so it never reports a finish or a failure.
+    private func onceAfterFailure(of tab: BrowserTab, _ action: @escaping @MainActor () -> Void) {
+        let handled = tab.page.onNavigationFailed
+        var fired = false
+        tab.page.onNavigationFailed = { navigation, error in
+            handled?(navigation, error)
+            guard !fired else { return }
+            fired = true
+            action()
+        }
+    }
+
+    /// Whether `tab` has finished loading WSurf's error document, titled with its headline. Not the alert branch (which clears the
+    /// flag too, and leaves `isShowingError` from the earlier failure) and not the engine's own error page.
+    private func showsOwnErrorPage(_ tab: BrowserTab) async -> Bool {
+        let headline = String(localized: "Can’t reach this website")
+        return await waitUntil(timeout: .seconds(30)) {
+            !tab.page.isLoading && tab.isShowingError && !tab.isLoadingErrorPage && tab.page.title == headline
+        }
+    }
+
+    /// Delta review N5: a page that replaces the error document while it loads reports nothing for it. The flag that waits for it
+    /// must not outlive it, or the next failure turns into an alert sheet with a stale address and no error page.
+    @Test(arguments: [BrowserEngine.chromium, .webKit])
+    func aStoppedErrorDocumentDoesNotTurnTheNextFailureIntoAnAlert(engine: BrowserEngine) async throws {
+        try await withRig(engine: engine) { rig, log in
+            let (first, _) = try await closedPort(log: log)
+            let (second, _) = try await closedPort(log: log)
+            let tab = try await rig.open("/a")
+            onceAfterFailure(of: tab) { [weak tab] in tab?.load(second) }
+            tab.load(first)
+            #expect(await showsOwnErrorPage(tab), "\(tab.page.title ?? "-") \(tab.urlString)")
+            #expect(tab.urlString == second.absoluteString, "the address of the page that failed: \(tab.urlString)")
+            #expect(!tab.isLoadingErrorPage)
+        }
+    }
+
+    /// The same on a Back hop (the S5 restart): a second Back while the error document of a failed hop loads goes to the same
+    /// entry, and that fails again, so the error document stands in its place once more and the lists keep it.
+    @Test func aSecondBackWhileTheErrorDocumentLoadsStillHandsTheFailedHopOver() async throws {
+        try await withRig { rig, log in
+            let (dead, _) = try await closedPort(log: log)
+            let (tab, _) = try await wake(at: "/c", from: state(back: [rig.server.url("/a"), dead], forward: []), in: rig, log: log)
+            try #require(await settles(tab, at: "/c", back: ["/a", "/dead"], forward: []), "\(lists(tab))")
+
+            onceAfterFailure(of: tab) { [weak tab] in tab?.goBack() }
+            tab.goBack()
+            #expect(await showsError(tab, back: ["/a"], forward: ["/c"]), "\(lists(tab))")
+            #expect(await showsOwnErrorPage(tab), "\(tab.page.title ?? "-")")
+            #expect(tab.urlString == dead.absoluteString, "\(tab.urlString)")
+            tab.goBack()
+            #expect(await settles(tab, at: "/a", back: [], forward: ["/dead", "/c"]), "\(lists(tab))")
+        }
+    }
+
     // MARK: Engine switches
 
     /// Chromium → WebKit → Back: the Chromium page comes back with its list, loading only its own address.
