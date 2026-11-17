@@ -125,19 +125,22 @@ nonisolated final class ChromiumAccessibilityDecoder: Sendable {
             oversize(message.browser)
             return
         }
+        // The parsed graph stays in this scope: only the update (Sendable) is captured by the closures below, and it is freed here.
         let parsed = ChromiumAccessibilityUpdate.parse(message, data: data)
+        let update = parsed?.update
         if let parsed {
-            mirrors.withLock { $0[parsed.update.browser] }?.apply(parsed.update.kind, json: parsed.json)
+            let browser = parsed.update.browser
+            mirrors.withLock { $0[browser] }?.apply(parsed.update.kind, json: parsed.json)
         }
         let took = started.duration(to: .now)
         let milliseconds = Double(took.components.seconds) * 1000 + Double(took.components.attoseconds) / 1e15
         state.withLock { state in
-            guard let parsed else {
+            guard let update else {
                 state.undecodable += 1
                 return
             }
             state.decoded += 1
-            state.bytes += parsed.update.byteCount
+            state.bytes += update.byteCount
             state.longestMs = max(state.longestMs, milliseconds)
             #if DEBUG
             if Thread.isMainThread {
@@ -147,8 +150,8 @@ nonisolated final class ChromiumAccessibilityDecoder: Sendable {
             }
             #endif
         }
-        if let parsed {
-            deliver(parsed.update)
+        if let update {
+            deliver(update)
         }
     }
 }
