@@ -247,15 +247,17 @@ struct ChromiumContextMenuTests {
         page.canPickCredential = { offered }
         page.credentialRefusal = { refusal }
         page.onPickCredential = { _ in picked += 1 }
+        AutofillDiagnostics.watch(page)
         withUnsafeMutablePointer(to: &model) {
             client.offerCredentialPicker(in: $0, editable: editable, frame: nil)
         }
         let remembered = client.pickCredentialMenu != nil
         let handled = client.runCredentialPicker()
+        let refused = AutofillDiagnostics.offered(to: page)
         withExtendedLifetime(page) {}
         client.close()
         await context.endPrivateSession()
-        return PickerOutcome(menu: PickerMenuProbe.menu, handled: handled, picked: picked, remembered: remembered)
+        return PickerOutcome(menu: PickerMenuProbe.menu, handled: handled, picked: picked, remembered: remembered, refused: refused)
     }
 
     @Test func anEditableFieldGetsTheEnabledItemAtTheTopWhileTheTabOffersIt() async {
@@ -285,6 +287,24 @@ struct ChromiumContextMenuTests {
             let result = await offerPicker(editable: editable, offered: offered, refusal: refusal)
             #expect(result.menu.items.isEmpty && result.menu.disabled.isEmpty && result.menu.separators.isEmpty)
             #expect(!result.remembered && !result.handled && result.picked == 0)
+        }
+    }
+
+    /// The Chromium menu hook tells the log why it has no usable item, by its fixed reason only, and says nothing for an offered one.
+    @Test func theMenuHookLogsWhyItHasNoUsableItem() async {
+        let none = CredentialPicker.Refusal?.none
+        let cases: [((editable: Bool, offered: Bool, refusal: CredentialPicker.Refusal?), [AutofillDiagnostics.Event])] = [
+            ((true, true, none), []),
+            ((true, true, .insecurePage), []),
+            ((false, false, none), [.menuNotEditable]),
+            ((false, true, none), [.menuNotEditable]),
+            ((true, false, none), [.menuNotOffered]),
+            ((true, false, .agentControl), [.agentControlled]),
+            ((true, false, .insecurePage), [.insecurePage]),
+        ]
+        for (menu, expected) in cases {
+            let result = await offerPicker(editable: menu.editable, offered: menu.offered, refusal: menu.refusal)
+            #expect(result.refused == expected, "editable \(menu.editable), offered \(menu.offered), reason \(String(describing: menu.refusal))")
         }
     }
 
@@ -477,6 +497,8 @@ private struct PickerOutcome {
     let handled: Bool
     let picked: Int
     let remembered: Bool
+    /// The events the menu hook offered the refusal log (`AutofillDiagnostics.refused`), in order.
+    let refused: [AutofillDiagnostics.Event]
 }
 
 /// C function pointers cannot capture, so the menu model's callbacks write here.

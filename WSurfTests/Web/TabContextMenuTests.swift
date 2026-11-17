@@ -230,4 +230,40 @@ struct TabContextMenuTests {
 
         #expect(marks(menu) == ["WKMenuItemIdentifierInspectElement"])
     }
+
+    // MARK: - Pick Credential…
+
+    private func pickCredentialView() throws -> (view: TabWebView, event: NSEvent) {
+        let view = TabWebView(frame: NSRect(x: 0, y: 0, width: 400, height: 300), configuration: WebViewPool.makeConfiguration())
+        let event = try #require(NSEvent.mouseEvent(
+            with: .rightMouseDown, location: NSPoint(x: 10, y: 10), modifierFlags: [], timestamp: 0, windowNumber: 0, context: nil,
+            eventNumber: 0, clickCount: 1, pressure: 1
+        ))
+        return (view, event)
+    }
+
+    private static let editable = ["WKMenuItemIdentifierCopy", "WKMenuItemIdentifierPaste", "WKMenuItemIdentifierSpellingMenu"]
+
+    /// The WebKit menu hook tells the log why it has no usable item, by its fixed reason only (`AutofillDiagnostics.menuRefusal`).
+    @Test(.boundedWebViews) func theMenuHookLogsWhyItHasNoUsableItem() throws {
+        let (view, event) = try pickCredentialView()
+        var offered = true
+        var reason: CredentialPicker.Refusal?
+        view.canPickCredential = { offered }
+        view.credentialRefusal = { reason }
+        func logged(_ identifiers: [String]) -> [AutofillDiagnostics.Event] {
+            AutofillDiagnostics.watch(view)
+            view.willOpenMenu(menu(identifiers.map { Optional($0) }), with: event)
+            return AutofillDiagnostics.offered(to: view)
+        }
+
+        #expect(logged(Self.editable).isEmpty, "an offered item is no refusal")
+        #expect(logged(["WKMenuItemIdentifierCopy"]) == [.menuNotEditable])
+        offered = false
+        #expect(logged(Self.editable) == [.menuNotOffered], "editable, not offered, and no reason to show")
+        reason = .agentControl
+        #expect(logged(Self.editable) == [.agentControlled])
+        reason = .insecurePage
+        #expect(logged(Self.editable) == [.insecurePage])
+    }
 }
