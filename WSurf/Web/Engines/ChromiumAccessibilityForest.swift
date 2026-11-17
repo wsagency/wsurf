@@ -232,19 +232,21 @@ nonisolated struct ChromiumAccessibilityForest: Sendable {
 
     /// Children for VoiceOver: nodes that are not elements give way to theirs; leaves have none.
     func visibleChildren(of key: Key) -> [Key] {
-        visibleChildren(of: key, depth: 0)
+        var seen: Set<Key> = [key]
+        return visibleChildren(of: key, depth: 0, seen: &seen)
     }
 
-    /// The updates come from a renderer: child lists that loop, or nest without end, must cost a bounded walk and nothing else.
-    private func visibleChildren(of key: Key, depth: Int) -> [Key] {
+    /// The updates come from a renderer: child lists that loop, repeat a child or nest without end must cost a bounded walk and nothing
+    /// else. `seen` is shared by the whole walk, so a node is expanded once however many lists name it.
+    private func visibleChildren(of key: Key, depth: Int, seen: inout Set<Key>) -> [Key] {
         guard depth < Self.maxDepth, let node = node(key), !Self.leafRoles.contains(node.role) else { return [] }
         var result: [Key] = []
         for child in children(of: key) {
-            guard let childNode = self.node(child) else { continue }
+            guard let childNode = self.node(child), seen.insert(child).inserted else { continue }
             if isElement(childNode, key: child) {
                 result.append(child)
             } else {
-                result += visibleChildren(of: child, depth: depth + 1)
+                result += visibleChildren(of: child, depth: depth + 1, seen: &seen)
             }
         }
         return result
