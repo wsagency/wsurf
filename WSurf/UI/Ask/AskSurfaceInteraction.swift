@@ -94,7 +94,8 @@ struct AskSurfaceInteraction: Equatable {
         fragment: String,
         tabs: [BrowserTab],
         mentionedTabIDs: Set<UUID>,
-        activeTabID: UUID?
+        activeTabID: UUID?,
+        limit: Int = 5
     ) -> [BrowserTab] {
         let needle = fragment.lowercased()
         let candidates = tabs.filter { tab in
@@ -107,7 +108,30 @@ struct AskSurfaceInteraction: Equatable {
         }
         let current = candidates.filter { $0.id == activeTabID }
         let others = candidates.filter { $0.id != activeTabID }
-        return Array((current + others).prefix(5))
+        return Array((current + others).prefix(limit))
+    }
+
+    /// The tabs the add menu may offer: this window's own, in this window's profile (a private window is one), that are not
+    /// extension pages, then the same page rules as the `@` list (no WSurf page, no tab without a page).
+    static func attachCandidates(
+        fragment: String,
+        in browser: BrowserModel,
+        mentionedTabIDs: Set<UUID>,
+        limit: Int = 5
+    ) -> [BrowserTab] {
+        mentionCandidates(
+            fragment: fragment,
+            tabs: browser.tabs.filter { isAttachable($0, in: browser) },
+            mentionedTabIDs: mentionedTabIDs,
+            activeTabID: browser.activeTab?.id,
+            limit: limit
+        )
+    }
+
+    /// A private window is a profile of its own, so one comparison keeps private and normal tabs apart as well as
+    /// one profile's tabs from another's.
+    static func isAttachable(_ tab: BrowserTab, in browser: BrowserModel) -> Bool {
+        tab.context.profile.id == browser.context.profile.id && tab.extensionBaseURL == nil
     }
 
     static func removingMentionFragment(from text: String) -> String {
