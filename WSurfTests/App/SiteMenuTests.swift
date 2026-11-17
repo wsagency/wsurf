@@ -209,7 +209,7 @@ struct SiteMenuTests {
         }
 
         static func turn() async {
-            await withCheckedContinuation { continuation in
+            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
                 DispatchQueue.main.async { continuation.resume() }
             }
         }
