@@ -114,7 +114,7 @@ final class BrowserHost: NSObject, NSWindowDelegate {
         } completionHandler: { [weak self, weak window] in
             MainActor.assumeIsolated {
                 window?.minSize = bloom.minSize
-                if let self, self.coordinator?.profiles.isPrivate == false {
+                if let self, self.savesFrame {
                     window?.setFrameAutosaveName(self.frameKey)
                 }
             }
@@ -162,7 +162,7 @@ final class BrowserHost: NSObject, NSWindowDelegate {
         }
         created.delegate = self
         dropSavedTilingState()
-        if coordinator?.profiles.isPrivate == false {
+        if savesFrame {
             created.setFrameAutosaveName(frameKey)
         }
         if coordinator?.profiles.isPrivate == true || !created.setFrameUsingName(frameKey) {
@@ -287,6 +287,12 @@ final class BrowserHost: NSObject, NSWindowDelegate {
         layer.cornerRadius = isFullScreen ? 0 : SystemWindowShape.cornerRadius
         layer.cornerCurve = .continuous
         layer.masksToBounds = !isFullScreen
+    }
+
+    /// A window's frame is saved under its own key, and a person's private window saves nothing. A test run saves nothing either:
+    /// it opens many windows, and each would leave a key in the standard preferences that no run removes.
+    private var savesFrame: Bool {
+        coordinator?.profiles.isPrivate == false && !AppDatabase.isRunningTests
     }
 
     /// Removes the tiling slot from the autosaved frame. macOS 26 replays it

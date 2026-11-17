@@ -87,6 +87,22 @@ enum PerfProbe {
         return try body()
     }
 
+    /// The persisted Assistant side panel state: the keys `SidePanelModel` writes whenever the panel is shown, selected or hidden.
+    static let sidePanelKeys = ["sidePanel.visible", "sidePanel.selected"]
+
+    /// Takes the values of `keys` in this host's own defaults and returns what puts them back, absent keys included. A test that
+    /// changes persisted UI state calls it first and runs the result in a `defer`: the defaults domain outlives the run (ci-local
+    /// reuses one on purpose), so what a test leaves there is what the next run's window starts from.
+    static func snapshotDefaults(_ keys: [String]) -> () -> Void {
+        let defaults = StageMode.defaults
+        let saved = keys.map { ($0, defaults.object(forKey: $0)) }
+        return {
+            for (key, value) in saved {
+                defaults.set(value, forKey: key)
+            }
+        }
+    }
+
     /// One result line, the format the report scripts and `run` grep for.
     static func report(_ name: String, _ fields: String) {
         print("WSURF-BENCH case=\(name) \(fields)")

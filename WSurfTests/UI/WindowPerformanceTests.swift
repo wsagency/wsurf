@@ -34,8 +34,20 @@ nonisolated final class WindowPerformanceTests: XCTestCase, @unchecked Sendable 
             coordinator.browser
         }
 
-        init(rows: Int = 300, history: HistoryStore? = nil, startPageRows: Int = 0) {
+        private let restorePanel: () -> Void
+
+        /// `sidePanelShown` pins the Assistant side panel, which the coordinator reads from the host's shared defaults: a
+        /// shown panel makes every front close run `AgentAttention.review` (a defaults write on the main thread), so a
+        /// budget that took whatever state the last run left would measure two different windows. The budgets were set on
+        /// the window a person gets by default, panel hidden, so that is the default here. `close()` puts the state back.
+        init(rows: Int = 300, history: HistoryStore? = nil, startPageRows: Int = 0, sidePanelShown: Bool = false) {
+            restorePanel = PerfProbe.snapshotDefaults(PerfProbe.sidePanelKeys)
             coordinator = AppCoordinator(browser: BrowserModel(database: .temporary(), history: history))
+            if sidePanelShown {
+                coordinator.sidePanel.show(.activity)
+            } else {
+                coordinator.sidePanel.hide()
+            }
             for index in 0..<rows {
                 PerfProbe.addBackgroundTab(to: coordinator.browser, address: "https://fixture-\(index).example/")
             }
@@ -65,6 +77,7 @@ nonisolated final class WindowPerformanceTests: XCTestCase, @unchecked Sendable 
             }
             coordinator.releaseWindowHost()
             coordinator.browser.cancelPendingSave()
+            restorePanel()
         }
 
         func editableField() -> NSTextField? {
@@ -234,12 +247,16 @@ nonisolated final class WindowPerformanceTests: XCTestCase, @unchecked Sendable 
     /// ten front rows are start-page rows; each pass adds five more at the front and closes five.
     func testClosingTheFrontTabInACrowdedWindow() {
         MainActor.assumeIsolated {
-            let rig = CrowdedWindow(startPageRows: 10)
+            // The budget (0.240 s) is the window a person gets by default: Assistant panel hidden.
+            let panelShown = false
+            let rig = CrowdedWindow(startPageRows: 10, sidePanelShown: panelShown)
             let browser = rig.browser
             guard let first = browser.tabs.first(where: { $0.title == SystemPages.startTitle || $0.pageTitle == SystemPages.startTitle }) else {
                 XCTFail("no start-page row")
+                rig.close()
                 return
             }
+            XCTAssertEqual(rig.coordinator.sidePanel.isVisible, panelShown, "the rig did not pin the panel, so the budget would time another window")
             browser.activate(first)
             rig.draw()
             let options = XCTMeasureOptions.budgeted

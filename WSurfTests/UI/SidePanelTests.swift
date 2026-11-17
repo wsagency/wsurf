@@ -22,6 +22,22 @@ struct SidePanelTests {
         UserDefaults(suiteName: AppDatabase.defaultsSuite("SidePanelTests-\(UUID().uuidString)"))!
     }
 
+    // MARK: - What a test that shows the panel must put back
+
+    /// `PerfProbe.sidePanelKeys` is what the budget suites restore. If the model persisted another key, a test could leak it.
+    @Test func showingAndHidingPersistsOnlyTheKeysTestsRestore() {
+        let defaults = scratch()
+        let panel = panel(defaults)
+
+        panel.show(.activity)
+        let shown = Set(defaults.dictionaryRepresentation().keys.filter { $0.hasPrefix("sidePanel.") })
+        panel.hide()
+        let hidden = Set(defaults.dictionaryRepresentation().keys.filter { $0.hasPrefix("sidePanel.") })
+
+        #expect(shown == Set(PerfProbe.sidePanelKeys))
+        #expect(hidden == Set(PerfProbe.sidePanelKeys))
+    }
+
     @Test func itStartsClosedWithATabForEveryKind() {
         let panel = panel()
 

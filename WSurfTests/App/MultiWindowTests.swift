@@ -20,6 +20,22 @@ struct MultiWindowTests {
         return coordinator
     }
 
+    /// Every window a test run opened used to leave an `NSWindow Frame wsurf.browser.window.<UUID>` key in the standard
+    /// preferences, which a reused test identity never loses: 22,748 of them, slowing every later defaults write.
+    @Test func aWindowOpenedUnderTestSavesNoFrameIntoThePreferences() throws {
+        let app = BrowserApplication()
+        let coordinator = window(in: app, context: .shared(for: .original()))
+        defer {
+            coordinator.closeWindow()
+            withExtendedLifetime(app) {}
+        }
+        coordinator.showBrowser(activate: false)
+        let native = try #require(coordinator.nativeWindow)
+
+        #expect(native.frameAutosaveName.isEmpty)
+        #expect(UserDefaults.standard.object(forKey: "NSWindow Frame wsurf.browser.window.\(coordinator.windowID.uuidString)") == nil)
+    }
+
     @Test func closingANativeWindowKeepsItsSessionAndTheOtherWindowOpen() throws {
         let app = BrowserApplication()
         let context = BrowserProfileContext.shared(for: .original())
