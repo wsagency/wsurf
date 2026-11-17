@@ -22,18 +22,21 @@ nonisolated enum WindowFrameKeys {
         "NSWindow Frame " + autosaveName(for: windowID)
     }
 
+    /// The windows that have a saved frame in `defaults`.
+    static func windowIDs(in defaults: UserDefaults) -> [UUID] {
+        defaults.dictionaryRepresentation().keys.compactMap { name in
+            name.hasPrefix(keyPrefix) ? UUID(uuidString: String(name.dropFirst(keyPrefix.count))) : nil
+        }
+    }
+
+    /// The ones of `windowIDs` that are not in `keeping`, at most `limit` of them.
+    static func stale(_ windowIDs: [UUID], keeping: Set<UUID>, limit: Int = launchLimit) -> [UUID] {
+        Array(windowIDs.lazy.filter { !keeping.contains($0) }.prefix(max(limit, 0)))
+    }
+
     /// The windows whose saved frame is in `defaults` but that are not in `keeping`, at most `limit` of them.
     static func staleWindowIDs(in defaults: UserDefaults, keeping: Set<UUID>, limit: Int = launchLimit) -> [UUID] {
-        guard limit > 0 else { return [] }
-        var stale: [UUID] = []
-        for name in defaults.dictionaryRepresentation().keys where name.hasPrefix(keyPrefix) {
-            guard let id = UUID(uuidString: String(name.dropFirst(keyPrefix.count))), !keeping.contains(id) else { continue }
-            stale.append(id)
-            if stale.count == limit {
-                break
-            }
-        }
-        return stale
+        stale(windowIDs(in: defaults), keeping: keeping, limit: limit)
     }
 
     static func remove(_ windowIDs: [UUID], from defaults: UserDefaults) {

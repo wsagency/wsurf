@@ -5,6 +5,7 @@
 
 import AppKit
 import Observation
+import os
 import WebKit
 
 /// Native windows own selection and running tasks; contexts own profile data.
@@ -209,26 +210,66 @@ final class BrowserApplication {
         }
     }
 
-    /// Drops the saved frames of windows that no session row names: not an open one, and not a closed one that Reopen Last
-    /// Closed Window or the next launch can still bring back (its frame goes with it, as `restoreSteps` reads it). Off the main
-    /// thread and a few at a time, because a write into a large preferences domain is slow. Only the copy that owns the saved
-    /// session prunes: a second copy reads temporary databases, which name none of the first copy's windows. A test run never
-    /// prunes the standard preferences, and no session row at all is no evidence of anything: nothing goes.
+    /// Reads the IDs of the windows one profile has saved rows for, open or closed, or throws: the launch prune must not guess.
+    typealias SavedWindowIDs = @Sendable (Profile, AppDatabase) throws -> [UUID]
+
+    /// The default `SavedWindowIDs`. A database that fell back to temporary storage holds no saved window, whatever was saved
+    /// before, so it says nothing about which frames are stale.
+    nonisolated static func persistedWindowIDs(of profile: Profile, in database: AppDatabase) throws -> [UUID] {
+        guard !database.isEphemeral else { throw WindowFramePruneSkipped.temporaryDatabase }
+        return try BrowserModel.savedWindowIDs(in: database)
+    }
+
+    private nonisolated enum WindowFramePruneSkipped: Error {
+        case temporaryDatabase
+    }
+
+    /// Drops the saved frames of windows that no saved session row names: not an open window, and not a closed one that Reopen
+    /// Last Closed Window or the next launch can still bring back (its frame goes with it, as `restoreSteps` reads it).
+    ///
+    /// Everything but the decision runs off the main thread (a write into a large preferences domain is slow, and so is reading
+    /// every profile's rows), a few keys at a time. The keys are listed first and the open windows are taken after that, on the
+    /// main thread; the rows are read after both. A window that has a key in the list is then either open, or closed with its row
+    /// saved, before either is looked at.
+    ///
+    /// Nothing is pruned when it could be wrong: not in the copy that does not own the saved session (it reads temporary
+    /// databases), not in a staged launch (its session is not the one `defaults` belongs to), not under test against the
+    /// standard preferences, not when any profile's rows cannot be read or sit in a temporary database, and not when the
+    /// rows name no window at all. An open window is no evidence: one is always open.
     @discardableResult
-    func pruneWindowFrames(of profiles: [Profile], defaults: UserDefaults = .standard) -> Task<Void, Never>? {
-        guard ownsSession, !AppDatabase.isRunningTests || defaults !== UserDefaults.standard else { return nil }
-        let named = Set(windows.map(\.windowID)).union(profiles.flatMap { profile in
-            BrowserModel.savedWindows(in: BrowserProfileContext.shared(for: profile).database, includeClosed: true).map(\.id)
-        })
-        guard !named.isEmpty else { return nil }
+    func pruneWindowFrames(
+        of profiles: [Profile],
+        defaults: UserDefaults = .standard,
+        savedWindowIDs: @escaping SavedWindowIDs = BrowserApplication.persistedWindowIDs
+    ) -> Task<Void, Never>? {
+        guard ownsSession, !Self.isStagedLaunch, !AppDatabase.isRunningTests || defaults !== UserDefaults.standard else { return nil }
+        let databases = profiles.map { ($0, BrowserProfileContext.shared(for: $0).database) }
         let store = ThreadSafeDefaults(defaults)
         return Task.detached(priority: .utility) { [weak self] in
-            let stale = WindowFrameKeys.staleWindowIDs(in: store.defaults, keeping: named)
-            guard !stale.isEmpty else { return }
-            // A window opened since `named` was taken has a key of its own already: look again just before they go.
-            let open = await MainActor.run { Set(self?.windows.map(\.windowID) ?? []) }
-            WindowFrameKeys.remove(stale.filter { !open.contains($0) }, from: store.defaults)
+            let framed = WindowFrameKeys.windowIDs(in: store.defaults)
+            guard !framed.isEmpty, let open = await MainActor.run(body: { self.map { Set($0.windows.map(\.windowID)) } }) else { return }
+            var saved: Set<UUID> = []
+            do {
+                for (profile, database) in databases {
+                    saved.formUnion(try savedWindowIDs(profile, database))
+                }
+            } catch {
+                Pipeline.log.error("window frames: saved windows not readable; none pruned")
+                return
+            }
+            guard !saved.isEmpty else { return }
+            WindowFrameKeys.remove(WindowFrameKeys.stale(framed, keeping: saved.union(open)), from: store.defaults)
         }
+    }
+
+    /// A staged dev launch keeps its session in its own home but its window frames in the preferences of the bundle it runs as,
+    /// which a person's own dev build shares.
+    private static var isStagedLaunch: Bool {
+        #if DEBUG
+        StageMode.isActive
+        #else
+        false
+        #endif
     }
 
     /// Opens the windows each profile had open when the app last ran. A profile with none gets back the window the user
