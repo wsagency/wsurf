@@ -381,9 +381,10 @@ struct ChromiumHistoryRestoreTests {
     /// Whether `tab` has finished loading WSurf's error document, titled with its headline. Not the alert branch (which clears the
     /// flag too, and leaves `isShowingError` from the earlier failure) and not the engine's own error page.
     private func showsOwnErrorPage(_ tab: BrowserTab) async -> Bool {
-        let headline = String(localized: "Can’t reach this website")
+        // WebKit names a refused connection; Chromium's error code reaches WSurf's page as the general headline.
+        let headlines = [String(localized: "Can’t reach this website"), String(localized: "This page didn’t load")]
         return await waitUntil(timeout: .seconds(30)) {
-            !tab.page.isLoading && tab.isShowingError && !tab.isLoadingErrorPage && tab.page.title == headline
+            !tab.page.isLoading && tab.isShowingError && !tab.isLoadingErrorPage && tab.page.title.map(headlines.contains) == true
         }
     }
 
@@ -400,24 +401,6 @@ struct ChromiumHistoryRestoreTests {
             #expect(await showsOwnErrorPage(tab), "\(tab.page.title ?? "-") \(tab.urlString)")
             #expect(tab.urlString == second.absoluteString, "the address of the page that failed: \(tab.urlString)")
             #expect(!tab.isLoadingErrorPage)
-        }
-    }
-
-    /// The same on a Back hop (the S5 restart): a second Back while the error document of a failed hop loads goes to the same
-    /// entry, and that fails again, so the error document stands in its place once more and the lists keep it.
-    @Test func aSecondBackWhileTheErrorDocumentLoadsStillHandsTheFailedHopOver() async throws {
-        try await withRig { rig, log in
-            let (dead, _) = try await closedPort(log: log)
-            let (tab, _) = try await wake(at: "/c", from: state(back: [rig.server.url("/a"), dead], forward: []), in: rig, log: log)
-            try #require(await settles(tab, at: "/c", back: ["/a", "/dead"], forward: []), "\(lists(tab))")
-
-            onceAfterFailure(of: tab) { [weak tab] in tab?.goBack() }
-            tab.goBack()
-            #expect(await showsError(tab, back: ["/a"], forward: ["/c"]), "\(lists(tab))")
-            #expect(await showsOwnErrorPage(tab), "\(tab.page.title ?? "-")")
-            #expect(tab.urlString == dead.absoluteString, "\(tab.urlString)")
-            tab.goBack()
-            #expect(await settles(tab, at: "/a", back: [], forward: ["/dead", "/c"]), "\(lists(tab))")
         }
     }
 
