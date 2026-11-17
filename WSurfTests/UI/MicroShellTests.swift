@@ -342,6 +342,13 @@ struct MicroShellTests {
         #expect(MicroWindowMetrics.minSize == NSSize(width: 420, height: 240))
     }
 
+    @Test func floatOnTopRaisesTheLevelOnlyOutsideFullScreen() {
+        #expect(FloatOnTop.level(floats: true, isFullScreen: false) == .floating)
+        #expect(FloatOnTop.level(floats: true, isFullScreen: true) == .normal)
+        #expect(FloatOnTop.level(floats: false, isFullScreen: false) == .normal)
+        #expect(FloatOnTop.level(floats: false, isFullScreen: true) == .normal)
+    }
+
     // MARK: - The badge
 
     @Test func theBadgeOffersMoveBackInAMicroWindowAndNothingOnInternalPages() throws {
