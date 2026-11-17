@@ -340,4 +340,65 @@ struct VaultSyncEdgeTests {
 
         #expect(rig.status(a) == .removed(.deleted))
     }
+
+    // MARK: A zone that is not there
+
+    @Test func aFirstUploadWhoseZoneWasNotMadeMakesItAndSyncs() async throws {
+        let rig = Rig()
+        defer { rig.finish() }
+        let held = syncAccounts(3)
+        let (a, _) = try rig.mac(holding: held)
+        a.engine.losesZoneSaves = 1
+
+        try await a.sync.enable(profileID: rig.profile, vaultID: rig.vaultID)
+        try await a.pump()
+
+        #expect(rig.status(a) == .synced, "not read as removed from iCloud")
+        #expect(rig.record(VaultSync.vaultRecordName) != nil)
+        #expect(held.allSatisfy { rig.item($0) != nil })
+        #expect(a.engine.losesZoneSaves == 0, "the zone was lost once and made again")
+    }
+
+    @Test func aZoneThatGoesMissingAfterItsVaultLandedIsRemovedAndNotMadeAgain() async throws {
+        let rig = Rig()
+        defer { rig.finish() }
+        let held = syncAccounts(1)
+        let (a, va) = try await rig.syncedMac(holding: held)
+        rig.cloud.removeZoneSilently(rig.zone)
+
+        va.edit(syncChanging(held[0], password: "after"))
+        await a.wrote(va)
+        try await a.pump()
+
+        #expect(rig.status(a) == .removed(.deleted))
+        #expect(rig.cloud.zones[rig.zone] == nil, "a zone that was confirmed is never made again")
+        #expect(a.engine.pending.isEmpty, "and nothing is left waiting to be sent")
+        #expect(va.account(held[0].id)?.password == "after", "this Mac keeps its copy")
+    }
+
+    @Test func aFirstUploadWhoseZoneIsNeverMadeStopsAfterAFewTriesAsRemovedAndKeepsEverythingHere() async throws {
+        let rig = Rig()
+        defer { rig.finish() }
+        let held = syncAccounts(2)
+        let (a, va) = try rig.mac(holding: held)
+        a.engine.losesZoneSaves = 100
+
+        try await a.sync.enable(profileID: rig.profile, vaultID: rig.vaultID)
+        try await a.pump()
+
+        // The first try and three more (`VaultSync.zoneRetryLimit`), and no further one over the six passes of `pump`.
+        #expect(a.engine.losesZoneSaves == 96, "four zone saves, not one per pass or a loop")
+        #expect(rig.status(a) == .removed(.deleted), "an error the person can act on, by turning sync off and on")
+        #expect(a.engine.pending.isEmpty)
+        #expect(rig.cloud.recordCount == 0)
+        #expect(Set(va.accounts.keys) == Set(held.map(\.id)), "nothing local was deleted")
+
+        // The person turns sync on again, and this time the zone is made.
+        a.engine.losesZoneSaves = 0
+        try await a.sync.enable(profileID: rig.profile, vaultID: rig.vaultID)
+        try await a.pump()
+
+        #expect(rig.status(a) == .synced)
+        #expect(held.allSatisfy { rig.item($0) != nil })
+    }
 }

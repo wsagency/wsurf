@@ -199,6 +199,8 @@ final class FakeSyncEngine: SyncEngine {
     var offline = false
     /// The server refuses to delete a zone: the engine reports the failure and keeps the change.
     var failsZoneDeletes = false
+    /// The next N zone creations are lost, as a zone save that failed or lost the race with its records.
+    var losesZoneSaves = 0
     /// Names of records that cannot be read when a zone is read in full, as the server can fail one record of a page.
     var unreadable: Set<String> = []
     /// The queued changes by target, each with its place in the queue: a change for a target that is queued again moves to the end, and
@@ -305,7 +307,11 @@ final class FakeSyncEngine: SyncEngine {
         for change in batch {
             switch change {
             case .saveZone(let zone):
-                cloud.createZone(zone)
+                if losesZoneSaves > 0 {
+                    losesZoneSaves -= 1
+                } else {
+                    cloud.createZone(zone)
+                }
             case .deleteZone(let zone):
                 if cloud.zones[zone] == nil {
                     // A zone that is already gone is a zone that is deleted, as the real engine reports it.

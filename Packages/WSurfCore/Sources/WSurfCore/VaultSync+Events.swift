@@ -165,6 +165,7 @@ extension VaultSync {
     private func confirmVaultRecord(_ record: SyncRecord, key: VaultKey) {
         guard let (database, row) = enabledRow(key) else { return }
         var next = row
+        zoneRetries[key] = nil
         if record.payload == row.pendingVault {
             next.uploadedMark = row.pendingMark
             next.pendingVault = nil
@@ -300,7 +301,19 @@ extension VaultSync {
             }
             return false
         case .zoneNotFound:
-            zoneRemoved(failure.id.zone, reason: .deleted)
+            // A zone this Mac made whose `Vault` record never landed (no uploaded mark, the record still waiting) lost its creation, as
+            // `readd` assumes after a lost queue: make it again with the save. Any other missing zone was removed. The retry is bounded:
+            // `zoneRetryLimit` rounds per vault and run, then the vault reads as removed, which stops uploads and asks the person to turn sync
+            // off and on. The engine paces the resends in between. Only the `Vault` record's failure counts, so a round in which many
+            // entries fail together is one round.
+            if row.uploadedMark == nil, row.pendingVault != nil, zoneRetries[key, default: 0] < Self.zoneRetryLimit {
+                if isVaultRecord {
+                    zoneRetries[key, default: 0] += 1
+                }
+                engine?.add([.saveZone(failure.id.zone), .saveRecord(failure.id)])
+            } else {
+                zoneRemoved(failure.id.zone, reason: .deleted)
+            }
             return false
         case .unknownItem:
             try? database.write { try $0.deleteSystemFields(key.vaultID, failure.id.name) }
