@@ -58,6 +58,30 @@ nonisolated enum MinimalBarEdge: String, CaseIterable, Identifiable {
     }
 }
 
+/// Where the Minimal toolbar lives: in the window, at `MinimalBarEdge`, or as a panel of its own that can leave the window.
+/// One choice, so a further place is one more case.
+nonisolated enum MinimalBarPlacement: String, CaseIterable, Identifiable {
+    case window
+    case floating
+
+    var id: String {
+        rawValue
+    }
+
+    /// The stored choice. A value this build cannot read, or none, is the window.
+    init(stored: String?) {
+        self = stored.flatMap(Self.init(rawValue:)) ?? .window
+    }
+
+    /// The stored place of the floating bar, `{x, y}` as `NSStringFromPoint` writes it. Anything else, or none, is no saved
+    /// place (an empty string is how a reset writes it).
+    static func offset(stored: String?) -> CGPoint? {
+        guard let stored, stored.hasPrefix("{"), stored.contains(",") else { return nil }
+        let point = NSPointFromString(stored)
+        return point.x.isFinite && point.y.isFinite ? point : nil
+    }
+}
+
 /// When the Minimal bar floats out of the way. The bar floats over the end of the page, which could not be read otherwise, so
 /// the choice stays While scrolling unless the person picks another.
 nonisolated enum MinimalBarHiding: String, CaseIterable, Identifiable {
@@ -195,6 +219,26 @@ extension BrowserSettings {
         }
     }
 
+    /// Where the Minimal toolbar lives. App-wide like the window style, in the window by default. Only the Minimal window
+    /// reads it (`AppCoordinator.barFloats`).
+    var minimalBarPlacement: MinimalBarPlacement {
+        get { globalValue(\.minimalBarPlacement, storage: storedMinimalBarPlacement) }
+        set {
+            setGlobal(\BrowserSettings.minimalBarPlacement, storage: \BrowserSettings.storedMinimalBarPlacement,
+                      value: newValue, key: Key.minimalBarPlacement, encode: { $0.rawValue })
+        }
+    }
+
+    /// Where the floating toolbar's bar sits: its origin relative to the origin of the window's frame, in points. nil is
+    /// the default place, over the window's bar edge. Saved when a drag ends, never while it moves.
+    var minimalBarFloatOffset: CGPoint? {
+        get { globalValue(\.minimalBarFloatOffset, storage: storedMinimalBarFloatOffset) }
+        set {
+            setGlobal(\BrowserSettings.minimalBarFloatOffset, storage: \BrowserSettings.storedMinimalBarFloatOffset,
+                      value: newValue, key: Key.minimalBarFloatOffset, encode: { $0.map(NSStringFromPoint) ?? "" })
+        }
+    }
+
     /// When the Minimal bar slides away: never, while the page scrolls down (the default, so the end of the page can be read),
     /// or once it has gone unused for a few seconds. The pointer at the bar's edge brings it back under each choice.
     var minimalBarHiding: MinimalBarHiding {
@@ -263,6 +307,8 @@ extension BrowserSettings {
         showsFullAddress = false
         windowStyle = .standard
         minimalBarEdge = .bottom
+        minimalBarPlacement = .window
+        minimalBarFloatOffset = nil
         minimalBarHiding = .whileScrolling
         keepsMinimalSidebarOpen = false
         windowShadow = true

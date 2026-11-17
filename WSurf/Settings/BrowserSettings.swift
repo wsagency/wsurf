@@ -110,6 +110,11 @@ final class BrowserSettings {
         appDefaults.string(forKey: Key.windowStyle).flatMap(BrowserWindowStyle.init(rawValue:)) ?? .standard
     @ObservationIgnored lazy var storedMinimalBarEdge: MinimalBarEdge? =
         appDefaults.string(forKey: Key.minimalBarEdge).flatMap(MinimalBarEdge.init(rawValue:)) ?? .bottom
+    @ObservationIgnored lazy var storedMinimalBarPlacement: MinimalBarPlacement? =
+        MinimalBarPlacement(stored: appDefaults.string(forKey: Key.minimalBarPlacement))
+    /// `.some(nil)`: loaded, and there is no saved place. A bare nil would read as not loaded.
+    @ObservationIgnored lazy var storedMinimalBarFloatOffset: CGPoint?? =
+        .some(MinimalBarPlacement.offset(stored: appDefaults.string(forKey: Key.minimalBarFloatOffset)))
     @ObservationIgnored lazy var storedMinimalBarHiding: MinimalBarHiding? =
         MinimalBarHiding(stored: appDefaults.object(forKey: Key.minimalBarAutoHide))
     @ObservationIgnored lazy var storedKeepsMinimalSidebarOpen: Bool? =

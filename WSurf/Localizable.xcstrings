@@ -181,6 +181,9 @@
     "Credential Manager changed. Review the old list again." : {
 
     },
+    "Detach Toolbar" : {
+      "comment" : "View menu item and context-menu item of the Minimal window’s bar that turns the bar into a small panel which can be dragged out of the window. Title Case; the opposite of “Dock Toolbar”."
+    },
     "Developer" : {
       "comment" : "Name of the profile WSurf creates for developer work, and the Developer choice in the Without asking menu on a paired app’s row. Title Case."
     },
@@ -615,6 +618,9 @@
     },
     "Keep Open" : {
       "comment" : "Button in the sheet that asks whether the assistant or a connected app may close a tab: leaves the tab open. Title Case."
+    },
+    "Dock Toolbar" : {
+      "comment" : "View menu item, context-menu item, and the tooltip and VoiceOver label of the icon in the tab list’s top row, that puts the Minimal window’s detached bar back into the window. Title Case; the opposite of “Detach Toolbar”."
     },
     "Don’t ask again for this task" : {
       "comment" : "Checkbox in the sheet that asks whether the assistant may close a tab. When checked and the person closes the tab, the assistant closes other tabs of the same task without asking."
@@ -3742,6 +3748,9 @@
     },
     "WSurf stores saved details on this Mac." : {
 
+    },
+    "WSurf Toolbar" : {
+      "comment" : "VoiceOver name of the panel that holds the Minimal bar while it is detached from the window and floats over it. A noun."
     },
     "WSurf updates to preview builds, ahead of the release." : {
       "comment" : "Caption under the Update channel menu in Settings > About while Preview is chosen. Describes the chosen channel, not the other one. Must stay on one line — about 57 characters."

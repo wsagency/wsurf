@@ -63,6 +63,10 @@ struct IslandBar: View {
         showsTabList ? "Hide Tabs" : "Show Tabs"
     }
 
+    private var detachLabel: LocalizedStringResource {
+        coordinator.barFloats ? "Dock Toolbar" : "Detach Toolbar"
+    }
+
     var body: some View {
         let shape = RoundedRectangle(
             cornerRadius: Self.cornerRadius(cornerScale: BrowserSettings.application.chromeShape.cornerScale),
@@ -116,6 +120,11 @@ struct IslandBar: View {
                     settings: BrowserSettings.application
                 )
                 WindowDragArea()
+            }
+            .contextMenu {
+                Button(String(localized: detachLabel)) {
+                    coordinator.toggleToolbarDetached()
+                }
             }
             .clipShape(shape)
             .overlay {

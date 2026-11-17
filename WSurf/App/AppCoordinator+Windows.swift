@@ -132,6 +132,11 @@ extension AppCoordinator {
         }
     }
 
+    /// The window, or its floating toolbar panel, has the keyboard: the two are one unit (`NSWindow.isKeyUnit`).
+    var isKeyWindow: Bool {
+        nativeWindow?.isKeyUnit == true
+    }
+
     func windowDidBecomeKey() {
         application?.focus(self)
         activation.setSuspended(false)
@@ -165,6 +170,10 @@ extension AppCoordinator {
             let appearance = profiles.isPrivate ? NSAppearance(named: .darkAqua) : settings.colorMode.nsAppearance
             if nativeWindow.appearance?.name != appearance?.name {
                 nativeWindow.appearance = appearance
+            }
+            // The floating toolbar's panel is a window of its own and does not inherit the window's appearance.
+            for case let panel as FloatingBarPanel in nativeWindow.childWindows ?? [] where panel.appearance?.name != appearance?.name {
+                panel.appearance = appearance
             }
             let title = windowTitle
             if nativeWindow.title != title {

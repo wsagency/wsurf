@@ -337,6 +337,7 @@
    "ExtensionConsentTests",
    "ExternalSchemeTests",
    "FloatingPlayerClickTests",
+   "FloatingToolbarTests",
    "FullAddressLineTests",
    "FullScreenRevealTests",
    "FullScreenTitleStripTests",

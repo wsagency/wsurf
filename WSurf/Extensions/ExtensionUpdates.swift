@@ -42,7 +42,7 @@ extension ExtensionManager {
             name: name,
             permissions: permissions,
             matchPatterns: websites,
-            in: NSApp.keyWindow ?? NSApp.mainWindow
+            in: NSApp.keyWindow?.sheetHost ?? NSApp.mainWindow
         )
     }
 

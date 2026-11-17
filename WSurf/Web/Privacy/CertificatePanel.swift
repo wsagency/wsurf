@@ -26,7 +26,7 @@ enum CertificatePanel {
 
     static func show(for tab: BrowserTab, in window: NSWindow? = nil) {
         guard let trust = trust(of: tab),
-              let window = window ?? NSApp.keyWindow ?? NSApp.mainWindow
+              let window = window ?? NSApp.keyWindow?.sheetHost ?? NSApp.mainWindow
         else { return }
         guard let panel = SFCertificatePanel.shared() else { return }
         if let host = URL(string: tab.urlString)?.host() {

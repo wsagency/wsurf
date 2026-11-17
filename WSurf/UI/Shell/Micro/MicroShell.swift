@@ -85,12 +85,14 @@ struct MicroShell: View {
     // fields live inside the web view, which is not a text view. The panel (the autofill suggestions, which name the site
     // themselves) is found by what it is, since it says nothing; only a bar that is already down is held by it.
     /// The address field has the keyboard, or a sheet or a panel hangs from the window: the bar stays. No window is a
-    /// reason to stay too.
+    /// reason to stay too. The Minimal bar's own panel is no reason: it is the bar.
     static func isEditing(in window: NSWindow?) -> Bool {
         guard let window else { return true }
         return window.firstResponder is NSTextView
             || window.attachedSheet != nil
-            || window.childWindows?.contains { $0.isVisible && ($0 is NSPanel || $0.className.contains("Popover")) } == true
+            || window.childWindows?.contains {
+                $0.isVisible && !($0 is FloatingBarPanel) && ($0 is NSPanel || $0.className.contains("Popover"))
+            } == true
     }
 
     /// The host of an address, nil for none: what "another site" is measured on.

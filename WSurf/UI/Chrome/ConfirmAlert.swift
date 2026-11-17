@@ -21,7 +21,7 @@ enum ConfirmAlert {
         alert.addButton(withTitle: String(localized: verb)).hasDestructiveAction = true
         alert.addButton(withTitle: String(localized: "Cancel"))
 
-        guard let window = NSApp.keyWindow else {
+        guard let window = NSApp.keyWindow?.sheetHost else {
             return alert.runModal() == .alertFirstButtonReturn
         }
         let response = await withCheckedContinuation { continuation in

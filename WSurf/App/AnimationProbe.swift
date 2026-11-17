@@ -132,7 +132,7 @@ enum AnimationProbe {
     }
 
     private static func capture(to url: URL) {
-        guard let window = NSApp.windows.first(where: { $0.isVisible && $0.frame.width > 400 }),
+        guard let window = NSApp.windows.first(where: { $0.isVisible && $0.frame.width > 400 && !($0 is FloatingBarPanel) }),
               let view = window.contentView,
               let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds)
         else { return }

@@ -621,7 +621,7 @@ final class ExtensionManager: NSObject, WKWebExtensionControllerDelegate {
             permissions: webExtension.requestedPermissions,
             matchPatterns: webExtension.allRequestedMatchPatterns,
             unsupported: unsupported,
-            in: NSApp.keyWindow ?? NSApp.mainWindow
+            in: NSApp.keyWindow?.sheetHost ?? NSApp.mainWindow
         )
     }
 
