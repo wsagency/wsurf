@@ -400,7 +400,9 @@ struct ChromiumOOPAccessibilityTransportTests {
         let pid = remote.servicePID
         remote.disconnect()
         guard pid > 0 else { return }
-        if ChromiumServiceClient.secondsUntilGone(pid, within: 8) == nil {
+        // Not a blocking poll: the control connection's teardown runs on the main queue, which must be free to do it.
+        let gone = await waitUntil(timeout: .seconds(8)) { kill(pid, 0) == -1 && errno == ESRCH }
+        if !gone {
             Issue.record("the service \(pid) did not leave after its connection closed")
         }
     }
