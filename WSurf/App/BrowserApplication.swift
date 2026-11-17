@@ -196,6 +196,7 @@ final class BrowserApplication {
             showCredentialExchange()
         }
         mcpServer.resume()
+        pruneWindowFrames(of: catalog.profiles)
         // The front window has drawn. Chromium's framework is read into memory off the main thread, where Chromium was used.
         ChromiumRuntime.shared.prepareInBackground()
         armChromiumPrewarm()
@@ -205,6 +206,28 @@ final class BrowserApplication {
         }
         if let coordinator = activeCoordinator {
             Task { await coordinator.offerLegacyPasswordImport() }
+        }
+    }
+
+    /// Drops the saved frames of windows that no session row names: not an open one, and not a closed one that Reopen Last
+    /// Closed Window or the next launch can still bring back (its frame goes with it, as `restoreSteps` reads it). Off the main
+    /// thread and a few at a time, because a write into a large preferences domain is slow. Only the copy that owns the saved
+    /// session prunes: a second copy reads temporary databases, which name none of the first copy's windows. A test run never
+    /// prunes the standard preferences, and no session row at all is no evidence of anything: nothing goes.
+    @discardableResult
+    func pruneWindowFrames(of profiles: [Profile], defaults: UserDefaults = .standard) -> Task<Void, Never>? {
+        guard ownsSession, !AppDatabase.isRunningTests || defaults !== UserDefaults.standard else { return nil }
+        let named = Set(windows.map(\.windowID)).union(profiles.flatMap { profile in
+            BrowserModel.savedWindows(in: BrowserProfileContext.shared(for: profile).database, includeClosed: true).map(\.id)
+        })
+        guard !named.isEmpty else { return nil }
+        let store = ThreadSafeDefaults(defaults)
+        return Task.detached(priority: .utility) { [weak self] in
+            let stale = WindowFrameKeys.staleWindowIDs(in: store.defaults, keeping: named)
+            guard !stale.isEmpty else { return }
+            // A window opened since `named` was taken has a key of its own already: look again just before they go.
+            let open = await MainActor.run { Set(self?.windows.map(\.windowID) ?? []) }
+            WindowFrameKeys.remove(stale.filter { !open.contains($0) }, from: store.defaults)
         }
     }
 
