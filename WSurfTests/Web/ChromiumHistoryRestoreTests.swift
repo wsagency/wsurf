@@ -86,6 +86,13 @@ struct ChromiumHistoryRestoreTests {
         return await waitUntil(timeout: .seconds(30)) { !tab.page.isLoading && lists(tab) == expected }
     }
 
+    /// Whether the requests since `mark` are exactly `expected`: waits for that many, then a moment for any extra one.
+    private func requests(_ log: RequestLog, since mark: Int, are expected: [String]) async -> Bool {
+        _ = await waitUntil(timeout: .seconds(10)) { log.since(mark).count >= expected.count }
+        try? await Task.sleep(for: .milliseconds(300))
+        return log.since(mark) == expected
+    }
+
     /// a → b → c, then `back` native Back presses.
     private func history(in rig: LiveWindowRig, back presses: Int = 0) async throws -> BrowserTab {
         let tab = try await rig.open("/a")
@@ -127,7 +134,7 @@ struct ChromiumHistoryRestoreTests {
 
             let mark = try await sleepAndWake(tab, in: rig, log: log)
             #expect(await settles(tab, at: "/b", back: ["/a"], forward: ["/c"]), "\(lists(tab))")
-            #expect(log.since(mark) == ["GET /b"], "the wake loads the current entry alone")
+            #expect(await requests(log, since: mark, are: ["GET /b"]), "\(log.since(mark))")
             #expect(tab.page.canGoBack && tab.page.canGoForward)
             #expect(tab.page.backForwardList.backList.first?.title == "Page A", "with its title")
         }
@@ -142,11 +149,11 @@ struct ChromiumHistoryRestoreTests {
             var mark = log.count
             tab.goBack()
             #expect(await settles(tab, at: "/b", back: ["/a"], forward: ["/c"]), "\(lists(tab))")
-            #expect(log.since(mark) == ["GET /b"])
+            #expect(await requests(log, since: mark, are: ["GET /b"]), "\(log.since(mark))")
             mark = log.count
             tab.goBack()
             #expect(await settles(tab, at: "/a", back: [], forward: ["/b", "/c"]), "\(lists(tab))")
-            #expect(log.since(mark) == ["GET /a"])
+            #expect(await requests(log, since: mark, are: ["GET /a"]), "\(log.since(mark))")
             #expect(!tab.page.canGoBack)
 
             mark = log.count
@@ -154,7 +161,7 @@ struct ChromiumHistoryRestoreTests {
             #expect(await settles(tab, at: "/b", back: ["/a"], forward: ["/c"]), "\(lists(tab))")
             tab.goForward()
             #expect(await settles(tab, at: "/c", back: ["/a", "/b"], forward: []), "\(lists(tab))")
-            #expect(log.since(mark) == ["GET /b", "GET /c"])
+            #expect(await requests(log, since: mark, are: ["GET /b", "GET /c"]), "\(log.since(mark))")
             #expect(!tab.page.canGoForward)
         }
     }
@@ -167,7 +174,7 @@ struct ChromiumHistoryRestoreTests {
             let mark = log.count
             tab.page.go(to: try #require(tab.page.backForwardList.backList.first))
             #expect(await settles(tab, at: "/a", back: [], forward: ["/b", "/c"]), "\(lists(tab))")
-            #expect(log.since(mark) == ["GET /a"])
+            #expect(await requests(log, since: mark, are: ["GET /a"]), "\(log.since(mark))")
         }
     }
 
@@ -176,7 +183,7 @@ struct ChromiumHistoryRestoreTests {
             let tab = try await history(in: rig, back: 1)
             _ = try await sleepAndWake(tab, in: rig, log: log)
             try #require(await settles(tab, at: "/b", back: ["/a"], forward: ["/c"]), "\(lists(tab))")
-            _ = try await tab.page.evaluateJavaScript("location.href = '/d'; 0")
+            _ = try? await tab.page.evaluateJavaScript("location.href = '/d'; 0")
             #expect(await settles(tab, at: "/d", back: ["/a", "/b"], forward: []), "\(lists(tab))")
             #expect(!tab.page.canGoForward)
         }
@@ -187,7 +194,7 @@ struct ChromiumHistoryRestoreTests {
             let tab = try await history(in: rig, back: 1)
             _ = try await sleepAndWake(tab, in: rig, log: log)
             try #require(await settles(tab, at: "/b", back: ["/a"], forward: ["/c"]), "\(lists(tab))")
-            _ = try await tab.page.evaluateJavaScript("location.replace('/b2'); 0")
+            _ = try? await tab.page.evaluateJavaScript("location.replace('/b2'); 0")
             #expect(await settles(tab, at: "/b2", back: ["/a"], forward: ["/c"]), "\(lists(tab))")
         }
     }
@@ -204,7 +211,8 @@ struct ChromiumHistoryRestoreTests {
             tab.page.chromium?.historyRecord.beforeCollapse = { await gate.wait() }
             tab.goBack()
             try #require(await waitUntil(timeout: .seconds(30)) { gate.reached })
-            _ = try await tab.page.evaluateJavaScript("history.pushState({}, '', '/pushed'); 0")
+            // With a gesture, as in PageInteractionTests: without one Chromium's Back skips the page that pushed (its intervention).
+            _ = try await tab.page.evaluateJavaScript("history.pushState({}, '', '/pushed'); 0", in: nil, contentWorld: .page, userGesture: true)
             try #require(await waitUntil { tab.page.url?.path == "/pushed" })
             gate.open()
             #expect(await settles(tab, at: "/pushed", back: ["/a", "/b"], forward: []), "\(lists(tab))")
@@ -221,7 +229,7 @@ struct ChromiumHistoryRestoreTests {
     @Test func aFormPostIsNeverSentAgain() async throws {
         try await withRig { rig, log in
             let tab = try await rig.open("/form")
-            _ = try await tab.page.evaluateJavaScript("document.forms[0].submit(); 0")
+            _ = try? await tab.page.evaluateJavaScript("document.forms[0].submit(); 0")
             try #require(await waitUntil(timeout: .seconds(30)) { tab.page.url?.path == "/result" && !tab.page.isLoading })
             #expect(log.since(0).contains("POST /result"))
             try await visit("/d", in: tab, rig)
@@ -232,7 +240,7 @@ struct ChromiumHistoryRestoreTests {
             tab.goBack()
             #expect(await settles(tab, at: "/form", back: [], forward: ["/d"]), "\(lists(tab))")
             #expect(!tab.page.canGoBack)
-            #expect(log.since(mark) == ["GET /d", "GET /form"], "no POST and no GET of the POST's page")
+            #expect(await requests(log, since: mark, are: ["GET /d", "GET /form"]), "\(log.since(mark))")
         }
     }
 
@@ -264,8 +272,9 @@ struct ChromiumHistoryRestoreTests {
             tab.deferRestore(state: stored, url: url)
             let mark = log.count
             rig.browser.activate(tab)
+            _ = await tab.waitForPendingNavigation()
             #expect(await settles(tab, at: "/b", back: ["/a"], forward: ["/c"]), "\(lists(tab))")
-            #expect(log.since(mark) == ["GET /b"])
+            #expect(await requests(log, since: mark, are: ["GET /b"]), "\(log.since(mark))")
         }
     }
 
@@ -302,6 +311,7 @@ struct ChromiumHistoryRestoreTests {
             let tab = try await history(in: rig, back: 1)
             _ = try await rig.open("/still")
             rig.coordinator.unloadTab(tab)
+            tab.engineOverride = nil
             rig.browser.sitePermissions.setEngine(.webKit, for: SitePermissions.origin(for: try rig.server.url("/b")))
             rig.browser.activate(tab)
             _ = await tab.waitForPendingNavigation()

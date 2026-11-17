@@ -310,17 +310,30 @@ extension ChromiumPage {
         return next
     }
 
-    /// After a hop: drops every native entry before its own, in the same turn as a check that nothing was added after it. When the
-    /// check fails or Chromium refuses, those entries stay hidden below the floor instead.
+    private struct CollapseBlocked: Error {}
+
+    /// After a hop: drops every native entry before its own, in the same turn as a check that nothing was added after it. Chromium
+    /// refuses the reset while a cross-site hop is still swapping renderers, so a refusal is retried as the startup reset's is; a
+    /// failed check is not. Until it lands, or when it cannot, those entries stay hidden below the floor.
     private func collapseHistory(keeping address: String, count: Int) {
         Task { [weak self] in
             guard let self else { return }
             await historyRecord.beforeCollapse?()
-            guard raw != nil, !closing, !isClosed else { return }
-            _ = try? await devTools.command("Page.resetNavigationHistory", dispatchCheck: { [weak self] in
-                guard let self, let read = nativeEntries(), read.entries.count == count, read.current == count - 1,
-                      read.entries.last?.url == address else { throw ChromiumError.staleFrame }
-            })
+            attempts: for attempt in 1...Self.startupResetAttempts {
+                guard raw != nil, !closing, !isClosed else { return }
+                do {
+                    _ = try await devTools.command("Page.resetNavigationHistory", dispatchCheck: { [weak self] in
+                        guard let self, let read = nativeEntries(), read.entries.count == count, read.current == count - 1,
+                              read.entries.last?.url == address else { throw CollapseBlocked() }
+                    })
+                    break attempts
+                } catch is CollapseBlocked {
+                    break attempts
+                } catch {
+                    guard attempt < Self.startupResetAttempts else { break attempts }
+                    try? await Task.sleep(for: Self.startupResetRetryDelay)
+                }
+            }
             await loadHistory()
         }
     }
