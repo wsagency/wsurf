@@ -23,10 +23,19 @@ final class BrowserTab: Identifiable {
         didSet {
             if pageTitle != oldValue {
                 onTitleChanged?()
+                if customTitle.isEmpty {
+                    onPropertiesChanged?(.title)
+                }
             }
         }
     }
-    var customTitle = ""
+    var customTitle = "" {
+        didSet {
+            if customTitle != oldValue {
+                onPropertiesChanged?(.title)
+            }
+        }
+    }
     var documentTitles: [URL: String] = [:]
     /// Open in Preview on a Chromium PDF waits for the one download it started (`BrowserTab.savePDF`).
     @ObservationIgnored var pendingPDFOpening: PendingPDFOpening?
@@ -39,6 +48,10 @@ final class BrowserTab: Identifiable {
     }
     var urlString = "" {
         didSet {
+            // A tab not loaded yet shows this address to extensions; a loaded one shows `committedURL`.
+            if urlString != oldValue, !isMaterialised {
+                onPropertiesChanged?(.URL)
+            }
             guard oldValue.isEmpty, !urlString.isEmpty, let onFirstAddress else { return }
             self.onFirstAddress = nil
             onFirstAddress()
@@ -46,7 +59,16 @@ final class BrowserTab: Identifiable {
     }
     /// Called once, when a tab that opened with no address gets one: the moment a person has typed where it goes.
     var onFirstAddress: (() -> Void)?
-    var isLoading = false
+    var isLoading = false {
+        didSet {
+            if isLoading != oldValue {
+                onPropertiesChanged?(.loading)
+            }
+        }
+    }
+    /// Called on a real change of the tab's address, title or loading state, for both engines (every change lands here
+    /// through `refreshChrome`). The extension manager turns it into `tabs.onUpdated`.
+    @ObservationIgnored var onPropertiesChanged: ((WKWebExtension.TabChangedProperties) -> Void)?
     var isFavorite = false
     var favicon: NSImage?
     var faviconHost = ""
@@ -102,7 +124,13 @@ final class BrowserTab: Identifiable {
     }
 
     /// `urlString` may include a provisional navigation; this URL reflects the committed page.
-    var committedURL: URL?
+    var committedURL: URL? {
+        didSet {
+            if committedURL != oldValue {
+                onPropertiesChanged?(.URL)
+            }
+        }
+    }
 
     var isControlledByMediaDock = false
 
@@ -531,6 +559,7 @@ final class BrowserTab: Identifiable {
         onSameDocumentNavigation = nil
         onInPageMove = nil
         onTitleChanged = nil
+        onPropertiesChanged = nil
         onContentProcessTerminated = nil
         mayUnloadAfterTermination = nil
         onLocationRevoked = nil

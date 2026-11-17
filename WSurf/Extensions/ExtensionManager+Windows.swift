@@ -87,10 +87,36 @@ extension ExtensionManager {
             guard let self, let adapter, self.owns(adapter) else { return }
             self.wakeBackgrounds(for: url)
         }
+        browser.onTabPropertiesChanged = { [weak self, weak adapter] tab, properties in
+            guard let self, let adapter, self.owns(adapter) else { return }
+            self.reportChange(properties, of: tab)
+        }
         if hasStarted {
             controller.didOpenWindow(adapter)
         }
         return adapter
+    }
+
+    /// Tells the extensions a tab's address, title or loading state changed (`tabs.onUpdated`).
+    /// Nothing goes out for a private window's tab, because WSurf has no per-extension private-browsing allowance, nor when
+    /// no loaded extension may see this tab (the `tabs` permission or access to its site), which also keeps the common
+    /// case of no extensions free. WebKit then withholds the URL and title from each extension that lacks that permission.
+    func reportChange(_ properties: WKWebExtension.TabChangedProperties, of tab: BrowserTab) {
+        guard profile?.isPrivate != true, !tab.isPrivate, !contexts.isEmpty,
+              let changed = tabAdapters[tab.id], changed.tab === tab else { return }
+        let seen = contexts.values.contains { context in
+            if context.hasPermission(.tabs) {
+                return true
+            }
+            guard let url = changed.url(for: context) else { return false }
+            return [.grantedExplicitly, .grantedImplicitly].contains(context.permissionStatus(for: url))
+        }
+        guard seen else { return }
+        if let tabChangeSink {
+            tabChangeSink(properties, changed)
+        } else {
+            controller.didChangeTabProperties(properties, for: changed)
+        }
     }
 
     func unregister(browser: BrowserModel) {
@@ -126,6 +152,7 @@ extension ExtensionManager {
             browser.onTabClosed = nil
             browser.onActiveTabChanged = nil
             browser.onNavigationStarted = nil
+            browser.onTabPropertiesChanged = nil
             browser.onTabTransferredIn = nil
         }
         window.invalidate()
