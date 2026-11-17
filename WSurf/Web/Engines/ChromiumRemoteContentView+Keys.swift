@@ -119,12 +119,18 @@ extension ChromiumRemoteContentView {
     private static func isModifierPressed(_ event: NSEvent) -> Bool {
         let flags = event.modifierFlags
         switch event.keyCode {
-        case 56, 60: return flags.contains(.shift)
-        case 59, 62: return flags.contains(.control)
-        case 58, 61: return flags.contains(.option)
-        case 55, 54: return flags.contains(.command)
-        case 57: return flags.contains(.capsLock)
-        default: return true
+        case 56, 60:
+            return flags.contains(.shift)
+        case 59, 62:
+            return flags.contains(.control)
+        case 58, 61:
+            return flags.contains(.option)
+        case 55, 54:
+            return flags.contains(.command)
+        case 57:
+            return flags.contains(.capsLock)
+        default:
+            return true
         }
     }
 }

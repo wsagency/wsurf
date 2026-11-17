@@ -80,9 +80,17 @@ struct ChromiumOOPInputTests {
             messages.filter { $0.op == op }
         }
 
-        var mouse: [CefRemoteMessage] { sent(CefRemote.Op.mouse) }
-        var keys: [CefRemoteMessage] { sent(CefRemote.Op.key) }
-        var focus: [Bool] { sent(CefRemote.Op.focus).map { $0.bool(CefRemote.Key.flag) } }
+        var mouse: [CefRemoteMessage] {
+            sent(CefRemote.Op.mouse)
+        }
+
+        var keys: [CefRemoteMessage] {
+            sent(CefRemote.Op.key)
+        }
+
+        var focus: [Bool] {
+            sent(CefRemote.Op.focus).map { $0.bool(CefRemote.Key.flag) }
+        }
     }
 
     // MARK: A page with a recorded browser (no service)
@@ -242,6 +250,10 @@ struct ChromiumOOPInputTests {
 
     @Test func theServiceIsToldOfFocusAsTheViewTakesAndLosesIt() async throws {
         let rig = try makeRig()
+        // The view has the keys from its attach (the page was the first responder). Let go of them, then take them again.
+        #expect(rig.window.makeFirstResponder(nil))
+        #expect(rig.sent.focus.last == false)
+        rig.sent.messages.removeAll()
         #expect(rig.window.makeFirstResponder(rig.page))
         #expect(rig.sent.focus == [true])
         #expect(rig.window.makeFirstResponder(nil))
@@ -324,7 +336,9 @@ struct ChromiumOOPInputTests {
         let native: ChromiumPage
         let page: BrowserPage
         let window: NSWindow
-        var view: ChromiumRemoteContentView? { native.remote?.contentView }
+        var view: ChromiumRemoteContentView? {
+            native.remote?.contentView
+        }
 
         func js(_ script: String) async -> Any? {
             try? await page.evaluateJavaScript(script)

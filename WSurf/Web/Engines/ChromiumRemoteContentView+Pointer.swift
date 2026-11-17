@@ -15,14 +15,30 @@ extension ChromiumRemoteContentView {
     /// `NSEvent.pressedMouseButtons`).
     static func modifiers(_ flags: NSEvent.ModifierFlags, buttons: Int = 0) -> Int64 {
         var value: UInt32 = 0
-        if flags.contains(.shift) { value |= UInt32(EVENTFLAG_SHIFT_DOWN.rawValue) }
-        if flags.contains(.control) { value |= UInt32(EVENTFLAG_CONTROL_DOWN.rawValue) }
-        if flags.contains(.option) { value |= UInt32(EVENTFLAG_ALT_DOWN.rawValue) }
-        if flags.contains(.command) { value |= UInt32(EVENTFLAG_COMMAND_DOWN.rawValue) }
-        if flags.contains(.capsLock) { value |= UInt32(EVENTFLAG_CAPS_LOCK_ON.rawValue) }
-        if buttons & 1 != 0 { value |= UInt32(EVENTFLAG_LEFT_MOUSE_BUTTON.rawValue) }
-        if buttons & 2 != 0 { value |= UInt32(EVENTFLAG_RIGHT_MOUSE_BUTTON.rawValue) }
-        if buttons & 4 != 0 { value |= UInt32(EVENTFLAG_MIDDLE_MOUSE_BUTTON.rawValue) }
+        if flags.contains(.shift) {
+            value |= UInt32(EVENTFLAG_SHIFT_DOWN.rawValue)
+        }
+        if flags.contains(.control) {
+            value |= UInt32(EVENTFLAG_CONTROL_DOWN.rawValue)
+        }
+        if flags.contains(.option) {
+            value |= UInt32(EVENTFLAG_ALT_DOWN.rawValue)
+        }
+        if flags.contains(.command) {
+            value |= UInt32(EVENTFLAG_COMMAND_DOWN.rawValue)
+        }
+        if flags.contains(.capsLock) {
+            value |= UInt32(EVENTFLAG_CAPS_LOCK_ON.rawValue)
+        }
+        if buttons & 1 != 0 {
+            value |= UInt32(EVENTFLAG_LEFT_MOUSE_BUTTON.rawValue)
+        }
+        if buttons & 2 != 0 {
+            value |= UInt32(EVENTFLAG_RIGHT_MOUSE_BUTTON.rawValue)
+        }
+        if buttons & 4 != 0 {
+            value |= UInt32(EVENTFLAG_MIDDLE_MOUSE_BUTTON.rawValue)
+        }
         return Int64(value)
     }
 
@@ -131,9 +147,12 @@ extension ChromiumRemoteContentView {
     /// setting `sideButtonsNavigate` is on: `BrowserWindow.sendEvent`.)
     override func otherMouseDown(with event: NSEvent) {
         switch event.buttonNumber {
-        case 3: _ = owningPage?.owner?.goBack()
-        case 4: _ = owningPage?.owner?.goForward()
-        default: sendMouse(CefRemote.MouseKind.down, event, button: 1)
+        case 3:
+            _ = owningPage?.owner?.goBack()
+        case 4:
+            _ = owningPage?.owner?.goForward()
+        default:
+            sendMouse(CefRemote.MouseKind.down, event, button: 1)
         }
     }
 
