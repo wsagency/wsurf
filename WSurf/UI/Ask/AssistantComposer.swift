@@ -118,7 +118,7 @@ struct AssistantComposer: View {
             AssistantComposerToolbar(
                 coordinator: coordinator, attachments: attachments,
                 stops: stops,
-                canSend: stops || (!attachments.isImporting && !isSending && (!trimmed.isEmpty || !attachments.files.isEmpty)),
+                canSend: stops || (attachments.isReady(textOnly: effectiveTextOnly) && !isSending && (!trimmed.isEmpty || !attachments.files.isEmpty)),
                 offersVoice: trimmed.isEmpty && attachments.files.isEmpty && !attachments.isImporting && !isSending && !isAnsweringAQuestion
             ) {
                 if stops {
@@ -210,7 +210,7 @@ struct AssistantComposer: View {
 
     private func send() {
         let message = trimmed
-        guard !attachments.isImporting, !isSending, !message.isEmpty || !attachments.files.isEmpty else { return }
+        guard attachments.isReady(textOnly: effectiveTextOnly), !isSending, !message.isEmpty || !attachments.files.isEmpty else { return }
         do {
             try AttachmentRequest.validate(
                 attachments.files, message: message, textOnly: effectiveTextOnly,
