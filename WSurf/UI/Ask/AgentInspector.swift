@@ -16,6 +16,7 @@ final class AgentAttention {
     private(set) var seenFailures: [UUID: Int] = [:]
 
     @ObservationIgnored private let defaults: UserDefaults
+    @ObservationIgnored private var isWritePending = false
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -26,11 +27,11 @@ final class AgentAttention {
         }
     }
 
+    /// An anchor nothing is recorded for counts as 0 seen, so reviewing it with 0 failures changes nothing and writes nothing:
+    /// this runs on every tab switch while the panel is open, and a write into the preferences is slow on the main thread.
     func review(_ count: Int, inAnchor anchorID: UUID?, isShowing: Bool) {
-        guard isShowing, let anchorID else { return }
-        let seen = max(seenFailures[anchorID] ?? 0, count)
-        guard seenFailures[anchorID] != seen else { return }
-        seenFailures[anchorID] = seen
+        guard isShowing, let anchorID, count > (seenFailures[anchorID] ?? 0) else { return }
+        seenFailures[anchorID] = count
         persist()
     }
 
@@ -46,7 +47,17 @@ final class AgentAttention {
         persist()
     }
 
+    /// Changes made in one turn of the run loop are written once, at its end.
     private func persist() {
+        guard !isWritePending else { return }
+        isWritePending = true
+        Task { @MainActor in flush() }
+    }
+
+    /// Writes now what is waiting to be written. A relaunch that follows a change within the same turn reads it after this.
+    func flush() {
+        guard isWritePending else { return }
+        isWritePending = false
         let stored = seenFailures.map { ($0.key.uuidString, $0.value) }
         defaults.set(Dictionary(uniqueKeysWithValues: stored), forKey: Key.seen)
     }

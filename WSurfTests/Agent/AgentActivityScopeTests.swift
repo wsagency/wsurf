@@ -178,7 +178,9 @@ struct AgentActivityScopeTests {
     @Test func aFailureSeenInOneLaunchIsStillSeenInTheNext() {
         let defaults = scratch()
         let anchor = UUID()
-        AgentAttention(defaults: defaults).review(1, inAnchor: anchor, isShowing: true)
+        let first = AgentAttention(defaults: defaults)
+        first.review(1, inAnchor: anchor, isShowing: true)
+        first.flush()
 
         let relaunched = AgentAttention(defaults: defaults)
 
@@ -189,12 +191,60 @@ struct AgentActivityScopeTests {
         )
     }
 
+    // MARK: - Writes into the preferences
+
+    private static let seenKey = "agent.seenFailures"
+
+    /// Reviewing runs on every tab switch while the panel shows, so a review that changes nothing must not write.
+    @Test func reviewingWritesNothingWhenNothingChanged() {
+        let defaults = scratch()
+        let attention = AgentAttention(defaults: defaults)
+        let anchor = UUID()
+
+        attention.review(0, inAnchor: anchor, isShowing: true)
+        attention.review(0, inAnchor: nil, isShowing: true)
+        attention.review(5, inAnchor: anchor, isShowing: false)
+        attention.flush()
+        #expect(defaults.object(forKey: Self.seenKey) == nil, "nothing was seen, so nothing is stored")
+        #expect(attention.seenFailures.isEmpty)
+
+        attention.review(2, inAnchor: anchor, isShowing: true)
+        attention.flush()
+        #expect(defaults.dictionary(forKey: Self.seenKey)?[anchor.uuidString] as? Int == 2)
+
+        defaults.removeObject(forKey: Self.seenKey)
+        attention.review(2, inAnchor: anchor, isShowing: true)
+        attention.review(1, inAnchor: anchor, isShowing: true)
+        attention.review(0, inAnchor: anchor, isShowing: true)
+        attention.flush()
+        #expect(defaults.object(forKey: Self.seenKey) == nil, "the same or a lower count is no change")
+        #expect(attention.seenFailures[anchor] == 2, "what was seen never goes down")
+    }
+
+    @Test func changesInOneTurnAreWrittenOnce() async {
+        let defaults = scratch()
+        let attention = AgentAttention(defaults: defaults)
+        let (first, second) = (UUID(), UUID())
+
+        attention.review(1, inAnchor: first, isShowing: true)
+        attention.review(1, inAnchor: second, isShowing: true)
+        attention.review(3, inAnchor: first, isShowing: true)
+        #expect(defaults.object(forKey: Self.seenKey) == nil, "the write waits for the end of the turn")
+
+        #expect(await waitUntil { defaults.object(forKey: Self.seenKey) != nil })
+
+        let stored = defaults.dictionary(forKey: Self.seenKey) as? [String: Int]
+        #expect(stored == [first.uuidString: 3, second.uuidString: 1])
+    }
+
     @Test func anAnchorThatIsGoneTakesWhatWasSeenWithIt() {
         let defaults = scratch()
         let attention = AgentAttention(defaults: defaults)
         attention.review(1, inAnchor: UUID(), isShowing: true)
+        attention.flush()
 
         attention.retainAnchors([UUID()])
+        attention.flush()
 
         #expect(attention.seenFailures.isEmpty)
         #expect(AgentAttention(defaults: defaults).seenFailures.isEmpty)

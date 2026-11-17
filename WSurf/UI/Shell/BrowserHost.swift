@@ -15,7 +15,7 @@ final class BrowserHost: NSObject, NSWindowDelegate {
 
     private var frameKey: String {
         guard let coordinator else { return "wsurf.browser.window" }
-        return "wsurf.browser.window.\(coordinator.windowID.uuidString)"
+        return WindowFrameKeys.autosaveName(for: coordinator.windowID)
     }
     var nativeWindow: NSWindow? {
         window

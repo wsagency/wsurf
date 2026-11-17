@@ -174,12 +174,20 @@ extension AppCoordinator {
         reloadFaviconsIfSchemeChanged()
     }
 
+    /// For a window that ends for good (its session is retired, not kept to reopen): its saved frame goes with it. The name
+    /// goes first, so that nothing saves the frame back on the way out.
+    private func forgetWindowFrame() {
+        nativeWindow?.setFrameAutosaveName("")
+        WindowFrameKeys.remove([windowID], from: .standard)
+    }
+
     func windowDidClose() {
         guard application?.isTerminating != true, beginClosingWindow() else { return }
         if !profiles.isPrivate {
             // A micro window whose page left or closed has nothing to reopen.
             if isMicro, browser.tabs.isEmpty {
                 browser.retireSession()
+                forgetWindowFrame()
             } else {
                 browser.markSessionClosed()
             }

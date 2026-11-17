@@ -37,6 +37,13 @@ extension BrowserModel {
         }) ?? []
     }
 
+    /// The IDs of every saved window, closed ones included, and nothing else: a read that fails throws.
+    nonisolated static func savedWindowIDs(in database: AppDatabase) throws -> [UUID] {
+        try database.writer.read { db in
+            try UUID.fetchAll(db, sql: "SELECT id FROM sessionWindow")
+        }
+    }
+
     @discardableResult
     static func remapSavedWindow(in database: AppDatabase, from oldID: UUID, to newID: UUID) -> Bool {
         do {

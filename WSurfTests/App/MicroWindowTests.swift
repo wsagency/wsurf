@@ -538,6 +538,211 @@ struct MicroWindowTests {
         }
     }
 
+    // MARK: - Saved window frames
+
+    /// A frame as AppKit saves it, under the key `BrowserHost` names after the window. Seeded by hand: a test run saves none.
+    private func seedFrame(of windowID: UUID, in defaults: UserDefaults = .standard) {
+        defaults.set("100 100 800 600 0 0 1440 900", forKey: WindowFrameKeys.key(for: windowID))
+    }
+
+    private func hasFrame(of windowID: UUID, in defaults: UserDefaults = .standard) -> Bool {
+        defaults.object(forKey: WindowFrameKeys.key(for: windowID)) != nil
+    }
+
+    @Test func aMicroWindowThatEndsForGoodTakesItsSavedFrameWithIt() async throws {
+        try await withProfile { profile in
+            let app = run()
+            let main = app.newWindow(profile: profile, show: false)
+            let tab = unloadedPage("https://one.example/", in: main)
+            let micro = try #require(main.moveToMicroWindow(tab))
+            let id = micro.windowID
+            micro.browser.saveBlocking()
+            seedFrame(of: id)
+            defer { UserDefaults.standard.removeObject(forKey: WindowFrameKeys.key(for: id)) }
+
+            tab.onCloseRequested?()
+
+            try #require(await waitUntil { micro.isClosed })
+            #expect(!hasFrame(of: id), "its session is gone, so nothing can reopen it")
+            finish(app)
+        }
+    }
+
+    @Test func aWindowClosedToBeReopenedKeepsItsSavedFrame() async throws {
+        try await withProfile { profile in
+            let app = run()
+            let main = app.newWindow(profile: profile, show: false)
+            let other = app.newWindow(profile: profile, show: false)
+            _ = unloadedPage("https://one.example/", in: main)
+            main.browser.saveBlocking()
+            let id = main.windowID
+            seedFrame(of: id)
+            defer { UserDefaults.standard.removeObject(forKey: WindowFrameKeys.key(for: id)) }
+
+            main.closeWindow()
+
+            try #require(await waitUntil { main.isClosed })
+            #expect(BrowserModel.savedWindows(in: main.context.database, includeClosed: true).contains { $0.id == id })
+            #expect(hasFrame(of: id), "Reopen Last Closed Window opens it again with this frame")
+            withExtendedLifetime(other) {}
+            finish(app)
+        }
+    }
+
+    @Test func aLaunchDropsTheFramesNoSessionNamesAndKeepsTheRest() async throws {
+        try await withProfile { profile in
+            let name = AppDatabase.defaultsSuite("WindowFrames-\(UUID().uuidString)")
+            let defaults = try #require(UserDefaults(suiteName: name))
+            defer { defaults.removePersistentDomain(forName: name) }
+            let app = BrowserApplication(defaults: InMemoryUserDefaults(inheriting: .standard), notifications: NotificationCenter(), ownsSession: true)
+            let open = app.newWindow(profile: profile, show: false)
+            let closed = app.newWindow(profile: profile, show: false)
+            _ = unloadedPage("https://one.example/", in: open)
+            _ = unloadedPage("https://two.example/", in: closed)
+            open.browser.saveBlocking()
+            closed.browser.saveBlocking()
+            let closedID = closed.windowID
+            closed.closeWindow()
+            try #require(await waitUntil { closed.isClosed })
+            let stale = (0..<5).map { _ in UUID() }
+            for id in [open.windowID, closedID] + stale {
+                seedFrame(of: id, in: defaults)
+            }
+            defaults.set("1 2 3 4", forKey: "NSWindow Frame wsurf.browser.window")
+            defaults.set("1 2 3 4", forKey: "NSWindow Frame wsurf.browser.window.not-an-id")
+            defaults.set("1 2 3 4", forKey: "NSWindow Frame wsurf.passwords")
+
+            await app.pruneWindowFrames(of: [profile], defaults: defaults, savedWindowIDs: Self.readRows)?.value
+
+            #expect(hasFrame(of: open.windowID, in: defaults), "a restored window keeps its frame")
+            #expect(hasFrame(of: closedID, in: defaults), "so does a closed one that can still be reopened")
+            #expect(stale.allSatisfy { !hasFrame(of: $0, in: defaults) })
+            #expect(defaults.object(forKey: "NSWindow Frame wsurf.browser.window") != nil, "not a per-window key")
+            #expect(defaults.object(forKey: "NSWindow Frame wsurf.browser.window.not-an-id") != nil)
+            #expect(defaults.object(forKey: "NSWindow Frame wsurf.passwords") != nil, "another window's frame")
+
+            let secondCopy = run()
+            seedFrame(of: UUID(), in: defaults)
+            #expect(!secondCopy.ownsSession && secondCopy.pruneWindowFrames(of: [profile], defaults: defaults, savedWindowIDs: Self.readRows) == nil,
+                    "a second copy reads temporary databases that name none of the first copy's windows")
+            finish(app)
+        }
+    }
+
+    /// Every test database is temporary, which the launch prune refuses, so the tests read the rows themselves.
+    private static let readRows: BrowserApplication.SavedWindowIDs = { _, database in
+        try BrowserModel.savedWindowIDs(in: database)
+    }
+
+    private struct ReadFailed: Error {}
+
+    private func scratchDefaults() throws -> (UserDefaults, name: String) {
+        let name = AppDatabase.defaultsSuite("WindowFrames-\(UUID().uuidString)")
+        return (try #require(UserDefaults(suiteName: name)), name)
+    }
+
+    @Test func aLaunchWhoseRowsNameNoWindowPrunesNothingEvenWithAWindowOpen() async throws {
+        try await withProfile { profile in
+            let (defaults, name) = try scratchDefaults()
+            defer { defaults.removePersistentDomain(forName: name) }
+            let app = BrowserApplication(defaults: InMemoryUserDefaults(inheriting: .standard), notifications: NotificationCenter(), ownsSession: true)
+            let open = app.newWindow(profile: profile, show: false)
+            let stale = UUID()
+            seedFrame(of: stale, in: defaults)
+            seedFrame(of: open.windowID, in: defaults)
+
+            await app.pruneWindowFrames(of: [profile], defaults: defaults, savedWindowIDs: { _, _ in [] })?.value
+
+            #expect(hasFrame(of: stale, in: defaults), "a window is always open, so it says nothing about the saved rows")
+            #expect(hasFrame(of: open.windowID, in: defaults))
+            finish(app)
+        }
+    }
+
+    @Test func aLaunchPrunesNothingWhenOneProfilesRowsCannotBeRead() async throws {
+        try await withProfile { profile in
+            let catalog = ProfileStore.shared
+            let other = catalog.add(name: "Unreadable rows")
+            let (defaults, name) = try scratchDefaults()
+            defer { defaults.removePersistentDomain(forName: name) }
+            let app = BrowserApplication(defaults: InMemoryUserDefaults(inheriting: .standard), notifications: NotificationCenter(), ownsSession: true)
+            let open = app.newWindow(profile: profile, show: false)
+            let stale = UUID()
+            seedFrame(of: stale, in: defaults)
+            seedFrame(of: open.windowID, in: defaults)
+            let readable = [open.windowID]
+            let failing = other.id
+
+            await app.pruneWindowFrames(of: [profile, other], defaults: defaults, savedWindowIDs: { profile, _ in
+                if profile.id == failing {
+                    throw ReadFailed()
+                }
+                return readable
+            })?.value
+
+            #expect(hasFrame(of: stale, in: defaults), "the unreadable profile may name it")
+            // The same rows, all readable, prune it: the failure is what kept it.
+            await app.pruneWindowFrames(of: [profile], defaults: defaults, savedWindowIDs: { _, _ in readable })?.value
+            #expect(!hasFrame(of: stale, in: defaults))
+            #expect(hasFrame(of: open.windowID, in: defaults))
+            finish(app)
+            await catalog.remove(other)
+        }
+    }
+
+    @Test func aLaunchOnTemporaryStoragePrunesNothing() async throws {
+        try await withProfile { profile in
+            let (defaults, name) = try scratchDefaults()
+            defer { defaults.removePersistentDomain(forName: name) }
+            let app = BrowserApplication(defaults: InMemoryUserDefaults(inheriting: .standard), notifications: NotificationCenter(), ownsSession: true)
+            let open = app.newWindow(profile: profile, show: false)
+            _ = unloadedPage("https://one.example/", in: open)
+            open.browser.saveBlocking()
+            let stale = UUID()
+            seedFrame(of: stale, in: defaults)
+
+            // The default row source: this profile's database is temporary here, as one that failed to open is in the app.
+            await app.pruneWindowFrames(of: [profile], defaults: defaults)?.value
+
+            #expect(hasFrame(of: stale, in: defaults))
+            finish(app)
+        }
+    }
+
+    @Test func aTemporaryDatabaseIsNotReadAsNamingNoWindow() throws {
+        let profile = Profile.original()
+
+        #expect(throws: (any Error).self) { try BrowserApplication.persistedWindowIDs(of: profile, in: .temporary()) }
+
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("WindowFrames-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let database = AppDatabase(at: directory.appendingPathComponent("WSurf.sqlite"))
+        #expect(!database.isEphemeral)
+        #expect(try BrowserApplication.persistedWindowIDs(of: profile, in: database).isEmpty)
+    }
+
+    @Test func aLaunchNeverPrunesMoreThanItsLimit() {
+        let name = AppDatabase.defaultsSuite("WindowFrames-\(UUID().uuidString)")
+        let defaults = UserDefaults(suiteName: name)!
+        defer { defaults.removePersistentDomain(forName: name) }
+        let ids = (0..<7).map { _ in UUID() }
+        ids.forEach { seedFrame(of: $0, in: defaults) }
+
+        let batch = WindowFrameKeys.staleWindowIDs(in: defaults, keeping: [ids[0]], limit: 3)
+        WindowFrameKeys.remove(batch, from: defaults)
+
+        #expect(batch.count == 3 && !batch.contains(ids[0]))
+        #expect(ids.filter { hasFrame(of: $0, in: defaults) }.count == 4, "the rest waits for the next launch")
+        #expect(WindowFrameKeys.staleWindowIDs(in: defaults, keeping: [ids[0]]).count == 3)
+    }
+
+    @Test func theWindowKeyIsTheOneAppKitSavesUnderTheAutosaveName() {
+        let id = UUID()
+
+        #expect(WindowFrameKeys.key(for: id) == "NSWindow Frame wsurf.browser.window.\(id.uuidString)")
+        #expect(WindowFrameKeys.autosaveName(for: id) == "wsurf.browser.window.\(id.uuidString)")
+    }
+
     @Test func theWindowMenuMovesThePageOutAndBack() async throws {
         try await withProfile { profile in
             let savedMenus = (NSApp.mainMenu, NSApp.windowsMenu, NSApp.helpMenu, NSApp.servicesMenu)
