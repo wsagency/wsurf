@@ -276,8 +276,20 @@ final class ServiceHost {
         guard Self.realPath(root) == root else {
             throw ServiceError(text: "the root cache path must exist and be canonical (no symlink or alias in it)")
         }
+        // D4-20: the service holds the same line as WSurf's client, for a hello that did not come from it. Both are refused before
+        // anything is made or CEF starts. A switch is WSurf's own (name and value, `CefRemoteSwitches`) or it is not there.
+        let switches = message.strings(CefRemote.Key.switches)
+        let refusedSwitches = CefRemoteSwitches.refused(wire: switches)
+        guard refusedSwitches.isEmpty else {
+            throw ServiceError(text: "switches that are not WSurf's own are refused: \(refusedSwitches.joined(separator: ", "))")
+        }
+        guard let log = Self.checkedLogFile(message.string(CefRemote.Key.logFile), root: root) else {
+            throw ServiceError(text: "the log file must be /dev/null, or the staged run's chromium-service.log (in the root or beside it)")
+        }
         let cache = message.string(CefRemote.Key.cachePath)
-        guard cache.isEmpty || Self.isInside(cache, root: root) else {
+        // The resolved path is the one CEF gets (review L1): what was checked is what is used.
+        let resolvedCache = cache.isEmpty ? nil : Self.resolvedInside(cache, root: root)
+        guard cache.isEmpty || resolvedCache != nil else {
             throw ServiceError(text: "the cache path must be the root cache path or inside it")
         }
         // The framework and the helpers are the service's own copies (`Tools/embed-chromium.sh`): Chromium's sandbox lets a
@@ -290,15 +302,14 @@ final class ServiceHost {
         // cookies encrypted under the real key would lose them, and a new code identity would raise a keychain prompt.
         configuration.safeStorage = .mockKeychain
         configuration.rootCachePath = URL(filePath: root, directoryHint: .isDirectory)
-        configuration.cachePath = cache.isEmpty ? nil : URL(filePath: cache, directoryHint: .isDirectory)
+        configuration.cachePath = resolvedCache.map { URL(filePath: $0, directoryHint: .isDirectory) }
         configuration.persistSessionCookies = true
         configuration.defaultRuntimeStyle = .alloy
-        // CEF's log goes to /dev/null unless WSurf names a file (a staged run).
-        let named = message.string(CefRemote.Key.logFile)
-        logFile = named.hasPrefix("/") ? named : "/dev/null"
+        // CEF's log goes to /dev/null unless WSurf names a file (a staged run), and `checkedLogFile` allowed it.
+        logFile = log
         configuration.logFile = URL(filePath: logFile)
         configuration.logSeverity = logFile == "/dev/null" ? .error : .warning
-        configuration.extraCommandLineSwitches = message.strings(CefRemote.Key.switches).mapValues { $0.isEmpty ? nil : $0 }
+        configuration.extraCommandLineSwitches = switches.mapValues { $0.isEmpty ? nil : $0 }
         configuration.windowlessRenderingEnabled = true
         configuration.frameworkDirectory = frameworks.appendingPathComponent("Chromium Embedded Framework.framework", isDirectory: true)
         configuration.browserSubprocessPath = frameworks.appendingPathComponent("WSurf Helper.app/Contents/MacOS/WSurf Helper")
@@ -318,7 +329,9 @@ final class ServiceHost {
         guard path.hasPrefix("/"), !components.contains(".."), !components.contains(".") else { return nil }
         var existing = path
         var below: [String] = []
-        while !FileManager.default.fileExists(atPath: existing) {
+        // `lstat`, not `fileExists`: that one follows a link, so a dangling symlink looked "not made yet" and was appended as if it
+        // were a folder to come (review L2). Here it is present, `realpath` fails on it, and the path is refused.
+        while !Self.isPresent(existing) {
             guard existing != "/" else { return nil }
             below.insert((existing as NSString).lastPathComponent, at: 0)
             existing = (existing as NSString).deletingLastPathComponent
@@ -328,30 +341,60 @@ final class ServiceHost {
         return ([String(cString: resolved)] + below).joined(separator: "/").replacingOccurrences(of: "//", with: "/")
     }
 
-    /// Whether `path` is `root` (canonical) or below it, as CEF requires of a cache path. The path is resolved first, folders that
-    /// do not exist yet included, and nothing is created here: the caller makes the folder only after this says yes.
-    private static func isInside(_ path: String, root: String) -> Bool {
-        guard let path = realPath(path) else { return false }
-        return path == root || path.hasPrefix(root.hasSuffix("/") ? root : root + "/")
+    /// Whether something is at `path`, a link (even a dangling one) included.
+    private static func isPresent(_ path: String) -> Bool {
+        var info = stat()
+        return lstat(path, &info) == 0
+    }
+
+    /// `path` resolved (folders that do not exist yet included) when it is `root` (canonical) or below it, as CEF requires of a cache
+    /// path; nil otherwise. Nothing is created here: the caller makes the folder, by the path this returns, only after it says yes.
+    private static func resolvedInside(_ path: String, root: String) -> String? {
+        guard let resolved = realPath(path) else { return nil }
+        return resolved == root || resolved.hasPrefix(root.hasSuffix("/") ? root : root + "/") ? resolved : nil
+    }
+
+    /// The log file CEF may write, for the hello's `named` one: `/dev/null` when none is named, else only the staged run's own
+    /// (`chromium-service.log` in the root or beside it, which is the staged home: `CefRemoteSwitches.logFileCandidates`), after
+    /// the folder it is in is resolved and when it is not itself a link. Nil refuses the hello. A service built without the DEBUG
+    /// ops (a signed one) writes no log at all: nothing that is not a staged DEBUG run names one.
+    private static func checkedLogFile(_ named: String, root: String) -> String? {
+        guard !named.isEmpty, named != "/dev/null" else { return "/dev/null" }
+        #if WSURF_SERVICE_DEBUG_OPS
+        let directory = (named as NSString).deletingLastPathComponent
+        guard named.hasPrefix("/"), (named as NSString).lastPathComponent == CefRemoteSwitches.logFileName,
+              let resolvedDirectory = realPath(directory)
+        else { return nil }
+        var info = stat()
+        if lstat(named, &info) == 0, (info.st_mode & S_IFMT) == S_IFLNK {
+            return nil
+        }
+        let resolved = (resolvedDirectory as NSString).appendingPathComponent(CefRemoteSwitches.logFileName)
+        return CefRemoteSwitches.logFileCandidates(root: root).contains(resolved) ? resolved : nil
+        #else
+        return nil
+        #endif
     }
 
     private func createContext(_ message: CefRemoteMessage, from peer: xpc_connection_t) {
         let identifier = message.string(CefRemote.Key.context)
         let path = message.string(CefRemote.Key.cachePath)
         let root = CefRuntime.shared.configuration?.rootCachePath?.path ?? ""
+        // Checked and used as one path (review L1): the folder is made, and CEF told, by the resolved one.
+        let resolved = path.isEmpty ? nil : Self.resolvedInside(path, root: root)
         var failure: String?
         if !CefRuntime.shared.isInitialized {
             failure = "CEF is not started"
         } else if identifier.isEmpty {
             failure = "a context needs an id"
-        } else if !path.isEmpty && !Self.isInside(path, root: root) {
+        } else if !path.isEmpty && resolved == nil {
             failure = "the cache path must be inside the root cache path"
         } else if contexts[identifier] == nil {
             var settings = cef_request_context_settings_t()
             settings.size = MemoryLayout<cef_request_context_settings_t>.stride
-            if !path.isEmpty {
-                try? FileManager.default.createDirectory(atPath: path, withIntermediateDirectories: true)
-                Native.set(path, &settings.cache_path)
+            if let resolved {
+                try? FileManager.default.createDirectory(atPath: resolved, withIntermediateDirectories: true)
+                Native.set(resolved, &settings.cache_path)
                 settings.persist_session_cookies = 1
             }
             defer { ccef_string_clear(&settings.cache_path) }

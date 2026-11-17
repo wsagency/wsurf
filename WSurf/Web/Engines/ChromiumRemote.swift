@@ -192,6 +192,13 @@ final class ChromiumRemote {
     let clock: () -> TimeInterval
     private let isEnabled: () -> Bool
     private let latch: ChromiumOOP.Latch
+    /// The connection seam (D4-20): whether an `XPC_ERROR_CONNECTION_INVALID` that comes while a hello waits for its answer means
+    /// "the service cannot be reached" (`.failed(.noAnswer)`: libxpc found no such service, or refused it, which no relaunch cures)
+    /// rather than a death (counted toward the crash loop). A unit test that gives the client a service name that does not exist
+    /// gets such an INVALID at the next turn of the main queue, and passes false to keep feeding it only the events it scripts.
+    private let invalidMeansUnreachable: Bool
+    /// The hello of this relaunch was asked again after it timed out (`helloEnded`): once.
+    private var helloRetried = false
     /// Every completion runs on the main queue: replies and interruptions come on it, and so do the timers.
     private let requests = CefRemoteRequests<CefRemoteMessage>(schedule: cefRemoteTimer(on: .main))
 
@@ -244,8 +251,10 @@ final class ChromiumRemote {
         protocolVersion: Int64 = CefRemote.protocolVersion,
         clock: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
         latch: ChromiumOOP.Latch = ChromiumOOP.latch,
-        isEnabled: @escaping () -> Bool = { ChromiumOOP.isEnabled }
+        isEnabled: @escaping () -> Bool = { ChromiumOOP.isEnabled },
+        invalidMeansUnreachable: Bool = true
     ) {
+        self.invalidMeansUnreachable = invalidMeansUnreachable
         self.serviceName = serviceName
         self.sink = sink
         self.root = root
@@ -427,6 +436,14 @@ final class ChromiumRemote {
             return
         case .timedOut:
             ChromiumOOP.log.error("hello: no answer in \(self.helloTimeout) s")
+            // A replacement that launchd held back (10 s after the spawn that died) and CEF on a loaded machine can outlast the
+            // timeout once: the hello is asked again, on the same connection (a service that answers the first one too is
+            // answered twice, and the late reply finds no request). A second timeout is the hard failure (review C4).
+            if relaunching, !helloRetried, control != nil {
+                helloRetried = true
+                sendHello()
+                return
+            }
             fail(.noAnswer)
         case let .value(message):
             guard message.bool(CefRemote.Key.success) else {
@@ -437,6 +454,7 @@ final class ChromiumRemote {
             cefStartMs = message.double(CefRemote.Key.startMs)
             helloRoundTripMs = (clock() - sentAt) * 1000
             relaunching = false
+            helloRetried = false
             ChromiumOOP.log.notice("hello answered: pid \(self.servicePID), CEF start \(self.cefStartMs) ms, round trip \(self.helloRoundTripMs) ms")
             setState(.running(pid: servicePID))
             openFrames()
@@ -524,7 +542,14 @@ final class ChromiumRemote {
             serviceEnded(reason: "interrupted")
         case .invalid:
             control = nil
-            serviceEnded(reason: "invalid")
+            // INVALID is terminal for the connection's name: with no answer to the hello yet it is "unreachable", not a death
+            // (three of them in a row would end in a crash loop that names the wrong thing, and relaunch nothing that exists).
+            if invalidMeansUnreachable, state == .starting || state == .relaunching {
+                ChromiumOOP.log.error("hello: the connection to \(self.serviceName, privacy: .public) is invalid, with no answer")
+                fail(.noAnswer)
+            } else {
+                serviceEnded(reason: "invalid")
+            }
         case .other:
             return
         case let .message(message):
@@ -592,6 +617,7 @@ final class ChromiumRemote {
             }
         }
         relaunching = relaunch
+        helloRetried = false
         if relaunch {
             setState(.relaunching)
         } else {
@@ -855,91 +881,5 @@ final class ChromiumRemote {
     /// The kill test: the service ends itself, as a crash would. Nothing outside signals it.
     func abortService() {
         send(CefRemoteMessage(CefRemote.Op.debugAbort))
-    }
-
-    // MARK: The hello
-
-    /// The Chromium switches the service may be given: exactly the ones WSurf's own Chromium has (`ChromiumRuntime`), with the
-    /// values it gives them. Anything else a caller asks for (`no-sandbox`, a remote-debugging port, a switch that turns off the
-    /// same-origin policy, a profile directory) is dropped here, so no hello, whoever builds it, can loosen the service.
-    nonisolated static func allowedSwitches(_ requested: [String: String?]) -> [String: String?] {
-        requested.filter { name, value in
-            guard let allowed = ChromiumRuntime.extraCommandLineSwitches[name] else { return false }
-            return allowed == value
-        }
-    }
-
-    /// The only log file the service may be told about: the staged run's own (`chromium-service.log` in its home). Any other path,
-    /// or none, or any path outside a staged run, is `/dev/null`, so no URL a page visits ever lands in a file of the service's
-    /// choosing.
-    nonisolated static func validatedLogPath(_ candidate: String?, stageHome: URL?) -> String {
-        guard let candidate, candidate.hasPrefix("/"), let stageHome else { return "/dev/null" }
-        let staged = stageHome.appending(path: "chromium-service.log", directoryHint: .notDirectory).standardizedFileURL.path
-        return URL(filePath: candidate).standardizedFileURL.path == staged ? staged : "/dev/null"
-    }
-
-    /// The staged run's home, in a staged DEBUG run.
-    nonisolated static var stageHome: URL? {
-        #if DEBUG
-        return StageMode.isActive ? StageMode.home : nil
-        #else
-        return nil
-        #endif
-    }
-
-    /// The staged run's service log, which `validatedLogPath` accepts.
-    nonisolated static var stagedLogPath: String? {
-        stageHome?.appending(path: "chromium-service.log", directoryHint: .notDirectory).path
-    }
-
-    /// The hello: version, root and cache (the root's `Global`, as the in-process path), the allowed switches, the validated log
-    /// file, and the linger when one is chosen (else the service's 60 s).
-    nonisolated static func makeHello(
-        protocolVersion: Int64 = CefRemote.protocolVersion,
-        root: URL,
-        linger: Double? = nil,
-        switches: [String: String?] = ChromiumRuntime.extraCommandLineSwitches,
-        logFile: String? = nil,
-        stageHome: URL? = ChromiumRemote.stageHome
-    ) -> CefRemoteMessage {
-        let message = CefRemoteMessage.hello(protocolVersion: protocolVersion, linger: linger)
-        message.set(CefRemote.Key.rootPath, root.path)
-        message.set(CefRemote.Key.cachePath, root.appending(path: "Global", directoryHint: .isDirectory).path)
-        message.set(CefRemote.Key.logFile, validatedLogPath(logFile, stageHome: stageHome))
-        message.set(CefRemote.Key.switches, strings: allowedSwitches(switches))
-        return message
-    }
-
-    /// The canonical form of a path that may not exist yet, made without creating anything: `..` and `.` are resolved, then the
-    /// nearest existing ancestor goes through `realpath` (so a symlink or a `/var` alias in it is resolved) and the components
-    /// below it, which cannot be links, are appended. Nil when no ancestor resolves.
-    nonisolated static func canonicalPath(of url: URL) -> URL? {
-        var existing = url.standardizedFileURL.path
-        var below: [String] = []
-        while !FileManager.default.fileExists(atPath: existing) {
-            guard existing != "/" else { return nil }
-            below.insert((existing as NSString).lastPathComponent, at: 0)
-            existing = (existing as NSString).deletingLastPathComponent
-        }
-        guard let resolved = realpath(existing, nil) else { return nil }
-        defer { free(resolved) }
-        return URL(filePath: String(cString: resolved), directoryHint: .isDirectory).appending(path: below.joined(separator: "/"))
-    }
-
-    /// Whether `path` is `root` or below it, component by component (`/a/bc` is not inside `/a/b`). Both are canonical.
-    nonisolated static func isInside(_ path: URL, root: URL) -> Bool {
-        let inner = path.pathComponents
-        let outer = root.pathComponents
-        return inner.count >= outer.count && Array(inner.prefix(outer.count)) == outer
-    }
-
-    /// The root as CEF needs it: it exists, and it is the canonical path (Foundation keeps `/tmp` aliases; CEF refuses them).
-    nonisolated static func prepareRoot(_ url: URL) throws -> URL {
-        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-        guard let canonical = realpath(url.path, nil) else {
-            throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
-        }
-        defer { free(canonical) }
-        return URL(filePath: String(cString: canonical), directoryHint: .isDirectory)
     }
 }

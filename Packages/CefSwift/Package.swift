@@ -1,5 +1,10 @@
 // swift-tools-version: 6.0
+import Foundation
 import PackageDescription
+
+// WSurf patch 3 (D4-20): the service's debug ops (see the service target) exist only when Tools/embed-chromium.sh says YES, which it
+// does for the OOP test lane and for staged DEBUG ad hoc builds, never for Release or a real signing identity.
+let serviceDebugOps = ProcessInfo.processInfo.environment["WSURF_SERVICE_DEBUG_OPS"] == "YES"
 
 let package = Package(
     name: "CefSwift",
@@ -52,10 +57,12 @@ let package = Package(
         .executableTarget(
             name: "wsurf-chromium-service",
             dependencies: ["CefKit", "CCef", "CCefAppKit"],
-            // ponytail: Tools/embed-chromium.sh builds the service in release, where `#if DEBUG` is false, so the debug ops
-            // (abort, stats, exitOnHello, askHost, memoryPressure, stubBrowser, hangExit, and `browser.create`'s DEBUG creation flags) have their own define, always on in phase 2. D4-S, which
-            // lets the service be signed, must make it conditional so no signed service has them.
-            swiftSettings: [.swiftLanguageMode(.v5), .define("WSURF_SERVICE_DEBUG_OPS")],
+            // Tools/embed-chromium.sh builds the service in release, where `#if DEBUG` is false, so the debug ops (abort, stats,
+            // exitOnHello, askHost, memoryPressure, stubBrowser, hangExit, holdHistory, and `browser.create`'s DEBUG creation flags,
+            // and a log file) have their own define. It is on only when the environment says WSURF_SERVICE_DEBUG_OPS=YES, which
+            // embed-chromium.sh sets for the OOP test lane and staged DEBUG ad hoc builds and never for Release or a signing
+            // identity (D4-20). Tools/check-service-strings.sh proves a build without it has none of them.
+            swiftSettings: [.swiftLanguageMode(.v5)] + (serviceDebugOps ? [.define("WSURF_SERVICE_DEBUG_OPS")] : []),
             linkerSettings: [.linkedFramework("AppKit")]
         ),
         // `swift package cef <download|bundle|info|clean>`

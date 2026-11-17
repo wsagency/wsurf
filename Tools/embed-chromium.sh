@@ -63,8 +63,18 @@ bin=$(/usr/bin/xcrun swift build --package-path "$package" --scratch-path "$scra
 helper="$bin/cef-helper"
 service=
 if [[ -n "$oop" ]]; then
-    /usr/bin/xcrun swift build --package-path "$package" --scratch-path "$scratch" \
-        --configuration release --product wsurf-chromium-service
+    # The service's debug ops (debug.abort, debug.stats, ... and a log file: Package.swift's WSURF_SERVICE_DEBUG_OPS define) are in the
+    # service only for the OOP test lane and for staged DEBUG ad hoc builds: not for Release, not for any real signing identity (a
+    # build the guard above refuses today, and one D4-S will allow), and not when the caller says WSURF_SERVICE_DEBUG_OPS=NO (the
+    # second build of the lane, which Tools/check-service-strings.sh judges). The manifest is read again each time, because the define
+    # comes from the environment and a cached manifest may be of another value. Own DerivedData per value: this phase is skipped when
+    # nothing it declares changed.
+    debugOps=NO
+    if [[ "${CONFIGURATION:-}" != Release && "${EXPANDED_CODE_SIGN_IDENTITY:--}" == - && "${WSURF_SERVICE_DEBUG_OPS:-YES}" != NO ]]; then
+        debugOps=YES
+    fi
+    WSURF_SERVICE_DEBUG_OPS="$debugOps" /usr/bin/xcrun swift build --package-path "$package" --scratch-path "$scratch" \
+        --manifest-cache none --configuration release --product wsurf-chromium-service
     service="$bin/wsurf-chromium-service"
 fi
 identity="${EXPANDED_CODE_SIGN_IDENTITY:--}"

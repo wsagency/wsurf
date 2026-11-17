@@ -63,12 +63,14 @@ struct ChromiumRemoteClientTests {
         helloTimeout: TimeInterval = ChromiumRemote.defaultHelloTimeout,
         latch: ChromiumOOP.Latch = ChromiumOOP.Latch(),
         isEnabled: Bool = true,
-        root: URL? = nil
+        root: URL? = nil,
+        invalidMeansUnreachable: Bool = false
     ) -> ChromiumRemote {
         let directory = root ?? FileManager.default.temporaryDirectory.appending(path: "wsurf-d4-client-\(UUID().uuidString)", directoryHint: .isDirectory)
         return ChromiumRemote(
             serviceName: serviceName, sink: ChromiumFrameSink(), root: { directory }, helloTimeout: helloTimeout,
-            clock: { clock.now }, latch: latch, isEnabled: { isEnabled }
+            clock: { clock.now }, latch: latch, isEnabled: { isEnabled },
+            invalidMeansUnreachable: invalidMeansUnreachable
         )
     }
 

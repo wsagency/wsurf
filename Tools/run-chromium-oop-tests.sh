@@ -13,6 +13,8 @@
 #    default layout's copy of CEF.
 # 2. Tools/check-built-identity.py, which knows the service's id and the one-copy helper paths, and refuses a build without
 #    the service.
+#    WSURF_SERVICE_DEBUG_OPS=NO (with a WSURF_OOP_DERIVED_DATA of its own, and --build-only) builds the service as a Release-shaped
+#    build would have it, without its debug ops, for Tools/check-service-strings.sh. The default is YES: the lane's tests need them.
 # 3. test-without-building -parallel-testing-enabled NO, -only-testing for each suite named (a suite of WSurfTests).
 #
 # Like every build and test run it must hold the Pro lock: start it as above, detached. The lock is not taken here, so that a
@@ -45,8 +47,9 @@ mkdir -p "$OUT"
 export WSURF_CI_RAW_LOG="$OUT/console.raw.log"
 
 echo "=== resolve packages ($DD)"
-xcodebuild -resolvePackageDependencies -project WSurf.xcodeproj -scheme WSurf -derivedDataPath "$DD" \
-    -onlyUsePackageVersionsFromResolvedFile
+# `netrc`: SwiftPM must never ask the Keychain for a credential (a prompt held the Pro lock for 83 minutes on 2026-11-17); 10 minutes at most.
+/usr/bin/perl -e 'alarm 600; exec @ARGV' xcodebuild -resolvePackageDependencies -project WSurf.xcodeproj -scheme WSurf \
+    -derivedDataPath "$DD" -onlyUsePackageVersionsFromResolvedFile -packageAuthorizationProvider netrc
 echo "=== build-for-testing (WSURF_CHROMIUM_OOP_BUILD=YES, $DD)"
 python3 Tools/run-xcodebuild-with-watchdog.py -- xcodebuild build-for-testing -quiet \
     -project WSurf.xcodeproj -scheme WSurf \
@@ -59,7 +62,8 @@ python3 Tools/run-xcodebuild-with-watchdog.py -- xcodebuild build-for-testing -q
     CODE_SIGNING_REQUIRED=NO \
     CODE_SIGN_ENTITLEMENTS= \
     WSURF_BUNDLE_ID_SUFFIX="$WSURF_BUNDLE_ID_SUFFIX" \
-    WSURF_CHROMIUM_OOP_BUILD=YES
+    WSURF_CHROMIUM_OOP_BUILD=YES \
+    ${WSURF_SERVICE_DEBUG_OPS:+WSURF_SERVICE_DEBUG_OPS="$WSURF_SERVICE_DEBUG_OPS"}
 
 set -- "$DD"/Build/Products/*.xctestrun "$@"
 xctestrun="$1"
