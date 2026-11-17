@@ -559,6 +559,7 @@ struct FloatingToolbarTests {
         try detach(rig, coordinator)
         let controller = try #require(host(of: coordinator).floatingBar)
         let panel = try #require(controller.panel)
+        controller.listensToAsk = false
         let before = panel.frame
         let up = controller.model.opensUpward
 

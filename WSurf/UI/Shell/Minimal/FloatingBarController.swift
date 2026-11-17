@@ -47,6 +47,10 @@ final class FloatingBarController: NSObject, NSWindowDelegate {
     private var isStarted = false
     private var isStopped = false
 
+    /// Whether the panel follows what Ask reports. A test with no Ask results on screen turns it off to drive `extrasChanged`
+    /// itself: laying the panel out again would report none and shrink it back.
+    var listensToAsk = true
+
     /// Whether a window is key. A test host in the background has no key window and sets what it needs here.
     var isKey: (NSWindow) -> Bool = { $0.isKeyWindow }
 
@@ -147,7 +151,12 @@ final class FloatingBarController: NSObject, NSWindowDelegate {
         panel.appearance = window.appearance
         panel.level = window.level
         let hosting = NSHostingView(rootView: FloatingBarView(
-            coordinator: coordinator, model: model, onExtras: { [weak self] in self?.extrasChanged($0) }
+            coordinator: coordinator, model: model,
+            onExtras: { [weak self] in
+                if self?.listensToAsk == true {
+                    self?.extrasChanged($0)
+                }
+            }
         ))
         hosting.sizingOptions = []
         hosting.safeAreaRegions = []
