@@ -270,31 +270,37 @@ struct ChromiumHistoryRecordTests {
         #expect(paths(record.forward) == ["b", "c"])
     }
 
-    /// A second Back after a Back hop committed, before a read applied it (S5): it goes to the same entry again, from the list the hop
-    /// started from. The first load's entry is in Chromium's list but does not land it: only the entry the new load commits does.
-    @Test func aSecondBackRestartsAHopThatCommittedFromWhereItStarted() throws {
+    /// A second Back while a Back hop fails (S5): Chromium's error entry for it is in the list, before or after WSurf's error document
+    /// takes over. Back goes to the same entry again, from the list the hop started from; the first load's error entry never lands it,
+    /// only the entry the new load commits. A hop that committed its page is not held: the next read lands it.
+    @Test func aSecondBackDuringAFailedHopRestartsItFromWhereItStarted() throws {
         var record = seeded(back: ["a", "b"], forward: [])
         _ = record.update(native: [native(1, "c", current: true)], navigation: nil)
         let hop = PageNavigation()
         record.startHop(to: try #require(record.back.last).id, window: [native(-1, "c", current: true)], current: 0, navigation: hop)
-        record.noteCommit(URL(string: "https://a.test/b"), navigation: hop)
+        #expect(!record.hopHasMoved(navigation: hop), "on its way, nothing in Chromium's list yet")
+        record.noteCommit(URL(string: "chrome-error://chromewebdata/"), navigation: hop)
         #expect(record.hopHasMoved(navigation: hop) && !record.hopHasMoved(navigation: PageNavigation()))
+        let errorDocument = PageNavigation()
+        record.failedHop(hop, errorDocument: errorDocument)
+        #expect(record.hopHasMoved(navigation: errorDocument))
         #expect(record.entryFromHop(1)?.url.absoluteString == "https://a.test/c", "nothing after it: the entry it started at, so it still lands")
 
         let restart = try #require(record.entryFromHop(-1))
         #expect(restart.url.absoluteString == "https://a.test/b")
         let again = PageNavigation()
         record.retargetHop(to: restart.index, navigation: again)
-        #expect(record.hopsBackward(navigation: again))
+        #expect(record.hopsBackward(navigation: again) && record.hopHasMoved(navigation: again))
         #expect(record.update(native: [native(1, "c"), native(2, "b", current: true)], navigation: again) == .unchanged,
-                "the first load's entry does not land the restart")
+                "the first load's error entry does not land the restart")
         #expect(paths(record.back) == ["a", "b"] && record.forward.isEmpty)
 
         record.noteCommit(URL(string: "https://a.test/b"), navigation: again)
+        #expect(!record.hopHasMoved(navigation: again))
         #expect(record.update(native: [native(1, "c"), native(2, "b"), native(3, "b", current: true)], navigation: again)
                 == .collapse(keeping: "https://a.test/b", count: 3))
         #expect(paths(record.back) == ["a"] && paths(record.forward) == ["c"])
-        #expect(record.floorIndex(in: record.native) == 2, "the first load's entry is hidden with the page the hop left")
+        #expect(record.floorIndex(in: record.native) == 2, "the first load's error entry is hidden with the page the hop left")
     }
 
     /// A pick from the list while a hop has moved goes to the picked entry's place in that hop's list.
@@ -304,7 +310,7 @@ struct ChromiumHistoryRecordTests {
         let hop = PageNavigation()
         let window = [native(-1, "b"), native(-1, "c", current: true)]
         record.startHop(to: try #require(record.forward.first).id, window: window, current: 1, navigation: hop)
-        record.noteCommit(URL(string: "https://a.test/d"), navigation: hop)
+        record.noteCommit(URL(string: "chrome-error://chromewebdata/"), navigation: hop)
         #expect(record.indexInHop(of: try #require(record.back.first).id) == 0)
         #expect(record.indexInHop(of: try #require(record.forward.last).id) == 4, "a, b, c, d, e")
         let again = PageNavigation()
@@ -314,7 +320,7 @@ struct ChromiumHistoryRecordTests {
         #expect(paths(record.back) == ["a", "b", "c", "d"] && record.forward.isEmpty)
     }
 
-    /// A failed hop retargeted after its error document had committed, that fails again: it lands only on the error document that is
+    /// A failed hop retargeted after its error document had committed (before a read applied it), that fails again: it lands only on the error document that is
     /// current, never on the earlier one (the same `data:` address) that Chromium's newer error entry follows.
     @Test func aRetargetedFailedHopLandsOnlyOnItsCurrentErrorDocument() throws {
         var record = seeded(back: ["a", "b"], forward: [])
@@ -324,12 +330,14 @@ struct ChromiumHistoryRecordTests {
         record.noteCommit(URL(string: "chrome-error://chromewebdata/"), navigation: hop)
         let errorDocument = PageNavigation()
         record.failedHop(hop, errorDocument: errorDocument)
+        let url = "data:text/html;base64,eA=="
+        record.noteCommit(URL(string: url), navigation: errorDocument)
         let again = PageNavigation()
         record.retargetHop(to: try #require(record.entryFromHop(-1)).index, navigation: again)
+        #expect(record.hopHasMoved(navigation: again), "the retarget waits for its own commit, not the error document's")
         let secondErrorDocument = PageNavigation()
         record.failedHop(again, errorDocument: secondErrorDocument)
 
-        let url = "data:text/html;base64,eA=="
         let earlier = CefRemote.HistoryEntry(id: 3, url: url, title: "")
         #expect(record.update(native: [native(1, "c"), native(2, "b"), earlier, native(4, "b", current: true)], navigation: secondErrorDocument)
                 == .unchanged, "the earlier error document does not land it")

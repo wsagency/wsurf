@@ -182,12 +182,13 @@ struct ChromiumHistoryRecord {
         hop = Hop(navigation: navigation, logical: logical, start: back.count + max(current, 0), target: target, knownIDs: Set(native.map(\.id)))
     }
 
-    /// Whether the hop on its way with the page's `navigation` has put an entry in Chromium's list (its commit, or the error entry of its
-    /// failed load) that no read has applied. Back and Forward then move from the entry it started at, in the list it started from
-    /// (`entryFromHop`), never natively: a native move from that entry would leave it in the list a second time.
+    /// Whether the hop on its way with the page's `navigation` failed: Chromium's error entry for it is in its list until WSurf's error
+    /// document lands the hop, and a retarget waits for its own commit. Back, Forward and picks then move from the entry it started at, in
+    /// the list it started from (`entryFromHop`), never natively: a native move from the error entry would leave the failed entry in the
+    /// list twice. A hop that committed its page lands on the next read.
     func hopHasMoved(navigation: PageNavigation?) -> Bool {
         guard let hop, hop.navigation === navigation else { return false }
-        return hop.committedURL != nil || hop.failed
+        return hop.failed || hop.committedURL == "" || hop.committedURL?.hasPrefix("chrome-error:") == true
     }
 
     /// The nearest kept entry `step` away (-1 Back, 1 Forward) from where the hop on its way started, with its place in the hop's list:
