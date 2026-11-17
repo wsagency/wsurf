@@ -286,7 +286,7 @@ final class MainMenu: NSObject, NSMenuItemValidation {
         let menu = NSMenu(title: "Window")
         menu.addItem(chain("Minimize", #selector(NSWindow.performMiniaturize(_:)), key: "m"))
         menu.addItem(chain("Zoom", #selector(NSWindow.performZoom(_:))))
-        menu.addItem(command("Float on Top", #selector(toggleFloatOnTop)))
+        menu.addItem(command("Float on Top", #selector(toggleFloatOnTop), key: "t", modifiers: [.command, .option]))
         menu.addItem(command(
             "Move to Micro Window", #selector(moveToMicroWindow), key: "n", modifiers: [.command, .option, .shift]
         ))
@@ -769,13 +769,13 @@ final class MainMenu: NSObject, NSMenuItemValidation {
         return true
     }
 
-    /// What a micro window changes: Float on Top, shown only there, Move to Micro Window and back, and the items it has no use
-    /// for. false refuses the item; anything else leaves it to `validateMenuItem`.
+    /// What a micro window changes: Float on Top (every window has it, this sets its checkmark), Move to Micro Window and
+    /// back, and the items it has no use for. false refuses the item; anything else leaves it to `validateMenuItem`.
     private func validateMicroItem(_ menuItem: NSMenuItem) -> Bool? {
         if menuItem.action == #selector(toggleFloatOnTop) {
-            menuItem.isHidden = !coordinator.isMicro
+            menuItem.isHidden = false
             menuItem.state = coordinator.floatsOnTop ? .on : .off
-            return coordinator.isMicro
+            return true
         }
         if menuItem.action == #selector(moveToMicroWindow) {
             let title: LocalizedStringResource = coordinator.isMicro ? "Move Back to Main Window" : "Move to Micro Window"

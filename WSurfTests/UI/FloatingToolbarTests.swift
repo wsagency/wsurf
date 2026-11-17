@@ -152,6 +152,38 @@ struct FloatingToolbarTests {
         #expect(coordinator.barFloats)
     }
 
+    /// Float on Top puts the window above other windows; the bar's panel stays level with it, so the bar is never under its own
+    /// window (a child window at a lower level is covered by its parent).
+    @Test func thePanelIsAtItsWindowsLevelWhileItFloatsOnTop() throws {
+        let rig = Rig()
+        defer { rig.finish() }
+        let coordinator = try rig.open()
+        let window = try #require(coordinator.nativeWindow)
+        let bar = try host(of: coordinator)
+        try detach(rig, coordinator)
+        let panel = try #require(panels(of: window).first)
+        #expect(panel.level == .normal && window.level == .normal)
+
+        coordinator.floatsOnTop = true
+        #expect(window.level == .floating)
+        #expect(panel.level == .floating, "the panel follows the window up")
+
+        coordinator.dockToolbar()
+        try bar.floatingBar?.sync()
+        try detach(rig, coordinator)
+        let second = try #require(panels(of: window).first)
+        #expect(second.level == .floating, "a panel made while the window floats starts at its level")
+
+        bar.windowWillEnterFullScreen(Notification(name: NSWindow.willEnterFullScreenNotification, object: window))
+        #expect(window.level == .normal && panels(of: window).isEmpty, "full screen: normal level, and no panel")
+        bar.windowDidExitFullScreen(Notification(name: NSWindow.didExitFullScreenNotification, object: window))
+        let back = try #require(panels(of: window).first)
+        #expect(window.level == .floating && back.level == .floating, "and both are back above other windows")
+
+        coordinator.floatsOnTop = false
+        #expect(window.level == .normal && back.level == .normal, "the panel follows the window down")
+    }
+
     @Test func thePanelAndItsWindowAreReleasedWhenTheBarIsDockedAndWhenTheWindowCloses() async throws {
         let rig = Rig()
         defer { rig.finish() }

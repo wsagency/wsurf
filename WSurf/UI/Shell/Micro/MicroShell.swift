@@ -4,6 +4,13 @@
 import AppKit
 import SwiftUI
 
+/// The level Float on Top gives a window: above other windows, never in full screen (that window has its own Space).
+nonisolated enum FloatOnTop {
+    static func level(floats: Bool, isFullScreen: Bool) -> NSWindow.Level {
+        floats && !isFullScreen ? .floating : .normal
+    }
+}
+
 /// How a micro window is sized, placed and stacked. The numbers are tuning knobs.
 nonisolated enum MicroWindowMetrics {
     static let minSize = NSSize(width: 420, height: 240)

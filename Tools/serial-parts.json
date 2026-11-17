@@ -321,6 +321,7 @@
    "ChromiumFileDialogFilterTests",
    "ChromiumFrameSinkTests",
    "ChromiumOOPAccessibilityTransportTests",
+   "ChromiumOOPContentViewTests",
    "ChromiumOOPDisplayTests",
    "ChromiumOOPPageTests",
    "ChromiumOOPRecoveryTests",

@@ -157,6 +157,10 @@ final class ChromiumPage: NSView {
 
     override func becomeFirstResponder() -> Bool {
         guard !isClosed else { return false }
+        // Out of process the content view is the first responder (`BrowserPage` makes it so), never the page.
+        if remote?.contentView != nil {
+            return false
+        }
         withHost { $0.pointee.set_focus?($0, 1) }
         return true
     }

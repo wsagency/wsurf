@@ -181,7 +181,7 @@ final class AppCoordinator {
         didSet { if isMinimalTabListOpen != oldValue { applyHoverShield() } }
     }
     var profileButtonFrame: CGRect?
-    /// A micro window's Float on Top: above other windows, on every desktop and over full-screen apps. Never saved.
+    /// Float on Top: above other windows (a micro window also on every desktop and over full-screen apps). Per window, never saved.
     var floatsOnTop = false {
         didSet { if floatsOnTop != oldValue { applyFloatOnTop() } }
     }

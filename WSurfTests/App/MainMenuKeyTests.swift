@@ -56,6 +56,21 @@ struct MainMenuKeyTests {
         #expect(menu.validateMenuItem(item))
     }
 
+    @Test func optionCommandTIsBoundToFloatOnTop() throws {
+        let coordinator = AppCoordinator()
+        let menu = MainMenu(coordinator: coordinator)
+        menu.install()
+        defer { NSApp.mainMenu = nil }
+        let root = try #require(NSApp.mainMenu)
+        let item = try #require(root.items.compactMap(\.submenu).flatMap(\.items)
+            .first { $0.title == String(localized: "Float on Top") })
+
+        #expect(item.keyEquivalent == "t")
+        #expect(item.keyEquivalentModifierMask == [.command, .option])
+        #expect(menu.validateMenuItem(item))
+        #expect(!item.isHidden)
+    }
+
     /// Edit ▸ Pick Credential… on ⌃⌘P, a chord no other item of the menu bar uses, enabled only where the tab could offer it.
     @Test func pickCredentialIsOnTheEditMenuOnItsOwnChordAndNeedsAPageThatOffersIt() throws {
         let coordinator = AppCoordinator()

@@ -389,6 +389,7 @@ final class BrowserHost: NSObject, NSWindowDelegate {
     }
 
     func windowWillEnterFullScreen(_ notification: Notification) {
+        window?.level = .normal
         window?.toolbar = nil
         coordinator?.windowIsFullScreen = true
         floatingBar?.sync()
@@ -409,6 +410,7 @@ final class BrowserHost: NSObject, NSWindowDelegate {
     }
 
     func windowDidExitFullScreen(_ notification: Notification) {
+        coordinator?.applyFloatOnTop()
         coordinator?.windowIsFullScreen = false
         floatingBar?.sync()
         window?.alignWindowControls()
