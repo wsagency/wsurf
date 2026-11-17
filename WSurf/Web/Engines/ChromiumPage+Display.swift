@@ -42,6 +42,10 @@ extension ChromiumPage {
         host.addSublayer(frames)
         CATransaction.commit()
         browser.attachFrameLayer(frames)
+        // Over the frames, at the page's size (it follows the page's bounds): the first responder of this page (`BrowserPage`).
+        let content = ChromiumRemoteContentView(frame: bounds)
+        addSubview(content)
+        browser.contentView = content
     }
 
     // MARK: The preview that waits for a relaunch

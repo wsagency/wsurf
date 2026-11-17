@@ -54,6 +54,8 @@ final class ChromiumRemoteBrowser: ChromiumRemoteBrowserHandle {
 
     /// The layer the frame sink shows this browser's frames in (registered with the sink while the browser lives).
     private(set) var pageLayer: CALayer?
+    /// The view over the page that takes its keyboard, pointer and text input (D4-11): made with this browser, gone with it.
+    var contentView: ChromiumRemoteContentView?
     /// What the service was last told: its view size in points, the backing scale, the screen's size, and whether the browser is
     /// hidden or parked. A new browser is shown at the size it was created with.
     var sentSize = CGSize.zero
@@ -98,6 +100,8 @@ final class ChromiumRemoteBrowser: ChromiumRemoteBrowserHandle {
     @discardableResult
     func detachFrameLayer(keepingPreview: Bool = false) -> CALayer? {
         stopObservingScreen()
+        contentView?.removeFromSuperview()
+        contentView = nil
         guard let layer = pageLayer else { return nil }
         pageLayer = nil
         connection.sink.unregister(browser: id, keepingPageLayer: keepingPreview)
