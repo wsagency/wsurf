@@ -40,6 +40,18 @@ class FloatingBarPanel: NSPanel {
         setAccessibilitySubrole(.floatingWindow)
     }
 
+    /// The address field is in this panel, so ending the edit (Return, Escape, a click elsewhere) ends it here, and the panel would
+    /// keep the keyboard with nothing to give it to: Space and the arrow keys would go nowhere until the page is clicked. The
+    /// window's own first responder (the page) was never touched, so handing the keyboard back is all the page needs.
+    override func makeFirstResponder(_ responder: NSResponder?) -> Bool {
+        let wasEditing = firstResponder is NSTextView
+        let accepted = super.makeFirstResponder(responder)
+        if accepted, wasEditing, !(responder is NSTextView), isKeyWindow {
+            parent?.makeKey()
+        }
+        return accepted
+    }
+
     /// `super` returns when the mouse is released.
     override func performDrag(with event: NSEvent) {
         super.performDrag(with: event)
