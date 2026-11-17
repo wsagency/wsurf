@@ -166,7 +166,12 @@ struct MinimalShellTests {
     @Test func switchingTheWindowStyleKeepsEveryTabAndTheSidePanel() throws {
         let coordinator = AppCoordinator(browser: BrowserModel(database: .temporary()))
         let browser = coordinator.browser
-        defer { browser.cancelPendingSave() }
+        // The coordinator's panel persists into the host's shared defaults, which later suites (the front-close budget) read.
+        let restorePanel = PerfProbe.snapshotDefaults(PerfProbe.sidePanelKeys)
+        defer {
+            browser.cancelPendingSave()
+            restorePanel()
+        }
         for _ in 0..<5 {
             _ = browser.newTab(activate: false)
         }

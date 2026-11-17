@@ -22,6 +22,40 @@ struct SidePanelTests {
         UserDefaults(suiteName: AppDatabase.defaultsSuite("SidePanelTests-\(UUID().uuidString)"))!
     }
 
+    // MARK: - What a test that shows the panel must put back
+
+    /// `PerfProbe.sidePanelKeys` is what the budget suites restore. If the model persisted another key, a test could leak it.
+    @Test func showingAndHidingPersistsOnlyTheKeysTestsRestore() {
+        let defaults = scratch()
+        let panel = panel(defaults)
+
+        panel.show(.activity)
+        let shown = Set(defaults.dictionaryRepresentation().keys.filter { $0.hasPrefix("sidePanel.") })
+        panel.hide()
+        let hidden = Set(defaults.dictionaryRepresentation().keys.filter { $0.hasPrefix("sidePanel.") })
+
+        #expect(shown == Set(PerfProbe.sidePanelKeys))
+        #expect(hidden == Set(PerfProbe.sidePanelKeys))
+    }
+
+    /// The pin the second-window and launch budgets take before their windows are made: hidden while it holds, what was there after.
+    @Test func pinningThePanelHiddenPutsTheKeysBack() {
+        let defaults = StageMode.defaults
+        let restoreAll = PerfProbe.snapshotDefaults(PerfProbe.sidePanelKeys)
+        defer { restoreAll() }
+        defaults.set(true, forKey: "sidePanel.visible")
+        defaults.set(SidePanelKind.activity.rawValue, forKey: "sidePanel.selected")
+
+        let restore = PerfProbe.pinSidePanelHidden()
+        let pinned = defaults.bool(forKey: "sidePanel.visible")
+        let selected = defaults.string(forKey: "sidePanel.selected")
+        restore()
+
+        #expect(!pinned)
+        #expect(selected == SidePanelKind.activity.rawValue)
+        #expect(defaults.bool(forKey: "sidePanel.visible"))
+    }
+
     @Test func itStartsClosedWithATabForEveryKind() {
         let panel = panel()
 

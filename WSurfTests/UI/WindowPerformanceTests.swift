@@ -34,8 +34,20 @@ nonisolated final class WindowPerformanceTests: XCTestCase, @unchecked Sendable 
             coordinator.browser
         }
 
-        init(rows: Int = 300, history: HistoryStore? = nil, startPageRows: Int = 0) {
+        private let restorePanel: () -> Void
+
+        /// `sidePanelShown` pins the Assistant side panel, which the coordinator reads from the host's shared defaults: a
+        /// shown panel makes every front close run `AgentAttention.review` (a defaults write on the main thread), so a
+        /// budget that took whatever state the last run left would measure two different windows. The budgets were set on
+        /// the window a person gets by default, panel hidden, so that is the default here. `close()` puts the state back.
+        init(rows: Int = 300, history: HistoryStore? = nil, startPageRows: Int = 0, sidePanelShown: Bool = false) {
+            restorePanel = PerfProbe.snapshotDefaults(PerfProbe.sidePanelKeys)
             coordinator = AppCoordinator(browser: BrowserModel(database: .temporary(), history: history))
+            if sidePanelShown {
+                coordinator.sidePanel.show(.activity)
+            } else {
+                coordinator.sidePanel.hide()
+            }
             for index in 0..<rows {
                 PerfProbe.addBackgroundTab(to: coordinator.browser, address: "https://fixture-\(index).example/")
             }
@@ -65,6 +77,7 @@ nonisolated final class WindowPerformanceTests: XCTestCase, @unchecked Sendable 
             }
             coordinator.releaseWindowHost()
             coordinator.browser.cancelPendingSave()
+            restorePanel()
         }
 
         func editableField() -> NSTextField? {
@@ -146,12 +159,16 @@ nonisolated final class WindowPerformanceTests: XCTestCase, @unchecked Sendable 
     func testOpeningASecondWindow() {
         MainActor.assumeIsolated {
             PerfProbe.withOnboardingDone {
+                // `BrowserApplication` makes the coordinators, which read the panel from the shared defaults: pin it hidden.
+                let restorePanel = PerfProbe.pinSidePanelHidden()
+                defer { restorePanel() }
                 let catalog = ProfileStore.shared
                 let previous = catalog.current
                 let profile = catalog.add(name: "Second window performance")
                 LiveWindowRig.useSharedDataStore(for: profile)
                 let app = BrowserApplication(defaults: InMemoryUserDefaults(inheriting: .standard), notifications: NotificationCenter())
                 let first = app.newWindow(profile: profile, show: false)
+                XCTAssertFalse(first.sidePanel.isVisible, "the panel was not pinned hidden, so the budget would time another window")
                 Self.drawWindow(of: first)
                 PerfProbe.idle(0.5)
 
@@ -233,16 +250,30 @@ nonisolated final class WindowPerformanceTests: XCTestCase, @unchecked Sendable 
     /// Cmd-W on the tab in front: each close activates a neighbour, and drawing may make that tab's page, so the clock only. The
     /// ten front rows are start-page rows; each pass adds five more at the front and closes five.
     func testClosingTheFrontTabInACrowdedWindow() {
+        // The budget (0.240 s) is the window a person gets by default: Assistant panel hidden.
+        closeFrontTabs(panelShown: false, budgeted: true)
+    }
+
+    /// The same close with the Assistant panel shown, which a person can have: every close then runs `AgentAttention.review`.
+    /// Report only (no budget): it prints `W2b.close-front-tab-panel-shown`.
+    func testClosingTheFrontTabInACrowdedWindowWithThePanelShown() {
+        closeFrontTabs(panelShown: true, budgeted: false)
+    }
+
+    private func closeFrontTabs(panelShown: Bool, budgeted: Bool) {
         MainActor.assumeIsolated {
-            let rig = CrowdedWindow(startPageRows: 10)
+            let rig = CrowdedWindow(startPageRows: 10, sidePanelShown: panelShown)
             let browser = rig.browser
             guard let first = browser.tabs.first(where: { $0.title == SystemPages.startTitle || $0.pageTitle == SystemPages.startTitle }) else {
                 XCTFail("no start-page row")
+                rig.close()
                 return
             }
+            XCTAssertEqual(rig.coordinator.sidePanel.isVisible, panelShown, "the rig did not pin the panel, so the budget would time another window")
             browser.activate(first)
             rig.draw()
-            let options = XCTMeasureOptions.budgeted
+            let options = budgeted ? XCTMeasureOptions.budgeted : XCTMeasureOptions()
+            options.iterationCount = 6
             options.invocationOptions = [.manuallyStart]
             var perClose: [Double] = []
             var pass = 0
@@ -269,7 +300,7 @@ nonisolated final class WindowPerformanceTests: XCTestCase, @unchecked Sendable 
                 }
                 viewsAfter = Self.liveWebViews()
             }
-            Self.perOperation("W2b.close-front-tab", perClose, "liveWebViewsBefore=\(viewsBefore) liveWebViewsAfter=\(viewsAfter)")
+            Self.perOperation(panelShown ? "W2b.close-front-tab-panel-shown" : "W2b.close-front-tab", perClose, "liveWebViewsBefore=\(viewsBefore) liveWebViewsAfter=\(viewsAfter)")
             rig.close()
         }
     }
@@ -365,6 +396,16 @@ nonisolated final class WindowPerformanceTests: XCTestCase, @unchecked Sendable 
     /// Dragging the brightness slider with Settings (Appearance) open in a 300-row window: 30 preview steps, each laid out and
     /// drawn. The guards and the preview are those of `ThemePerformanceTests.testDraggingThemeBrightness`.
     func testPreviewingBrightnessWithSettingsOpenInACrowdedWindow() throws {
+        try previewBrightness(panelShown: false, budgeted: true)
+    }
+
+    /// The same drag with the Assistant panel shown. Report only (no budget): it prints
+    /// `W5.brightness-step-with-settings-panel-shown`.
+    func testPreviewingBrightnessWithSettingsOpenAndThePanelShown() throws {
+        try previewBrightness(panelShown: true, budgeted: false)
+    }
+
+    private func previewBrightness(panelShown: Bool, budgeted: Bool) throws {
         try MainActor.assumeIsolated {
             guard let bundleID = Bundle.main.bundleIdentifier,
                   bundleID.hasPrefix("io.wsagency.wsurf.dev-") || bundleID.hasPrefix("io.wsagency.wsurf.ci-") else {
@@ -379,7 +420,7 @@ nonisolated final class WindowPerformanceTests: XCTestCase, @unchecked Sendable 
             guard settings.themePreview == nil else {
                 throw XCTSkip("Brightness measurement must not replace an existing theme preview.")
             }
-            let rig = CrowdedWindow()
+            let rig = CrowdedWindow(sidePanelShown: panelShown)
             defer { rig.close() }
             XCTAssertTrue(rig.coordinator.settings.globalSettings === settings)
             rig.window.appearance = NSAppearance(named: .darkAqua)
@@ -403,7 +444,9 @@ nonisolated final class WindowPerformanceTests: XCTestCase, @unchecked Sendable 
             var pass = 0
             let clock = ContinuousClock()
 
-            measure(metrics: [XCTClockMetric(), XCTMemoryMetric()], options: .budgeted) {
+            let options = budgeted ? XCTMeasureOptions.budgeted : XCTMeasureOptions()
+            options.iterationCount = 6
+            measure(metrics: [XCTClockMetric(), XCTMemoryMetric()], options: options) {
                 pass += 1
                 for step in 0..<30 {
                     let started = clock.now
@@ -419,7 +462,7 @@ nonisolated final class WindowPerformanceTests: XCTestCase, @unchecked Sendable 
                     }
                 }
             }
-            Self.perOperation("W5.brightness-step-with-settings", perStep)
+            Self.perOperation(panelShown ? "W5.brightness-step-with-settings-panel-shown" : "W5.brightness-step-with-settings", perStep)
             XCTAssertEqual(settings.themePreview?.adjustment.darkBrightness, 0.5)
         }
     }
