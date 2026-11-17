@@ -3,11 +3,12 @@
 
 import AppKit
 import Foundation
+import os
 
 // D4-41 (out-of-process Chromium, phase 5): what a client of the accessibility API (VoiceOver, or any other) finds in a page that runs
 // in the Chromium service. The view is not an element itself (a plain NSView is ignored, and its children are promoted): it answers
-// `accessibilityChildren`, `accessibilityHitTest` and `accessibilityFocusedUIElement` from the browser's mirror, whose root is an
-// AXWebArea. Nothing is added to `ChromiumPage` (plan C1a), so the accessibility of a page in process is what it was.
+// `accessibilityChildren` and `accessibilityHitTest` from the browser's mirror, whose root is an AXWebArea. (The page's own focus is not
+// mirrored before D4-42, so the focused element is AppKit's default.) Nothing is added to `ChromiumPage` (plan C1a), so the accessibility of a page in process is what it was.
 //
 // The first query by any client turns Chromium's tree on (`ChromiumRemote.noteAccessibilityQuery`, plan Q12), and the tree arrives a
 // moment later: until then the view has no children, and a layout-changed notification tells the client to ask again.
@@ -118,16 +119,15 @@ extension ChromiumRemoteContentView {
         return children
     }
 
-    override func accessibilityHitTest(_ point: NSPoint) -> Any? {
-        guard let host = accessibilityHost else { return super.accessibilityHitTest(point) }
-        host.noteQuery()
-        return host.element(atScreenPoint: point) ?? super.accessibilityHitTest(point)
-    }
-
-    /// The page's own focus (D4-42) is not mirrored yet: the root.
-    override func accessibilityFocusedUIElement() -> Any? {
-        guard let host = accessibilityHost else { return super.accessibilityFocusedUIElement() }
-        host.noteQuery()
-        return host.rootElement() ?? super.accessibilityFocusedUIElement()
+    /// AppKit declares the hit test `nonisolated`; it asks on the main thread, like every other accessibility query.
+    nonisolated override func accessibilityHitTest(_ point: NSPoint) -> Any? {
+        nonisolated(unsafe) var hit: Any?
+        MainActor.assumeIsolated {
+            if let host = accessibilityHost {
+                host.noteQuery()
+                hit = host.element(atScreenPoint: point)
+            }
+        }
+        return hit ?? super.accessibilityHitTest(point)
     }
 }
