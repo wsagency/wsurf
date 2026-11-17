@@ -189,7 +189,7 @@ final class ChromiumRemote {
     private let logFile: String?
     private let helloTimeout: TimeInterval
     private let protocolVersion: Int64
-    private let clock: () -> TimeInterval
+    let clock: () -> TimeInterval
     private let isEnabled: () -> Bool
     private let latch: ChromiumOOP.Latch
     /// Every completion runs on the main queue: replies and interruptions come on it, and so do the timers.
@@ -198,6 +198,8 @@ final class ChromiumRemote {
     private var control: xpc_connection_t?
     var input: xpc_connection_t?
     var frames: xpc_connection_t?
+    /// The accessibility transport (D4-40): the fourth connection, and when the tree is on. `ChromiumRemote+Accessibility.swift`.
+    let accessibility = ChromiumRemoteAccessibility()
     /// Bumped when a control connection is opened or abandoned: its late events are ignored (`receive`).
     private(set) var generation = 0
     private var needsHello = true
@@ -265,14 +267,6 @@ final class ChromiumRemote {
 
     var browserCount: Int {
         browsers.count
-    }
-
-    var hasInputConnection: Bool {
-        input != nil
-    }
-
-    var hasFramesConnection: Bool {
-        frames != nil
     }
 
     /// Which connection that is, for a test that refuses it.
@@ -446,6 +440,7 @@ final class ChromiumRemote {
             ChromiumOOP.log.notice("hello answered: pid \(self.servicePID), CEF start \(self.cefStartMs) ms, round trip \(self.helloRoundTripMs) ms")
             setState(.running(pid: servicePID))
             openFrames()
+            syncAccessibility()
         }
     }
 
@@ -625,6 +620,7 @@ final class ChromiumRemote {
         }
         input = nil
         frames = nil
+        closeAccessibility()
         if !keepingControl, let control {
             xpc_connection_cancel(control)
             self.control = nil

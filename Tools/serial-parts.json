@@ -318,6 +318,7 @@
    "ChromiumAutoplayAllowlistTests",
    "ChromiumFileDialogFilterTests",
    "ChromiumFrameSinkTests",
+   "ChromiumOOPAccessibilityTransportTests",
    "ChromiumOOPDisplayTests",
    "ChromiumOOPPageTests",
    "ChromiumOOPRecoveryTests",

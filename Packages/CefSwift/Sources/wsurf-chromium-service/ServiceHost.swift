@@ -32,6 +32,10 @@ final class ServiceHost {
     private var control: xpc_connection_t?
     private var inputConnection: xpc_connection_t?
     private var framesConnection: xpc_connection_t?
+    /// The accessibility connection (D4-40): CEF's tree updates go there, never on the control connection.
+    private var accessibilityConnection: xpc_connection_t?
+    /// The browsers whose tree is on: the ones a new or lost accessibility connection switches off.
+    private var accessibilityBrowsers: Set<Int64> = []
     private var contexts: [String: UnsafeMutablePointer<cef_request_context_t>] = [:]
     /// The open browsers by id (WSurf assigns the ids), and the DEBUG stubs, which count as open browsers too so that the
     /// lifecycle can be tested without CEF.
@@ -89,17 +93,23 @@ final class ServiceHost {
         if peer === framesConnection {
             framesConnection = nil
         }
+        if peer === accessibilityConnection {
+            // Nobody takes the updates any more: the browsers stop building their trees (a new connection starts from none).
+            accessibilityConnection = nil
+            switchAccessibilityOff()
+        }
         guard peer === control else { return }
         note("WSurf's connection ended: closing \(openCount) browsers and exiting")
         control = nil
         hostReady = false
-        for side in [inputConnection, framesConnection] {
+        for side in [inputConnection, framesConnection, accessibilityConnection] {
             if let side {
                 xpc_connection_cancel(side)
             }
         }
         inputConnection = nil
         framesConnection = nil
+        accessibilityConnection = nil
         closeEverythingAndExit()
     }
 
@@ -117,8 +127,15 @@ final class ServiceHost {
             reply(to: message, on: peer) { $0.set(CefRemote.Key.pid, Int64(getpid())) }
         case CefRemote.Op.hello:
             hello(message, from: peer)
-        case CefRemote.Op.inputHello, CefRemote.Op.framesHello:
+        case CefRemote.Op.inputHello, CefRemote.Op.framesHello, CefRemote.Op.axHello:
             attachSideConnection(message, from: peer)
+        case CefRemote.Op.accessibility:
+            guard isHost(peer, for: message) else { return }
+            let refusal = setAccessibility(message)
+            reply(to: message, on: peer) {
+                $0.set(CefRemote.Key.success, refusal == nil)
+                if let refusal { $0.set(CefRemote.Key.error, refusal) }
+            }
         case CefRemote.Op.createContext:
             guard isHost(peer, for: message) else { return }
             createContext(message, from: peer)
@@ -351,7 +368,7 @@ final class ServiceHost {
         }
     }
 
-    /// The input and frames connections say which control connection they belong to by being its process's: they are accepted
+    /// The input, frames and accessibility (D4-40) connections say which control connection they belong to by being its process's: they are accepted
     /// only after a hello that got `ok` (CEF is up), only from the process of the host, only while the service is not leaving,
     /// and are dropped with the control connection (review F8b, pr123 C3). The same peer may be both. A second hello of one kind
     /// replaces the first connection, which is cancelled. Their hello gets an answer: a refusal is how the client learns that
@@ -360,7 +377,7 @@ final class ServiceHost {
         var failure: String?
         if let control, hostReady, !exiting {
             if peer === control {
-                failure = "the control connection cannot be an input or frames connection"
+                failure = "the control connection cannot be an input, frames or accessibility connection"
             } else if xpc_connection_get_pid(peer) != xpc_connection_get_pid(control) {
                 failure = "not the host's process"
             }
@@ -368,18 +385,27 @@ final class ServiceHost {
             failure = exiting ? CefRemote.leavingError : "no host has said hello"
         }
         if failure == nil {
-            if message.op == CefRemote.Op.inputHello {
-                if let old = inputConnection, old !== peer, old !== framesConnection {
-                    xpc_connection_cancel(old)
-                }
+            let old: xpc_connection_t?
+            switch message.op {
+            case CefRemote.Op.inputHello:
+                old = inputConnection
                 inputConnection = peer
-            } else {
-                if let old = framesConnection, old !== peer, old !== inputConnection {
-                    xpc_connection_cancel(old)
-                }
+            case CefRemote.Op.axHello:
+                old = accessibilityConnection
+                accessibilityConnection = peer
+            default:
+                old = framesConnection
                 framesConnection = peer
             }
+            // The replaced connection is cancelled, unless the same peer still serves another kind.
+            if let old, old !== peer, ![inputConnection, framesConnection, accessibilityConnection].contains(where: { $0 === old }) {
+                xpc_connection_cancel(old)
+            }
             note("\(message.op) connection open")
+            if message.op == CefRemote.Op.axHello {
+                // A new accessibility connection starts from no tree: the first update of an enabled browser is its whole tree.
+                switchAccessibilityOff()
+            }
             if message.op == CefRemote.Op.framesHello {
                 // Whatever was painted before the connection attached went nowhere: every shown page paints again.
                 for browser in browsers.values {
@@ -397,6 +423,43 @@ final class ServiceHost {
 
     /// Whether a frames connection is attached: with none, the browsers copy and send nothing.
     var hasFramesConnection: Bool { framesConnection != nil }
+
+    // MARK: Accessibility (D4-40)
+
+    /// With none attached, CEF's updates are not even converted to JSON.
+    var hasAccessibilityConnection: Bool { accessibilityConnection != nil }
+
+    /// `ax.enable`: nil when it was done, else the reason it was not. Turning the tree on is refused while no accessibility
+    /// connection is attached: the first update is the whole tree and would go nowhere, and every later one is incremental.
+    private func setAccessibility(_ message: CefRemoteMessage) -> String? {
+        let enabled = message.bool(CefRemote.Key.flag)
+        guard let browser = browsers[message.browser] else { return "no such browser" }
+        guard !enabled || accessibilityConnection != nil else { return "no accessibility connection" }
+        browser.setAccessibility(enabled)
+        if enabled {
+            accessibilityBrowsers.insert(message.browser)
+        } else {
+            accessibilityBrowsers.remove(message.browser)
+        }
+        return nil
+    }
+
+    /// The accessibility connection is gone: no browser builds a tree for nobody.
+    private func switchAccessibilityOff() {
+        for id in accessibilityBrowsers {
+            browsers[id]?.setAccessibility(false)
+        }
+        accessibilityBrowsers.removeAll()
+    }
+
+    /// One of CEF's accessibility updates, as JSON, to the accessibility connection. `name` is ``CefRemote/Event/accessibilityTree``
+    /// or ``CefRemote/Event/accessibilityLocation``.
+    func sendAccessibility(browser id: Int64, name: String, data: Data) {
+        guard let accessibilityConnection else { return }
+        let message = CefRemoteMessage(name, browser: id)
+        message.set(CefRemote.Key.data, data: data)
+        xpc_connection_send_message(accessibilityConnection, message.object)
+    }
 
     /// One frame to WSurf's frames connection. The IOSurface travels as a Mach port; WSurf puts it in a layer from its frames
     /// queue, never its main thread. `entry`: when CEF entered the paint callback, on the mach clock the two processes share.
@@ -481,6 +544,7 @@ final class ServiceHost {
     /// A browser reached the end of its life (`on_before_close`, or it never was made): WSurf is told, and the host lets it go.
     func browserDidClose(_ id: Int64) {
         guard browsers.removeValue(forKey: id) != nil else { return }
+        accessibilityBrowsers.remove(id)
         send(CefRemoteMessage(CefRemote.Event.browserClosed, browser: id))
         browsersChanged()
     }
