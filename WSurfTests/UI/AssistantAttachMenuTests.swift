@@ -75,6 +75,31 @@ struct AssistantAttachMenuTests {
         #expect(listed.map(\.title) == ["Real"])
     }
 
+    @Test func anExtensionPageIsNotOffered() {
+        let browser = model()
+        let own = page("Own")
+        let extensionPage = BrowserTab(extensionHost: ExtensionPageHost(
+            configuration: WebViewPool.makeConfiguration(),
+            baseURL: URL(string: "webkit-extension://stub/")!,
+            name: "Stub Extension",
+            icon: nil
+        ))
+        extensionPage.urlString = "webkit-extension://stub/popup.html"
+        browser.tabs = [own, extensionPage]
+
+        // The page rules of the `@` list alone let it through, so the extension rule is what keeps it out.
+        #expect(
+            AskSurfaceInteraction.mentionCandidates(
+                fragment: "", tabs: [extensionPage], mentionedTabIDs: [], activeTabID: nil
+            ).map(\.id) == [extensionPage.id]
+        )
+        #expect(!AskSurfaceInteraction.isAttachable(extensionPage, in: browser))
+        #expect(
+            AskSurfaceInteraction.attachCandidates(fragment: "", in: browser, mentionedTabIDs: []).map(\.id)
+                == [own.id]
+        )
+    }
+
     @Test func searchAndTheLimitStillApplyInsideTheWindow() {
         let browser = model()
         browser.tabs = (0..<8).map { page("Item\($0)") }

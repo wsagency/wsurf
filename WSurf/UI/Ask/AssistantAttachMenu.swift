@@ -173,6 +173,7 @@ struct AssistantAttachMenu: View {
             .padding(.horizontal, Self.textInset)
             .padding(.top, 10)
             .padding(.bottom, 4)
+            .accessibilityAddTraits(.isHeader)
     }
 
     private func submit() {
@@ -259,5 +260,7 @@ private struct AssistantAttachRow<Label: View>: View {
                 onHover()
             }
         }
+        // The keyboard highlight is otherwise only visual.
+        .accessibilityAddTraits(isHighlighted ? .isSelected : [])
     }
 }
