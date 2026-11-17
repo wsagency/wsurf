@@ -3169,7 +3169,7 @@
 
     },
     "Float on Top" : {
-      "comment" : "Window menu item (checkmark when on, shown only in a Micro window) and, with “Stop Floating on Top”, the tooltip of a button in the Micro window’s bar. While on, the Micro window stays above other windows, on every desktop and over full-screen apps, like a picture-in-picture window. Title Case."
+      "comment" : "Window menu item (checkmark when on, in every browser window) and, with “Stop Floating on Top”, the tooltip of a button in the Micro window’s bar. While on, the window stays above other windows (a Micro window also on every desktop and over full-screen apps, like a picture-in-picture window). Title Case."
     },
     "Folder name" : {
       "comment" : "Placeholder in the inline rename field on a sidebar folder row. Sentence case, and very narrow — the field is only as wide as a sidebar row."

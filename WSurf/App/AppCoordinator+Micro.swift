@@ -29,7 +29,9 @@ extension AppCoordinator {
     func applyFloatOnTop() {
         guard let window = nativeWindow else { return }
         window.level = FloatOnTop.level(floats: floatsOnTop, isFullScreen: window.styleMask.contains(.fullScreen))
-        if isMicro { window.collectionBehavior = MicroWindowMetrics.collectionBehavior(floating: floatsOnTop) }
+        if isMicro {
+            window.collectionBehavior = MicroWindowMetrics.collectionBehavior(floating: floatsOnTop)
+        }
     }
 
     /// The window the commands that open app pages (a new tab, the palette, Settings, History, Downloads, release notes) act
