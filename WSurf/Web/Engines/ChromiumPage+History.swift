@@ -195,15 +195,7 @@ extension ChromiumPage {
               let index = response["currentIndex"] as? Int,
               let entries = response["entries"] as? [[String: Any]] else { return false }
         guard !closing, !isClosed else { return false }
-        let addresses: [String] = entries.map { $0["url"] as? String ?? "" }
-        let visited = nativeEntries()
-        let posts: [Bool]? = visited.flatMap { $0.current == index && $0.entries.map(\.url) == addresses ? $0.entries.map(\.hasPostData) : nil }
-        let list = entries.enumerated().map { position, entry -> CefRemote.HistoryEntry in
-            CefRemote.HistoryEntry(
-                id: Int64(entry["id"] as? Int ?? -1), url: addresses[position], title: entry["title"] as? String ?? "",
-                hasPostData: posts?[position] ?? true, isCurrent: position == index)
-        }
-        setHistory(list)
+        setHistory(ChromiumHistoryRecord.nativeList(entries, current: index, visited: nativeEntries()))
         return true
     }
 
@@ -288,6 +280,11 @@ extension ChromiumPage {
     func goInHistory(to item: PageHistoryItem) -> PageNavigation? {
         guard let id = item.restoredID else { return go(to: item) }
         return remote == nil ? hop(to: id) : nil
+    }
+
+    /// WSurf's error document replaced the failed load `failed`: a hop that was that load keeps its place through the document.
+    func keepHopThroughErrorDocument(failed: PageNavigation?) {
+        historyRecord.failedHop(failed, errorDocument: navigation)
     }
 
     /// Whether the page's navigation is a hop backward in the list. A load the engine router moves to the other engine must then not

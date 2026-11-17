@@ -161,6 +161,8 @@ extension BrowserTab {
                 isShowingError = true
                 isLoadingErrorPage = true
                 ErrorPage.show(error, in: page, fallbackURL: fallback)
+                // A Back or Forward to a restored Chromium entry that failed keeps its place in the list (D3b).
+                page.chromium?.keepHopThroughErrorDocument(failed: navigation)
             }
         }
         refreshChrome()

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 
 import Foundation
+import Network
 import Testing
 import WebKit
 
@@ -56,6 +57,7 @@ struct ChromiumHistoryRestoreTests {
 
     private static let routes: [String: HTTPFixtureServer.Response] = [
         "/a": page("A"), "/b": page("B"), "/c": page("C"), "/d": page("D"), "/b2": page("B2"), "/result": page("Result"),
+        "/r": HTTPFixtureServer.Response(status: "302 Found", headers: ["Location": "/b2", "Cache-Control": "no-store"], body: Data()),
         "/form": .html(#"<!doctype html><title>Form</title><form method="post" action="/result"><input name="q" value="1"></form>"#, headers: noStore),
     ]
 
@@ -115,6 +117,51 @@ struct ChromiumHistoryRestoreTests {
         rig.browser.activate(tab)
         _ = await tab.waitForPendingNavigation()
         return mark
+    }
+
+    /// A saved Chromium state in the format a tab writes, built by hand: entries a test cannot make by browsing (an unreachable site,
+    /// an address that now redirects).
+    private func state(back: [URL], forward: [URL]) throws -> Data {
+        func entries(_ urls: [URL]) -> [[String: String]] {
+            urls.map { ["url": $0.absoluteString, "title": $0.lastPathComponent] }
+        }
+        let saved: [String: Any] = ["engine": "chromium", "chromium": ["back": entries(back), "forward": entries(forward)]]
+        return try JSONSerialization.data(withJSONObject: saved)
+    }
+
+    /// A tab that wakes at `path` from `state`, and the request count from just before it wakes.
+    private func wake(at path: String, from state: Data, in rig: LiveWindowRig, log: RequestLog) async throws -> (BrowserTab, Int) {
+        let tab = try await rig.open("/still")
+        _ = try await rig.open("/still")
+        rig.coordinator.unloadTab(tab)
+        tab.deferRestore(state: state, url: try rig.server.url(path))
+        let mark = log.count
+        rig.browser.activate(tab)
+        _ = await tab.waitForPendingNavigation()
+        return (tab, mark)
+    }
+
+    /// Waits until `tab` shows WSurf's error document for `url` with these lists around it.
+    private func showsError(_ tab: BrowserTab, for url: URL, back: [String], forward: [String]) async -> Bool {
+        await waitUntil(timeout: .seconds(30)) {
+            let list = tab.page.backForwardList
+            return !tab.page.isLoading && tab.isShowingError && tab.urlString == url.absoluteString
+                && list.backList.map(\.url.path) == back && list.forwardList.map(\.url.path) == forward
+        }
+    }
+
+    /// A port nothing listens on (a connection to it is refused), where `reopen` later starts a server that logs to `log`.
+    private func closedPort(log: RequestLog) async throws -> (dead: URL, reopen: () async throws -> HTTPFixtureServer) {
+        let server = try await HTTPFixtureServer.start(routes: [:])
+        let dead = try server.url("/dead")
+        let port = try #require(server.port)
+        await server.stop()
+        return (dead, {
+            try await HTTPFixtureServer.start(routes: ["/dead": Self.page("Dead")], respond: { request in
+                log.record(request)
+                return nil
+            }, port: port)
+        })
     }
 
     // MARK: Wake
@@ -241,6 +288,134 @@ struct ChromiumHistoryRestoreTests {
             #expect(await settles(tab, at: "/form", back: [], forward: ["/d"]), "\(lists(tab))")
             #expect(!tab.page.canGoBack)
             #expect(await requests(log, since: mark, are: ["GET /d", "GET /form"]), "\(log.since(mark))")
+        }
+    }
+
+    /// Known and documented (the record moves only once a hop's entry appears): a second Back while a hop is still on its way restarts
+    /// that hop, so two quick Backs move one step, where native history moves two.
+    @Test func aSecondBackWhileAHopIsOnItsWayGoesToTheSameEntry() async throws {
+        try await withRig { rig, log in
+            let tab = try await history(in: rig)
+            _ = try await sleepAndWake(tab, in: rig, log: log)
+            try #require(await settles(tab, at: "/c", back: ["/a", "/b"], forward: []), "\(lists(tab))")
+            let mark = log.count
+            tab.goBack()
+            tab.goBack()
+            #expect(await settles(tab, at: "/b", back: ["/a"], forward: ["/c"]), "\(lists(tab))")
+            try? await Task.sleep(for: .milliseconds(300))
+            #expect(!log.since(mark).isEmpty && Set(log.since(mark)) == ["GET /b"], "\(log.since(mark))")
+        }
+    }
+
+    /// A restored entry redirects now: the hop lands where the redirect commits, in the entry's place.
+    @Test func aHopToAnEntryThatRedirectsLandsOnTheRedirectsTarget() async throws {
+        try await withRig { rig, log in
+            let (tab, mark) = try await wake(at: "/c", from: state(back: [rig.server.url("/a"), rig.server.url("/r")], forward: []), in: rig, log: log)
+            try #require(await settles(tab, at: "/c", back: ["/a", "/r"], forward: []), "\(lists(tab))")
+            tab.goBack()
+            #expect(await settles(tab, at: "/b2", back: ["/a"], forward: ["/c"]), "\(lists(tab))")
+            tab.goBack()
+            #expect(await settles(tab, at: "/a", back: [], forward: ["/b2", "/c"]), "\(lists(tab))")
+            #expect(await requests(log, since: mark, are: ["GET /c", "GET /r", "GET /b2", "GET /a"]), "\(log.since(mark))")
+        }
+    }
+
+    // MARK: A hop that fails
+
+    /// Review F1: the site of a restored entry is down. WSurf's error document stands in its place: Back goes on to the entry before
+    /// it (never forward in time to the page the hop left), and once the site is back the entry loads by GET.
+    @Test func aBackHopToAnUnreachableEntryKeepsItsPlaceAndLoadsOnceTheSiteIsBack() async throws {
+        try await withRig { rig, log in
+            let (dead, reopen) = try await closedPort(log: log)
+            let (tab, mark) = try await wake(at: "/c", from: state(back: [rig.server.url("/a"), dead], forward: []), in: rig, log: log)
+            try #require(await settles(tab, at: "/c", back: ["/a", "/dead"], forward: []), "\(lists(tab))")
+
+            tab.goBack()
+            #expect(await showsError(tab, for: dead, back: ["/a"], forward: ["/c"]), "\(lists(tab))")
+            #expect(tab.page.canGoBack && tab.page.canGoForward)
+            tab.goBack()
+            #expect(await settles(tab, at: "/a", back: [], forward: ["/dead", "/c"]), "\(lists(tab))")
+
+            let server = try await reopen()
+            tab.goForward()
+            #expect(await settles(tab, at: "/dead", back: ["/a"], forward: ["/c"]), "\(lists(tab))")
+            #expect(await requests(log, since: mark, are: ["GET /c", "GET /a", "GET /dead"]), "\(log.since(mark))")
+            withExtendedLifetime(server) {}
+        }
+    }
+
+    @Test func aForwardHopToAnUnreachableEntryKeepsTheForwardList() async throws {
+        try await withRig { rig, log in
+            let (dead, reopen) = try await closedPort(log: log)
+            let (tab, mark) = try await wake(at: "/a", from: state(back: [], forward: [dead, rig.server.url("/c")]), in: rig, log: log)
+            try #require(await settles(tab, at: "/a", back: [], forward: ["/dead", "/c"]), "\(lists(tab))")
+
+            tab.goForward()
+            #expect(await showsError(tab, for: dead, back: ["/a"], forward: ["/c"]), "\(lists(tab))")
+            tab.goForward()
+            #expect(await settles(tab, at: "/c", back: ["/a", "/dead"], forward: []), "\(lists(tab))")
+
+            let server = try await reopen()
+            tab.goBack()
+            #expect(await settles(tab, at: "/dead", back: ["/a"], forward: ["/c"]), "\(lists(tab))")
+            #expect(await requests(log, since: mark, are: ["GET /a", "GET /c", "GET /dead"]), "\(log.since(mark))")
+            withExtendedLifetime(server) {}
+        }
+    }
+
+    // MARK: Engine switches
+
+    /// Chromium → WebKit → Back: the Chromium page comes back with its list, loading only its own address.
+    @Test func backFromWebKitReturnsToTheChromiumPageWithItsList() async throws {
+        try await withRig { rig, log in
+            let other = try await HTTPFixtureServer.start(routes: ["/w": Self.page("W")], respond: { request in
+                log.record(request)
+                return nil
+            })
+            let webKitPage = try other.url("/w")
+            let tab = try await history(in: rig)
+            tab.engineOverride = nil
+            rig.browser.sitePermissions.setEngine(.webKit, for: SitePermissions.origin(for: webKitPage))
+            tab.load(webKitPage)
+            try #require(await waitUntil(timeout: .seconds(30)) { tab.page.engine == .webKit && tab.page.url == webKitPage && !tab.page.isLoading })
+
+            let mark = log.count
+            tab.goBack()
+            #expect(await settles(tab, at: "/c", back: ["/a", "/b"], forward: []), "\(lists(tab))")
+            #expect(tab.page.engine == .chromium)
+            tab.goBack()
+            #expect(await settles(tab, at: "/b", back: ["/a"], forward: ["/c"]), "\(lists(tab))")
+            #expect(await requests(log, since: mark, are: ["GET /c", "GET /b"]), "\(log.since(mark))")
+            withExtendedLifetime(other) {}
+        }
+    }
+
+    /// A Back hop to a restored entry whose site now opens in WebKit: the tab moves there, and the page it left is ahead of the
+    /// entry, so it is not kept for Back (Back would go forward in time).
+    @Test func aBackHopThatMovesTheTabToWebKitDoesNotKeepThePageItLeft() async throws {
+        try await withRig { rig, log in
+            let other = try await HTTPFixtureServer.start(routes: ["/w": Self.page("W")], respond: { request in
+                log.record(request)
+                return nil
+            })
+            let webKitPage = try other.url("/w")
+            let tab = try await rig.open("/a")
+            tab.load(webKitPage)
+            try #require(await waitUntil(timeout: .seconds(30)) { tab.page.url == webKitPage && !tab.page.isLoading })
+            try await visit("/c", in: tab, rig)
+            try #require(await settles(tab, at: "/c", back: ["/a", "/w"], forward: []), "\(lists(tab))")
+            _ = try await sleepAndWake(tab, in: rig, log: log)
+            try #require(await settles(tab, at: "/c", back: ["/a", "/w"], forward: []), "\(lists(tab))")
+
+            tab.engineOverride = nil
+            rig.browser.sitePermissions.setEngine(.webKit, for: SitePermissions.origin(for: webKitPage))
+            let mark = log.count
+            tab.goBack()
+            #expect(await waitUntil(timeout: .seconds(30)) { tab.page.engine == .webKit && tab.page.url == webKitPage && !tab.page.isLoading })
+            #expect(tab.pageBeforeEngineSwitch == nil)
+            tab.goBack()
+            #expect(await requests(log, since: mark, are: ["GET /w"]), "Back does not return to /c: \(log.since(mark))")
+            withExtendedLifetime(other) {}
         }
     }
 

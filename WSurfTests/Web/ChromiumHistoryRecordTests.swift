@@ -53,6 +53,34 @@ struct ChromiumHistoryRecordTests {
         #expect(saved.forward == [entry("d")])
     }
 
+    /// A page could otherwise grow the saved state by megabytes per entry; a user name or password would be written in clear, and
+    /// without it the entry would load something else, so the entry is dropped rather than changed.
+    @Test func longAddressesAndAddressesWithAUserNameOrPasswordAreNotSaved() throws {
+        let limit = ChromiumHistoryRecord.maximumURLLength
+        let prefix = "https://a.test/?q="
+        let fits = Entry(url: prefix + String(repeating: "x", count: limit - prefix.count), title: "fits")
+        let long = Entry(url: prefix + String(repeating: "x", count: limit - prefix.count + 1), title: "long")
+        let credentials = [Entry(url: "https://user:secret@a.test/x", title: "x"), Entry(url: "https://user@a.test/y", title: "y")]
+        let saved = try #require(ChromiumHistoryRecord.saved(back: [long, entry("a")] + credentials, forward: [fits]))
+        #expect(saved.back == [entry("a")])
+        #expect(saved.forward == [fits], "an address of exactly the limit is kept")
+    }
+
+    /// Only CEF's entry visitor knows whether a POST made an entry. A read it does not match cannot show any entry to be a GET.
+    @Test func aReadWhoseEntriesCannotBeConfirmedAsGetsCountsEveryEntryAsAPost() {
+        let read: [[String: Any]] = [["id": 1, "url": "https://a.test/a", "title": "A"], ["id": 2, "url": "https://a.test/b", "title": "B"]]
+        let a = NavigationEntryReader.Entry(url: "https://a.test/a", title: "A", hasPostData: false)
+        let b = NavigationEntryReader.Entry(url: "https://a.test/b", title: "B", hasPostData: false)
+        let matching = ChromiumHistoryRecord.nativeList(read, current: 1, visited: ([a, b], 1))
+        #expect(matching == [CefRemote.HistoryEntry(id: 1, url: a.url, title: "A"), CefRemote.HistoryEntry(id: 2, url: b.url, title: "B", isCurrent: true)])
+        let other = NavigationEntryReader.Entry(url: "https://a.test/x", title: "B", hasPostData: false)
+        let mismatches: [(entries: [NavigationEntryReader.Entry], current: Int)?] = [nil, ([a, b], 0), ([a], 1), ([a, b, other], 1), ([a, other], 1)]
+        for visited in mismatches {
+            let list = ChromiumHistoryRecord.nativeList(read, current: 1, visited: visited)
+            #expect(list.map(\.id) == [1, 2] && list.allSatisfy(\.hasPostData), "\(String(describing: visited))")
+        }
+    }
+
     @Test func aRecordKeepsAtMostFortyNineOtherEntriesDroppingTheOldestBackFirst() throws {
         let back = (0..<60).map { entry("b\($0)") }
         let saved = try #require(ChromiumHistoryRecord.saved(back: back, forward: [entry("f0"), entry("f1")]))
@@ -207,6 +235,43 @@ struct ChromiumHistoryRecordTests {
         record.noteCommit(URL(string: "https://a.test/a"), navigation: hop)
         #expect(record.update(native: [native(2, "x"), native(3, "a", current: true)], navigation: other) == .unchanged)
         #expect(paths(record.back) == ["a"])
+    }
+
+    /// The hop's load fails and WSurf's error document replaces it, with a navigation of its own. The hop lands on that document's
+    /// entry, never on an error entry Chromium committed for the failed address: the failed entry keeps its place.
+    @Test func aFailedBackHopKeepsItsPlaceThroughTheErrorDocument() throws {
+        var record = seeded(back: ["a", "b"], forward: [])
+        _ = record.update(native: [native(1, "c", current: true)], navigation: nil)
+        let hop = PageNavigation()
+        record.startHop(to: try #require(record.back.last).id, window: [native(-1, "c", current: true)], current: 0, navigation: hop)
+        let errorDocument = PageNavigation()
+        record.failedHop(hop, errorDocument: errorDocument)
+        #expect(record.saved(window: [native(1, "c", current: true)], current: 0) == .init(back: [entry("a")], forward: [entry("c")]),
+                "saved while the error document loads: the list around the failed entry")
+        #expect(record.update(native: [native(1, "c"), native(2, "b", current: true)], navigation: errorDocument) == .unchanged,
+                "Chromium's error entry is not the hop's")
+        #expect(paths(record.back) == ["a", "b"] && record.forward.isEmpty)
+
+        let document = CefRemote.HistoryEntry(id: 3, url: "data:text/html;base64,eA==", title: "", isCurrent: true)
+        #expect(record.update(native: [native(1, "c"), native(2, "b"), document], navigation: errorDocument)
+                == .collapse(keeping: document.url, count: 3))
+        #expect(paths(record.back) == ["a"])
+        #expect(paths(record.forward) == ["c"], "Back never reaches the page the hop left")
+        #expect(record.floorIndex(in: record.native) == 2)
+    }
+
+    @Test func aFailedForwardHopKeepsTheForwardEntries() throws {
+        var record = seeded(back: [], forward: ["b", "c"])
+        _ = record.update(native: [native(1, "a", current: true)], navigation: nil)
+        let hop = PageNavigation()
+        record.startHop(to: try #require(record.forward.first).id, window: [native(-1, "a", current: true)], current: 0, navigation: hop)
+        record.failedHop(PageNavigation(), errorDocument: PageNavigation())
+        let errorDocument = PageNavigation()
+        record.failedHop(hop, errorDocument: errorDocument)
+        let document = CefRemote.HistoryEntry(id: 2, url: "data:text/html;base64,eA==", title: "", isCurrent: true)
+        #expect(record.update(native: [native(1, "a"), document], navigation: errorDocument) == .collapse(keeping: document.url, count: 2))
+        #expect(paths(record.back) == ["a"])
+        #expect(paths(record.forward) == ["c"])
     }
 
     @Test func aHopInsideTheDocumentIsFoundByItsAddress() throws {

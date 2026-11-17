@@ -33,7 +33,7 @@ struct ChromiumHistoryRecord {
     /// A hop on its way: the whole list as it was when it started (nil where an entry is not kept), re-formed around `target` once the
     /// hop's own entry appears.
     private struct Hop {
-        let navigation: PageNavigation
+        var navigation: PageNavigation
         let logical: [Entry?]
         let target: Int
         let isBackward: Bool
@@ -41,6 +41,8 @@ struct ChromiumHistoryRecord {
         /// The address the main frame committed for it (after any redirect). A hop that stays inside the document commits none, and
         /// is found by its own address.
         var committedURL: String?
+        /// Its load failed and WSurf's error document took its place (`failedHop`): that document's entry lands it.
+        var failed = false
 
         var address: String {
             committedURL ?? logical[target]?.url ?? ""
@@ -50,6 +52,8 @@ struct ChromiumHistoryRecord {
     /// Chromium keeps 50 entries; the current one is the tab's address.
     static let maximumEntries = 49
     static let maximumTitleLength = 256
+    /// Longer addresses are not saved: a page could otherwise grow the saved state by megabytes per entry (`pushState`).
+    static let maximumURLLength = 8192
 
     private(set) var back: [Restored] = []
     private(set) var forward: [Restored] = []
@@ -62,10 +66,26 @@ struct ChromiumHistoryRecord {
     /// Test seam: awaited before a hop's collapse is sent, so a case can change the page in between.
     var beforeCollapse: (@MainActor () async -> Void)?
 
-    /// Saved only: an http or https address that no POST made.
+    /// Saved only: an http or https address that no POST made, at most `maximumURLLength` long and with no user name or password in
+    /// it (dropped, not stripped: without them the entry would load something else).
     static func keeps(_ entry: CefRemote.HistoryEntry) -> Bool {
-        guard !entry.hasPostData, let scheme = URL(string: entry.url)?.scheme?.lowercased() else { return false }
+        guard !entry.hasPostData, entry.url.utf8.count <= maximumURLLength, let url = URL(string: entry.url), url.user == nil,
+              url.password == nil, let scheme = url.scheme?.lowercased() else { return false }
         return scheme == "http" || scheme == "https"
+    }
+
+    /// The native list from a DevTools read (ids, addresses, titles) and the entry visitor's read handled in the same turn (POST flags).
+    /// Only the visitor knows whether a POST made an entry: when the two reads do not describe the same list (count, current entry,
+    /// addresses), no entry can be shown to be a GET, so every one counts as a POST and is never saved.
+    static func nativeList(_ entries: [[String: Any]], current index: Int,
+                           visited: (entries: [NavigationEntryReader.Entry], current: Int)?) -> [CefRemote.HistoryEntry] {
+        let addresses: [String] = entries.map { $0["url"] as? String ?? "" }
+        let posts: [Bool]? = visited.flatMap { $0.current == index && $0.entries.map(\.url) == addresses ? $0.entries.map(\.hasPostData) : nil }
+        return entries.enumerated().map { position, entry in
+            CefRemote.HistoryEntry(
+                id: Int64(entry["id"] as? Int ?? -1), url: addresses[position], title: entry["title"] as? String ?? "",
+                hasPostData: posts?[position] ?? true, isCurrent: position == index)
+        }
     }
 
     private static func entry(_ native: CefRemote.HistoryEntry) -> Entry {
@@ -115,7 +135,7 @@ struct ChromiumHistoryRecord {
     /// The list to save, around the native entries Back can reach (`window`, with `current` in it). A hop that has committed but not
     /// yet been applied saves the list it re-forms.
     func saved(window: [CefRemote.HistoryEntry], current: Int) -> Saved? {
-        if let hop, hop.committedURL != nil {
+        if let hop, hop.committedURL != nil || hop.failed {
             return Self.saved(back: hop.logical[..<hop.target].compactMap(\.self), forward: hop.logical[(hop.target + 1)...].compactMap(\.self))
         }
         let nativeBack = window.prefix(max(current, 0)).filter(Self.keeps).map(Self.entry)
@@ -152,6 +172,16 @@ struct ChromiumHistoryRecord {
         hop?.committedURL = url.absoluteString
     }
 
+    /// The hop's load (`failed`) failed and WSurf's error document (`errorDocument`, the page's navigation now) replaced it. The hop
+    /// is kept through that document: the failed entry stays in its place in the list, shown by the error document, and loads again
+    /// by GET when the person comes back to it. Without this, the error document would count as a new navigation after the entry the
+    /// hop left, so Back would go forward in time and Forward would lose the forward entries.
+    mutating func failedHop(_ failed: PageNavigation?, errorDocument: PageNavigation?) {
+        guard let errorDocument, hop?.navigation === failed, errorDocument !== failed else { return }
+        hop?.navigation = errorDocument
+        hop?.failed = true
+    }
+
     /// Whether `navigation` is a hop backward in the list (an engine switch must then not keep the page it leaves for Back).
     func hopsBackward(navigation: PageNavigation?) -> Bool {
         hop?.navigation === navigation && hop?.isBackward == true
@@ -173,15 +203,16 @@ struct ChromiumHistoryRecord {
         if hop != nil, hop?.navigation !== navigation {
             hop = nil
         }
-        if let hop, let landed = new.lastIndex(where: { !hop.knownIDs.contains($0.id) && $0.url == hop.address }) {
+        // A failed hop lands on the error document's own entry: never on an error entry Chromium committed for the failed address.
+        if let hop, let landed = new.lastIndex(where: { !hop.knownIDs.contains($0.id) && (hop.failed ? $0.url.hasPrefix("data:") : $0.url == hop.address) }) {
             back = restored(hop.logical[..<hop.target].compactMap(\.self))
             forward = restored(hop.logical[(hop.target + 1)...].compactMap(\.self))
             floor = new[landed].id
             self.hop = nil
             return .collapse(keeping: new[landed].url, count: new.count)
         }
-        if hop?.committedURL != nil {
-            // Committed, but its entry is not in this read yet.
+        if hop?.committedURL != nil || hop?.failed == true {
+            // Committed (or failed), but its entry is not in this read yet.
             return .unchanged
         }
         guard !forward.isEmpty, let previous = native.first(where: \.isCurrent), previous.url != "about:blank",
