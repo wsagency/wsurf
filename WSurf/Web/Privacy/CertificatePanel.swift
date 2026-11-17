@@ -24,9 +24,15 @@ enum CertificatePanel {
         trust(of: tab) != nil
     }
 
+    /// The window the sheet for a page hangs from: the page's own window, never whichever window happens to be key (a click in
+    /// a window's floating bar does not make that window key before the action runs).
+    static func sheetWindow(for window: NSWindow?) -> NSWindow? {
+        window?.sheetHost ?? NSApp.keyWindow?.sheetHost ?? NSApp.mainWindow
+    }
+
     static func show(for tab: BrowserTab, in window: NSWindow? = nil) {
         guard let trust = trust(of: tab),
-              let window = window ?? NSApp.keyWindow?.sheetHost ?? NSApp.mainWindow
+              let window = sheetWindow(for: window ?? tab.liveView?.window)
         else { return }
         guard let panel = SFCertificatePanel.shared() else { return }
         if let host = URL(string: tab.urlString)?.host() {

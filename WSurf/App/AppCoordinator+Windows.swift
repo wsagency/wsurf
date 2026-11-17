@@ -132,19 +132,22 @@ extension AppCoordinator {
         }
     }
 
-    /// The window, or its floating toolbar panel, has the keyboard: the two are one unit (`NSWindow.isKeyUnit`).
-    var isKeyWindow: Bool {
-        nativeWindow?.isKeyUnit == true
-    }
-
     func windowDidBecomeKey() {
         application?.focus(self)
         activation.setSuspended(false)
         updateWindowAppearance()
     }
 
+    /// A window that resigns key after the next window became key (the floating bar's deferred resign) must not clear the
+    /// extensions' focus, which is that window's now.
+    static func clearsExtensionFocus(activeWindowID: UUID?, resigning: UUID) -> Bool {
+        activeWindowID == nil || activeWindowID == resigning
+    }
+
     func windowDidResignKey() {
-        extensions.focus(browser: nil)
+        if Self.clearsExtensionFocus(activeWindowID: application?.activeWindowID, resigning: windowID) {
+            extensions.focus(browser: nil)
+        }
         activation.setSuspended(true)
         controlDownAt = nil
         browser.endTabSwitching()

@@ -955,3 +955,17 @@ extension AppCoordinator {
         self.titleStripInset = titleStripInset
     }
 }
+
+extension AppCoordinator {
+    /// The window, or its floating toolbar panel, has the keyboard: the two are one unit (`FloatingBarController.isKeyUnit`).
+    var isKeyWindow: Bool {
+        host?.isKeyUnit ?? false
+    }
+
+    /// The responder that has the keyboard: the field editor of the floating bar while its panel is key, else the window's own
+    /// (the page). Whatever asks whether the person is typing asks this, never the browser window's `firstResponder` alone: that
+    /// is the page while the address is edited in the panel.
+    var keyUnitResponder: NSResponder? {
+        host?.keyResponder
+    }
+}

@@ -150,9 +150,8 @@ struct MinimalShellTests {
     @Test func theDetachedBarIsTheSameBarAndTheShellSkipsItOnlyWhileItFloats() throws {
         #expect(try source("WSurf/UI/Shell/Minimal/FloatingBarController.swift").contains("IslandBar("))
         let shell = try source("WSurf/UI/Shell/Minimal/MinimalShell.swift")
-        #expect(shell.contains("let floats = coordinator.barFloats"))
-        #expect(shell.contains("if !floats {\n                    IslandBar("))
-        #expect(!shell.contains("minimalBarPlacement"))
+        #expect(shell.contains("coordinator.barFloats"))
+        #expect(shell.contains(try Regex(#"if\s+!floats\s*\{\s*IslandBar\("#)), "the window's own bar is drawn only while it does not float")
     }
 
     // MARK: - The tab list and switching

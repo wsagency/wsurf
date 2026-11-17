@@ -46,10 +46,17 @@ final class FloatingBarController: NSObject, NSWindowDelegate {
     let model = FloatingBarModel()
     private var isStarted = false
     private var isStopped = false
+    private var screenObserver: (any NSObjectProtocol)?
+    private var settleWork: DispatchWorkItem?
+    /// Whether the app is active. The edit in the panel is left alone when the whole app deactivates, as the in-window bar's is.
+    var appIsActive: () -> Bool = { NSApp.isActive }
 
     /// Whether the panel follows what Ask reports. A test with no Ask results on screen turns it off to drive `extrasChanged`
     /// itself: laying the panel out again would report none and shrink it back.
     var listensToAsk = true
+
+    /// The visible frames of the screens the bar may sit on. A test stands in for a display that goes away.
+    var screens: () -> [CGRect] = { NSScreen.screens.map(\.visibleFrame) }
 
     /// Whether a window is key. A test host in the background has no key window and sets what it needs here.
     var isKey: (NSWindow) -> Bool = { $0.isKeyWindow }
@@ -62,6 +69,16 @@ final class FloatingBarController: NSObject, NSWindowDelegate {
     private func keyed(_ window: NSWindow?) -> Bool {
         guard let window else { return false }
         return isKey(window)
+    }
+
+    /// The window or its panel has the keyboard.
+    var isKeyUnit: Bool {
+        keyed(window) || keyed(panel)
+    }
+
+    /// The first responder of whichever of the two has the keyboard: the panel's field editor while the address is typed there.
+    var keyResponder: NSResponder? {
+        (keyed(panel) ? panel : window)?.firstResponder
     }
 
     // MARK: - Panel
@@ -96,6 +113,7 @@ final class FloatingBarController: NSObject, NSWindowDelegate {
         withObservationTracking {
             _ = coordinator?.barFloats
             _ = coordinator?.settings.minimalBarFloatOffset
+            _ = coordinator?.settings.minimalBarEdge
             _ = coordinator?.settings.showsFullAddress
         } onChange: { [weak self] in
             Task { @MainActor [weak self] in
@@ -106,10 +124,6 @@ final class FloatingBarController: NSObject, NSWindowDelegate {
         }
     }
 
-    private static var visibleFrames: [CGRect] {
-        NSScreen.screens.map(\.visibleFrame)
-    }
-
     private func barSize(_ coordinator: AppCoordinator, _ window: NSWindow) -> CGSize {
         let visible = (window.screen ?? NSScreen.main)?.visibleFrame.width ?? 1_000
         // The full address (or a developer-mode page) makes the in-window bar wider; the panel follows the setting only, so
@@ -118,15 +132,16 @@ final class FloatingBarController: NSObject, NSWindowDelegate {
         return CGSize(width: width, height: IslandBar.height)
     }
 
-    /// Where the bar belongs: its saved place, else the window's bar edge, kept on a screen.
-    private func savedRow(_ coordinator: AppCoordinator, _ window: NSWindow, size: CGSize) -> CGRect {
+    /// Where the bar belongs: its saved place (a fraction of this window's size), else the window's bar edge, kept near the
+    /// window and on a screen. nil when there is no screen to put it on: the bar is docked.
+    private func savedRow(_ coordinator: AppCoordinator, _ window: NSWindow, size: CGSize) -> CGRect? {
         let settings = coordinator.settings
         let wanted = settings.minimalBarFloatOffset.map { FloatingBarMetrics.row(at: $0, size: size, in: window.frame) }
             ?? FloatingBarMetrics.defaultRow(
                 parent: window.frame, width: size.width, edge: settings.minimalBarEdge,
                 gap: IslandBar.edgeGap(pageSpacing: settings.chromeShape.pageSpacing)
             )
-        return FloatingBarMetrics.clamped(row: wanted, in: Self.visibleFrames)
+        return FloatingBarMetrics.placed(wanted, parent: window.frame, in: screens())
     }
 
     private func show(in window: NSWindow, for coordinator: AppCoordinator) {
@@ -136,14 +151,15 @@ final class FloatingBarController: NSObject, NSWindowDelegate {
             var row = currentRow(of: panel)
             row.size = size
             if coordinator.settings.minimalBarFloatOffset != nil {
-                row = savedRow(coordinator, window, size: size)
+                guard let saved = savedRow(coordinator, window, size: size) else { return dockForWantOfAScreen() }
+                row = saved
             }
             apply(row, to: panel)
             return
         }
-        let row = savedRow(coordinator, window, size: size)
+        guard let row = savedRow(coordinator, window, size: size) else { return dockForWantOfAScreen() }
         model.hasExtras = false
-        model.opensUpward = FloatingBarMetrics.opensUpward(row: row, in: Self.visibleFrames)
+        model.opensUpward = FloatingBarMetrics.opensUpward(row: row, in: screens())
 
         let panel = FloatingBarPanel(frame: FloatingBarMetrics.panelFrame(row: row, opensUpward: model.opensUpward, hasExtras: false))
         panel.delegate = self
@@ -164,6 +180,12 @@ final class FloatingBarController: NSObject, NSWindowDelegate {
         hosting.autoresizingMask = [.width, .height]
         panel.contentView = hosting
         self.panel = panel
+        // A display that goes away leaves the bar where no screen is: it is brought back onto one.
+        screenObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.windowDidSettle() }
+        }
         keyUnit.seed(isKey: keyed(window))
         window.addChildWindow(panel, ordered: .above)
         if window.isVisible {
@@ -174,6 +196,10 @@ final class FloatingBarController: NSObject, NSWindowDelegate {
     private func hide() {
         guard let panel else { return }
         let wasKey = keyed(panel)
+        screenObserver.map(NotificationCenter.default.removeObserver)
+        screenObserver = nil
+        settleWork?.cancel()
+        settleWork = nil
         panel.delegate = nil
         panel.onDragEnd = nil
         window?.removeChildWindow(panel)
@@ -186,6 +212,12 @@ final class FloatingBarController: NSObject, NSWindowDelegate {
         if wasKey, !isStopped {
             window?.makeKey()
         }
+    }
+
+    /// With no screen at all the bar cannot be placed (and a panel nobody can see would take the keyboard for ⌘L): it docks.
+    private func dockForWantOfAScreen() {
+        coordinator?.dockToolbar()
+        hide()
     }
 
     private func currentRow(of panel: FloatingBarPanel) -> CGRect {
@@ -207,21 +239,36 @@ final class FloatingBarController: NSObject, NSWindowDelegate {
     /// A drag ended: keep the bar on a screen, say which way Ask opens from here, and save the place, once.
     private func dragEnded() {
         guard let panel, let window, let coordinator else { return }
-        let screens = Self.visibleFrames
-        let row = FloatingBarMetrics.clamped(row: currentRow(of: panel), in: screens)
+        let visible = screens()
+        guard let row = FloatingBarMetrics.placed(currentRow(of: panel), parent: window.frame, in: visible) else {
+            return dockForWantOfAScreen()
+        }
         if !model.hasExtras {
-            model.opensUpward = FloatingBarMetrics.opensUpward(row: row, in: screens)
+            model.opensUpward = FloatingBarMetrics.opensUpward(row: row, in: visible)
         }
         apply(row, to: panel)
         coordinator.settings.minimalBarFloatOffset = FloatingBarMetrics.offset(of: row, in: window.frame)
     }
 
-    /// The window moved to another display, or opened at its final size: the bar stays inside a screen, at its saved place.
+    /// The window moved or was resized: once it has stopped (not once per step of the move) the bar is kept near it and on a
+    /// screen. Nothing is queued while there is no panel.
+    func windowDidMoveOrResize() {
+        guard panel != nil else { return }
+        settleWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated { self?.windowDidSettle() }
+        }
+        settleWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: work)
+    }
+
+    /// The window moved to another display, a display went away, or the window opened at its final size: the bar stays near the
+    /// window, on a screen, at its saved place.
     func windowDidSettle() {
         guard let panel, let coordinator, let window else { return }
-        let row = savedRow(coordinator, window, size: barSize(coordinator, window))
+        guard let row = savedRow(coordinator, window, size: barSize(coordinator, window)) else { return dockForWantOfAScreen() }
         if !model.hasExtras {
-            model.opensUpward = FloatingBarMetrics.opensUpward(row: row, in: Self.visibleFrames)
+            model.opensUpward = FloatingBarMetrics.opensUpward(row: row, in: screens())
         }
         apply(row, to: panel)
     }
@@ -233,13 +280,15 @@ final class FloatingBarController: NSObject, NSWindowDelegate {
         let row = currentRow(of: panel)
         model.hasExtras = hasExtras
         if !hasExtras {
-            model.opensUpward = FloatingBarMetrics.opensUpward(row: row, in: Self.visibleFrames)
+            model.opensUpward = FloatingBarMetrics.opensUpward(row: row, in: screens())
         }
         apply(row, to: panel)
     }
 
-    /// For ⌘L: the address is in the panel, which has to be key to take what is typed.
+    /// For ⌘L: the address is in the panel, which has to be key to take what is typed, so it is first brought onto a screen: a
+    /// panel nobody can see must never take the keyboard.
     func makeKey() {
+        windowDidSettle()
         panel?.makeKey()
     }
 
@@ -269,8 +318,18 @@ final class FloatingBarController: NSObject, NSWindowDelegate {
     }
 
     private func settleKey() {
+        endEditingIfLeft()
         guard keyUnit.resigned(windowIsKey: keyed(window), panelIsKey: keyed(panel)) else { return }
         coordinator?.windowDidResignKey()
+    }
+
+    /// The keyboard went from the panel to the window (a click on the page): the address edit ends, as it does in the window, or
+    /// the suggestions and the room made for them stay up over the page, the lock stays hidden and the address stops following
+    /// navigation. Not when the whole app deactivates, nor when another window took the keyboard: the edit waits, as the
+    /// window's own does.
+    private func endEditingIfLeft() {
+        guard let panel, appIsActive(), keyed(window), !keyed(panel), panel.firstResponder is NSTextView else { return }
+        _ = panel.makeFirstResponder(nil)
     }
 
     func windowDidBecomeKey(_ notification: Notification) {
@@ -290,6 +349,8 @@ struct BrowserWindowEnvironment: ViewModifier {
         content
             .disclosureGroupStyle(ClickableDisclosureStyle())
             .writingToolsAffordanceVisibility(.hidden)
+            // Switches, sliders and the controls of popovers opened from the page chrome take the theme's accent.
+            .tint(Theme.systemAccent)
             .environment(\.windowControlsInset, coordinator.windowControlsInset)
             .environment(\.titleStripInset, coordinator.titleStripInset)
             .environment(\.profileFavicons, coordinator.browser.context.favicons)

@@ -406,9 +406,9 @@ extension AppCoordinator {
         }
     }
 
-    private func handleKey(_ event: NSEvent) -> Bool {
+    func handleKey(_ event: NSEvent) -> Bool {
         guard isKeyWindow else { return false }
-        if let responder = nativeWindow?.firstResponder, responder is NSText {
+        if keyUnitResponder is NSText {
             return false
         }
         if peek.isOpen,
@@ -423,7 +423,7 @@ extension AppCoordinator {
 
     private func handleEscape() -> Bool {
         guard isKeyWindow else { return false }
-        if let responder = nativeWindow?.firstResponder, responder is NSText {
+        if keyUnitResponder is NSText {
             return false
         }
         if onboarding.isPresented {

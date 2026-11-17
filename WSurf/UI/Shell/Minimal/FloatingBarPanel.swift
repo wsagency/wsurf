@@ -59,6 +59,17 @@ class FloatingBarPanel: NSPanel {
 
     private var isChangingResponder = false
 
+    /// A click in the bar acts for this window, whichever window had the keyboard: with `becomesKeyOnlyIfNeeded` a button does
+    /// not make the panel key, so without this the action would run while another window (or Passwords, or Settings) is key,
+    /// and a sheet it opens through `NSApp.keyWindow` would land on that one. The window takes the keyboard first, as a click
+    /// in the window itself does; the address field then takes it for the panel (`KeyUnit` counts the two as one).
+    override func sendEvent(_ event: NSEvent) {
+        if event.type == .leftMouseDown || event.type == .rightMouseDown, let parent, !parent.isKeyUnit {
+            parent.makeKeyAndOrderFront(nil)
+        }
+        super.sendEvent(event)
+    }
+
     /// `super` returns when the mouse is released.
     override func performDrag(with event: NSEvent) {
         super.performDrag(with: event)
@@ -68,6 +79,31 @@ class FloatingBarPanel: NSPanel {
     /// The bar sits where it was put; AppKit does not move it back inside the screen (`FloatingBarMetrics.clamped` does).
     override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect {
         frameRect
+    }
+
+    // MARK: - Sheets belong to the browser window
+
+    /// Every sheet, a SwiftUI `.sheet` of a view in the bar as much as an AppKit one, is shown on the browser window: this
+    /// panel is a 44 pt strip that cannot hold one, and a sheet there would not block the window it is about (the Review Saved
+    /// Details sheet holds password and card fields). A panel with no window has nowhere better, and keeps it.
+    override func beginSheet(_ sheetWindow: NSWindow, completionHandler handler: ((NSApplication.ModalResponse) -> Void)?) {
+        guard let parent else { return super.beginSheet(sheetWindow, completionHandler: handler) }
+        parent.beginSheet(sheetWindow, completionHandler: handler)
+    }
+
+    override func beginCriticalSheet(_ sheetWindow: NSWindow, completionHandler handler: ((NSApplication.ModalResponse) -> Void)?) {
+        guard let parent else { return super.beginCriticalSheet(sheetWindow, completionHandler: handler) }
+        parent.beginCriticalSheet(sheetWindow, completionHandler: handler)
+    }
+
+    override func endSheet(_ sheetWindow: NSWindow) {
+        guard let parent else { return super.endSheet(sheetWindow) }
+        parent.endSheet(sheetWindow)
+    }
+
+    override func endSheet(_ sheetWindow: NSWindow, returnCode: NSApplication.ModalResponse) {
+        guard let parent else { return super.endSheet(sheetWindow, returnCode: returnCode) }
+        parent.endSheet(sheetWindow, returnCode: returnCode)
     }
 
     // MARK: - Window commands go to the browser window
@@ -113,6 +149,12 @@ extension NSWindow {
     /// The window, or its floating toolbar panel, has the keyboard: the two are one unit as far as the app is concerned.
     var isKeyUnit: Bool {
         isKeyWindow || childWindows?.contains { $0 is FloatingBarPanel && $0.isKeyWindow } == true
+    }
+
+    /// The responder that has the keyboard: the field editor of the floating bar while its panel is key, else the window's own
+    /// (the page). Whatever asks whether the person is typing asks this, never the browser window's `firstResponder` alone.
+    var keyUnitResponder: NSResponder? {
+        (childWindows?.first { $0 is FloatingBarPanel && $0.isKeyWindow } ?? self).firstResponder
     }
 
     /// The window a sheet, an alert or a window command belongs to: the browser window for its floating toolbar panel, which
@@ -187,13 +229,35 @@ enum FloatingBarMetrics {
         return CGRect(x: parent.midX - width / 2, y: y, width: width, height: IslandBar.height)
     }
 
-    /// The saved place: the row's origin relative to the origin of the window's frame.
+    /// The saved place: the row's origin as a fraction of the window's size from the window's origin, so that a window of
+    /// another size puts the bar at the same place relative to itself (a bar dragged near the top of a tall window is near the
+    /// top of a short one, not far above it).
     static func offset(of row: CGRect, in parent: CGRect) -> CGPoint {
-        CGPoint(x: row.minX - parent.minX, y: row.minY - parent.minY)
+        guard parent.width > 0, parent.height > 0 else { return .zero }
+        return CGPoint(x: (row.minX - parent.minX) / parent.width, y: (row.minY - parent.minY) / parent.height)
     }
 
+    /// `row` kept within one window size of its window in each direction: beside it, over a neighbouring display, but never so
+    /// far that the bar, with this window's address and lock, sits over something else.
+    static func near(_ row: CGRect, parent: CGRect) -> CGRect {
+        let limit = parent.insetBy(dx: -parent.width, dy: -parent.height)
+        var result = row
+        result.origin.x = min(max(row.minX, limit.minX), max(limit.maxX - row.width, limit.minX))
+        result.origin.y = min(max(row.minY, limit.minY), max(limit.maxY - row.height, limit.minY))
+        return result
+    }
+
+    /// Where a saved place puts the bar for `parent`: its fraction of that window's size, kept near the window.
     static func row(at offset: CGPoint, size: CGSize, in parent: CGRect) -> CGRect {
-        CGRect(origin: CGPoint(x: parent.minX + offset.x, y: parent.minY + offset.y), size: size)
+        let origin = CGPoint(x: parent.minX + offset.x * parent.width, y: parent.minY + offset.y * parent.height)
+        return near(CGRect(origin: origin, size: size), parent: parent)
+    }
+
+    /// The row for a window, on a screen: `wanted` kept near the window and then inside the screen's visible frame. nil when
+    /// there is no screen at all, and the bar cannot be placed: the caller docks it.
+    static func placed(_ wanted: CGRect, parent: CGRect, in screens: [CGRect]) -> CGRect? {
+        guard !screens.isEmpty else { return nil }
+        return clamped(row: near(wanted, parent: parent), in: screens)
     }
 
     /// The panel's frame around `row`. The row's own edge stays where it is whether or not the headroom is there.
