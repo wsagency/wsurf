@@ -2677,7 +2677,7 @@
       "comment" : "One-line description of the DeepSeek provider in the provider list in Settings, also shown in that row's tooltip. A fragment with no verb; keep it terse."
     },
     "Default" : {
-      "comment" : "The (disabled) state of the button on the General settings page when WSurf is already the system's default browser. A noun/adjective here, never a verb."
+      "comment" : "The (disabled) state of the button on the General settings page and in the setup's bookmarks step when WSurf is already the system's default browser. A noun/adjective here, never a verb."
     },
     "Default browser" : {
       "comment" : "Heading of the section on the General settings page about which app opens links, and the title of that same row in Settings search. Sentence case; “default” is an adjective."
