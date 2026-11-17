@@ -258,6 +258,16 @@ struct ChromiumHistoryRecordTests {
         #expect(paths(record.back) == ["a"])
         #expect(paths(record.forward) == ["c"], "Back never reaches the page the hop left")
         #expect(record.floorIndex(in: record.native) == 2)
+
+        // The error document stands for b: the next hop away keeps b in its place, retried by GET when visited.
+        let away = PageNavigation()
+        let shown = CefRemote.HistoryEntry(id: -1, url: document.url, title: "", isCurrent: true)
+        #expect(record.saved(window: [shown, native(-1, "x")], current: 0) == .init(back: [entry("a")], forward: [entry("x"), entry("c")]))
+        record.startHop(to: try #require(record.back.last).id, window: [shown], current: 0, navigation: away)
+        record.noteCommit(URL(string: "https://a.test/a"), navigation: away)
+        _ = record.update(native: [CefRemote.HistoryEntry(id: 3, url: document.url, title: ""), native(4, "a", current: true)], navigation: away)
+        #expect(record.back.isEmpty)
+        #expect(paths(record.forward) == ["b", "c"])
     }
 
     @Test func aFailedForwardHopKeepsTheForwardEntries() throws {

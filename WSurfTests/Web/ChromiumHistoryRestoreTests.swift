@@ -19,8 +19,9 @@ struct ChromiumHistoryRestoreTests {
         private let lock = NSLock()
         private var seen: [String] = []
 
+        /// A connection that closed before sending a request line (Chromium's preconnect to a site it just tried) is not a load.
         func record(_ request: HTTPFixtureServer.Request) {
-            guard request.path != "/favicon.ico" else { return }
+            guard request.path != "/favicon.ico", !request.method.isEmpty else { return }
             lock.withLock { seen.append("\(request.method) \(request.path)") }
         }
 

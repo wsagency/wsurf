@@ -63,6 +63,8 @@ struct ChromiumHistoryRecord {
     /// Native entries before this one are hidden: what a hop left behind until its collapse lands.
     private(set) var floor: Int64?
     private var hop: Hop?
+    /// WSurf's error document that a failed hop landed on (its native address), and the entry it stands for in the list.
+    private var errorDocument: (url: String, entry: Entry)?
     /// Test seam: awaited before a hop's collapse is sent, so a case can change the page in between.
     var beforeCollapse: (@MainActor () async -> Void)?
 
@@ -90,6 +92,15 @@ struct ChromiumHistoryRecord {
 
     private static func entry(_ native: CefRemote.HistoryEntry) -> Entry {
         Entry(url: native.url, title: native.title)
+    }
+
+    /// The entry a native one stands for in the list: the failed entry for the error document of a failed hop, else itself when it is
+    /// kept, else none.
+    private func standIn(for native: CefRemote.HistoryEntry) -> Entry? {
+        if let errorDocument, native.url == errorDocument.url {
+            return errorDocument.entry
+        }
+        return Self.keeps(native) ? Self.entry(native) : nil
     }
 
     /// `back` and `forward` with only http and https addresses, titles cut, and at most `maximumEntries` in all (the oldest back
@@ -122,6 +133,7 @@ struct ChromiumHistoryRecord {
         native = []
         floor = nil
         hop = nil
+        errorDocument = nil
         back = restored(clean?.back ?? [])
         forward = restored(clean?.forward ?? [])
     }
@@ -138,8 +150,8 @@ struct ChromiumHistoryRecord {
         if let hop, hop.committedURL != nil || hop.failed {
             return Self.saved(back: hop.logical[..<hop.target].compactMap(\.self), forward: hop.logical[(hop.target + 1)...].compactMap(\.self))
         }
-        let nativeBack = window.prefix(max(current, 0)).filter(Self.keeps).map(Self.entry)
-        let nativeForward = window.dropFirst(max(current + 1, 0)).filter(Self.keeps).map(Self.entry)
+        let nativeBack = window.prefix(max(current, 0)).compactMap { standIn(for: $0) }
+        let nativeForward = window.dropFirst(max(current + 1, 0)).compactMap { standIn(for: $0) }
         return Self.saved(back: back.map(\.entry) + nativeBack, forward: nativeForward + forward.map(\.entry))
     }
 
@@ -151,7 +163,7 @@ struct ChromiumHistoryRecord {
     /// A hop to the restored entry `id` started with `navigation`. `window` is the native list Back can reach, read now, with `current`.
     mutating func startHop(to id: Int, window: [CefRemote.HistoryEntry], current: Int, navigation: PageNavigation) {
         let older: [Entry?] = back.map { $0.entry }
-        let reachable: [Entry?] = window.map { Self.keeps($0) ? Self.entry($0) : nil }
+        let reachable: [Entry?] = window.map { standIn(for: $0) }
         let newer: [Entry?] = forward.map { $0.entry }
         let logical = older + reachable + newer
         let target: Int
@@ -208,6 +220,9 @@ struct ChromiumHistoryRecord {
             back = restored(hop.logical[..<hop.target].compactMap(\.self))
             forward = restored(hop.logical[(hop.target + 1)...].compactMap(\.self))
             floor = new[landed].id
+            if hop.failed, let failed = hop.logical[hop.target] {
+                errorDocument = (new[landed].url, failed)
+            }
             self.hop = nil
             return .collapse(keeping: new[landed].url, count: new.count)
         }
