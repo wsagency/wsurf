@@ -23,11 +23,15 @@ extension AppCoordinator {
         return micro
     }
 
-    /// Float on Top, set from the bar and the Window menu. Off is a normal window that can zoom but never enter full screen.
+    /// Float on Top, set from the micro bar and the Window menu, in every window. A micro window also joins every desktop
+    /// while it floats (off is a normal window that can zoom but never enter full screen); a regular window only changes
+    /// level and keeps its collection behaviour. A full-screen window stays at the normal level.
     func applyFloatOnTop() {
-        guard isMicro, let window = nativeWindow else { return }
-        window.level = floatsOnTop ? .floating : .normal
-        window.collectionBehavior = MicroWindowMetrics.collectionBehavior(floating: floatsOnTop)
+        guard let window = nativeWindow else { return }
+        window.level = FloatOnTop.level(floats: floatsOnTop, isFullScreen: window.styleMask.contains(.fullScreen))
+        if isMicro {
+            window.collectionBehavior = MicroWindowMetrics.collectionBehavior(floating: floatsOnTop)
+        }
     }
 
     /// The window the commands that open app pages (a new tab, the palette, Settings, History, Downloads, release notes) act

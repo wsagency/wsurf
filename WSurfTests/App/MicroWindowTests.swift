@@ -259,7 +259,12 @@ struct MicroWindowTests {
                 let found = atWork.first { $0.title == title }
                 #expect(found.map(menu.validateMenuItem) == true, "\(title) works in a window that has a sidebar")
             }
-            #expect(!menu.validateMenuItem(float) && float.isHidden, "Float on Top is a micro window's item")
+            // Float on Top works in every window (owner-requested): the main window's item validates, shows, and follows its state.
+            #expect(menu.validateMenuItem(float) && !float.isHidden && float.state == .off)
+            main.floatsOnTop = true
+            _ = menu.validateMenuItem(float)
+            #expect(float.state == .on)
+            main.floatsOnTop = false
 
             app.focus(micro)
             #expect(app.activeCoordinator === micro)
@@ -921,11 +926,14 @@ struct MicroWindowTests {
             #expect(window.level == .normal)
             #expect(window.collectionBehavior == [.fullScreenNone])
 
-            // The setting belongs to a micro window: a standard window ignores it.
+            // A standard window floats too (owner-requested), but stays on its own desktop and can still enter full screen.
             main.floatsOnTop = true
+            #expect(mainWindow.level == .floating)
+            #expect(mainWindow.collectionBehavior.contains(.fullScreenPrimary))
+            #expect(!mainWindow.collectionBehavior.contains(.canJoinAllSpaces))
+            main.floatsOnTop = false
             #expect(mainWindow.level == .normal)
             #expect(mainWindow.collectionBehavior.contains(.fullScreenPrimary))
-            main.floatsOnTop = false
             finish(app)
         }
     }

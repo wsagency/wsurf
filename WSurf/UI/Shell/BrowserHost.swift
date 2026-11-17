@@ -356,6 +356,7 @@ final class BrowserHost: NSObject, NSWindowDelegate {
     }
 
     func windowWillEnterFullScreen(_ notification: Notification) {
+        window?.level = .normal
         window?.toolbar = nil
     }
 
@@ -374,6 +375,7 @@ final class BrowserHost: NSObject, NSWindowDelegate {
     }
 
     func windowDidExitFullScreen(_ notification: Notification) {
+        coordinator?.applyFloatOnTop()
         window?.alignWindowControls()
         if let window {
             roundContentCorners(of: window)
