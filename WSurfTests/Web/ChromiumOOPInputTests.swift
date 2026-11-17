@@ -867,4 +867,3 @@ struct ChromiumOOPInputTests {
         }
     }
 }
-
