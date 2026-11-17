@@ -241,10 +241,10 @@ enum FloatingBarMetrics {
         return result
     }
 
-    /// Where a saved place puts the bar for `parent`: its fraction of that window's size, kept near the window.
+    /// A saved fraction of `parent`'s size as a row, as it is: no limit.
     static func row(at offset: CGPoint, size: CGSize, in parent: CGRect) -> CGRect {
         let origin = CGPoint(x: parent.minX + offset.x * parent.width, y: parent.minY + offset.y * parent.height)
-        return near(CGRect(origin: origin, size: size), parent: parent)
+        return CGRect(origin: origin, size: size)
     }
 
     /// The row for a window, on a screen: `wanted` kept near the window and then inside the screen's visible frame. nil when
@@ -252,6 +252,39 @@ enum FloatingBarMetrics {
     static func placed(_ wanted: CGRect, parent: CGRect, in screens: [CGRect]) -> CGRect? {
         guard !screens.isEmpty else { return nil }
         return clamped(row: near(wanted, parent: parent), in: screens)
+    }
+
+    /// A drag: the bar may be dropped anywhere on any screen, however far from its window, and is kept only inside the visible
+    /// frame of the screen it is on, so it cannot be lost off screen. nil when there is no screen.
+    static func dropped(_ row: CGRect, in screens: [CGRect]) -> CGRect? {
+        guard !screens.isEmpty else { return nil }
+        return clamped(row: row, in: screens)
+    }
+
+    /// Whether `place` was made in this window and the window is not much smaller than it was then (under three quarters of its
+    /// width or height). A window that was closed and reopened keeps its id, so a relaunch is the same window.
+    static func isOwn(_ place: FloatingBarPlace, windowID: UUID, windowSize: CGSize) -> Bool {
+        place.windowID == windowID
+            && windowSize.width >= place.windowSize.width * 0.75 && windowSize.height >= place.windowSize.height * 0.75
+    }
+
+    /// Where a saved place puts the bar for a window. In the window it was made in (not much smaller now) it is where the person
+    /// put it, if a visible screen holds it, even on another display; if none does (that display went away) it comes back near
+    /// the window. In any other window (a new one, another, a much smaller one) it is the same fraction of that window's size
+    /// kept near the window, so a bar never appears far from its own window or over another by surprise. Both end inside a
+    /// screen. nil when there is no screen: the caller docks it.
+    static func applied(
+        _ place: FloatingBarPlace, size: CGSize, windowID: UUID, parent: CGRect, in screens: [CGRect]
+    ) -> CGRect? {
+        guard !screens.isEmpty else { return nil }
+        let wanted = row(at: place.offset, size: size, in: parent)
+        if isOwn(place, windowID: windowID, windowSize: parent.size) {
+            let centre = CGPoint(x: wanted.midX, y: wanted.midY)
+            if screens.contains(where: { $0.contains(centre) }) {
+                return clamped(row: wanted, in: screens)
+            }
+        }
+        return placed(wanted, parent: parent, in: screens)
     }
 
     /// The panel's frame around `row`. The row's own edge stays where it is whether or not the headroom is there.

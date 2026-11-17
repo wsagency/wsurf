@@ -33,7 +33,7 @@ struct FloatingToolbarTests {
         private let placement: MinimalBarPlacement
 
         private let edge: MinimalBarEdge
-        private let offset: CGPoint?
+        private let offset: FloatingBarPlace?
 
         init() {
             let current = BrowserSettings.application
@@ -810,8 +810,10 @@ struct FloatingToolbarTests {
         let up = controller.model.opensUpward
         let row = FloatingBarMetrics.row(inPanel: panel.frame, opensUpward: up, hasExtras: false)
         #expect(FloatingBarMetrics.clamped(row: row, in: NSScreen.screens.map(\.visibleFrame)) == row, "back on a screen")
-        let saved = try #require(rig.settings.minimalBarFloatOffset)
-        #expect(saved == FloatingBarMetrics.offset(of: row, in: window.frame), "relative to the window's origin")
+        let place = try #require(rig.settings.minimalBarFloatOffset)
+        let saved = place.offset
+        #expect(saved == FloatingBarMetrics.offset(of: row, in: window.frame), "a fraction of the window's size")
+        #expect(place.windowID == first.windowID && place.windowSize == window.frame.size, "and which window, and how big it was")
 
         #expect(await waitUntil(timeout: .seconds(10)) {
             let follower = FloatingBarMetrics.row(inPanel: otherPanel.frame, opensUpward: up, hasExtras: false)

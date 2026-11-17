@@ -136,11 +136,15 @@ final class FloatingBarController: NSObject, NSWindowDelegate {
     /// window and on a screen. nil when there is no screen to put it on: the bar is docked.
     private func savedRow(_ coordinator: AppCoordinator, _ window: NSWindow, size: CGSize) -> CGRect? {
         let settings = coordinator.settings
-        let wanted = settings.minimalBarFloatOffset.map { FloatingBarMetrics.row(at: $0, size: size, in: window.frame) }
-            ?? FloatingBarMetrics.defaultRow(
-                parent: window.frame, width: size.width, edge: settings.minimalBarEdge,
-                gap: IslandBar.edgeGap(pageSpacing: settings.chromeShape.pageSpacing)
+        if let place = settings.minimalBarFloatOffset {
+            return FloatingBarMetrics.applied(
+                place, size: size, windowID: coordinator.windowID, parent: window.frame, in: screens()
             )
+        }
+        let wanted = FloatingBarMetrics.defaultRow(
+            parent: window.frame, width: size.width, edge: settings.minimalBarEdge,
+            gap: IslandBar.edgeGap(pageSpacing: settings.chromeShape.pageSpacing)
+        )
         return FloatingBarMetrics.placed(wanted, parent: window.frame, in: screens())
     }
 
@@ -240,14 +244,17 @@ final class FloatingBarController: NSObject, NSWindowDelegate {
     private func dragEnded() {
         guard let panel, let window, let coordinator else { return }
         let visible = screens()
-        guard let row = FloatingBarMetrics.placed(currentRow(of: panel), parent: window.frame, in: visible) else {
+        // A drag is free: any screen, any distance from the window; only kept inside the screen it is on.
+        guard let row = FloatingBarMetrics.dropped(currentRow(of: panel), in: visible) else {
             return dockForWantOfAScreen()
         }
         if !model.hasExtras {
             model.opensUpward = FloatingBarMetrics.opensUpward(row: row, in: visible)
         }
         apply(row, to: panel)
-        coordinator.settings.minimalBarFloatOffset = FloatingBarMetrics.offset(of: row, in: window.frame)
+        coordinator.settings.minimalBarFloatOffset = FloatingBarPlace(
+            offset: FloatingBarMetrics.offset(of: row, in: window.frame), windowID: coordinator.windowID, windowSize: window.frame.size
+        )
     }
 
     /// The window moved or was resized: once it has stopped (not once per step of the move) the bar is kept near it and on a

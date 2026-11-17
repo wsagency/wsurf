@@ -73,16 +73,37 @@ nonisolated enum MinimalBarPlacement: String, CaseIterable, Identifiable {
         self = stored.flatMap(Self.init(rawValue:)) ?? .window
     }
 
-    /// The stored place of the floating bar, `{x, y}` as `NSStringFromPoint` writes it. Anything else, or none, is no saved
-    /// place (an empty string is how a reset writes it).
-    static func offset(stored: String?) -> CGPoint? {
-        guard let stored, stored.hasPrefix("{"), stored.hasSuffix("}") else { return nil }
-        let parts = stored.dropFirst().dropLast().split(separator: ",", omittingEmptySubsequences: false)
-        guard parts.count == 2,
-              let x = Double(parts[0].trimmingCharacters(in: .whitespaces)),
-              let y = Double(parts[1].trimmingCharacters(in: .whitespaces)),
-              x.isFinite, y.isFinite else { return nil }
-        return CGPoint(x: x, y: y)
+}
+
+/// Where the person put the floating bar, and in which window. `offset` is the bar's origin as a fraction of that window's size
+/// from the window's origin; `windowSize` is how large the window was then. Applied freely to that same window (a drag may
+/// put the bar on another display); to any other window, or to that one once it is much smaller, the bar is kept near the
+/// window instead (`FloatingBarMetrics.applied`).
+nonisolated struct FloatingBarPlace: Equatable {
+    var offset: CGPoint
+    var windowID: UUID
+    var windowSize: CGSize
+
+    /// `fx,fy,width,height,window-id`. Anything else, or none, is no saved place (an empty string is how a reset writes it).
+    var stored: String {
+        "\(offset.x),\(offset.y),\(windowSize.width),\(windowSize.height),\(windowID.uuidString)"
+    }
+
+    init(offset: CGPoint, windowID: UUID, windowSize: CGSize) {
+        self.offset = offset
+        self.windowID = windowID
+        self.windowSize = windowSize
+    }
+
+    init?(stored: String?) {
+        guard let stored else { return nil }
+        let parts = stored.split(separator: ",", omittingEmptySubsequences: false)
+        guard parts.count == 5, let id = UUID(uuidString: String(parts[4])) else { return nil }
+        let numbers = parts[0..<4].compactMap { Double($0) }
+        guard numbers.count == 4, numbers.allSatisfy(\.isFinite), numbers[2] > 0, numbers[3] > 0 else { return nil }
+        self.init(
+            offset: CGPoint(x: numbers[0], y: numbers[1]), windowID: id, windowSize: CGSize(width: numbers[2], height: numbers[3])
+        )
     }
 }
 
@@ -233,13 +254,13 @@ extension BrowserSettings {
         }
     }
 
-    /// Where the floating toolbar's bar sits: its origin relative to the origin of the window's frame, in points. nil is
-    /// the default place, over the window's bar edge. Saved when a drag ends, never while it moves.
-    var minimalBarFloatOffset: CGPoint? {
+    /// Where the floating toolbar's bar was put, and in which window. nil is the default place, over the window's bar edge.
+    /// Saved when a drag ends, never while it moves.
+    var minimalBarFloatOffset: FloatingBarPlace? {
         get { globalValue(\.minimalBarFloatOffset, storage: storedMinimalBarFloatOffset) }
         set {
             setGlobal(\BrowserSettings.minimalBarFloatOffset, storage: \BrowserSettings.storedMinimalBarFloatOffset,
-                      value: newValue, key: Key.minimalBarFloatOffset, encode: { $0.map(NSStringFromPoint) ?? "" })
+                      value: newValue, key: Key.minimalBarFloatOffset, encode: { $0?.stored ?? "" })
         }
     }
 

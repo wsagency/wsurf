@@ -108,8 +108,84 @@ struct FloatingBarGeometryTests {
         #expect(kept.minX >= parent.minX - parent.width - 0.001)
         let beside = row(1_900, 700)
         #expect(FloatingBarMetrics.near(beside, parent: parent) == beside, "beside the window or on a neighbouring display: untouched")
-        #expect(FloatingBarMetrics.row(at: CGPoint(x: 40, y: 40), size: size, in: parent).minX <= parent.maxX + parent.width,
-                "a saved place far outside, from a stored value or another window, is brought back near")
+        let place = FloatingBarPlace(offset: CGPoint(x: 40, y: 40), windowID: UUID(), windowSize: parent.size)
+        let huge = [CGRect(x: -5_000, y: -5_000, width: 60_000, height: 60_000)]
+        let applied = FloatingBarMetrics.applied(place, size: size, windowID: UUID(), parent: parent, in: huge)
+        #expect((applied?.minX ?? .infinity) <= parent.maxX + parent.width,
+                "a saved place far outside, in another window, is brought back near that window")
+    }
+
+    // MARK: - A drag is free; a saved place is applied near its window unless it is this window's own
+
+    private let id = UUID()
+    private let other = UUID()
+    private let window = CGRect(x: 200, y: 100, width: 1_000, height: 700)
+
+    private func close(_ left: CGRect?, _ right: CGRect) -> Bool {
+        guard let left else { return false }
+        return abs(left.minX - right.minX) < 0.001 && abs(left.minY - right.minY) < 0.001
+            && abs(left.width - right.width) < 0.001 && abs(left.height - right.height) < 0.001
+    }
+
+    private func place(of bar: CGRect, in parent: CGRect, window: UUID) -> FloatingBarPlace {
+        FloatingBarPlace(offset: FloatingBarMetrics.offset(of: bar, in: parent), windowID: window, windowSize: parent.size)
+    }
+
+    @Test func aDragMayDropTheBarOnAnotherDisplayFarFromItsWindow() {
+        let far = row(2_500, 100)
+
+        #expect(FloatingBarMetrics.dropped(far, in: screens) == far, "second display, 1,300 pt from the window: allowed")
+        #expect(FloatingBarMetrics.placed(far, parent: window, in: screens) != far, "the near-the-window rule would have refused it")
+        let lost = FloatingBarMetrics.dropped(row(9_000, 9_000), in: screens)
+        #expect(lost.map { r in screens.contains { $0.contains(CGPoint(x: r.midX, y: r.midY)) } } == true, "but never off every screen")
+        #expect(FloatingBarMetrics.dropped(far, in: []) == nil)
+    }
+
+    @Test func aRelaunchPutsTheBarWhereThePersonDroppedItWhileTheDisplayAndTheWindowAreThere() {
+        let far = row(2_500, 100)
+        let saved = place(of: far, in: window, window: id)
+
+        let applied = FloatingBarMetrics.applied(saved, size: size, windowID: id, parent: window, in: screens)
+        #expect(close(applied, far), "the same window, the same size, the second display still there: where it was put")
+    }
+
+    @Test func withTheSecondDisplayGoneTheBarComesBackNextToItsWindowAndDoesNotDock() throws {
+        let saved = place(of: row(2_500, 100), in: window, window: id)
+
+        let applied = try #require(FloatingBarMetrics.applied(saved, size: size, windowID: id, parent: window, in: [screens[0]]))
+        #expect(close(applied, row(720, 100)), "on the display that is left, within one window size of the window")
+        #expect(applied.intersects(window), "next to its window: it touches it")
+        #expect(FloatingBarMetrics.applied(saved, size: size, windowID: id, parent: window, in: []) == nil, "no screen: the caller docks")
+    }
+
+    @Test func aNewMuchSmallerWindowKeepsTheBarNearItself() throws {
+        let saved = place(of: row(2_500, 100), in: window, window: id)
+        let small = CGRect(x: 100, y: 100, width: 400, height: 300)
+
+        let fresh = try #require(FloatingBarMetrics.applied(saved, size: size, windowID: other, parent: small, in: screens))
+        #expect(fresh.minX <= small.maxX + small.width - size.width + 0.001, "within one window size of the small window: \(fresh)")
+        #expect(close(fresh, row(180, 100)))
+        let shrunk = try #require(FloatingBarMetrics.applied(saved, size: size, windowID: id, parent: small, in: screens))
+        #expect(close(shrunk, row(180, 100)), "the same window after it became much smaller is no longer trusted with the place")
+    }
+
+    @Test func anotherWindowOfTheSameSizeDoesNotPutItsBarOnTheFarDisplay() throws {
+        let saved = place(of: row(2_500, 100), in: window, window: id)
+
+        let another = try #require(FloatingBarMetrics.applied(saved, size: size, windowID: other, parent: window, in: screens))
+        #expect(another.maxX <= window.maxX + window.width + 0.001, "never farther than one window size from its own window")
+        #expect(another != row(2_500, 100))
+    }
+
+    @Test func aWindowIsTheSameWindowWhileItIsNotMuchSmallerThanItWas() {
+        let saved = FloatingBarPlace(offset: .zero, windowID: id, windowSize: CGSize(width: 1_000, height: 800))
+
+        #expect(FloatingBarMetrics.isOwn(saved, windowID: id, windowSize: CGSize(width: 1_000, height: 800)))
+        #expect(FloatingBarMetrics.isOwn(saved, windowID: id, windowSize: CGSize(width: 1_600, height: 1_200)), "bigger is fine")
+        #expect(FloatingBarMetrics.isOwn(saved, windowID: id, windowSize: CGSize(width: 750, height: 600)), "three quarters is the limit")
+        #expect(!FloatingBarMetrics.isOwn(saved, windowID: id, windowSize: CGSize(width: 749, height: 800)))
+        #expect(!FloatingBarMetrics.isOwn(saved, windowID: id, windowSize: CGSize(width: 1_000, height: 599)))
+        #expect(!FloatingBarMetrics.isOwn(saved, windowID: other, windowSize: CGSize(width: 1_000, height: 800)), "another window")
     }
 
     // MARK: - S2: a bar that cannot be seen is brought back, or docked

@@ -222,16 +222,19 @@ struct WindowStyleSettingsTests {
         }
     }
 
-    @Test func theFloatingBarsPlaceIsSavedAsAPointAndResets() throws {
+    private let window = UUID(uuidString: "6F9619FF-8B86-D011-B42D-00C04FC964FF")!
+
+    @Test func theFloatingBarsPlaceIsSavedWithItsWindowAndResets() throws {
         try withSettings { settings, defaults in
             #expect(settings.minimalBarFloatOffset == nil, "no place until the bar is dragged")
             let profile = BrowserSettings(defaults: defaults, appliesAppearanceGlobally: false, application: settings)
+            let place = FloatingBarPlace(offset: CGPoint(x: 0.25, y: 1.5), windowID: window, windowSize: CGSize(width: 1_200, height: 800))
 
-            profile.minimalBarFloatOffset = CGPoint(x: 120.5, y: 48)
-            #expect(settings.minimalBarFloatOffset == CGPoint(x: 120.5, y: 48))
-            #expect(defaults.string(forKey: BrowserSettings.Key.minimalBarFloatOffset) == NSStringFromPoint(CGPoint(x: 120.5, y: 48)))
-            #expect(BrowserSettings(defaults: defaults, appliesAppearanceGlobally: false).minimalBarFloatOffset
-                == CGPoint(x: 120.5, y: 48), "it survives a restart")
+            profile.minimalBarFloatOffset = place
+            #expect(settings.minimalBarFloatOffset == place)
+            #expect(defaults.string(forKey: BrowserSettings.Key.minimalBarFloatOffset) == place.stored)
+            #expect(BrowserSettings(defaults: defaults, appliesAppearanceGlobally: false).minimalBarFloatOffset == place,
+                    "it survives a restart, with the window it was made in")
 
             settings.resetToDefaults()
             #expect(settings.minimalBarFloatOffset == nil && profile.minimalBarFloatOffset == nil)
@@ -239,13 +242,18 @@ struct WindowStyleSettingsTests {
         }
     }
 
-    @Test func aStoredPlaceThatIsNotAPointIsNoPlace() {
-        #expect(MinimalBarPlacement.offset(stored: nil) == nil)
-        #expect(MinimalBarPlacement.offset(stored: "") == nil)
-        #expect(MinimalBarPlacement.offset(stored: "somewhere") == nil)
-        #expect(MinimalBarPlacement.offset(stored: "{nan, 4}") == nil)
-        #expect(MinimalBarPlacement.offset(stored: "{inf, 4}") == nil)
-        #expect(MinimalBarPlacement.offset(stored: "{12, -4}") == CGPoint(x: 12, y: -4))
+    @Test func aStoredPlaceThatIsNotAPlaceIsNoPlace() {
+        let good = "0.5,-0.25,1200.0,800.0,\(window.uuidString)"
+        #expect(FloatingBarPlace(stored: good) == FloatingBarPlace(
+            offset: CGPoint(x: 0.5, y: -0.25), windowID: window, windowSize: CGSize(width: 1_200, height: 800)))
+        for bad in [
+            nil, "", "somewhere", "{12, -4}", "0.5,-0.25,1200,800", "0.5,-0.25,1200,800,not-a-uuid",
+            "nan,0.1,1200,800,\(window.uuidString)", "0.1,inf,1200,800,\(window.uuidString)",
+            "0.1,0.1,0,800,\(window.uuidString)", "0.1,0.1,1200,-5,\(window.uuidString)", "a,b,c,d,\(window.uuidString)",
+            "\(good),extra",
+        ] as [String?] {
+            #expect(FloatingBarPlace(stored: bad) == nil, "\(bad ?? "nil")")
+        }
     }
 
     @Test func anUnknownStoredStyleFallsBackToStandard() throws {
