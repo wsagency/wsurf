@@ -24,123 +24,6 @@ struct ChromiumOOPInputTests {
         #endif
     }
 
-    // MARK: Events
-
-    private static func window(_ content: NSView, width: CGFloat = 800, height: CGFloat = 600) -> NSWindow {
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: height), styleMask: .borderless, backing: .buffered, defer: false)
-        window.isReleasedWhenClosed = false
-        window.contentView = content
-        window.orderBack(nil)
-        return window
-    }
-
-    /// A mouse event at (`x`, `y`) of the PAGE (CSS pixels, top-left origin). The window point is worked out here by hand (the window's
-    /// y runs up from its bottom), not by asking the view, so a view that gets its flip wrong fails the tests that check the point.
-    private static func mouse(_ type: NSEvent.EventType, _ x: CGFloat, _ y: CGFloat, in window: NSWindow, clicks: Int = 1) throws -> NSEvent {
-        try #require(NSEvent.mouseEvent(
-            with: type, location: NSPoint(x: x, y: (window.contentView?.bounds.height ?? 0) - y), modifierFlags: [],
-            timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil, eventNumber: 0,
-            clickCount: clicks, pressure: 1))
-    }
-
-    private static func key(
-        _ characters: String, code: UInt16, type: NSEvent.EventType = .keyDown, flags: NSEvent.ModifierFlags = [], in window: NSWindow
-    ) throws -> NSEvent {
-        try #require(NSEvent.keyEvent(
-            with: type, location: .zero, modifierFlags: flags, timestamp: ProcessInfo.processInfo.systemUptime,
-            windowNumber: window.windowNumber, context: nil, characters: characters, charactersIgnoringModifiers: characters,
-            isARepeat: false, keyCode: code))
-    }
-
-    /// A wheel event of `pixels` (a CGEvent that is never posted).
-    private static func wheel(pixels: Int32) throws -> NSEvent {
-        let cgEvent = try #require(CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1, wheel1: pixels, wheel2: 0, wheel3: 0))
-        return try #require(NSEvent(cgEvent: cgEvent))
-    }
-
-    private static func thumbButton(_ number: Int64) throws -> NSEvent {
-        let cgEvent = try #require(CGEvent(mouseEventSource: nil, mouseType: .otherMouseDown, mouseCursorPosition: .zero, mouseButton: .center))
-        cgEvent.setIntegerValueField(.mouseEventButtonNumber, value: number)
-        return try #require(NSEvent(cgEvent: cgEvent))
-    }
-
-    /// The responder after the content view in a test: records the key-downs that reach it.
-    final class KeyRecorder: NSResponder {
-        var keyCodes: [UInt16] = []
-
-        override func keyDown(with event: NSEvent) {
-            keyCodes.append(event.keyCode)
-        }
-    }
-
-    final class Sent {
-        var messages: [CefRemoteMessage] = []
-
-        func sent(_ op: String) -> [CefRemoteMessage] {
-            messages.filter { $0.op == op }
-        }
-
-        var mouse: [CefRemoteMessage] {
-            sent(CefRemote.Op.mouse)
-        }
-
-        var keys: [CefRemoteMessage] {
-            sent(CefRemote.Op.key)
-        }
-
-        var focus: [Bool] {
-            sent(CefRemote.Op.focus).map { $0.bool(CefRemote.Key.flag) }
-        }
-    }
-
-    // MARK: A page with a recorded browser (no service)
-
-    private struct Rig {
-        let context: BrowserProfileContext
-        let native: ChromiumPage
-        let page: BrowserPage
-        let window: NSWindow
-        let connection: ChromiumRemote
-        let remote: ChromiumRemoteBrowser
-        let sent: Sent
-        let view: ChromiumRemoteContentView
-
-        func end() async {
-            window.contentView = nil
-            window.close()
-            connection.disconnect()
-            await page.close()
-            await context.endPrivateSession()
-        }
-    }
-
-    private func makeRig() throws -> Rig {
-        let context = BrowserProfileContext(profile: .privateBrowsing())
-        let native = ChromiumPage(context: context)
-        let page = BrowserPage(chromium: native)
-        let connection = ChromiumRemote(
-            serviceName: ChromiumRemoteClientTests.noSuchService, sink: ChromiumFrameSink(),
-            root: { FileManager.default.temporaryDirectory.appending(path: "wsurf-d4-input-\(UUID().uuidString)", directoryHint: .isDirectory) },
-            latch: ChromiumOOP.Latch(), isEnabled: { true })
-        let remote = ChromiumRemoteBrowser(page: native, connection: connection)
-        let sent = Sent()
-        remote.outgoing = { message in
-            sent.messages.append(message)
-            return true
-        }
-        native.remote = remote
-        native.preparation = Task<Void, Error> {}
-        native.hasAppliedInitialSettings = true
-        remote.markCreated()
-        let window = Self.window(page)
-        native.attachRemoteFrameLayer(to: remote)
-        let view = try #require(remote.contentView)
-        // A shown tab's page has the keys (the attach gave them already when the window had none; made sure of here).
-        _ = window.makeFirstResponder(view)
-        sent.messages.removeAll()
-        return Rig(context: context, native: native, page: page, window: window, connection: connection, remote: remote, sent: sent, view: view)
-    }
-
     @Test func aClickGoesToTheServiceAtThePointOfThePageWithItsTopLeftOrigin() async throws {
         let rig = try makeRig()
         rig.view.mouseDown(with: try Self.mouse(.leftMouseDown, 350, 120, in: rig.window))
@@ -323,27 +206,6 @@ struct ChromiumOOPInputTests {
 
     // MARK: Re-entry, modifiers, page-first chords (review of #145: F3, N1, F2)
 
-    /// A responder that offers the event back to the view, as the window does (`NSWindow.keyDown` offers it as a key equivalent) and as
-    /// a menu action may: first as a key equivalent, then as a key.
-    final class ReenteringResponder: NSResponder {
-        weak var view: ChromiumRemoteContentView?
-        var received = 0
-
-        override func keyDown(with event: NSEvent) {
-            received += 1
-            _ = view?.performKeyEquivalent(with: event)
-            view?.keyDown(with: event)
-        }
-    }
-
-    private func unhandled(_ rig: Rig, code: Int64, modifiers: Int64 = 0) -> CefRemoteMessage {
-        let message = CefRemoteMessage(CefRemote.Event.unhandledKey, browser: rig.remote.id)
-        message.set(CefRemote.Key.keyType, Int64(1))
-        message.set(CefRemote.Key.nativeKeyCode, code)
-        message.set(CefRemote.Key.modifiers, modifiers)
-        return message
-    }
-
     /// F3: an unhandled key that climbs to the window and is offered back to the view (as a key equivalent, or as a key) is never sent to
     /// the page again, so a page that reports every key-down unhandled cannot make an endless exchange. The route that stormed under
     /// the M2 mutation of the first run: the count is exactly one key-down and one character.
@@ -404,39 +266,6 @@ struct ChromiumOOPInputTests {
         await rig.end()
     }
 
-    private final class MenuHits: NSObject {
-        var hits: [String] = []
-
-        @objc func find(_ sender: Any?) {
-            hits.append("find")
-        }
-
-        @objc func back(_ sender: Any?) {
-            hits.append("back")
-        }
-    }
-
-    /// Runs `body` with a main menu of a Find item (⌘F) and a Back item (⌘←) that record their hits.
-    private func withMenu(_ body: (MenuHits) async throws -> Void) async throws {
-        let previous = NSApp.mainMenu
-        defer { NSApp.mainMenu = previous }
-        let hits = MenuHits()
-        let root = NSMenu()
-        let submenu = NSMenu()
-        let find = NSMenuItem(title: "Find", action: #selector(MenuHits.find(_:)), keyEquivalent: "f")
-        find.target = hits
-        let leftArrow = String(UnicodeScalar(NSLeftArrowFunctionKey)!)
-        let back = NSMenuItem(title: "Back", action: #selector(MenuHits.back(_:)), keyEquivalent: leftArrow)
-        back.target = hits
-        submenu.addItem(find)
-        submenu.addItem(back)
-        let item = NSMenuItem()
-        item.submenu = submenu
-        root.addItem(item)
-        NSApp.mainMenu = root
-        try await body(hits)
-    }
-
     /// F2: a chord of `ShortcutPriority.pageFirst` (⌘F here) is offered to the page before the menu, when the view has the keys; one the
     /// page does not handle goes to the menu once. A chord that is the menu's (⌘T) is never claimed.
     @Test func aPageFirstChordGoesToThePageAndComesBackToTheMenuOnceWhenTheyDoNotHandleIt() async throws {
@@ -457,6 +286,34 @@ struct ChromiumOOPInputTests {
             // Not the first responder: not its key.
             #expect(rig.window.makeFirstResponder(nil))
             #expect(!rig.view.performKeyEquivalent(with: find))
+        }
+        await rig.end()
+    }
+
+    /// R1: an agent's key (the MCP key press) is the page's and no one else's. In process it goes to the web view and never to WSurf's
+    /// menu; here an agent's ⌘Z or ⌘← that the page does not handle must not run Undo or Back either, nor go on to any responder. A
+    /// person's ⌘← on the same page still goes Back.
+    @Test func anAgentsKeyThePageDoesNotHandleNeverReachesTheMenuOrTheResponders() async throws {
+        let rig = try makeRig()
+        try await withMenu { hits in
+            let responder = ReenteringResponder()
+            responder.view = rig.view
+            rig.view.nextResponder = responder
+            let left = String(UnicodeScalar(NSLeftArrowFunctionKey)!)
+            let agentZ = try Self.key("z", code: 6, flags: .command, in: rig.window)
+            let agentLeft = try Self.key(left, code: 123, flags: .command, in: rig.window)
+            #expect(rig.native.sendKeyEvent(agentZ), "the page got the agent's ⌘Z")
+            #expect(rig.native.sendKeyEvent(agentLeft), "and ⌘←")
+            #expect(rig.sent.keys.map { $0.int(CefRemote.Key.nativeKeyCode) } == [6, 123])
+            rig.remote.remoteEvent(unhandled(rig, code: 6, modifiers: ChromiumRemoteContentView.modifiers(.command)))
+            rig.remote.remoteEvent(unhandled(rig, code: 123, modifiers: ChromiumRemoteContentView.modifiers(.command)))
+            #expect(hits.hits.isEmpty, "no menu item ran for an agent's keys: \(hits.hits)")
+            #expect(responder.received == 0, "and no responder saw them")
+            #expect(rig.view.sentKeyDowns.isEmpty)
+            // A person's ⌘← on the same page, left unhandled, is Back.
+            #expect(rig.view.performKeyEquivalent(with: try Self.key(left, code: 123, flags: .command, in: rig.window)))
+            rig.remote.remoteEvent(unhandled(rig, code: 123, modifiers: ChromiumRemoteContentView.modifiers(.command)))
+            #expect(hits.hits == ["back"], "a person's ⌘← goes Back: \(hits.hits)")
         }
         await rig.end()
     }
@@ -504,7 +361,7 @@ struct ChromiumOOPInputTests {
 
     // MARK: Real pages through the service
 
-    private static let routes: [String: HTTPFixtureServer.Response] = [
+    static let routes: [String: HTTPFixtureServer.Response] = [
         // Fixed positions, no margin: a point of the page is a point of the viewport.
         "/input": .html("""
             <!doctype html><title>Input</title><body style="margin:0;height:3000px">
@@ -525,73 +382,6 @@ struct ChromiumOOPInputTests {
         "/step2": .html("<!doctype html><title>Two</title><a id=\"next\" href=\"/step3\">next</a>"),
         "/step3": .html("<!doctype html><title>Three</title><p>three"),
     ]
-
-    private struct Live {
-        let server: HTTPFixtureServer
-        let context: BrowserProfileContext
-        let native: ChromiumPage
-        let page: BrowserPage
-        let window: NSWindow
-        var view: ChromiumRemoteContentView? {
-            native.remote?.contentView
-        }
-
-        func js(_ script: String) async -> Any? {
-            try? await page.evaluateJavaScript(script)
-        }
-
-        func number(_ script: String) async -> Double? {
-            await js(script) as? Double
-        }
-
-        func stats() async -> CefRemoteMessage? {
-            guard case let .value(reply) = await ChromiumRemote.shared.request(
-                CefRemoteMessage(CefRemote.Op.debugStats, browser: native.remote?.id ?? -1)) else { return nil }
-            return reply
-        }
-
-        func click(_ x: CGFloat, _ y: CGFloat) throws {
-            let view = try #require(view)
-            view.mouseMoved(with: try ChromiumOOPInputTests.mouse(.mouseMoved, x, y, in: window))
-            view.mouseDown(with: try ChromiumOOPInputTests.mouse(.leftMouseDown, x, y, in: window))
-            view.mouseUp(with: try ChromiumOOPInputTests.mouse(.leftMouseUp, x, y, in: window))
-        }
-
-        func finish() async {
-            window.contentView = nil
-            window.close()
-            await page.close()
-            await context.endPrivateSession()
-        }
-    }
-
-    private func withLive(_ path: String, container: Bool = false, _ body: (Live) async throws -> Void) async throws {
-        let server = try await HTTPFixtureServer.start(routes: Self.routes)
-        let context = BrowserProfileContext(profile: .privateBrowsing())
-        let native = ChromiumPage(context: context)
-        let page = BrowserPage(chromium: native)
-        let window: NSWindow
-        if container {
-            let root = NSView(frame: NSRect(x: 0, y: 0, width: 800, height: 600))
-            page.frame = root.bounds
-            root.addSubview(page)
-            window = Self.window(root)
-        } else {
-            window = Self.window(page)
-        }
-        let live = Live(server: server, context: context, native: native, page: page, window: window)
-        do {
-            let url = try server.url(path)
-            page.load(URLRequest(url: url))
-            try #require(await waitUntil { page.url == url && !page.isLoading })
-            try #require(live.view != nil)
-            try await body(live)
-        } catch {
-            await live.finish()
-            throw error
-        }
-        await live.finish()
-    }
 
     @Test(.enabled(if: ChromiumServiceBundle.isPresent), .boundedWebViews)
     func typingWsurfIntoAFieldGivesItsValueAndTheServiceHasTheInputStats() async throws {

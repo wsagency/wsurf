@@ -25,7 +25,15 @@ final class ChromiumRemoteContentView: NSView {
 
     /// The key-down events sent to the page that it has not answered, oldest first: the page reports a key it did not handle by its
     /// key code only, and the event that goes on in the app is the one made for it (`+Keys`).
-    var sentKeyDowns: [NSEvent] = []
+    var sentKeyDowns: [SentKey] = []
+
+    /// A key-down sent to the page, and whose key it was: a person's (the app's own `keyDown` and `performKeyEquivalent`), or an agent's
+    /// (the MCP key press, `ChromiumPage.sendKeyEvent`). An agent's key never leaves the page (R1): in process it goes to the web view and
+    /// to nothing else, never to WSurf's menu.
+    struct SentKey {
+        let event: NSEvent
+        let fromPerson: Bool
+    }
     /// The key-down this view handed on to the app (`redispatchUnhandledKey`) while the hand-on runs. Whatever the app does with it, it
     /// never comes back to the page: the view neither sends it again nor claims it as a key equivalent.
     var redispatching: NSEvent?

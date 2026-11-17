@@ -58,9 +58,10 @@ extension ChromiumRemoteContentView {
     }
 
     /// Sends a key event to the page as `keyDown` and `keyUp` do. False when nothing was sent (no browser, not made yet, gone, or the
-    /// page is hidden): a caller that reports "delivered" (the MCP key press) must not when the page never received it.
+    /// page is hidden): a caller that reports "delivered" (the MCP key press) must not when the page never received it. `fromPerson` is
+    /// false for an agent's key: if the page does not handle it, it is dropped (`redispatchUnhandledKey`).
     @discardableResult
-    func deliver(_ event: NSEvent) -> Bool {
+    func deliver(_ event: NSEvent, fromPerson: Bool = true) -> Bool {
         guard event !== redispatching else { return false }
         let line = lineKey(for: event)
         guard event.type == .keyDown else {
@@ -69,7 +70,7 @@ extension ChromiumRemoteContentView {
         guard sendKey(event, type: KEYEVENT_KEYDOWN, as: line) else { return false }
         // Home and End are the page's own: it takes them, and they never come back as a key to hand on.
         guard line == nil else { return true }
-        sentKeyDowns.append(event)
+        sentKeyDowns.append(SentKey(event: event, fromPerson: fromPerson))
         if sentKeyDowns.count > Self.unansweredKeyLimit {
             sentKeyDowns.removeFirst()
         }
@@ -143,12 +144,14 @@ extension ChromiumRemoteContentView {
     func redispatchUnhandledKey(nativeKeyCode: UInt16, type: Int64, modifiers: Int64) {
         guard type == Int64(KEYEVENT_RAWKEYDOWN.rawValue) || type == Int64(KEYEVENT_KEYDOWN.rawValue),
               let index = sentKeyDowns.firstIndex(where: {
-                  $0.keyCode == nativeKeyCode
-                      && Self.modifiers($0.modifierFlags) & Self.matchedModifiers == modifiers & Self.matchedModifiers
+                  $0.event.keyCode == nativeKeyCode
+                      && Self.modifiers($0.event.modifierFlags) & Self.matchedModifiers == modifiers & Self.matchedModifiers
               }) else { return }
-        let event = sentKeyDowns[index]
+        let sent = sentKeyDowns[index]
+        let event = sent.event
         sentKeyDowns.removeFirst(index + 1)
-        guard window?.firstResponder === self else { return }
+        // An agent's key never reaches WSurf's menu or its responders (R1): an MCP ⌘Z must not run Undo, nor ⌘← Back.
+        guard sent.fromPerson, window?.firstResponder === self else { return }
         redispatching = event
         defer { redispatching = nil }
         if ShortcutPriority.pageAnswersFirst(event), NSApp.mainMenu?.performKeyEquivalent(with: event) == true {

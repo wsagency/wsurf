@@ -65,7 +65,7 @@ extension ChromiumPage {
     func sendKeyEvent(_ event: NSEvent) -> Bool {
         guard let responder = window?.firstResponder, responder !== self, ownsResponder(responder) else { return false }
         if let view = responder as? ChromiumRemoteContentView {
-            return view.deliver(event)
+            return view.deliver(event, fromPerson: false)
         }
         if event.type == .keyUp {
             responder.keyUp(with: event)
