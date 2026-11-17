@@ -131,17 +131,18 @@ struct SiteMenuTests {
         let menu: MainMenu
     }
 
-    private func withMenu(_ body: (Rig, NSMenuItem) throws -> Void) throws {
+    private func withMenu(firstAddress: String = "https://first.example/page", _ body: (Rig, NSMenuItem) throws -> Void) throws {
         let saved = (NSApp.mainMenu, NSApp.windowsMenu, NSApp.helpMenu, NSApp.servicesMenu)
         NSApp.mainMenu = nil
         NSApp.windowsMenu = nil
         let app = BrowserApplication()
-        let first = coordinator(showing: "https://first.example/page")
+        let first = coordinator(showing: firstAddress)
         let second = coordinator(showing: "https://second.example/")
         app.register(first)
         app.register(second)
         let menu = MainMenu(application: app)
         menu.install()
+        app.mainMenu = menu  // what `bootstrap()` does: a window becoming key reaches the menu through it
         defer {
             first.closeWindow()
             second.closeWindow()
@@ -241,8 +242,7 @@ struct SiteMenuTests {
     /// The row names the address as `AddressText` rebuilds it: no sign-in details in front of the host.
     @Test func theAddressRowNeverShowsSignInDetails() throws {
         try withSiteSetting {
-            try withMenu { rig, item in
-                rig.first.browser.activeTab?.urlString = "https://bank.com@evil.com/login"
+            try withMenu(firstAddress: "https://bank.com@evil.com/login") { rig, item in
                 rig.first.windowDidBecomeKey()
                 let address = try #require(item.submenu?.items.first)
                 _ = rig.menu.validateMenuItem(address)

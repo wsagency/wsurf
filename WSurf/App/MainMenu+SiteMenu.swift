@@ -69,7 +69,7 @@ extension MainMenu {
             menuItem.state = coordinator.settings.showsSiteInMenuBar ? .on : .off
             return true
         case #selector(showSiteAddress):
-            let text = AddressText(coordinator.pageCommandTab.flatMap { coordinator.linkURL(for: $0) })?.text ?? ""
+            let text = coordinator.menuBarAddress?.text ?? ""
             menuItem.title = text.count > 80 ? String(text.prefix(40)) + "…" + String(text.suffix(39)) : text
             return false
         default:

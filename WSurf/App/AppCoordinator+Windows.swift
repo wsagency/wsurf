@@ -99,17 +99,22 @@ extension AppCoordinator {
             : String(localized: "\(title) — \(profiles.current.name)")
     }
 
-    /// The name the “site” menu after Help shows: the front page's website as the address bar draws it (`AddressText`, so
-    /// sign-in details, look-alike letters and the path never reach the menu bar), at most 32 characters. Nil when the
-    /// setting is off, which is checked first so nothing about a navigation is read or observed then, and for a private
-    /// window, a system, internal or extension page, an empty tab, and any address that is not an http(s) website.
-    var menuBarHost: String? {
+    /// The front page's address as the address bar draws it (`AddressText`: no sign-in details, no look-alike letters), for the
+    /// “site” menu after Help. Nil when the setting is off, which is checked first so nothing about a navigation is read or
+    /// observed then, and for a private window, a system, internal or extension page, an empty tab, and any address that is
+    /// not an http(s) website.
+    var menuBarAddress: AddressText? {
         guard settings.showsSiteInMenuBar, !profiles.isPrivate, let tab = browser.activeTab,
               !tab.isPrivate, tab.extensionBaseURL == nil, !tab.isShowingSystemPage,
               let address = AddressText(URL(string: tab.urlString)),
               address.scheme == "https://" || address.scheme == "http://", !address.host.isEmpty
         else { return nil }
-        let name = address.name
+        return address
+    }
+
+    /// The name that menu shows: the website only, never path or query, at most 32 characters.
+    var menuBarHost: String? {
+        guard let name = menuBarAddress?.name else { return nil }
         return name.count > 32 ? String(name.prefix(31)) + "…" : name
     }
 

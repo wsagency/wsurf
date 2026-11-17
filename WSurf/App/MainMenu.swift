@@ -649,10 +649,9 @@ final class MainMenu: NSObject, NSMenuItemValidation {
     }
 
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {  // swiftlint:disable:this cyclomatic_complexity
-        if let answer = validateWithoutBrowserWindow(menuItem) {
+        if let answer = validateWithoutBrowserWindow(menuItem) ?? validateSiteItem(menuItem) {
             return answer
         }
-        if let answer = validateSiteItem(menuItem) { return answer }
         guard validateMicroItem(menuItem) != false else { return false }
         switch menuItem.action {
         case #selector(goBack):
