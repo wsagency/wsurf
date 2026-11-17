@@ -46,7 +46,8 @@ struct ChromiumOOPAccessibilityTests {
         }
         return [
             "id": id, "role": role, "child_ids": children,
-            "location": ["x": frame.minX, "y": frame.minY, "width": frame.width, "height": frame.height] as [String: Any],
+            // JSON numbers, as the service sends them (a CGFloat in an `Any` is not a Double to the mirror's decoding).
+            "location": ["x": Double(frame.minX), "y": Double(frame.minY), "width": Double(frame.width), "height": Double(frame.height)] as [String: Any],
             "attributes": attributes,
         ]
     }
@@ -239,7 +240,7 @@ struct ChromiumOOPAccessibilityTests {
         // The page navigates: a new tree, a new root.
         rig.mirror.apply(.tree, json: Self.tree([Self.node(1, "rootWebArea", children: [2]), Self.node(2, "button", name: "Next")], id: "tree-2"))
         #expect(rig.mirror.nodeCount == 2 && before > 2, "the old tree is gone, not kept beside the new one")
-        #expect(Self.walk(rig.view).map { $0.accessibilityTitle() } == ["Next"])
+        #expect(Self.walk(rig.view).dropFirst().map { $0.accessibilityTitle() } == ["Next"], "the web area and the one button")
         await rig.end()
     }
 
@@ -519,7 +520,8 @@ struct ChromiumOOPAccessibilityTests {
             #expect(await waitUntil { state.mirror.isEmpty }, "and holds none")
             live.page.isHidden = false
             #expect(await waitUntil { state.sentOn })
-            #expect(await waitUntil(timeout: .seconds(30)) { !state.mirror.isEmpty }, "shown again, the tree is rebuilt")
+            let rebuilt = await waitUntil(timeout: .seconds(30)) { !state.mirror.isEmpty }
+            #expect(rebuilt, "shown again, the tree is rebuilt: \(state.mirror.summary), delivered \(live.connection.accessibility.delivered), dropped \(live.connection.accessibility.droppedUpdates), sentOn \(state.sentOn), enables \(state.enableMessagesSent)")
         }
     }
 

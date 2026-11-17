@@ -90,6 +90,15 @@ nonisolated struct ChromiumAccessibilityForest: Sendable {
         relink()
     }
 
+    /// No nodes, as after the tree was turned off. What the trees said about themselves (their parent, title and which one is the page's)
+    /// is kept: a whole tree that comes again may not repeat it, and the page's tree must still be found.
+    mutating func clearNodes() {
+        for id in Array(trees.keys) {
+            trees[id]?.nodes = [:]
+            trees[id]?.rootID = -1
+        }
+    }
+
     /// One `ax.location` message's JSON array.
     mutating func applyLocations(_ list: [[String: Any]]) {
         for change in list {

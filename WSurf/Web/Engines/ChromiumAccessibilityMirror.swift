@@ -67,7 +67,7 @@ nonisolated final class ChromiumAccessibilityMirror: @unchecked Sendable {
     /// Back to no tree: the tree was turned off, its connection was lost, or the browser is gone. Updates are ignored until `accept`.
     func reset() {
         state.withLock { state in
-            state.forest = ChromiumAccessibilityForest()
+            state.forest.clearNodes()
             state.elements.removeAll()
             state.accepting = false
         }
@@ -98,6 +98,14 @@ nonisolated final class ChromiumAccessibilityMirror: @unchecked Sendable {
 
     var rootKey: Key? {
         state.withLock { $0.forest.rootKey }
+    }
+
+    /// What the mirror holds, for a failing test's message.
+    var summary: String {
+        state.withLock { state in
+            "trees \(state.forest.trees.count), nodes \(state.forest.nodeCount), root \(String(describing: state.forest.rootKey)), "
+                + "accepting \(state.accepting), tree updates \(state.treeUpdates)"
+        }
     }
 
     /// The root web area's bounds in Chromium's unit.
