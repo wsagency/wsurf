@@ -106,7 +106,7 @@ struct FloatingBarGeometryTests {
         let kept = FloatingBarMetrics.near(far, parent: parent)
         #expect(kept.maxX <= parent.maxX + parent.width + 0.001 && kept.maxY <= parent.maxY + parent.height + 0.001)
         #expect(kept.minX >= parent.minX - parent.width - 0.001)
-        let beside = row(1_900, 700)
+        let beside = row(1_800, 700)
         #expect(FloatingBarMetrics.near(beside, parent: parent) == beside, "beside the window or on a neighbouring display: untouched")
         let place = FloatingBarPlace(offset: CGPoint(x: 40, y: 40), windowID: UUID(), windowSize: parent.size)
         let huge = [CGRect(x: -5_000, y: -5_000, width: 60_000, height: 60_000)]
@@ -196,7 +196,7 @@ struct FloatingBarGeometryTests {
         let both = [screens[0], screens[1]]
 
         let onSecond = FloatingBarMetrics.placed(wanted, parent: parent, in: both)
-        #expect(onSecond == wanted, "within one window size of the window, on the second display")
+        #expect(onSecond == row(1_440, 300), "within one window size of the window, on the second display, whole inside it")
         let afterUnplug = FloatingBarMetrics.placed(wanted, parent: parent, in: [screens[0]])
         #expect(afterUnplug == row(720, 300), "the second display is gone: onto the first")
         #expect(FloatingBarMetrics.placed(wanted, parent: parent, in: []) == nil, "no screen at all: nothing to place it on")

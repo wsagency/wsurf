@@ -192,10 +192,10 @@ struct FloatingToolbarTests {
         weak var controller: FloatingBarController?
         weak var hosting: NSView?
         let coordinator = try rig.open()
-        let hostObject = try host(of: coordinator)
+        // The host is looked up each time and never held: a test that holds it would be what keeps the controller alive.
         do {
             try detach(rig, coordinator)
-            let bar = try #require(hostObject.floatingBar)
+            let bar = try #require(host(of: coordinator).floatingBar)
             let panel = try #require(bar.panel)
             panels.track(panel)
             windows.track(coordinator.nativeWindow)
@@ -203,21 +203,20 @@ struct FloatingToolbarTests {
             hosting = panel.contentView
         }
         coordinator.dockToolbar()
-        hostObject.syncFloatingBar()
+        try host(of: coordinator).syncFloatingBar()
         // Counted like every other window leak test: a closed window can sit in an autorelease pool, which is no leak.
         #expect(await waitUntil(timeout: .seconds(10)) { panels.live == 0 && hosting == nil },
                 "the docked panel or its hosting view is still alive: \(panels.liveDescription)")
 
         do {
             try detach(rig, coordinator)
-            let bar = try #require(hostObject.floatingBar)
-            let panel = try #require(bar.panel)
+            let panel = try #require(host(of: coordinator).floatingBar?.panel)
             panels.track(panel)
             hosting = panel.contentView
         }
         coordinator.closeWindow()
         #expect(await waitUntil(timeout: .seconds(10)) { panels.live == 0 && windows.live == 0 && hosting == nil && controller == nil },
-                "the panel, its view, its controller or the window outlived the window: \(panels.liveDescription) \(windows.liveDescription)")
+                "outlived the window: panel \(panels.live) [\(panels.liveDescription)], window \(windows.live) [\(windows.liveDescription)], hosting view \(hosting != nil), controller \(controller != nil)")
     }
 
     @Test func aWindowThatNeverFloatsItsBarHasNoControllerAtAll() throws {
