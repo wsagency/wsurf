@@ -309,14 +309,23 @@ struct ChromiumHistoryRestoreTests {
         }
     }
 
-    /// WebKit restores its own state natively, as before: a state saved before this change keeps its meaning.
-    @Test func aWebKitTabStillWakesWithItsLists() async throws {
+    /// WebKit restores its own state natively, as before, and a state the previous build wrote (`{"engine":"webkit","webKit":…}`,
+    /// made here by hand, not by the code under test) keeps its meaning.
+    @Test func aWebKitTabStillWakesWithItsListsFromAStateSavedBeforeThisChange() async throws {
         try await withRig(engine: .webKit) { rig, log in
             let tab = try await history(in: rig, back: 1)
             try #require(await settles(tab, at: "/b", back: ["/a"], forward: ["/c"]), "\(lists(tab))")
             _ = try await sleepAndWake(tab, in: rig, log: log)
             #expect(await settles(tab, at: "/b", back: ["/a"], forward: ["/c"]), "\(lists(tab))")
             #expect(tab.page.engine == .webKit)
+
+            let native = try #require(tab.page.webKit?.interactionState as? Data)
+            let older = try JSONSerialization.data(withJSONObject: ["engine": "webkit", "webKit": native.base64EncodedString()])
+            _ = try await rig.open("/still")
+            rig.coordinator.unloadTab(tab)
+            tab.deferRestore(state: older, url: try rig.server.url("/b"))
+            rig.browser.activate(tab)
+            #expect(await settles(tab, at: "/b", back: ["/a"], forward: ["/c"]), "\(lists(tab))")
         }
     }
 }
