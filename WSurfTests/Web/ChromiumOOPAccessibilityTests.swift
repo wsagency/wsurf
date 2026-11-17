@@ -100,7 +100,7 @@ struct ChromiumOOPAccessibilityTests {
     }
 
     /// A page in a 1000 x 600 window, whose browser was told scale 2 and sends nowhere: no service, no CEF.
-    private func makeRig() -> Rig {
+    private func makeRig() async -> Rig {
         let context = BrowserProfileContext(profile: .privateBrowsing())
         let native = ChromiumPage(context: context)
         let page = BrowserPage(chromium: native)
@@ -120,6 +120,9 @@ struct ChromiumOOPAccessibilityTests {
         window.contentView = page
         window.orderBack(nil)
         native.attachRemoteFrameLayer(to: remote)
+        // The page's own geometry update (queued when it joined the window) runs first and says the window's real scale, whatever the
+        // display is; the rig then says 2, which nothing changes again (no resize follows).
+        _ = await waitUntil(timeout: .seconds(5)) { !remote.geometryUpdatePending }
         remote.sentScale = 2
         return Rig(context: context, native: native, page: page, window: window, connection: connection, remote: remote)
     }
@@ -154,7 +157,7 @@ struct ChromiumOOPAccessibilityTests {
     }
 
     @Test func theViewShowsAnAXWebAreaWhoseChildrenAreTheHeadingTextButtonAndLinkWithTheirNamesAndValues() async {
-        let rig = makeRig()
+        let rig = await makeRig()
         #expect(rig.view.accessibilityChildren()?.isEmpty == true, "no tree has arrived: nothing to show")
         rig.mirror.apply(.tree, json: Self.page)
         let root = rig.view.accessibilityChildren()?.first as? ChromiumAccessibilityElement
@@ -177,7 +180,7 @@ struct ChromiumOOPAccessibilityTests {
     /// The plan's mutation: the spike calibrated the unit from the root's width. The root here is 1600 units wide in a 1000-point view
     /// (a resize that has not reached the tree yet), which a calibration reads as a scale of 1.6; the scale the service was told is 2.
     @Test func framesAreInViewPointsFromTheScaleTheServiceWasToldWhateverWidthTheTreeHas() async {
-        let rig = makeRig()
+        let rig = await makeRig()
         rig.mirror.apply(.tree, json: Self.page)
         #expect(rig.mirror.rootBounds?.width == 1600)
         #expect(rig.view.bounds.width == 1000)
@@ -192,7 +195,7 @@ struct ChromiumOOPAccessibilityTests {
     }
 
     @Test func aPointOnTheScreenFindsTheElementUnderIt() async throws {
-        let rig = makeRig()
+        let rig = await makeRig()
         rig.mirror.apply(.tree, json: Self.page)
         let button = try #require(Self.find(rig.view, role: .button))
         let screen = button.accessibilityFrame()
@@ -206,7 +209,7 @@ struct ChromiumOOPAccessibilityTests {
     /// The plan's second mutation: after an update the parents are made again. A node a DOM change adds has none until then, and a
     /// client asks an element for its parent to walk up.
     @Test func aNodeTheNextUpdateAddsKnowsItsParentSoTheTreeFollowsADomChange() async throws {
-        let rig = makeRig()
+        let rig = await makeRig()
         rig.mirror.apply(.tree, json: Self.page)
         let root = try #require(rig.view.accessibilityChildren()?.first as? ChromiumAccessibilityElement)
         #expect(Self.find(rig.view, role: .button, title: "New") == nil)
@@ -225,7 +228,7 @@ struct ChromiumOOPAccessibilityTests {
     }
 
     @Test func aLocationUpdateMovesAnElementAndAReplacedTreeLeavesNoOldNodes() async throws {
-        let rig = makeRig()
+        let rig = await makeRig()
         rig.mirror.apply(.tree, json: Self.page)
         let before = rig.mirror.nodeCount
         let button = try #require(Self.find(rig.view, role: .button))
@@ -241,7 +244,7 @@ struct ChromiumOOPAccessibilityTests {
     }
 
     @Test func theFirstQueryWantsTheTreeAndNothingBeforeItDoes() async {
-        let rig = makeRig()
+        let rig = await makeRig()
         #expect(!rig.connection.accessibility.wantsTree && !rig.connection.accessibilityIsOn, "VoiceOver is off and nobody asked")
         _ = rig.view.accessibilityChildren()
         #expect(rig.connection.accessibility.wantsTree, "the first query by any client turns the tree on (Q12)")
@@ -249,7 +252,7 @@ struct ChromiumOOPAccessibilityTests {
     }
 
     @Test func theMirrorEmptiesWhenTheServiceEndsAndALateUpdateOfTheOldConnectionIsDropped() async throws {
-        let rig = makeRig()
+        let rig = await makeRig()
         rig.mirror.apply(.tree, json: Self.page)
         let mirror = rig.mirror
         #expect(!(rig.view.accessibilityChildren() ?? []).isEmpty)
@@ -273,7 +276,7 @@ struct ChromiumOOPAccessibilityTests {
     // MARK: The decoder and the cap
 
     @Test func anUpdateOverTheCapIsNotParsedAndTheBrowsersTreeIsTurnedOffAndEmptied() async throws {
-        let rig = makeRig()
+        let rig = await makeRig()
         rig.mirror.apply(.tree, json: Self.page)
         let decoder = rig.connection.accessibility.decoder
         let message = CefRemoteMessage(CefRemote.Event.accessibilityTree, browser: rig.remote.id)
