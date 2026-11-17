@@ -46,7 +46,7 @@ class FloatingBarPanel: NSPanel {
     override func makeFirstResponder(_ responder: NSResponder?) -> Bool {
         let wasEditing = firstResponder is NSTextView
         let accepted = super.makeFirstResponder(responder)
-        if accepted, wasEditing, !(responder is NSTextView), isKeyWindow {
+        if accepted, wasEditing, !(responder is NSTextView || responder is NSTextField), isKeyWindow {
             parent?.makeKey()
         }
         return accepted
