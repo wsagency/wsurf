@@ -215,7 +215,7 @@ struct WindowStyleSettingsTests {
         try withSettings { _, defaults in
             for stored in ["sidebar", "Floating", "", "1"] {
                 defaults.set(stored, forKey: BrowserSettings.Key.minimalBarPlacement)
-                #expect(BrowserSettings(defaults: defaults, appliesAppearanceGlobally: false).minimalBarPlacement == .window, stored)
+                #expect(BrowserSettings(defaults: defaults, appliesAppearanceGlobally: false).minimalBarPlacement == .window, "\(stored)")
             }
             defaults.set(true, forKey: BrowserSettings.Key.minimalBarPlacement)
             #expect(BrowserSettings(defaults: defaults, appliesAppearanceGlobally: false).minimalBarPlacement == .window)
