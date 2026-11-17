@@ -9,7 +9,6 @@ struct AskContextPage: Identifiable, Equatable {
     let id: UUID
     let title: String
     let host: String?
-    let isAttached: Bool
 }
 
 enum AskContext {
@@ -18,23 +17,22 @@ enum AskContext {
         var seen: Set<UUID> = []
         var pages = onScreen.compactMap { tab -> AskContextPage? in
             guard tab.isShowingRealPage, seen.insert(tab.id).inserted else { return nil }
-            return page(tab, isAttached: false)
+            return page(tab)
         }
         pages += mentionedTabIDs.compactMap { id in
             guard let tab = browser.tabs.first(where: { $0.id == id }),
                   seen.insert(id).inserted
             else { return nil }
-            return page(tab, isAttached: true)
+            return page(tab)
         }
         return pages
     }
 
-    private static func page(_ tab: BrowserTab, isAttached: Bool) -> AskContextPage {
+    private static func page(_ tab: BrowserTab) -> AskContextPage {
         AskContextPage(
             id: tab.id,
             title: tab.title,
-            host: URL(string: tab.urlString)?.displayHost,
-            isAttached: isAttached
+            host: URL(string: tab.urlString)?.displayHost
         )
     }
 }
@@ -60,7 +58,6 @@ struct AskContextStrip: View {
                         AskPageChipView(
                             title: page.title,
                             host: page.host,
-                            isAttached: page.isAttached,
                             fontSize: 10.5
                         )
                     }
