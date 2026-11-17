@@ -186,7 +186,7 @@ final class FloatingBarController: NSObject, NSWindowDelegate {
     private func apply(_ row: CGRect, to panel: FloatingBarPanel) {
         let frame = FloatingBarMetrics.panelFrame(row: row, opensUpward: model.opensUpward, hasExtras: model.hasExtras)
         if !panel.frame.equalTo(frame) {
-            panel.setFrame(frame, display: true)
+            panel.setFrame(frame, display: false)
         }
         if let level = window?.level, panel.level != level {
             panel.level = level
