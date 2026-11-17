@@ -46,10 +46,11 @@ nonisolated enum PasswordAutofillScript {
           username:typeof username === 'string' && username.length <= 500 ? username : ''};
       };
       // Why a login or code field got no offer, for the log alone (a fixed set, never a value of the page): null for a field that is
-      // no login field at all, so a search box or a comment field reports nothing.
+      // no login field at all, so a search box or a comment field reports nothing. A field the model does not list (it is not shown)
+      // counts as a login field when it is a password input.
       const why = target => {
         const field = forms.field(target);
-        if (field?.category !== 'password' && field?.kind !== 'one-time-code') return null;
+        if (field?.category !== 'password' && field?.kind !== 'one-time-code' && !(target instanceof HTMLInputElement && target.type === 'password')) return null;
         if (!enabled) return 'disabled';
         if (!visible(target)) return 'notVisible';
         return forms.group(target)?.safe ? 'formShape' : 'formUnsafe';

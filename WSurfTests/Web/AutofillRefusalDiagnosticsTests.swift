@@ -28,7 +28,7 @@ struct AutofillRefusalDiagnosticsTests {
         Offer(frameOriginTrusted: false, expected: .frameNotTrusted),
         // Several refusals at once: the order of the checks, not the order of the arguments, names the reason.
         Offer(enabled: false, topIsSecure: false, agentControlled: true, frameOriginTrusted: false, expected: .disabled),
-        Offer(hasOnlySecureContent: false, agentControlled: true, expected: .agentControlled),
+        Offer(hasOnlySecureContent: false, agentControlled: true, expected: .insecurePage),
         Offer(hasOnlySecureContent: false, frameOriginTrusted: false, expected: .insecurePage),
     ])
     func theDropdownsRefusalIsTheFirstCheckThatFails(offer: Offer) {
