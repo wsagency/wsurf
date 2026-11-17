@@ -336,6 +336,7 @@ struct ChromiumHistoryRestoreTests {
             rig.coordinator.unloadTab(tab)
             tab.deferRestore(state: older, url: try rig.server.url("/b"))
             rig.browser.activate(tab)
+            _ = await tab.waitForPendingNavigation()
             #expect(await settles(tab, at: "/b", back: ["/a"], forward: ["/c"]), "\(lists(tab))")
         }
     }
