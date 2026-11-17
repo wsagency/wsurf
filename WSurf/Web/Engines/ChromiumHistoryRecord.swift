@@ -1,0 +1,194 @@
+// SPDX-FileCopyrightText: 2026 WSurf Agency
+// SPDX-License-Identifier: BUSL-1.1
+
+import CefKit
+import Foundation
+
+/// WSurf's own record of a Chromium tab's Back and Forward list (D3b). Chromium can read its history but never take one back, so a
+/// tab that sleeps, is restored after a relaunch, duplicated or reopened keeps its entries here and loads only its current address.
+/// The other entries ("restored") load only when the person goes Back or Forward to them, by a plain GET (a hop). Nothing is imported
+/// into Chromium, no form is sent again, and an entry made by a POST is never saved.
+///
+/// One store, one input: the native list as `[CefRemote.HistoryEntry]` (Chromium's entry ids, addresses, titles, POST flags). In
+/// process `ChromiumPage` feeds it from `Page.getNavigationHistory` (ids) and CEF's entry visitor (POST flags, read in the turn they are
+/// used); out of process the service already sends this shape (`history.changed`), which D4-33 connects.
+struct ChromiumHistoryRecord {
+    /// What is saved of an entry: its address and title, nothing else.
+    nonisolated struct Entry: Codable, Equatable, Sendable {
+        var url: String
+        var title: String
+    }
+
+    /// What a tab saves: `back` oldest first, `forward` nearest first. The current entry is the tab's own address.
+    nonisolated struct Saved: Codable, Equatable, Sendable {
+        var back: [Entry]
+        var forward: [Entry]
+    }
+
+    struct Restored: Equatable {
+        let id: Int
+        let entry: Entry
+    }
+
+    /// A hop on its way: the whole list as it was when it started (nil where an entry is not kept), re-formed around `target` once the
+    /// hop's own entry appears.
+    private struct Hop {
+        let navigation: PageNavigation
+        let logical: [Entry?]
+        let target: Int
+        let isBackward: Bool
+        let knownIDs: Set<Int64>
+        /// The address the main frame committed for it (after any redirect). A hop that stays inside the document commits none, and
+        /// is found by its own address.
+        var committedURL: String?
+
+        var address: String {
+            committedURL ?? logical[target]?.url ?? ""
+        }
+    }
+
+    /// Chromium keeps 50 entries; the current one is the tab's address.
+    static let maximumEntries = 49
+    static let maximumTitleLength = 256
+
+    private(set) var back: [Restored] = []
+    private(set) var forward: [Restored] = []
+    private var nextID = 1
+    /// The native list as last read, with Chromium's ids.
+    private(set) var native: [CefRemote.HistoryEntry] = []
+    /// Native entries before this one are hidden: what a hop left behind until its collapse lands.
+    private(set) var floor: Int64?
+    private var hop: Hop?
+    /// Test seam: awaited before a hop's collapse is sent, so a case can change the page in between.
+    var beforeCollapse: (@MainActor () async -> Void)?
+
+    /// Saved only: an http or https address that no POST made.
+    static func keeps(_ entry: CefRemote.HistoryEntry) -> Bool {
+        guard !entry.hasPostData, let scheme = URL(string: entry.url)?.scheme?.lowercased() else { return false }
+        return scheme == "http" || scheme == "https"
+    }
+
+    private static func entry(_ native: CefRemote.HistoryEntry) -> Entry {
+        Entry(url: native.url, title: native.title)
+    }
+
+    /// `back` and `forward` with only http and https addresses, titles cut, and at most `maximumEntries` in all (the oldest back
+    /// entries go first); nil when nothing is left.
+    static func saved(back: [Entry], forward: [Entry]) -> Saved? {
+        func clean(_ list: [Entry]) -> [Entry] {
+            list.filter { Self.keeps(CefRemote.HistoryEntry(id: 0, url: $0.url, title: "")) }
+                .map { Entry(url: $0.url, title: String($0.title.prefix(Self.maximumTitleLength))) }
+        }
+        var back = clean(back)
+        var forward = clean(forward)
+        while back.count + forward.count > Self.maximumEntries {
+            if back.isEmpty {
+                forward.removeLast()
+            } else {
+                back.removeFirst()
+            }
+        }
+        return back.isEmpty && forward.isEmpty ? nil : Saved(back: back, forward: forward)
+    }
+
+    /// Where the hidden native entries end in `list`, by id: 0 when nothing is hidden.
+    func floorIndex(in list: [CefRemote.HistoryEntry]) -> Int {
+        floor.flatMap { id in list.firstIndex { $0.id == id } } ?? 0
+    }
+
+    /// Starts again from a saved list, before the tab's address is loaded.
+    mutating func seed(_ saved: Saved) {
+        let clean = Self.saved(back: saved.back, forward: saved.forward)
+        native = []
+        floor = nil
+        hop = nil
+        back = restored(clean?.back ?? [])
+        forward = restored(clean?.forward ?? [])
+    }
+
+    private mutating func restored(_ entries: [Entry]) -> [Restored] {
+        let base = nextID
+        nextID += entries.count
+        return entries.enumerated().map { Restored(id: base + $0.offset, entry: $0.element) }
+    }
+
+    /// The list to save, around the native entries Back can reach (`window`, with `current` in it). A hop that has committed but not
+    /// yet been applied saves the list it re-forms.
+    func saved(window: [CefRemote.HistoryEntry], current: Int) -> Saved? {
+        if let hop, hop.committedURL != nil {
+            return Self.saved(back: hop.logical[..<hop.target].compactMap(\.self), forward: hop.logical[(hop.target + 1)...].compactMap(\.self))
+        }
+        let nativeBack = window.prefix(max(current, 0)).filter(Self.keeps).map(Self.entry)
+        let nativeForward = window.dropFirst(max(current + 1, 0)).filter(Self.keeps).map(Self.entry)
+        return Self.saved(back: back.map(\.entry) + nativeBack, forward: nativeForward + forward.map(\.entry))
+    }
+
+    /// The address of the restored entry `id`.
+    func address(of id: Int) -> URL? {
+        (back + forward).first { $0.id == id }.flatMap { URL(string: $0.entry.url) }
+    }
+
+    /// A hop to the restored entry `id` started with `navigation`. `window` is the native list Back can reach, read now, with `current`.
+    mutating func startHop(to id: Int, window: [CefRemote.HistoryEntry], current: Int, navigation: PageNavigation) {
+        let older: [Entry?] = back.map { $0.entry }
+        let reachable: [Entry?] = window.map { Self.keeps($0) ? Self.entry($0) : nil }
+        let newer: [Entry?] = forward.map { $0.entry }
+        let logical = older + reachable + newer
+        let target: Int
+        if let index = back.firstIndex(where: { $0.id == id }) {
+            target = index
+        } else if let index = forward.firstIndex(where: { $0.id == id }) {
+            target = back.count + window.count + index
+        } else {
+            return
+        }
+        hop = Hop(navigation: navigation, logical: logical, target: target, isBackward: target < back.count + max(current, 0),
+                  knownIDs: Set(native.map(\.id)))
+    }
+
+    /// The main frame committed `url` (a new document, or a move inside one) while `navigation` was the page's.
+    mutating func noteCommit(_ url: URL?, navigation: PageNavigation?) {
+        guard hop?.navigation === navigation, let url else { return }
+        hop?.committedURL = url.absoluteString
+    }
+
+    /// Whether `navigation` is a hop backward in the list (an engine switch must then not keep the page it leaves for Back).
+    func hopsBackward(navigation: PageNavigation?) -> Bool {
+        hop?.navigation === navigation && hop?.isBackward == true
+    }
+
+    enum Change: Equatable {
+        case unchanged
+        /// The restored forward entries were dropped.
+        case forwardDropped
+        /// A hop was applied: native history may now be collapsed to its entry, which must be the last of `count` entries.
+        case collapse(keeping: String, count: Int)
+    }
+
+    /// The native list changed. A hop whose entry is in it is applied. Otherwise a new navigation (a new entry right after the entry
+    /// that was current, which is still there) drops the restored forward entries, as Chromium drops its own; a replacement, a
+    /// traversal or a reload does not, and neither does WSurf's own error document (`data:`).
+    mutating func update(native new: [CefRemote.HistoryEntry], navigation: PageNavigation?) -> Change {
+        defer { native = new }
+        if hop != nil, hop?.navigation !== navigation {
+            hop = nil
+        }
+        if let hop, let landed = new.lastIndex(where: { !hop.knownIDs.contains($0.id) && $0.url == hop.address }) {
+            back = restored(hop.logical[..<hop.target].compactMap(\.self))
+            forward = restored(hop.logical[(hop.target + 1)...].compactMap(\.self))
+            floor = new[landed].id
+            self.hop = nil
+            return .collapse(keeping: new[landed].url, count: new.count)
+        }
+        if hop?.committedURL != nil {
+            // Committed, but its entry is not in this read yet.
+            return .unchanged
+        }
+        guard !forward.isEmpty, let previous = native.first(where: \.isCurrent), previous.url != "about:blank",
+              let index = new.firstIndex(where: { $0.id == previous.id }), index + 1 < new.count else { return .unchanged }
+        let next = new[index + 1]
+        guard !native.contains(where: { $0.id == next.id }), !next.url.hasPrefix("data:") else { return .unchanged }
+        forward = []
+        return .forwardDropped
+    }
+}

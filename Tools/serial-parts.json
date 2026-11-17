@@ -208,6 +208,8 @@
    "ChromiumCloseTimeoutTests",
    "ChromiumContextMenuTests",
    "ChromiumFindTests",
+   "ChromiumHistoryRecordTests",
+   "ChromiumHistoryRestoreTests",
    "ChromiumPrewarmTests",
    "ChromiumScrollWakeTests",
    "ColourChooserDismissalTests",

@@ -310,7 +310,11 @@ extension BrowserTab {
             refreshChrome()
         }
         view.onContentProcessTerminated = { [weak self] in self?.contentProcessDidTerminate() }
-        view.onHistoryChanged = { [weak self] in self?.refreshChrome() }
+        // Chromium's list can change with no commit (`pushState`): the saved state follows it.
+        view.onHistoryChanged = { [weak self] in
+            self?.refreshChrome()
+            self?.invalidateSessionState()
+        }
         view.onNavigatedWithinDocument = { [weak self, weak view] in
             guard let self, let view, !isClosed, liveView === view, isShowingRealPage, !isRestoring else { return }
             onInPageMove?()
