@@ -181,9 +181,9 @@ struct CredentialPickerScriptTests {
 
     private static let cancel = "<script>document.addEventListener('contextmenu', event => event.preventDefault());</script>"
 
-    private static func page(crossOriginFrame: Bool) -> String {
+    private static func page(crossOriginFrame: Bool, extra: String = "") -> String {
         let host = crossOriginFrame ? "'localhost:' + location.port" : "location.host"
-        return cancel + #"""
+        return cancel + extra + #"""
         <form id="a"><input id="au" autocomplete="username"><input id="ap" type="password"></form>
         <form id="b"><input id="bu" name="email" type="email"><input id="bp" type="password"></form>
         <p id="text">Some text</p>
@@ -227,10 +227,10 @@ struct CredentialPickerScriptTests {
     private static let frame = cancel + #"<form><input id="fu" autocomplete="username"><input id="fp" type="password"></form>"#
 
     private func withHarness(
-        _ engine: BrowserEngine, crossOriginFrame: Bool = false, body: (Harness) async throws -> Void
+        _ engine: BrowserEngine, crossOriginFrame: Bool = false, extra: String = "", body: (Harness) async throws -> Void
     ) async throws {
         let server = try await HTTPFixtureServer.start(routes: [
-            "/": .html("<!doctype html><html><body>\(Self.page(crossOriginFrame: crossOriginFrame))</body></html>"),
+            "/": .html("<!doctype html><html><body>\(Self.page(crossOriginFrame: crossOriginFrame, extra: extra))</body></html>"),
             "/frame": .html("<!doctype html><html><body>\(Self.frame)</body></html>"),
         ])
         defer { withExtendedLifetime(server) {} }
@@ -291,6 +291,25 @@ struct CredentialPickerScriptTests {
             let frame = try #require(harness.subframe)
             #expect(try await harness.values(["fu", "fp"], in: frame) == ["", ""])
             #expect(try await harness.fill(click, ["username": "again", "password": "again"]) == 0, "a right-click fills once")
+        }
+    }
+
+    /// A login form whose username is prefilled and `readonly` still gets its password: the right-click on the editable password
+    /// field is a target, and the fill goes into that field alone and leaves the username as the page wrote it. A `readonly` field
+    /// is no target, so no fill reaches it (a disabled one is left out: whether a page sees a right-click on it is the engine's
+    /// call, and the menu tests cover it).
+    @Test(.boundedWebViews, arguments: BrowserEngine.allCases)
+    func aReadOnlyUsernameDoesNotStopThePasswordBesideItFromFillingAndNoReadOnlyFieldTakesAFill(engine: BrowserEngine) async throws {
+        let extra = #"<form id="rf"><input id="ru" value="prefilled" readonly><input id="rp" type="password"></form><input id="ro" value="read only" readonly>"#
+        try await withHarness(engine, extra: extra) { harness in
+            let readOnly = try await harness.rightClick("ro")
+            #expect(readOnly.body["token"] is NSNull || readOnly.body["token"] == nil, "a read-only field is no target")
+            #expect(try await harness.fill(readOnly, ["username": "ada", "password": "dummy-secret"]) == 0)
+
+            let password = try await harness.rightClick("rp")
+            #expect(password.body["field"] as? String == "password" && UUID(uuidString: password.body["token"] as? String ?? "") != nil)
+            #expect(try await harness.fill(password, ["username": "ada", "password": "dummy-secret"]) == 1, "the password field only")
+            #expect(try await harness.values(["ru", "rp", "ro"]) == ["prefilled", "dummy-secret", "read only"])
         }
     }
 
