@@ -52,6 +52,12 @@ struct ChromiumHistoryRecord {
         var isBackward: Bool {
             target < start
         }
+
+        /// Its load failed, so Chromium's error entry for it is in the list until WSurf's error document lands it, or a retarget is
+        /// waiting for its own commit.
+        var hasMoved: Bool {
+            failed || committedURL == "" || committedURL?.hasPrefix("chrome-error:") == true
+        }
     }
 
     /// Chromium keeps 50 entries; the current one is the tab's address.
@@ -182,18 +188,19 @@ struct ChromiumHistoryRecord {
         hop = Hop(navigation: navigation, logical: logical, start: back.count + max(current, 0), target: target, knownIDs: Set(native.map(\.id)))
     }
 
-    /// Whether the hop on its way with the page's `navigation` failed: Chromium's error entry for it is in its list until WSurf's error
-    /// document lands the hop, and a retarget waits for its own commit. Back, Forward and picks then move from the entry it started at, in
-    /// the list it started from (`entryFromHop`), never natively: a native move from the error entry would leave the failed entry in the
-    /// list twice. A hop that committed its page lands on the next read.
-    func hopHasMoved(navigation: PageNavigation?) -> Bool {
-        guard let hop, hop.navigation === navigation else { return false }
-        return hop.failed || hop.committedURL == "" || hop.committedURL?.hasPrefix("chrome-error:") == true
+    /// Whether a hop failed and is not applied yet (`Hop.hasMoved`), also after a typed address replaced its navigation (`superseded`).
+    /// Back, Forward, picks and reloads then move in the list it started from (`entryFromHop`, `hopTarget`), never natively: a native
+    /// move from Chromium's error entry would leave the failed entry in the list twice. A hop that committed its page lands on the next
+    /// read.
+    var hopHasMoved: Bool {
+        hop?.hasMoved == true
     }
 
     /// The nearest kept entry `step` away (-1 Back, 1 Forward) from where the hop on its way started, with its place in the hop's list:
-    /// a second Back during a Back hop is its own target again (S5). With nothing that way, the entry it started at (else its target),
-    /// so the hop still lands and its entry in Chromium's list is never left behind.
+    /// a second Back during a Back hop is its own target again (S5). It counts from the entry the held list still calls current, not
+    /// from the failed entry the address bar shows, so it matches that list (and the agent's Back check, which reads its last back
+    /// entry): after a Back hop with an entry D after the start, Forward goes to D. With nothing that way, the entry it started at
+    /// (else its target), so the hop still lands and its entry in Chromium's list is never left behind.
     func entryFromHop(_ step: Int) -> (index: Int, url: URL)? {
         guard let hop else { return nil }
         var index = hop.start + step
@@ -206,6 +213,12 @@ struct ChromiumHistoryRecord {
             }
         }
         return nil
+    }
+
+    /// The hop's own target with its place in its list: a reload, or a load of its address, while it has moved retries it there.
+    var hopTarget: (index: Int, url: URL)? {
+        guard let hop, let url = hop.logical[hop.target].flatMap({ URL(string: $0.url) }) else { return nil }
+        return (hop.target, url)
     }
 
     /// The place of the restored entry `id` in the list of the hop on its way (a pick from the list while the hop has moved).
@@ -262,12 +275,17 @@ struct ChromiumHistoryRecord {
     /// traversal or a reload does not, and neither does WSurf's own error document (`data:`).
     mutating func update(native new: [CefRemote.HistoryEntry], navigation: PageNavigation?) -> Change {
         defer { native = new }
-        if hop != nil, hop?.navigation !== navigation {
-            hop = nil
+        if let hop, hop.navigation !== navigation {
+            if hop.hasMoved {
+                return superseded(hop, in: new)
+            }
+            self.hop = nil
         }
         // A failed hop lands on the error document's own entry, once it is current: never on an error entry Chromium committed for the
         // failed address, nor on an earlier error document a retarget left (the same `data:` address).
-        if let hop, let landed = new.lastIndex(where: { !hop.knownIDs.contains($0.id) && (hop.failed ? $0.isCurrent && $0.url.hasPrefix("data:") : $0.url == hop.address) }) {
+        if let hop, let landed = new.lastIndex(where: { entry in
+            !hop.knownIDs.contains(entry.id) && (hop.failed ? entry.isCurrent && entry.url.hasPrefix("data:") : entry.url == hop.address)
+        }) {
             back = restored(hop.logical[..<hop.target].compactMap(\.self))
             forward = restored(hop.logical[(hop.target + 1)...].compactMap(\.self))
             floor = new[landed].id
@@ -287,5 +305,19 @@ struct ChromiumHistoryRecord {
         guard !native.contains(where: { $0.id == next.id }), !next.url.hasPrefix("data:") else { return .unchanged }
         forward = []
         return .forwardDropped
+    }
+
+    /// A failed hop whose navigation a typed address replaced before its error document landed (a reload, or a load of the failed
+    /// address, retries the hop instead). Its entries stay in Chromium's list, so once the new address's entry is current the list
+    /// re-forms as a new navigation from the failed entry: it and the entries before it go back, the forward entries are dropped, and
+    /// every older native entry goes below the floor. Until then the hop holds.
+    private mutating func superseded(_ hop: Hop, in new: [CefRemote.HistoryEntry]) -> Change {
+        guard let entry = new.last(where: \.isCurrent), !hop.knownIDs.contains(entry.id), !entry.url.hasPrefix("data:"),
+              entry.url != hop.logical[hop.target]?.url else { return .unchanged }
+        back = restored(hop.logical[...hop.target].compactMap(\.self))
+        forward = []
+        floor = entry.id
+        self.hop = nil
+        return .collapse(keeping: entry.url, count: new.count)
     }
 }

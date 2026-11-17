@@ -211,7 +211,7 @@ extension ChromiumPage {
         if remote == nil {
             applyToRecord(list)
             // A hop's entry is in this list but not applied: the list it started from stays, which Back and Forward move in (`rehop`).
-            if historyRecord.hopHasMoved(navigation: navigation) {
+            if historyRecord.hopHasMoved {
                 return
             }
         }
@@ -269,8 +269,8 @@ extension ChromiumPage {
     /// The person's (or the agent's) Back: natively while Chromium has an entry to go to, else a hop to the newest restored entry. While
     /// a hop's entry is in Chromium's list but not yet applied (`ChromiumHistoryRecord.hopHasMoved`), from where it started (`rehop`).
     func goBackInHistory() -> PageNavigation? {
-        if historyRecord.hopHasMoved(navigation: navigation) {
-            return rehop(-1)
+        if historyRecord.hopHasMoved {
+            return rehop(to: historyRecord.entryFromHop(-1))
         }
         if remote == nil, !nativeCanGoBack(), let target = historyRecord.back.last {
             return hop(to: target.id)
@@ -279,8 +279,8 @@ extension ChromiumPage {
     }
 
     func goForwardInHistory() -> PageNavigation? {
-        if historyRecord.hopHasMoved(navigation: navigation) {
-            return rehop(1)
+        if historyRecord.hopHasMoved {
+            return rehop(to: historyRecord.entryFromHop(1))
         }
         if remote == nil, let target = historyRecord.forward.first, let read = nativeEntries(), read.current == read.entries.count - 1 {
             return hop(to: target.id)
@@ -288,14 +288,31 @@ extension ChromiumPage {
         return goForward()
     }
 
+    /// A pick from the Back or Forward list. A native entry is not picked while a failed hop holds the list: its traversal would start
+    /// from Chromium's error entry and leave the failed entry in the list twice. The list is the hop's own again once it lands.
     func goInHistory(to item: PageHistoryItem) -> PageNavigation? {
-        guard let id = item.restoredID else { return go(to: item) }
+        guard let id = item.restoredID else { return historyRecord.hopHasMoved ? nil : go(to: item) }
         return remote == nil ? hop(to: id) : nil
     }
 
     /// WSurf's error document replaced the failed load `failed`: a hop that was that load keeps its place through the document.
     func keepHopThroughErrorDocument(failed: PageNavigation?) {
         historyRecord.failedHop(failed, errorDocument: navigation)
+    }
+
+    /// Reload: while a failed hop holds the list, the failed entry again by GET in its place (`rehop`). A native reload of Chromium's
+    /// error entry would make a second error document after it, and the failed entry would be in the list twice.
+    func reloadInHistory(ignoreCache: Bool = false, byPerson: Bool = false) -> PageNavigation? {
+        historyRecord.hopHasMoved ? rehop(to: historyRecord.hopTarget, byPerson: byPerson) : reload(ignoreCache: ignoreCache, byPerson: byPerson)
+    }
+
+    /// A load of the failed entry's own address while a failed hop holds the list (a reload after Stop, the address typed again)
+    /// retries the hop, as a reload does. Any other load replaces it (`ChromiumHistoryRecord.superseded`).
+    func loadInHistory(_ request: URLRequest, byPerson: Bool = false) -> PageNavigation? {
+        if historyRecord.hopHasMoved, (request.httpMethod ?? "GET") == "GET", let target = historyRecord.hopTarget, request.url == target.url {
+            return rehop(to: target, byPerson: byPerson)
+        }
+        return load(request, byPerson: byPerson)
     }
 
     /// Whether the page's navigation is a hop backward in the list. A load the engine router moves to the other engine must then not
@@ -310,7 +327,7 @@ extension ChromiumPage {
     private func hop(to id: Int) -> PageNavigation? {
         guard let url = historyRecord.address(of: id), let read = nativeEntries() else { return nil }
         // A pick while a hop has moved Chromium's list: in that hop's list, as Back and Forward then are (`rehop`).
-        if historyRecord.hopHasMoved(navigation: navigation) {
+        if historyRecord.hopHasMoved {
             guard let index = historyRecord.indexInHop(of: id), let next = load(URLRequest(url: url)) else { return nil }
             historyRecord.retargetHop(to: index, navigation: next)
             return next
@@ -324,10 +341,10 @@ extension ChromiumPage {
         return next
     }
 
-    /// Back (`step` -1) or Forward (1) while a hop has moved Chromium's list unapplied: the entry next to the one the hop started at, by GET, in the hop's
-    /// own list (`ChromiumHistoryRecord.entryFromHop`), so two quick Backs move one step (S5).
-    private func rehop(_ step: Int) -> PageNavigation? {
-        guard let entry = historyRecord.entryFromHop(step), let next = load(URLRequest(url: entry.url)) else { return nil }
+    /// Back, Forward or a reload while a failed hop holds the list: `entry` of the hop's own list by GET (`entryFromHop`, `hopTarget`),
+    /// so two quick Backs move one step (S5).
+    private func rehop(to entry: (index: Int, url: URL)?, byPerson: Bool = false) -> PageNavigation? {
+        guard let entry, let next = load(URLRequest(url: entry.url), byPerson: byPerson) else { return nil }
         historyRecord.retargetHop(to: entry.index, navigation: next)
         return next
     }
