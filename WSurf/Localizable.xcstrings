@@ -619,9 +619,6 @@
     "Keep Open" : {
       "comment" : "Button in the sheet that asks whether the assistant or a connected app may close a tab: leaves the tab open. Title Case."
     },
-    "Dock Toolbar" : {
-      "comment" : "View menu item, context-menu item, and the tooltip and VoiceOver label of the icon in the tab list’s top row, that puts the Minimal window’s detached bar back into the window. Title Case; the opposite of “Detach Toolbar”."
-    },
     "Don’t ask again for this task" : {
       "comment" : "Checkbox in the sheet that asks whether the assistant may close a tab. When checked and the person closes the tab, the assistant closes other tabs of the same task without asking."
     },
@@ -9118,6 +9115,9 @@
     },
     "Dock icon" : {
       "comment" : "Title of the Dock icon section in Settings › Appearance, and of its entry in Settings search. It chooses the icon the macOS Dock shows while WSurf is running. Sentence case; a noun phrase."
+    },
+    "Dock Toolbar" : {
+      "comment" : "View menu item, context-menu item, and the tooltip and VoiceOver label of the icon in the tab list’s top row, that puts the Minimal window’s detached bar back into the window. Title Case; the opposite of “Detach Toolbar”."
     },
     "Document number" : {
       "comment" : "Row label, shown beside the value, of a field of an item in the credential editor of Settings › Credentials. Sentence case. On an ID document item: the document’s number, hidden by default. Noun phrase."
