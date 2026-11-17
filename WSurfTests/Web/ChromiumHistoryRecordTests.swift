@@ -270,6 +270,33 @@ struct ChromiumHistoryRecordTests {
         #expect(paths(record.forward) == ["b", "c"])
     }
 
+    /// A second Back after a Back hop committed, before a read applied it (S5): it goes to the same entry again, from the list the hop
+    /// started from. The first load's entry is in Chromium's list but does not land it: only the entry the new load commits does.
+    @Test func aSecondBackRestartsAHopThatCommittedFromWhereItStarted() throws {
+        var record = seeded(back: ["a", "b"], forward: [])
+        _ = record.update(native: [native(1, "c", current: true)], navigation: nil)
+        let hop = PageNavigation()
+        record.startHop(to: try #require(record.back.last).id, window: [native(-1, "c", current: true)], current: 0, navigation: hop)
+        record.noteCommit(URL(string: "https://a.test/b"), navigation: hop)
+        #expect(record.hopHasMoved(navigation: hop) && !record.hopHasMoved(navigation: PageNavigation()))
+        #expect(record.entryFromHop(1)?.index == nil, "nothing after the entry it started at")
+
+        let restart = try #require(record.entryFromHop(-1))
+        #expect(restart.url.absoluteString == "https://a.test/b")
+        let again = PageNavigation()
+        record.retargetHop(to: restart.index, navigation: again)
+        #expect(record.hopsBackward(navigation: again))
+        #expect(record.update(native: [native(1, "c"), native(2, "b", current: true)], navigation: again) == .unchanged,
+                "the first load's entry does not land the restart")
+        #expect(paths(record.back) == ["a", "b"] && record.forward.isEmpty)
+
+        record.noteCommit(URL(string: "https://a.test/b"), navigation: again)
+        #expect(record.update(native: [native(1, "c"), native(2, "b"), native(3, "b", current: true)], navigation: again)
+                == .collapse(keeping: "https://a.test/b", count: 3))
+        #expect(paths(record.back) == ["a"] && paths(record.forward) == ["c"])
+        #expect(record.floorIndex(in: record.native) == 2, "the first load's entry is hidden with the page the hop left")
+    }
+
     @Test func aFailedForwardHopKeepsTheForwardEntries() throws {
         var record = seeded(back: [], forward: ["b", "c"])
         _ = record.update(native: [native(1, "a", current: true)], navigation: nil)

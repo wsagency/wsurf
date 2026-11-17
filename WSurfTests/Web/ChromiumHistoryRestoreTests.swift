@@ -423,6 +423,34 @@ struct ChromiumHistoryRestoreTests {
         #expect(tab.urlString == url?.absoluteString)
     }
 
+    /// A second Back while the error document of a failed Back hop loads (S5): Chromium's error entry for the hop is already in its
+    /// list, and Back must not move natively from it back to the page the hop left. It restarts the hop, which fails again; the error
+    /// document stands in the failed entry's place once more and the list keeps its order, with no entry twice.
+    @Test func aSecondBackWhileTheErrorDocumentLoadsRestartsTheFailedHop() async throws {
+        try await withRig { rig, log in
+            let (dead, _) = try await closedPort(log: log)
+            let (tab, _) = try await wake(at: "/c", from: state(back: [rig.server.url("/a"), dead], forward: []), in: rig, log: log)
+            try #require(await settles(tab, at: "/c", back: ["/a", "/dead"], forward: []), "\(lists(tab))")
+
+            let mark = log.count
+            onceAfterFailure(of: tab) { [weak tab] in tab?.goBack() }
+            tab.goBack()
+            #expect(await showsError(tab, back: ["/a"], forward: ["/c"]), "\(lists(tab))")
+            #expect(await showsOwnErrorPage(tab), "\(tab.page.title ?? "-")")
+            #expect(tab.urlString == dead.absoluteString, "the tab's address (saved as its current entry) is the failed one: \(tab.urlString)")
+            let first = try rig.server.url("/a").absoluteString
+            let left = try rig.server.url("/c").absoluteString
+            let stored = try #require(tab.sessionState)
+            let object = try #require(try JSONSerialization.jsonObject(with: stored) as? [String: Any])
+            let saved = try #require(object["chromium"] as? [String: [[String: String]]], "\(object)")
+            #expect(saved["back"]?.compactMap { $0["url"] } == [first] && saved["forward"]?.compactMap { $0["url"] } == [left],
+                    "saved: the list in its order, no entry twice: \(saved)")
+            tab.goBack()
+            #expect(await settles(tab, at: "/a", back: [], forward: ["/dead", "/c"]), "\(lists(tab))")
+            #expect(await requests(log, since: mark, are: ["GET /a"]), "Back never went to /c: \(log.since(mark))")
+        }
+    }
+
     // MARK: Engine switches
 
     /// Chromium → WebKit → Back: the Chromium page comes back with its list, loading only its own address.

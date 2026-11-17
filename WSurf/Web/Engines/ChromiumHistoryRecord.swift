@@ -35,17 +35,22 @@ struct ChromiumHistoryRecord {
     private struct Hop {
         var navigation: PageNavigation
         let logical: [Entry?]
-        let target: Int
-        let isBackward: Bool
+        /// The entry that was current when it started.
+        let start: Int
+        var target: Int
         let knownIDs: Set<Int64>
         /// The address the main frame committed for it (after any redirect). A hop that stays inside the document commits none, and
-        /// is found by its own address.
+        /// is found by its own address. Empty after a retarget until the new load commits (`retargetHop`).
         var committedURL: String?
         /// Its load failed and WSurf's error document took its place (`failedHop`): that document's entry lands it.
         var failed = false
 
         var address: String {
             committedURL ?? logical[target]?.url ?? ""
+        }
+
+        var isBackward: Bool {
+            target < start
         }
     }
 
@@ -174,8 +179,40 @@ struct ChromiumHistoryRecord {
         } else {
             return
         }
-        hop = Hop(navigation: navigation, logical: logical, target: target, isBackward: target < back.count + max(current, 0),
-                  knownIDs: Set(native.map(\.id)))
+        hop = Hop(navigation: navigation, logical: logical, start: back.count + max(current, 0), target: target, knownIDs: Set(native.map(\.id)))
+    }
+
+    /// Whether the hop on its way with the page's `navigation` has put an entry in Chromium's list (its commit, or the error entry of its
+    /// failed load) that no read has applied. Back and Forward then move from the entry it started at, in the list it started from
+    /// (`entryFromHop`), never natively: a native move from that entry would leave it in the list a second time.
+    func hopHasMoved(navigation: PageNavigation?) -> Bool {
+        guard let hop, hop.navigation === navigation else { return false }
+        return hop.committedURL != nil || hop.failed
+    }
+
+    /// The nearest kept entry `step` away (-1 Back, 1 Forward) from where the hop on its way started, with its place in the hop's list.
+    /// A second Back during a Back hop is its own target again (S5).
+    func entryFromHop(_ step: Int) -> (index: Int, url: URL)? {
+        guard let hop else { return nil }
+        var index = hop.start + step
+        while hop.logical.indices.contains(index) {
+            if let url = hop.logical[index].flatMap({ URL(string: $0.url) }) {
+                return (index, url)
+            }
+            index += step
+        }
+        return nil
+    }
+
+    /// The hop on its way now goes to `index` of its list, loaded with `navigation`. Once the replaced load has committed (its page or
+    /// its error entry), only an entry the new load commits lands the hop.
+    mutating func retargetHop(to index: Int, navigation: PageNavigation) {
+        hop?.navigation = navigation
+        hop?.target = index
+        hop?.failed = false
+        if hop?.committedURL != nil {
+            hop?.committedURL = ""
+        }
     }
 
     /// The main frame committed `url` (a new document, or a move inside one) while `navigation` was the page's.
@@ -215,8 +252,9 @@ struct ChromiumHistoryRecord {
         if hop != nil, hop?.navigation !== navigation {
             hop = nil
         }
-        // A failed hop lands on the error document's own entry: never on an error entry Chromium committed for the failed address.
-        if let hop, let landed = new.lastIndex(where: { !hop.knownIDs.contains($0.id) && (hop.failed ? $0.url.hasPrefix("data:") : $0.url == hop.address) }) {
+        // A failed hop lands on the error document's own entry, once it is current: never on an error entry Chromium committed for the
+        // failed address, nor on an earlier error document a retarget left (the same `data:` address).
+        if let hop, let landed = new.lastIndex(where: { !hop.knownIDs.contains($0.id) && (hop.failed ? $0.isCurrent && $0.url.hasPrefix("data:") : $0.url == hop.address) }) {
             back = restored(hop.logical[..<hop.target].compactMap(\.self))
             forward = restored(hop.logical[(hop.target + 1)...].compactMap(\.self))
             floor = new[landed].id

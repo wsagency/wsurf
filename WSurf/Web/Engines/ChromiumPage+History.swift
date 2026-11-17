@@ -262,8 +262,12 @@ extension ChromiumPage {
         owner?.canGoForward = !historyRecord.forward.isEmpty
     }
 
-    /// The person's (or the agent's) Back: natively while Chromium has an entry to go to, else a hop to the newest restored entry.
+    /// The person's (or the agent's) Back: natively while Chromium has an entry to go to, else a hop to the newest restored entry. While
+    /// a hop's entry is in Chromium's list but not yet applied (`ChromiumHistoryRecord.hopHasMoved`), from where it started (`rehop`).
     func goBackInHistory() -> PageNavigation? {
+        if historyRecord.hopHasMoved(navigation: navigation) {
+            return rehop(-1)
+        }
         if remote == nil, !nativeCanGoBack(), let target = historyRecord.back.last {
             return hop(to: target.id)
         }
@@ -271,6 +275,9 @@ extension ChromiumPage {
     }
 
     func goForwardInHistory() -> PageNavigation? {
+        if historyRecord.hopHasMoved(navigation: navigation) {
+            return rehop(1)
+        }
         if remote == nil, let target = historyRecord.forward.first, let read = nativeEntries(), read.current == read.entries.count - 1 {
             return hop(to: target.id)
         }
@@ -304,6 +311,14 @@ extension ChromiumPage {
         }
         guard let next = load(URLRequest(url: url)) else { return nil }
         historyRecord.startHop(to: id, window: window, current: read.current - reachable, navigation: next)
+        return next
+    }
+
+    /// Back (`step` -1) or Forward (1) while a hop has moved Chromium's list unapplied: the entry next to the one the hop started at, by GET, in the hop's own
+    /// list (`ChromiumHistoryRecord.entryFromHop`), so two quick Backs move one step (S5). Nothing when there is no entry that way.
+    private func rehop(_ step: Int) -> PageNavigation? {
+        guard let entry = historyRecord.entryFromHop(step), let next = load(URLRequest(url: entry.url)) else { return nil }
+        historyRecord.retargetHop(to: entry.index, navigation: next)
         return next
     }
 
