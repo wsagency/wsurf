@@ -103,6 +103,16 @@ enum PerfProbe {
         }
     }
 
+    /// Hides the Assistant side panel in this host's own defaults and returns what puts the keys back. For the cases that build
+    /// windows through `BrowserApplication`, whose coordinators read the panel when they are made (inside the measured block), so
+    /// the state has to be set before. Hidden is the window the budgets were set on (`7f1ced3b`). Call it first, run the result in
+    /// a `defer`.
+    static func pinSidePanelHidden() -> () -> Void {
+        let restore = snapshotDefaults(sidePanelKeys)
+        StageMode.defaults.set(false, forKey: "sidePanel.visible")
+        return restore
+    }
+
     /// One result line, the format the report scripts and `run` grep for.
     static func report(_ name: String, _ fields: String) {
         print("WSURF-BENCH case=\(name) \(fields)")

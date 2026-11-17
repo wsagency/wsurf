@@ -99,6 +99,10 @@ nonisolated final class LaunchPerformanceTests: XCTestCase, @unchecked Sendable 
         let completed = defaults.object(forKey: completedKey)
         defaults.set(true, forKey: completedKey)
         defer { defaults.set(completed, forKey: completedKey) }
+        // The coordinators read the Assistant panel when `measureLaunch` makes them, so it is pinned here, hidden: the window the
+        // budgets were set on, whatever an earlier run left in the shared defaults.
+        let restorePanel = PerfProbe.pinSidePanelHidden()
+        defer { restorePanel() }
         let catalog = ProfileStore.shared
         let previous = catalog.current
         let profile = catalog.add(name: "Launch performance")
@@ -132,6 +136,7 @@ nonisolated final class LaunchPerformanceTests: XCTestCase, @unchecked Sendable 
             startMeasuring()
             launch(app)
             stopMeasuring()
+            XCTAssertTrue(app.windows.allSatisfy { !$0.sidePanel.isVisible }, "the panel was not pinned hidden, so the budget would time another window")
             notifications.post(name: NSApplication.willTerminateNotification, object: nil)
             for coordinator in app.windows {
                 coordinator.nativeWindow?.contentView = nil
