@@ -151,12 +151,6 @@ extension NSWindow {
         isKeyWindow || childWindows?.contains { $0 is FloatingBarPanel && $0.isKeyWindow } == true
     }
 
-    /// The responder that has the keyboard: the field editor of the floating bar while its panel is key, else the window's own
-    /// (the page). Whatever asks whether the person is typing asks this, never the browser window's `firstResponder` alone.
-    var keyUnitResponder: NSResponder? {
-        (childWindows?.first { $0 is FloatingBarPanel && $0.isKeyWindow } ?? self).firstResponder
-    }
-
     /// The window a sheet, an alert or a window command belongs to: the browser window for its floating toolbar panel, which
     /// is 44 pt high and would hold a sheet it cannot show. Every `NSApp.keyWindow` that picks a window to attach to goes
     /// through this.

@@ -90,12 +90,12 @@ final class BrowserHost: NSObject, NSWindowDelegate {
 
     /// The window, or its floating toolbar panel, has the keyboard.
     var isKeyUnit: Bool {
-        window?.isKeyUnit == true
+        floatingBar?.isKeyUnit ?? (window?.isKeyWindow == true)
     }
 
     /// The responder that has the keyboard: the floating bar's field editor while its panel is key, else the window's.
     var keyResponder: NSResponder? {
-        window?.keyUnitResponder
+        floatingBar?.keyResponder ?? window?.firstResponder
     }
 
     /// Makes the toolbar's controller the first time the bar floats (a window that never does has none), and brings the panel up
