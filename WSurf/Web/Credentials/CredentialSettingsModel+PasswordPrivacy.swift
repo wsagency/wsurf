@@ -5,7 +5,8 @@ import Foundation
 import WSurfVault
 
 /// Touch ID or the Mac password before a saved password or verification code is shown or copied in the Credential Manager. The list
-/// asks for every Show and Copy. The editor of a stored credential asks once, the first time it shows or copies one, and its History
+/// asks for every Show, and for a Copy unless a `CopyGrace` window (30 s after one confirmation, Passwords popover and window only) is
+/// open. The editor of a stored credential asks once, the first time it shows or copies one, and its History
 /// shares that answer. Each action asks first and reads the vault only after the answer, so a refused prompt leaves nothing
 /// decrypted on the page. A locked vault or a cancelled task asks for nothing. Cards and identity documents keep their own prompt
 /// (`+SecureItems`): this answer never stands in for it.
