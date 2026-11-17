@@ -57,6 +57,7 @@
    "AutofillFramePolicyTests",
    "AutofillLastUsedTests",
    "AutofillPageTests",
+   "AutofillRefusalDiagnosticsTests",
    "AutofillSaveCompletionTests",
    "AutofillSaveFramesTests",
    "AutofillSaveScriptTests",

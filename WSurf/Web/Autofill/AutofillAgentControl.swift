@@ -18,10 +18,20 @@ extension AutofillSuggestions {
     /// page, the frame's own verified HTTPS origin (`BrowserFrame.autofillOrigin`) and no agent controlling the tab. Nil: no dropdown.
     static func offerOrigin(for message: BrowserScriptMessage, kind: AutofillSaveKind) -> String? {
         let page = message.page
-        guard let body = message.body as? [String: Any], AutofillSaveCoordinator.shared.isEnabled(kind, context: page.context),
-              let rawURL = body["url"] as? String, let frameURL = URL(string: rawURL),
-              let topURL = page.url, SavedPassword.origin(for: topURL) != nil, page.hasOnlySecureContent,
-              !isAgentControlled(page) else { return nil }
-        return message.frameInfo.autofillOrigin(reportedURL: frameURL)
+        guard let body = message.body as? [String: Any], let rawURL = body["url"] as? String, let frameURL = URL(string: rawURL) else {
+            return nil
+        }
+        let origin = message.frameInfo.autofillOrigin(reportedURL: frameURL)
+        let enabled = AutofillSaveCoordinator.shared.isEnabled(kind, context: page.context)
+        let topIsSecure = page.url.flatMap(SavedPassword.origin(for:)) != nil
+        let refusal = AutofillDiagnostics.offerRefusal(
+            enabled: enabled, topIsSecure: topIsSecure, hasOnlySecureContent: page.hasOnlySecureContent,
+            agentControlled: isAgentControlled(page), frameOriginTrusted: origin != nil
+        )
+        if let refusal {
+            AutofillDiagnostics.refused(refusal, by: page)
+            return nil
+        }
+        return origin
     }
 }

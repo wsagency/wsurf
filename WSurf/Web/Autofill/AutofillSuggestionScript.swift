@@ -74,11 +74,17 @@ nonisolated enum AutofillSuggestionScript {
         quiet = true;
         try { return fill(); } finally { quiet = false; }
       };
-      const track = (channel, state, accepts, extra) => {
+      // `why(target)` names, for the log alone, why a field that got no offer got none: a reason from a fixed set, or null.
+      const track = (channel, state, accepts, extra, why) => {
         let pending = null, timer = null;
         const cancelPending = () => {
           if (timer !== null) clearTimeout(timer);
           pending = null; timer = null;
+        };
+        // One report per interaction, when its selection gives up: the reason and nothing of the page.
+        const skip = target => {
+          const reason = why && (accepts(target) ? 'notVisible' : why(target));
+          if (reason) channel?.postMessage({action:'skip',reason});
         };
         const hide = () => {
           cancelPending();
@@ -121,7 +127,7 @@ nonisolated enum AutofillSuggestionScript {
             if (pending !== selection) return;
             if (!target.isConnected || active() !== target || location.href !== selection.url) { clear(); return; }
             const now = performance.now();
-            if (now >= selection.deadline) { cancelPending(); return; }
+            if (now >= selection.deadline) { cancelPending(); skip(target); return; }
             const rect = accepts(target) ? geometry(target) : null;
             const stable = rect && selection.rect &&
               ['x','y','width','height','viewportWidth','viewportHeight'].every(key => Math.abs(rect[key]-selection.rect[key]) < 1);

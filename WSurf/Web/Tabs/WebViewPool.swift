@@ -303,13 +303,20 @@ final class TabWebView: WKWebView {
         }
         TabContextMenu.sinkInspect(in: menu)
         pickCredentialMenu = nil
-        if TabContextMenu.isEditable(menu) {
-            if canPickCredential?() == true {
+        let editable = TabContextMenu.isEditable(menu)
+        var offered = false, refusal: CredentialPicker.Refusal?
+        if editable {
+            offered = canPickCredential?() == true
+            refusal = offered ? nil : credentialRefusal?()
+            if offered {
                 TabContextMenu.addPickCredential(to: menu, target: self, action: #selector(pickCredential))
                 pickCredentialMenu = CredentialPicker.Menu(opened: .now)
-            } else if let refusal = credentialRefusal?() {
+            } else if let refusal {
                 TabContextMenu.addPickCredential(to: menu, target: self, action: #selector(pickCredential), refusal: refusal)
             }
+        }
+        if let reason = AutofillDiagnostics.menuRefusal(editable: editable, offered: offered, refusal: refusal) {
+            AutofillDiagnostics.refused(reason, by: self)
         }
     }
 

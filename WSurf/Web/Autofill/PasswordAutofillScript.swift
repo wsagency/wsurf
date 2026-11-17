@@ -45,10 +45,20 @@ nonisolated enum PasswordAutofillScript {
         return {field:'password',kind,webauthn:tokens(target).includes('webauthn'),
           username:typeof username === 'string' && username.length <= 500 ? username : ''};
       };
+      // Why a login or code field got no offer, for the log alone (a fixed set, never a value of the page): null for a field that is
+      // no login field at all, so a search box or a comment field reports nothing. A field the model does not list (it is not shown)
+      // counts as a login field when it is a password input.
+      const why = target => {
+        const field = forms.field(target);
+        if (field?.category !== 'password' && field?.kind !== 'one-time-code' && !(target instanceof HTMLInputElement && target.type === 'password')) return null;
+        if (!enabled) return 'disabled';
+        if (!visible(target)) return 'notVisible';
+        return forms.group(target)?.safe ? 'formShape' : 'formUnsafe';
+      };
       const suggestions = globalThis.__wsurfAutofillSuggestions;
       const tracker = suggestions.track(channel, state, target => {
         return enabled && (!!fields(target) || !!otp(target));
-      }, extra);
+      }, extra, why);
       const eligible = (token,url) => enabled && suggestions.valid(state,token,url) && (!!fields(state.target) || !!otp(state.target));
       // Pick Credential…: the field the person right-clicked in this frame, taken only from a trusted contextmenu event. Native keeps
       // the latest one per page, and fills only that field (and its partner), only in this frame, once the person has picked.

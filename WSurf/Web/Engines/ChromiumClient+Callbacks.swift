@@ -739,11 +739,14 @@ extension ChromiumClient {
     /// was right-clicked and when.
     func offerCredentialPicker(in model: UnsafeMutablePointer<cef_menu_model_t>, editable: Bool, frame: CredentialPicker.ChromiumFrame?) {
         pickCredentialMenu = nil
-        guard editable, let page else { return }
-        let offered = page.canPickCredential?() == true
+        guard let page else { return }
+        let offered = editable && page.canPickCredential?() == true
         // Refused for a reason a person can see: the item is there, disabled, and `pickCredentialMenu` stays nil, so the command
         // would run nothing even if the engine delivered it.
-        let refusal = offered ? nil : page.credentialRefusal?()
+        let refusal = editable && !offered ? page.credentialRefusal?() : nil
+        if let reason = AutofillDiagnostics.menuRefusal(editable: editable, offered: offered, refusal: refusal) {
+            AutofillDiagnostics.refused(reason, by: page)
+        }
         guard offered || refusal != nil else { return }
         let added = ChromiumInterop.withString(refusal?.menuTitle ?? String(localized: "Pick Credential…")) {
             model.pointee.insert_item_at?(model, 0, Self.pickCredentialCommand, $0)

@@ -208,6 +208,7 @@ final class AutofillSuggestions {
         Task { [weak self, weak page] in
             guard let self, let page, page.context === context, id == self.presentationID,
                   let rect = try? await self.awaitRect(rawRect, requestPage: page, frame: message.frameInfo, frameURL: frameURL, world: world) else {
+                self?.noteRectRefused(in: page, context: context, presentation: id)
                 request.isSettled = true
                 return
             }
@@ -254,6 +255,7 @@ final class AutofillSuggestions {
         if let row = Self.messagesCodeRow(kind: kind, field: request.field, origin: origin, in: page) {
             request.actions[row.id] = .messagesCode; rows.append(row)
         }
+        noteNoRows(rows, kind: kind, in: page, context: context, presentation: id)
         guard page.context === context, id == presentationID, !rows.isEmpty,
               (try? await validate(request, in: page, requiresFocus: true)) != nil,
               Self.canPresent(in: page) else { return false }
