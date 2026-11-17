@@ -186,6 +186,7 @@ extension ChromiumPage {
         remote.sentHidden = visibility.hidden
         remote.sentParked = visibility.parked
         remote.countVisibility()
+        remote.connection.accessibilityVisibilityChanged(remote.id, shown: !visibility.hidden && !visibility.parked)
         remote.send(CefRemote.Op.visibility) {
             $0.set(CefRemote.Key.hidden, visibility.hidden)
             $0.set(CefRemote.Key.parked, visibility.parked)

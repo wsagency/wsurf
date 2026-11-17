@@ -145,6 +145,7 @@ struct ChromiumOOPAccessibilityTransportTests {
             serviceName: ChromiumRemoteClientTests.noSuchService, sink: ChromiumFrameSink(),
             root: { FileManager.default.temporaryDirectory.appending(path: "wsurf-d4-ax-\(UUID().uuidString)", directoryHint: .isDirectory) },
             latch: ChromiumOOP.Latch(), isEnabled: { true })
+        connection.accessibility.voiceOverSource = { false }
         let remote = ChromiumRemoteBrowser(page: native, connection: connection)
         remote.outgoing = { _ in true }
         native.remote = remote
@@ -389,6 +390,8 @@ struct ChromiumOOPAccessibilityTransportTests {
         let remote = ChromiumRemote(
             sink: ChromiumFrameSink(), root: { canonical }, helloTimeout: Self.helloTimeout,
             clock: { ProcessInfo.processInfo.systemUptime }, latch: ChromiumOOP.Latch(), isEnabled: { true })
+        // What the person's VoiceOver does must not decide a test (`NSWorkspace.isVoiceOverEnabled` is the real one's source).
+        remote.accessibility.voiceOverSource = { false }
         if let grace {
             remote.accessibility.policy = CefRemoteAccessibilityPolicy(graceSeconds: grace)
         }
@@ -476,7 +479,7 @@ struct ChromiumOOPAccessibilityTransportTests {
         #expect(arrived, "no update: wanted \(remote.accessibility.wantsTree), attached \(remote.accessibility.isAttached)")
         let state = try #require(remote.browserAccessibility(id))
         #expect(state.nodesReceived >= 2000, "the first updates carry the page: \(state.nodesReceived) nodes in \(state.treeUpdates) updates")
-        #expect(state.latestTree?.treeID.isEmpty == false)
+        #expect(state.mirror.nodeCount >= 2000, "the updates were applied to the browser's mirror: \(state.mirror.nodeCount) nodes")
         #expect(state.largestTreeBytes > 100_000, "a big first update: \(state.largestTreeBytes) bytes")
         let statistics = remote.accessibility.decoder.statistics
         #expect(statistics.decoded >= 1)

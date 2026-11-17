@@ -1,8 +1,9 @@
 // SPDX-FileCopyrightText: 2026 WSurf Agency
 // SPDX-License-Identifier: BUSL-1.1
 
-// D4-40: CEF's accessibility updates (a `cef_value_t` tree built from Chromium's `AXTreeUpdate`) as JSON bytes for WSurf. A value
-// that cannot be written as JSON (a number that is not finite) becomes an empty object: WSurf's decoder skips it.
+// D4-40: CEF's accessibility updates (a `cef_value_t` tree built from Chromium's `AXTreeUpdate`) as JSON bytes for WSurf. A number
+// that is not finite (a NaN scroll offset on a page) cannot be written as JSON: it becomes `null` in its place, so that the rest of
+// the update still arrives (one dropped update would leave WSurf's tree out of step with every incremental one after it).
 
 import CCef
 import Foundation
@@ -22,7 +23,8 @@ enum AccessibilityJSON {
         case VTYPE_INT:
             return Int(value.pointee.get_int?(value) ?? 0)
         case VTYPE_DOUBLE:
-            return value.pointee.get_double?(value) ?? 0
+            let number = value.pointee.get_double?(value) ?? 0
+            return number.isFinite ? number : NSNull()
         case VTYPE_STRING:
             return Native.take(value.pointee.get_string?(value))
         case VTYPE_DICTIONARY:
