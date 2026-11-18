@@ -220,7 +220,7 @@ final class BrowserPage: NSView {
         if let chromium, let remote = chromium.remote {
             // A page that runs in the Chromium service takes the keys and text through its content view (D4-11), as a web view does
             // itself: that view is the first responder, never the page.
-            guard let view = remote.contentView else { return false }
+            guard let view = remote.contentView else { return true }
             return window?.makeFirstResponder(view) == true
         }
         return chromium?.becomeFirstResponder() == true
@@ -305,7 +305,7 @@ final class BrowserPage: NSView {
         if let webKit {
             return navigation(for: webKit.load(request))
         }
-        return chromium?.load(request, byPerson: byPerson)
+        return chromium?.loadInHistory(request, byPerson: byPerson)
     }
 
     /// Chromium has no read-access parameter: `ChromiumFileScope` holds a `file:` page to the same scope, frame by frame.
@@ -335,7 +335,7 @@ final class BrowserPage: NSView {
         if let webKit {
             return navigation(for: webKit.reload())
         }
-        return chromium?.reload(byPerson: byPerson)
+        return chromium?.reloadInHistory(byPerson: byPerson)
     }
 
     @discardableResult
@@ -344,7 +344,7 @@ final class BrowserPage: NSView {
         if let webKit {
             return navigation(for: webKit.reloadFromOrigin())
         }
-        return chromium?.reload(ignoreCache: true, byPerson: byPerson)
+        return chromium?.reloadInHistory(ignoreCache: true, byPerson: byPerson)
     }
 
     @discardableResult

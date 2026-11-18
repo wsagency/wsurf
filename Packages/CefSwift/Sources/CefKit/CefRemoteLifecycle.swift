@@ -27,6 +27,15 @@ public final class CefRemoteLinger: Sendable {
     public static let defaultSeconds: TimeInterval = 60
     /// The shortest linger a hello may ask for.
     public static let minimumSeconds: TimeInterval = 1
+    /// The longest one (D4-20): a hello that named a huge linger would keep an idle service resident. WSurf sends none longer than
+    /// the default; a test may ask for ten minutes.
+    public static let maximumSeconds: TimeInterval = 600
+
+    /// `seconds` held to the allowed range. A value that is not a number is the default.
+    public static func clamped(_ seconds: TimeInterval) -> TimeInterval {
+        guard !seconds.isNaN else { return defaultSeconds }
+        return min(maximumSeconds, max(minimumSeconds, seconds))
+    }
 
     private struct State {
         var seconds: TimeInterval
@@ -57,7 +66,7 @@ public final class CefRemoteLinger: Sendable {
     ) {
         self.schedule = schedule
         self.onExit = onExit
-        state = OSAllocatedUnfairLock(initialState: State(seconds: max(Self.minimumSeconds, seconds)))
+        state = OSAllocatedUnfairLock(initialState: State(seconds: Self.clamped(seconds)))
     }
 
     /// The service is up with no browser: the linger starts now, so if nothing ever opens, it leaves. Call it once, after the
@@ -69,9 +78,9 @@ public final class CefRemoteLinger: Sendable {
     public var seconds: TimeInterval { state.withLock { $0.seconds } }
     public var hasExited: Bool { state.withLock { $0.exited } }
 
-    /// Takes the hello's linger (never below the minimum). It applies to the next wait; one already running keeps its end.
+    /// Takes the hello's linger (held to the minimum and the maximum). It applies to the next wait; one already running keeps its end.
     public func setSeconds(_ seconds: TimeInterval) {
-        state.withLock { $0.seconds = max(Self.minimumSeconds, seconds) }
+        state.withLock { $0.seconds = Self.clamped(seconds) }
     }
 
     /// The number of open browsers changed. Zero starts the linger; anything above zero cancels it.

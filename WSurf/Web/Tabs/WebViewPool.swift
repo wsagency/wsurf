@@ -73,6 +73,13 @@ final class TabWebView: WKWebView {
     var credentialRefusal: (() -> CredentialPicker.Refusal?)?
     var onPickCredential: ((CredentialPicker.Menu) -> Void)?
     private var pickCredentialMenu: CredentialPicker.Menu?
+    /// The page's own hit test found the right-click on a `readonly` or disabled input or textarea. WebKit's menu is as editable
+    /// for those as for a writable field (it has Paste), Chromium's is not, so Pick Credential… is left out of it here. Unknown
+    /// (false) until the hit test answers, and reset by every right-click.
+    private var contextFieldLocked = false
+    private weak var pickCredentialItem: NSMenuItem?
+    /// Which right-click, or menu, an answer of the hit test belongs to: a reply from an earlier one is dropped.
+    private var contextGeneration = 0
 
     var onZoomChanged: (() -> Void)?
 
@@ -173,6 +180,10 @@ final class TabWebView: WKWebView {
     /// A choice nobody used goes when a menu closes, as it does when a menu opens.
     override func didCloseMenu(_ menu: NSMenu, with event: NSEvent?) {
         super.didCloseMenu(menu, with: event)
+        // The next menu may open without a right-click (Control-click): it gets no answer from this one's hit test.
+        contextGeneration += 1
+        contextFieldLocked = false
+        pickCredentialItem = nil
         if let choice = newWindowChoice, choice.at.duration(to: .now) > Self.choiceGraceAtClose {
             newWindowChoice = nil
         }
@@ -188,6 +199,18 @@ final class TabWebView: WKWebView {
     ]
 
     override func rightMouseDown(with event: NSEvent) {
+        prepareContextMenu(with: event)
+        super.rightMouseDown(with: event)
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        if event.modifierFlags.contains(.control) {
+            prepareContextMenu(with: event)
+        }
+        super.mouseDown(with: event)
+    }
+
+    private func prepareContextMenu(with event: NSEvent) {
         let local = convert(event.locationInWindow, from: nil)
         let zoom = pageZoom == 0 ? 1 : pageZoom
         let x = local.x / zoom
@@ -196,6 +219,9 @@ final class TabWebView: WKWebView {
         contextImageURL = nil
         contextLinkURL = nil
         contextLinkAnchor = nil
+        contextFieldLocked = false
+        contextGeneration += 1
+        let generation = contextGeneration
         evaluateJavaScript(Self.hitTest(x: x, y: y)) { [weak self] value, _ in
             guard let self, let json = value as? String,
                   let data = json.data(using: .utf8),
@@ -206,10 +232,12 @@ final class TabWebView: WKWebView {
             contextLinkAnchor = found["linkBottom"]
                 .flatMap { Double($0) }
                 .map { CGPoint(x: local.x, y: $0 * zoom) }
+            if generation == contextGeneration {
+                contextFieldResolved(locked: found["locked"] == "1")
+            }
         }
 
         awaitPDFMenu()
-        super.rightMouseDown(with: event)
     }
 
     /// WebKit's PDF viewer pops its own menu up without asking the view (`willOpenMenu` never runs for it), so the menu is
@@ -303,21 +331,38 @@ final class TabWebView: WKWebView {
         }
         TabContextMenu.sinkInspect(in: menu)
         pickCredentialMenu = nil
-        let editable = TabContextMenu.isEditable(menu)
+        pickCredentialItem = nil
+        let editable = TabContextMenu.isEditable(menu) && !contextFieldLocked
         var offered = false, refusal: CredentialPicker.Refusal?
         if editable {
             offered = canPickCredential?() == true
             refusal = offered ? nil : credentialRefusal?()
             if offered {
-                TabContextMenu.addPickCredential(to: menu, target: self, action: #selector(pickCredential))
+                pickCredentialItem = TabContextMenu.addPickCredential(to: menu, target: self, action: #selector(pickCredential))
                 pickCredentialMenu = CredentialPicker.Menu(opened: .now)
             } else if let refusal {
-                TabContextMenu.addPickCredential(to: menu, target: self, action: #selector(pickCredential), refusal: refusal)
+                pickCredentialItem = TabContextMenu.addPickCredential(
+                    to: menu, target: self, action: #selector(pickCredential), refusal: refusal)
             }
         }
         if let reason = AutofillDiagnostics.menuRefusal(editable: editable, offered: offered, refusal: refusal) {
             AutofillDiagnostics.refused(reason, by: self)
         }
+    }
+
+    /// The page's hit test answered for the latest right-click. Usually before the menu opens; if the menu is already open, the
+    /// item comes out of it again (with the rule after it), so the menu is the same whichever came first.
+    func contextFieldResolved(locked: Bool) {
+        contextFieldLocked = locked
+        guard locked, let item = pickCredentialItem, let menu = item.menu else { return }
+        let index = menu.index(of: item)
+        menu.removeItem(item)
+        if index < menu.numberOfItems, menu.item(at: index)?.isSeparatorItem == true {
+            menu.removeItem(at: index)
+        }
+        pickCredentialItem = nil
+        pickCredentialMenu = nil
+        AutofillDiagnostics.refused(.menuNotEditable, by: self)
     }
 
     @objc private func pickCredential() {
@@ -417,7 +462,9 @@ final class TabWebView: WKWebView {
           var anchor = el.closest('a[href]');
           var box = anchor ? anchor.getBoundingClientRect() : null;
           var under = box ? Math.min(box.bottom, \(y) + 28) : 0;
+          var locked = (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) && (el.readOnly || el.matches(':disabled'));
           return JSON.stringify({
+            locked: locked ? '1' : '',
             image: img ? (img.currentSrc || img.src || '') : (media ? (media.currentSrc || media.src || '') : ''),
             link: anchor ? anchor.href : '',
             linkBottom: box ? String(under) : ''

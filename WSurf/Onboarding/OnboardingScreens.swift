@@ -180,6 +180,10 @@ extension OnboardingUI {
         let model: OnboardingModel
         let clock: ShimmerClock
 
+        private var defaultBrowserButton: LocalizedStringResource {
+            model.isDefaultBrowser ? "Default" : "Set as Default"
+        }
+
         var body: some View {
             Screen {
                 Heading(
@@ -201,18 +205,23 @@ extension OnboardingUI {
                         caption: "Open links from other apps in WSurf."
                     ) {
                         SettingsButton(
-                            title: "Set as Default",
+                            title: defaultBrowserButton,
                             minWidth: OnboardingUI.actionWidth
                         ) {
                             model.requestDefaultBrowser()
                         }
+                        .disabled(!model.canRequestDefaultBrowser)
                     }
                 }
                 .frame(width: OnboardingUI.columnWidth)
                 .multilineTextAlignment(.leading)
                 .padding(.top, 24)
+                .task { model.refreshDefaultBrowser() }
+                .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+                    model.refreshDefaultBrowser()
+                }
 
-                if model.handedOverToSystemSettings {
+                if model.handedOverToSystemSettings, !model.isDefaultBrowser {
                     Text("In System Settings, choose WSurf as the default web browser.")
                         .font(Theme.Font.label)
                         .foregroundStyle(.secondary)

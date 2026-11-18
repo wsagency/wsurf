@@ -25,6 +25,8 @@ final class BrowserHost: NSObject, NSWindowDelegate {
     private let content: NSHostingView<BrowserRootView>
     private var window: BrowserWindow?
     private var outline: WindowOutlineView?
+    /// The Minimal bar's panel while it is detached (`AppCoordinator.barFloats`); made with the window, holding nothing until then.
+    private(set) var floatingBar: FloatingBarController?
 
     private let frameToolbar: NSToolbar = {
         let toolbar = NSToolbar(identifier: "wsurf.browser.frame")
@@ -53,6 +55,7 @@ final class BrowserHost: NSObject, NSWindowDelegate {
             window.alignWindowControls()
             isVisible = true
             publish()
+            showFloatingBar()
             return
         }
 
@@ -82,6 +85,52 @@ final class BrowserHost: NSObject, NSWindowDelegate {
         window.alignWindowControls()
         isVisible = true
         publish()
+        showFloatingBar()
+    }
+
+    /// The window, or its floating toolbar panel, has the keyboard.
+    var isKeyUnit: Bool {
+        floatingBar?.isKeyUnit ?? (window?.isKeyWindow == true)
+    }
+
+    /// The responder that has the keyboard: the floating bar's field editor while its panel is key, else the window's.
+    var keyResponder: NSResponder? {
+        floatingBar?.keyResponder ?? window?.firstResponder
+    }
+
+    /// Makes the toolbar's controller the first time the bar floats (a window that never does has none), and brings the panel up
+    /// or away to match. Not while the window blooms open: its frame is not the final one, and the bar is placed against that.
+    func syncFloatingBar() {
+        guard bloom == nil, isVisible, let window, let coordinator else { return }
+        if floatingBar == nil, coordinator.barFloats {
+            floatingBar = FloatingBarController(coordinator: coordinator, window: window)
+        }
+        floatingBar?.windowDidShow()
+    }
+
+    private func showFloatingBar() {
+        syncFloatingBar()
+    }
+
+    private var isClosing = false
+
+    /// The one thing every window watches for the toolbar: whether its bar floats. The controller, and with it the rest of the
+    /// watching, exists only once it does.
+    private func watchBarPlacement() {
+        guard !isClosing, let coordinator else { return }
+        withObservationTracking {
+            _ = coordinator.barFloats
+        } onChange: { [weak self] in
+            Task { @MainActor [weak self] in
+                guard let self, !isClosing else { return }
+                syncFloatingBar()
+                watchBarPlacement()
+            }
+        }
+    }
+
+    func makeFloatingBarKey() {
+        floatingBar?.makeKey()
     }
 
     // MARK: - Opening
@@ -114,6 +163,7 @@ final class BrowserHost: NSObject, NSWindowDelegate {
         } completionHandler: { [weak self, weak window] in
             MainActor.assumeIsolated {
                 window?.minSize = bloom.minSize
+                self?.showFloatingBar()
                 if let self, self.savesFrame {
                     window?.setFrameAutosaveName(self.frameKey)
                 }
@@ -184,6 +234,7 @@ final class BrowserHost: NSObject, NSWindowDelegate {
         Self.hideTitlebarDecoration(of: created)
 
         window = created
+        watchBarPlacement()
         observeAppearance()
         NSWorkspace.shared.notificationCenter.addObserver(
             self,
@@ -336,14 +387,29 @@ final class BrowserHost: NSObject, NSWindowDelegate {
     // MARK: - Window delegate
 
     func windowDidBecomeKey(_ notification: Notification) {
-        coordinator?.windowDidBecomeKey()
+        if let floatingBar {
+            floatingBar.memberBecameKey()
+        } else {
+            coordinator?.windowDidBecomeKey()
+        }
     }
 
     func windowDidResignKey(_ notification: Notification) {
-        coordinator?.windowDidResignKey()
+        if let floatingBar {
+            floatingBar.memberResignedKey()
+        } else {
+            coordinator?.windowDidResignKey()
+        }
+    }
+
+    func windowDidChangeScreen(_ notification: Notification) {
+        floatingBar?.windowDidSettle()
     }
 
     func windowWillClose(_ notification: Notification) {
+        isClosing = true
+        floatingBar?.stop()
+        floatingBar = nil
         stopWatchingTitleStrip()
         isVisible = false
         publish()
@@ -358,6 +424,15 @@ final class BrowserHost: NSObject, NSWindowDelegate {
     func windowWillEnterFullScreen(_ notification: Notification) {
         window?.level = .normal
         window?.toolbar = nil
+        coordinator?.windowIsFullScreen = true
+        floatingBar?.sync()
+    }
+
+    /// The window stayed as it was: the Float on Top level and the toolbar panel come back, and `windowIsFullScreen` does not stick.
+    func windowDidFailToEnterFullScreen(_ window: NSWindow) {
+        coordinator?.applyFloatOnTop()
+        coordinator?.windowIsFullScreen = false
+        syncFloatingBar()
     }
 
     func windowWillExitFullScreen(_ notification: Notification) {
@@ -376,6 +451,8 @@ final class BrowserHost: NSObject, NSWindowDelegate {
 
     func windowDidExitFullScreen(_ notification: Notification) {
         coordinator?.applyFloatOnTop()
+        coordinator?.windowIsFullScreen = false
+        syncFloatingBar()
         window?.alignWindowControls()
         if let window {
             roundContentCorners(of: window)
@@ -387,10 +464,12 @@ final class BrowserHost: NSObject, NSWindowDelegate {
     func windowDidResize(_ notification: Notification) {
         window?.alignWindowControls()
         rememberMicroFrame()
+        floatingBar?.windowDidMoveOrResize()
     }
 
     func windowDidMove(_ notification: Notification) {
         rememberMicroFrame()
+        floatingBar?.windowDidMoveOrResize()
     }
 
     // MARK: - State out
@@ -554,12 +633,7 @@ struct BrowserRootView: View {
                 BrowserView(browser: coordinator.browser, coordinator: coordinator)
             }
         }
-            .disclosureGroupStyle(ClickableDisclosureStyle())
-            .writingToolsAffordanceVisibility(.hidden)
-            .environment(\.windowControlsInset, coordinator.windowControlsInset)
-            .environment(\.titleStripInset, coordinator.titleStripInset)
-            .environment(\.profileFavicons, coordinator.browser.context.favicons)
-            .environment(\.assistantProviderID, coordinator.selectedProvider.id)
+            .browserWindowEnvironment(coordinator)
             .background { WindowTitleFollower(coordinator: coordinator) }
     }
 }
@@ -573,6 +647,9 @@ private struct WindowTitleFollower: View {
         Color.clear
             .onChange(of: coordinator.windowTitle) { _, _ in
                 coordinator.updateWindowAppearance()
+            }
+            .onChange(of: coordinator.menuBarHost) { _, _ in
+                coordinator.refreshSiteMenu()
             }
     }
 }
@@ -765,7 +842,10 @@ struct WindowDragArea: NSViewRepresentable {
                 return
             }
             if event.clickCount == 2 {
-                Self.performDoubleClickAction(on: window)
+                // The floating toolbar's ground moves the bar; a double click must not zoom or minimise the window behind it.
+                if !(window is FloatingBarPanel) {
+                    Self.performDoubleClickAction(on: window)
+                }
                 return
             }
             window.performDrag(with: event)

@@ -874,9 +874,9 @@ final class CommandPaletteModel {
         case .toggleFullScreen:
             coordinator.toggleFullScreen()
         case .closeWindow:
-            (NSApp.keyWindow ?? NSApp.mainWindow)?.performClose(nil)
+            (NSApp.keyWindow?.sheetHost ?? NSApp.mainWindow)?.performClose(nil)
         case .minimizeWindow:
-            (NSApp.keyWindow ?? NSApp.mainWindow)?.performMiniaturize(nil)
+            (NSApp.keyWindow?.sheetHost ?? NSApp.mainWindow)?.performMiniaturize(nil)
         case .toggleSpeech:
             coordinator.toggleSpeechMute()
         case .toggleListening:

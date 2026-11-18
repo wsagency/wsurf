@@ -16,7 +16,7 @@ import XPC
 public enum CefRemote {
     /// Bumped when either side changes a message in a way the other must know about. `hello` carries it; a mismatch fails the
     /// hello (``CefRemoteMessage/checkProtocolVersion()``), so two builds that disagree never half-work.
-    public static let protocolVersion: Int64 = 2
+    public static let protocolVersion: Int64 = 3
     /// The service's bundle identifier is the app's plus this suffix, so a staged build's suffix carries over.
     public static let serviceSuffix = ".chromium"
     /// The `error` of a reply to a hello or to an op that acts on CEF, when the service has begun to leave: nothing is served any more, and
@@ -177,19 +177,19 @@ public enum CefRemote {
     /// reach with a real CEF.
     public enum DebugCreate {
         /// The creation fails as CEF's own refusal would (the same code path), without calling CEF.
-        public static let fail = "fail"
+        @_alwaysEmitIntoClient public static var fail: String { "fail" }
         /// CEF is never called and the browser never reaches `on_after_created`: a close before creation, made deterministic.
-        public static let hold = "hold"
+        @_alwaysEmitIntoClient public static var hold: String { "hold" }
         /// CEF is asked, and a close is taken at once, before CEF has made the browser: the close then has to wait for
         /// `on_after_created`. A real close can only win that race against the first browser of a fresh disk context.
-        public static let closeFirst = "closeFirst"
+        @_alwaysEmitIntoClient public static var closeFirst: String { "closeFirst" }
         /// The browser is made without a shared texture, so CEF paints into memory (`on_paint`): the CPU path of D4-7's frames
         /// (still copied into a ring surface, which needs a Metal device to be made).
-        public static let cpuPaint = "cpuPaint"
+        @_alwaysEmitIntoClient public static var cpuPaint: String { "cpuPaint" }
         /// The browser's frame copy keeps one source texture instead of ``CefRemote/sourceTextureLimit``. Chromium cycles about three
         /// surfaces at one size and a size change empties the cache, so the real cap is not reached by a page; this one is, by any
         /// animated page, and a test can tell a cache that evicts from one that does not.
-        public static let smallSourceCache = "smallSourceCache"
+        @_alwaysEmitIntoClient public static var smallSourceCache: String { "smallSourceCache" }
     }
 
     /// How many copies of its frames the service keeps per browser and element (the page, the popup). Three cover the one WSurf
@@ -238,30 +238,30 @@ public enum CefRemote {
         public static let collapseHistory = "history.collapse"
         public static let devTools = "devtools.send"
         /// DEBUG: the service ends itself at once, as a crash would. Nothing outside signals it.
-        public static let debugAbort = "debug.abort"
+        @_alwaysEmitIntoClient public static var debugAbort: String { "debug.abort" }
         /// DEBUG: the service answers with its live counts. Has a reply.
-        public static let debugStats = "debug.stats"
+        @_alwaysEmitIntoClient public static var debugStats: String { "debug.stats" }
         /// DEBUG: the next ``Key/count`` hellos, whichever service instance gets them, each end the service at once (SIGKILL, before
         /// CEF starts), as a crash would: the crash-loop tests. The count is kept in a marker file under ``Key/rootPath``, which the
         /// hellos must name too, because a relaunched service is a new process. Has a reply.
-        public static let debugExitOnHello = "debug.exitOnHello"
+        @_alwaysEmitIntoClient public static var debugExitOnHello: String { "debug.exitOnHello" }
         /// DEBUG: the service asks WSurf a question and reports how that went (`answered` or `timedOut`). Has a reply.
-        public static let debugAskHost = "debug.askHost"
+        @_alwaysEmitIntoClient public static var debugAskHost: String { "debug.askHost" }
         /// DEBUG: runs the handler the system's memory-pressure source runs, with ``Key/flag`` as "under pressure". Has a reply
         /// (sent before any exit it causes) that carries ``Key/flushes``.
-        public static let debugMemoryPressure = "debug.memoryPressure"
+        @_alwaysEmitIntoClient public static var debugMemoryPressure: String { "debug.memoryPressure" }
         /// DEBUG: registers a browser that is not one, under ``Key/browser``, so the lifecycle (linger, memory pressure, closing
         /// everything) can be tested before real browsers exist. ``Key/flag`` says whether it answers a close (`browser.close`
         /// or the service's own) by going away; one that does not stays until the service gives up on it.
-        public static let debugStubBrowser = "debug.stubBrowser"
+        @_alwaysEmitIntoClient public static var debugStubBrowser: String { "debug.stubBrowser" }
         /// DEBUG: answers, begins the service's exit (as the end of the control connection does) and then blocks the main thread
         /// for 15 s, as a hung `cef_shutdown` would. Only the exit's backstop, which runs on another queue, can end the service
         /// sooner. Has a reply (sent before the block).
-        public static let debugHangExit = "debug.hangExit"
+        @_alwaysEmitIntoClient public static var debugHangExit: String { "debug.hangExit" }
         /// DEBUG: the next ``Key/count`` history reads of one browser are held back: with no ``Key/value`` they get no answer, as a read
         /// whose renderer went away would (the F8 case: the service must give up on it and go on); with one, they are answered after
         /// that many seconds (a slow read, which a collapse must wait for: F5). Has a reply.
-        public static let debugHoldHistory = "debug.holdHistory"
+        @_alwaysEmitIntoClient public static var debugHoldHistory: String { "debug.holdHistory" }
     }
 
     /// Events from the service to WSurf.

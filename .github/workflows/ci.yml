@@ -16,7 +16,7 @@ concurrency:
 env:
   PROJECT: WSurf.xcodeproj
   SCHEME: WSurf
-  XCODE: '27.0'
+  XCODE: '27.2'
   DD: ${{ github.workspace }}/build/DD
   # The macOS runner image carries no SwiftLint. Pinned so a new release cannot
   # add a rule that fails a build nobody changed.

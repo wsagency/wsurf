@@ -584,13 +584,6 @@ final class ChromiumPage: NSView {
         return next
     }
 
-    func stopLoading() {
-        pendingLoad?.cancel()
-        client?.documentResponses.reset()
-        remote?.send(CefRemote.Op.stop)
-        withBrowser { $0.pointee.stop_load?($0) }
-    }
-
     var pageZoom: CGFloat {
         get { zoom }
         set {
@@ -620,25 +613,6 @@ final class ChromiumPage: NSView {
 
     func insertText(_ text: String) async throws {
         _ = try await command("Input.insertText", params: ["text": text])
-    }
-
-    func selectAll() {
-        guard let responder = window?.firstResponder, responder !== self, ownsResponder(responder) else { return }
-        responder.selectAll(nil)
-    }
-
-    func ownsResponder(_ responder: NSResponder?) -> Bool {
-        responder === self || (responder as? NSView)?.isDescendant(of: self) == true
-    }
-
-    func sendKeyEvent(_ event: NSEvent) -> Bool {
-        guard let responder = window?.firstResponder, responder !== self, ownsResponder(responder) else { return false }
-        if event.type == .keyUp {
-            responder.keyUp(with: event)
-        } else {
-            responder.keyDown(with: event)
-        }
-        return true
     }
 
     func sendMouseMove(to point: CGPoint, modifiers: NSEvent.ModifierFlags) {

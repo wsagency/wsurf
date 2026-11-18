@@ -16,7 +16,7 @@ final class PageColourChooser {
     private init() {
         observation = NSColorPanel.shared.observe(\.isVisible, options: [.new]) { panel, _ in
             MainActor.assumeIsolated {
-                let key = NSApp.keyWindow
+                let key = NSApp.keyWindow?.sheetHost
                 PageColourChooser.shared.openedFrom = panel.isVisible ? (key === panel ? NSApp.mainWindow : key) : nil
             }
         }

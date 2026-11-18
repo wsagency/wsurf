@@ -181,6 +181,9 @@
     "Credential Manager changed. Review the old list again." : {
 
     },
+    "Detach Toolbar" : {
+      "comment" : "View menu item and context-menu item of the Minimal window’s bar that turns the bar into a small panel which can be dragged out of the window. Title Case; the opposite of “Dock Toolbar”."
+    },
     "Developer" : {
       "comment" : "Name of the profile WSurf creates for developer work, and the Developer choice in the Without asking menu on a paired app’s row. Title Case."
     },
@@ -2164,6 +2167,9 @@
     "Choose files, not folders." : {
 
     },
+    "Choose Files…" : {
+      "comment" : "Row in the assistant’s add menu, under the Files heading. Opens the file picker. Keep the ellipsis."
+    },
     "Choose From Menus" : {
       "comment" : "Tool name in assistant settings: picking an option in a dropdown on a web page."
     },
@@ -2677,7 +2683,7 @@
       "comment" : "One-line description of the DeepSeek provider in the provider list in Settings, also shown in that row's tooltip. A fragment with no verb; keep it terse."
     },
     "Default" : {
-      "comment" : "The (disabled) state of the button on the General settings page when WSurf is already the system's default browser. A noun/adjective here, never a verb."
+      "comment" : "The (disabled) state of the button on the General settings page and in the setup's bookmarks step when WSurf is already the system's default browser. A noun/adjective here, never a verb."
     },
     "Default browser" : {
       "comment" : "Heading of the section on the General settings page about which app opens links, and the title of that same row in Settings search. Sentence case; “default” is an adjective."
@@ -3742,6 +3748,9 @@
     },
     "WSurf stores saved details on this Mac." : {
 
+    },
+    "WSurf Toolbar" : {
+      "comment" : "VoiceOver name of the panel that holds the Minimal bar while it is detached from the window and floats over it. A noun."
     },
     "WSurf updates to preview builds, ahead of the release." : {
       "comment" : "Caption under the Update channel menu in Settings > About while Preview is chosen. Describes the chosen channel, not the other one. Must stay on one line — about 57 characters."
@@ -4909,6 +4918,9 @@
     "Reading speed" : {
 
     },
+    "Reading text in attachments…" : {
+      "comment" : "Status above the assistant composer while on-device text recognition runs on attached images. Shown only for models that can’t read images, because Send waits for it."
+    },
     "Reading this page…" : {
 
     },
@@ -5472,6 +5484,9 @@
     "Search suggestions" : {
       "comment" : "Title of the row that turns on completions offered by the search engine while typing, and the same wording in the Settings search index. A noun phrase. Sentence case."
     },
+    "Search tabs" : {
+      "comment" : "Placeholder and accessibility label of the search field in the assistant’s add menu, which lists the window’s open tabs to attach. Lowercase after the first word."
+    },
     "Search Symbols" : {
       "comment" : "Placeholder and VoiceOver label of the search field in the Icon… popover of a sidebar folder; it searches SF Symbols by name and by the words they are found by. Title Case."
     },
@@ -5846,6 +5861,18 @@
     },
     "Show Sidebar" : {
       "comment" : "Menu bar command under View, shortcut ⌃⌘S, which reveals the tab sidebar. The same item reads Hide Sidebar when the sidebar is already showing, so the two should stay parallel. Title Case, Show is a verb."
+    },
+    "Site: %@" : {
+      "comment" : "VoiceOver label of the menu after Help named for the website in front, which is read as a menu bar item. %@ is the website’s name, for example “github.com” (ASCII; an international name arrives as punycode, “xn--…”, spelled out as is). Short; the colon is read as a pause."
+    },
+    "Address: %@" : {
+      "comment" : "VoiceOver label of the first row of the menu named for the website in front, a disabled row that shows the page’s address. %@ is the address as the address bar draws it, for example “https://github.com/wsagency”. Short; the colon is read as a pause."
+    },
+    "Show Site in Menu Bar" : {
+      "comment" : "Menu bar command under View, with a checkmark while on. Turns on a menu after Help whose title is the website of the page in front, for example “github.com”. Title Case, Show is a verb. Pairs with the sentence case Settings row “Show site in menu bar”."
+    },
+    "Show site in menu bar" : {
+      "comment" : "Sentence case title of the Appearance settings row (Window section) that turns on the menu after Help named for the website in front, and the same wording in the Settings search index. Show is a verb. Deliberately sentence case, unlike the Title Case menu command with the same words."
     },
     "Show Tab %lld" : {
       "comment" : "Hidden menu commands under Window bound to ⌘1 through ⌘8. %lld is the tab’s position in the row, a number from 1 to 8. Title Case and established platform terminology."
@@ -6260,7 +6287,7 @@
 
     },
     "Tabs" : {
-      "comment" : "Heading of the tab commands in the ⌘K command palette: new tab, close tab, reopen, pin. Title Case, plural noun."
+      "comment" : "Heading of the tab commands in the ⌘K command palette: new tab, close tab, reopen, pin. Title Case, plural noun. Also the section header over the list of open tabs in the assistant’s add menu."
     },
     "Tabs and folders" : {
       "comment" : "Something a profile keeps separately from every other profile."
@@ -7026,6 +7053,9 @@
     },
     "View downloads and their saved locations." : {
       "comment" : "Caption describing the Recent downloads list in the Settings search results. Where it was saved means which folder the file went to."
+    },
+    "View More" : {
+      "comment" : "Row at the end of the tab list in the assistant’s add menu. Shows the rest of the open tabs. Title Case."
     },
     "View the installed version and check for updates." : {
       "comment" : "Caption describing the Software update section in the Settings search results. A sentence fragment naming what the section reports."
@@ -8399,6 +8429,9 @@
     "Adds %@." : {
       "comment" : "Sentence in the status line of an import review row, after “Same website, username and password as …”. %@ is a list joined with “and” of fragments such as “a note and a passkey”."
     },
+    "Adds a menu after Help named for the website in front." : {
+      "comment" : "Caption under the “Show site in menu bar” row in Settings › Appearance, and its Settings search description. Explains that the menu bar gets one more menu, after Help, whose title is the website of the page in front (only the name, never the full address). Sentence case, ends with a full stop."
+    },
     "Adds to a credential that is already saved." : {
       "comment" : "Status line of an import review row for a new item that Import adds to a credential that is already saved, rather than creating a new one."
     },
@@ -9110,6 +9143,9 @@
     "Dock icon" : {
       "comment" : "Title of the Dock icon section in Settings › Appearance, and of its entry in Settings search. It chooses the icon the macOS Dock shows while WSurf is running. Sentence case; a noun phrase."
     },
+    "Dock Toolbar" : {
+      "comment" : "View menu item, context-menu item, and the tooltip and VoiceOver label of the icon in the tab list’s top row, that puts the Minimal window’s detached bar back into the window. Title Case; the opposite of “Detach Toolbar”."
+    },
     "Document number" : {
       "comment" : "Row label, shown beside the value, of a field of an item in the credential editor of Settings › Credentials. Sentence case. On an ID document item: the document’s number, hidden by default. Noun phrase."
     },
@@ -9273,7 +9309,7 @@
       "comment" : "Brief notice above the Credentials list after the user saved a decrypted copy of a file attached to a credential. Title Case, short."
     },
     "Files" : {
-      "comment" : "Section header in the credential editor over the files attached to the credential. Also a section chip on the Vault tab and a row title in the History panel. Plural noun."
+      "comment" : "Section header in the credential editor over the files attached to the credential. Also a section chip on the Vault tab and a row title in the History panel. Plural noun. Also the section header over the Choose Files row in the assistant’s add menu."
     },
     "Files from an earlier vault were found without the store that owns them." : {
       "comment" : "One explanation under the title “Credentials can’t be opened”: files of an earlier vault exist, but the store that should own them is not there. Sentence."

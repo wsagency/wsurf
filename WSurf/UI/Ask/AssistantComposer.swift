@@ -117,8 +117,10 @@ struct AssistantComposer: View {
 
             AssistantComposerToolbar(
                 coordinator: coordinator, attachments: attachments,
+                attachedTabIDs: Set(attached),
+                onAttachTab: attach,
                 stops: stops,
-                canSend: stops || (!attachments.isImporting && !isSending && (!trimmed.isEmpty || !attachments.files.isEmpty)),
+                canSend: stops || (attachments.isReady(textOnly: effectiveTextOnly) && !isSending && (!trimmed.isEmpty || !attachments.files.isEmpty)),
                 offersVoice: trimmed.isEmpty && attachments.files.isEmpty && !attachments.isImporting && !isSending && !isAnsweringAQuestion
             ) {
                 if stops {
@@ -205,16 +207,16 @@ struct AssistantComposer: View {
     }
 
     private var effectiveTextOnly: Bool {
-        !ModelImageSupport.acceptsImages(for: coordinator.selectedProvider, model: coordinator.selectedModel)
+        coordinator.attachmentTextOnly
     }
 
     private func send() {
         let message = trimmed
-        guard !attachments.isImporting, !isSending, !message.isEmpty || !attachments.files.isEmpty else { return }
+        guard attachments.isReady(textOnly: effectiveTextOnly), !isSending, !message.isEmpty || !attachments.files.isEmpty else { return }
         do {
             try AttachmentRequest.validate(
                 attachments.files, message: message, textOnly: effectiveTextOnly,
-                windowTokens: ContextWindow.tokens(for: coordinator.selectedProvider, model: coordinator.selectedModel),
+                windowTokens: coordinator.attachmentWindowTokens,
                 imageTokens: AttachmentRequest.imageTokens(for: coordinator.selectedProvider)
             )
         } catch {

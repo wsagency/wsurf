@@ -70,9 +70,8 @@ final class AppCoordinator {
     var nativeWindow: NSWindow? {
         host?.nativeWindow
     }
-    var isKeyWindow: Bool {
-        nativeWindow?.isKeyWindow == true
-    }
+    /// Set by the host's full-screen callbacks, so that `barFloats` can be read (and observed) without the window.
+    var windowIsFullScreen = false
     var isBootstrapped = false
     private(set) var isClosed = false
     let media: MediaCenter
@@ -655,6 +654,8 @@ final class AppCoordinator {
         if !browserVisible {
             showBrowser()
         }
+        // The address is in the floating toolbar's panel, which has to be key to take what is typed.
+        host?.makeFloatingBarKey()
         addressBarFocusToken += 1
     }
 
@@ -913,14 +914,12 @@ final class AppCoordinator {
         showsInChrome: Bool = true
     ) async -> Bool {
         let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        let attachmentTextOnly = !ModelImageSupport.acceptsImages(
-            for: selectedProvider, model: selectedModel, settings: modelSettings
-        )
+        let attachmentTextOnly = self.attachmentTextOnly
         guard !text.isEmpty || !attachments.isEmpty else { return false }
         do {
             try AttachmentRequest.validate(
                 attachments, message: text, textOnly: attachmentTextOnly,
-                windowTokens: ContextWindow.tokens(for: selectedProvider, model: selectedModel, settings: modelSettings),
+                windowTokens: attachmentWindowTokens,
                 imageTokens: AttachmentRequest.imageTokens(for: selectedProvider)
             )
         } catch {
@@ -945,6 +944,17 @@ final class AppCoordinator {
 }
 
 extension AppCoordinator {
+    /// Whether the selected model reads only text, by THIS window's profile settings (`modelSettings`). The composer, the
+    /// send path and the agent all ask here, so a window in a named or private profile cannot disagree with the agent
+    /// (`LLMSettings.current` is the original profile's store).
+    var attachmentTextOnly: Bool {
+        !ModelImageSupport.acceptsImages(for: selectedProvider, model: selectedModel, settings: modelSettings)
+    }
+
+    var attachmentWindowTokens: Int {
+        ContextWindow.tokens(for: selectedProvider, model: selectedModel, settings: modelSettings)
+    }
+
     /// Called about once a frame while the full-screen strip slides, so only a real change reaches the views.
     func hostDidChange(visible: Bool, controlsInset: CGFloat, titleStripInset: CGFloat) {
         guard visible != browserVisible || controlsInset != windowControlsInset || titleStripInset != self.titleStripInset
@@ -952,5 +962,19 @@ extension AppCoordinator {
         browserVisible = visible
         windowControlsInset = controlsInset
         self.titleStripInset = titleStripInset
+    }
+}
+
+extension AppCoordinator {
+    /// The window, or its floating toolbar panel, has the keyboard: the two are one unit (`FloatingBarController.isKeyUnit`).
+    var isKeyWindow: Bool {
+        host?.isKeyUnit ?? false
+    }
+
+    /// The responder that has the keyboard: the field editor of the floating bar while its panel is key, else the window's own
+    /// (the page). Whatever asks whether the person is typing asks this, never the browser window's `firstResponder` alone: that
+    /// is the page while the address is edited in the panel.
+    var keyUnitResponder: NSResponder? {
+        host?.keyResponder
     }
 }

@@ -56,6 +56,8 @@ final class ChromiumRemoteBrowser: ChromiumRemoteBrowserHandle {
     private(set) var pageLayer: CALayer?
     /// The view over the page that takes its keyboard, pointer and text input (D4-11): made with this browser, gone with it.
     var contentView: ChromiumRemoteContentView?
+    /// What the content view's accessibility reads (D4-41, `ChromiumRemoteContentView+Accessibility`): made with the first query.
+    var accessibilityHost: ChromiumRemoteAccessibilityHost?
     /// What the service was last told: its view size in points, the backing scale, the screen's size, and whether the browser is
     /// hidden or parked. A new browser is shown at the size it was created with.
     var sentSize = CGSize.zero
@@ -100,8 +102,15 @@ final class ChromiumRemoteBrowser: ChromiumRemoteBrowserHandle {
     @discardableResult
     func detachFrameLayer(keepingPreview: Bool = false) -> CALayer? {
         stopObservingScreen()
+        // Taking the focused view out of its window would leave the window as first responder, and every key would beep: the page
+        // keeps the focus (`BrowserPage`) until a browser comes back to give it to (`ChromiumPage.attachRemoteFrameLayer`).
+        let focusedIn = contentView.flatMap { $0.window?.firstResponder === $0 ? $0.window : nil }
         contentView?.removeFromSuperview()
         contentView = nil
+        accessibilityHost = nil
+        if let focusedIn, let owner = page?.owner {
+            focusedIn.makeFirstResponder(owner)
+        }
         guard let layer = pageLayer else { return nil }
         pageLayer = nil
         connection.sink.unregister(browser: id, keepingPageLayer: keepingPreview)
@@ -137,6 +146,8 @@ final class ChromiumRemoteBrowser: ChromiumRemoteBrowserHandle {
     /// the create: the service has no browser to give it to before.
     private(set) var isCreated = false
     private var held: [CefRemoteMessage] = []
+    /// The focus the view took or lost before the browser was made (`ChromiumRemoteBrowser.sendFocus`): the last answer goes out first.
+    var pendingFocus: Bool?
 
     /// Queues a message for this browser. False when the browser is gone or nothing is, or will be, running.
     @discardableResult
@@ -160,11 +171,16 @@ final class ChromiumRemoteBrowser: ChromiumRemoteBrowserHandle {
     func markCreated() {
         guard !isCreated, !isClosed else { return }
         isCreated = true
-        connection.accessibilityBrowserCreated(id)
+        connection.accessibilityBrowserCreated(id, shown: !sentHidden && !sentParked)
+        connection.browserAccessibility(id)?.onTreeChanged = { [weak self] in self?.contentView?.accessibilityTreeChanged() }
         let waiting = held
         held.removeAll()
         for message in waiting {
             send(message)
+        }
+        if let focus = pendingFocus {
+            pendingFocus = nil
+            sendFocus(focus)
         }
     }
 

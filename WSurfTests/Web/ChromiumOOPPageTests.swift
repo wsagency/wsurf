@@ -73,7 +73,8 @@ struct ChromiumOOPPageTests {
         let connection = ChromiumRemote(
             serviceName: ChromiumRemoteClientTests.noSuchService, sink: ChromiumFrameSink(),
             root: { FileManager.default.temporaryDirectory.appending(path: "wsurf-d4-page-\(UUID().uuidString)", directoryHint: .isDirectory) },
-            latch: ChromiumOOP.Latch(), isEnabled: { true })
+            latch: ChromiumOOP.Latch(), isEnabled: { true },
+            invalidMeansUnreachable: false)
         let remote = ChromiumRemoteBrowser(page: native, connection: connection)
         let recorder = Recorder()
         remote.outgoing = { message in
@@ -181,6 +182,19 @@ struct ChromiumOOPPageTests {
         #expect(abs((rig.recorder.sent(CefRemote.Op.zoom).first?.double(CefRemote.Key.value) ?? 0) - 1) < 0.001, "zoom 1.2 is one step of 1.2")
         #expect(rig.recorder.sent(CefRemote.Op.reload).map { $0.bool(CefRemote.Key.flag) } == [false, true])
         #expect(rig.recorder.messages.allSatisfy { $0.browser == rig.remote.id })
+        await rig.end()
+    }
+
+    /// A load WSurf started that the service has not begun reports no end after Stop; the page must not stay loading, or the tab's
+    /// next Reload takes it for stuck and restarts it.
+    @Test func stoppingALoadTheServiceHasNotBegunEndsItsLoading() async {
+        let rig = makeRig()
+        _ = rig.native.load(URLRequest(url: URL(string: "http://127.0.0.1/c")!))
+        #expect(rig.page.isLoading)
+        rig.native.stopLoading()
+        #expect(!rig.page.isLoading)
+        #expect(rig.page.estimatedProgress == 1)
+        #expect(rig.recorder.ops.last == CefRemote.Op.stop)
         await rig.end()
     }
 

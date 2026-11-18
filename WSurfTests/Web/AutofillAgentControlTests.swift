@@ -144,6 +144,37 @@ struct AutofillAgentControlTests {
         }
     }
 
+    /// The dropdown's guard tells the log why it refused, by its fixed reason only, once per refusal and never for an offer: the first
+    /// check that fails names the reason (`AutofillDiagnostics.offerRefusal`).
+    @Test(arguments: BrowserEngine.allCases)
+    func theDropdownsRefusalReachesTheLogByItsReason(engine: BrowserEngine) async throws {
+        try await withRig(engine) { rig in
+            @MainActor func logged(in frame: BrowserFrame) -> (origin: String?, events: [AutofillDiagnostics.Event]) {
+                AutofillDiagnostics.watch(rig.page)
+                let origin = AutofillSuggestions.offerOrigin(for: rig.select(in: frame), kind: .password)
+                return (origin, AutofillDiagnostics.offered(to: rig.page))
+            }
+            let main = logged(in: rig.main)
+            #expect(main.origin != nil && main.events.isEmpty, "an offer is no refusal")
+
+            rig.page.hasOnlySecureContent = false
+            #expect(logged(in: rig.main).events == [.insecurePage])
+            set(.assistant, true, on: rig.tab)
+            #expect(logged(in: rig.main).events == [.insecurePage], "the order of the checks, not of the causes")
+            rig.page.hasOnlySecureContent = true
+            #expect(logged(in: rig.main).events == [.agentControlled])
+            set(.assistant, false, on: rig.tab)
+
+            let opaque = BrowserFrame(
+                id: "OPAQUE", documentID: "loader-opaque", url: URL(string: Self.idp + "/embed")!, isMainFrame: false,
+                securityOrigin: BrowserSecurityOrigin(protocol: "https", host: "login.idp.example", port: 0), parentID: "MAIN",
+                hasTrustedSecurityOrigin: false
+            )
+            let untrusted = logged(in: opaque)
+            #expect(untrusted.origin == nil && untrusted.events == [.frameNotTrusted])
+        }
+    }
+
     @Test(arguments: BrowserEngine.allCases)
     func controlStartingTakesTheTabsOffersAway(engine: BrowserEngine) async throws {
         try await withRig(engine) { rig in

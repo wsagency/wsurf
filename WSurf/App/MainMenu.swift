@@ -25,21 +25,32 @@ enum ShortcutPriority {
         (rightArrow, [.command]),
     ]
 
-    static func menuAnswersFirst(_ event: NSEvent) -> Bool {
+    /// For a key chord (a command or control key): whether it is one the page is offered first. Nil for any other key.
+    private static func isPageFirst(_ event: NSEvent) -> Bool? {
         let flags = event.modifierFlags
             .intersection(.deviceIndependentFlagsMask)
             .subtracting([.capsLock, .numericPad, .function])
-        guard flags.contains(.command) || flags.contains(.control) else { return false }
-        guard let key = event.charactersIgnoringModifiers?.lowercased() else { return false }
-        return !pageFirst.contains { $0.key == key && $0.modifiers == flags }
+        guard flags.contains(.command) || flags.contains(.control) else { return nil }
+        guard let key = event.charactersIgnoringModifiers?.lowercased() else { return nil }
+        return pageFirst.contains { $0.key == key && $0.modifiers == flags }
+    }
+
+    static func menuAnswersFirst(_ event: NSEvent) -> Bool {
+        isPageFirst(event).map { !$0 } ?? false
+    }
+
+    /// The chords of `pageFirst`: a web view answers them before the menu does (an out-of-process page's content view asks this).
+    static func pageAnswersFirst(_ event: NSEvent) -> Bool {
+        isPageFirst(event) ?? false
     }
 }
 
 @MainActor
 final class MainMenu: NSObject, NSMenuItemValidation {
-    private let fallbackCoordinator: AppCoordinator?
-    private weak var application: BrowserApplication?
-    private var coordinator: AppCoordinator {
+    let fallbackCoordinator: AppCoordinator?
+    weak var application: BrowserApplication?
+    var site = SiteMenuState()
+    var coordinator: AppCoordinator {
         if let application {
             return application.ensureActiveWindow()
         }
@@ -58,6 +69,10 @@ final class MainMenu: NSObject, NSMenuItemValidation {
         super.init()
     }
 
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+    }
+
     func install() {
         let root = NSMenu()
         root.addItem(submenu(appMenu(), titled: "WSurf"))
@@ -72,9 +87,14 @@ final class MainMenu: NSObject, NSMenuItemValidation {
         let help = NSMenu(title: "Help")
         root.addItem(submenu(help, titled: "Help"))
 
+        root.addItem(siteMenu())
+
         NSApp.mainMenu = root
         NSApp.windowsMenu = window
         NSApp.helpMenu = help
+
+        watchSiteWindows()
+        refreshSiteItem()
 
         let coordinators = application?.windows ?? fallbackCoordinator.map { [$0] } ?? []
         for coordinator in coordinators {
@@ -221,6 +241,7 @@ final class MainMenu: NSObject, NSMenuItemValidation {
         menu.addItem(command("Hide Sidebar", #selector(toggleSidebar), key: "s", modifiers: [.command, .control]))
         menu.addItem(command("Use Minimal Window Style", #selector(toggleWindowStyle), key: "m", modifiers: [.command, .shift]))
         menu.addItem(command("Move Bar to Top", #selector(moveMinimalBar)))
+        menu.addItem(command("Detach Toolbar", #selector(toggleToolbarDetached)))
         menu.addItem(command("Keep Sidebar Open", #selector(toggleMinimalSidebarPin)))
         menu.addItem(command(
             "Show Assistant",
@@ -232,6 +253,7 @@ final class MainMenu: NSObject, NSMenuItemValidation {
         menu.addItem(submenu(playerCornerMenu(), titled: "Move Player to Corner"))
         // ⌃⌘M: ⌘M minimizes, ⇧⌘M is the window style and ⌥⌘M is the system's Minimize All; ⌃⌘M was free.
         menu.addItem(command("Mute WSurf", #selector(toggleWSurfMute), key: "m", modifiers: [.command, .control]))
+        menu.addItem(command("Show Site in Menu Bar", #selector(toggleSiteInMenuBar)))
         menu.addItem(.separator())
         let developer = NSMenu()
         developer.addItem(command("Show Web Inspector", #selector(showWebInspector), key: "i", modifiers: [.command, .option]))
@@ -406,10 +428,10 @@ final class MainMenu: NSObject, NSMenuItemValidation {
             coordinator.browser.reopenLastClosedTab()
         }
     }
-    @objc private func openLocation() {
+    @objc func openLocation() {
         coordinator.focusAddressBar()
     }
-    @objc private func copyPageURL() {
+    @objc func copyPageURL() {
         coordinator.copyCurrentURL()
     }
 
@@ -464,6 +486,9 @@ final class MainMenu: NSObject, NSMenuItemValidation {
     }
     @objc private func moveMinimalBar() {
         coordinator.moveMinimalBar()
+    }
+    @objc private func toggleToolbarDetached() {
+        coordinator.toggleToolbarDetached()
     }
     @objc private func toggleMinimalSidebarPin() {
         coordinator.toggleMinimalSidebarPin()
@@ -606,7 +631,7 @@ final class MainMenu: NSObject, NSMenuItemValidation {
         #selector(splitRight), #selector(splitDown), #selector(focusOtherPane), #selector(swapPanes),
         #selector(toggleSplitAxis), #selector(exitSplit), #selector(closeOtherPanes),
         #selector(toggleSidebar), #selector(toggleWindowStyle), #selector(moveMinimalBar), #selector(toggleMinimalSidebarPin),
-        #selector(toggleAgentInspector), #selector(toggleLyrics), #selector(pinPage), #selector(returnToPin),
+        #selector(toggleToolbarDetached), #selector(toggleAgentInspector), #selector(toggleLyrics), #selector(pinPage), #selector(returnToPin),
     ]
 
     /// What still works with no browser window open.
@@ -638,7 +663,7 @@ final class MainMenu: NSObject, NSMenuItemValidation {
     }
 
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {  // swiftlint:disable:this cyclomatic_complexity
-        if let answer = validateWithoutBrowserWindow(menuItem) {
+        if let answer = validateSiteItem(menuItem) ?? validateWithoutBrowserWindow(menuItem) {
             return answer
         }
         guard validateMicroItem(menuItem) != false else { return false }
@@ -732,7 +757,7 @@ final class MainMenu: NSObject, NSMenuItemValidation {
         case #selector(checkForUpdates):
             return coordinator.updates.canCheck
         case #selector(toggleSidebar), #selector(toggleWindowStyle), #selector(moveMinimalBar),
-             #selector(toggleMinimalSidebarPin):
+             #selector(toggleMinimalSidebarPin), #selector(toggleToolbarDetached):
             return validateWindowStyleItem(menuItem)
         case #selector(toggleAgentInspector):
             let activityTitle: LocalizedStringResource = coordinator.sidePanel.isShowing(.activity)
@@ -826,6 +851,8 @@ final class MainMenu: NSObject, NSMenuItemValidation {
             title = isMinimal ? "Use Standard Window Style" : "Use Minimal Window Style"
         case #selector(moveMinimalBar):
             title = coordinator.settings.minimalBarEdge == .top ? "Move Bar to Bottom" : "Move Bar to Top"
+        case #selector(toggleToolbarDetached):
+            title = coordinator.settings.minimalBarPlacement == .floating ? "Dock Toolbar" : "Detach Toolbar"
         case #selector(toggleMinimalSidebarPin):
             title = "Keep Sidebar Open"
             menuItem.state = coordinator.keepsMinimalSidebarOpen ? .on : .off
@@ -838,6 +865,7 @@ final class MainMenu: NSObject, NSMenuItemValidation {
         }
         menuItem.title = String(localized: title)
         let isMinimalOnly = menuItem.action == #selector(moveMinimalBar) || menuItem.action == #selector(toggleMinimalSidebarPin)
+            || menuItem.action == #selector(toggleToolbarDetached)
         return !isMinimalOnly || isMinimal
     }
 
@@ -851,7 +879,7 @@ final class MainMenu: NSObject, NSMenuItemValidation {
         return holder
     }
 
-    private func command(
+    func command(
         _ title: LocalizedStringResource,
         _ action: Selector,
         key: String = "",

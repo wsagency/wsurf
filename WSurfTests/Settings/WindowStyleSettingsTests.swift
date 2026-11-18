@@ -193,6 +193,89 @@ struct WindowStyleSettingsTests {
         }
     }
 
+    @Test func showingTheSiteInTheMenuBarIsOffByDefaultAppWideAndResets() throws {
+        try withSettings { settings, defaults in
+            #expect(!settings.showsSiteInMenuBar, "nothing changes for anyone who never turns it on")
+            #expect(defaults.object(forKey: BrowserSettings.Key.siteInMenuBar) == nil, "reading the default writes nothing")
+
+            let profile = BrowserSettings(defaults: defaults, appliesAppearanceGlobally: false, application: settings)
+            profile.showsSiteInMenuBar = true
+            #expect(settings.showsSiteInMenuBar, "a profile writes the app-wide value")
+            #expect(defaults.object(forKey: BrowserSettings.Key.siteInMenuBar) as? Bool == true)
+            #expect(BrowserSettings.Key.siteInMenuBar == "appearance.siteInMenuBar")
+
+            let reopened = BrowserSettings(defaults: defaults, appliesAppearanceGlobally: false)
+            #expect(reopened.showsSiteInMenuBar)
+
+            settings.resetToDefaults()
+            #expect(!settings.showsSiteInMenuBar && !profile.showsSiteInMenuBar)
+            #expect(defaults.object(forKey: BrowserSettings.Key.siteInMenuBar) as? Bool == false)
+        }
+    }
+
+    @Test func theBarsPlacementIsOneAppWideChoiceInTheWindowUntilItIsDetached() throws {
+        try withSettings { settings, defaults in
+            #expect(settings.minimalBarPlacement == .window)
+            #expect(defaults.object(forKey: BrowserSettings.Key.minimalBarPlacement) == nil, "reading the default writes nothing")
+            let profile = BrowserSettings(defaults: defaults, appliesAppearanceGlobally: false, application: settings)
+
+            profile.minimalBarPlacement = .floating
+            #expect(settings.minimalBarPlacement == .floating, "a profile writes the app-wide value")
+            #expect(defaults.string(forKey: BrowserSettings.Key.minimalBarPlacement) == "floating")
+            #expect(settings.minimalBarEdge == .bottom, "the dock edge is its own choice and stays")
+            #expect(BrowserSettings(defaults: defaults, appliesAppearanceGlobally: false).minimalBarPlacement == .floating)
+
+            settings.resetToDefaults()
+            #expect(settings.minimalBarPlacement == .window && profile.minimalBarPlacement == .window)
+            #expect(defaults.string(forKey: BrowserSettings.Key.minimalBarPlacement) == "window")
+        }
+    }
+
+    @Test func anUnreadablePlacementIsTheWindow() throws {
+        try withSettings { _, defaults in
+            for stored in ["sidebar", "Floating", "", "1"] {
+                defaults.set(stored, forKey: BrowserSettings.Key.minimalBarPlacement)
+                #expect(BrowserSettings(defaults: defaults, appliesAppearanceGlobally: false).minimalBarPlacement == .window, "\(stored)")
+            }
+            defaults.set(true, forKey: BrowserSettings.Key.minimalBarPlacement)
+            #expect(BrowserSettings(defaults: defaults, appliesAppearanceGlobally: false).minimalBarPlacement == .window)
+        }
+    }
+
+    private let window = UUID(uuidString: "6F9619FF-8B86-D011-B42D-00C04FC964FF")!
+
+    @Test func theFloatingBarsPlaceIsSavedWithItsWindowAndResets() throws {
+        try withSettings { settings, defaults in
+            #expect(settings.minimalBarFloatOffset == nil, "no place until the bar is dragged")
+            let profile = BrowserSettings(defaults: defaults, appliesAppearanceGlobally: false, application: settings)
+            let place = FloatingBarPlace(offset: CGPoint(x: 0.25, y: 1.5), windowID: window, windowSize: CGSize(width: 1_200, height: 800))
+
+            profile.minimalBarFloatOffset = place
+            #expect(settings.minimalBarFloatOffset == place)
+            #expect(defaults.string(forKey: BrowserSettings.Key.minimalBarFloatOffset) == place.stored)
+            #expect(BrowserSettings(defaults: defaults, appliesAppearanceGlobally: false).minimalBarFloatOffset == place,
+                    "it survives a restart, with the window it was made in")
+
+            settings.resetToDefaults()
+            #expect(settings.minimalBarFloatOffset == nil && profile.minimalBarFloatOffset == nil)
+            #expect(BrowserSettings(defaults: defaults, appliesAppearanceGlobally: false).minimalBarFloatOffset == nil)
+        }
+    }
+
+    @Test func aStoredPlaceThatIsNotAPlaceIsNoPlace() {
+        let good = "0.5,-0.25,1200.0,800.0,\(window.uuidString)"
+        #expect(FloatingBarPlace(stored: good) == FloatingBarPlace(
+            offset: CGPoint(x: 0.5, y: -0.25), windowID: window, windowSize: CGSize(width: 1_200, height: 800)))
+        for bad in [
+            nil, "", "somewhere", "{12, -4}", "0.5,-0.25,1200,800", "0.5,-0.25,1200,800,not-a-uuid",
+            "nan,0.1,1200,800,\(window.uuidString)", "0.1,inf,1200,800,\(window.uuidString)",
+            "0.1,0.1,0,800,\(window.uuidString)", "0.1,0.1,1200,-5,\(window.uuidString)", "a,b,c,d,\(window.uuidString)",
+            "\(good),extra",
+        ] as [String?] {
+            #expect(FloatingBarPlace(stored: bad) == nil, "\(bad ?? "nil")")
+        }
+    }
+
     @Test func anUnknownStoredStyleFallsBackToStandard() throws {
         try withSettings { _, defaults in
             defaults.set("floating", forKey: BrowserSettings.Key.windowStyle)

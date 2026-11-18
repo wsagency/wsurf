@@ -9,10 +9,11 @@ import WebKit
 @testable import WSurf
 
 /// Where Pick Credential… appears in the REAL context menu of both engines, and where it must not. A loopback page with a text
-/// field, a password field, a read-only field, a field under an overlay and a field under an overlay that lets the pointer through
-/// is right-clicked with AppKit events made in process (`window.sendEvent`; WebKit) or DevTools input (Chromium): nothing is posted
-/// to the system. The menu is the one the engine built, as `TabWebView.willOpenMenu` (WebKit) or `on_before_context_menu`
-/// (Chromium) left it, read while it tracks (`ContextMenuReader`).
+/// field, a password field, a read-only field, a disabled field, a field under an overlay, a field under an overlay that lets the
+/// pointer through and a login form whose prefilled username is read-only is right-clicked with AppKit events made in process
+/// (`window.sendEvent`; WebKit) or DevTools input (Chromium): nothing is posted to the system. The menu is the one the engine
+/// built, as `TabWebView.willOpenMenu` (WebKit) or `on_before_context_menu` (Chromium) left it, read while it tracks
+/// (`ContextMenuReader`).
 ///
 /// The fixture is plain HTTP, which the tab's own policy refuses (`CredentialPicker.isOffered` needs HTTPS: neither engine can load
 /// an HTTPS fixture here), so the tests that look at WHERE the item goes put the tab's answer in by hand (`Rig.offer`). The one that
@@ -23,32 +24,45 @@ import WebKit
 struct PickCredentialRealMenuTests {
     // MARK: - Fixture
 
-    /// The fields of the fixture, by the element a right-click on them lands on.
+    /// The fields of the fixture, by the element a right-click on them lands on. `user` and `pw2` are one form: a prefilled
+    /// username the page made read-only, and the password field beside it, which takes input.
     nonisolated enum Field: String, CaseIterable, CustomTestStringConvertible, Sendable {
-        case text, pw, through, ro, cover, plain
+        case text, pw, through, ro, cover, plain, dis, user, pw2
 
         var testDescription: String {
             rawValue
         }
 
-        /// Whether the engine's menu for a right-click there is an editable field's, and so gets the item. The engines differ on a
-        /// read-only field, measured here: Chromium's `is_editable` is false for it, but WebKit's menu for it has Cut, Copy and
-        /// Paste like a writable field's, so the item is offered there (choosing it picks for nothing: the form model skips a `readonly`
-        /// field, `AutofillFormScript` `rendered`).
-        func isEditable(in engine: BrowserEngine) -> Bool {
+        /// The fields whose menu the engine always opens: a disabled one is the engine's call (`aDisabledFieldGetsNoItem`).
+        static let withMenu = allCases.filter { $0 != .dis }
+
+        /// Whether the item is offered there, in both engines. A field the page marked `readonly` or disabled takes no input, and
+        /// Chromium's `is_editable` says so; WebKit's menu for a read-only field has Cut, Copy and Paste like a writable one's, so
+        /// there the page's own hit test tells it (`TabWebView.contextFieldResolved`). The password field beside a read-only
+        /// username takes input and gets the item.
+        var offersPick: Bool {
             switch self {
-            case .text, .pw, .through:
+            case .text, .pw, .through, .pw2:
                 true
-            case .ro:
-                engine == .webKit
-            case .cover, .plain:
+            case .ro, .cover, .plain, .dis, .user:
+                false
+            }
+        }
+
+        /// WebKit's own sign that the right-click landed in something editable (its Paste item): present for every input that
+        /// opens a menu (read-only ones too), absent elsewhere. Not asked for `dis`, whose menu is the engine's call.
+        var webKitHasPaste: Bool {
+            switch self {
+            case .text, .pw, .through, .ro, .pw2, .user:
+                true
+            case .cover, .plain, .dis:
                 false
             }
         }
 
         /// The middle of the element in the viewport, in points (see `page`).
         var point: CGPoint {
-            let top: [Field: Double] = [.text: 10, .pw: 50, .ro: 90, .cover: 130, .through: 170, .plain: 210]
+            let top: [Field: Double] = [.text: 10, .pw: 50, .ro: 90, .cover: 130, .through: 170, .plain: 210, .dis: 250, .user: 290, .pw2: 330]
             return CGPoint(x: 140, y: (top[self] ?? 0) + 15)
         }
     }
@@ -69,6 +83,8 @@ struct PickCredentialRealMenuTests {
         <input id="covered" style="top: 130px"><div id="cover" style="top: 130px"></div>
         <input id="through" style="top: 170px"><div id="screen" style="top: 170px; pointer-events: none"></div>
         <p id="plain" style="top: 210px">Plain text</p>
+        <input id="dis" disabled value="disabled" style="top: 250px">
+        <form><input id="user" readonly value="ada@example.test" style="top: 290px"><input id="pw2" type="password" style="top: 330px"></form>
         <script>
           window.__ctx = [];
           addEventListener('contextmenu', event => { window.__ctx.push({ id: event.target.id, prevented: false }); }, true);
@@ -84,6 +100,14 @@ struct PickCredentialRealMenuTests {
     ]
 
     nonisolated static let pick = String(localized: "Pick Credential…")
+    /// No reason, then each reason the tab can give for a withheld item.
+    nonisolated static let refusals: [CredentialPicker.Refusal?] = {
+        var all: [CredentialPicker.Refusal?] = [nil]
+        for reason in CredentialPicker.Refusal.allCases {
+            all.append(reason)
+        }
+        return all
+    }()
 
     /// What the open menu held when it was read.
     @MainActor
@@ -178,7 +202,8 @@ struct PickCredentialRealMenuTests {
         /// Right-clicks `field` and reads the menu that opens, choosing the first item `choose` accepts. With `expectingMenu` false
         /// (the page cancels the event) it waits until the page has seen the event, then a while longer, and returns what appeared.
         func rightClick(
-            _ field: Field, expectingMenu: Bool = true, choosing choose: @escaping @MainActor (String) -> Bool = { _ in false }
+            _ field: Field, expectingMenu: Bool = true, controlClick: Bool = false,
+            choosing choose: @escaping @MainActor (String) -> Bool = { _ in false }
         ) async throws -> Shown {
             let point = field.point
             let hit = try await page.evaluateJavaScript("document.elementFromPoint(\(point.x), \(point.y))?.id ?? ''") as? String
@@ -207,7 +232,7 @@ struct PickCredentialRealMenuTests {
                     }
                 }
             }
-            try await PageRightClick.send(at: point, in: page, window: window)
+            try await PageRightClick.send(at: point, in: page, window: window, left: controlClick, control: controlClick)
             if expectingMenu {
                 _ = await waitUntil(timeout: .seconds(10)) { self.menuDone }
             } else {
@@ -250,26 +275,69 @@ struct PickCredentialRealMenuTests {
 
     // MARK: - Where it goes
 
-    /// The item is on top of the menu of an editable field, password field included, and nowhere else. A field under an overlay is
-    /// not what the pointer is over, in either engine; an overlay that lets the pointer through (`pointer-events: none`) leaves the
-    /// field editable; a read-only field is editable to WebKit's menu and not to Chromium's (`Field.isEditable`). WebKit's own sign
-    /// of an editable target, its Paste item, is present exactly where the item is.
-    @Test(arguments: BrowserEngine.allCases, Field.allCases)
+    /// The item is on top of the menu of an editable field, password field included, and nowhere else, in both engines. A field
+    /// under an overlay is not what the pointer is over; an overlay that lets the pointer through (`pointer-events: none`) leaves
+    /// the field editable; a read-only field gets nothing, though WebKit's menu for it is as editable as a writable field's (its
+    /// Paste item is there: the item is withheld by the page's hit test, `Field.offersPick`); the password field beside a read-only
+    /// username still gets it.
+    @Test(arguments: BrowserEngine.allCases, Field.withMenu)
     func theItemIsOnTopOfAnEditableFieldsMenuAndOnNoOther(engine: BrowserEngine, field: Field) async throws {
         try await withRig(engine) { rig in
             try rig.offer(true)
             let menu = try await rig.rightClick(field)
             try #require(menu.appeared, "a menu opened on \(field)")
             let note: Comment = "\(engine) \(field): the menu held \(menu.titles) \(menu.identifiers)"
-            #expect(menu.offersPick == field.isEditable(in: engine), note)
+            #expect(menu.offersPick == field.offersPick, note)
             if engine == .webKit {
-                #expect(menu.hasPaste == field.isEditable(in: engine), "WebKit offers Paste only where the right-click landed in something editable: \(note)")
-                if field.isEditable(in: engine) {
+                #expect(menu.hasPaste == field.webKitHasPaste, "WebKit offers Paste where the right-click landed in an input: \(note)")
+                if field.offersPick {
                     #expect(menu.identifiers.first == CredentialPicker.menuItemIdentifier.rawValue, note)
                 }
             }
             #expect(rig.picked == 0, "looking at the menu runs nothing")
             #expect(try await rig.events().last?.prevented == false, "the page did not cancel this right-click")
+        }
+    }
+
+    @Test(arguments: [Field.ro, .user, .dis, .pw2])
+    func aControlClickOffersCredentialsOnlyOnEditableFields(field: Field) async throws {
+        try await withRig(.webKit) { rig in
+            try rig.offer(true)
+            let menu = try await rig.rightClick(field, controlClick: true)
+            if field != .dis {
+                try #require(menu.appeared, "Control-click opened the menu on \(field)")
+            }
+            #expect(menu.offersPick == field.offersPick, "Control-click on \(field): \(menu.titles)")
+            #expect(rig.picked == 0)
+        }
+    }
+
+    /// A disabled field gets no item in either engine. Whether the engine opens a menu over a disabled control at all is its own
+    /// decision, so a menu is not required here, only that none that opened has the item (also with the reason, which only an
+    /// editable field's menu shows).
+    @Test(arguments: BrowserEngine.allCases, PickCredentialRealMenuTests.refusals)
+    func aDisabledFieldGetsNoItem(engine: BrowserEngine, refusal: CredentialPicker.Refusal?) async throws {
+        try await withRig(engine) { rig in
+            try rig.offer(refusal == nil, refusal: refusal)
+            let menu = try await rig.rightClick(.dis)
+            #expect(!menu.offersPick && !menu.titles.contains { $0.hasPrefix(Self.pick) }, "\(engine) disabled: the menu held \(menu.titles)")
+            #expect(rig.picked == 0)
+        }
+    }
+
+    /// The password field next to a read-only, prefilled username is an editable field like any other: it gets the item, and
+    /// choosing it runs the picker (what the picker then fills is `CredentialPickerTests`, for the form this fixture has).
+    @Test(arguments: BrowserEngine.allCases)
+    func theEditablePasswordFieldBesideAReadOnlyUsernameStillGetsTheItem(engine: BrowserEngine) async throws {
+        try await withRig(engine) { rig in
+            try rig.offer(true)
+            let username = try await rig.rightClick(.user)
+            try #require(username.appeared)
+            #expect(!username.offersPick, "the read-only username: \(username.titles)")
+            let password = try await rig.rightClick(.pw2) { $0 == Self.pick }
+            try #require(password.appeared && password.offersPick, "the password field beside it: \(password.titles)")
+            #expect(password.chosen)
+            #expect(await waitUntil { rig.picked == 1 }, "choosing it ran the picker once")
         }
     }
 

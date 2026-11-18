@@ -67,6 +67,8 @@ public final class VaultSync: SyncEngineDelegate {
     /// A pass that would send more removed states than this, or a quarter of the vault's synced entries if that is more, waits for
     /// the owner.
     static let removalFloor = 20
+    /// How often a first upload may ask for its missing zone (or an entry for its own save) again, between two heartbeats.
+    static let zoneRetryLimit = 3
 
     public internal(set) var state: VaultSyncAppState
     /// Nil until the engine has answered.
@@ -107,6 +109,10 @@ public final class VaultSync: SyncEngineDelegate {
     /// Vaults whose owed second read of the zone was started in this run, and how many records the last read of each skipped.
     @ObservationIgnored var rereadTried: Set<VaultKey> = []
     @ObservationIgnored var skippedRecords: [VaultKey: Int] = [:]
+    /// How many times this run asked for a first upload's zone again after the `Vault` record found it missing, and for each entry how
+    /// many times it asked for its own save again. Cleared when the `Vault` record lands and at every heartbeat.
+    @ObservationIgnored var zoneRetries: [VaultKey: Int] = [:]
+    @ObservationIgnored var itemRetries: [VaultKey: [String: Int]] = [:]
     /// Set from `attach` until the vaults the profiles no longer list are dropped: nothing is handed to the engine before that.
     @ObservationIgnored var launchCheck = false
     /// Checks that wait for the host and are not steps of a vault's chain; `settle` waits for them too.
@@ -476,6 +482,8 @@ public final class VaultSync: SyncEngineDelegate {
         guard engine != nil else { return }
         let keys = enabledKeys
         for (position, key) in keys.enumerated() {
+            zoneRetries[key] = nil
+            itemRetries[key] = nil
             readd(key)
             rereadSkipped(key)
             enqueue(key) { [weak self] in
@@ -532,6 +540,10 @@ public final class VaultSync: SyncEngineDelegate {
         case .zoneDeletesFailed(let zones):
             for zone in zones.sorted() {
                 zoneDeleteFailed(zone)
+            }
+        case .zoneSavesOverQuota(let zones):
+            for zone in zones.sorted() {
+                zoneSaveOverQuota(zone)
             }
         }
         persist(state)
@@ -625,6 +637,8 @@ public final class VaultSync: SyncEngineDelegate {
         holding[key] = nil
         releasing[key] = nil
         rereadTried.remove(key)
+        zoneRetries[key] = nil
+        itemRetries[key] = nil
         skippedRecords[key] = nil
     }
 
@@ -700,6 +714,20 @@ public final class VaultSync: SyncEngineDelegate {
         return notRolledBack(key, snapshot, row, database)
     }
 
+    /// True for a vault whose first `Vault` record never reached the server as far as this Mac can tell: no uploaded mark, the record
+    /// still waiting, and no server fields stored for it (they exist only once the record was seen on the server: a rename that overtook
+    /// the first save, or another Mac that enabled the vault at the same moment). Only such a vault may make its zone again, whether a
+    /// save found it missing or the heartbeat re-adds what waits; any other missing zone was removed, and this Mac never undoes that.
+    /// A read that fails counts as "stored", the answer that does not make a zone.
+    func firstUploadPending(_ key: VaultKey, database: VaultSyncDatabase, row: VaultRow) -> Bool {
+        guard row.uploadedMark == nil, row.pendingVault != nil else { return false }
+        do {
+            return try database.read { try $0.systemFields(key.vaultID, Self.vaultRecordName) } == nil
+        } catch {
+            return false
+        }
+    }
+
     /// Asks the engine to send everything the vault still has waiting.
     func readd(_ key: VaultKey) {
         guard let engine, let (database, row) = runningRow(key) else { return }
@@ -708,7 +736,7 @@ public final class VaultSync: SyncEngineDelegate {
         // that held its creation was lost. A zone another Mac removed must not come back because this Mac signed in again.
         var changes: [SyncChange] = []
         if row.pendingVault != nil {
-            if row.uploadedMark == nil {
+            if firstUploadPending(key, database: database, row: row) {
                 changes.append(.saveZone(key.zone))
             }
             changes.append(.saveRecord(key.vaultRecord))

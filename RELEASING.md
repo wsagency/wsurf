@@ -1,7 +1,7 @@
 <!-- Modified for WSurf by wsagency in 2026; based on Linen by Kavoye. -->
 # Releasing WSurf
 
-WSurf uses [Sparkle 2.10.0](https://sparkle-project.org) for updates. The app
+WSurf uses [Sparkle 2.10.1](https://sparkle-project.org) for updates. The app
 does not show the Sparkle windows. The update interface is only the banner in
 `WSurf/Updates/UpdateBanner.swift`.
 
@@ -488,8 +488,10 @@ The candidates tried by hand on the owner's Macs (development-signed, `WSURF_BUN
 that ships. A Debug app is 477 MB on disk (a 145 MB debug dylib, coverage counters, unoptimised code) and as slow as the code can be;
 `release.yml` and `tip.yml` already archive Release, so the local candidate should too.
 
-- **Build** with `xcodebuild archive -configuration Release -destination 'generic/platform=macOS'`, the `release.yml` command with the
-  development identity and profiles, and `ENABLE_DEBUG_DYLIB=NO ENABLE_PREVIEWS=NO`. An archive strips the executables and writes
+- **Build** with `xcodebuild archive -configuration Release -destination 'generic/platform=macOS' -IDEPackageEnablePrebuilts=NO`, the
+  `release.yml` command with the development identity and profiles, and `ENABLE_DEBUG_DYLIB=NO ENABLE_PREVIEWS=NO`.
+  `-IDEPackageEnablePrebuilts=NO` stops SwiftPM from downloading prebuilt swift-syntax (macro) binaries, so they are built from the
+  pinned source. Sparkle is still a binary artifact, verified against the checksum in its own package manifest. An archive strips the executables and writes
   `dSYMs/`: keep them with the build's evidence, they are what symbolicates a crash of that exact build. A plain `xcodebuild build`
   of the scheme turns on code coverage, because the scheme's test action enables it, and leaves the debug map in the binary. An
   archive does neither, and `xcodebuild` refuses `-enableCodeCoverage` for it ("only supported when testing").

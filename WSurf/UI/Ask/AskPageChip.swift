@@ -9,7 +9,6 @@ import SwiftUI
 struct AskPageChip: View {
     let title: String
     let icon: NSImage?
-    var isAttached = false
     var isRasterised = false
     let fontSize: CGFloat
 
@@ -30,12 +29,6 @@ struct AskPageChip: View {
 
     var body: some View {
         HStack(spacing: (fontSize * 0.45).rounded()) {
-            if isAttached {
-                Image(systemName: "at")
-                    .font(.system(size: fontSize * 0.95))
-                    .foregroundStyle(.tertiary)
-            }
-
             Group {
                 if let icon {
                     FaviconImage(image: icon)
@@ -53,7 +46,7 @@ struct AskPageChip: View {
                 .foregroundStyle(ink)
                 .lineLimit(1)
                 .truncationMode(.middle)
-                .frame(maxWidth: fontSize * 14, alignment: .leading)
+                .frame(maxWidth: fontSize * 9, alignment: .leading)
         }
         .padding(.horizontal, (fontSize * 0.55).rounded())
         .padding(.vertical, (fontSize * 0.24).rounded())
@@ -76,14 +69,13 @@ struct AskPageChip: View {
 struct AskPageChipView: View {
     let title: String
     let host: String?
-    var isAttached = false
     let fontSize: CGFloat
 
     @State private var icon: NSImage?
     @Environment(\.profileFavicons) private var profileFavicons
 
     var body: some View {
-        AskPageChip(title: title, icon: icon, isAttached: isAttached, fontSize: fontSize)
+        AskPageChip(title: title, icon: icon, fontSize: fontSize)
             .task(id: "\(host ?? "")|\(profileFavicons.map { String(describing: ObjectIdentifier($0)) } ?? "")") {
                 guard let host, let favicons = profileFavicons else { return }
                 if let hit = favicons.cached(for: host) {

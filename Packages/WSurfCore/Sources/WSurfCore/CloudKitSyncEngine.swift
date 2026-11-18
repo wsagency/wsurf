@@ -136,6 +136,11 @@ private nonisolated final class Bridge: CKSyncEngineDelegate {
             if !sent.failedZoneSaves.isEmpty || !sent.failedZoneDeletes.isEmpty {
                 SyncLog.logger.error("sync: \(sent.failedZoneSaves.count + sent.failedZoneDeletes.count) zone changes failed")
             }
+            // A zone this Mac could not make because iCloud is full is not a zone that was removed: the vault says so.
+            let full = sent.failedZoneSaves.filter { $0.error.code == .quotaExceeded }.map { $0.zone.zoneID.zoneName }.filter(SyncZone.isVault)
+            if !full.isEmpty {
+                await delegate.handle(.zoneSavesOverQuota(full.sorted()))
+            }
             // A zone that is gone is a zone that is deleted, whether this delete did it or the zone was not there to delete.
             let gone = sent.deletedZoneIDs + sent.failedZoneDeletes.filter { $0.value.code == .zoneNotFound }.map(\.key)
             let removed = gone.map(\.zoneName).filter(SyncZone.isVault)

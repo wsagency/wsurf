@@ -110,10 +110,16 @@ final class BrowserSettings {
         appDefaults.string(forKey: Key.windowStyle).flatMap(BrowserWindowStyle.init(rawValue:)) ?? .standard
     @ObservationIgnored lazy var storedMinimalBarEdge: MinimalBarEdge? =
         appDefaults.string(forKey: Key.minimalBarEdge).flatMap(MinimalBarEdge.init(rawValue:)) ?? .bottom
+    @ObservationIgnored lazy var storedMinimalBarPlacement: MinimalBarPlacement? =
+        MinimalBarPlacement(stored: appDefaults.string(forKey: Key.minimalBarPlacement))
+    /// `.some(nil)`: loaded, and there is no saved place. A bare nil would read as not loaded.
+    @ObservationIgnored lazy var storedMinimalBarFloatOffset: FloatingBarPlace?? =
+        .some(FloatingBarPlace(stored: appDefaults.string(forKey: Key.minimalBarFloatOffset)))
     @ObservationIgnored lazy var storedMinimalBarHiding: MinimalBarHiding? =
         MinimalBarHiding(stored: appDefaults.object(forKey: Key.minimalBarAutoHide))
     @ObservationIgnored lazy var storedKeepsMinimalSidebarOpen: Bool? =
         appDefaults.object(forKey: Key.minimalSidebarPinned) as? Bool ?? false
+    @ObservationIgnored lazy var storedShowsSiteInMenuBar: Bool? = appDefaults.object(forKey: Key.siteInMenuBar) as? Bool ?? false
     @ObservationIgnored lazy var storedFastTransitions: Bool? = appDefaults.object(forKey: Key.fastTransitions) as? Bool ?? false
     @ObservationIgnored lazy var storedWindowShadow: Bool? = appDefaults.object(forKey: Key.windowShadow) as? Bool ?? true
     /// `WindowBorder.none` spelled out: a bare `.none` here would be `Optional.none`, and the getter would find no value.

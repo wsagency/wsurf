@@ -63,12 +63,14 @@ struct ChromiumRemoteClientTests {
         helloTimeout: TimeInterval = ChromiumRemote.defaultHelloTimeout,
         latch: ChromiumOOP.Latch = ChromiumOOP.Latch(),
         isEnabled: Bool = true,
-        root: URL? = nil
+        root: URL? = nil,
+        invalidMeansUnreachable: Bool = false
     ) -> ChromiumRemote {
         let directory = root ?? FileManager.default.temporaryDirectory.appending(path: "wsurf-d4-client-\(UUID().uuidString)", directoryHint: .isDirectory)
         return ChromiumRemote(
             serviceName: serviceName, sink: ChromiumFrameSink(), root: { directory }, helloTimeout: helloTimeout,
-            clock: { clock.now }, latch: latch, isEnabled: { isEnabled }
+            clock: { clock.now }, latch: latch, isEnabled: { isEnabled },
+            invalidMeansUnreachable: invalidMeansUnreachable
         )
     }
 
@@ -739,6 +741,41 @@ struct ChromiumRemoteClientTests {
     }
 
     // MARK: Side connections (D4-7, review pr123 C3)
+
+    @Test func terminalInputEventsOnlyDropTheirOwnConnectionAndGeneration() throws {
+        let remote = makeRemote()
+        defer { remote.disconnect() }
+        remote.connect()
+        let answer = CefRemoteMessage("reply")
+        answer.set(CefRemote.Key.success, true)
+        answer.set(CefRemote.Key.pid, 4242)
+        remote.helloEnded(.value(answer), sentAt: 0, generation: remote.generation)
+        let message = CefRemoteMessage(CefRemote.Op.focus)
+        remote.sendInput(message)
+        let old = try #require(remote.input)
+        let identity = ObjectIdentifier(old)
+        let generation = remote.generation
+
+        remote.receiveInput(.invalid, connection: ObjectIdentifier(remote), generation: generation)
+        #expect(remote.input === old, "another connection cannot clear this one")
+        remote.receiveInput(.interrupted, connection: identity, generation: generation - 1)
+        #expect(remote.input === old, "a previous service instance cannot clear this connection")
+        remote.receiveInput(.message(answer), connection: identity, generation: generation)
+        remote.receiveInput(.other, connection: identity, generation: generation)
+        #expect(remote.input === old, "nonterminal events do not clear the connection")
+        remote.receiveInput(.invalid, connection: identity, generation: generation)
+        #expect(!remote.hasInputConnection)
+        #expect(remote.isRunning && remote.generation == generation && remote.interruptions == 0)
+
+        remote.sendInput(message)
+        let replacement = try #require(remote.input)
+        #expect(replacement !== old)
+        remote.receiveInput(.invalid, connection: identity, generation: generation)
+        #expect(remote.input === replacement, "a late callback cannot clear the replacement")
+        remote.receiveInput(.interrupted, connection: ObjectIdentifier(replacement), generation: generation)
+        #expect(!remote.hasInputConnection)
+        #expect(remote.isRunning && remote.interruptions == 0 && remote.sideRefusals == 0)
+    }
 
     @Test
     func aFramesHelloTheServiceRefusesDropsThatConnectionAndOnlyThatOne() throws {

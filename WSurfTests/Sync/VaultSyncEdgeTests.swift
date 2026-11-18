@@ -340,4 +340,251 @@ struct VaultSyncEdgeTests {
 
         #expect(rig.status(a) == .removed(.deleted))
     }
+
+    // MARK: A zone that is not there
+
+    @Test func aFirstUploadWhoseZoneWasNotMadeMakesItAndSyncs() async throws {
+        let rig = Rig()
+        defer { rig.finish() }
+        let held = syncAccounts(3)
+        let (a, _) = try rig.mac(holding: held)
+        a.engine.losesZoneSaves = 1
+
+        try await a.sync.enable(profileID: rig.profile, vaultID: rig.vaultID)
+        try await a.pump()
+
+        #expect(rig.status(a) == .synced, "not read as removed from iCloud")
+        #expect(rig.record(VaultSync.vaultRecordName) != nil)
+        #expect(held.allSatisfy { rig.item($0) != nil })
+        #expect(a.engine.losesZoneSaves == 0, "the zone was lost once and made again")
+    }
+
+    @Test func aZoneThatGoesMissingAfterItsVaultLandedIsRemovedAndNotMadeAgain() async throws {
+        let rig = Rig()
+        defer { rig.finish() }
+        let held = syncAccounts(1)
+        let (a, va) = try await rig.syncedMac(holding: held)
+        rig.cloud.removeZoneSilently(rig.zone)
+
+        va.edit(syncChanging(held[0], password: "after"))
+        await a.wrote(va)
+        try await a.pump()
+
+        #expect(rig.status(a) == .removed(.deleted))
+        #expect(rig.cloud.zones[rig.zone] == nil, "a zone that was confirmed is never made again")
+        #expect(a.engine.pending.isEmpty, "and nothing is left waiting to be sent")
+        #expect(va.account(held[0].id)?.password == "after", "this Mac keeps its copy")
+    }
+
+    @Test(arguments: [false, true])
+    func threeLostZoneSavesStillEndSyncedWhateverTheOrderOfTheFailedRecords(reversed: Bool) async throws {
+        let rig = Rig()
+        defer { rig.finish() }
+        let held = syncAccounts(2)
+        let (a, _) = try rig.mac(holding: held)
+        a.engine.losesZoneSaves = 3
+        a.engine.reversesFailures = reversed
+
+        try await a.sync.enable(profileID: rig.profile, vaultID: rig.vaultID)
+        try await a.pump()
+
+        // The first try and three more: the fourth zone save is the one that works, so the vault is never read as removed.
+        #expect(a.engine.losesZoneSaves == 0)
+        #expect(rig.status(a) == .synced)
+        #expect(rig.cloud.zones[rig.zone] != nil && rig.record(VaultSync.vaultRecordName) != nil)
+        #expect(held.allSatisfy { rig.item($0) != nil })
+    }
+
+    @Test func aZoneThatIsNeverMadeStopsAfterThreeTriesStaysPendingAndTheHeartbeatTriesAgain() async throws {
+        let rig = Rig()
+        defer { rig.finish() }
+        let held = syncAccounts(2)
+        let (a, va) = try rig.mac(holding: held)
+        a.engine.losesZoneSaves = 100
+
+        try await a.sync.enable(profileID: rig.profile, vaultID: rig.vaultID)
+        try await a.pump()
+
+        // The first try and three more, and no further one over the six passes of `pump`. A zone that never existed was not removed.
+        #expect(a.engine.losesZoneSaves == 96)
+        #expect(a.engine.saveAttempts[VaultSync.vaultRecordName] == 4)
+        #expect(isSending(rig.status(a)), "still active, with its upload pending, and not read as removed from iCloud")
+        #expect(rig.cloud.zones[rig.zone] == nil, "no zone save is left on its way")
+        #expect(a.engine.pending.isEmpty && rig.cloud.recordCount == 0)
+        #expect(Set(va.accounts.keys) == Set(held.map(\.id)), "nothing local was deleted")
+
+        // The heartbeat gives it three more tries, and no tight loop in between.
+        a.sync.beat()
+        await a.sync.settle()
+        try await a.pump()
+        #expect(a.engine.losesZoneSaves == 92)
+        #expect(a.engine.saveAttempts[VaultSync.vaultRecordName] == 8)
+        try await a.pump()
+        #expect(a.engine.losesZoneSaves == 92, "between two heartbeats nothing is sent again")
+        #expect(isSending(rig.status(a)))
+
+        // The cloud works again: the next heartbeat ends it.
+        a.engine.losesZoneSaves = 0
+        a.sync.beat()
+        await a.sync.settle()
+        try await a.pump()
+        #expect(rig.status(a) == .synced)
+        #expect(rig.record(VaultSync.vaultRecordName) != nil && held.allSatisfy { rig.item($0) != nil })
+    }
+
+    @Test func entriesThatKeepFindingTheirZoneMissingAskForItAtMostThreeTimesEach() async throws {
+        let rig = Rig()
+        defer { rig.finish() }
+        let held = syncAccounts(2)
+        let (a, va) = try rig.mac(holding: held)
+        a.engine.losesZoneSaves = 100
+        // The `Vault` record is turned down for another reason, so only the entries find the zone missing.
+        a.engine.refusesVaultRecord = true
+
+        try await a.sync.enable(profileID: rig.profile, vaultID: rig.vaultID)
+        try await a.pump()
+
+        #expect(held.allSatisfy { a.engine.saveAttempts[$0.id.uuidString] == 4 }, "the first save and three more, for each entry")
+        #expect(a.engine.losesZoneSaves == 96)
+        #expect(a.engine.pending.isEmpty)
+        #expect(isSending(rig.status(a)) && rig.cloud.recordCount == 0)
+        #expect(Set(va.accounts.keys) == Set(held.map(\.id)))
+    }
+
+    @Test func anEditAfterTheLimitAsksForTheZoneAtMostThreeTimesMore() async throws {
+        let rig = Rig()
+        defer { rig.finish() }
+        let all = syncAccounts(3)
+        let (a, va) = try rig.mac(holding: Array(all.prefix(2)))
+        a.engine.losesZoneSaves = 100
+        try await a.sync.enable(profileID: rig.profile, vaultID: rig.vaultID)
+        try await a.pump()
+        #expect(a.engine.losesZoneSaves == 96)
+
+        // The `Vault` record is at its limit. A new entry asks for the zone itself, three times, and then waits like the others.
+        va.add(all[2])
+        await a.wrote(va)
+        try await a.pump()
+
+        #expect(a.engine.losesZoneSaves == 93)
+        #expect(a.engine.saveAttempts[all[2].id.uuidString] == 4)
+        #expect(a.engine.saveAttempts[VaultSync.vaultRecordName] == 4, "the Vault record asked no more than its four times")
+        #expect(a.engine.pending.isEmpty && isSending(rig.status(a)))
+        #expect(Set(va.accounts.keys) == Set(all.map(\.id)))
+    }
+
+    @Test func theHeartbeatMakesNoZoneForAVaultWhoseServerFieldsAreStored() async throws {
+        let rig = Rig()
+        defer { rig.finish() }
+        let held = syncAccounts(1)
+        let (a, va) = try rig.mac(holding: held)
+        try await a.sync.enable(profileID: rig.profile, vaultID: rig.vaultID)
+
+        // Another Mac enabled the vault at the same moment: its record is on the server, and this Mac's first save was turned down.
+        let id = SyncRecordID(zone: rig.zone, name: VaultSync.vaultRecordName)
+        let theirs = SyncRecord(id: id, type: .vault, schema: 1, payload: Data("theirs".utf8), systemFields: FakeSyncCloud.fields(for: 1))
+        await a.sync.handle(.sent(saved: [], deleted: [], failed: [SyncFailedSave(id: id, failure: .serverRecordChanged(theirs))]))
+        await a.sync.settle()
+        // The zone is made and the entries land, but the `Vault` record is turned down for another reason: it is still waiting.
+        a.engine.refusesVaultRecord = true
+        try await a.pump()
+        #expect(rig.cloud.zones[rig.zone] != nil && rig.item(held[0]) != nil)
+        #expect(a.engine.pending.isEmpty && isSending(rig.status(a)))
+
+        // Another Mac removes the vault from iCloud, and this Mac has not been told when its heartbeat comes.
+        rig.cloud.removeZoneSilently(rig.zone)
+        a.sync.beat()
+        await a.sync.settle()
+
+        #expect(!a.engine.pending.contains(.saveZone(rig.zone)), "the heartbeat does not make a zone another Mac may have removed")
+        #expect(a.engine.pending.contains(.saveRecord(id)))
+        a.engine.refusesVaultRecord = false
+        try await a.pump()
+
+        #expect(rig.status(a) == .removed(.deleted))
+        #expect(rig.cloud.zones[rig.zone] == nil, "and nothing made it")
+        #expect(Set(va.accounts.keys) == Set(held.map(\.id)))
+    }
+
+    @Test func aZoneSaveRefusedBecauseICloudIsFullReadsAsFullAndRecoversWhenThereIsRoom() async throws {
+        let rig = Rig()
+        defer { rig.finish() }
+        let held = syncAccounts(2)
+        let (a, va) = try rig.mac(holding: held)
+        a.engine.refusesZoneSaves = true
+
+        try await a.sync.enable(profileID: rig.profile, vaultID: rig.vaultID)
+        try await a.pump()
+
+        #expect(rig.status(a) == .iCloudFull, "something the person can act on, not Sending… for ever and not removed")
+        #expect(rig.cloud.zones[rig.zone] == nil)
+        #expect(Set(va.accounts.keys) == Set(held.map(\.id)), "nothing local was deleted")
+
+        a.engine.refusesZoneSaves = false
+        a.sync.beat()
+        await a.sync.settle()
+        try await a.pump()
+
+        #expect(rig.status(a) == .synced)
+        #expect(held.allSatisfy { rig.item($0) != nil })
+    }
+
+    @Test func aVaultWhoseServerFieldsAreStoredIsRemovedWhenItsZoneGoesMissingEvenWithNoUploadedMark() async throws {
+        let rig = Rig()
+        defer { rig.finish() }
+        let held = syncAccounts(1)
+        let (a, va) = try rig.mac(holding: held)
+        a.engine.losesZoneSaves = 100
+        try await a.sync.enable(profileID: rig.profile, vaultID: rig.vaultID)
+
+        // Another Mac enabled the vault at the same moment: its record is on the server, and this Mac's first save was turned down.
+        let id = SyncRecordID(zone: rig.zone, name: VaultSync.vaultRecordName)
+        let theirs = SyncRecord(id: id, type: .vault, schema: 1, payload: Data("theirs".utf8), systemFields: FakeSyncCloud.fields(for: 1))
+        await a.sync.handle(.sent(saved: [], deleted: [], failed: [SyncFailedSave(id: id, failure: .serverRecordChanged(theirs))]))
+        await a.sync.settle()
+        try await a.pump()
+
+        #expect(rig.status(a) == .removed(.deleted), "the zone is gone, and another Mac had the vault: that is a removal")
+        #expect(a.engine.losesZoneSaves == 99, "the zone was asked for once and never again")
+        #expect(rig.cloud.zones[rig.zone] == nil)
+        #expect(Set(va.accounts.keys) == Set(held.map(\.id)))
+    }
+
+    @Test func aRenameThatOvertookTheFirstVaultRecordMakesAMissingZoneARemoval() async throws {
+        let rig = Rig()
+        defer { rig.finish() }
+        let held = syncAccounts(1)
+        let (a, va) = try rig.mac(holding: held)
+        try await a.sync.enable(profileID: rig.profile, vaultID: rig.vaultID)
+        await a.sync.settle()
+
+        // The first `Vault` record is in flight when the vault is renamed; it lands, but what it says is already old.
+        let id = SyncRecordID(zone: rig.zone, name: VaultSync.vaultRecordName)
+        let inFlight = try #require(a.engine.handOut(id))
+        va.name = "Renamed"
+        await a.wrote(va)
+        rig.cloud.createZone(rig.zone)
+        guard case .saved(let stored) = rig.cloud.save(inFlight) else {
+            Issue.record("the first Vault record was not saved")
+            return
+        }
+        await a.sync.handle(.sent(saved: [stored], deleted: [], failed: []))
+        await a.sync.settle()
+
+        // Another Mac then removes the vault from iCloud. The zone save queued at the start is lost, as it would be on the way.
+        rig.cloud.removeZoneSilently(rig.zone)
+        a.engine.losesZoneSaves = 1
+        try await a.pump()
+
+        #expect(rig.status(a) == .removed(.deleted))
+        #expect(rig.cloud.zones[rig.zone] == nil, "a record that was on the server makes the zone one this Mac never makes again")
+        #expect(a.engine.losesZoneSaves == 0 && va.name == "Renamed")
+    }
+}
+
+private func isSending(_ status: VaultSyncStatus) -> Bool {
+    if case .sending = status {
+        return true
+    }
+    return false
 }

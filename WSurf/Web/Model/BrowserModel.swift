@@ -128,6 +128,7 @@ final class BrowserModel {
     var extensionPageHost: ((URL) -> ExtensionPageHost?)?
     var onTabOpened: ((BrowserTab) -> Void)?
     var onNavigationStarted: ((BrowserTab, URL) -> Void)?
+    var onTabPropertiesChanged: ((BrowserTab, WKWebExtension.TabChangedProperties) -> Void)?
     var onTabClosed: ((BrowserTab) -> Void)?
     /// A front pop-up closed whose opener lives in another window: that model's window must come forward.
     var onShowWindow: ((BrowserModel) -> Void)?
@@ -190,12 +191,21 @@ final class BrowserModel {
         return tab
     }
 
+    /// A tab's address, title and loading changes, for the extensions' `tabs.onUpdated`.
+    private func bindExtensionCallbacks(to tab: BrowserTab) {
+        tab.onPropertiesChanged = { [weak self, weak tab] properties in
+            guard let tab else { return }
+            self?.onTabPropertiesChanged?(tab, properties)
+        }
+    }
+
     func bindCallbacks(to tab: BrowserTab) {
         tab.onNavigationStarted = { [weak self, weak tab] url in
             guard let tab else { return }
             self?.heldInPageMove[tab.id] = nil
             self?.onNavigationStarted?(tab, url)
         }
+        bindExtensionCallbacks(to: tab)
         bindHistoryCallbacks(to: tab)
         tab.onSameDocumentNavigation = { [weak self] in
             self?.scheduleSave()

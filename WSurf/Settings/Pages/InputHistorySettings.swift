@@ -384,7 +384,7 @@ private struct InputHistoryEntries: View {
     /// The vault is chosen and unlocked on this click, before the sheet: its prompts must not stack on a sheet. Nothing is
     /// written until the person confirms in the sheet.
     private func beginSave(_ row: InputHistoryListModel.Row) {
-        guard let window = NSApp.keyWindow, let save = InputHistoryCredentialSave(row: row, profile: model.profile) else { return }
+        guard let window = NSApp.keyWindow?.sheetHost, let save = InputHistoryCredentialSave(row: row, profile: model.profile) else { return }
         Task {
             await save.start(in: window)
             if save.stage != .canceled {

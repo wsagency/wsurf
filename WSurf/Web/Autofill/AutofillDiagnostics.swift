@@ -70,6 +70,9 @@ nonisolated enum AutofillDiagnostics {
     @discardableResult
     static func refused(_ event: Event, by owner: AnyObject, now: ContinuousClock.Instant = .now) -> Bool {
         let key = ObjectIdentifier(owner)
+        #if DEBUG
+        _ = watched.withLock { $0[key]?.append(event) }
+        #endif
         guard let suppressed = limiter.withLock({ $0.admit(key, event, at: now) }) else { return false }
         log.info("refused reason=\(event.rawValue, privacy: .public) suppressed=\(suppressed, privacy: .public)")
         return true
@@ -77,10 +80,27 @@ nonisolated enum AutofillDiagnostics {
 
     /// A page script's `skip`: logged when its reason is on the allow-list, dropped otherwise. Returns the event that was logged.
     @discardableResult
-    static func pageSkipped(_ reason: Any?, by owner: AnyObject) -> Event? {
-        guard let event = Event(skipReason: reason), refused(event, by: owner) else { return nil }
+    static func pageSkipped(_ reason: Any?, by owner: AnyObject, now: ContinuousClock.Instant = .now) -> Event? {
+        guard let event = Event(skipReason: reason), refused(event, by: owner, now: now) else { return nil }
         return event
     }
+
+    #if DEBUG
+    private static let watched = OSAllocatedUnfairLock(initialState: [ObjectIdentifier: [Event]]())
+
+    /// Tests only: records every event offered to `refused` for `owner`, before the budget, so a test sees the wiring whatever the
+    /// process-wide table holds. Starts a new record; the owner is read by identity only and nothing else is kept.
+    static func watch(_ owner: AnyObject) {
+        let key = ObjectIdentifier(owner)
+        watched.withLock { $0[key] = [] }
+    }
+
+    /// Tests only: the events `refused` was offered for a watched `owner`, in order.
+    static func offered(to owner: AnyObject) -> [Event] {
+        let key = ObjectIdentifier(owner)
+        return watched.withLock { $0[key] ?? [] }
+    }
+    #endif
 
     /// Budget for `refused`, per owner and reason: `limit` lines per `window`, the rest counted and reported with the next window's first line.
     nonisolated struct RefusalLimiter: Sendable {
@@ -115,12 +135,13 @@ nonisolated enum AutofillDiagnostics {
                 return 0
             }
             let carried = entries[key]?.suppressed ?? 0
-            // ponytail: a full table drops the expired windows, then all of them; this is only a log budget.
+            // ponytail: a full table drops the expired windows, then the new line itself; this is only a log budget. Emptying it
+            // would give every key a fresh allowance at once; the live entries expire within one window anyway.
             if entries.count >= Self.capacity {
                 entries = entries.filter { now < $0.value.start.advanced(by: Self.window) }
             }
             if entries.count >= Self.capacity {
-                entries = [:]
+                return nil
             }
             entries[key] = Entry(start: now)
             return carried

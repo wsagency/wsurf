@@ -140,6 +140,23 @@ struct SyncRouterTests {
         #expect(setup.vaults?.state.accountUser == "user-1")
     }
 
+    @Test func aZoneSaveRefusedForSpaceReachesTheVaultsAndNobodyElse() async throws {
+        let setup = Setup()
+        defer { setup.finish() }
+        let vault = try setup.host.addVault(profile: setup.personal, name: "Personal")
+        vault.add(SyncVaultFixtures.account())
+        setup.engine.refusesZoneSaves = true
+        try await setup.vaults?.enable(profileID: setup.personal, vaultID: vault.vaultID)
+
+        try await setup.engine.sendNow()
+        await setup.vaults?.settle()
+        // A zone of tab sharing is dropped at the router.
+        await setup.router.handle(.zoneSavesOverQuota([SyncZone.devices, SyncZone.profile(setup.personal)]))
+
+        #expect(setup.vaults?.status(profileID: setup.personal, vaultID: vault.vaultID) == .iCloudFull)
+        #expect(setup.cloud.zones[SyncZone.vault(profileID: setup.personal, vaultID: vault.vaultID)] == nil)
+    }
+
     @Test func aFailedZoneDeleteReachesTheVaultsAndNobodyElse() async throws {
         let setup = Setup()
         defer { setup.finish() }

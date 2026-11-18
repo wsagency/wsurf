@@ -236,7 +236,7 @@ struct OpenAIMCPSettingsView: View {
     }
 
     private func signIn(_ server: OpenAIMCPServer) {
-        guard let window = NSApp.keyWindow else { error = OpenAIMCPOAuthFailure.unavailable.localizedDescription; return }
+        guard let window = NSApp.keyWindow?.sheetHost else { error = OpenAIMCPOAuthFailure.unavailable.localizedDescription; return }
         let identity = UUID()
         operationID = identity
         operationMessage = String(localized: "Waiting for sign-in…")

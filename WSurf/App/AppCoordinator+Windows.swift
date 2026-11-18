@@ -99,6 +99,33 @@ extension AppCoordinator {
             : String(localized: "\(title) — \(profiles.current.name)")
     }
 
+    /// The front page's address as the address bar draws it (`AddressText`: no sign-in details, no look-alike letters), for the
+    /// “site” menu after Help. Nil when the setting is off, which is checked first so nothing about a navigation is read or
+    /// observed then, and for a private window, a system, internal or extension page, an empty tab, and any address that is
+    /// not an http(s) website.
+    var menuBarAddress: AddressText? {
+        guard settings.showsSiteInMenuBar, !profiles.isPrivate, let tab = browser.activeTab,
+              !tab.isPrivate, tab.extensionBaseURL == nil, !tab.isShowingSystemPage,
+              let address = AddressText(URL(string: tab.urlString)),
+              address.scheme == "https://" || address.scheme == "http://", !address.host.isEmpty
+        else { return nil }
+        return address
+    }
+
+    /// The name that menu shows: the website only, never path or query, shortened to 32 characters by `AddressText.shortened`,
+    /// which keeps the domain that owns the page whole.
+    var menuBarHost: String? {
+        menuBarAddress.map { AddressText.shortened(host: $0.name, to: 32) }
+    }
+
+    /// Writes `menuBarHost` into the menu bar when this is the window in front.
+    func refreshSiteMenu() {
+        guard let nativeWindow,
+              isKeyWindow || PasswordsWindow.keyWindow()?.sheetParent?.sheetHost === nativeWindow
+        else { return }
+        (application?.mainMenu ?? mainMenu)?.refreshSiteItem()
+    }
+
     var otherWindows: [AppCoordinator] {
         application?.windows.filter { $0 !== self && $0.browser.context === browser.context } ?? []
     }
@@ -136,10 +163,15 @@ extension AppCoordinator {
         application?.focus(self)
         activation.setSuspended(false)
         updateWindowAppearance()
+        (application?.mainMenu ?? mainMenu)?.refreshSiteItem()
     }
 
     func windowDidResignKey() {
-        extensions.focus(browser: nil)
+        let successor = application?.windows.first { !$0.isClosed && $0.windowID == application?.activeWindowID }
+        // A deferred resign must preserve a successor's focus only within the same profile's extension manager.
+        if successor === self || successor?.extensions !== extensions {
+            extensions.focus(browser: nil)
+        }
         activation.setSuspended(true)
         controlDownAt = nil
         browser.endTabSwitching()
@@ -165,6 +197,10 @@ extension AppCoordinator {
             let appearance = profiles.isPrivate ? NSAppearance(named: .darkAqua) : settings.colorMode.nsAppearance
             if nativeWindow.appearance?.name != appearance?.name {
                 nativeWindow.appearance = appearance
+            }
+            // The floating toolbar's panel is a window of its own and does not inherit the window's appearance.
+            for case let panel as FloatingBarPanel in nativeWindow.childWindows ?? [] where panel.appearance?.name != appearance?.name {
+                panel.appearance = appearance
             }
             let title = windowTitle
             if nativeWindow.title != title {

@@ -66,6 +66,45 @@ extension ChromiumRemoteClientTests {
     }
 
     @Test(.enabled(if: ChromiumServiceBundle.isPresent))
+    func aReplacedInputConnectionIsForgottenWithoutCountingAServiceDeath() async throws {
+        let (remote, root) = try #require(realRemote())
+        remote.connect()
+        guard await waitUntil(40, { remote.isRunning }), case let .running(pid) = remote.state else {
+            Issue.record("no hello: \(remote.state): \(remote.lastRefusalText)")
+            await finish(remote, pid: nil)
+            return
+        }
+        do {
+            let message = CefRemoteMessage(CefRemote.Op.focus)
+            remote.sendInput(message)
+            let old = try #require(remote.input)
+            let generation = remote.generation
+            let attached: Bool = await withCheckedContinuation { continuation in
+                xpc_connection_send_message_with_reply(old, CefRemoteMessage(CefRemote.Op.debugStats).object, DispatchQueue.main) { answer in
+                    continuation.resume(returning: CefRemoteMessage(wrapping: answer)?.int(CefRemote.Key.pid) == Int64(pid))
+                }
+            }
+            try #require(attached, "a reply on the input connection follows its accepted hello")
+            let replacement = try ChromiumServiceClient(root: root)
+            defer { replacement.close() }
+            let accepted = try replacement.call(CefRemoteMessage(CefRemote.Op.inputHello))
+            try #require(accepted.bool(CefRemote.Key.success))
+            #expect(await waitUntil(3) { !remote.hasInputConnection }, "the service cancelled the old input connection")
+            #expect(remote.isRunning && remote.servicePID == pid)
+            #expect(remote.generation == generation && remote.interruptions == 0, "the control connection stayed healthy")
+
+            remote.sendInput(message)
+            let reopened = try #require(remote.input)
+            #expect(ObjectIdentifier(reopened) != ObjectIdentifier(old), "the next send opens a new input connection")
+            #expect(await remote.statistics()?.int(CefRemote.Key.pid) == Int64(pid))
+        } catch {
+            await finish(remote, pid: pid)
+            throw error
+        }
+        await finish(remote, pid: pid)
+    }
+
+    @Test(.enabled(if: ChromiumServiceBundle.isPresent))
     func aHelloIsAnsweredAndTheClientIsRunningWithItsFramesConnection() async throws {
         let (remote, _) = try #require(realRemote())
         _ = remote.connect()

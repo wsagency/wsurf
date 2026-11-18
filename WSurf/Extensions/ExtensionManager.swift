@@ -75,7 +75,8 @@ final class ExtensionManager: NSObject, WKWebExtensionControllerDelegate {
     /// Versions this profile holds back because they ask for more access than it approved.
     var heldUpdates: [String: String]
 
-    @ObservationIgnored private static var systemCatalogue: [SafariExtension]?
+    /// The Safari extensions found on this Mac, read once. A test sets it to `[]` so none of the machine's own load.
+    @ObservationIgnored static var systemCatalogue: [SafariExtension]?
     @ObservationIgnored private static let liveManagers = NSHashTable<ExtensionManager>.weakObjects()
 
     /// The application owns window creation; the complete configuration includes all URLs and moved tabs.
@@ -94,6 +95,8 @@ final class ExtensionManager: NSObject, WKWebExtensionControllerDelegate {
     @TaskLocal static var extensionCreatedForTesting: (@MainActor @Sendable () async -> Void)?
 
     @ObservationIgnored var tabAdapters: [UUID: ExtensionTabAdapter] = [:]
+    /// Where a permitted tab change goes. Nil is the controller; a test replaces it to see what would be sent.
+    @ObservationIgnored var tabChangeSink: ((WKWebExtension.TabChangedProperties, ExtensionTabAdapter) -> Void)?
     @ObservationIgnored private var iconCache: [String: NSImage] = [:]
     @ObservationIgnored var anchors: [ObjectIdentifier: [String: NSView]] = [:]
     @ObservationIgnored var overflowAnchors: [ObjectIdentifier: NSView] = [:]
@@ -621,7 +624,7 @@ final class ExtensionManager: NSObject, WKWebExtensionControllerDelegate {
             permissions: webExtension.requestedPermissions,
             matchPatterns: webExtension.allRequestedMatchPatterns,
             unsupported: unsupported,
-            in: NSApp.keyWindow ?? NSApp.mainWindow
+            in: NSApp.keyWindow?.sheetHost ?? NSApp.mainWindow
         )
     }
 

@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: 2026 WSurf Agency
 // SPDX-License-Identifier: BUSL-1.1
 
+import CCef
+import CefKit
 import Foundation
 
 extension ChromiumPage {
@@ -27,6 +29,25 @@ extension ChromiumPage {
         if base != nil, base == now {
             sameDocumentWait = SameDocumentWait()
         }
+    }
+
+    func stopLoading() {
+        pendingLoad?.cancel()
+        client?.documentResponses.reset()
+        remote?.send(CefRemote.Op.stop)
+        withBrowser { $0.pointee.stop_load?($0) }
+        endUnstartedLoad()
+    }
+
+    /// Stop ends a load that Chromium has not begun (no `willNavigate` yet). It reports no end of its own: `loading = false` is
+    /// dropped while the wait holds and -3 is ignored, so the page would stay loading and `BrowserTab.reload` would take it for
+    /// stuck and restart it, dropping Back and Forward.
+    private func endUnstartedLoad() {
+        guard awaitingNativeNavigation else { return }
+        awaitingNativeNavigation = false
+        sameDocumentWait = nil
+        owner?.isLoading = false
+        owner?.estimatedProgress = 1
     }
 
     /// A Back, Forward, history jump or fragment load that stays inside the document never calls `willNavigate`, the only

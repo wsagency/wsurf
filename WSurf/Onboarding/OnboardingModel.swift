@@ -36,10 +36,24 @@ final class OnboardingModel {
 
     private(set) var handedOverToSystemSettings = false
 
+    /// Whether WSurf already opens web links for the system; the Set as Default button is disabled then.
+    private(set) var isDefaultBrowser = false
+
     private(set) var hasPlayedIntro = false
 
-    init(defaults: UserDefaults = .standard) {
+    /// What asks the system whether WSurf is the default browser. A test passes its own so it never reads LaunchServices.
+    private let defaultBrowserCheck: () -> Bool
+    /// What asks the system to make WSurf the default. A test passes a counter, so none reaches LaunchServices.
+    private let defaultBrowserRequest: @MainActor () async -> DefaultBrowser.Outcome
+
+    init(
+        defaults: UserDefaults = .standard,
+        defaultBrowserCheck: @escaping () -> Bool = { DefaultBrowser.isCurrent },
+        defaultBrowserRequest: @escaping @MainActor () async -> DefaultBrowser.Outcome = { await DefaultBrowser.request() }
+    ) {
         self.defaults = defaults
+        self.defaultBrowserCheck = defaultBrowserCheck
+        self.defaultBrowserRequest = defaultBrowserRequest
     }
 
     var isPresented: Bool {
@@ -92,9 +106,20 @@ final class OnboardingModel {
         }
     }
 
+    /// The Set as Default button is enabled until WSurf is the default browser.
+    var canRequestDefaultBrowser: Bool {
+        !isDefaultBrowser
+    }
+
     func requestDefaultBrowser() {
+        guard canRequestDefaultBrowser else { return }
         Task {
-            handedOverToSystemSettings = await DefaultBrowser.request() == .handedOverToSystemSettings
+            handedOverToSystemSettings = await defaultBrowserRequest() == .handedOverToSystemSettings
+            refreshDefaultBrowser()
         }
+    }
+
+    func refreshDefaultBrowser() {
+        isDefaultBrowser = defaultBrowserCheck()
     }
 }

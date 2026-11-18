@@ -164,6 +164,43 @@ struct ChromiumHistoryRestoreTests {
         })
     }
 
+    // MARK: Stop, then Reload
+
+    /// A restored list survives Stop then Reload. A load WSurf starts that Chromium has not begun used to stay loading after Stop, so
+    /// the Reload restarted the page (`BrowserTab.reload`): the list on screen became the current entry alone, and the next save
+    /// wrote a tab with nothing to go back to over the saved list (`savedHistory` is nil for it).
+    @Test func reloadAfterStoppingAnUnstartedLoadKeepsARestoredListAndItsSavedCopy() async throws {
+        try await withRig { rig, log in
+            let data = try state(back: [try rig.server.url("/a"), try rig.server.url("/b")], forward: [])
+            let (tab, _) = try await wake(at: "/c", from: data, in: rig, log: log)
+            try #require(await settles(tab, at: "/c", back: ["/a", "/b"], forward: []), "\(lists(tab))")
+            let before = tab.page
+
+            tab.load(try rig.server.url("/d"), byPerson: true)
+            tab.stopLoading()
+            let ended = await waitUntil(timeout: .seconds(3)) { !tab.page.isLoading }
+            #expect(ended, "the page still reports loading after Stop")
+            tab.reload(byPerson: true)
+            #expect(tab.page === before, "Reload after Stop restarted the page")
+            _ = await tab.waitForPendingNavigation()
+            let settled = await waitUntil(timeout: .seconds(30)) { tab.page.url != nil && !tab.page.isLoading }
+            try #require(settled)
+
+            // The current entry may end as C (reloaded in place) or D (the stopped address, loaded again): neither is asserted.
+            let list = tab.page.backForwardList
+            let paths = list.backList.map(\.url.path) + [list.currentItem?.url.path].compactMap { $0 }
+            #expect(paths.starts(with: ["/a", "/b", "/c"]), "\(lists(tab))")
+
+            // What the next session save writes: the tab's state read afresh.
+            tab.invalidateSessionState()
+            let saved = try #require(tab.sessionState, "nothing to save: the restored list is gone")
+            let object = try #require(try JSONSerialization.jsonObject(with: saved) as? [String: Any])
+            let chromium = try #require(object["chromium"] as? [String: [[String: Any]]])
+            let back = (chromium["back"] ?? []).compactMap { ($0["url"] as? String).flatMap(URL.init(string:))?.path }
+            #expect(back.starts(with: ["/a", "/b"]), "saved back list \(back)")
+        }
+    }
+
     // MARK: Wake
 
     @Test func aWokenTabLoadsOnlyItsCurrentEntryAndKeepsItsLists() async throws {
@@ -421,6 +458,130 @@ struct ChromiumHistoryRestoreTests {
         tab.navigationStarted(PageNavigation(), url: url)
         #expect(!tab.isLoadingErrorPage && !tab.isShowingError)
         #expect(tab.urlString == url?.absoluteString)
+    }
+
+    /// A second Back while the error document of a failed Back hop loads (S5): Chromium's error entry for the hop is already in its
+    /// list, and Back must not move natively from it back to the page the hop left. It restarts the hop, which fails again; the error
+    /// document stands in the failed entry's place once more and the list keeps its order, with no entry twice.
+    @Test func aSecondBackWhileTheErrorDocumentLoadsRestartsTheFailedHop() async throws {
+        try await withRig { rig, log in
+            let (dead, _) = try await closedPort(log: log)
+            let (tab, _) = try await wake(at: "/c", from: state(back: [rig.server.url("/a"), dead], forward: []), in: rig, log: log)
+            try #require(await settles(tab, at: "/c", back: ["/a", "/dead"], forward: []), "\(lists(tab))")
+
+            let mark = log.count
+            onceAfterFailure(of: tab) { [weak tab] in tab?.goBack() }
+            tab.goBack()
+            #expect(await showsError(tab, back: ["/a"], forward: ["/c"]), "\(lists(tab))")
+            #expect(await showsOwnErrorPage(tab), "\(tab.page.title ?? "-")")
+            #expect(tab.urlString == dead.absoluteString, "the tab's address (saved as its current entry) is the failed one: \(tab.urlString)")
+            let first = try rig.server.url("/a").absoluteString
+            let left = try rig.server.url("/c").absoluteString
+            let stored = try #require(tab.sessionState)
+            let object = try #require(try JSONSerialization.jsonObject(with: stored) as? [String: Any])
+            let saved = try #require(object["chromium"] as? [String: [[String: String]]], "\(object)")
+            #expect(saved["back"]?.compactMap { $0["url"] } == [first] && saved["forward"]?.compactMap { $0["url"] } == [left],
+                    "saved: the list in its order, no entry twice: \(saved)")
+            tab.goBack()
+            #expect(await settles(tab, at: "/a", back: [], forward: ["/dead", "/c"]), "\(lists(tab))")
+            #expect(await requests(log, since: mark, are: ["GET /a"]), "Back never went to /c: \(log.since(mark))")
+        }
+    }
+
+    /// The same for Forward: a second Forward while the error document of a failed Forward hop loads restarts that hop, and the
+    /// forward list keeps its order with no entry twice.
+    @Test func aSecondForwardWhileTheErrorDocumentLoadsRestartsTheFailedHop() async throws {
+        try await withRig { rig, log in
+            let (dead, _) = try await closedPort(log: log)
+            let (tab, _) = try await wake(at: "/a", from: state(back: [], forward: [dead, rig.server.url("/c")]), in: rig, log: log)
+            try #require(await settles(tab, at: "/a", back: [], forward: ["/dead", "/c"]), "\(lists(tab))")
+
+            let mark = log.count
+            onceAfterFailure(of: tab) { [weak tab] in tab?.goForward() }
+            tab.goForward()
+            #expect(await showsError(tab, back: ["/a"], forward: ["/c"]), "\(lists(tab))")
+            #expect(await showsOwnErrorPage(tab), "\(tab.page.title ?? "-")")
+            #expect(tab.urlString == dead.absoluteString, "\(tab.urlString)")
+            tab.goForward()
+            #expect(await settles(tab, at: "/c", back: ["/a", "/dead"], forward: []), "\(lists(tab))")
+            #expect(await requests(log, since: mark, are: ["GET /c"]), "\(log.since(mark))")
+        }
+    }
+
+    /// Review F1: a pick of a native entry from the Back list while a failed hop holds it does nothing. A native traversal from
+    /// Chromium's error entry would leave the failed entry in the list twice. The hop lands as without the pick.
+    @Test func aNativePickWhileAFailedHopHoldsTheListDoesNothing() async throws {
+        try await withRig { rig, log in
+            let (dead, _) = try await closedPort(log: log)
+            let (tab, _) = try await wake(at: "/c", from: state(back: [rig.server.url("/a"), dead], forward: []), in: rig, log: log)
+            try #require(await settles(tab, at: "/c", back: ["/a", "/dead"], forward: []), "\(lists(tab))")
+            try await visit("/d", in: tab, rig)
+            try #require(await settles(tab, at: "/d", back: ["/a", "/dead", "/c"], forward: []), "\(lists(tab))")
+            let list = tab.page.backForwardList.backList
+            let page = try #require(list.last { $0.url.path == "/c" && $0.restoredID == nil }, "C is a native entry")
+            let failed = try #require(list.first { $0.url.path == "/dead" && $0.restoredID != nil })
+
+            let mark = log.count
+            onceAfterFailure(of: tab) { [weak tab] in _ = tab?.page.go(to: page) }
+            _ = tab.page.go(to: failed)
+            #expect(await showsError(tab, back: ["/a"], forward: ["/c", "/d"]), "\(lists(tab))")
+            #expect(tab.urlString == dead.absoluteString, "\(tab.urlString)")
+            #expect(await requests(log, since: mark, are: []), "no page loaded: \(log.since(mark))")
+        }
+    }
+
+    /// Review F2: Reload while the error document of a failed Back hop loads retries the failed entry in its place, and so does the
+    /// failed address typed again after Stop. A native reload of Chromium's error entry, or a plain load of its address, would put the
+    /// failed entry in the list twice.
+    @Test(arguments: [false, true])
+    func aReloadWhileTheErrorDocumentLoadsRetriesTheFailedHop(typedAfterStop: Bool) async throws {
+        try await withRig { rig, log in
+            let (dead, _) = try await closedPort(log: log)
+            let (tab, _) = try await wake(at: "/c", from: state(back: [rig.server.url("/a"), dead], forward: []), in: rig, log: log)
+            try #require(await settles(tab, at: "/c", back: ["/a", "/dead"], forward: []), "\(lists(tab))")
+
+            let mark = log.count
+            onceAfterFailure(of: tab) { [weak tab] in
+                if typedAfterStop {
+                    tab?.stopLoading()
+                    _ = tab?.load(dead, byPerson: true)
+                } else {
+                    tab?.reload(byPerson: true)
+                }
+            }
+            tab.goBack()
+            #expect(await showsError(tab, back: ["/a"], forward: ["/c"]), "\(lists(tab))")
+            #expect(await showsOwnErrorPage(tab), "\(tab.page.title ?? "-")")
+            #expect(tab.urlString == dead.absoluteString, "\(tab.urlString)")
+            let stored = try #require(tab.sessionState)
+            let object = try #require(try JSONSerialization.jsonObject(with: stored) as? [String: Any])
+            let saved = try #require(object["chromium"] as? [String: [[String: String]]], "\(object)")
+            #expect(saved["back"]?.count == 1 && saved["forward"]?.count == 1, "saved: no entry twice: \(saved)")
+            #expect(await requests(log, since: mark, are: []), "\(log.since(mark))")
+        }
+    }
+
+    /// Review F2: a typed address while the error document of a failed Back hop loads is a new navigation from the failed entry:
+    /// back [a, dead], forward dropped, no entry twice, also in the saved state.
+    @Test func aTypedAddressWhileTheErrorDocumentLoadsCountsFromTheFailedEntry() async throws {
+        try await withRig { rig, log in
+            let (dead, _) = try await closedPort(log: log)
+            let (tab, _) = try await wake(at: "/c", from: state(back: [rig.server.url("/a"), dead], forward: []), in: rig, log: log)
+            try #require(await settles(tab, at: "/c", back: ["/a", "/dead"], forward: []), "\(lists(tab))")
+
+            let next = try rig.server.url("/d")
+            let first = try rig.server.url("/a").absoluteString
+            let mark = log.count
+            onceAfterFailure(of: tab) { [weak tab] in _ = tab?.load(next) }
+            tab.goBack()
+            #expect(await settles(tab, at: "/d", back: ["/a", "/dead"], forward: []), "\(lists(tab))")
+            let stored = try #require(tab.sessionState)
+            let object = try #require(try JSONSerialization.jsonObject(with: stored) as? [String: Any])
+            let saved = try #require(object["chromium"] as? [String: [[String: String]]], "\(object)")
+            #expect(saved["back"]?.compactMap { $0["url"] } == [first, dead.absoluteString] && saved["forward"]?.isEmpty != false,
+                    "saved: \(saved)")
+            #expect(await requests(log, since: mark, are: ["GET /d"]), "\(log.since(mark))")
+        }
     }
 
     // MARK: Engine switches

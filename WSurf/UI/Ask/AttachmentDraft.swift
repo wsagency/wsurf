@@ -10,28 +10,51 @@ import UniformTypeIdentifiers
 @MainActor
 @Observable
 final class AttachmentDraft {
-    var files: [AssistantAttachment] = []
+    var files: [AssistantAttachment] = [] {
+        didSet { stopReadingRemovedFiles() }
+    }
     var error: String?
     private(set) var pendingImports = 0
+    private(set) var recognizing: Set<UUID> = []
     @ObservationIgnored private var generation = UUID()
     @ObservationIgnored private var work: Task<Void, Never>?
+    @ObservationIgnored private var recognition: Task<Void, Never>?
+    /// The reading job of each file still being read, so removing a file can cancel its own job.
+    @ObservationIgnored private var readings: [UUID: Task<Void, Never>] = [:]
+    @ObservationIgnored private let recognize: @Sendable (AssistantAttachment) async throws -> String
+
+    init(
+        recognize: @escaping @Sendable (AssistantAttachment) async throws -> String = {
+            try AttachmentImporter.recognizedText(in: $0)
+        }
+    ) {
+        self.recognize = recognize
+    }
 
     nonisolated enum Source: Sendable {
         case file(URL)
         case bytes(Data, name: String, type: UTType)
 
-        func read() throws -> AssistantAttachment {
+        func read() throws -> AttachmentImporter.Draft {
             switch self {
             case .file(let url):
-                try AttachmentImporter.read(url)
+                try AttachmentImporter.draft(url)
             case .bytes(let data, let name, let type):
-                try AttachmentImporter.prepare(data: data, name: name, type: type)
+                try AttachmentImporter.draft(data: data, name: name, type: type)
             }
         }
     }
 
     var isImporting: Bool {
         pendingImports > 0
+    }
+
+    var isRecognizing: Bool {
+        !recognizing.isEmpty
+    }
+
+    func isReady(textOnly: Bool) -> Bool {
+        !isImporting && !(textOnly && isRecognizing)
     }
 
     func chooseFiles() {
@@ -70,15 +93,58 @@ final class AttachmentDraft {
                 guard generation == token else { return }
                 pendingImports -= 1
                 do {
-                    let file = try result.get()
-                    try AssistantAttachment.validate(files + [file])
-                    files.append(file)
+                    let draft = try result.get()
+                    try AssistantAttachment.validate(files + [draft.file])
+                    files.append(draft.file)
+                    if draft.needsRecognition {
+                        recognizeText(in: draft.file)
+                    }
                 } catch is CancellationError {
                     return
                 } catch {
                     self.error = error.localizedDescription
                 }
             }
+        }
+    }
+
+    private func recognizeText(in file: AssistantAttachment) {
+        let token = generation
+        let previous = recognition
+        let recognize = recognize
+        recognizing.insert(file.id)
+        let job = Task { [weak self] in
+            await previous?.value
+            guard let self, generation == token else { return }
+            defer {
+                recognizing.remove(file.id)
+                readings[file.id] = nil
+            }
+            guard !Task.isCancelled, files.contains(where: { $0.id == file.id }) else { return }
+            let reader = Task.detached(priority: .utility) { try await recognize(file) }
+            let result = await withTaskCancellationHandler {
+                await reader.result
+            } onCancel: {
+                reader.cancel()
+            }
+            guard generation == token,
+                  case .success(let text) = result,
+                  let index = files.firstIndex(where: { $0.id == file.id })
+            else { return }
+            files[index].text = text
+        }
+        readings[file.id] = job
+        recognition = job
+    }
+
+    /// WSurf difference from Linen: a file the person removes while its text is being read stops being waited for
+    /// at once, so Send is not held back for a model that reads only text by a file that is gone.
+    private func stopReadingRemovedFiles() {
+        guard !recognizing.isEmpty else { return }
+        let present = Set(files.map(\.id))
+        for id in recognizing where !present.contains(id) {
+            readings.removeValue(forKey: id)?.cancel()
+            recognizing.remove(id)
         }
     }
 
@@ -149,6 +215,11 @@ final class AttachmentDraft {
         generation = UUID()
         work?.cancel()
         work = nil
+        recognition?.cancel()
+        recognition = nil
+        readings.values.forEach { $0.cancel() }
+        readings = [:]
+        recognizing = []
         pendingImports = 0
         files = []
         error = nil
