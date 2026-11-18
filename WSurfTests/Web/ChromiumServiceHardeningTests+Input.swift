@@ -78,8 +78,13 @@ extension ChromiumServiceHardeningTests {
             do {
                 _ = try peer.call(CefRemoteMessage(CefRemote.Op.debugStats, browser: 1), timeout: 1)
                 Issue.record("a side connection still answered after its control connection and service ended")
-            } catch is ChromiumServiceClient.Failure {
-                // The service cancelled every attached peer; none can act on its old browser.
+            } catch let error as ChromiumServiceClient.Failure {
+                switch error {
+                case .connection, .serviceEnded:
+                    break
+                case .noAnswer, .setup:
+                    throw error
+                }
             }
         }
     }
