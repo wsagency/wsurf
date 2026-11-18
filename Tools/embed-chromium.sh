@@ -64,18 +64,28 @@ helper="$bin/cef-helper"
 service=
 if [[ -n "$oop" ]]; then
     # The service's debug ops (debug.abort, debug.stats, ... and a log file: Package.swift's WSURF_SERVICE_DEBUG_OPS define) are in the
-    # service only for the OOP test lane and for staged DEBUG ad hoc builds: not for Release, not for any real signing identity (a
-    # build the guard above refuses today, and one D4-S will allow), and not when the caller says WSURF_SERVICE_DEBUG_OPS=NO (the
-    # second build of the lane, which Tools/check-service-strings.sh judges). The manifest is read again each time, because the define
-    # comes from the environment and a cached manifest may be of another value. Own DerivedData per value: this phase is skipped when
-    # nothing it declares changed.
+    # service only when EVERY one of these holds, and anything unset, empty or unknown is NO (fail closed, PR #153 review M2):
+    #   - the configuration is exactly Debug (not Release, and not another name that is ad hoc signed later),
+    #   - the identity is positively ad hoc: CODE_SIGN_IDENTITY and EXPANDED_CODE_SIGN_IDENTITY are both "-",
+    #   - the bundle id carries a test or stage suffix (io.wsagency.wsurf.<suffix>, never the production id),
+    #   - the caller asked for them explicitly: WSURF_SERVICE_DEBUG_OPS=YES (Tools/run-chromium-oop-tests.sh does; a staged DEBUG build
+    #     passes it on the xcodebuild command line). The manifest is read again each time, because the define comes from the
+    #     environment and a cached manifest may be of another value.
     debugOps=NO
-    if [[ "${CONFIGURATION:-}" != Release && "${EXPANDED_CODE_SIGN_IDENTITY:--}" == - && "${WSURF_SERVICE_DEBUG_OPS:-YES}" != NO ]]; then
+    if [[ "${CONFIGURATION:-}" == Debug && "${CODE_SIGN_IDENTITY:-}" == - && "${EXPANDED_CODE_SIGN_IDENTITY:-}" == - \
+        && "${PRODUCT_BUNDLE_IDENTIFIER:-}" == io.wsagency.wsurf.?* && "${WSURF_SERVICE_DEBUG_OPS:-}" == YES ]]; then
         debugOps=YES
     fi
     WSURF_SERVICE_DEBUG_OPS="$debugOps" /usr/bin/xcrun swift build --package-path "$package" --scratch-path "$scratch" \
         --manifest-cache none --configuration release --product wsurf-chromium-service
     service="$bin/wsurf-chromium-service"
+    # A stale or wrong service is impossible: whatever this build produced is checked against what the gate decided, and the build
+    # fails otherwise (a product left from an earlier value of the variable in the same DerivedData would fail here).
+    if [[ "$debugOps" == YES ]]; then
+        "$SRCROOT/Tools/check-service-strings.sh" --expect-debug "$service"
+    else
+        "$SRCROOT/Tools/check-service-strings.sh" "$service"
+    fi
 fi
 identity="${EXPANDED_CODE_SIGN_IDENTITY:--}"
 [[ -n "$identity" ]] || identity=-
@@ -112,7 +122,7 @@ if [[ -n "$oop" ]]; then
 PLIST
     )
     plistHash=$(printf '%s' "$servicePlist" | /usr/bin/shasum -a 256)
-    fingerprint="$fingerprint|oop|${plistHash%% *}"
+    fingerprint="$fingerprint|oop|${plistHash%% *}|debugops=$debugOps"
 fi
 contents="$TARGET_BUILD_DIR/$CONTENTS_FOLDER_PATH"
 resources="$contents/Resources"

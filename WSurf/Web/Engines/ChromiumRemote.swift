@@ -168,7 +168,8 @@ final class ChromiumRemote {
         /// The first hello is on its way.
         case starting
         /// The service died and its replacement has been asked for. launchd starts a replacement no sooner than 10 s after the
-        /// spawn of the instance that died, so a service that died young takes about that long: this is not an error.
+        /// spawn of the instance that died, so a service that died young takes up to that long (measured in D4-20: 6.1 s after one
+        /// that lived 4 s, whether it exited cleanly or was killed): this is not an error.
         case relaunching
         case running(pid: pid_t)
         /// The service keeps dying (`CefRemoteRelaunchPolicy`): nothing relaunches it until the person reloads (`userReload`).
@@ -177,7 +178,8 @@ final class ChromiumRemote {
     }
 
     /// How long a hello may take. launchd spawns a service no sooner than 10 s after the previous spawn, so a hello after a young
-    /// death waits that long before CEF even starts: this must stay above 12 s.
+    /// death waits up to that long (minus the instance's age) before CEF even starts: this must stay above 12 s. The wait is a timer
+    /// (`CefRemoteRequests`), never a busy wait.
     nonisolated static let defaultHelloTimeout: TimeInterval = 15
     /// How long a `browser.close` waits for its `browser.closed`.
     static let closeTimeout: TimeInterval = 5
@@ -872,6 +874,7 @@ final class ChromiumRemote {
 
     // MARK: Debug
 
+    #if DEBUG
     /// The service's live counts, or nil when it does not answer (the request's timeout) or ends first.
     func statistics() async -> CefRemoteMessage? {
         guard case let .value(reply) = await request(CefRemoteMessage(CefRemote.Op.debugStats)) else { return nil }
@@ -882,4 +885,5 @@ final class ChromiumRemote {
     func abortService() {
         send(CefRemoteMessage(CefRemote.Op.debugAbort))
     }
+    #endif
 }

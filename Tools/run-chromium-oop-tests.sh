@@ -13,8 +13,10 @@
 #    default layout's copy of CEF.
 # 2. Tools/check-built-identity.py, which knows the service's id and the one-copy helper paths, and refuses a build without
 #    the service.
-#    WSURF_SERVICE_DEBUG_OPS=NO (with a WSURF_OOP_DERIVED_DATA of its own, and --build-only) builds the service as a Release-shaped
-#    build would have it, without its debug ops, for Tools/check-service-strings.sh. The default is YES: the lane's tests need them.
+#    WSURF_SERVICE_DEBUG_OPS=NO builds the service as a Release-shaped build would have it, without its debug ops, and the suites
+#    that prove a service without them (ChromiumServiceNoDebugOpsTests) run against it; embed-chromium.sh checks the built service
+#    with Tools/check-service-strings.sh either way and fails the build if it is not what the value says. The default is YES: the
+#    lane's other tests need the ops. Building one value and then the other in the same DerivedData is safe (the check is the proof).
 # 3. test-without-building -parallel-testing-enabled NO, -only-testing for each suite named (a suite of WSurfTests).
 #
 # Like every build and test run it must hold the Pro lock: start it as above, detached. The lock is not taken here, so that a
@@ -41,6 +43,13 @@ for key in $(env | sed -n 's/^\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/p'); do
     esac
 done
 
+# The debug ops are on for the lane unless the caller says NO (a service built as a Release-shaped one would be, for the tests that
+# prove a service without them): Tools/embed-chromium.sh builds the service with them only for an explicit YES, so it is always set.
+WSURF_SERVICE_DEBUG_OPS="${WSURF_SERVICE_DEBUG_OPS:-YES}"
+case "$WSURF_SERVICE_DEBUG_OPS" in
+    YES|NO) ;;
+    *) echo "error: WSURF_SERVICE_DEBUG_OPS must be YES or NO, not '$WSURF_SERVICE_DEBUG_OPS'" >&2; exit 2 ;;
+esac
 DD="${WSURF_OOP_DERIVED_DATA:-$PWD/build/DD-oop}"
 OUT="$PWD/build/oop-lane/$(date -u +%Y%m%dT%H%M%SZ)"
 mkdir -p "$OUT"
@@ -63,7 +72,7 @@ python3 Tools/run-xcodebuild-with-watchdog.py -- xcodebuild build-for-testing -q
     CODE_SIGN_ENTITLEMENTS= \
     WSURF_BUNDLE_ID_SUFFIX="$WSURF_BUNDLE_ID_SUFFIX" \
     WSURF_CHROMIUM_OOP_BUILD=YES \
-    ${WSURF_SERVICE_DEBUG_OPS:+WSURF_SERVICE_DEBUG_OPS="$WSURF_SERVICE_DEBUG_OPS"}
+    WSURF_SERVICE_DEBUG_OPS="$WSURF_SERVICE_DEBUG_OPS"
 
 set -- "$DD"/Build/Products/*.xctestrun "$@"
 xctestrun="$1"

@@ -3,7 +3,8 @@
 
 // D4-20: what a `hello` may ask of the Chromium service, in one place that WSurf's client and the service both read. The client
 // filters what it sends (it is trusted, so this only keeps a bug from loosening Chromium); the service refuses anything else
-// before CEF starts (it does not trust what reaches it: the service must hold up if a caller other than WSurf's client says hello).
+// before CEF starts, in every hello and not only the first (it does not trust what reaches it: the service must hold up if a
+// caller other than WSurf's client says hello). The root's own rule is `CefRemoteRoot`.
 
 import Foundation
 

@@ -48,8 +48,10 @@ final class ServiceHost {
     private var backstopArmed = false
     private var exitScheduled = false
     private var flushCount = 0
-    private var cefStartMs: Double = -1
-    private var logFile = "/dev/null"
+    var cefStartMs: Double = -1
+    var logFile = "/dev/null"
+    /// What the hello that started CEF asked for (`ServiceHost+Hello.swift`): every later hello must ask for the same.
+    var acceptedHello: HelloParameters?
     /// The control connection's hello was answered "ok" (CEF is up): only then may the input and frames connections attach.
     private var hostReady = false
 
@@ -214,9 +216,21 @@ final class ServiceHost {
             }
             return
         }
+        // Every hello, the first or a later one (WSurf's client asks again after a timeout in a relaunch), is checked by the same
+        // rules before anything else: a switch, log file, root or cache path that is not WSurf's is refused here, before CEF
+        // starts, whether or not CEF is up already (review L1).
+        var failure: String?
+        let parameters: HelloParameters?
+        do {
+            parameters = try validatedHello(message)
+        } catch {
+            parameters = nil
+            note("hello refused: \(error)")
+            failure = "\(error)"
+        }
         #if WSURF_SERVICE_DEBUG_OPS
-        if Self.consumeExitOnHello(root: message.string(CefRemote.Key.rootPath)) {
-            note("debug.exitOnHello: the service kills itself (SIGKILL)")
+        if let parameters, Self.consumeExitOnHello(root: parameters.root) {
+            note(DebugOps.debugExitOnHello)
             kill(getpid(), SIGKILL)
         }
         #endif
@@ -226,9 +240,21 @@ final class ServiceHost {
             xpc_transaction_begin()
             holdsTransaction = true
         }
+        if failure == nil, let parameters {
+            do {
+                try startCEF(parameters)
+            } catch {
+                note("CEF start failed: \(error)")
+                failure = "\(error)"
+            }
+        }
+        // The linger is the hello's (held to CefRemoteLinger's range) when the hello was accepted; a refused hello of a service that is
+        // already serving does not change it.
         let seconds = message.has(CefRemote.Key.linger) ? message.double(CefRemote.Key.linger) : CefRemoteLinger.defaultSeconds
         if let linger {
-            linger.setSeconds(seconds)
+            if failure == nil {
+                linger.setSeconds(seconds)
+            }
         } else {
             linger = CefRemoteLinger(
                 seconds: seconds,
@@ -238,16 +264,10 @@ final class ServiceHost {
                 }
             )
         }
-        var failure: String?
-        do {
-            try startCEF(message)
-        } catch {
-            note("CEF start failed: \(error)")
-            failure = "\(error)"
-        }
-        // The side connections may attach only after a hello that got `ok`: a refused one (a root that is not canonical, a CEF that
-        // would not start) leaves a service with a control connection and no CEF, which must not be given frames or input.
-        hostReady = failure == nil
+        // The side connections may attach only once CEF is up from an accepted hello: a refused first one (a root that is not
+        // canonical, a CEF that would not start) leaves a service with a control connection and no CEF, which must not be given
+        // frames or input. A later hello that was refused leaves a service that is up as it was.
+        hostReady = acceptedHello != nil && CefRuntime.shared.isInitialized
         // With no browser the linger starts now, so a service whose CEF failed to start leaves too.
         linger?.start()
         startMemoryPressureSource()
@@ -262,118 +282,6 @@ final class ServiceHost {
                 answer.set(CefRemote.Key.startMs, cefStartMs)
             }
         }
-    }
-
-    // MARK: CEF
-
-    private func startCEF(_ message: CefRemoteMessage) throws {
-        guard !CefRuntime.shared.isInitialized else { return }
-        let started = Clock.nowNanoseconds
-        let root = message.string(CefRemote.Key.rootPath)
-        guard root.hasPrefix("/") else { throw ServiceError(text: "the root cache path must be absolute") }
-        // CEF refuses a root with an alias in it (`/var` for `/private/var`, a symlink), so the host sends the canonical one, and
-        // anything else is refused here, before anything is made, with a reason that names the cause.
-        guard Self.realPath(root) == root else {
-            throw ServiceError(text: "the root cache path must exist and be canonical (no symlink or alias in it)")
-        }
-        // D4-20: the service holds the same line as WSurf's client, for a hello that did not come from it. Both are refused before
-        // anything is made or CEF starts. A switch is WSurf's own (name and value, `CefRemoteSwitches`) or it is not there.
-        let switches = message.strings(CefRemote.Key.switches)
-        let refusedSwitches = CefRemoteSwitches.refused(wire: switches)
-        guard refusedSwitches.isEmpty else {
-            throw ServiceError(text: "switches that are not WSurf's own are refused: \(refusedSwitches.joined(separator: ", "))")
-        }
-        guard let log = Self.checkedLogFile(message.string(CefRemote.Key.logFile), root: root) else {
-            throw ServiceError(text: "the log file must be /dev/null, or the staged run's chromium-service.log (in the root or beside it)")
-        }
-        let cache = message.string(CefRemote.Key.cachePath)
-        // The resolved path is the one CEF gets (review L1): what was checked is what is used.
-        let resolvedCache = cache.isEmpty ? nil : Self.resolvedInside(cache, root: root)
-        guard cache.isEmpty || resolvedCache != nil else {
-            throw ServiceError(text: "the cache path must be the root cache path or inside it")
-        }
-        // The framework and the helpers are the service's own copies (`Tools/embed-chromium.sh`): Chromium's sandbox lets a
-        // child read only inside the browser process's main bundle, which here is the .xpc.
-        let bundle = Bundle.main.bundleURL
-        let frameworks = bundle.appendingPathComponent("Contents/Frameworks", isDirectory: true)
-        var configuration = CefConfiguration()
-        configuration.noSandbox = false
-        // Until the owner picks a "Chromium Safe Storage" option (D4-S), the service never reads the keychain: a profile with
-        // cookies encrypted under the real key would lose them, and a new code identity would raise a keychain prompt.
-        configuration.safeStorage = .mockKeychain
-        configuration.rootCachePath = URL(filePath: root, directoryHint: .isDirectory)
-        configuration.cachePath = resolvedCache.map { URL(filePath: $0, directoryHint: .isDirectory) }
-        configuration.persistSessionCookies = true
-        configuration.defaultRuntimeStyle = .alloy
-        // CEF's log goes to /dev/null unless WSurf names a file (a staged run), and `checkedLogFile` allowed it.
-        logFile = log
-        configuration.logFile = URL(filePath: logFile)
-        configuration.logSeverity = logFile == "/dev/null" ? .error : .warning
-        configuration.extraCommandLineSwitches = switches.mapValues { $0.isEmpty ? nil : $0 }
-        configuration.windowlessRenderingEnabled = true
-        configuration.frameworkDirectory = frameworks.appendingPathComponent("Chromium Embedded Framework.framework", isDirectory: true)
-        configuration.browserSubprocessPath = frameworks.appendingPathComponent("WSurf Helper.app/Contents/MacOS/WSurf Helper")
-        configuration.mainBundlePath = bundle
-        try CefRuntime.shared.initialize(configuration: configuration)
-        CEFApplication.setTerminateHandler(nil)
-        cefStartMs = Double(Clock.nowNanoseconds &- started) / 1e6
-        note(String(format: "CEF started in %.1f ms", cefStartMs))
-    }
-
-    /// `path` with every symlink and alias resolved, for a path that may not exist yet: the nearest existing ancestor goes through
-    /// `realpath` and the components below it are appended (they do not exist, so they cannot be links). Nil for a relative path,
-    /// for one with a `.` or `..` component (which would be resolved before a link in front of it, so the result could name
-    /// somewhere else than the path does), and when no ancestor resolves.
-    private static func realPath(_ path: String) -> String? {
-        let components = (path as NSString).pathComponents
-        guard path.hasPrefix("/"), !components.contains(".."), !components.contains(".") else { return nil }
-        var existing = path
-        var below: [String] = []
-        // `lstat`, not `fileExists`: that one follows a link, so a dangling symlink looked "not made yet" and was appended as if it
-        // were a folder to come (review L2). Here it is present, `realpath` fails on it, and the path is refused.
-        while !Self.isPresent(existing) {
-            guard existing != "/" else { return nil }
-            below.insert((existing as NSString).lastPathComponent, at: 0)
-            existing = (existing as NSString).deletingLastPathComponent
-        }
-        guard let resolved = realpath(existing, nil) else { return nil }
-        defer { free(resolved) }
-        return ([String(cString: resolved)] + below).joined(separator: "/").replacingOccurrences(of: "//", with: "/")
-    }
-
-    /// Whether something is at `path`, a link (even a dangling one) included.
-    private static func isPresent(_ path: String) -> Bool {
-        var info = stat()
-        return lstat(path, &info) == 0
-    }
-
-    /// `path` resolved (folders that do not exist yet included) when it is `root` (canonical) or below it, as CEF requires of a cache
-    /// path; nil otherwise. Nothing is created here: the caller makes the folder, by the path this returns, only after it says yes.
-    private static func resolvedInside(_ path: String, root: String) -> String? {
-        guard let resolved = realPath(path) else { return nil }
-        return resolved == root || resolved.hasPrefix(root.hasSuffix("/") ? root : root + "/") ? resolved : nil
-    }
-
-    /// The log file CEF may write, for the hello's `named` one: `/dev/null` when none is named, else only the staged run's own
-    /// (`chromium-service.log` in the root or beside it, which is the staged home: `CefRemoteSwitches.logFileCandidates`), after
-    /// the folder it is in is resolved and when it is not itself a link. Nil refuses the hello. A service built without the DEBUG
-    /// ops (a signed one) writes no log at all: nothing that is not a staged DEBUG run names one.
-    private static func checkedLogFile(_ named: String, root: String) -> String? {
-        guard !named.isEmpty, named != "/dev/null" else { return "/dev/null" }
-        #if WSURF_SERVICE_DEBUG_OPS
-        let directory = (named as NSString).deletingLastPathComponent
-        guard named.hasPrefix("/"), (named as NSString).lastPathComponent == CefRemoteSwitches.logFileName,
-              let resolvedDirectory = realPath(directory)
-        else { return nil }
-        var info = stat()
-        if lstat(named, &info) == 0, (info.st_mode & S_IFMT) == S_IFLNK {
-            return nil
-        }
-        let resolved = (resolvedDirectory as NSString).appendingPathComponent(CefRemoteSwitches.logFileName)
-        return CefRemoteSwitches.logFileCandidates(root: root).contains(resolved) ? resolved : nil
-        #else
-        return nil
-        #endif
     }
 
     private func createContext(_ message: CefRemoteMessage, from peer: xpc_connection_t) {
@@ -415,7 +323,9 @@ final class ServiceHost {
     /// only after a hello that got `ok` (CEF is up), only from the process of the host, only while the service is not leaving,
     /// and are dropped with the control connection (review F8b, pr123 C3). The same peer may be both. A second hello of one kind
     /// replaces the first connection, which is cancelled. Their hello gets an answer: a refusal is how the client learns that
-    /// the connection it holds is not attached.
+    /// the connection it holds is not attached. A side hello carries and checks no protocol version: it is safe only because it
+    /// must come from the control connection's own process after a hello whose version was checked and got `ok`. Whoever relaxes
+    /// that process binding (D4-S's code-signing requirement replaces it) must add a version check here.
     private func attachSideConnection(_ message: CefRemoteMessage, from peer: xpc_connection_t) {
         var failure: String?
         if let control, hostReady, !exiting {
@@ -769,8 +679,11 @@ final class ServiceHost {
     // MARK: DEBUG ops
 
     #if WSURF_SERVICE_DEBUG_OPS
+    /// The marker's place for a root that passes the hello's own rule (canonical, below WSurf's folders): no other root is read
+    /// or written, by the hello or by the op.
     private static func exitOnHelloMarker(root: String) -> URL? {
-        root.hasPrefix("/") ? URL(filePath: root, directoryHint: .isDirectory).appending(path: ".debug-exit-on-hello") : nil
+        guard CefRemoteRoot.resolve(root) == root, CefRemoteRoot.isAllowed(root, bases: CefRemoteRoot.bases()) else { return nil }
+        return URL(filePath: root, directoryHint: .isDirectory).appending(path: ".debug-exit-on-hello")
     }
 
     private static func writeExitOnHello(root: String, count: Int) -> Bool {
@@ -796,9 +709,10 @@ final class ServiceHost {
         switch message.op {
         case CefRemote.Op.debugAbort:
             // The plan's kill test: SIGKILL, which leaves no crash report (and so no crash dialog) behind.
-            note("debug.abort: the service kills itself (SIGKILL)")
+            note(DebugOps.debugAbort)
             kill(getpid(), SIGKILL)
         case CefRemote.Op.debugStats:
+            note(DebugOps.debugStats)
             reply(to: message, on: peer) { answer in
                 answer.set(CefRemote.Key.pid, Int64(getpid()))
                 answer.set(CefRemote.Key.started, CefRuntime.shared.isInitialized)
@@ -819,29 +733,35 @@ final class ServiceHost {
                 }
             }
         case CefRemote.Op.debugExitOnHello:
+            note(DebugOps.debugExitOnHello)
             // A relaunched service is a new process with no memory of this op, so the count lives in a file under the root
             // the hellos will name, and every hello (in any instance) takes one off before it starts CEF.
             let written = Self.writeExitOnHello(root: message.string(CefRemote.Key.rootPath), count: Int(message.int(CefRemote.Key.count)))
             reply(to: message, on: peer) { $0.set(CefRemote.Key.success, written) }
         case CefRemote.Op.debugStubBrowser:
+            note(DebugOps.debugStubBrowser)
             stubs[message.browser] = StubBrowser(answersClose: message.bool(CefRemote.Key.flag))
             browsersChanged()
             reply(to: message, on: peer) { $0.set(CefRemote.Key.count, openCount) }
         case CefRemote.Op.debugHangExit:
+            note(DebugOps.debugHangExit)
             // Bounded, so that a service whose backstop is broken still ends (late) and leaves nothing behind a failed test.
             reply(to: message, on: peer) { $0.set(CefRemote.Key.success, true) }
             closeEverythingAndExit()
             Thread.sleep(forTimeInterval: 15)
         case CefRemote.Op.debugHoldHistory:
+            note(DebugOps.debugHoldHistory)
             // The F8 case on demand: the browser's next history reads are sent to nobody, as one whose renderer is gone would be.
             let known = browsers[message.browser]
             known?.holdHistoryReads(Int(message.int(CefRemote.Key.count)), delay: message.double(CefRemote.Key.value))
             reply(to: message, on: peer) { $0.set(CefRemote.Key.success, known != nil) }
         case CefRemote.Op.debugMemoryPressure:
+            note(DebugOps.debugMemoryPressure)
             // An exit the handler decides on runs later (the linger's onExit hops to the main queue), so the answer still goes.
             memoryPressureChanged(isUnder: message.bool(CefRemote.Key.flag))
             reply(to: message, on: peer) { $0.set(CefRemote.Key.flushes, flushCount) }
         case CefRemote.Op.debugAskHost:
+            note(DebugOps.debugAskHost)
             let started = Clock.nowNanoseconds
             let question = CefRemoteMessage(CefRemote.Event.beforeBrowse, browser: message.browser)
             question.set(CefRemote.Key.url, message.string(CefRemote.Key.url))

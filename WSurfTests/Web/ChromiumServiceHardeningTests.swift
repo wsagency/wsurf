@@ -216,43 +216,199 @@ struct ChromiumServiceHardeningTests {
         try Data((["a service that has this text in it"] + lines + ["and some more text, as a binary has"]).joined(separator: "\n").utf8).write(to: url)
     }
 
-    @Test
-    func theStringsCheckPassesAServiceWithoutDebugOpsAndFailsOneWithAnyOfThem() throws {
-        let folder = try Self.canonicalTemporaryFolder()
-        defer { try? FileManager.default.removeItem(at: folder) }
-        let clean = folder.appending(path: "clean")
-        try Self.write(["debug and abort are plain words here", "browser create started", "history read"], to: clean)
-        let clear = try Self.runChecker([clean.path])
-        #expect(clear.status == 0, "\(clear.output)")
-
-        // Every token the check names fails it on its own: the ones the task lists, and the ops of the protocol.
-        let tokens = [
-            "consumeExitOnHello", "hangExit", "create FAILED (debug)", "create held (debug)", "closeFirst", "cpuPaint",
-            "smallSourceCache", "debug.holdHistory", "debug.abort", "debug.stats", "debug.exitOnHello", "debug.stubBrowser", "debug.askHost",
-        ]
-        for token in tokens {
-            let file = folder.appending(path: "with-\(token.replacingOccurrences(of: " ", with: "_"))")
-            try Self.write([token], to: file)
-            let run = try Self.runChecker([file.path])
-            #expect(run.status == 1, "\(token): \(run.output)")
-            #expect(run.output.contains(token), "the failure names \(token): \(run.output)")
+    /// A Mach-O file that has no debug ops in it and is on every Mac: the strings check runs `otool` on what it is given.
+    private static func machOCopy(in folder: URL, named name: String, appending lines: [String] = []) throws -> URL {
+        let copy = folder.appending(path: name)
+        try FileManager.default.copyItem(at: URL(filePath: "/usr/bin/true"), to: copy)
+        if !lines.isEmpty {
+            let handle = try FileHandle(forWritingTo: copy)
+            defer { try? handle.close() }
+            try handle.seekToEnd()
+            try handle.write(contentsOf: Data(("\n" + lines.joined(separator: "\n") + "\n").utf8))
         }
-        let missing = try Self.runChecker([folder.appending(path: "no-such-file").path])
-        #expect(missing.status == 2)
+        return copy
+    }
+
+    /// What the strings check looks for, as the script prints it (`--list`): the texts of `DebugOps.swift` and the short names.
+    private static func listed() throws -> (texts: [String], names: [String]) {
+        let run = try runChecker(["--list"])
+        let lines = run.output.split(separator: "\n").map(String.init)
+        return (
+            lines.filter { $0.hasPrefix("text: ") }.map { String($0.dropFirst(6)) },
+            lines.filter { $0.hasPrefix("name: ") }.map { String($0.dropFirst(6)) }
+        )
+    }
+
+    /// The names of CefKit's `@_alwaysEmitIntoClient` debug names and their values, from the source: `[property name: wire value]`.
+    private static func debugNamesInCefKit() throws -> [String: String] {
+        let text = try String(contentsOf: repositoryRoot.appending(path: "Packages/CefSwift/Sources/CefKit/CefRemoteProtocol.swift"), encoding: .utf8)
+        let pattern = try Regex(#"@_alwaysEmitIntoClient public static var (\w+): String \{ "([^"]*)" \}"#)
+        return Dictionary(uniqueKeysWithValues: text.matches(of: pattern).map { match in
+            (String(match.output[1].substring ?? ""), String(match.output[2].substring ?? ""))
+        })
+    }
+
+    /// The entries of `DebugOps.swift`: `[property name: text]`.
+    private static func debugTextsInService() throws -> [String: String] {
+        let text = try String(
+            contentsOf: repositoryRoot.appending(path: "Packages/CefSwift/Sources/wsurf-chromium-service/DebugOps.swift"), encoding: .utf8)
+        let pattern = try Regex(#"static let (\w+) = "([^"]*)""#)
+        return Dictionary(uniqueKeysWithValues: text.matches(of: pattern).map { match in
+            (String(match.output[1].substring ?? ""), String(match.output[2].substring ?? ""))
+        })
     }
 
     @Test
-    func theStringsCheckProvesItSeesTheDebugOpsOfAServiceThatHasThem() throws {
+    func theDebugNamesTheirTextsAndTheScriptsListAgree() throws {
+        // A debug op added later must be in all three places, or this fails: its name in CefKit (as `@_alwaysEmitIntoClient`), its
+        // text in DebugOps.swift under the same name, 16 bytes or more and holding the wire name, and the script reads the texts
+        // from that file, so it cannot miss one.
+        let names = try Self.debugNamesInCefKit()
+        let texts = try Self.debugTextsInService()
+        #expect(names.count >= 13, "the debug names were found in CefRemoteProtocol.swift: \(names.count)")
+        #expect(Set(names.keys) == Set(texts.keys), "names without a text, or texts without a name: \(Set(names.keys).symmetricDifference(texts.keys).sorted())")
+        for (name, wire) in names {
+            let text = try #require(texts[name], "\(name)")
+            #expect(text.utf8.count >= 16, "\(name): \"\(text)\" is shorter than 16 bytes, which `strings` cannot see")
+            #expect(text.contains(wire), "\(name): the text \"\(text)\" does not hold the wire name \"\(wire)\"")
+        }
+        #expect(Set(texts.values).count == texts.count, "the texts are unique")
+        // The script's own list is those texts, and the names it looks for as code are the CefKit ones of 8 to 15 bytes.
+        let listed = try Self.listed()
+        #expect(Set(listed.texts) == Set(texts.values))
+        #expect(Set(listed.names) == Set(names.values))
+        // The debug ops a service without them must answer "unknown op" are every `Op.debug*` name of CefKit.
+        let ops = Set(names.filter { $0.key.hasPrefix("debug") }.values)
+        #expect(ops == Set(ChromiumServiceNoDebugOpsTests.debugOps), "the absence test covers every debug op: \(ops.symmetricDifference(ChromiumServiceNoDebugOpsTests.debugOps).sorted())")
+        // The names are the ones the client and the tests use (the compiler resolves them), and nothing else is debug-named.
+        #expect(CefRemote.Op.debugAbort == "debug.abort" && CefRemote.DebugCreate.cpuPaint == "cpuPaint")
+    }
+
+    @Test
+    func theStringsCheckPassesAFileWithoutDebugOpsAndFailsOneWithAnyOfTheirTexts() throws {
         let folder = try Self.canonicalTemporaryFolder()
         defer { try? FileManager.default.removeItem(at: folder) }
-        let debug = folder.appending(path: "debug")
-        try Self.write(["create FAILED (debug)", "create held (debug)", "debug.abort"], to: debug)
-        #expect(try Self.runChecker(["--expect-debug", debug.path]).status == 0)
-        // A file with nothing in it would pass the plain check for the wrong reason: the other mode refuses it.
-        let empty = folder.appending(path: "empty")
-        try Self.write([], to: empty)
-        #expect(try Self.runChecker([empty.path]).status == 0)
-        #expect(try Self.runChecker(["--expect-debug", empty.path]).status == 1)
+        let clean = try Self.machOCopy(in: folder, named: "clean", appending: ["debug and abort are plain words here", "browser create started"])
+        let clear = try Self.runChecker([clean.path])
+        #expect(clear.status == 0, "\(clear.output)")
+        // Every text it looks for fails it on its own, and is named.
+        for text in try Self.listed().texts {
+            let file = try Self.machOCopy(in: folder, named: "with-\(abs(text.hashValue))", appending: [text])
+            let run = try Self.runChecker([file.path])
+            #expect(run.status == 1, "\(text): \(run.output)")
+            #expect(run.output.contains(text), "the failure names \(text): \(run.output)")
+        }
+        // The extra names count against a service without the ops too.
+        let extra = try Self.machOCopy(in: folder, named: "extra", appending: ["consumeExitOnHello"])
+        #expect(try Self.runChecker([extra.path]).status == 1)
+        #expect(try Self.runChecker([folder.appending(path: "no-such-file").path]).status == 2)
+        // A file that is not a program cannot be judged: the check fails instead of passing for the wrong reason.
+        let text = folder.appending(path: "plain.txt")
+        try Self.write([], to: text)
+        #expect(try Self.runChecker([text.path]).status == 2)
+    }
+
+    @Test
+    func theDebugBuildCheckRequiresEveryTextAndEveryShortNameAndNamesTheOnesItMisses() throws {
+        let folder = try Self.canonicalTemporaryFolder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let listed = try Self.listed()
+        // Nothing of the ops: every text and every short name is named as missing.
+        let bare = try Self.machOCopy(in: folder, named: "bare")
+        let none = try Self.runChecker(["--expect-debug", bare.path])
+        #expect(none.status == 1, "\(none.output)")
+        for text in listed.texts {
+            #expect(none.output.contains("text: \(text)"), "named: \(text)")
+        }
+        // Every text but one: that one is named, and nothing else is a text.
+        let leftOut = try #require(listed.texts.first { $0.hasPrefix("debug.stats") })
+        let nearly = try Self.machOCopy(in: folder, named: "nearly", appending: listed.texts.filter { $0 != leftOut })
+        let almost = try Self.runChecker(["--expect-debug", nearly.path])
+        #expect(almost.status == 1)
+        #expect(almost.output.contains("text: \(leftOut)"))
+        #expect(listed.texts.filter { $0 != leftOut }.allSatisfy { !almost.output.contains("text: \($0)") }, "only the missing text is named: \(almost.output)")
+        // All the texts and no code: the short names are missing (a text alone is not the op).
+        let texts = try Self.machOCopy(in: folder, named: "texts", appending: listed.texts)
+        let named = try Self.runChecker(["--expect-debug", texts.path])
+        #expect(named.status == 1)
+        for name in listed.names where (8...15).contains(name.utf8.count) {
+            #expect(named.output.contains("short name (as code immediates): \(name)"), "named: \(name)")
+        }
+    }
+
+    @Test
+    func theImmediatesScannerFindsANameBuiltFromImmediatesAndNothingElse() throws {
+        let folder = try Self.canonicalTemporaryFolder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        // What the compiler writes for `debug.stats` (8 bytes in one register, the rest in another), as `otool -tV` prints it.
+        func moves(_ bytes: [UInt8], register: String) -> [String] {
+            let pieces = stride(from: 0, to: bytes.count, by: 2).map { UInt16(bytes[$0]) | (($0 + 1 < bytes.count ? UInt16(bytes[$0 + 1]) : 0) << 8) }
+            return pieces.enumerated().map { index, value in
+                String(format: "0000000100001000\t%@\t%@, #0x%x%@", index == 0 ? "mov" : "movk", register, value, index == 0 ? "" : ", lsl #\(16 * index)")
+            }
+        }
+        func disassembly(_ name: String, spread: Bool) -> String {
+            let bytes = Array(name.utf8)
+            let head = moves(Array(bytes.prefix(8)), register: "x0")
+            let tail = moves(Array(bytes.dropFirst(8)), register: "x1")
+            let filler = Array(repeating: "0000000100001000\tnop", count: spread ? 40 : 0)
+            return (tail + head.prefix(2) + filler + head.dropFirst(2)).joined(separator: "\n")
+        }
+        let script = Self.repositoryRoot.appending(path: "Tools/check-service-immediates.py").path
+        func run(_ text: String, _ names: [String]) throws -> [String] {
+            let file = folder.appending(path: "d-\(UUID().uuidString)")
+            try Data(text.utf8).write(to: file)
+            let process = Process()
+            process.executableURL = URL(filePath: "/usr/bin/python3")
+            process.arguments = ["-I", script, file.path] + names
+            let pipe = Pipe()
+            process.standardOutput = pipe
+            try process.run()
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            process.waitUntilExit()
+            return String(decoding: data, as: UTF8.self).split(separator: "\n").map(String.init)
+        }
+        #expect(try run(disassembly("debug.stats", spread: false), ["debug.stats", "closeFirst"]) == ["FOUND:debug.stats", "MISSING:closeFirst"])
+        #expect(try run(disassembly("closeFirst", spread: false), ["closeFirst", "cpuPaint"]) == ["FOUND:closeFirst", "MISSING:cpuPaint"])
+        // The pieces far apart in the code are not one name.
+        #expect(try run(disassembly("debug.stats", spread: true), ["debug.stats"]) == ["MISSING:debug.stats"])
+        #expect(try run("0000000100001000\tnop\n", ["debug.stats"]) == ["MISSING:debug.stats"])
+    }
+
+    @Test
+    func aLingerHasAnUpperBoundAndANumberThatIsNotOneIsTheDefault() {
+        #expect(CefRemoteLinger.clamped(86_400) == CefRemoteLinger.maximumSeconds)
+        #expect(CefRemoteLinger.clamped(.infinity) == CefRemoteLinger.maximumSeconds)
+        #expect(CefRemoteLinger.clamped(0.01) == CefRemoteLinger.minimumSeconds)
+        #expect(CefRemoteLinger.clamped(-5) == CefRemoteLinger.minimumSeconds)
+        #expect(CefRemoteLinger.clamped(.nan) == CefRemoteLinger.defaultSeconds)
+        #expect(CefRemoteLinger.clamped(25) == 25)
+        let linger = CefRemoteLinger(seconds: 1e9, schedule: { _, _ in {} }, onExit: { _ in })
+        #expect(linger.seconds == CefRemoteLinger.maximumSeconds)
+        linger.setSeconds(1e9)
+        #expect(linger.seconds == CefRemoteLinger.maximumSeconds)
+    }
+
+    @Test
+    func aRootMustBeStrictlyBelowOneOfWSurfsFolders() {
+        let bases = ["/Users/someone/Library/Application Support/WSurf", "/private/var/folders/ab/cd/T"]
+        #expect(CefRemoteRoot.isAllowed("/Users/someone/Library/Application Support/WSurf/Chromium", bases: bases))
+        #expect(CefRemoteRoot.isAllowed("/private/var/folders/ab/cd/T/wsurf-stage/home/Chromium", bases: bases))
+        #expect(!CefRemoteRoot.isAllowed("/Users/someone/Library/Application Support/WSurf", bases: bases), "the base itself is not a root")
+        #expect(!CefRemoteRoot.isAllowed("/private/var/folders/ab/cd/T", bases: bases))
+        #expect(!CefRemoteRoot.isAllowed("/private/var/folders/ab/cd/Tx/root", bases: bases), "component by component")
+        #expect(!CefRemoteRoot.isAllowed("/Users/someone/Library/Application Support/WSurf-other/root", bases: bases))
+        #expect(!CefRemoteRoot.isAllowed("/Users/someone", bases: bases))
+        #expect(!CefRemoteRoot.isAllowed("/", bases: bases))
+        #expect(!CefRemoteRoot.isAllowed("/private/tmp/root", bases: bases))
+        #expect(!CefRemoteRoot.isAllowed("/private/var/folders/ab/cd/T/root", bases: []))
+        // The real bases hold this process's temporary folder, resolved: the folder the tests make their roots in.
+        let temporary = realpath(NSTemporaryDirectory(), nil).map { String(cString: $0) }
+        #expect(temporary != nil && CefRemoteRoot.bases().contains(temporary ?? ""))
+        // `resolve` refuses what could name somewhere else.
+        #expect(CefRemoteRoot.resolve("relative/path") == nil)
+        #expect(CefRemoteRoot.resolve("/a/../b") == nil)
+        #expect(CefRemoteRoot.resolve("/a/./b") == nil)
     }
 
     // MARK: Raw XPC: the service refuses what is not WSurf's (gated)
@@ -338,8 +494,17 @@ struct ChromiumServiceHardeningTests {
         #expect(!FileManager.default.fileExists(atPath: target.path), "nothing was written through the link")
         #expect(!FileManager.default.fileExists(atPath: outside.path))
         #expect(!FileManager.default.fileExists(atPath: unrelated.path), "no folder was made for a refused log file")
-        // The staged run's own file, in the root, is taken (here it is a link, which the loop refused: a plain one is made now).
+        // The right name as a hard link to another file is refused too: CEF appends to a log, and that write would reach the other name.
         try FileManager.default.removeItem(at: link)
+        try Data("not a log".utf8).write(to: target)
+        #expect(Darwin.link(target.path, link.path) == 0, "the hard link was made")
+        let hardLinked = try client.call(Self.hello(client, logFile: link.path), timeout: Self.helloTimeout)
+        #expect(!hardLinked.bool(CefRemote.Key.success), "a log with a second hard link must be refused")
+        #expect(hardLinked.string(CefRemote.Key.error).contains("log"), "\(hardLinked.string(CefRemote.Key.error))")
+        #expect(!(try client.stats()).bool(CefRemote.Key.started))
+        try FileManager.default.removeItem(at: link)
+        #expect((try String(contentsOf: target, encoding: .utf8)) == "not a log", "nothing was written through the hard link")
+        // The staged run's own file, in the root, is taken (none is there yet).
         let reply = try client.call(Self.hello(client, logFile: link.path), timeout: Self.helloTimeout)
         #expect(reply.bool(CefRemote.Key.success), "\(reply.string(CefRemote.Key.error))")
         #expect(try client.stats().string(CefRemote.Key.logFile) == link.path)
@@ -462,7 +627,125 @@ struct ChromiumServiceHardeningTests {
         #expect(stats.int(CefRemote.Key.count) == 0, "no browser was made")
     }
 
+    // MARK: Every hello, the root's base, the staged log (gated)
+
     @Test(.enabled(if: ChromiumServiceBundle.isPresent))
+    func everyHelloPassesTheSameChecksAndASecondOneThatAsksForSomethingElseIsRefused() throws {
+        let client = try ChromiumServiceClient()
+        defer { client.finish(expectExit: false) }
+        _ = try client.stats()
+        let good = Self.hello(client, switches: ["disable-chrome-login-prompt": nil])
+        let first = try client.call(good, timeout: Self.helloTimeout)
+        #expect(first.bool(CefRemote.Key.success), "\(first.string(CefRemote.Key.error))")
+        // The client's own retry asks for the same: answered ok, and CEF stays as it was.
+        let again = try client.call(Self.hello(client, switches: ["disable-chrome-login-prompt": nil]), timeout: Self.helloTimeout)
+        #expect(again.bool(CefRemote.Key.success), "a repeat of the same hello is answered ok: \(again.string(CefRemote.Key.error))")
+        // After CEF is up, a hello with a switch that is not WSurf's is refused as the first one would be (it was ok'd before).
+        let bad = try client.call(Self.hello(client, switches: ["no-sandbox": nil]), timeout: Self.helloTimeout)
+        #expect(!bad.bool(CefRemote.Key.success), "a second hello with a switch that is not WSurf's must be refused")
+        #expect(bad.string(CefRemote.Key.error).contains("switch"), "\(bad.string(CefRemote.Key.error))")
+        // So is one that is allowed by itself and is not what CEF was started with: other switches, another root, another log.
+        let fewer = try client.call(Self.hello(client), timeout: Self.helloTimeout)
+        #expect(!fewer.bool(CefRemote.Key.success), "other switches than CEF was started with")
+        #expect(fewer.string(CefRemote.Key.error).contains("second hello"), "\(fewer.string(CefRemote.Key.error))")
+        let otherRoot = FileManager.default.temporaryDirectory.appending(path: "wsurf-d4-other-root-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: otherRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: otherRoot) }
+        let canonical = try #require(realpath(otherRoot.path, nil))
+        defer { free(canonical) }
+        let moved = try client.call(
+            Self.hello(client, root: String(cString: canonical), switches: ["disable-chrome-login-prompt": nil]), timeout: Self.helloTimeout)
+        #expect(!moved.bool(CefRemote.Key.success), "another root than CEF was started with")
+        #expect(moved.string(CefRemote.Key.error).contains("second hello"), "\(moved.string(CefRemote.Key.error))")
+        let logged = try client.call(
+            Self.hello(client, switches: ["disable-chrome-login-prompt": nil], logFile: client.root.appending(path: "chromium-service.log").path),
+            timeout: Self.helloTimeout)
+        #expect(!logged.bool(CefRemote.Key.success), "a log file that CEF was not started with")
+        // A refused repeat changes nothing: the service is as it was, and still takes a side connection from the host.
+        let stats = try client.stats()
+        #expect(stats.bool(CefRemote.Key.started))
+        #expect(stats.string(CefRemote.Key.logFile) == "/dev/null")
+        let side = try ChromiumServiceClient(root: client.root)
+        defer { side.close() }
+        #expect(try side.call(CefRemoteMessage(CefRemote.Op.framesHello)).bool(CefRemote.Key.success), "a refused repeat does not unready the host")
+    }
+
+    @Test(.enabled(if: ChromiumServiceBundle.isPresent))
+    func aRootOutsideWSurfsFoldersIsRefusedAndStartsNothing() throws {
+        let client = try ChromiumServiceClient()
+        defer { client.finish(expectExit: false) }
+        _ = try client.stats()
+        // `/tmp` is not the user's temporary folder (`/private/var/folders/...`), and is the kind of place a root must not be.
+        let outside = URL(filePath: "/private/tmp/wsurf-d4-outside-root-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: outside) }
+        for (name, root) in [
+            ("a canonical folder outside WSurf's own", outside.path),
+            ("the temporary folder itself", try #require(realpath(NSTemporaryDirectory(), nil).map { String(cString: $0) })),
+            ("the root of the disk", "/"),
+            ("the home folder", NSHomeDirectory()),
+        ] {
+            let reply = try client.call(Self.hello(client, root: root), timeout: Self.helloTimeout)
+            #expect(!reply.bool(CefRemote.Key.success), "\(name) (\(root)) must be refused")
+            #expect(reply.string(CefRemote.Key.error).contains("below WSurf"), "\(name): \(reply.string(CefRemote.Key.error))")
+            #expect(!(try client.stats()).bool(CefRemote.Key.started), "\(name): a refused hello starts no CEF")
+        }
+        #expect(try FileManager.default.contentsOfDirectory(atPath: outside.path).isEmpty, "nothing was made in the folder that was refused")
+        #expect(try client.call(Self.hello(client), timeout: Self.helloTimeout).bool(CefRemote.Key.success), "a root of the tests' own is taken")
+    }
+
+    @Test(.enabled(if: ChromiumServiceBundle.isPresent))
+    func aStagedRunsLogBesideItsRootIsTakenAndOneBesideAnyOtherIsNot() throws {
+        // A staged run's root is `<home>/Chromium` and its log `<home>/chromium-service.log`: the folder beside the root, which holds
+        // the root, and which is itself below a base. A root straight under the temporary folder has the temporary folder beside it.
+        let home = FileManager.default.temporaryDirectory.appending(path: "wsurf-d4-stage-\(UUID().uuidString)", directoryHint: .isDirectory)
+        let root = home.appending(path: "Chromium", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let canonicalRoot = URL(filePath: try #require(realpath(root.path, nil).map { String(cString: $0) }), directoryHint: .isDirectory)
+        let staged = try ChromiumServiceClient(root: canonicalRoot)
+        defer { staged.finish(expectExit: false) }
+        _ = try staged.stats()
+        let beside = canonicalRoot.deletingLastPathComponent().appending(path: "chromium-service.log")
+        let reply = try staged.call(Self.hello(staged, logFile: beside.path), timeout: Self.helloTimeout)
+        #expect(reply.bool(CefRemote.Key.success), "the log beside a staged root: \(reply.string(CefRemote.Key.error))")
+        #expect(try staged.stats().string(CefRemote.Key.logFile) == beside.path)
+        // The same name beside a root that is straight under the temporary folder would be in the temporary folder itself: refused.
+        let direct = try ChromiumServiceClient()
+        defer { direct.finish(expectExit: false) }
+        _ = try direct.stats()
+        let shared = URL(filePath: try #require(realpath(NSTemporaryDirectory(), nil).map { String(cString: $0) }), directoryHint: .isDirectory)
+            .appending(path: "chromium-service.log")
+        let refused = try direct.call(Self.hello(direct, logFile: shared.path), timeout: Self.helloTimeout)
+        #expect(!refused.bool(CefRemote.Key.success), "a log in the temporary folder itself must be refused")
+        #expect(!FileManager.default.fileExists(atPath: shared.path), "and was not made")
+    }
+
+    @Test(.enabled(if: ChromiumServiceBundle.isPresent))
+    func theExitOnHelloMarkerIsOnlyReadAndWrittenForARootThatPassesTheHellosRule() throws {
+        let client = try ChromiumServiceClient()
+        defer { client.finish(expectExit: false) }
+        _ = try client.stats()
+        let outside = URL(filePath: "/private/tmp/wsurf-d4-marker-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: outside) }
+        let refused = CefRemoteMessage(CefRemote.Op.debugExitOnHello)
+        refused.set(CefRemote.Key.rootPath, outside.path)
+        refused.set(CefRemote.Key.count, 1)
+        #expect(!(try client.call(refused)).bool(CefRemote.Key.success), "a root outside WSurf's folders gets no marker")
+        #expect(!FileManager.default.fileExists(atPath: outside.appending(path: ".debug-exit-on-hello").path))
+        let relative = CefRemoteMessage(CefRemote.Op.debugExitOnHello)
+        relative.set(CefRemote.Key.rootPath, "relative/folder")
+        relative.set(CefRemote.Key.count, 1)
+        #expect(!(try client.call(relative)).bool(CefRemote.Key.success))
+        // A root of the tests' own is written, and taking it off again (count 0) removes the marker.
+        let allowed = CefRemoteMessage(CefRemote.Op.debugExitOnHello)
+        allowed.set(CefRemote.Key.rootPath, client.root.path)
+        allowed.set(CefRemote.Key.count, 0)
+        #expect(try client.call(allowed).bool(CefRemote.Key.success))
+    }
+
+    @Test(.enabled(if: ChromiumServiceBundle.isPresent && ChromiumServiceNoDebugOpsTests.serviceHasDebugOps))
     func theServiceTheLaneBuiltHasTheDebugOpsTheStringsCheckLooksFor() throws {
         // The other half of the strings check, on the real thing: this service is built with the ops (the tests above need them),
         // so the check must see them. The same check on the service built without them is the lane's second build.

@@ -99,10 +99,10 @@ final class RemoteBrowser {
         switch debug {
         case CefRemote.DebugCreate.fail:
             // Stops before CEF's own refusal path (the references handed to CEF below), which is CEF's wrappers' to consume.
-            note("browser \(id): create FAILED (debug)")
+            note("browser \(id): \(DebugOps.fail)")
             return false
         case CefRemote.DebugCreate.hold:
-            note("browser \(id): create held (debug)")
+            note("browser \(id): \(DebugOps.hold)")
             return true
         default:
             break
@@ -116,9 +116,11 @@ final class RemoteBrowser {
         info.shared_texture_enabled = 1
         #if WSURF_SERVICE_DEBUG_OPS
         if debug == CefRemote.DebugCreate.cpuPaint {
+            note(DebugOps.cpuPaint)
             info.shared_texture_enabled = 0
         }
         if debug == CefRemote.DebugCreate.smallSourceCache {
+            note(DebugOps.smallSourceCache)
             presenter.sourceTextureLimit = 1
         }
         #endif
@@ -139,6 +141,7 @@ final class RemoteBrowser {
         note("browser \(id): create \(started == 1 ? "started" : "FAILED") \(Int(sizeDIP.width))x\(Int(sizeDIP.height))@\(scale)")
         #if WSURF_SERVICE_DEBUG_OPS
         if started == 1, debug == CefRemote.DebugCreate.closeFirst {
+            note(DebugOps.closeFirst)
             // CEF makes the browser in a later task (`on_after_created`), so this close always comes first.
             requestClose()
         }

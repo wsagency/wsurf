@@ -336,6 +336,7 @@
    "ChromiumServiceHardeningTests",
    "ChromiumServiceHostTests",
    "ChromiumServiceNavigationTests",
+   "ChromiumServiceNoDebugOpsTests",
    "ChromiumServiceThrottleTests",
    "DownloadFilenameTests",
    "ErrorPageTests",
