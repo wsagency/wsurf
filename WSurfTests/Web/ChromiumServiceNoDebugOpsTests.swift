@@ -15,23 +15,23 @@ import Testing
 @Suite(.serialized)
 struct ChromiumServiceNoDebugOpsTests {
     /// Every `Op.debug*` name. `ChromiumServiceHardeningTests` fails when this list and CefKit's differ.
-    static let debugOps = [
+    nonisolated static let debugOps = [
         CefRemote.Op.debugAbort, CefRemote.Op.debugStats, CefRemote.Op.debugExitOnHello, CefRemote.Op.debugAskHost,
         CefRemote.Op.debugMemoryPressure, CefRemote.Op.debugStubBrowser, CefRemote.Op.debugHangExit, CefRemote.Op.debugHoldHistory,
     ]
 
-    private static var executable: URL {
+    nonisolated private static var executable: URL {
         ChromiumServiceBundle.url.appending(path: "Contents/MacOS/WSurf Chromium")
     }
 
     /// Whether the service's file has the debug ops: one of their texts is in it (every text is 16 bytes or more, so it is stored
     /// in the file as it is).
-    static var serviceHasDebugOps: Bool {
+    nonisolated static var serviceHasDebugOps: Bool {
         guard ChromiumServiceBundle.isPresent, let data = try? Data(contentsOf: executable, options: .mappedIfSafe) else { return false }
         return data.range(of: Data("debug.stats: the service answers".utf8)) != nil
     }
 
-    static var serviceHasNoDebugOps: Bool {
+    nonisolated static var serviceHasNoDebugOps: Bool {
         ChromiumServiceBundle.isPresent && !serviceHasDebugOps
     }
 
