@@ -311,6 +311,7 @@
    "SecretClipboardTests",
    "SettingsRowAccessibilityTests",
    "SidebarListHeightTests",
+   "TabDeinitTests",
    "TabSleepScheduleTests",
    "TabSleepSparesTests",
    "TabSwitchWorkTests"
