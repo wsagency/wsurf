@@ -105,12 +105,16 @@ nonisolated final class HTTPFixtureServer: @unchecked Sendable {
     /// `waitsForBody` answers a request that has a body only after the body arrived, so closing the connection never cuts a POST off.
     /// Off by default: the other tests send no bodies, and their timing is left as it was.
     /// `respond` answers first, on the server's queue, for a test that needs state; nil falls back to `routes`.
+    /// `port`: a fixed port, for a server that comes back where a stopped one was (`stop()`).
     static func start(
         routes: [String: Response],
         waitsForBody: Bool = false,
-        respond: (@Sendable (Request) -> Response?)? = nil
+        respond: (@Sendable (Request) -> Response?)? = nil,
+        port: NWEndpoint.Port = .any
     ) async throws -> HTTPFixtureServer {
-        let listener = try NWListener(using: .tcp, on: .any)
+        let parameters = NWParameters.tcp
+        parameters.allowLocalEndpointReuse = port != .any
+        let listener = try NWListener(using: parameters, on: port)
         let server = HTTPFixtureServer(listener: listener, routes: routes, waitsForBody: waitsForBody, respond: respond)
         listener.newConnectionHandler = { [weak server] connection in
             server?.accept(connection)
@@ -136,6 +140,25 @@ nonisolated final class HTTPFixtureServer: @unchecked Sendable {
         }
         guard listener.port != nil else { throw StartError.missingPort }
         return server
+    }
+
+    /// Stops listening and returns once the port is closed: a connection to it is then refused.
+    func stop() async {
+        await withCheckedContinuation { continuation in
+            queue.async { [listener] in
+                guard listener.state != .cancelled else { return continuation.resume() }
+                listener.stateUpdateHandler = { state in
+                    guard state == .cancelled else { return }
+                    listener.stateUpdateHandler = nil
+                    continuation.resume()
+                }
+                listener.cancel()
+            }
+        }
+    }
+
+    var port: NWEndpoint.Port? {
+        listener.port
     }
 
     func url(_ path: String = "/") throws -> URL {

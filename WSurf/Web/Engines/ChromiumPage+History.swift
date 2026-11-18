@@ -6,8 +6,8 @@ import CefKit
 import Foundation
 
 /// Chromium's native navigation history as the page reads it: from CEF's navigation entries in process, from the list the service
-/// pushes (`historyChanged`, `ChromiumRemoteBrowser.history`) out of process. WSurf's own list (`history`) is built from it, and
-/// the startup page is kept out of Back.
+/// pushes (`historyChanged`, `ChromiumRemoteBrowser.history`) out of process. WSurf's own list (`history`) is built from it and from
+/// the entries WSurf restored itself (`historyRecord`, D3b), and the startup page is kept out of Back.
 extension ChromiumPage {
     private static let startupResetAttempts = 10
     private static let startupResetRetryDelay: Duration = .milliseconds(100)
@@ -21,6 +21,7 @@ extension ChromiumPage {
     /// D4-4b: one entry after the load), and the same check then finds nothing to drop (`landed`, with no reset sent). A load that
     /// comes after about:blank has finished keeps both entries, and the service's one-turn `collapseHistory` drops the startup one.
     func dropStartupEntry() {
+        startupEntry = .resetting
         guard raw != nil || remote != nil, !closing, !isClosed else { return }
         Task { [weak self] in
             guard let self else { return }
@@ -33,7 +34,7 @@ extension ChromiumPage {
             }
             guard !closing, !isClosed else { return }
             startupEntry = outcome == .landed ? .dropped : .kept
-            owner?.canGoBack = nativeCanGoBack()
+            owner?.canGoBack = logicalCanGoBack()
             await loadHistory()
         }
     }
@@ -103,11 +104,22 @@ extension ChromiumPage {
         return native.count == 2 && native.current == 1 ? nil : .refused
     }
 
+    /// The first native entry Back may reach: not the startup page while it is Chromium's first entry, and not an entry a hop left
+    /// below its floor (`ChromiumHistoryRecord.floor`, found by id in the last list read).
+    private func firstReachable(firstAddress: String?, in list: [CefRemote.HistoryEntry]) -> Int {
+        let startup = startupEntry != .dropped && firstAddress == "about:blank" ? 1 : 0
+        return max(startup, historyRecord.floorIndex(in: list))
+    }
+
     /// Back is possible to an entry other than the startup page, from Chromium's history as it is now.
     func nativeCanGoBack() -> Bool {
         guard let native = nativeHistory() else { return false }
-        let floor = startupEntry != .dropped && native.first == "about:blank" ? 1 : 0
-        return native.current > floor
+        return native.current > firstReachable(firstAddress: native.first, in: historyRecord.native)
+    }
+
+    /// Back is possible natively or to an entry WSurf restored.
+    func logicalCanGoBack() -> Bool {
+        nativeCanGoBack() || !historyRecord.back.isEmpty
     }
 
     /// Chromium's entry count, current index and first URL. In process the visitor runs before the call returns on the UI thread, so
@@ -117,18 +129,30 @@ extension ChromiumPage {
         if let remote {
             return remote.nativeHistory
         }
+        guard let read = nativeEntries(), let first = read.entries.first else { return nil }
+        return (read.entries.count, read.current, first.url)
+    }
+
+    /// In process only: every entry with its address, title and POST flag, read now (the visitor runs before the call returns).
+    func nativeEntries() -> (entries: [NavigationEntryReader.Entry], current: Int)? {
+        guard remote == nil else { return nil }
         let reader = NavigationEntryReader()
         let visitor = ChromiumInterop.allocate(cef_navigation_entry_visitor_t.self, owner: reader)
         visitor.pointee.visit = { visitorSelf, entry, current, index, total in
-            // Callback object arguments arrive with a reference.
-            let url = entry.map { ChromiumInterop.takeString($0.pointee.get_url?($0)) } ?? ""
+            // Callback object arguments arrive with a reference. An entry that cannot be read counts as made by a POST: never saved.
+            let read = entry.map {
+                NavigationEntryReader.Entry(
+                    url: ChromiumInterop.takeString($0.pointee.get_url?($0)),
+                    title: ChromiumInterop.takeString($0.pointee.get_title?($0)),
+                    hasPostData: $0.pointee.has_post_data?($0) != 0)
+            } ?? NavigationEntryReader.Entry(url: "", title: "", hasPostData: true)
             if let entry {
                 ChromiumInterop.release(UnsafeMutableRawPointer(entry))
             }
             guard let visitorSelf,
                   let reader = ChromiumInterop.owner(NavigationEntryReader.self, of: UnsafeMutableRawPointer(visitorSelf)) else { return 0 }
             MainActor.assumeIsolated {
-                reader.record(url: url, isCurrent: current != 0, index: Int(index), total: Int(total))
+                reader.record(read, isCurrent: current != 0, index: Int(index), total: Int(total))
             }
             return 1
         }
@@ -143,8 +167,8 @@ extension ChromiumPage {
         if !visited {
             ChromiumInterop.release(UnsafeMutableRawPointer(visitor))
         }
-        guard let total = reader.total, let first = reader.first else { return nil }
-        return (total, reader.current, first)
+        guard let entries = reader.entries, !entries.isEmpty else { return nil }
+        return (entries, reader.current)
     }
 
     func refreshHistory() {
@@ -159,7 +183,9 @@ extension ChromiumPage {
         }
     }
 
-    /// Reads Chromium's history into `history`. False when the read fails.
+    /// Reads Chromium's history into `history`. False when the read fails. Only CDP has the entries' ids; only the visitor has their
+    /// POST flags, read when the answer is handled. A visitor list that does not match (count, current entry, addresses) leaves every
+    /// entry of this read counted as made by a POST, so none of them is saved.
     @discardableResult
     func loadHistory() async -> Bool {
         if remote != nil {
@@ -168,12 +194,8 @@ extension ChromiumPage {
         guard raw != nil, !closing, !isClosed, let response = try? await command("Page.getNavigationHistory"),
               let index = response["currentIndex"] as? Int,
               let entries = response["entries"] as? [[String: Any]] else { return false }
-        let items = entries.enumerated().compactMap { position, entry -> (Int, PageHistoryItem)? in
-            guard let id = entry["id"] as? Int, let address = entry["url"] as? String,
-                  let url = URL(string: address) else { return nil }
-            return (position, PageHistoryItem(url: url, title: entry["title"] as? String, chromiumIndex: id))
-        }
-        setHistory(items, current: index, firstAddress: entries.first?["url"] as? String)
+        guard !closing, !isClosed else { return false }
+        setHistory(ChromiumHistoryRecord.nativeList(entries, current: index, visited: nativeEntries()))
         return true
     }
 
@@ -181,21 +203,135 @@ extension ChromiumPage {
     @discardableResult
     func applyRemoteHistory() -> Bool {
         guard !closing, !isClosed, let list = remote?.history else { return false }
-        let items = list.enumerated().compactMap { position, entry -> (Int, PageHistoryItem)? in
-            guard let url = URL(string: entry.url) else { return nil }
-            return (position, PageHistoryItem(url: url, title: entry.title, chromiumIndex: Int(entry.id)))
-        }
-        setHistory(items, current: list.firstIndex(where: \.isCurrent) ?? -1, firstAddress: list.first?.url)
+        setHistory(list)
         return true
     }
 
-    private func setHistory(_ items: [(Int, PageHistoryItem)], current index: Int, firstAddress: String?) {
+    private func setHistory(_ list: [CefRemote.HistoryEntry]) {
+        if remote == nil {
+            applyToRecord(list)
+        }
+        let index = list.firstIndex(where: \.isCurrent) ?? -1
+        let items = list.enumerated().compactMap { position, entry -> (Int, PageHistoryItem)? in
+            guard entry.id >= 0, let url = URL(string: entry.url) else { return nil }
+            return (position, PageHistoryItem(url: url, title: entry.title, chromiumIndex: Int(entry.id)))
+        }
         // Until a reset drops it, Chromium's first entry is the startup page, which Back never reaches.
-        let hidden = startupEntry != .dropped && firstAddress == "about:blank" ? 0 : -1
+        let reachable = firstReachable(firstAddress: list.first?.url, in: list)
+        func restored(_ entries: [ChromiumHistoryRecord.Restored]) -> [PageHistoryItem] {
+            entries.compactMap { item in URL(string: item.entry.url).map { PageHistoryItem(url: $0, title: item.entry.title, restoredID: item.id) } }
+        }
         history = PageHistoryList(
-            backList: items.filter { $0.0 < index && $0.0 != hidden }.map(\.1),
-            forwardList: items.filter { $0.0 > index }.map(\.1),
+            backList: restored(historyRecord.back) + items.filter { $0.0 < index && $0.0 >= reachable }.map(\.1),
+            forwardList: items.filter { $0.0 > index }.map(\.1) + restored(historyRecord.forward),
             currentItem: items.first { $0.0 == index }?.1)
         owner?.onHistoryChanged?()
+    }
+
+    // MARK: Restored entries (D3b)
+
+    private func applyToRecord(_ list: [CefRemote.HistoryEntry]) {
+        switch historyRecord.update(native: list, navigation: navigation) {
+        case .unchanged:
+            return
+        case .forwardDropped:
+            break
+        case let .collapse(keeping, count):
+            collapseHistory(keeping: keeping, count: count)
+        }
+        owner?.canGoBack = logicalCanGoBack()
+        owner?.canGoForward = list.last?.isCurrent == false || !historyRecord.forward.isEmpty
+    }
+
+    /// The list to save for this page: nil out of process (D4-33 connects it) and when there is nothing to go back or forward to.
+    func savedHistory() -> ChromiumHistoryRecord.Saved? {
+        guard !runsRemotely else { return nil }
+        let list = historyRecord.native
+        let reachable = firstReachable(firstAddress: list.first?.url, in: list)
+        let current = list.firstIndex(where: \.isCurrent) ?? -1
+        return historyRecord.saved(window: Array(list.dropFirst(reachable)), current: current - reachable)
+    }
+
+    /// A saved list, before the tab's address is loaded: its entries load only when visited. Out of process the tab keeps loading its
+    /// address alone until D4-33.
+    func seedHistory(_ saved: ChromiumHistoryRecord.Saved) {
+        guard !runsRemotely else { return }
+        historyRecord.seed(saved)
+        setHistory(historyRecord.native)
+        owner?.canGoBack = !historyRecord.back.isEmpty
+        owner?.canGoForward = !historyRecord.forward.isEmpty
+    }
+
+    /// The person's (or the agent's) Back: natively while Chromium has an entry to go to, else a hop to the newest restored entry.
+    func goBackInHistory() -> PageNavigation? {
+        if remote == nil, !nativeCanGoBack(), let target = historyRecord.back.last {
+            return hop(to: target.id)
+        }
+        return goBack()
+    }
+
+    func goForwardInHistory() -> PageNavigation? {
+        if remote == nil, let target = historyRecord.forward.first, let read = nativeEntries(), read.current == read.entries.count - 1 {
+            return hop(to: target.id)
+        }
+        return goForward()
+    }
+
+    func goInHistory(to item: PageHistoryItem) -> PageNavigation? {
+        guard let id = item.restoredID else { return go(to: item) }
+        return remote == nil ? hop(to: id) : nil
+    }
+
+    /// WSurf's error document replaced the failed load `failed`: a hop that was that load keeps its place through the document.
+    func keepHopThroughErrorDocument(failed: PageNavigation?) {
+        historyRecord.failedHop(failed, errorDocument: navigation)
+    }
+
+    /// Whether the page's navigation is a hop backward in the list. A load the engine router moves to the other engine must then not
+    /// keep this page for Back: Back from there would go forward in time.
+    var hopsBackward: Bool {
+        historyRecord.hopsBackward(navigation: navigation)
+    }
+
+    /// Loads a restored entry by a plain GET, through the same navigation decision as any load: nothing is imported and nothing
+    /// is sent again. The list moves only once the hop's own entry appears (`ChromiumHistoryRecord.update`); a hop that never commits
+    /// (cancelled, blocked, moved to the other engine) moves nothing.
+    private func hop(to id: Int) -> PageNavigation? {
+        guard let url = historyRecord.address(of: id), let read = nativeEntries() else { return nil }
+        let reachable = firstReachable(firstAddress: read.entries.first?.url, in: historyRecord.native)
+        let window = read.entries.dropFirst(reachable).map {
+            CefRemote.HistoryEntry(id: -1, url: $0.url, title: $0.title, hasPostData: $0.hasPostData)
+        }
+        guard let next = load(URLRequest(url: url)) else { return nil }
+        historyRecord.startHop(to: id, window: window, current: read.current - reachable, navigation: next)
+        return next
+    }
+
+    private struct CollapseBlocked: Error {}
+
+    /// After a hop: drops every native entry before its own, in the same turn as a check that nothing was added after it. Chromium
+    /// refuses the reset while a cross-site hop is still swapping renderers, so a refusal is retried as the startup reset's is; a
+    /// failed check is not. Until it lands, or when it cannot, those entries stay hidden below the floor.
+    private func collapseHistory(keeping address: String, count: Int) {
+        Task { [weak self] in
+            guard let self else { return }
+            await historyRecord.beforeCollapse?()
+            attempts: for attempt in 1...Self.startupResetAttempts {
+                guard raw != nil, !closing, !isClosed else { return }
+                do {
+                    _ = try await devTools.command("Page.resetNavigationHistory", dispatchCheck: { [weak self] in
+                        guard let self, let read = nativeEntries(), read.entries.count == count, read.current == count - 1,
+                              read.entries.last?.url == address else { throw CollapseBlocked() }
+                    })
+                    break attempts
+                } catch is CollapseBlocked {
+                    break attempts
+                } catch {
+                    guard attempt < Self.startupResetAttempts else { break attempts }
+                    try? await Task.sleep(for: Self.startupResetRetryDelay)
+                }
+            }
+            await loadHistory()
+        }
     }
 }

@@ -416,7 +416,9 @@ final class BrowserModel {
     /// A title that arrives after the load names the page that was recorded. For a held move it is the title that makes
     /// the move a visit.
     private func noteTitleChange(of tab: BrowserTab) {
-        guard !tab.isPrivate else { return }
+        // An error page's headline is not the title of the page that failed: its address stands in the tab (and Chromium's own
+        // error page commits as chrome-error:// first), so the title would rename that page's History entries.
+        guard !tab.isPrivate, !tab.isShowingError, tab.liveView?.url?.scheme != "chrome-error" else { return }
         if let held = heldInPageMove[tab.id], held == tab.urlString {
             guard tab.awaitsVisit || lastVisit(of: tab)?.title != tab.pageTitle else { return }
             heldInPageMove[tab.id] = nil

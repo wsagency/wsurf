@@ -92,10 +92,12 @@ struct LiveWindowRig {
     }
 
     /// Runs `body` in a window of a profile of its own, whose pages open on `engine` and may start sound, and closes it after.
-    /// `routes` adds pages of the case's own to the server.
+    /// `routes` adds pages of the case's own to the server; `respond` sees every request first (see `HTTPFixtureServer.start`), and
+    /// with it a request with a body is answered once the body arrived.
     static func with(
         engine: BrowserEngine,
         routes: [String: HTTPFixtureServer.Response] = [:],
+        respond: (@Sendable (HTTPFixtureServer.Request) -> HTTPFixtureServer.Response?)? = nil,
         _ body: @MainActor (LiveWindowRig) async throws -> Void
     ) async throws {
         let never = ResponseGate()
@@ -103,7 +105,7 @@ struct LiveWindowRig {
             "/page": .html(page),
             "/never": .html("", gate: never),
             "/still": .html("<!doctype html><title>Still</title><p>Nothing moves here.</p>"),
-        ]) { _, fixed in fixed })
+        ]) { _, fixed in fixed }, waitsForBody: respond != nil, respond: respond)
         let catalog = ProfileStore.shared
         let previous = catalog.current
         let profile = catalog.add(name: "Live window")
