@@ -199,6 +199,18 @@ final class TabWebView: WKWebView {
     ]
 
     override func rightMouseDown(with event: NSEvent) {
+        prepareContextMenu(with: event)
+        super.rightMouseDown(with: event)
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        if event.modifierFlags.contains(.control) {
+            prepareContextMenu(with: event)
+        }
+        super.mouseDown(with: event)
+    }
+
+    private func prepareContextMenu(with event: NSEvent) {
         let local = convert(event.locationInWindow, from: nil)
         let zoom = pageZoom == 0 ? 1 : pageZoom
         let x = local.x / zoom
@@ -226,7 +238,6 @@ final class TabWebView: WKWebView {
         }
 
         awaitPDFMenu()
-        super.rightMouseDown(with: event)
     }
 
     /// WebKit's PDF viewer pops its own menu up without asking the view (`willOpenMenu` never runs for it), so the menu is

@@ -120,7 +120,9 @@ extension AppCoordinator {
 
     /// Writes `menuBarHost` into the menu bar when this is the window in front.
     func refreshSiteMenu() {
-        guard isKeyWindow else { return }
+        guard let nativeWindow,
+              isKeyWindow || PasswordsWindow.keyWindow()?.sheetParent?.sheetHost === nativeWindow
+        else { return }
         (application?.mainMenu ?? mainMenu)?.refreshSiteItem()
     }
 
@@ -164,14 +166,10 @@ extension AppCoordinator {
         (application?.mainMenu ?? mainMenu)?.refreshSiteItem()
     }
 
-    /// A window that resigns key after the next window became key (the floating bar's deferred resign) must not clear the
-    /// extensions' focus, which is that window's now.
-    static func clearsExtensionFocus(activeWindowID: UUID?, resigning: UUID) -> Bool {
-        activeWindowID == nil || activeWindowID == resigning
-    }
-
     func windowDidResignKey() {
-        if Self.clearsExtensionFocus(activeWindowID: application?.activeWindowID, resigning: windowID) {
+        let successor = application?.windows.first { !$0.isClosed && $0.windowID == application?.activeWindowID }
+        // A deferred resign must preserve a successor's focus only within the same profile's extension manager.
+        if successor === self || successor?.extensions !== extensions {
             extensions.focus(browser: nil)
         }
         activation.setSuspended(true)

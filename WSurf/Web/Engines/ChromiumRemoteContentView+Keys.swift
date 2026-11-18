@@ -27,7 +27,7 @@ extension ChromiumRemoteContentView {
 
     /// `on_take_focus`: Tab left the page's last field (or Shift-Tab its first). The window's key view loop goes on from here.
     func passFocusOn(forward: Bool) {
-        guard window?.firstResponder === self else { return }
+        guard window?.isKeyWindow == true, window?.firstResponder === self else { return }
         if forward {
             window?.selectNextKeyView(self)
         } else {
@@ -156,7 +156,7 @@ extension ChromiumRemoteContentView {
         let ambiguous = matching.contains { !sentKeyDowns[$0].fromPerson }
         sentKeyDowns.removeFirst(ambiguous ? last + 1 : index + 1)
         // An agent's key never reaches WSurf's menu or its responders (R1): an MCP ⌘Z must not run Undo, nor ⌘← Back.
-        guard !ambiguous, sent.fromPerson, window?.firstResponder === self else { return }
+        guard !ambiguous, sent.fromPerson, window?.isKeyWindow == true, window?.firstResponder === self else { return }
         redispatching = event
         defer { redispatching = nil }
         if ShortcutPriority.pageAnswersFirst(event), NSApp.mainMenu?.performKeyEquivalent(with: event) == true {

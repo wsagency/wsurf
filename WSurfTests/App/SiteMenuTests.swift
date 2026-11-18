@@ -465,6 +465,29 @@ struct SiteMenuTests {
     }
 
     /// A sheet (save panel, print, alert) is key while it is open; the window it hangs from still counts as the window in front.
+    @Test func aKeyFloatingToolbarNamesItsBrowserInTheSiteMenu() async throws {
+        try await withSiteSetting {
+            try await withMenu { rig, item in
+                let window = try #require(rig.first.nativeWindow)
+                let panel = FloatingBarPanel(frame: NSRect(x: 0, y: 0, width: 300, height: 76))
+                window.addChildWindow(panel, ordered: .above)
+                defer {
+                    window.removeChildWindow(panel)
+                    panel.close()
+                }
+                rig.becomeKey(rig.second)
+                PasswordsWindow.keyWindow = { panel }
+                NotificationCenter.default.post(name: NSWindow.didBecomeKeyNotification, object: panel)
+                await Rig.turn()
+                #expect(!item.isHidden && item.title == "first.example")
+                #expect(item.submenu?.title == "first.example")
+                let address = try #require(item.submenu?.items.first)
+                #expect(!rig.menu.validateMenuItem(address))
+                #expect(address.title == "https://first.example/page")
+            }
+        }
+    }
+
     @Test func aSheetOnABrowserWindowKeepsTheMenu() async throws {
         try await withSiteSetting {
             try await withMenu { rig, item in
@@ -479,6 +502,12 @@ struct SiteMenuTests {
                 PasswordsWindow.keyWindow = { sheet }
                 rig.menu.refreshSiteItem()
                 #expect(!item.isHidden && item.title == "first.example", "the sheet is key and the menu stays")
+                rig.first.browser.activeTab?.urlString = "https://moved.example/next"
+                rig.first.refreshSiteMenu()
+                #expect(item.title == "moved.example" && item.submenu?.title == "moved.example")
+                let address = try #require(item.submenu?.items.first)
+                _ = rig.menu.validateMenuItem(address)
+                #expect(address.title == "https://moved.example/next")
             }
         }
     }

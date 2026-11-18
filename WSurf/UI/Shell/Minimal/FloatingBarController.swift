@@ -308,6 +308,11 @@ final class FloatingBarController: NSObject, NSWindowDelegate {
         if panel == nil || news {
             coordinator?.windowDidBecomeKey()
         }
+        if panel != nil {
+            DispatchQueue.main.async { [weak self] in
+                MainActor.assumeIsolated { self?.endEditingIfLeft() }
+            }
+        }
     }
 
     /// The window or the panel resigned key. Without a panel the app hears now, as before. With one, a run-loop turn later and

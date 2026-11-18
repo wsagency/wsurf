@@ -101,13 +101,29 @@ done
 foundNames=()
 missingNames=()
 if [[ "${#shortNames[@]}" -gt 0 ]]; then
-    disassembly=$(/usr/bin/otool -tV "$target" 2>/dev/null || true)
+    disassembly=$(/usr/bin/otool -tV "$target") || { echo "error: otool failed for $target" >&2; exit 2; }
     [[ -n "$disassembly" ]] || { echo "error: no disassembly of $target (otool -tV printed nothing)" >&2; exit 2; }
+    scan=$(printf '%s\n' "$disassembly" | /usr/bin/python3 -I "$repo/Tools/check-service-immediates.py" /dev/stdin "${shortNames[@]}") || {
+        echo "error: the immediate scanner failed" >&2; exit 2;
+    }
+    index=0
     while IFS= read -r name; do
-        if [[ "$name" == FOUND:* ]]; then foundNames+=("${name#FOUND:}"); else missingNames+=("${name#MISSING:}"); fi
-    done < <(printf '%s\n' "$disassembly" | /usr/bin/python3 -I "$repo/Tools/check-service-immediates.py" /dev/stdin "${shortNames[@]}")
+        [[ "$index" -lt "${#shortNames[@]}" ]] || { echo "error: extra scanner result: $name" >&2; exit 2; }
+        expected="${shortNames[$index]}"
+        case "$name" in
+            "FOUND:$expected") foundNames+=("$expected") ;;
+            "MISSING:$expected") missingNames+=("$expected") ;;
+            *) echo "error: invalid scanner result for $expected: $name" >&2; exit 2 ;;
+        esac
+        index=$((index + 1))
+    done <<< "$scan"
+    [[ "$index" -eq "${#shortNames[@]}" ]] || { echo "error: incomplete scanner results" >&2; exit 2; }
 fi
 
+# A compiler may store any wire name as bytes instead of immediates, without its diagnostic text.
+for name in "${nameList[@]}"; do
+    if [[ "${#name}" -ge 8 ]]; then EXTRA+=("$name"); fi
+done
 extraFound=()
 for extra in "${EXTRA[@]}"; do
     if LC_ALL=C /usr/bin/grep -a -q -F -- "$extra" "$target"; then extraFound+=("$extra"); fi

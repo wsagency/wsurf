@@ -60,7 +60,7 @@ extension MainMenu {
     /// site for a window that is not in front. It is not `activeCoordinator`, which falls back to the window used last.
     private var siteCoordinator: AppCoordinator? {
         guard let key = PasswordsWindow.keyWindow() else { return nil }
-        let window = key.sheetParent ?? key
+        let window = (key.sheetParent ?? key).sheetHost
         let windows = application?.windows ?? fallbackCoordinator.map { [$0] } ?? []
         return windows.first { !$0.isClosed && $0.nativeWindow === window }
     }

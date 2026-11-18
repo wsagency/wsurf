@@ -50,12 +50,12 @@ enum PageRightClick {
     }
 
     /// `left`: an ordinary click instead, which focuses a field the way a person does.
-    static func send(at point: CGPoint, in page: BrowserPage, window: NSWindow, left: Bool = false) async throws {
+    static func send(at point: CGPoint, in page: BrowserPage, window: NSWindow, left: Bool = false, control: Bool = false) async throws {
         if let chromium = page.chromium {
             for (type, buttons) in [("mousePressed", left ? 1 : 2), ("mouseReleased", 0)] {
                 _ = try await chromium.command("Input.dispatchMouseEvent", params: [
                     "type": type, "x": Double(point.x), "y": Double(point.y), "button": left ? "left" : "right", "buttons": buttons,
-                    "clickCount": 1,
+                    "clickCount": 1, "modifiers": control ? 2 : 0,
                 ])
             }
             return
@@ -64,7 +64,7 @@ enum PageRightClick {
         let location = native.convert(point, to: nil)
         for type in left ? [NSEvent.EventType.leftMouseDown, .leftMouseUp] : [.rightMouseDown, .rightMouseUp] {
             window.sendEvent(try #require(NSEvent.mouseEvent(
-                with: type, location: location, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                with: type, location: location, modifierFlags: control ? .control : [], timestamp: ProcessInfo.processInfo.systemUptime,
                 windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1,
                 pressure: [.rightMouseDown, .leftMouseDown].contains(type) ? 1 : 0
             )))

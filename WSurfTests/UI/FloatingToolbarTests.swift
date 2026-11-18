@@ -25,7 +25,7 @@ struct FloatingToolbarTests {
     // MARK: - Windows
 
     /// The windows a test opened, and the app-wide choices as they were. `finish` closes the windows and puts the choices back.
-    private final class Rig {
+    final class Rig {
         let app = BrowserApplication()
         let settings = BrowserSettings.application
         private var coordinators: [AppCoordinator] = []
@@ -67,16 +67,16 @@ struct FloatingToolbarTests {
         }
     }
 
-    private func panels(of window: NSWindow?) -> [FloatingBarPanel] {
+    func panels(of window: NSWindow?) -> [FloatingBarPanel] {
         (window?.childWindows ?? []).compactMap { $0 as? FloatingBarPanel }
     }
 
-    private func host(of coordinator: AppCoordinator) throws -> BrowserHost {
+    func host(of coordinator: AppCoordinator) throws -> BrowserHost {
         try #require(coordinator.nativeWindow?.delegate as? BrowserHost)
     }
 
     /// The host acts on the setting when the observation hops to the main actor; a test asks for the same thing directly.
-    private func detach(_ rig: Rig, _ coordinator: AppCoordinator) throws {
+    func detach(_ rig: Rig, _ coordinator: AppCoordinator) throws {
         rig.settings.minimalBarPlacement = .floating
         try host(of: coordinator).syncFloatingBar()
     }
@@ -520,7 +520,7 @@ struct FloatingToolbarTests {
     }
 
     /// One run-loop turn of the main queue: what `FloatingBarController.memberResignedKey` queued before this has run by then.
-    private func nextTurn() async {
+    func nextTurn() async {
         await withCheckedContinuation { continuation in
             DispatchQueue.main.async { continuation.resume() }
         }
@@ -741,12 +741,6 @@ struct FloatingToolbarTests {
 
     /// S1: a window's resign that runs after the next window took focus must not clear that window's extension focus.
     @Test func aResignAfterTheNextWindowBecameKeyDoesNotClearItsExtensionFocus() throws {
-        let first = UUID()
-        let second = UUID()
-        #expect(AppCoordinator.clearsExtensionFocus(activeWindowID: nil, resigning: first), "no window took over: cleared")
-        #expect(AppCoordinator.clearsExtensionFocus(activeWindowID: first, resigning: first), "this one was the focused one")
-        #expect(!AppCoordinator.clearsExtensionFocus(activeWindowID: second, resigning: first), "another took it: left alone")
-
         let rig = Rig()
         defer { rig.finish() }
         let one = try rig.open()

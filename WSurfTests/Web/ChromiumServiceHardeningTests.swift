@@ -191,10 +191,10 @@ struct ChromiumServiceHardeningTests {
         URL(filePath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
     }
 
-    private static func runChecker(_ arguments: [String]) throws -> ScriptRun {
+    private static func runChecker(_ arguments: [String], root: URL? = nil) throws -> ScriptRun {
         let process = Process()
         process.executableURL = URL(filePath: "/bin/bash")
-        process.arguments = [repositoryRoot.appending(path: "Tools/check-service-strings.sh").path] + arguments
+        process.arguments = [(root ?? repositoryRoot).appending(path: "Tools/check-service-strings.sh").path] + arguments
         let pipe = Pipe()
         process.standardOutput = pipe
         process.standardError = pipe
@@ -306,6 +306,62 @@ struct ChromiumServiceHardeningTests {
         let text = folder.appending(path: "plain.txt")
         try Self.write([], to: text)
         #expect(try Self.runChecker([text.path]).status == 2)
+    }
+
+    @Test
+    func standaloneDebugWireNamesAreRefusedEvenWithoutTheirDiagnosticText() throws {
+        let folder = try Self.canonicalTemporaryFolder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        for name in try Self.listed().names where name.utf8.count >= 8 {
+            let file = try Self.machOCopy(in: folder, named: UUID().uuidString, appending: [name])
+            let result = try Self.runChecker([file.path])
+            #expect(result.status == 1 && result.output.contains(name), "\(name): \(result.output)")
+        }
+    }
+
+    @Test
+    func aFailedOrIncompleteScannerCannotCertifyEitherServiceMode() throws {
+        let folder = try Self.canonicalTemporaryFolder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let root = folder.appending(path: "checker")
+        for path in [
+            "Tools/check-service-strings.sh", "Packages/CefSwift/Sources/wsurf-chromium-service/DebugOps.swift",
+            "Packages/CefSwift/Sources/CefKit/CefRemoteProtocol.swift",
+        ] {
+            let target = root.appending(path: path)
+            try FileManager.default.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try FileManager.default.copyItem(at: Self.repositoryRoot.appending(path: path), to: target)
+        }
+        let plain = try Self.machOCopy(in: folder, named: "plain")
+        let debug = try Self.machOCopy(in: folder, named: "debug", appending: Self.listed().texts)
+        let scanner = root.appending(path: "Tools/check-service-immediates.py")
+        let reports = try Self.listed().names.filter { (8...15).contains($0.utf8.count) }.map { "print('MISSING:\($0)')" }
+        let faults: [String?] = [
+            nil, "raise RuntimeError('scanner failed')", "", "print('unexpected result')",
+            reports.dropLast().joined(separator: "\n"),
+            (reports + reports.prefix(1)).joined(separator: "\n"),
+        ]
+        for source in faults {
+            if let source {
+                try Data(source.utf8).write(to: scanner)
+            }
+            for arguments in [[plain.path], ["--expect-debug", debug.path]] {
+                let result = try Self.runChecker(arguments, root: root)
+                #expect(result.status == 2, "scanner \(source ?? "missing"), \(arguments): \(result.output)")
+            }
+        }
+        try FileManager.default.removeItem(at: scanner)
+        try FileManager.default.copyItem(at: Self.repositoryRoot.appending(path: "Tools/check-service-immediates.py"), to: scanner)
+        let otool = root.appending(path: "failing-otool")
+        try Data("#!/bin/sh\nprintf 'partial disassembly\\n'\nexit 7\n".utf8).write(to: otool)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: otool.path)
+        let checker = root.appending(path: "Tools/check-service-strings.sh")
+        let source = try String(contentsOf: checker, encoding: .utf8)
+        try Data(source.replacingOccurrences(of: "/usr/bin/otool", with: "\"\(otool.path)\"").utf8).write(to: checker)
+        for arguments in [[plain.path], ["--expect-debug", debug.path]] {
+            let result = try Self.runChecker(arguments, root: root)
+            #expect(result.status == 2, "otool failed: \(result.output)")
+        }
     }
 
     @Test

@@ -783,13 +783,30 @@ final class ChromiumRemote {
         }
         if input == nil {
             let connection = xpc_connection_create(serviceName, DispatchQueue.main)
-            xpc_connection_set_event_handler(connection) { _ in }
+            let identity = ObjectIdentifier(connection)
+            let current = generation
+            xpc_connection_set_event_handler(connection) { [weak self] event in
+                let incoming = Incoming(event)
+                MainActor.assumeIsolated { self?.receiveInput(incoming, connection: identity, generation: current) }
+            }
             xpc_connection_activate(connection)
             sendSideHello(CefRemote.Op.inputHello, on: connection)
             input = connection
         }
         if let input {
             xpc_connection_send_message(input, message.object)
+        }
+    }
+
+    /// The service can replace this side connection while control stays healthy; the next input opens a new one.
+    func receiveInput(_ incoming: Incoming, connection ended: ObjectIdentifier, generation sentGeneration: Int) {
+        guard sentGeneration == generation, let input, ObjectIdentifier(input) == ended else { return }
+        switch incoming {
+        case .interrupted, .invalid:
+            self.input = nil
+            xpc_connection_cancel(input)
+        case .message, .other:
+            break
         }
     }
 

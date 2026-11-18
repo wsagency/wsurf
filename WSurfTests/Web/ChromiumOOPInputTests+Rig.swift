@@ -16,8 +16,16 @@ import WebKit
 extension ChromiumOOPInputTests {
     // MARK: Events
 
+    /// The background test host cannot make native windows key; only AppKit's key-state answer is supplied here.
+    final class KeyWindow: NSWindow {
+        var keyed = true
+        override var isKeyWindow: Bool {
+            keyed
+        }
+    }
+
     static func window(_ content: NSView, width: CGFloat = 800, height: CGFloat = 600) -> NSWindow {
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: height), styleMask: .borderless, backing: .buffered, defer: false)
+        let window = KeyWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: height), styleMask: .borderless, backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         window.contentView = content
         window.orderBack(nil)

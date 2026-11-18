@@ -202,7 +202,8 @@ struct PickCredentialRealMenuTests {
         /// Right-clicks `field` and reads the menu that opens, choosing the first item `choose` accepts. With `expectingMenu` false
         /// (the page cancels the event) it waits until the page has seen the event, then a while longer, and returns what appeared.
         func rightClick(
-            _ field: Field, expectingMenu: Bool = true, choosing choose: @escaping @MainActor (String) -> Bool = { _ in false }
+            _ field: Field, expectingMenu: Bool = true, controlClick: Bool = false,
+            choosing choose: @escaping @MainActor (String) -> Bool = { _ in false }
         ) async throws -> Shown {
             let point = field.point
             let hit = try await page.evaluateJavaScript("document.elementFromPoint(\(point.x), \(point.y))?.id ?? ''") as? String
@@ -231,7 +232,7 @@ struct PickCredentialRealMenuTests {
                     }
                 }
             }
-            try await PageRightClick.send(at: point, in: page, window: window)
+            try await PageRightClick.send(at: point, in: page, window: window, left: controlClick, control: controlClick)
             if expectingMenu {
                 _ = await waitUntil(timeout: .seconds(10)) { self.menuDone }
             } else {
@@ -295,6 +296,19 @@ struct PickCredentialRealMenuTests {
             }
             #expect(rig.picked == 0, "looking at the menu runs nothing")
             #expect(try await rig.events().last?.prevented == false, "the page did not cancel this right-click")
+        }
+    }
+
+    @Test(arguments: [Field.ro, .user, .dis, .pw2])
+    func aControlClickOffersCredentialsOnlyOnEditableFields(field: Field) async throws {
+        try await withRig(.webKit) { rig in
+            try rig.offer(true)
+            let menu = try await rig.rightClick(field, controlClick: true)
+            if field != .dis {
+                try #require(menu.appeared, "Control-click opened the menu on \(field)")
+            }
+            #expect(menu.offersPick == field.offersPick, "Control-click on \(field): \(menu.titles)")
+            #expect(rig.picked == 0)
         }
     }
 
