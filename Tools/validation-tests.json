@@ -20,7 +20,7 @@
     "PageComputerInputTests/nativeHoverReachesPageHandlersAndCSS()", "PageComputerInputTests/hoverTriggersCssHover()",
     "PageComputerInputTests/hoverFailsWhenCoveredOrOffscreen()", "RecentDownloadsTests/evidence()",
     "SidebarAppearanceEvidenceTests/*", "SidebarIconAlignmentTests/theWholeMatrixIsReported()",
-    "OpenAI*LiveTests/*", "OpenAIMCPOAuthUITests/*", "VoiceConversationUITests/*", "BrowserAgentBenchWorker/*",
+    "OpenAI*LiveTests/*", "OpenAILiveValidationTests/*", "OpenAIMCPOAuthUITests/*", "VoiceConversationUITests/*", "BrowserAgentBenchWorker/*",
     "VaultMoveBenchmark/*", "VaultVerificationBenchmark/*"
   ],
   "areas": [

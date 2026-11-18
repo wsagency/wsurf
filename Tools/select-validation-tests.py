@@ -121,13 +121,14 @@ def git(*args):
 
 def comparison(head, base_ref):
     if base_ref == '@preview':
-        tag = subprocess.run(['git', '-C', str(ROOT), 'rev-parse', '--verify', '--quiet', 'refs/tags/tip^{commit}'],
+        tag = subprocess.run(['git', '-C', str(ROOT), 'ls-remote', '--exit-code', 'origin', 'refs/tags/tip', 'refs/tags/tip^{}'],
                              text=True, capture_output=True)
-        if tag.returncode == 1:
+        if tag.returncode == 2:
             paths = git('ls-tree', '-r', '--name-only', '-z', head, '--', 'WSurf', 'WSurfCredentialExchange', 'Packages')
             return None, [path for path in paths.split('\0') if path]
         tag.check_returncode()
-        base_ref = tag.stdout.strip()
+        refs = dict(line.split('\t', 1)[::-1] for line in tag.stdout.splitlines())
+        base_ref = refs.get('refs/tags/tip^{}') or refs['refs/tags/tip']
     base = git('rev-parse', '--verify', '--end-of-options', (base_ref or 'origin/main') + '^{commit}')
     if git('merge-base', base, head) != base:
         raise ValueError(f'Validation base {base} must be an ancestor of {head}')

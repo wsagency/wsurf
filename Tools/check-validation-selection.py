@@ -139,6 +139,7 @@ class ReleaseSelectionTests(unittest.TestCase):
 
     def test_preview_includes_a_changed_area_from_an_intervening_canceled_run(self):
         self.git('tag', 'tip', 'v0.1.28')
+        self.git('remote', 'add', 'origin', str(self.repo))
         (self.repo / 'Vault.swift').write_text('change from the canceled run')
         self.git('add', 'Vault.swift')
         self.git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', 'commit', '-qm', 'Vault change')
@@ -150,6 +151,21 @@ class ReleaseSelectionTests(unittest.TestCase):
         base, paths = module.comparison(self.git('rev-parse', 'HEAD'), '@preview')
         self.assertEqual(base, self.git('rev-parse', 'tip^{commit}'))
         self.assertEqual(paths, ['README.md', 'Vault.swift'])
+
+    def test_first_preview_ignores_an_inherited_local_tip(self):
+        self.git('tag', 'tip', 'v0.1.28')
+        remote = self.repo / 'empty-origin.git'
+        self.git('init', '-q', '--bare', str(remote))
+        self.git('remote', 'add', 'origin', str(remote))
+        (self.repo / 'WSurf').mkdir()
+        (self.repo / 'WSurf/Browser.swift').touch()
+        self.git('add', 'WSurf/Browser.swift')
+        self.git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', 'commit', '-qm', 'App')
+        module = selector()
+        module.ROOT = self.repo
+        base, paths = module.comparison(self.git('rev-parse', 'HEAD'), '@preview')
+        self.assertIsNone(base)
+        self.assertEqual(paths, ['WSurf/Browser.swift'])
 
 
 if __name__ == '__main__':
