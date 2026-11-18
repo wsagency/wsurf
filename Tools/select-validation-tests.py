@@ -25,6 +25,29 @@ MINOR_BENCHMARKS = {
     'Chromium-Engine': (['EngineBenchmarkTests'], ['EngineBenchmarkTests/startingChromiumForTheFirstTab()']),
     'Vault-Scale': (['VaultMoveBenchmark', 'VaultVerificationBenchmark'], []),
 }
+OOP_PARTS = {
+    'OOP-Transport': ['ChromiumServiceFramesTests', 'ChromiumRemoteClientTests', 'ChromiumServiceBrowserTests',
+                      'ChromiumServiceHostTests', 'ChromiumServiceBundleTests', 'ChromiumRemoteProtocolTests'],
+    'OOP-Page': ['ChromiumOOPPageTests'],
+    'OOP-Navigation': ['ChromiumServiceNavigationTests'],
+    'OOP-Display': ['ChromiumOOPDisplayTests'],
+    'OOP-Recovery': ['ChromiumOOPRecoveryTests', 'ChromiumServiceThrottleTests'],
+    'OOP-Load': ['ChromiumLoadTests'],
+    'OOP-AXTransport': ['ChromiumOOPAccessibilityTransportTests'],
+    'OOP-Content': ['ChromiumOOPContentViewTests'],
+    'OOP-History': ['ChromiumHistoryRecordTests', 'ChromiumHistoryRestoreTests', 'PageInteractionTests',
+                    'ChromiumPageTests', 'BackForwardScrollTests', 'TabDiscardTests'],
+    'OOP-Input': ['ChromiumOOPInputTests'],
+    'OOP-Hardening': ['ChromiumServiceHardeningTests'],
+    'OOP-Accessibility': ['ChromiumOOPAccessibilityTests'],
+    'OOP-NoDebug': ['ChromiumServiceNoDebugOpsTests'],
+}
+OOP_ONLY = set().union(*(scopes for name, scopes in OOP_PARTS.items() if name not in ('OOP-Load', 'OOP-History')))
+OOP_ONLY.remove('ChromiumRemoteProtocolTests')
+OOP_SKIPS = {
+    'OOP-Content': ['ChromiumOOPContentViewTests/aPageInProcessNeverHasAContentViewAndTakesFocusAsBefore()'],
+    'OOP-Accessibility': ['ChromiumOOPAccessibilityTests/aPageInProcessAnswersAccessibilityAsItDidAndOnlyTheContentViewAnswersFromTheMirror()'],
+}
 
 
 def matches(value, patterns):
@@ -96,6 +119,22 @@ def git(*args):
     return subprocess.check_output(['git', '-C', str(ROOT), *args], text=True).strip()
 
 
+def comparison(head, base_ref):
+    if base_ref == '@preview':
+        tag = subprocess.run(['git', '-C', str(ROOT), 'rev-parse', '--verify', '--quiet', 'refs/tags/tip^{commit}'],
+                             text=True, capture_output=True)
+        if tag.returncode == 1:
+            paths = git('ls-tree', '-r', '--name-only', '-z', head, '--', 'WSurf', 'WSurfCredentialExchange', 'Packages')
+            return None, [path for path in paths.split('\0') if path]
+        tag.check_returncode()
+        base_ref = tag.stdout.strip()
+    base = git('rev-parse', '--verify', '--end-of-options', (base_ref or 'origin/main') + '^{commit}')
+    if git('merge-base', base, head) != base:
+        raise ValueError(f'Validation base {base} must be an ancestor of {head}')
+    paths = git('diff', '--name-only', '--no-renames', '-z', base, head, '--')
+    return base, [path for path in paths.split('\0') if path]
+
+
 def make_plan(tier, base_ref, extra):
     head = git('rev-parse', 'HEAD')
     tree = git('rev-parse', 'HEAD^{tree}')
@@ -107,7 +146,7 @@ def make_plan(tier, base_ref, extra):
     policy = json.loads((ROOT / 'Tools/validation-tests.json').read_text())
     parallel = parallel['selectedTests']
     performance = performance['selectedTests']
-    manifest = {'tier': tier, 'head': head, 'tree': tree, 'runs': {}}
+    manifest = {'tier': tier, 'head': head, 'tree': tree, 'runs': {}, 'allowed_skips': policy['conditional_skips']}
     runs = manifest['runs']
     if tier == 'minor':
         if extra:
@@ -115,12 +154,11 @@ def make_plan(tier, base_ref, extra):
         runs.update({name: {'arguments': PARTITION['arguments'](name)} for name in (*SERIAL, REST)})
         for name, (choices, exclusions) in MINOR_BENCHMARKS.items():
             runs[name] = test_run(suites, choices, exclusions)
+        runs.update({name: test_run(suites, choices, ()) for name, choices in OOP_PARTS.items()})
+        runs['Optimized-Smoke'] = test_run(suites, policy['smoke'], ())
+        manifest['cefkit'] = True
         return manifest
-    base = git('rev-parse', '--verify', '--end-of-options', (base_ref or 'origin/main') + '^{commit}')
-    if git('merge-base', base, head) != base:
-        raise ValueError(f'Validation base {base} must be an ancestor of {head}')
-    paths = git('diff', '--name-only', '--no-renames', '-z', base, head, '--').split('\0')
-    paths = [path for path in paths if path]
+    base, paths = comparison(head, base_ref)
     choices, unresolved = quick_selection(suites, parallel, performance, omitted, policy, paths, extra)
     exclusions = set(PARTITION['OCR_SKIPS']) | (set(policy['minor_cases']) - set(extra))
     for case in policy['minor_cases']:
@@ -128,16 +166,20 @@ def make_plan(tier, base_ref, extra):
     placements = [(name, set(group)) for name, group in zip(SERIAL, parts)]
     placements.append((REST, set(parallel) | set(performance)))
     for name, group in placements:
-        selected = [choice for choice in choices if suite_name(choice) in group]
+        selected = [choice for choice in choices if suite_name(choice) in group - OOP_ONLY]
         if not selected:
             continue
         run = test_run(suites, selected, exclusions)
         if run['cases']:
             runs[name] = run
+    for name, scopes in OOP_PARTS.items():
+        selected = [choice for choice in choices if suite_name(choice) in OOP_ONLY.intersection(scopes)]
+        if selected:
+            runs[name] = test_run(suites, selected, ())
     if not runs:
         raise ValueError('The quick run selected no tests')
-    manifest.update(base=base, paths=paths, explicit_paths=unresolved, selection=choices,
-                    allowed_skips=policy['conditional_skips'],
+    manifest.update(base=base, comparison=base_ref or 'origin/main', paths=paths, explicit_paths=unresolved, selection=choices,
+                    cefkit=any(path.startswith('Packages/CefSwift/') and not path.endswith('.md') for path in paths),
                     deferred=['full functional matrix', 'coverage', 'performance budgets', 'minor resource benchmarks'])
     return manifest
 
@@ -167,17 +209,21 @@ def verify(manifest, results):
     minor = manifest['tier'] == 'minor'
     failed = minor and PARTITION['verify_results']([results / f'{name}-tests.json' for name in (*SERIAL, REST)]) != 0
     for name, run in manifest['runs'].items():
-        if 'cases' not in run:
-            continue
         actual = list(actual_cases(results / f'{name}-tests.json', aliases))
         count.update(outcome for _, outcome in actual)
-        problems = result_problems(run['cases'], actual, manifest.get('allowed_skips', ()))
+        allowed_skips = manifest['allowed_skips'] if name.startswith('WSurf-') else ()
+        if minor and name.startswith('WSurf-'):
+            allowed_skips = [*allowed_skips, *(suite + '/*' for suite in OOP_ONLY)]
+        if name in ('OOP-Content', 'OOP-Accessibility'):
+            allowed_skips = OOP_SKIPS[name]
+        expected = run.get('cases', [case for case, _ in actual])
+        problems = result_problems(expected, actual, allowed_skips)
         if problems:
             failed = True
             print(f'{name}: {len(problems)} result mismatches', file=sys.stderr)
             print('\n'.join(problems[:25]), file=sys.stderr)
     if minor:
-        print(f"Minor benchmark results: {count['Passed']} passed, {count['Skipped']} skipped.")
+        print(f"Minor results: {count['Passed']} passed, {count['Skipped']} skipped.")
     else:
         print(f"Quick results: {count['Passed']} passed, {count['Skipped']} skipped. Deferred: {', '.join(manifest['deferred'])}.")
     return int(failed)

@@ -11,14 +11,14 @@ permissions:
   contents: write
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: public-release
+  cancel-in-progress: false
 
 env:
   PROJECT: WSurf.xcodeproj
   SCHEME: WSurf
   APP: WSurf
   TEAM_ID: 5X68L55TNU
-  XCODE: '27.0'
   DD: ${{ github.workspace }}/build/DD
 
 jobs:
@@ -43,9 +43,9 @@ jobs:
       - name: Check the tag is on main
         run: |
           git fetch --no-tags origin main
-          # HEAD, not GITHUB_SHA: an annotated tag is its own object.
-          if ! git merge-base --is-ancestor "$(git rev-parse HEAD)" origin/main; then
-            echo "::error::${GITHUB_REF_NAME} points at a commit that is not on main."
+          source=$(git rev-parse HEAD)
+          if ! git rev-list --first-parent origin/main | grep -Fx "$source" >/dev/null; then
+            echo "::error::${GITHUB_REF_NAME} must point to a commit on main's first-parent history."
             exit 1
           fi
 
@@ -83,13 +83,8 @@ jobs:
           ref: ${{ needs.gate.outputs.source }}
           fetch-depth: 0
 
-      - name: Select Xcode ${{ env.XCODE }}
-        run: |
-          if [ ! -d "/Applications/Xcode_${XCODE}.app" ]; then
-            echo "::error::Required Xcode ${XCODE} is unavailable at /Applications/Xcode_${XCODE}.app."
-            exit 1
-          fi
-          sudo xcode-select -s "/Applications/Xcode_${XCODE}.app"
+      - name: Select the CI-pinned Xcode
+        run: bash Tools/select-ci-xcode.sh >> "$GITHUB_ENV"
 
       - name: Install Metal toolchain
         run: |
@@ -454,7 +449,13 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
           DMG: ${{ steps.dmg.outputs.path }}
         run: |
-          gh release create "$TAG" \
+          remote_tag=$(git ls-remote --exit-code origin "refs/tags/$TAG" "refs/tags/$TAG^{}")
+          remote_commit=$(printf '%s\n' "$remote_tag" | awk '/\^\{\}$/ { peeled = $1 } { ref = $1 } END { print peeled ? peeled : ref }')
+          if [ "$remote_commit" != "$(git rev-parse HEAD)" ]; then
+            echo "::error::$TAG no longer identifies the validated commit."
+            exit 1
+          fi
+          gh release create "$TAG" --verify-tag \
             --title "$VERSION" \
             --notes-file build/notes.md \
             "$DMG" \

@@ -80,7 +80,13 @@ finish() {
   echo
   echo "=== ci-local summary ($(git rev-parse --short HEAD), $OUT)"
   printf '%s\n' "${SUMMARY[@]}"
-  if [ "$FAILED" -eq 0 ]; then echo "ci-local: PASS"; else echo "ci-local: FAIL"; fi
+  if [ "$FAILED" -eq 0 ]; then
+    xcodebuild -version > "$OUT/xcode-version.txt"
+    shasum -a 256 "$manifest" "$OUT"/results/*-tests.json > "$OUT/verified-results.sha256"
+    echo "ci-local: PASS"
+  else
+    echo "ci-local: FAIL"
+  fi
   exit "$FAILED"
 }
 gate() { [ "$FAILED" -eq 0 ] || finish; }  # CI stops at a failed step before the tests
@@ -123,7 +129,7 @@ build_for_testing() {
     CODE_SIGN_IDENTITY=- \
     CODE_SIGNING_REQUIRED=NO \
     CODE_SIGN_ENTITLEMENTS= \
-    WSURF_BUNDLE_ID_SUFFIX="$WSURF_BUNDLE_ID_SUFFIX" || return
+    WSURF_BUNDLE_ID_SUFFIX="$WSURF_BUNDLE_ID_SUFFIX" "$@" || return
   set -- "$DD"/Build/Products/*.xctestrun
   [ "$#" -eq 1 ] && [ -f "$1" ] || { echo "error: expected exactly one generated .xctestrun in $DD/Build/Products" >&2; return 1; }
   xctestrun="$1"
@@ -142,6 +148,7 @@ run_test_plan() {
 
 test_runs() {
   local total="${WSURF_CI_TEST_LIMIT_SECONDS:-5400}" start=$SECONDS failed="" plans plan remaining
+  local default_run="$xctestrun" oop_mode="" debug_ops oop_dd="$PWD/build/DD-oop"
   plans=$(python3 -B Tools/select-validation-tests.py runs "$manifest") || return
   while IFS= read -r plan; do
     python3 -B Tools/select-validation-tests.py args "$manifest" "$plan" > "$OUT/results/$plan.args" || return
@@ -149,6 +156,7 @@ test_runs() {
     local line
     while IFS= read -r line; do selection+=("$line"); done < "$OUT/results/$plan.args"
     echo "--- $plan (${#selection[@]} selection arguments, $((SECONDS - start))s into the tests)"
+    if [[ "$plan" != WSurf-* && -n "$failed" ]]; then break; fi
     case "$plan" in
       WSurf-*)
         remaining=$((total - (SECONDS - start)))
@@ -156,7 +164,7 @@ test_runs() {
         run_test_plan "$plan" "$remaining" -enableCodeCoverage "$coverage" "${selection[@]}" || failed="$failed $plan"
         ;;
       Vault-Scale)
-        TEST_RUNNER_WSURF_VAULT_BENCHMARK=1 run_test_plan "$plan" 9000 -enableCodeCoverage NO \
+        TEST_RUNNER_WSURF_VAULT_BENCHMARK=1 run_test_plan "$plan" 10800 -enableCodeCoverage NO \
           -default-test-execution-time-allowance 3600 -maximum-test-execution-time-allowance 3600 \
           "${selection[@]}" || failed="$failed $plan"
         ;;
@@ -164,6 +172,25 @@ test_runs() {
         TEST_RUNNER_WSURF_PERF_BENCH=1 TEST_RUNNER_WSURF_PERF_SOAK=1 run_test_plan "$plan" 1800 -enableCodeCoverage NO \
           -default-test-execution-time-allowance 600 -maximum-test-execution-time-allowance 900 \
           "${selection[@]}" || failed="$failed $plan"
+        ;;
+      OOP-*)
+        debug_ops=YES
+        [ "$plan" != OOP-NoDebug ] || debug_ops=NO
+        if [ "$oop_mode" != "$debug_ops" ]; then
+          WSURF_BUNDLE_ID_SUFFIX="$WSURF_BUNDLE_ID_SUFFIX-oop" WSURF_OOP_DERIVED_DATA="$oop_dd" \
+            WSURF_SERVICE_DEBUG_OPS="$debug_ops" Tools/run-chromium-oop-tests.sh --build-only || return
+          local oop_runs=("$oop_dd"/Build/Products/*.xctestrun)
+          [ "${#oop_runs[@]}" -eq 1 ] && [ -f "${oop_runs[0]}" ] || return 2
+          oop_mode="$debug_ops"
+        fi
+        xctestrun="${oop_runs[0]}"
+        WSURF_BUNDLE_ID_SUFFIX="$WSURF_BUNDLE_ID_SUFFIX-oop" WSURF_CHROMIUM_OOP_BUILD=YES \
+          run_test_plan "$plan" 1800 -enableCodeCoverage NO "${selection[@]}" || failed="$failed $plan"
+        xctestrun="$default_run"
+        ;;
+      Optimized-Smoke)
+        coverage=NO build_for_testing SWIFT_OPTIMIZATION_LEVEL=-O ENABLE_DEBUG_DYLIB=NO ENABLE_HARDENED_RUNTIME=NO || return
+        run_test_plan "$plan" 900 -enableCodeCoverage NO "${selection[@]}" || failed="$failed $plan"
         ;;
       *) echo "error: unknown run $plan" >&2; return 2 ;;
     esac
@@ -173,6 +200,13 @@ test_runs() {
     fi
   done <<< "$plans"
   [ -z "$failed" ] || { echo "error: failed test runs:$failed" >&2; return 1; }
+}
+
+test_cefkit() {
+  local framework="$DD/Build/Products/Debug/WSurf.app/Contents/Frameworks/Chromium Embedded Framework.framework"
+  [ -d "$framework" ] || { echo "error: no Framework for CefKitTests at $framework" >&2; return 2; }
+  CEF_FRAMEWORK_PATH="$framework" python3 Tools/run-xcodebuild-with-watchdog.py -- \
+    swift test --package-path Packages/CefSwift --scratch-path "$PWD/build/cefkit-tests" --no-parallel
 }
 
 export_metrics() {
@@ -197,6 +231,9 @@ gate
 step "Build for testing" build_for_testing
 gate
 step "Test" test_runs
+if python3 -c 'import json, sys; sys.exit(not json.load(open(sys.argv[1]))["cefkit"])' "$manifest"; then
+  step "Test CefKit" test_cefkit
+fi
 # After the tests every check runs, so one run shows the test, coverage and performance verdicts together.
 step "Check selected results" python3 -B Tools/select-validation-tests.py verify "$manifest" "$OUT/results"
 if [ "$tier" = minor ]; then

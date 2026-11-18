@@ -35,10 +35,12 @@ def selection(tag, pages):
         baseline = version(previous)
         if current <= baseline:
             raise ValueError(f'{tag} must be newer than the published {previous}')
+        previous_source = commit(f'refs/tags/{previous}')
+        if (previous_source == source
+                or subprocess.run(['git', 'merge-base', '--is-ancestor', previous_source, source]).returncode != 0):
+            raise ValueError(f'{tag} must use a newer commit than the published {previous}')
         if current[:2] == baseline[:2]:
-            tier, base = 'quick', commit(f'refs/tags/{previous}')
-            if subprocess.run(['git', 'merge-base', '--is-ancestor', base, source]).returncode != 0:
-                raise ValueError(f'The published {previous} must precede {tag} in Git history')
+            tier, base = 'quick', previous_source
     return {'tier': tier, 'source': source, 'base': base}
 
 

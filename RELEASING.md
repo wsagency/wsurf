@@ -29,10 +29,10 @@ Do not build release artifacts or deploy from feature branches, dirty working
 trees, or changes committed directly to `main`. Local and PR validation builds
 are not deployments.
 
-Release and signed preview builds must use the merged `main` commit after its
-CI checks pass. The preview workflow already waits for successful CI on `main`;
-the release workflow checks that the tag is on `main` and waits for CI on that
-commit. These gates must not be bypassed.
+Release and signed preview builds use a merged `main` commit after validation
+passes on it. The preview workflow waits for CI on `main`. The release workflow
+requires the tag on the first-parent history of `main` and then runs CI on that
+commit. Both archive with the Xcode version pinned in `ci.yml`.
 
 ## The signing tools
 
@@ -354,10 +354,10 @@ Release requirements:
   budgets from Rest. It then runs WebKit and Chromium resource benchmarks,
   first-tab timing, the soak case and the large-vault benchmarks in separate
   hosts. A skipped benchmark fails this tier. The Chromium XCTest load
-  benchmark is excluded because it can invalidate later memory measurements.
-  For a minor checkpoint that includes the test-only out-of-process prototype,
-  run the OOP service matrix separately. Run VoiceOver and other manual checks
-  when relevant to the functionality being released.
+  benchmark remains excluded due to its effect on later memory measurements.
+  The minor tier runs the separate debug and debug-disabled Chromium service
+  checks, CefKit tests and optimized Debug smoke. Run VoiceOver and other manual
+  checks when relevant to the functionality being released.
 - **Memory budgets are judged on the median, time budgets on the mean.**
   `XCTMemoryMetric` is the change of the test host's physical footprint over one
   pass, and in a long-running host a single sample swings by tens of MB either
@@ -506,9 +506,8 @@ that ships. A Debug app is 477 MB on disk (a 145 MB debug dylib, coverage counte
   (`ditto` and `cp -cR` keep it).
 - **Tests stay Debug.** Never host tests in the Release configuration: its bundle identifier is fixed and Stage mode is compiled out.
   `CredentialStore` now isolates tests in every configuration, but nothing else promises that for a Release test host. The
-  minor candidate checklist includes an optimised host, a Debug build with `SWIFT_OPTIMIZATION_LEVEL=-O ENABLE_DEBUG_DYLIB=NO
-  ENABLE_HARDENED_RUNTIME=NO`, that runs the Performance plan and a short smoke subset. It catches bugs only the optimiser causes,
-  which the Debug binary cannot show. Performance budgets stay the Debug budgets.
+  minor validation builds an optimised Debug host with `SWIFT_OPTIMIZATION_LEVEL=-O ENABLE_DEBUG_DYLIB=NO
+  ENABLE_HARDENED_RUNTIME=NO` and runs the smoke tests again. Performance budgets stay on the measured Debug plan.
 - **What differs at runtime**, from the `#if DEBUG` sites: Stage mode is gone (screenshot and staged-profile work needs a Debug build),
   extension contexts are not inspectable, WebAuthn counts and `AutofillDiagnostics.policyFailed` log less, Swift `assert`s are compiled
   out, and `MoveToApplications` offers to move a copy that does not run from `/Applications` (never launch a candidate from its
@@ -526,8 +525,10 @@ Preview. Sparkle reads the other feed at the next check, with no restart.
 
 ### What the workflow does
 
-`.github/workflows/tip.yml` runs each time CI passes on `main`. No manual trigger
-or tag is needed. The workflow:
+`.github/workflows/tip.yml` runs each time CI passes on `main`. Main CI selects
+changes since the last published preview. Before the first preview, it selects
+tests for the mapped app and package areas. No manual trigger or tag is needed.
+The workflow:
 
 1. Reads the version: the last `v` tag, then the number of commits after it,
    such as `0.1.2 (4)`.

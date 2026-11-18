@@ -43,6 +43,24 @@
       "suites": ["PickCredentialRealMenuTests", "AutofillVaultSaveTests", "AutofillRefusalDiagnosticsTests", "CredentialExchangeCoordinatorTests", "CredentialListLifetimeTests", "CredentialPasswordPrivacyTests"]
     },
     {
+      "paths": ["WSurf/Settings/Pages/Credential*", "WSurf/Settings/Pages/Autofill*"],
+      "suites": ["CredentialSettingsTests", "CredentialExchangeCoordinatorTests", "AutofillVaultSaveTests"]
+    },
+    {"paths": ["WSurf/Settings/Pages/WebsiteDataPage.swift"], "suites": ["WebsiteDataTests"]},
+    {"paths": ["WSurf/Settings/Pages/CloudVaultRow.swift"], "suites": ["VaultSyncReviewSheetTests", "VaultSyncEdgeTests"]},
+    {
+      "paths": ["Packages/CefSwift/Sources/CefKit/CefRemote*.swift", "Packages/CefSwift/Sources/wsurf-chromium-service/*", "WSurf/Web/Engines/ChromiumRemote*.swift", "Tools/check-service-*.py", "Tools/check-service-strings.sh", "Tools/embed-chromium.sh"],
+      "suites": ["ChromiumRemoteProtocolTests", "ChromiumServiceHardeningTests", "ChromiumServiceNoDebugOpsTests"]
+    },
+    {
+      "paths": ["WSurf/Web/Engines/ChromiumRemote*Input*.swift", "WSurf/Web/Engines/ChromiumRemote*Keys*.swift", "Packages/CefSwift/Sources/wsurf-chromium-service/*Input*.swift"],
+      "suites": ["ChromiumOOPInputTests"]
+    },
+    {
+      "paths": ["WSurf/Web/Engines/*Accessibility*.swift", "Packages/CefSwift/Sources/wsurf-chromium-service/*Accessibility*.swift"],
+      "suites": ["ChromiumOOPAccessibilityTests", "ChromiumOOPAccessibilityTransportTests"]
+    },
+    {
       "paths": ["Packages/WSurfCore/*", "WSurf/Sync/*", "WSurf.xcodeproj/*", "WSurf/Web/Credentials/*", "WSurf/Profiles/*", "WSurfTests/Web/Vault*Support.swift"],
       "suites": ["AppDatabaseMigrationTests", "VaultMigrationTests", "VaultIntegrityTests", "VaultSyncEdgeTests", "VaultSyncMemoryDeviceTests", "VaultSyncRaceTests", "SyncRouterTests"]
     },

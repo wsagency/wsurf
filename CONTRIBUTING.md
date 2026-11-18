@@ -73,8 +73,8 @@ The `WSurf` scheme runs the `WSurfTests` target from `WSurf.xctestplan`.
 
 Hosted native workflows use GitHub's documented `xcode-27` ARM64 runner
 ([currently public preview](https://github.com/actions/runner-images/issues/14404))
-and require `/Applications/Xcode_27.0.app`; preflight fails if that toolchain is
-unavailable. The `macos-26` image contains only Xcode 26.x. Native Pro builds use
+and use the Xcode version pinned in `ci.yml`. Preflight fails when that exact
+version is unavailable. The `macos-26` image contains only Xcode 26.x. Native Pro builds use
 `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer` without changing the
 machine's selected developer directory. Keep the resolved package graph frozen
 for build/test runs; dependency updates must explicitly update the lockfile and
@@ -173,14 +173,16 @@ source commit, comparison base, selected tests and result bundles.
 
 For a timing fix, run the deterministic regression and any repetitions needed
 to prove it. Changes to data, migration, privacy and engine code call for their
-own regression tests. Run the affected out-of-process Chromium suites with
-`Tools/run-chromium-oop-tests.sh` under the Pro lock when working on the service.
-Run the CefKit package tests for library changes. Foreground, live account and
-manual UI checks apply to the features that need them.
+own regression tests. Native validation adds CefKit tests for package changes
+and an isolated service build for selected out-of-process suites. Add a related
+service suite with `--suite`, or use `Tools/run-chromium-oop-tests.sh` under the
+Pro lock when developing that service. Foreground, live account and manual UI
+checks apply to the features that need them.
 
 `Tools/ci-local.sh --tier minor` runs the complete automated plans, enforces a
 24% line coverage floor, checks speed and memory budgets, and runs additional
-resource benchmarks. Xcode sometimes omits static package coverage.
+resource benchmarks, the out-of-process test matrix, CefKit and an optimized
+smoke build. Xcode sometimes omits static package coverage.
 `Tools/check-coverage.sh` names omitted packages in a warning and requires app
 coverage. Both tiers run
 `Tools/check-format.sh`, which fails on SwiftLint violations. CI pins SwiftLint

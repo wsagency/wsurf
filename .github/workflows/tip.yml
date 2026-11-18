@@ -22,7 +22,6 @@ env:
   SCHEME: WSurf
   APP: WSurf
   TEAM_ID: 5X68L55TNU
-  XCODE: '27.0'
   DD: ${{ github.workspace }}/build/DD
   TIP: tip
 
@@ -93,13 +92,8 @@ jobs:
           ref: ${{ github.event.workflow_run.head_sha }}
           fetch-depth: 0
 
-      - name: Select Xcode ${{ env.XCODE }}
-        run: |
-          if [ ! -d "/Applications/Xcode_${XCODE}.app" ]; then
-            echo "::error::Required Xcode ${XCODE} is unavailable at /Applications/Xcode_${XCODE}.app."
-            exit 1
-          fi
-          sudo xcode-select -s "/Applications/Xcode_${XCODE}.app"
+      - name: Select the CI-pinned Xcode
+        run: bash Tools/select-ci-xcode.sh >> "$GITHUB_ENV"
 
       - name: Install Metal toolchain
         run: |

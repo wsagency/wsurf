@@ -95,7 +95,8 @@ class ReleaseSelectionTests(unittest.TestCase):
         self.git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', 'commit', '-q', '--allow-empty', '-m', 'Candidate')
 
     def git(self, *args):
-        return subprocess.check_output(['git', *args], cwd=self.repo, text=True).strip()
+        return subprocess.check_output(['git', '-c', 'commit.gpgSign=false', '-c', 'tag.gpgSign=false',
+                                        '-c', 'core.hooksPath=/dev/null', *args], cwd=self.repo, text=True).strip()
 
     def classify(self, tag, published):
         script = Path(__file__).with_name('select-release-validation.py')
@@ -127,6 +128,28 @@ class ReleaseSelectionTests(unittest.TestCase):
                 run = self.classify(tag, ['v0.1.28'])
                 self.assertNotEqual(run.returncode, 0)
                 self.assertEqual(run.stdout, '')
+
+    def test_new_patch_or_minor_cannot_reuse_previous_build_commit(self):
+        self.git('checkout', '-q', '--detach', 'v0.1.28')
+        for tag in ['v0.1.29', 'v0.2.29']:
+            with self.subTest(tag=tag):
+                run = self.classify(tag, ['v0.1.28'])
+                self.assertNotEqual(run.returncode, 0)
+                self.assertEqual(run.stdout, '')
+
+    def test_preview_includes_a_changed_area_from_an_intervening_canceled_run(self):
+        self.git('tag', 'tip', 'v0.1.28')
+        (self.repo / 'Vault.swift').write_text('change from the canceled run')
+        self.git('add', 'Vault.swift')
+        self.git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', 'commit', '-qm', 'Vault change')
+        (self.repo / 'README.md').write_text('change from the newest push')
+        self.git('add', 'README.md')
+        self.git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', 'commit', '-qm', 'Docs change')
+        module = selector()
+        module.ROOT = self.repo
+        base, paths = module.comparison(self.git('rev-parse', 'HEAD'), '@preview')
+        self.assertEqual(base, self.git('rev-parse', 'tip^{commit}'))
+        self.assertEqual(paths, ['README.md', 'Vault.swift'])
 
 
 if __name__ == '__main__':

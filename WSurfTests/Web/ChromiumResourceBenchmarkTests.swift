@@ -23,10 +23,7 @@ struct ChromiumResourceBenchmarkTests {
 
     @Test(.enabled(if: benchEnabled), .timeLimit(.minutes(5)))
     func chromiumFamilyLifecycle() async throws {
-        guard !ChromiumRuntime.shared.isInitialized else {
-            print("\(Self.prefix) case=R8 skipped=\"CEF is already initialised in this host\"")
-            return
-        }
+        try #require(!ChromiumRuntime.shared.isInitialized, "This benchmark needs a fresh host before CEF starts")
         try await LiveWindowRig.with(engine: .chromium) { rig in
             @MainActor func record(_ label: String) {
                 let stage = ResourceProbe.stage(label)

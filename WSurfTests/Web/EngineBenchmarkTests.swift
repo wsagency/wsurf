@@ -111,10 +111,7 @@ struct EngineBenchmarkTests {
     /// two ticks of a 2 ms main-run-loop timer is the longest the window froze.
     @Test(.enabled(if: benchEnabled), .timeLimit(.minutes(5)))
     func startingChromiumForTheFirstTab() async throws {
-        guard !ChromiumRuntime.shared.isInitialized else {
-            Self.report("E1-first-chromium-tab", "skipped=CEF-was-already-initialised-in-this-host")
-            return
-        }
+        try #require(!ChromiumRuntime.shared.isInitialized, "This benchmark needs a fresh host before CEF starts")
         try await LiveWindowRig.with(engine: .chromium, routes: Self.routes) { rig in
             #expect(!ChromiumRuntime.shared.isInitialized, "opening the window did not start CEF")
             let load = Self.loadAverage()
