@@ -14,8 +14,8 @@ public enum CefRemoteRoot {
 
     /// The exact rule. A root is allowed when, after every link and alias in it is resolved, it is STRICTLY BELOW one of
     /// - `<Application Support>/WSurf` (the app), or
-    /// - the user's temporary folder (`NSTemporaryDirectory()`: the tests, which make `wsurf-*` folders there, and a staged run's
-    ///   default home, `<temporary folder>/wsurf-stage/home`).
+    /// - the user's temporary folder (`NSTemporaryDirectory()`, and the per-user folder `confstr` names: the tests, which make
+    ///   `wsurf-*` folders there, and a staged run's default home, `<temporary folder>/wsurf-stage/home`).
     /// The base itself is not a root (a root's parent is where a staged run's log may go, and that must stay inside the base).
     /// A staged home anywhere else (a folder of a checkout, say) is refused: naming it is a decision for the owner, not a default.
     /// Ownership and the mode of the folder are not judged here; a sandbox (D4-S) bounds them.
@@ -25,8 +25,17 @@ public enum CefRemoteRoot {
            let resolved = resolve(support.appendingPathComponent(supportFolderName, isDirectory: true).path) {
             found.append(resolved)
         }
-        if let resolved = resolve(NSTemporaryDirectory()) {
-            found.append(resolved)
+        // The user's temporary folder as this process sees it (`$TMPDIR`), and as the system names it (`confstr`): a service that
+        // launchd starts has no `$TMPDIR` of the app's, and both are the same user's own folder.
+        var candidates = [NSTemporaryDirectory()]
+        var buffer = [CChar](repeating: 0, count: Int(PATH_MAX))
+        if confstr(_CS_DARWIN_USER_TEMP_DIR, &buffer, buffer.count) > 0 {
+            candidates.append(String(cString: buffer))
+        }
+        for candidate in candidates {
+            if let resolved = resolve(candidate), !found.contains(resolved) {
+                found.append(resolved)
+            }
         }
         return found
     }

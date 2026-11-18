@@ -95,13 +95,11 @@ done
 foundNames=()
 missingNames=()
 if [[ "${#shortNames[@]}" -gt 0 ]]; then
-    disassembly=$(mktemp -t wsurf-service-strings)
-    trap '/bin/rm -f "$disassembly"' EXIT
-    /usr/bin/otool -tV "$target" > "$disassembly" 2>/dev/null || true
-    [[ -s "$disassembly" ]] || { echo "error: no disassembly of $target (otool -tV printed nothing)" >&2; exit 2; }
+    disassembly=$(/usr/bin/otool -tV "$target" 2>/dev/null || true)
+    [[ -n "$disassembly" ]] || { echo "error: no disassembly of $target (otool -tV printed nothing)" >&2; exit 2; }
     while IFS= read -r name; do
         if [[ "$name" == FOUND:* ]]; then foundNames+=("${name#FOUND:}"); else missingNames+=("${name#MISSING:}"); fi
-    done < <(/usr/bin/python3 -I "$repo/Tools/check-service-immediates.py" "$disassembly" "${shortNames[@]}")
+    done < <(printf '%s\n' "$disassembly" | /usr/bin/python3 -I "$repo/Tools/check-service-immediates.py" /dev/stdin "${shortNames[@]}")
 fi
 
 extraFound=()

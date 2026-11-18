@@ -342,10 +342,17 @@ struct ChromiumServiceHardeningTests {
         defer { try? FileManager.default.removeItem(at: folder) }
         // What the compiler writes for `debug.stats` (8 bytes in one register, the rest in another), as `otool -tV` prints it.
         func moves(_ bytes: [UInt8], register: String) -> [String] {
-            let pieces = stride(from: 0, to: bytes.count, by: 2).map { UInt16(bytes[$0]) | (($0 + 1 < bytes.count ? UInt16(bytes[$0 + 1]) : 0) << 8) }
-            return pieces.enumerated().map { index, value in
-                String(format: "0000000100001000\t%@\t%@, #0x%x%@", index == 0 ? "mov" : "movk", register, value, index == 0 ? "" : ", lsl #\(16 * index)")
+            var lines: [String] = []
+            var index = 0
+            while index * 2 < bytes.count {
+                let low = Int(bytes[index * 2])
+                let high = index * 2 + 1 < bytes.count ? Int(bytes[index * 2 + 1]) : 0
+                let value = low | (high << 8)
+                let shift = index == 0 ? "" : ", lsl #\(16 * index)"
+                lines.append("0000000100001000\t\(index == 0 ? "mov" : "movk")\t\(register), #0x\(String(value, radix: 16))\(shift)")
+                index += 1
             }
+            return lines
         }
         func disassembly(_ name: String, spread: Bool) -> String {
             let bytes = Array(name.utf8)
@@ -679,12 +686,14 @@ struct ChromiumServiceHardeningTests {
         let outside = URL(filePath: "/private/tmp/wsurf-d4-outside-root-\(UUID().uuidString)", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: outside) }
-        for (name, root) in [
+        let temporary = try #require(realpath(NSTemporaryDirectory(), nil).map { String(cString: $0) })
+        let candidates: [(String, String)] = [
             ("a canonical folder outside WSurf's own", outside.path),
-            ("the temporary folder itself", try #require(realpath(NSTemporaryDirectory(), nil).map { String(cString: $0) })),
+            ("the temporary folder itself", temporary),
             ("the root of the disk", "/"),
             ("the home folder", NSHomeDirectory()),
-        ] {
+        ]
+        for (name, root) in candidates {
             let reply = try client.call(Self.hello(client, root: root), timeout: Self.helloTimeout)
             #expect(!reply.bool(CefRemote.Key.success), "\(name) (\(root)) must be refused")
             #expect(reply.string(CefRemote.Key.error).contains("below WSurf"), "\(name): \(reply.string(CefRemote.Key.error))")
@@ -710,7 +719,10 @@ struct ChromiumServiceHardeningTests {
         let reply = try staged.call(Self.hello(staged, logFile: beside.path), timeout: Self.helloTimeout)
         #expect(reply.bool(CefRemote.Key.success), "the log beside a staged root: \(reply.string(CefRemote.Key.error))")
         #expect(try staged.stats().string(CefRemote.Key.logFile) == beside.path)
-        // The same name beside a root that is straight under the temporary folder would be in the temporary folder itself: refused.
+    }
+
+    @Test(.enabled(if: ChromiumServiceBundle.isPresent))
+    func aLogBesideARootThatIsStraightUnderTheTemporaryFolderWouldBeInItAndIsRefused() throws {
         let direct = try ChromiumServiceClient()
         defer { direct.finish(expectExit: false) }
         _ = try direct.stats()
