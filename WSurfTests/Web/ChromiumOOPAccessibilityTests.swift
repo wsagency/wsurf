@@ -5,6 +5,7 @@ import AppKit
 import Darwin
 import Foundation
 import ObjectiveC
+import os
 import Testing
 
 @testable import CefKit
