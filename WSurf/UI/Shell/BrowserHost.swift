@@ -574,6 +574,9 @@ private struct WindowTitleFollower: View {
             .onChange(of: coordinator.windowTitle) { _, _ in
                 coordinator.updateWindowAppearance()
             }
+            .onChange(of: coordinator.menuBarHost) { _, _ in
+                coordinator.refreshSiteMenu()
+            }
     }
 }
 extension EnvironmentValues {

@@ -499,6 +499,7 @@
    "SidebarUndoTests",
    "SiteAccessWindowTests",
    "SiteContentGuardTests",
+   "SiteMenuTests",
    "SpaceProfileTests",
    "SpaceStoreTests",
    "SpaceSwitcherTests",

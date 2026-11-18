@@ -112,6 +112,15 @@ struct AppearanceWindowSection: View {
             .settingsAnchor("appearance.fastTransitions")
 
             RowSeparator()
+            DetailRow(
+                title: "Show site in menu bar",
+                caption: "Adds a menu after Help named for the website in front."
+            ) {
+                SettingsToggle($settings.showsSiteInMenuBar)
+            }
+            .settingsAnchor("appearance.siteInMenuBar")
+
+            RowSeparator()
             AppearanceLayoutSection(settings: settings, part: .window)
         }
     }

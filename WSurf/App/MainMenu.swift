@@ -37,9 +37,10 @@ enum ShortcutPriority {
 
 @MainActor
 final class MainMenu: NSObject, NSMenuItemValidation {
-    private let fallbackCoordinator: AppCoordinator?
-    private weak var application: BrowserApplication?
-    private var coordinator: AppCoordinator {
+    let fallbackCoordinator: AppCoordinator?
+    weak var application: BrowserApplication?
+    var site = SiteMenuState()
+    var coordinator: AppCoordinator {
         if let application {
             return application.ensureActiveWindow()
         }
@@ -58,6 +59,10 @@ final class MainMenu: NSObject, NSMenuItemValidation {
         super.init()
     }
 
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+    }
+
     func install() {
         let root = NSMenu()
         root.addItem(submenu(appMenu(), titled: "WSurf"))
@@ -72,9 +77,14 @@ final class MainMenu: NSObject, NSMenuItemValidation {
         let help = NSMenu(title: "Help")
         root.addItem(submenu(help, titled: "Help"))
 
+        root.addItem(siteMenu())
+
         NSApp.mainMenu = root
         NSApp.windowsMenu = window
         NSApp.helpMenu = help
+
+        watchSiteWindows()
+        refreshSiteItem()
 
         let coordinators = application?.windows ?? fallbackCoordinator.map { [$0] } ?? []
         for coordinator in coordinators {
@@ -232,6 +242,7 @@ final class MainMenu: NSObject, NSMenuItemValidation {
         menu.addItem(submenu(playerCornerMenu(), titled: "Move Player to Corner"))
         // ⌃⌘M: ⌘M minimizes, ⇧⌘M is the window style and ⌥⌘M is the system's Minimize All; ⌃⌘M was free.
         menu.addItem(command("Mute WSurf", #selector(toggleWSurfMute), key: "m", modifiers: [.command, .control]))
+        menu.addItem(command("Show Site in Menu Bar", #selector(toggleSiteInMenuBar)))
         menu.addItem(.separator())
         let developer = NSMenu()
         developer.addItem(command("Show Web Inspector", #selector(showWebInspector), key: "i", modifiers: [.command, .option]))
@@ -406,10 +417,10 @@ final class MainMenu: NSObject, NSMenuItemValidation {
             coordinator.browser.reopenLastClosedTab()
         }
     }
-    @objc private func openLocation() {
+    @objc func openLocation() {
         coordinator.focusAddressBar()
     }
-    @objc private func copyPageURL() {
+    @objc func copyPageURL() {
         coordinator.copyCurrentURL()
     }
 
@@ -638,7 +649,7 @@ final class MainMenu: NSObject, NSMenuItemValidation {
     }
 
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {  // swiftlint:disable:this cyclomatic_complexity
-        if let answer = validateWithoutBrowserWindow(menuItem) {
+        if let answer = validateSiteItem(menuItem) ?? validateWithoutBrowserWindow(menuItem) {
             return answer
         }
         guard validateMicroItem(menuItem) != false else { return false }
@@ -851,7 +862,7 @@ final class MainMenu: NSObject, NSMenuItemValidation {
         return holder
     }
 
-    private func command(
+    func command(
         _ title: LocalizedStringResource,
         _ action: Selector,
         key: String = "",

@@ -5847,6 +5847,18 @@
     "Show Sidebar" : {
       "comment" : "Menu bar command under View, shortcut ⌃⌘S, which reveals the tab sidebar. The same item reads Hide Sidebar when the sidebar is already showing, so the two should stay parallel. Title Case, Show is a verb."
     },
+    "Site: %@" : {
+      "comment" : "VoiceOver label of the menu after Help named for the website in front, which is read as a menu bar item. %@ is the website’s name, for example “github.com” (ASCII; an international name arrives as punycode, “xn--…”, spelled out as is). Short; the colon is read as a pause."
+    },
+    "Address: %@" : {
+      "comment" : "VoiceOver label of the first row of the menu named for the website in front, a disabled row that shows the page’s address. %@ is the address as the address bar draws it, for example “https://github.com/wsagency”. Short; the colon is read as a pause."
+    },
+    "Show Site in Menu Bar" : {
+      "comment" : "Menu bar command under View, with a checkmark while on. Turns on a menu after Help whose title is the website of the page in front, for example “github.com”. Title Case, Show is a verb. Pairs with the sentence case Settings row “Show site in menu bar”."
+    },
+    "Show site in menu bar" : {
+      "comment" : "Sentence case title of the Appearance settings row (Window section) that turns on the menu after Help named for the website in front, and the same wording in the Settings search index. Show is a verb. Deliberately sentence case, unlike the Title Case menu command with the same words."
+    },
     "Show Tab %lld" : {
       "comment" : "Hidden menu commands under Window bound to ⌘1 through ⌘8. %lld is the tab’s position in the row, a number from 1 to 8. Title Case and established platform terminology."
     },
@@ -8398,6 +8410,9 @@
     },
     "Adds %@." : {
       "comment" : "Sentence in the status line of an import review row, after “Same website, username and password as …”. %@ is a list joined with “and” of fragments such as “a note and a passkey”."
+    },
+    "Adds a menu after Help named for the website in front." : {
+      "comment" : "Caption under the “Show site in menu bar” row in Settings › Appearance, and its Settings search description. Explains that the menu bar gets one more menu, after Help, whose title is the website of the page in front (only the name, never the full address). Sentence case, ends with a full stop."
     },
     "Adds to a credential that is already saved." : {
       "comment" : "Status line of an import review row for a new item that Import adds to a credential that is already saved, rather than creating a new one."
