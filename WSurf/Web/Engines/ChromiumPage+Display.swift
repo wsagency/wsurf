@@ -44,8 +44,14 @@ extension ChromiumPage {
         browser.attachFrameLayer(frames)
         // Over the frames, at the page's size (it follows the page's bounds): the first responder of this page (`BrowserPage`).
         let content = ChromiumRemoteContentView(frame: bounds)
+        content.browser = browser
         addSubview(content)
         browser.contentView = content
+        // A page that was focused when its browser went (or before it came) holds the keys in `BrowserPage`: they go to the new view
+        // (F1 of the D4-11 review). Any other first responder (the address bar, a find field) is not taken from.
+        if let window, window.firstResponder === owner || window.firstResponder === self {
+            window.makeFirstResponder(content)
+        }
     }
 
     // MARK: The preview that waits for a relaunch

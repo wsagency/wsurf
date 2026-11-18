@@ -329,6 +329,7 @@
    "ChromiumOOPAccessibilityTransportTests",
    "ChromiumOOPContentViewTests",
    "ChromiumOOPDisplayTests",
+   "ChromiumOOPInputTests",
    "ChromiumOOPPageTests",
    "ChromiumOOPRecoveryTests",
    "ChromiumPopupAllowlistTests",

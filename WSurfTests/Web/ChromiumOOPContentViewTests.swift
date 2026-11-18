@@ -123,6 +123,8 @@ struct ChromiumOOPContentViewTests {
         let rig = makeRig()
         let view = rig.remote.contentView
         #expect(view != nil)
+        // The attach gave the view the keys already (F1 of #142); let go of them so that the page's own forward is what is tested.
+        #expect(rig.window.makeFirstResponder(nil))
         #expect(rig.window.makeFirstResponder(rig.page))
         #expect(rig.window.firstResponder === view, "the first responder is \(String(describing: rig.window.firstResponder))")
         #expect(rig.page.ownsResponder(rig.window.firstResponder), "the page still owns its content view's keys")
@@ -141,17 +143,50 @@ struct ChromiumOOPContentViewTests {
         #expect(Self.contentViews(of: rig.native).isEmpty)
         #expect(first.superview == nil)
         #expect(rig.window.firstResponder !== first)
-        // The next browser: a new view, at the page's size.
+        // F1 of the review of #142: the focus did not fall to the window (every key would beep there). The page holds it until the
+        // next browser comes.
+        #expect(rig.window.firstResponder === rig.page, "the page keeps the focus while it waits: \(String(describing: rig.window.firstResponder))")
+        // The next browser: a new view, at the page's size, and it has the keys with no one asking for them.
         let next = ChromiumRemoteBrowser(page: rig.native, connection: rig.connection)
         next.outgoing = { _ in true }
         rig.native.remote = next
         rig.native.attachRemoteFrameLayer(to: next)
         #expect(Self.contentViews(of: rig.native).count == 1)
         #expect(next.contentView !== first && next.contentView?.frame == rig.native.bounds)
-        #expect(rig.window.makeFirstResponder(rig.page))
-        #expect(rig.window.firstResponder === next.contentView)
+        #expect(rig.window.firstResponder === next.contentView, "the new view took the focus by itself: \(String(describing: rig.window.firstResponder))")
         await rig.end()
         #expect(Self.contentViews(of: rig.native).isEmpty, "a closed page has no view")
+    }
+
+    /// F1 again, for a page that was focused before it had a browser at all (waiting for the service, given up, between an end and the
+    /// reload): `BrowserPage` holds the focus and the view that comes takes it.
+    @Test func aPageFocusedBeforeItsBrowserArrivesGivesTheKeysToTheViewThatComes() async throws {
+        let rig = makeRig()
+        rig.remote.remoteServiceEnded()
+        #expect(rig.window.makeFirstResponder(rig.page), "a page with no browser still takes the focus")
+        let next = ChromiumRemoteBrowser(page: rig.native, connection: rig.connection)
+        next.outgoing = { _ in true }
+        rig.native.remote = next
+        rig.native.attachRemoteFrameLayer(to: next)
+        #expect(rig.window.firstResponder === next.contentView)
+        await rig.end()
+    }
+
+    /// The address bar, a find field or any other field is never robbed of the keys by a browser that arrives.
+    @Test func aBrowserThatArrivesDoesNotTakeTheKeysFromAnotherField() async throws {
+        let rig = makeRig()
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 100, height: 20))
+        rig.page.addSubview(field)
+        #expect(rig.window.makeFirstResponder(rig.page))
+        rig.remote.remoteServiceEnded()
+        #expect(rig.window.makeFirstResponder(field), "the person went to a field while the service was down")
+        let editor = rig.window.firstResponder
+        let next = ChromiumRemoteBrowser(page: rig.native, connection: rig.connection)
+        next.outgoing = { _ in true }
+        rig.native.remote = next
+        rig.native.attachRemoteFrameLayer(to: next)
+        #expect(rig.window.firstResponder === editor, "the field keeps the keys")
+        await rig.end()
     }
 
     // MARK: Real pages through the service

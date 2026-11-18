@@ -16,7 +16,7 @@ import XPC
 public enum CefRemote {
     /// Bumped when either side changes a message in a way the other must know about. `hello` carries it; a mismatch fails the
     /// hello (``CefRemoteMessage/checkProtocolVersion()``), so two builds that disagree never half-work.
-    public static let protocolVersion: Int64 = 2
+    public static let protocolVersion: Int64 = 3
     /// The service's bundle identifier is the app's plus this suffix, so a staged build's suffix carries over.
     public static let serviceSuffix = ".chromium"
     /// The `error` of a reply to a hello or to an op that acts on CEF, when the service has begun to leave: nothing is served any more, and

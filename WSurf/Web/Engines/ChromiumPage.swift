@@ -622,25 +622,6 @@ final class ChromiumPage: NSView {
         _ = try await command("Input.insertText", params: ["text": text])
     }
 
-    func selectAll() {
-        guard let responder = window?.firstResponder, responder !== self, ownsResponder(responder) else { return }
-        responder.selectAll(nil)
-    }
-
-    func ownsResponder(_ responder: NSResponder?) -> Bool {
-        responder === self || (responder as? NSView)?.isDescendant(of: self) == true
-    }
-
-    func sendKeyEvent(_ event: NSEvent) -> Bool {
-        guard let responder = window?.firstResponder, responder !== self, ownsResponder(responder) else { return false }
-        if event.type == .keyUp {
-            responder.keyUp(with: event)
-        } else {
-            responder.keyDown(with: event)
-        }
-        return true
-    }
-
     func sendMouseMove(to point: CGPoint, modifiers: NSEvent.ModifierFlags) {
         var flags: UInt32 = 0
         if modifiers.contains(.shift) {

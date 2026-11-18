@@ -25,13 +25,23 @@ enum ShortcutPriority {
         (rightArrow, [.command]),
     ]
 
-    static func menuAnswersFirst(_ event: NSEvent) -> Bool {
+    /// For a key chord (a command or control key): whether it is one the page is offered first. Nil for any other key.
+    private static func isPageFirst(_ event: NSEvent) -> Bool? {
         let flags = event.modifierFlags
             .intersection(.deviceIndependentFlagsMask)
             .subtracting([.capsLock, .numericPad, .function])
-        guard flags.contains(.command) || flags.contains(.control) else { return false }
-        guard let key = event.charactersIgnoringModifiers?.lowercased() else { return false }
-        return !pageFirst.contains { $0.key == key && $0.modifiers == flags }
+        guard flags.contains(.command) || flags.contains(.control) else { return nil }
+        guard let key = event.charactersIgnoringModifiers?.lowercased() else { return nil }
+        return pageFirst.contains { $0.key == key && $0.modifiers == flags }
+    }
+
+    static func menuAnswersFirst(_ event: NSEvent) -> Bool {
+        isPageFirst(event).map { !$0 } ?? false
+    }
+
+    /// The chords of `pageFirst`: a web view answers them before the menu does (an out-of-process page's content view asks this).
+    static func pageAnswersFirst(_ event: NSEvent) -> Bool {
+        isPageFirst(event) ?? false
     }
 }
 
