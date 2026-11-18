@@ -163,11 +163,15 @@ nonisolated final class ChromiumServiceClient: @unchecked Sendable {
 
     // MARK: Typed calls
 
-    /// The first message: protocol version, linger, and the temporary root and cache. No log file, so CEF logs nowhere.
-    func hello(linger: Double? = nil) throws -> CefRemoteMessage {
+    /// The first message: protocol version, linger, and the temporary root and cache. No log file (unless `logFile` names one), so CEF
+    /// logs nowhere.
+    func hello(linger: Double? = nil, logFile: String? = nil) throws -> CefRemoteMessage {
         let hello = CefRemoteMessage.hello(linger: linger)
         hello.set(CefRemote.Key.rootPath, root.path)
         hello.set(CefRemote.Key.cachePath, root.appending(path: "default").path)
+        if let logFile {
+            hello.set(CefRemote.Key.logFile, logFile)
+        }
         let reply = try call(hello, timeout: 30)
         if reply.has(CefRemote.Key.pid) {
             state.withLock { $0.pid = pid_t(reply.int(CefRemote.Key.pid)) }

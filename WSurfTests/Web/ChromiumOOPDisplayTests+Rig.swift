@@ -51,7 +51,8 @@ extension ChromiumOOPDisplayTests {
         let connection = ChromiumRemote(
             serviceName: ChromiumRemoteClientTests.noSuchService, sink: ChromiumFrameSink(),
             root: { FileManager.default.temporaryDirectory.appending(path: "wsurf-d4-display-\(UUID().uuidString)", directoryHint: .isDirectory) },
-            latch: ChromiumOOP.Latch(), isEnabled: { true })
+            latch: ChromiumOOP.Latch(), isEnabled: { true },
+            invalidMeansUnreachable: false)
         let remote = ChromiumRemoteBrowser(page: native, connection: connection)
         let recorder = Recorder()
         remote.outgoing = { message in
@@ -135,7 +136,8 @@ extension ChromiumOOPDisplayTests {
         let native = ChromiumPage(context: context)
         let connection = ChromiumRemote(
             serviceName: ChromiumRemoteClientTests.noSuchService, sink: ChromiumFrameSink(),
-            root: { FileManager.default.temporaryDirectory }, latch: ChromiumOOP.Latch(), isEnabled: { true })
+            root: { FileManager.default.temporaryDirectory }, latch: ChromiumOOP.Latch(), isEnabled: { true },
+            invalidMeansUnreachable: false)
         let remote = ChromiumRemoteBrowser(page: native, connection: connection)
         let recorder = Recorder()
         remote.outgoing = { message in

@@ -77,7 +77,8 @@ struct ChromiumOOPRecoveryTests {
         let connection = ChromiumRemote(
             serviceName: ChromiumRemoteClientTests.noSuchService, sink: ChromiumFrameSink(),
             root: { FileManager.default.temporaryDirectory.appending(path: "wsurf-d4-recovery-\(UUID().uuidString)", directoryHint: .isDirectory) },
-            latch: ChromiumOOP.Latch(), isEnabled: { true })
+            latch: ChromiumOOP.Latch(), isEnabled: { true },
+            invalidMeansUnreachable: false)
         native.remoteConnection = connection
         let remote = ChromiumRemoteBrowser(page: native, connection: connection)
         let recorder = Recorder()
@@ -414,7 +415,8 @@ struct ChromiumOOPRecoveryTests {
         ChromiumRemote(
             serviceName: ChromiumRemoteClientTests.noSuchService, sink: ChromiumFrameSink(),
             root: { FileManager.default.temporaryDirectory.appending(path: "wsurf-d4-recovery-\(UUID().uuidString)", directoryHint: .isDirectory) },
-            latch: ChromiumOOP.Latch(), isEnabled: { true })
+            latch: ChromiumOOP.Latch(), isEnabled: { true },
+            invalidMeansUnreachable: false)
     }
 
     /// Three deaths of the service with a browser of each tab in it, with no await between them (so that nothing made in between
