@@ -166,6 +166,7 @@ extension VaultSync {
         guard let (database, row) = enabledRow(key) else { return }
         var next = row
         zoneRetries[key] = nil
+        itemRetries[key] = nil
         if record.payload == row.pendingVault {
             next.uploadedMark = row.pendingMark
             next.pendingVault = nil
@@ -301,19 +302,7 @@ extension VaultSync {
             }
             return false
         case .zoneNotFound:
-            // A zone this Mac made whose `Vault` record never landed (no uploaded mark, the record still waiting) lost its creation, as
-            // `readd` assumes after a lost queue: make it again with the save. Any other missing zone was removed. The retry is bounded:
-            // `zoneRetryLimit` rounds per vault and run, then the vault reads as removed, which stops uploads and asks the person to turn sync
-            // off and on. The engine paces the resends in between. Only the `Vault` record's failure counts, so a round in which many
-            // entries fail together is one round.
-            if row.uploadedMark == nil, row.pendingVault != nil, zoneRetries[key, default: 0] < Self.zoneRetryLimit {
-                if isVaultRecord {
-                    zoneRetries[key, default: 0] += 1
-                }
-                engine?.add([.saveZone(failure.id.zone), .saveRecord(failure.id)])
-            } else {
-                zoneRemoved(failure.id.zone, reason: .deleted)
-            }
+            zoneMissing(failure.id, key: key, database: database, row: row)
             return false
         case .unknownItem:
             try? database.write { try $0.deleteSystemFields(key.vaultID, failure.id.name) }
@@ -331,6 +320,43 @@ extension VaultSync {
             SyncLog.logger.error("sync: a vault record save failed; the next heartbeat tries again")
             return false
         }
+    }
+
+    /// A save found its zone missing. For a zone this Mac made whose `Vault` record never landed, the zone was lost on the way up (the
+    /// engine only logs a failed zone save, as `readd` assumes after a lost queue): ask for it again with the save. Any other missing
+    /// zone was removed.
+    ///
+    /// "Never landed" is no uploaded mark, the record still waiting, and no server fields stored for it: fields exist only once the
+    /// record was seen on the server (a rename that overtook the first save, or another Mac that enabled the vault at the same moment),
+    /// and then a missing zone is another Mac's removal, which this Mac never undoes.
+    ///
+    /// The retry is bounded between two heartbeats: the `Vault` record asks `zoneRetryLimit` times, and each entry asks that often for
+    /// itself, counted apart, so the order of the failures in one `.sent` changes nothing and an entry never ends the `Vault` record's
+    /// tries. After that the vault stays active with its upload pending, and the next heartbeat clears the counts and tries again. A zone
+    /// that never existed was not removed, so nothing here reports a removal.
+    private func zoneMissing(_ id: SyncRecordID, key: VaultKey, database: VaultSyncDatabase, row: VaultRow) {
+        // A read that fails counts as "stored": the answer that stays on today's side, which is removal.
+        let serverFields: Bool
+        do {
+            serverFields = try database.read { try $0.systemFields(key.vaultID, Self.vaultRecordName) } != nil
+        } catch {
+            serverFields = true
+        }
+        guard row.uploadedMark == nil, row.pendingVault != nil, !serverFields else {
+            zoneRemoved(id.zone, reason: .deleted)
+            return
+        }
+        if id.name == Self.vaultRecordName {
+            guard zoneRetries[key, default: 0] < Self.zoneRetryLimit else {
+                SyncLog.logger.error("sync: a vault's zone could not be made; the next heartbeat tries again")
+                return
+            }
+            zoneRetries[key, default: 0] += 1
+        } else {
+            guard itemRetries[key, default: [:]][id.name, default: 0] < Self.zoneRetryLimit else { return }
+            itemRetries[key, default: [:]][id.name, default: 0] += 1
+        }
+        engine?.add([.saveZone(id.zone), .saveRecord(id)])
     }
 
     // MARK: - Zones and the account

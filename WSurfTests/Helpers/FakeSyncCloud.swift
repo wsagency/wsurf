@@ -201,6 +201,10 @@ final class FakeSyncEngine: SyncEngine {
     var failsZoneDeletes = false
     /// The next N zone creations are lost, as a zone save that failed or lost the race with its records.
     var losesZoneSaves = 0
+    /// The failed saves of one send are reported in the opposite order: the real engine does not promise one.
+    var reversesFailures = false
+    /// A save of the `Vault` record fails with an error that is not a missing zone (the entries still find their zone missing).
+    var refusesVaultRecord = false
     /// Names of records that cannot be read when a zone is read in full, as the server can fail one record of a page.
     var unreadable: Set<String> = []
     /// The queued changes by target, each with its place in the queue: a change for a target that is queued again moves to the end, and
@@ -211,6 +215,8 @@ final class FakeSyncEngine: SyncEngine {
     var pending: [SyncChange] {
         queue.values.sorted { $0.place < $1.place }.map(\.change)
     }
+    /// How many times a save of each record (by name) went out, whatever came of it.
+    private(set) var saveAttempts: [String: Int] = [:]
     private(set) var sendCount = 0
     private(set) var fetchCount = 0
     private(set) var fetchAllCount = 0
@@ -342,6 +348,11 @@ final class FakeSyncEngine: SyncEngine {
             case .saveRecord(let id):
                 // A record the model no longer wants is dropped, as the real engine drops it.
                 guard let record = delegate?.record(for: id) else { continue }
+                saveAttempts[id.name, default: 0] += 1
+                if refusesVaultRecord, id.name == VaultSync.vaultRecordName {
+                    failed.append(SyncFailedSave(id: id, failure: .other))
+                    continue
+                }
                 switch cloud.save(record) {
                 case .saved(let stored):
                     saved.append(stored)
@@ -354,6 +365,9 @@ final class FakeSyncEngine: SyncEngine {
             case .saveZone, .deleteZone:
                 break
             }
+        }
+        if reversesFailures {
+            failed.reverse()
         }
         await delegate?.handle(.sent(saved: saved, deleted: deleted, failed: failed))
         await publishState()

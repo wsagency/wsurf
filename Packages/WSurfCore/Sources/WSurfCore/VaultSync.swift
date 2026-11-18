@@ -67,7 +67,7 @@ public final class VaultSync: SyncEngineDelegate {
     /// A pass that would send more removed states than this, or a quarter of the vault's synced entries if that is more, waits for
     /// the owner.
     static let removalFloor = 20
-    /// How often a first upload may make its missing zone again before the vault reads as removed from iCloud.
+    /// How often a first upload may ask for its missing zone (or an entry for its own save) again, between two heartbeats.
     static let zoneRetryLimit = 3
 
     public internal(set) var state: VaultSyncAppState
@@ -109,8 +109,10 @@ public final class VaultSync: SyncEngineDelegate {
     /// Vaults whose owed second read of the zone was started in this run, and how many records the last read of each skipped.
     @ObservationIgnored var rereadTried: Set<VaultKey> = []
     @ObservationIgnored var skippedRecords: [VaultKey: Int] = [:]
-    /// How many times this run made a first upload's zone again after a save found it missing; cleared when the `Vault` record lands.
+    /// How many times this run asked for a first upload's zone again after the `Vault` record found it missing, and for each entry how
+    /// many times it asked for its own save again. Cleared when the `Vault` record lands and at every heartbeat.
     @ObservationIgnored var zoneRetries: [VaultKey: Int] = [:]
+    @ObservationIgnored var itemRetries: [VaultKey: [String: Int]] = [:]
     /// Set from `attach` until the vaults the profiles no longer list are dropped: nothing is handed to the engine before that.
     @ObservationIgnored var launchCheck = false
     /// Checks that wait for the host and are not steps of a vault's chain; `settle` waits for them too.
@@ -480,6 +482,8 @@ public final class VaultSync: SyncEngineDelegate {
         guard engine != nil else { return }
         let keys = enabledKeys
         for (position, key) in keys.enumerated() {
+            zoneRetries[key] = nil
+            itemRetries[key] = nil
             readd(key)
             rereadSkipped(key)
             enqueue(key) { [weak self] in
@@ -630,6 +634,7 @@ public final class VaultSync: SyncEngineDelegate {
         releasing[key] = nil
         rereadTried.remove(key)
         zoneRetries[key] = nil
+        itemRetries[key] = nil
         skippedRecords[key] = nil
     }
 
