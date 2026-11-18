@@ -216,7 +216,10 @@ struct FloatingToolbarTests {
         }
         coordinator.closeWindow()
         #expect(await waitUntil(timeout: .seconds(10)) { panels.live == 0 && windows.live == 0 && hosting == nil && controller == nil },
-                "outlived the window: panel \(panels.live) [\(panels.liveDescription)], window \(windows.live) [\(windows.liveDescription)], hosting view \(hosting != nil), controller \(controller != nil)")
+                """
+                outlived the window: panel \(panels.live) [\(panels.liveDescription)], window \(windows.live) \
+                [\(windows.liveDescription)], hosting view \(hosting != nil), controller \(controller != nil)
+                """)
     }
 
     @Test func aWindowThatNeverFloatsItsBarHasNoControllerAtAll() throws {
