@@ -5,7 +5,7 @@ Describe the user-visible change and why it belongs in WSurf.
 ## Verification
 
 - [ ] The app builds without new warnings.
-- [ ] The full test suite passes.
+- [ ] Quick validation passes, including tests for the changed behavior and affected areas.
 - [ ] New behavior has meaningful tests.
 - [ ] User-facing strings are localizable and concise.
 - [ ] SwiftUI views use existing design primitives and accessibility patterns.

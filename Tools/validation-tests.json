@@ -1,0 +1,89 @@
+{
+  "smoke": [
+    "BrowserSmokeTests", "ChromiumPageTests/fastEncodingGivesTheSamePixels()",
+    "LaunchRestoreTests", "WindowSessionTests", "ProfileSwitchTests", "PrivateBrowsingTests",
+    "CredentialStoreTests", "CredentialAutoLockTests", "FreeMemoryTests", "WindowLeakCheckTests"
+  ],
+  "minor_cases": [
+    "CredentialExchangeCoordinatorTests/importOf20000ItemsPreviewsCommitsAndReimports()",
+    "CredentialExchangeCoordinatorTests/importOf20000ItemsThatAreAllSavedAlreadyIsLinear()",
+    "CredentialExchangeCoordinatorTests/planning2000AddedPasskeysBeside20000SavedCredentialsIsNotQuadratic()",
+    "CredentialExchangeCoordinatorTests/deciding1000ItemsOfA25000ItemReviewIsNotQuadratic()"
+  ],
+  "conditional_skips": [
+    "CredentialExchangeTests/olderSystemsRejectFIDO2MetadataInsteadOfDroppingIt()",
+    "AudioIndicatorViewTests/theSpeakerAndItsListAreDrawnForReview()",
+    "ConversationMicrophoneTests/physicalConversationCaptureDeliversPCM(attempt:)",
+    "FolderLookTests/theLookIsDrawnForReview()", "FullScreenRevealTests/theStripTakesRoomOnlyWhileItShows()",
+    "MCPDevelopmentOwnershipTests/elementScreenshotScaleAtPhoneDeviceScaleOnChromium()",
+    "MCPDevelopmentOwnershipTests/phoneProfileAppliesDPRTouchAndMobileOnChromium()",
+    "PageComputerInputTests/nativeHoverReachesPageHandlersAndCSS()", "PageComputerInputTests/hoverTriggersCssHover()",
+    "PageComputerInputTests/hoverFailsWhenCoveredOrOffscreen()", "RecentDownloadsTests/evidence()",
+    "SidebarAppearanceEvidenceTests/*", "SidebarIconAlignmentTests/theWholeMatrixIsReported()",
+    "OpenAI*LiveTests/*", "OpenAILiveValidationTests/*", "OpenAIMCPOAuthUITests/*", "VoiceConversationUITests/*", "BrowserAgentBenchWorker/*",
+    "VaultMoveBenchmark/*", "VaultVerificationBenchmark/*"
+  ],
+  "areas": [
+    {"paths": ["*.md", "branding/*", "docs/*", "wsurf.app/*", "wrangler.jsonc", "LICENSE*", "NOTICE", ".gitignore", ".omp/*"], "suites": []},
+    {"paths": ["Tools/*", ".github/*", ".swiftlint.yml", "WSurf*.xctestplan", "WSurf/AppIcon.icon/*", "WSurfTests/Helpers/*"], "suites": []},
+    {
+      "paths": ["WSurf/App/*", "WSurf/main.swift", "WSurf/Onboarding/*", "WSurf/Profiles/*", "WSurf/UI/Chrome/*", "WSurf/UI/Shell/*", "WSurf/UI/Content/*"],
+      "suites": ["SiteMenuTests", "FloatingToolbarTests", "NativeSheetTests", "WindowStyleSettingsTests", "ExtensionWindowTests", "PageKeyChordMenuTests"]
+    },
+    {
+      "paths": ["WSurf/UI/Sidebar/*", "WSurf/UI/CommandPalette/*", "WSurf/UI/StartPage/*", "WSurf/Settings/*", "WSurfTests/UI/SidebarRowRig.swift"],
+      "suites": ["WindowStyleSettingsTests", "NewTabChromeTests", "MinimalShellTests", "SidebarInvalidationTests", "PinnedSectionTests"]
+    },
+    {
+      "paths": ["WSurf/Web/Tabs/*", "WSurf/Web/Model/*", "WSurf/Web/Engines/*", "WSurf/Web/Page/*", "WSurf/Web/Splits/*", "WSurf/Web/WebKitFeatures.swift", "Packages/CefSwift/*", "Tools/embed-chromium.sh"],
+      "suites": ["BrowserResourceLifetimeTests", "BackForwardScrollTests", "ChromiumHistoryRestoreTests", "TabRecoveryTests", "PageInputTests", "ExtensionTabEventTests"]
+    },
+    {
+      "paths": ["WSurf/Web/Autofill/*", "WSurf/Web/Credentials/*", "WSurf/UI/Passwords/*", "WSurfCredentialExchange/*"],
+      "suites": ["PickCredentialRealMenuTests", "AutofillVaultSaveTests", "AutofillRefusalDiagnosticsTests", "CredentialExchangeCoordinatorTests", "CredentialListLifetimeTests", "CredentialPasswordPrivacyTests"]
+    },
+    {
+      "paths": ["WSurf/Settings/Pages/Credential*", "WSurf/Settings/Pages/Autofill*"],
+      "suites": ["CredentialSettingsTests", "CredentialExchangeCoordinatorTests", "AutofillVaultSaveTests"]
+    },
+    {"paths": ["WSurf/Settings/Pages/WebsiteDataPage.swift"], "suites": ["WebsiteDataTests"]},
+    {"paths": ["WSurf/Settings/Pages/CloudVaultRow.swift"], "suites": ["VaultSyncReviewSheetTests", "VaultSyncEdgeTests"]},
+    {
+      "paths": ["Packages/CefSwift/Sources/CefKit/CefRemote*.swift", "Packages/CefSwift/Sources/wsurf-chromium-service/*", "WSurf/Web/Engines/ChromiumRemote*.swift", "Tools/check-service-*.py", "Tools/check-service-strings.sh", "Tools/embed-chromium.sh"],
+      "suites": ["ChromiumRemoteProtocolTests", "ChromiumServiceHardeningTests", "ChromiumServiceNoDebugOpsTests"]
+    },
+    {
+      "paths": ["WSurf/Web/Engines/ChromiumRemote*Input*.swift", "WSurf/Web/Engines/ChromiumRemote*Keys*.swift", "Packages/CefSwift/Sources/wsurf-chromium-service/*Input*.swift"],
+      "suites": ["ChromiumOOPInputTests"]
+    },
+    {
+      "paths": ["WSurf/Web/Engines/*Accessibility*.swift", "Packages/CefSwift/Sources/wsurf-chromium-service/*Accessibility*.swift"],
+      "suites": ["ChromiumOOPAccessibilityTests", "ChromiumOOPAccessibilityTransportTests"]
+    },
+    {
+      "paths": ["Packages/WSurfCore/*", "WSurf/Sync/*", "WSurf.xcodeproj/*", "WSurf/Web/Credentials/*", "WSurf/Profiles/*", "WSurfTests/Web/Vault*Support.swift"],
+      "suites": ["AppDatabaseMigrationTests", "VaultMigrationTests", "VaultIntegrityTests", "VaultSyncEdgeTests", "VaultSyncMemoryDeviceTests", "VaultSyncRaceTests", "SyncRouterTests"]
+    },
+    {
+      "paths": ["WSurf/Agent/*", "WSurf/MCP/*", "WSurf/UI/Ask/*", "WSurf/UI/DevMode/*", "WSurf/Web/Assistant/*", "WSurf/Web/DevMode/*", "WSurfTests/Agent/*Support.swift", "WSurfTests/Agent/*Rig.swift", "WSurfTests/Evals/*"],
+      "suites": ["AgentActionPolicyTests", "MCPAccessConsentTests", "AttachmentTests", "OpenAIConversationTests", "MCPTransportTests"]
+    },
+    {
+      "paths": ["WSurf/Extensions/*", "WSurf/Web/Privacy/*", "WSurf/Web/System/*", "WSurf/Support/*"],
+      "suites": ["ExtensionLifecycleTests", "ExtensionTabEventTests", "ExtensionWindowTests", "BrowserResourceLifetimeTests", "WebsiteDataTests"]
+    },
+    {
+      "paths": ["WSurf/Updates/*", "WSurf/Info.plist", "WSurf/*.entitlements", ".github/workflows/release.yml", ".github/workflows/tip.yml"],
+      "suites": ["UpdateSurfaceTests", "AppDatabaseMigrationTests"]
+    },
+    {
+      "paths": ["WSurf/Voice/*", "WSurf/Media/*"],
+      "suites": ["ConversationMicrophoneTests", "AudioIndicatorViewTests", "AudioFrameEngineTests"]
+    },
+    {
+      "paths": ["WSurf/Web/Reader/*", "WSurf/Web/Translation/*", "WSurf/UI/Reader/*", "WSurf/Web/Search/*", "WSurf/Web/InputHistory/*"],
+      "suites": ["ReaderNavigationTests", "PageTranslationTests", "InputHistoryStoreTests", "OmniboxTests"]
+    },
+    {"paths": ["WSurf/Stage/*", "WSurf/Assets.xcassets/*", "WSurf/*.xcstrings"], "suites": ["StageSetTests"]}
+  ]
+}

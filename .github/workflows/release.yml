@@ -11,24 +11,27 @@ permissions:
   contents: write
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: public-release
+  cancel-in-progress: false
 
 env:
   PROJECT: WSurf.xcodeproj
   SCHEME: WSurf
   APP: WSurf
   TEAM_ID: 5X68L55TNU
-  XCODE: '27.0'
   DD: ${{ github.workspace }}/build/DD
 
 jobs:
-  # A cheap runner reads the mark that the push to main already left. Tests are
-  # never run twice for one commit, and no signing secret is reachable until
-  # this passes. The tag may be pushed while CI is still running.
   gate:
-    name: Wait for green
+    name: Select release validation
     runs-on: ubuntu-latest
-    timeout-minutes: 50
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      source: ${{ steps.selection.outputs.source }}
+      tier: ${{ steps.selection.outputs.tier }}
+      base: ${{ steps.selection.outputs.base }}
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -40,44 +43,33 @@ jobs:
       - name: Check the tag is on main
         run: |
           git fetch --no-tags origin main
-          # HEAD, not GITHUB_SHA: an annotated tag is its own object.
-          if ! git merge-base --is-ancestor "$(git rev-parse HEAD)" origin/main; then
-            echo "::error::${GITHUB_REF_NAME} points at a commit that is not on main."
+          source=$(git rev-parse HEAD)
+          if ! git rev-list --first-parent origin/main | grep -Fx "$source" >/dev/null; then
+            echo "::error::${GITHUB_REF_NAME} must point to a commit on main's first-parent history."
             exit 1
           fi
 
-      - name: Wait for the tests to pass on this commit
+      - name: Select the tier from published WSurf releases
+        id: selection
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          SHA="$(git rev-parse HEAD)"
-          for _ in $(seq 1 90); do
-            STATE="$(gh api "repos/$GITHUB_REPOSITORY/commits/$SHA/check-runs" \
-              --jq '.check_runs[] | select(.name == "Build and test") | "\(.status) \(.conclusion)"' \
-              | head -1)"
-            case "$STATE" in
-              "completed success")
-                echo "$SHA passed."
-                exit 0
-                ;;
-              completed*)
-                echo "::error::Build and test ${STATE#completed } on $SHA."
-                exit 1
-                ;;
-              "")
-                echo "No Build and test run on $SHA yet."
-                ;;
-              *)
-                echo "Build and test is ${STATE% *}."
-                ;;
-            esac
-            sleep 30
-          done
-          echo "::error::Build and test did not finish on $SHA."
-          exit 1
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/releases?per_page=100" > "$RUNNER_TEMP/releases.json"
+          python3 -B Tools/select-release-validation.py --tag "$GITHUB_REF_NAME" < "$RUNNER_TEMP/releases.json" >> "$GITHUB_OUTPUT"
+
+  validate:
+    name: Validate release source
+    needs: gate
+    permissions:
+      contents: read
+    uses: ./.github/workflows/ci.yml
+    with:
+      source: ${{ needs.gate.outputs.source }}
+      tier: ${{ needs.gate.outputs.tier }}
+      base: ${{ needs.gate.outputs.base }}
 
   release:
-    needs: gate
+    needs: [gate, validate]
     runs-on: xcode-27
     timeout-minutes: 60
 
@@ -88,15 +80,11 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ needs.gate.outputs.source }}
           fetch-depth: 0
 
-      - name: Select Xcode ${{ env.XCODE }}
-        run: |
-          if [ ! -d "/Applications/Xcode_${XCODE}.app" ]; then
-            echo "::error::Required Xcode ${XCODE} is unavailable at /Applications/Xcode_${XCODE}.app."
-            exit 1
-          fi
-          sudo xcode-select -s "/Applications/Xcode_${XCODE}.app"
+      - name: Select the CI-pinned Xcode
+        run: bash Tools/select-ci-xcode.sh >> "$GITHUB_ENV"
 
       - name: Install Metal toolchain
         run: |
@@ -461,7 +449,13 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
           DMG: ${{ steps.dmg.outputs.path }}
         run: |
-          gh release create "$TAG" \
+          remote_tag=$(git ls-remote --exit-code origin "refs/tags/$TAG" "refs/tags/$TAG^{}")
+          remote_commit=$(printf '%s\n' "$remote_tag" | awk '/\^\{\}$/ { peeled = $1 } { ref = $1 } END { print peeled ? peeled : ref }')
+          if [ "$remote_commit" != "$(git rev-parse HEAD)" ]; then
+            echo "::error::$TAG no longer identifies the validated commit."
+            exit 1
+          fi
+          gh release create "$TAG" --verify-tag \
             --title "$VERSION" \
             --notes-file build/notes.md \
             "$DMG" \
