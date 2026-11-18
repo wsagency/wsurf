@@ -305,7 +305,7 @@ final class BrowserPage: NSView {
         if let webKit {
             return navigation(for: webKit.load(request))
         }
-        return chromium?.load(request, byPerson: byPerson)
+        return chromium?.loadInHistory(request, byPerson: byPerson)
     }
 
     /// Chromium has no read-access parameter: `ChromiumFileScope` holds a `file:` page to the same scope, frame by frame.
@@ -335,7 +335,7 @@ final class BrowserPage: NSView {
         if let webKit {
             return navigation(for: webKit.reload())
         }
-        return chromium?.reload(byPerson: byPerson)
+        return chromium?.reloadInHistory(byPerson: byPerson)
     }
 
     @discardableResult
@@ -344,7 +344,7 @@ final class BrowserPage: NSView {
         if let webKit {
             return navigation(for: webKit.reloadFromOrigin())
         }
-        return chromium?.reload(ignoreCache: true, byPerson: byPerson)
+        return chromium?.reloadInHistory(ignoreCache: true, byPerson: byPerson)
     }
 
     @discardableResult
