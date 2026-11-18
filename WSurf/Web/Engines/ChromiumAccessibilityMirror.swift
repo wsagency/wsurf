@@ -11,8 +11,11 @@ import os
 // (`tests/shared/browser/osr_accessibility_*`), with one change for VoiceOver's sequential navigation (VO-arrow keys): containers with
 // no name of their own are flattened, and headings, links and buttons are leaves that speak their name.
 //
-// Threads: the decode queue writes, the main thread reads, both under one lock. A query never waits for more than the apply of one
-// update (a few milliseconds for a page of thousands of nodes), and the main thread never parses or frees a tree.
+// Threads: the decode queue writes, the main thread reads, both under one lock. A query waits for the apply that holds it: the whole
+// apply of one update runs under the lock (about 130 ms for the first update of a 12,000-node page, measured as the difference of
+// two runs, not as the hold itself: D4-42 publishes snapshots instead). The main thread never parses a tree, and it is the thread
+// that lets go of the elements (`releaseOnMain`): an element's dealloc may call into AppKit, which a decode queue holding the lock must
+// not be in.
 
 nonisolated final class ChromiumAccessibilityMirror: @unchecked Sendable {
     typealias Key = ChromiumAccessibilityKey
@@ -47,30 +50,56 @@ nonisolated final class ChromiumAccessibilityMirror: @unchecked Sendable {
 
     /// Applies one parsed update. `json` is what `JSONSerialization` made of the update's bytes; it is not kept.
     func apply(_ kind: ChromiumAccessibilityUpdate.Kind, json: Any) {
-        state.withLockUnchecked { state in
-            guard state.accepting else { return }
+        // The box takes the only reference to the array that holds them (nothing here keeps another: a second reference would free the
+        // elements wherever it was dropped last), and the main thread empties it.
+        let retired = Retired(state.withLockUnchecked { state -> [ChromiumAccessibilityElement] in
+            guard state.accepting else { return [] }
             switch kind {
             case .tree:
-                guard let object = json as? [String: Any] else { return }
+                guard let object = json as? [String: Any] else { return [] }
                 state.forest.applyTree(object)
                 state.treeUpdates += 1
                 // An element whose node is gone is dropped with it (a client that still holds one is told it does not exist).
-                state.elements = state.elements.filter { state.forest.node($0.key) != nil }
+                let gone = state.elements.filter { state.forest.node($0.key) == nil }
+                for key in gone.keys {
+                    state.elements[key] = nil
+                }
+                return Array(gone.values)
             case .location:
-                guard let list = json as? [[String: Any]] else { return }
+                guard let list = json as? [[String: Any]] else { return [] }
                 state.forest.applyLocations(list)
                 state.locationUpdates += 1
+                return []
             }
+        })
+        retired.releaseOnMain()
+    }
+
+    /// Elements the mirror let go of, to be freed on the main thread, outside the lock: with a client such as VoiceOver registered, an
+    /// element's dealloc may call back into AppKit, and into our own overrides.
+    private nonisolated final class Retired: @unchecked Sendable {
+        var elements: [ChromiumAccessibilityElement]
+
+        init(_ elements: [ChromiumAccessibilityElement]) {
+            self.elements = elements
+        }
+
+        func releaseOnMain() {
+            guard !elements.isEmpty else { return }
+            DispatchQueue.main.async { self.elements.removeAll() }
         }
     }
 
     /// Back to no tree: the tree was turned off, its connection was lost, or the browser is gone. Updates are ignored until `accept`.
     func reset() {
-        state.withLock { state in
+        let retired = Retired(state.withLock { state -> [ChromiumAccessibilityElement] in
             state.forest.clearNodes()
+            let all = Array(state.elements.values)
             state.elements.removeAll()
             state.accepting = false
-        }
+            return all
+        })
+        retired.releaseOnMain()
     }
 
     /// The tree is being turned on: its updates are applied again.
@@ -123,17 +152,24 @@ nonisolated final class ChromiumAccessibilityMirror: @unchecked Sendable {
 
     // MARK: Elements
 
-    /// The element of a node, made once and kept until the node goes.
+    /// The element of a node, made once and kept until the node goes, or until the page navigates (an element is bound to the page's
+    /// main-frame generation when it was made: the one a client holds across a navigation stays what it was, and a new query gets a
+    /// new one). Asked on the main thread, by AppKit's queries; off it the generation is 0, which no press accepts.
     func element(for key: Key, host: ChromiumRemoteAccessibilityHost?) -> ChromiumAccessibilityElement? {
-        state.withLockUnchecked { state in
-            guard state.forest.node(key) != nil else { return nil }
-            if let element = state.elements[key] {
-                return element
+        let generation: UInt64 = Thread.isMainThread ? MainActor.assumeIsolated { host?.generation ?? 0 } : 0
+        let (element, replaced): (ChromiumAccessibilityElement?, ChromiumAccessibilityElement?) = state.withLockUnchecked { state in
+            guard state.forest.node(key) != nil else { return (nil, nil) }
+            let cached = state.elements[key]
+            if let cached, cached.generation == generation {
+                return (cached, nil)
             }
-            let element = ChromiumAccessibilityElement(mirror: self, key: key, host: host)
+            let element = ChromiumAccessibilityElement(mirror: self, key: key, host: host, generation: generation)
             state.elements[key] = element
-            return element
+            return (element, cached)
         }
+        // The one it replaced is let go of here, outside the lock.
+        withExtendedLifetime(replaced) {}
+        return element
     }
 
     func rootElement(host: ChromiumRemoteAccessibilityHost?) -> ChromiumAccessibilityElement? {

@@ -225,6 +225,12 @@ struct ChromiumOOPAccessibilityTests {
         rig.mirror.apply(.tree, json: Self.tree([Self.node(2, "genericContainer", children: [3, 4, 5, 6])]))
         #expect(Self.find(rig.view, role: .button, title: "New") == nil)
         #expect(added.isAccessibilityElement() == false, "a client that still holds it is told it does not exist")
+        // And it answers nothing, in every way a client can ask (no crash, no junk frame, not the window's group as its parent).
+        #expect(added.accessibilityRole() == nil && added.accessibilityTitle() == nil && added.accessibilityValue() == nil)
+        #expect((added.accessibilityChildren() ?? []).isEmpty)
+        #expect(added.accessibilityParent() == nil)
+        #expect(added.accessibilityFrame() == .zero)
+        #expect(!added.accessibilityPerformPress())
         await rig.end()
     }
 
@@ -276,22 +282,76 @@ struct ChromiumOOPAccessibilityTests {
 
     // MARK: The decoder and the cap
 
-    @Test func anUpdateOverTheCapIsNotParsedAndTheBrowsersTreeIsTurnedOffAndEmptied() async throws {
+    @Test func anUpdateOverTheCapIsRefusedBeforeItIsCopiedAndTheBrowsersTreeIsTurnedOffAndEmptied() async throws {
         let rig = await makeRig()
         rig.mirror.apply(.tree, json: Self.page)
-        let decoder = rig.connection.accessibility.decoder
+        #expect(ChromiumAccessibilityDecoder.maxUpdateBytes == 48 * 1024 * 1024 && ChromiumAccessibilityDecoder().limit == ChromiumAccessibilityDecoder.maxUpdateBytes)
+        // A decoder with a small cap, so that the message it refuses is small as well. Its only copy of a message's bytes is counted.
+        let decoder = ChromiumAccessibilityDecoder(maxUpdateBytes: 100_000)
         let message = CefRemoteMessage(CefRemote.Event.accessibilityTree, browser: rig.remote.id)
-        message.set(CefRemote.Key.data, data: Data(count: ChromiumAccessibilityDecoder.maxUpdateBytes + 1))
+        message.set(CefRemote.Key.data, data: Data(count: 300_000))
         let told = CallCounts()
         decoder.queue.sync {
             decoder.decode(.message(message), deliver: { _ in told.deliver() }, oversize: { _ in told.oversize() })
         }
         #expect(told.oversizeCount == 1 && told.deliverCount == 0)
         #expect(decoder.statistics.oversized == 1 && decoder.statistics.undecodable == 0)
+        #expect(decoder.statistics.copiedBytes == 0, "the size is read in place: \(decoder.statistics.copiedBytes) bytes were copied")
+        // The control: the counter does see a copy. A message under the cap is copied (and here, being no JSON, not decoded).
+        let small = CefRemoteMessage(CefRemote.Event.accessibilityTree, browser: rig.remote.id)
+        small.set(CefRemote.Key.data, data: Data(count: 50_000))
+        decoder.queue.sync {
+            decoder.decode(.message(small), deliver: { _ in told.deliver() }, oversize: { _ in told.oversize() })
+        }
+        #expect(decoder.statistics.copiedBytes == 50_000 && decoder.statistics.undecodable == 1 && decoder.statistics.oversized == 1)
+        // What WSurf does when told: the browser's tree is turned off and its mirror emptied.
         rig.connection.suspendAccessibility(browser: rig.remote.id, epoch: rig.connection.accessibility.epoch)
-        decoder.queue.sync {}
+        rig.connection.accessibility.decoder.queue.sync {}
         #expect(rig.connection.browserAccessibility(rig.remote.id)?.isSuspended == true)
-        #expect(rig.mirror.isEmpty)
+        #expect(await waitUntil { rig.mirror.isEmpty })
+        await rig.end()
+    }
+
+    // MARK: Elements and the threads they are freed on (review S2)
+
+    /// The mirror lets go of an element on the decode queue (an update that drops its node), inside its lock. With a client registered
+    /// the element's dealloc may call into AppKit and back into our overrides, so the mirror hands it to the main thread to free.
+    @Test func elementsTheMirrorLetsGoOfAreFreedOnTheMainThreadAndNeverOnTheDecodeQueue() async {
+        let rig = await makeRig()
+        rig.mirror.apply(.tree, json: Self.page)
+        // The elements are made and nothing here keeps one (a held element would be freed wherever it was dropped last).
+        autoreleasepool { _ = Self.walk(rig.view).count }
+        // What earlier tests left queued has run (their rigs' mirrors empty on this queue), so that it cannot count as this test's.
+        rig.connection.accessibility.decoder.queue.sync {}
+        let before = ChromiumAccessibilityElement.deallocations.withLock { $0 }
+        let mirror = rig.mirror
+        nonisolated(unsafe) let drop = Self.tree([Self.node(2, "genericContainer", children: [4, 5, 6])])
+        // On the decode queue itself (a `sync` from here would run the block on this thread), as an update from the service does.
+        await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in
+            rig.connection.accessibility.decoder.queue.async {
+                mirror.apply(.tree, json: drop)
+                done.resume()
+            }
+        }
+        #expect(await waitUntil { ChromiumAccessibilityElement.deallocations.withLock { $0.main } > before.main }, "the dropped heading was freed")
+        let after = ChromiumAccessibilityElement.deallocations.withLock { $0 }
+        #expect(after.other == before.other, "\(after.other - before.other) element(s) were freed off the main thread")
+        await rig.end()
+    }
+
+    // MARK: The press is bound to its document (review S1)
+
+    @Test func anElementMadeBeforeANavigationIsNotPressedAfterItAndANewQueryMakesANewOne() async throws {
+        let rig = await makeRig()
+        rig.mirror.apply(.tree, json: Self.page)
+        let before = try #require(Self.find(rig.view, role: .button))
+        #expect(before.generation == rig.native.mainFrameGeneration)
+        rig.native.didStartLoad()
+        #expect(before.generation != rig.native.mainFrameGeneration, "a navigation moves the page's generation")
+        #expect(before.isAccessibilityElement(), "its node is still in the mirror: the new tree has not arrived")
+        #expect(!before.accessibilityPerformPress(), "but it was made for the document before")
+        let after = try #require(Self.find(rig.view, role: .button))
+        #expect(after !== before && after.generation == rig.native.mainFrameGeneration, "a new query gets an element of this document")
         await rig.end()
     }
 
@@ -336,6 +396,11 @@ struct ChromiumOOPAccessibilityTests {
             </body>
             """),
         "/ax2": .html("<!doctype html><title>Second</title><body><p>second</p></body>"),
+        // A page that takes a click anywhere in it: its title says so.
+        "/axclick": .html("""
+            <!doctype html><html style="height:100%"><head><title>Clicks</title></head>
+            <body style="margin:0;height:100%" onclick="document.title='clicked'"><p>second</p></body></html>
+            """),
     ]
 
     /// A connection of its own (the test's VoiceOver is a call), a window with a page on it, and the tab's reaction to a lost browser.
@@ -485,6 +550,40 @@ struct ChromiumOOPAccessibilityTests {
             #expect(link.accessibilityPerformPress())
             let second = try live.server.url("/ax2")
             #expect(await waitUntil(timeout: .seconds(10)) { live.page.url == second }, "the page is at \(String(describing: live.page.url))")
+        }
+    }
+
+    /// The review's S1: a press is sent some time after it is made, and the page may navigate in between. The click must not land on
+    /// the next document at the old element's point.
+    @Test(.enabled(if: ChromiumServiceBundle.isPresent), .boundedWebViews)
+    func aPressThatMeetsANavigationOnItsWayClicksNothingOnTheNextPageAndAnElementFromBeforeItIsRefused() async throws {
+        try await withLive { live in
+            let view = try #require(live.view)
+            _ = try #require(await live.root())
+            let button = try #require(Self.walk(view).first { $0.accessibilityRole() == .button })
+            let host = try #require(view.accessibilityHost)
+            let next = try live.server.url("/axclick")
+            var mouseEvents = 0
+            var refusal: Error?
+            live.native.devTools.commandObserver = { method, _ in
+                if method == "Input.dispatchMouseEvent" {
+                    mouseEvents += 1
+                }
+            }
+            host.pressRefused = { refusal = $0 }
+            // The navigation lands after the press is made and before it is sent.
+            host.pressGate = {
+                live.page.load(URLRequest(url: next))
+                _ = await waitUntil(timeout: .seconds(20)) { live.page.url == next && !live.page.isLoading }
+            }
+            #expect(button.accessibilityPerformPress(), "made while the page was still the one the element is of")
+            #expect(await waitUntil(timeout: .seconds(30)) { refusal != nil }, "the press was not sent")
+            host.pressGate = nil
+            try? await Task.sleep(for: .milliseconds(500))
+            #expect(mouseEvents == 0, "\(mouseEvents) mouse event(s) were sent to the next page")
+            let title = try await live.page.evaluateJavaScript("document.title") as? String
+            #expect(title == "Clicks", "the next page's title is '\(title ?? "")': it took the click")
+            #expect(!button.accessibilityPerformPress(), "an element of the document before is refused, whether or not its node is in the new tree")
         }
     }
 

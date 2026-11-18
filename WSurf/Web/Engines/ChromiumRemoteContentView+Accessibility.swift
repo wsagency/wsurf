@@ -43,6 +43,11 @@ final class ChromiumRemoteAccessibilityHost {
         max(1, browser?.sentScale ?? 1)
     }
 
+    /// The page's main-frame generation: it moves with every navigation (see `press`).
+    var generation: UInt64 {
+        page?.mainFrameGeneration ?? 0
+    }
+
     func noteQuery() {
         browser?.connection.noteAccessibilityQuery()
     }
@@ -67,18 +72,44 @@ final class ChromiumRemoteAccessibilityHost {
         return mirror.elementKey(at: inView, unitsPerPoint: unitsPerPoint).flatMap { mirror.element(for: $0, host: self) }
     }
 
+    #if DEBUG
+    /// Runs after a press is made and before it is sent (DEBUG: a test navigates the page in this gap, which a real press meets as
+    /// a slow DevTools round trip or `ensureReady`), and, when the press ended without reaching the page, with what stopped it.
+    var pressGate: (@MainActor () async -> Void)?
+    var pressRefused: (@MainActor (Error) -> Void)?
+    #endif
+
     /// A trusted click at the middle of an element, through DevTools (`Input.dispatchMouseEvent`): it needs neither the app to be
-    /// active nor the window to be key, and no input connection. False for an element that is not in view. The view's points are
-    /// CSS pixels times the page's zoom.
-    func press(_ rect: CGRect) -> Bool {
+    /// active nor the window to be key, and no input connection. False for an element that is gone or not in view. The view's points
+    /// are CSS pixels times the page's zoom.
+    ///
+    /// The click goes out some time after the press is made (`ensureReady`, a DevTools round trip), and a page that navigates in
+    /// between would take it at a point of the next document. So it is bound to the document it was aimed at, the way an agent's
+    /// pointer is (`PageAutomationGuard`): `generation` is the page's main-frame generation (`ChromiumPage.mainFrameGeneration`, which
+    /// every navigation moves, a reload to the same address included) when the element was made. A press of an element from an
+    /// earlier document returns false, and one whose navigation lands while it is on its way is not sent; both need the node to be
+    /// in the mirror still. (An element first made after a navigation committed and before the new tree arrived, about a tenth of a
+    /// second, is not told apart.)
+    func press(_ key: ChromiumAccessibilityKey, in mirror: ChromiumAccessibilityMirror, generation: UInt64) -> Bool {
+        guard mirror.exists(key), page?.mainFrameGeneration == generation else { return false }
+        let rect = mirror.rectInPoints(key, unitsPerPoint: unitsPerPoint)
         guard let page, let view, rect.width > 0, rect.height > 0, view.bounds.contains(CGPoint(x: rect.midX, y: rect.midY)) else { return false }
         let zoom = max(0.1, page.zoom)
         let point = CGPoint(x: rect.midX / zoom, y: rect.midY / zoom)
-        Task { @MainActor [weak page] in
+        let stillThere: @MainActor @Sendable () -> Bool = { [weak page, weak mirror] in
+            page?.mainFrameGeneration == generation && mirror?.exists(key) == true
+        }
+        Task { @MainActor [weak page, weak self] in
+            #if DEBUG
+            await self?.pressGate?()
+            #endif
             do {
-                try await page?.dragPointer(path: [point, point], allowed: { true })
+                try await page?.dragPointer(path: [point, point], allowed: stillThere)
             } catch {
                 ChromiumOOP.log.error("an accessibility press did not reach the page: \(String(describing: error), privacy: .public)")
+                #if DEBUG
+                self?.pressRefused?(error)
+                #endif
             }
         }
         return true

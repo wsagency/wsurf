@@ -78,6 +78,8 @@ nonisolated final class ChromiumAccessibilityDecoder: Sendable {
         var undecodable = 0
         /// Updates over `maxUpdateBytes`: dropped unread, because an incremental stream cannot go on after one is missing.
         var oversized = 0
+        /// Bytes copied out of messages (only an update that is under the cap is copied).
+        var copiedBytes = 0
         var bytes = 0
         /// The longest single decode and apply, in milliseconds.
         var longestMs = 0.0
@@ -91,12 +93,26 @@ nonisolated final class ChromiumAccessibilityDecoder: Sendable {
     /// The biggest update taken: a page of a hundred thousand nodes is about 40 MB. A page may not drive WSurf's own memory.
     static let maxUpdateBytes = 48 * 1024 * 1024
 
+    /// The cap of this decoder (a test makes one with a small cap, so that the message it refuses is small too).
+    let limit: Int
+
+    init(maxUpdateBytes: Int = ChromiumAccessibilityDecoder.maxUpdateBytes) {
+        limit = maxUpdateBytes
+    }
+
     let queue = DispatchQueue(label: "io.wsagency.wsurf.chromium-accessibility", qos: .userInitiated)
     private let state = OSAllocatedUnfairLock(initialState: Statistics())
     private let mirrors = OSAllocatedUnfairLock(initialState: [Int64: ChromiumAccessibilityMirror]())
 
     var statistics: Statistics {
         state.withLock { $0 }
+    }
+
+    /// The one place a message's bytes are copied (and counted).
+    private func copyBytes(of message: CefRemoteMessage) -> Data {
+        let data = message.data(CefRemote.Key.data)
+        state.withLock { $0.copiedBytes += data.count }
+        return data
     }
 
     /// The mirror that takes a browser's updates (made with the browser, on the main thread).
@@ -119,12 +135,14 @@ nonisolated final class ChromiumAccessibilityDecoder: Sendable {
     ) {
         guard case let .message(message) = incoming else { return }
         let started = ContinuousClock.now
-        let data = message.data(CefRemote.Key.data)
-        if data.count > Self.maxUpdateBytes {
+        // The size first, read from the message in place: an update over the cap is refused with no copy of it made.
+        let size = message.withBytes(CefRemote.Key.data) { _, count in count }
+        if size > limit {
             state.withLock { $0.oversized += 1 }
             oversize(message.browser)
             return
         }
+        let data = copyBytes(of: message)
         // The parsed graph stays in this scope: only the update (Sendable) is captured by the closures below, and it is freed here.
         let parsed = ChromiumAccessibilityUpdate.parse(message, data: data)
         let update = parsed?.update
@@ -171,7 +189,12 @@ final class ChromiumRemoteAccessibility {
     var policy = CefRemoteAccessibilityPolicy()
     var voiceOverObservation: NSKeyValueObservation?
     /// Whether VoiceOver runs now (a test replaces it: the real one reads the person's accessibility state).
-    var voiceOverSource: () -> Bool = { NSWorkspace.shared.isVoiceOverEnabled }
+    var voiceOverSource: (() -> Bool)?
+    private(set) var watchesVoiceOver = false
+
+    func startedWatchingVoiceOver() {
+        watchesVoiceOver = true
+    }
     /// When the last query was noted (clock time): a client asks hundreds of times a second.
     var lastQueryNoted: TimeInterval?
     var cancelGraceTimer: (@Sendable () -> Void)?
@@ -432,8 +455,16 @@ extension ChromiumRemote {
     }
 
     private func watchVoiceOver() {
-        guard accessibility.voiceOverObservation == nil else { return }
-        accessibility.policy.setVoiceOver(accessibility.voiceOverSource())
+        guard !accessibility.watchesVoiceOver else { return }
+        accessibility.startedWatchingVoiceOver()
+        if let source = accessibility.voiceOverSource {
+            // A test's own source: the workspace is not observed (nothing of the person's accessibility state, and no observer of
+            // AppKit's to set up and tear down in a test process).
+            accessibility.policy.setVoiceOver(source())
+            reevaluateAccessibility()
+            return
+        }
+        accessibility.policy.setVoiceOver(NSWorkspace.shared.isVoiceOverEnabled)
         // The change may come on any thread: the handler only hops to the main actor.
         accessibility.voiceOverObservation = NSWorkspace.shared.observe(\.isVoiceOverEnabled, options: [.new]) { @Sendable [weak self] _, change in
             let isOn = change.newValue ?? false
