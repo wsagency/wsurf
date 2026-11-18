@@ -120,14 +120,25 @@ if [[ "${#shortNames[@]}" -gt 0 ]]; then
     [[ "$index" -eq "${#shortNames[@]}" ]] || { echo "error: incomplete scanner results" >&2; exit 2; }
 fi
 
-# A compiler may store any wire name as bytes instead of immediates, without its diagnostic text.
-for name in "${nameList[@]}"; do
-    if [[ "${#name}" -ge 8 ]]; then EXTRA+=("$name"); fi
-done
 extraFound=()
 for extra in "${EXTRA[@]}"; do
     if LC_ALL=C /usr/bin/grep -a -q -F -- "$extra" "$target"; then extraFound+=("$extra"); fi
 done
+
+# A wire name can live in the binary as text. Match it as a word so a Swift property descriptor
+# such as 10closeFirstSSvpZMV does not count as the actual wire value closeFirst.
+wireNames=0
+for name in "${nameList[@]}"; do
+    [[ "${#name}" -ge 8 ]] || continue
+    wireNames=$((wireNames + 1))
+    if LC_ALL=C /usr/bin/grep -a -w -q -F -- "$name" "$target"; then
+        extraFound+=("$name")
+    elif [[ "$?" -ne 1 ]]; then
+        echo "error: could not scan $target for $name" >&2
+        exit 2
+    fi
+done
+extraCount=$((${#EXTRA[@]} + wireNames))
 
 if [[ -n "$expectDebug" ]]; then
     if [[ "${#missingTexts[@]}" -gt 0 || "${#missingNames[@]}" -gt 0 ]]; then
@@ -136,7 +147,7 @@ if [[ -n "$expectDebug" ]]; then
         [[ "${#missingNames[@]}" -eq 0 ]] || printf '  short name (as code immediates): %s\n' "${missingNames[@]}" >&2
         exit 1
     fi
-    echo "ok: $target has every debug op: ${#foundTexts[@]} of ${#textList[@]} texts and ${#foundNames[@]} of ${#shortNames[@]} short names found (${#extraFound[@]} of ${#EXTRA[@]} extra names, which are no proof)"
+    echo "ok: $target has every debug op: ${#foundTexts[@]} of ${#textList[@]} texts and ${#foundNames[@]} of ${#shortNames[@]} short names found (${#extraFound[@]} of $extraCount extra names, which are no proof)"
     exit 0
 fi
 
@@ -147,4 +158,4 @@ if [[ "${#foundTexts[@]}" -gt 0 || "${#foundNames[@]}" -gt 0 || "${#extraFound[@
     [[ "${#extraFound[@]}" -eq 0 ]] || printf '  name: %s\n' "${extraFound[@]}" >&2
     exit 1
 fi
-echo "ok: $target carries none of ${#textList[@]} debug texts, ${#shortNames[@]} short names or ${#EXTRA[@]} extra names"
+echo "ok: $target carries none of ${#textList[@]} debug texts, ${#shortNames[@]} short names or $extraCount extra names"

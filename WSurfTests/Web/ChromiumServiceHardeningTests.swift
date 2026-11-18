@@ -320,6 +320,19 @@ struct ChromiumServiceHardeningTests {
     }
 
     @Test
+    func swiftPropertySymbolsAloneDoNotCountAsDebugWireNames() throws {
+        let folder = try Self.canonicalTemporaryFolder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let symbols = ["_$s6CefKit0A6RemoteO11DebugCreateO10closeFirstSSvpZMV", "16smallSourceCacheSSvpZMV", "8cpuPaintSSvpZMV"]
+        let metadata = try Self.machOCopy(in: folder, named: "swift-metadata", appending: symbols)
+        let clear = try Self.runChecker([metadata.path])
+        #expect(clear.status == 0, "\(clear.output)")
+        let withWireName = try Self.machOCopy(in: folder, named: "with-wire-name", appending: symbols + ["closeFirst"])
+        let refused = try Self.runChecker([withWireName.path])
+        #expect(refused.status == 1 && refused.output.contains("name: closeFirst"), "\(refused.output)")
+    }
+
+    @Test
     func aFailedOrIncompleteScannerCannotCertifyEitherServiceMode() throws {
         let folder = try Self.canonicalTemporaryFolder()
         defer { try? FileManager.default.removeItem(at: folder) }
