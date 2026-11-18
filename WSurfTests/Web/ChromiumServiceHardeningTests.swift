@@ -650,7 +650,7 @@ struct ChromiumServiceHardeningTests {
         // After CEF is up, a hello with a switch that is not WSurf's is refused as the first one would be (it was ok'd before).
         let bad = try client.call(Self.hello(client, switches: ["no-sandbox": nil]), timeout: Self.helloTimeout)
         #expect(!bad.bool(CefRemote.Key.success), "a second hello with a switch that is not WSurf's must be refused")
-        #expect(bad.string(CefRemote.Key.error).contains("switch"), "\(bad.string(CefRemote.Key.error))")
+        #expect(bad.string(CefRemote.Key.error).contains("not WSurf's own"), "refused for the switch itself, not only for differing: \(bad.string(CefRemote.Key.error))")
         // So is one that is allowed by itself and is not what CEF was started with: other switches, another root, another log.
         let fewer = try client.call(Self.hello(client), timeout: Self.helloTimeout)
         #expect(!fewer.bool(CefRemote.Key.success), "other switches than CEF was started with")
