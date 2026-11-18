@@ -145,6 +145,7 @@ struct ChromiumOOPAccessibilityTransportTests {
             serviceName: ChromiumRemoteClientTests.noSuchService, sink: ChromiumFrameSink(),
             root: { FileManager.default.temporaryDirectory.appending(path: "wsurf-d4-ax-\(UUID().uuidString)", directoryHint: .isDirectory) },
             latch: ChromiumOOP.Latch(), isEnabled: { true })
+        connection.accessibility.voiceOverSource = { false }
         let remote = ChromiumRemoteBrowser(page: native, connection: connection)
         remote.outgoing = { _ in true }
         native.remote = remote
@@ -327,6 +328,41 @@ struct ChromiumOOPAccessibilityTransportTests {
         #expect(after.contains { Self.name(of: $0) == "Changed after on" }, "updates after turning it on again: \(after.count) nodes")
     }
 
+    /// What D4-41's mirror depends on: a tree that is turned off and on again starts from nothing, so Chromium must send the whole tree
+    /// again with no change in the page to prompt it (a mirror that was emptied while the tree was off cannot use incremental updates).
+    @Test(.enabled(if: ChromiumServiceBundle.isPresent))
+    func turningTheTreeOffAndOnAgainSendsTheWholeTreeAgainWithNoChangeInThePage() async throws {
+        let rig = try await Self.rig()
+        defer { rig.finish() }
+        try rig.attachAccessibility()
+        try Self.open(rig, 1, "/ax")
+        #expect(try Self.enable(rig, 1, true).bool(CefRemote.Key.success))
+        #expect(rig.ax.waitEvent(CefRemote.Event.accessibilityTree) != nil)
+        let first = Self.settledCount(rig)
+        let firstNodes = Self.nodes(Self.treeUpdates(rig)).count
+        #expect(try Self.enable(rig, 1, false).bool(CefRemote.Key.success))
+        let off = Self.settledCount(rig, quiet: 1)
+        #expect(try Self.enable(rig, 1, true).bool(CefRemote.Key.success))
+        let deadline = Date().addingTimeInterval(15)
+        while Self.treeUpdates(rig).count == off, Date() < deadline {
+            usleep(50_000)
+        }
+        _ = Self.settledCount(rig)
+        let again = Self.nodes(Array(Self.treeUpdates(rig).dropFirst(off)))
+        let updates = Array(Self.treeUpdates(rig).dropFirst(off))
+        let named = again.compactMap { Self.name(of: $0) }
+        let roots = updates.compactMap { update in
+            ((try? JSONSerialization.jsonObject(with: update.data(CefRemote.Key.data))) as? [String: Any])
+                .flatMap { ($0["updates"] as? [[String: Any]])?.compactMap { $0["root_id"] as? Int }.first }
+        }
+        let before = "the first tree \(first) updates / \(firstNodes) nodes"
+        print("ChromiumOOPAccessibilityTransportTests observed: \(before); after off and on, \(updates.count) updates / \(again.count) nodes, roots \(roots), names \(named)")
+        #expect(!updates.isEmpty, "no update at all after turning it on again")
+        #expect(again.count >= firstNodes, "the whole tree again: \(again.count) nodes, \(firstNodes) the first time")
+        #expect(named.contains("Press") && again.contains { $0["role"] as? String == "heading" }, "the page's own nodes: \(named)")
+        #expect(!roots.isEmpty, "an update that names the root")
+    }
+
     @Test(.enabled(if: ChromiumServiceBundle.isPresent))
     func anAccessibilityHelloBeforeTheControlHelloIsRefusedAndSoIsOneFromTheControlConnection() async throws {
         // A hello that failed (a root that is not canonical) leaves a control connection behind: it must not be a host either.
@@ -389,6 +425,8 @@ struct ChromiumOOPAccessibilityTransportTests {
         let remote = ChromiumRemote(
             sink: ChromiumFrameSink(), root: { canonical }, helloTimeout: Self.helloTimeout,
             clock: { ProcessInfo.processInfo.systemUptime }, latch: ChromiumOOP.Latch(), isEnabled: { true })
+        // What the person's VoiceOver does must not decide a test (`NSWorkspace.isVoiceOverEnabled` is the real one's source).
+        remote.accessibility.voiceOverSource = { false }
         if let grace {
             remote.accessibility.policy = CefRemoteAccessibilityPolicy(graceSeconds: grace)
         }
@@ -476,7 +514,7 @@ struct ChromiumOOPAccessibilityTransportTests {
         #expect(arrived, "no update: wanted \(remote.accessibility.wantsTree), attached \(remote.accessibility.isAttached)")
         let state = try #require(remote.browserAccessibility(id))
         #expect(state.nodesReceived >= 2000, "the first updates carry the page: \(state.nodesReceived) nodes in \(state.treeUpdates) updates")
-        #expect(state.latestTree?.treeID.isEmpty == false)
+        #expect(state.mirror.nodeCount >= 2000, "the updates were applied to the browser's mirror: \(state.mirror.nodeCount) nodes")
         #expect(state.largestTreeBytes > 100_000, "a big first update: \(state.largestTreeBytes) bytes")
         let statistics = remote.accessibility.decoder.statistics
         #expect(statistics.decoded >= 1)

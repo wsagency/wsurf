@@ -56,6 +56,8 @@ final class ChromiumRemoteBrowser: ChromiumRemoteBrowserHandle {
     private(set) var pageLayer: CALayer?
     /// The view over the page that takes its keyboard, pointer and text input (D4-11): made with this browser, gone with it.
     var contentView: ChromiumRemoteContentView?
+    /// What the content view's accessibility reads (D4-41, `ChromiumRemoteContentView+Accessibility`): made with the first query.
+    var accessibilityHost: ChromiumRemoteAccessibilityHost?
     /// What the service was last told: its view size in points, the backing scale, the screen's size, and whether the browser is
     /// hidden or parked. A new browser is shown at the size it was created with.
     var sentSize = CGSize.zero
@@ -105,6 +107,7 @@ final class ChromiumRemoteBrowser: ChromiumRemoteBrowserHandle {
         let focusedIn = contentView.flatMap { $0.window?.firstResponder === $0 ? $0.window : nil }
         contentView?.removeFromSuperview()
         contentView = nil
+        accessibilityHost = nil
         if let focusedIn, let owner = page?.owner {
             focusedIn.makeFirstResponder(owner)
         }
@@ -168,7 +171,8 @@ final class ChromiumRemoteBrowser: ChromiumRemoteBrowserHandle {
     func markCreated() {
         guard !isCreated, !isClosed else { return }
         isCreated = true
-        connection.accessibilityBrowserCreated(id)
+        connection.accessibilityBrowserCreated(id, shown: !sentHidden && !sentParked)
+        connection.browserAccessibility(id)?.onTreeChanged = { [weak self] in self?.contentView?.accessibilityTreeChanged() }
         let waiting = held
         held.removeAll()
         for message in waiting {

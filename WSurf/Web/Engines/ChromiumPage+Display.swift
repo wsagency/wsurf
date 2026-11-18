@@ -196,5 +196,7 @@ extension ChromiumPage {
             $0.set(CefRemote.Key.hidden, visibility.hidden)
             $0.set(CefRemote.Key.parked, visibility.parked)
         }
+        // After the visibility, so that the service turns the tree on for a page that is already shown again, and off after it hid.
+        remote.connection.accessibilityVisibilityChanged(remote.id, shown: !visibility.hidden && !visibility.parked)
     }
 }
