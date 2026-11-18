@@ -184,6 +184,19 @@ struct ChromiumOOPPageTests {
         await rig.end()
     }
 
+    /// A load WSurf started that the service has not begun reports no end after Stop; the page must not stay loading, or the tab's
+    /// next Reload takes it for stuck and restarts it.
+    @Test func stoppingALoadTheServiceHasNotBegunEndsItsLoading() async {
+        let rig = makeRig()
+        _ = rig.native.load(URLRequest(url: URL(string: "http://127.0.0.1/c")!))
+        #expect(rig.page.isLoading)
+        rig.native.stopLoading()
+        #expect(!rig.page.isLoading)
+        #expect(rig.page.estimatedProgress == 1)
+        #expect(rig.recorder.ops.last == CefRemote.Op.stop)
+        await rig.end()
+    }
+
     @Test func messagesSentBeforeTheBrowserExistsWaitInOrderAndGoRightAfterIt() async {
         let rig = makeRig(created: false)
         rig.native.setAudioMuted(true)

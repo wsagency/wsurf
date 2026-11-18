@@ -164,6 +164,43 @@ struct ChromiumHistoryRestoreTests {
         })
     }
 
+    // MARK: Stop, then Reload
+
+    /// A restored list survives Stop then Reload. A load WSurf starts that Chromium has not begun used to stay loading after Stop, so
+    /// the Reload restarted the page (`BrowserTab.reload`): the list on screen became the current entry alone, and the next save
+    /// wrote a tab with nothing to go back to over the saved list (`savedHistory` is nil for it).
+    @Test func reloadAfterStoppingAnUnstartedLoadKeepsARestoredListAndItsSavedCopy() async throws {
+        try await withRig { rig, log in
+            let data = try state(back: [try rig.server.url("/a"), try rig.server.url("/b")], forward: [])
+            let (tab, _) = try await wake(at: "/c", from: data, in: rig, log: log)
+            try #require(await settles(tab, at: "/c", back: ["/a", "/b"], forward: []), "\(lists(tab))")
+            let before = tab.page
+
+            tab.load(try rig.server.url("/d"), byPerson: true)
+            tab.stopLoading()
+            let ended = await waitUntil(timeout: .seconds(3)) { !tab.page.isLoading }
+            #expect(ended, "the page still reports loading after Stop")
+            tab.reload(byPerson: true)
+            #expect(tab.page === before, "Reload after Stop restarted the page")
+            _ = await tab.waitForPendingNavigation()
+            let settled = await waitUntil(timeout: .seconds(30)) { tab.page.url != nil && !tab.page.isLoading }
+            try #require(settled)
+
+            // The current entry may end as C (reloaded in place) or D (the stopped address, loaded again): neither is asserted.
+            let list = tab.page.backForwardList
+            let paths = list.backList.map(\.url.path) + [list.currentItem?.url.path].compactMap { $0 }
+            #expect(paths.starts(with: ["/a", "/b", "/c"]), "\(lists(tab))")
+
+            // What the next session save writes: the tab's state read afresh.
+            tab.invalidateSessionState()
+            let saved = try #require(tab.sessionState, "nothing to save: the restored list is gone")
+            let object = try #require(try JSONSerialization.jsonObject(with: saved) as? [String: Any])
+            let chromium = try #require(object["chromium"] as? [String: [[String: Any]]])
+            let back = (chromium["back"] ?? []).compactMap { ($0["url"] as? String).flatMap(URL.init(string:))?.path }
+            #expect(back.starts(with: ["/a", "/b"]), "saved back list \(back)")
+        }
+    }
+
     // MARK: Wake
 
     @Test func aWokenTabLoadsOnlyItsCurrentEntryAndKeepsItsLists() async throws {
