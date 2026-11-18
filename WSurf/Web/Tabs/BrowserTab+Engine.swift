@@ -10,6 +10,8 @@ import WebKit
 extension BrowserTab {
     @discardableResult
     func retire(_ outgoing: BrowserPage) -> Task<Void, Never> {
+        coverHold?.cancel()
+        coverHold = nil
         releaseCurrentDevelopment(reason: .engineReplaced)
         onPageRetired?(outgoing)
         retirementGeneration &+= 1

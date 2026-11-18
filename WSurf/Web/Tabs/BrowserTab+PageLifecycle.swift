@@ -809,8 +809,8 @@ extension BrowserTab {
     }
 
     private func awaitPresentation() {
-        guard page.window != nil else { return }
-        guard let native = page.webKit else {
+        guard let view = liveView, view.window != nil else { return }
+        guard let native = view.webKit else {
             uncover()
             return
         }
@@ -824,9 +824,9 @@ extension BrowserTab {
             uncover()
             return
         }
-        let done: @convention(block) () -> Void = { [weak self] in
+        let done: @convention(block) () -> Void = { [weak self, weak view] in
             MainActor.assumeIsolated {
-                guard let self else { return }
+                guard let self, let view, self.liveView === view else { return }
                 if self.isArmingPresentation {
                     self.uncover()
                 } else {
@@ -847,8 +847,8 @@ extension BrowserTab {
     }
 
     func didPresentContent() {
-        guard !hasPresentedContent else { return }
-        guard presentedFrameWouldFlash else {
+        guard !hasPresentedContent, let view = liveView else { return }
+        guard presentedFrameWouldFlash(view) else {
             uncover()
             return
         }
@@ -863,19 +863,19 @@ extension BrowserTab {
     }
 
     private func uncover() {
-        guard !hasPresentedContent else { return }
+        guard !hasPresentedContent, let view = liveView else { return }
         coverHold?.cancel()
         coverHold = nil
         hasPresentedContent = true
-        refreshCanvas(from: page)
+        refreshCanvas(from: view)
         // A Chromium tab that has just been brought back or shown takes its band capture after it has settled.
-        refreshPageColor(from: page, onShow: true)
+        refreshPageColor(from: view, onShow: true)
     }
 
-    private var presentedFrameWouldFlash: Bool {
+    private func presentedFrameWouldFlash(_ view: BrowserPage) -> Bool {
         Self.wouldFlash(
-            painting: page.underPageBackgroundColor,
-            inDark: page.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+            painting: view.underPageBackgroundColor,
+            inDark: view.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
         )
     }
 }

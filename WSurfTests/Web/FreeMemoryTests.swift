@@ -4,6 +4,7 @@
 import AppKit
 import Foundation
 import Testing
+import WebKit
 
 @testable import WSurf
 
@@ -142,6 +143,115 @@ struct FreeMemoryTests {
 
         model.activate(pinned)
         #expect(!pinned.isDeferred)
+    }
+
+    // MARK: - Late presentation
+
+    @Test(.boundedWebViews)
+    func aLatePresentationDoesNotBringBackAnUnloadedPage() async {
+        let tab = BrowserTab(adopting: WKWebView(frame: .zero, configuration: WebViewPool.makeConfiguration()))
+        tab.urlString = "https://example.test/background"
+        defer { tab.detach() }
+
+        tab.unloadUntilShown()
+        await tab.waitForRetirement()
+        #expect(!tab.isMaterialised)
+
+        tab.didPresentContent()
+
+        #expect(!tab.isMaterialised)
+        #expect(!tab.hasPresentedContent)
+        #expect(tab.isDeferred)
+    }
+
+    @Test(.boundedWebViews, arguments: [false, true])
+    func unloadingCancelsThePresentationDeadline(replace: Bool) async throws {
+        let tab = BrowserTab(adopting: WKWebView(frame: .zero, configuration: WebViewPool.makeConfiguration()))
+        let page = tab.page
+        tab.urlString = "https://example.test/background"
+        defer { tab.detach() }
+        let clock = TestClock()
+        tab.presentationClock = clock
+        page.appearance = NSAppearance(named: .darkAqua)
+        page.underPageBackgroundColor = .white
+        tab.didPresentContent()
+        let hold = try #require(tab.coverHold)
+        try #require(await waitUntil { clock.pendingCount == 1 })
+
+        tab.unloadUntilShown()
+        await tab.waitForRetirement()
+
+        #expect(hold.isCancelled)
+        #expect(tab.coverHold == nil)
+        if replace {
+            let view = WKWebView(frame: .zero, configuration: WebViewPool.makeConfiguration())
+            tab.adopt(BrowserPage(webKit: view, context: tab.context))
+        }
+        clock.advance(by: BrowserTab.coverCeiling)
+        await hold.value
+        #expect(tab.isMaterialised == replace)
+        #expect(!tab.hasPresentedContent)
+        #expect(tab.isDeferred)
+    }
+
+    private final class DelayedPresentationView: WKWebView {
+        var presentation: (() -> Void)?
+
+        override nonisolated func value(forKey key: String) -> Any? {
+            key == "_webProcessIdentifier" ? NSNumber(value: 1) : super.value(forKey: key)
+        }
+
+        @objc(_doAfterNextPresentationUpdate:)
+        func schedulePresentation(_ completion: @escaping () -> Void) {
+            presentation = completion
+        }
+    }
+
+    @Test(.boundedWebViews, arguments: [false, true])
+    func aRetiredPagesPresentationCannotUncoverItsReplacement(replace: Bool) async throws {
+        let view = DelayedPresentationView(frame: .zero, configuration: WebViewPool.makeConfiguration())
+        let tab = BrowserTab(adopting: view)
+        let oldPage = tab.page
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 400, height: 300),
+            styleMask: .borderless, backing: .buffered, defer: false
+        )
+        window.isReleasedWhenClosed = false
+        defer {
+            tab.detach()
+            window.close()
+        }
+        window.contentView = oldPage
+        tab.urlString = "https://example.test/background"
+        tab.coverUntilPresented()
+        let oldPresentation = try #require(view.presentation)
+
+        tab.unloadUntilShown()
+        await tab.waitForRetirement()
+        #expect(!tab.isMaterialised)
+        if replace {
+            let replacement = DelayedPresentationView(frame: .zero, configuration: WebViewPool.makeConfiguration())
+            let page = BrowserPage(webKit: replacement, context: tab.context)
+            tab.adopt(page)
+            window.contentView = page
+            page.appearance = NSAppearance(named: .aqua)
+            page.underPageBackgroundColor = .white
+            tab.coverUntilPresented()
+            let presentation = try #require(replacement.presentation)
+
+            oldPresentation()
+            #expect(!tab.hasPresentedContent)
+            #expect(tab.liveView === page)
+
+            presentation()
+            #expect(tab.hasPresentedContent)
+        } else {
+            oldPresentation()
+            #expect(!tab.isMaterialised)
+            #expect(!tab.hasPresentedContent)
+            #expect(tab.isDeferred)
+        }
+        withExtendedLifetime(oldPage) {}
     }
 
     // MARK: - Both engines
