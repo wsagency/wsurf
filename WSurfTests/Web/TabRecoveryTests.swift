@@ -213,7 +213,8 @@ struct TabRecoveryTests {
         let tab = try await rig.open("/a")
         let b = try rig.server.url("/b")
         tab.load(b)
-        try #require(await waitUntil { tab.page.url == b && !tab.page.isLoading })
+        let loaded = await waitUntil { tab.page.url == b && !tab.page.isLoading }
+        try #require(loaded)
         return (tab, tab.page)
     }
 
@@ -223,7 +224,8 @@ struct TabRecoveryTests {
         tab.reload(byPerson: true)
         #expect(tab.page === before, "\(engine): Reload after Stop restarted the page")
         _ = await tab.waitForPendingNavigation()
-        try #require(await waitUntil { tab.page.url != nil && !tab.page.isLoading })
+        let settled = await waitUntil { tab.page.url != nil && !tab.page.isLoading }
+        try #require(settled)
         #expect(tab.page === before, "\(engine): the page was replaced while it reloaded")
         let list = tab.page.backForwardList
         let paths = list.backList.map(\.url.path) + [list.currentItem?.url.path].compactMap { $0 }
@@ -253,7 +255,11 @@ struct TabRecoveryTests {
         try await LiveWindowRig.with(engine: engine, routes: routes) { rig in
             let (tab, before) = try await openAThenBForStop(rig)
             tab.load(try rig.server.url("/slow"), byPerson: true)
-            try #require(await waitUntil(timeout: .seconds(30)) { gate.requestCount > 0 }, "\(engine): the server never saw the request")
+            let deadline = ContinuousClock.now + .seconds(30)
+            while gate.requestCount == 0 && ContinuousClock.now < deadline {
+                try await Task.sleep(for: .milliseconds(20))
+            }
+            try #require(gate.requestCount > 0, "\(engine): the server never saw the request")
             tab.stopLoading()
             let ended = await waitUntil(timeout: .seconds(3)) { !tab.page.isLoading }
             #expect(ended, "\(engine): the page still reports loading after Stop")

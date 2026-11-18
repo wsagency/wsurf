@@ -183,7 +183,8 @@ struct ChromiumHistoryRestoreTests {
             tab.reload(byPerson: true)
             #expect(tab.page === before, "Reload after Stop restarted the page")
             _ = await tab.waitForPendingNavigation()
-            try #require(await waitUntil(timeout: .seconds(30)) { tab.page.url != nil && !tab.page.isLoading })
+            let settled = await waitUntil(timeout: .seconds(30)) { tab.page.url != nil && !tab.page.isLoading }
+            try #require(settled)
 
             // The current entry may end as C (reloaded in place) or D (the stopped address, loaded again): neither is asserted.
             let list = tab.page.backForwardList
