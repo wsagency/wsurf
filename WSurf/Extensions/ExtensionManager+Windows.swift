@@ -12,7 +12,7 @@ extension ExtensionManager {
     }
 
     var focusedWindowAdapter: ExtensionWindowAdapter? {
-        windowAdapters.first { $0.nativeWindow?.isKeyWindow == true }
+        windowAdapters.first { $0.nativeWindow?.isKeyUnit == true }
     }
 
     var preferredWindowAdapter: ExtensionWindowAdapter? {

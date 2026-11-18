@@ -30,6 +30,8 @@ extension BrowserSettings {
         static let dockIcon = "appearance.dockIcon"
         static let windowStyle = "appearance.windowStyle"
         static let minimalBarEdge = "appearance.minimalBar"
+        static let minimalBarPlacement = "appearance.minimalBarPlacement"
+        static let minimalBarFloatOffset = "appearance.minimalBarFloatOffset"
         static let minimalBarAutoHide = "appearance.minimalBarAutoHide"
         static let minimalSidebarPinned = "appearance.minimalSidebarPinned"
         static let siteInMenuBar = "appearance.siteInMenuBar"

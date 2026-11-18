@@ -364,7 +364,7 @@ struct BrowserView: View {
 
     /// The find bar sits 10 pt below the page's top, or below the Minimal bar when it floats at the top.
     private func findBarTop(isMinimal: Bool, spacing: CGFloat) -> CGFloat {
-        guard isMinimal, BrowserSettings.application.minimalBarEdge == .top else { return 10 }
+        guard isMinimal, BrowserSettings.application.minimalBarEdge == .top, !coordinator.barFloats else { return 10 }
         return IslandBar.edgeGap(pageSpacing: spacing) + IslandBar.height + 10 - spacing
     }
 }

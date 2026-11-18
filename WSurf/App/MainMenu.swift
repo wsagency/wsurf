@@ -241,6 +241,7 @@ final class MainMenu: NSObject, NSMenuItemValidation {
         menu.addItem(command("Hide Sidebar", #selector(toggleSidebar), key: "s", modifiers: [.command, .control]))
         menu.addItem(command("Use Minimal Window Style", #selector(toggleWindowStyle), key: "m", modifiers: [.command, .shift]))
         menu.addItem(command("Move Bar to Top", #selector(moveMinimalBar)))
+        menu.addItem(command("Detach Toolbar", #selector(toggleToolbarDetached)))
         menu.addItem(command("Keep Sidebar Open", #selector(toggleMinimalSidebarPin)))
         menu.addItem(command(
             "Show Assistant",
@@ -486,6 +487,9 @@ final class MainMenu: NSObject, NSMenuItemValidation {
     @objc private func moveMinimalBar() {
         coordinator.moveMinimalBar()
     }
+    @objc private func toggleToolbarDetached() {
+        coordinator.toggleToolbarDetached()
+    }
     @objc private func toggleMinimalSidebarPin() {
         coordinator.toggleMinimalSidebarPin()
     }
@@ -627,7 +631,7 @@ final class MainMenu: NSObject, NSMenuItemValidation {
         #selector(splitRight), #selector(splitDown), #selector(focusOtherPane), #selector(swapPanes),
         #selector(toggleSplitAxis), #selector(exitSplit), #selector(closeOtherPanes),
         #selector(toggleSidebar), #selector(toggleWindowStyle), #selector(moveMinimalBar), #selector(toggleMinimalSidebarPin),
-        #selector(toggleAgentInspector), #selector(toggleLyrics), #selector(pinPage), #selector(returnToPin),
+        #selector(toggleToolbarDetached), #selector(toggleAgentInspector), #selector(toggleLyrics), #selector(pinPage), #selector(returnToPin),
     ]
 
     /// What still works with no browser window open.
@@ -753,7 +757,7 @@ final class MainMenu: NSObject, NSMenuItemValidation {
         case #selector(checkForUpdates):
             return coordinator.updates.canCheck
         case #selector(toggleSidebar), #selector(toggleWindowStyle), #selector(moveMinimalBar),
-             #selector(toggleMinimalSidebarPin):
+             #selector(toggleMinimalSidebarPin), #selector(toggleToolbarDetached):
             return validateWindowStyleItem(menuItem)
         case #selector(toggleAgentInspector):
             let activityTitle: LocalizedStringResource = coordinator.sidePanel.isShowing(.activity)
@@ -847,6 +851,8 @@ final class MainMenu: NSObject, NSMenuItemValidation {
             title = isMinimal ? "Use Standard Window Style" : "Use Minimal Window Style"
         case #selector(moveMinimalBar):
             title = coordinator.settings.minimalBarEdge == .top ? "Move Bar to Bottom" : "Move Bar to Top"
+        case #selector(toggleToolbarDetached):
+            title = coordinator.settings.minimalBarPlacement == .floating ? "Dock Toolbar" : "Detach Toolbar"
         case #selector(toggleMinimalSidebarPin):
             title = "Keep Sidebar Open"
             menuItem.state = coordinator.keepsMinimalSidebarOpen ? .on : .off
@@ -859,6 +865,7 @@ final class MainMenu: NSObject, NSMenuItemValidation {
         }
         menuItem.title = String(localized: title)
         let isMinimalOnly = menuItem.action == #selector(moveMinimalBar) || menuItem.action == #selector(toggleMinimalSidebarPin)
+            || menuItem.action == #selector(toggleToolbarDetached)
         return !isMinimalOnly || isMinimal
     }
 

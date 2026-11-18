@@ -145,6 +145,15 @@ struct MinimalShellTests {
         #expect(try source("WSurf/UI/Ask/AskSurfaceAppearance.swift").contains(#"engine == .webKit ? "WK" : "Cr""#))
     }
 
+    /// The detached bar is the same bar: the panel hosts `IslandBar(`, so nothing the bar carries can be missing from it, and the
+    /// window's own copy is skipped only while the bar floats (`AppCoordinator.barFloats`), never on the setting alone.
+    @Test func theDetachedBarIsTheSameBarAndTheShellSkipsItOnlyWhileItFloats() throws {
+        #expect(try source("WSurf/UI/Shell/Minimal/FloatingBarController.swift").contains("IslandBar("))
+        let shell = try source("WSurf/UI/Shell/Minimal/MinimalShell.swift")
+        #expect(shell.contains("coordinator.barFloats"))
+        #expect(shell.contains(try Regex(#"if\s+!floats\s*\{\s*IslandBar\("#)), "the window's own bar is drawn only while it does not float")
+    }
+
     // MARK: - The tab list and switching
 
     @Test func theTabListNeverChangesTheStandardSidebar() throws {

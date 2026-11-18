@@ -80,7 +80,7 @@ enum SpaceEditor {
         alert.window.initialFirstResponder = name
 
         let response: NSApplication.ModalResponse
-        if let window = NSApp.keyWindow {
+        if let window = NSApp.keyWindow?.sheetHost {
             response = await withCheckedContinuation { continuation in
                 alert.beginSheetModal(for: window) { continuation.resume(returning: $0) }
             }

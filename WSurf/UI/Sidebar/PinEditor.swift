@@ -22,7 +22,7 @@ enum PinEditor {
 
         Task {
             let response: NSApplication.ModalResponse
-            if let window = NSApp.keyWindow {
+            if let window = NSApp.keyWindow?.sheetHost {
                 alert.window.initialFirstResponder = field
                 response = await withCheckedContinuation { continuation in
                     alert.beginSheetModal(for: window) { continuation.resume(returning: $0) }

@@ -181,6 +181,9 @@
     "Credential Manager changed. Review the old list again." : {
 
     },
+    "Detach Toolbar" : {
+      "comment" : "View menu item and context-menu item of the Minimal window’s bar that turns the bar into a small panel which can be dragged out of the window. Title Case; the opposite of “Dock Toolbar”."
+    },
     "Developer" : {
       "comment" : "Name of the profile WSurf creates for developer work, and the Developer choice in the Without asking menu on a paired app’s row. Title Case."
     },
@@ -3745,6 +3748,9 @@
     },
     "WSurf stores saved details on this Mac." : {
 
+    },
+    "WSurf Toolbar" : {
+      "comment" : "VoiceOver name of the panel that holds the Minimal bar while it is detached from the window and floats over it. A noun."
     },
     "WSurf updates to preview builds, ahead of the release." : {
       "comment" : "Caption under the Update channel menu in Settings > About while Preview is chosen. Describes the chosen channel, not the other one. Must stay on one line — about 57 characters."
@@ -9136,6 +9142,9 @@
     },
     "Dock icon" : {
       "comment" : "Title of the Dock icon section in Settings › Appearance, and of its entry in Settings search. It chooses the icon the macOS Dock shows while WSurf is running. Sentence case; a noun phrase."
+    },
+    "Dock Toolbar" : {
+      "comment" : "View menu item, context-menu item, and the tooltip and VoiceOver label of the icon in the tab list’s top row, that puts the Minimal window’s detached bar back into the window. Title Case; the opposite of “Detach Toolbar”."
     },
     "Document number" : {
       "comment" : "Row label, shown beside the value, of a field of an item in the credential editor of Settings › Credentials. Sentence case. On an ID document item: the document’s number, hidden by default. Noun phrase."

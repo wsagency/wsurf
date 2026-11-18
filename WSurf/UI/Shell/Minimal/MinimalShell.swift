@@ -57,36 +57,40 @@ struct MinimalShell: View {
         let edge = settings.minimalBarEdge
         let spacing = settings.chromeShape.pageSpacing
         let gap = IslandBar.edgeGap(pageSpacing: spacing)
+        // The bar is a panel of its own: nothing here draws it, slides it or listens for the pointer at its edge.
+        let floats = coordinator.barFloats
 
         GeometryReader { proxy in
             ZStack(alignment: .leading) {
                 MinimalShellSensor(
-                    onScroll: { reveal.scrolled(towardTop: $0) },
+                    onScroll: { if !floats { reveal.scrolled(towardTop: $0) } },
                     edge: edge,
                     zoneHeight: reveal.isRevealed ? IslandBar.height + gap + 8 : MicroShell.revealBand,
-                    onPointerInZone: { reveal.pointer(inZone: $0) },
+                    onPointerInZone: { if !floats { reveal.pointer(inZone: $0) } },
                     onPointerDown: { closeTabList(unlessAt: $0, height: proxy.size.height + titleStripInset) },
                     pinsWindowControls: coordinator.isMinimalTabListOpen || isPinned
                 )
                 .allowsHitTesting(false)
 
-                PageScrollWatch(browser: browser) { reveal.scrolled(towardTop: $0) }
+                PageScrollWatch(browser: browser) { if !floats { reveal.scrolled(towardTop: $0) } }
 
                 // No toolbar to hold: the gutter above the page moves the window, like the bar's own ground.
                 WindowDragArea()
                     .frame(height: max(spacing, 6))
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
 
-                IslandBar(browser: browser, coordinator: coordinator, edge: edge) { tabButtonFrame = $0 }
-                    .frame(width: IslandBar.width(
-                        fullAddress: settings.showsFullAddress || browser.activeTab?.usesDevMode == true,
-                        available: proxy.size.width - pinnedInset - 2 * gap
-                    ))
-                    .padding(edge == .top ? .top : .bottom, gap)
-                    .offset(y: reveal.isRevealed ? 0 : (edge == .top ? -1 : 1) * (IslandBar.height + gap + 24))
-                    .allowsHitTesting(reveal.isRevealed)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: edge == .top ? .top : .bottom)
-                    .padding(.leading, pinnedInset)
+                if !floats {
+                    IslandBar(browser: browser, coordinator: coordinator, edge: edge) { tabButtonFrame = $0 }
+                        .frame(width: IslandBar.width(
+                            fullAddress: settings.showsFullAddress || browser.activeTab?.usesDevMode == true,
+                            available: proxy.size.width - pinnedInset - 2 * gap
+                        ))
+                        .padding(edge == .top ? .top : .bottom, gap)
+                        .offset(y: reveal.isRevealed ? 0 : (edge == .top ? -1 : 1) * (IslandBar.height + gap + 24))
+                        .allowsHitTesting(reveal.isRevealed)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: edge == .top ? .top : .bottom)
+                        .padding(.leading, pinnedInset)
+                }
 
                 // Kept open the list is docked, and there is nothing to peek at.
                 if PeekEdge.armsTabList(isPinned: isPinned, isTabListOpen: coordinator.isMinimalTabListOpen) {
@@ -130,6 +134,8 @@ struct MinimalShell: View {
             }
         }
         .onChange(of: edge) { _, _ in reveal.rest() }
+        // The bar's button is gone from this window, and a click beside the list must still close it.
+        .onChange(of: floats) { _, _ in tabButtonFrame = .zero }
         .onDisappear {
             reveal.stop()
             coordinator.isMinimalTabListOpen = false

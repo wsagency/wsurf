@@ -70,9 +70,8 @@ final class AppCoordinator {
     var nativeWindow: NSWindow? {
         host?.nativeWindow
     }
-    var isKeyWindow: Bool {
-        nativeWindow?.isKeyWindow == true
-    }
+    /// Set by the host's full-screen callbacks, so that `barFloats` can be read (and observed) without the window.
+    var windowIsFullScreen = false
     var isBootstrapped = false
     private(set) var isClosed = false
     let media: MediaCenter
@@ -655,6 +654,8 @@ final class AppCoordinator {
         if !browserVisible {
             showBrowser()
         }
+        // The address is in the floating toolbar's panel, which has to be key to take what is typed.
+        host?.makeFloatingBarKey()
         addressBarFocusToken += 1
     }
 
@@ -961,5 +962,19 @@ extension AppCoordinator {
         browserVisible = visible
         windowControlsInset = controlsInset
         self.titleStripInset = titleStripInset
+    }
+}
+
+extension AppCoordinator {
+    /// The window, or its floating toolbar panel, has the keyboard: the two are one unit (`FloatingBarController.isKeyUnit`).
+    var isKeyWindow: Bool {
+        host?.isKeyUnit ?? false
+    }
+
+    /// The responder that has the keyboard: the field editor of the floating bar while its panel is key, else the window's own
+    /// (the page). Whatever asks whether the person is typing asks this, never the browser window's `firstResponder` alone: that
+    /// is the page while the address is edited in the panel.
+    var keyUnitResponder: NSResponder? {
+        host?.keyResponder
     }
 }

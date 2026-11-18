@@ -32,6 +32,10 @@ extension AppCoordinator {
         if isMicro {
             window.collectionBehavior = MicroWindowMetrics.collectionBehavior(floating: floatsOnTop)
         }
+        // The Minimal bar's panel is a window of its own: at a lower level it would sit under its own floating window.
+        for case let panel as FloatingBarPanel in window.childWindows ?? [] where panel.level != window.level {
+            panel.level = window.level
+        }
     }
 
     /// The window the commands that open app pages (a new tab, the palette, Settings, History, Downloads, release notes) act

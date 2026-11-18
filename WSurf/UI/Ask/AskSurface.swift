@@ -120,6 +120,8 @@ struct AskSurface: View {
         .contentShape(RoundedRectangle(cornerRadius: model.placement.cornerRadius, style: .continuous))
         .fixedSize(horizontal: false, vertical: true)
         .frame(height: model.placement.rowHeight, alignment: opensUpward ? .bottom : .top)
+        // The floating toolbar's panel makes room for these (`FloatingBarMetrics.askHeadroom`); nothing else listens.
+        .preference(key: AskExtrasKey.self, value: !sections.isEmpty || model.pendingQuestion != nil || !contextPages.isEmpty)
         .animation(Theme.Motion.settle, value: model.isFocused)
         .animation(Theme.Motion.settle, value: model.isListening)
         .animation(Theme.Motion.drift, value: status)

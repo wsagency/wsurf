@@ -102,7 +102,7 @@ extension AppCoordinator {
         alert.showsSuppressionButton = true
         alert.suppressionButton?.title = String(localized: "Don’t ask again")
         let response: NSApplication.ModalResponse
-        if let window = nativeWindow ?? NSApp.keyWindow {
+        if let window = nativeWindow ?? NSApp.keyWindow?.sheetHost {
             response = await withCheckedContinuation { continuation in
                 alert.beginSheetModal(for: window) { continuation.resume(returning: $0) }
             }

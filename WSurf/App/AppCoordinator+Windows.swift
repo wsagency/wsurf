@@ -164,8 +164,16 @@ extension AppCoordinator {
         (application?.mainMenu ?? mainMenu)?.refreshSiteItem()
     }
 
+    /// A window that resigns key after the next window became key (the floating bar's deferred resign) must not clear the
+    /// extensions' focus, which is that window's now.
+    static func clearsExtensionFocus(activeWindowID: UUID?, resigning: UUID) -> Bool {
+        activeWindowID == nil || activeWindowID == resigning
+    }
+
     func windowDidResignKey() {
-        extensions.focus(browser: nil)
+        if Self.clearsExtensionFocus(activeWindowID: application?.activeWindowID, resigning: windowID) {
+            extensions.focus(browser: nil)
+        }
         activation.setSuspended(true)
         controlDownAt = nil
         browser.endTabSwitching()
@@ -191,6 +199,10 @@ extension AppCoordinator {
             let appearance = profiles.isPrivate ? NSAppearance(named: .darkAqua) : settings.colorMode.nsAppearance
             if nativeWindow.appearance?.name != appearance?.name {
                 nativeWindow.appearance = appearance
+            }
+            // The floating toolbar's panel is a window of its own and does not inherit the window's appearance.
+            for case let panel as FloatingBarPanel in nativeWindow.childWindows ?? [] where panel.appearance?.name != appearance?.name {
+                panel.appearance = appearance
             }
             let title = windowTitle
             if nativeWindow.title != title {

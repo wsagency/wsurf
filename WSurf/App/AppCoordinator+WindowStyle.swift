@@ -53,8 +53,29 @@ extension AppCoordinator {
         settings.windowStyle = isMinimal ? .standard : .minimal
     }
 
-    /// View › Move Bar to Top / Bottom, in the Minimal window.
+    /// The Minimal bar is a panel of its own over this window: the Minimal window style, a placement of floating, and not
+    /// full screen, where the window has room for the bar and docks it for the while. Micro windows keep their own bar. Every
+    /// decision about the panel, in the host and in the shell, reads this and never the setting alone.
+    var barFloats: Bool {
+        isMinimal && !isMicro && settings.minimalBarPlacement == .floating && !windowIsFullScreen
+    }
+
+    /// View › Move Bar to Top / Bottom, in the Minimal window. A floating bar docks to the edge it is sent to.
     func moveMinimalBar() {
         settings.minimalBarEdge = settings.minimalBarEdge == .top ? .bottom : .top
+        settings.minimalBarPlacement = .window
+    }
+
+    /// View › Detach Toolbar / Dock Toolbar, the bar's context menu and the icon in the tab list, in the Minimal window.
+    func toggleToolbarDetached() {
+        guard isMinimal else { return }
+        if !browserVisible {
+            showBrowser()
+        }
+        settings.minimalBarPlacement = settings.minimalBarPlacement == .floating ? .window : .floating
+    }
+
+    func dockToolbar() {
+        settings.minimalBarPlacement = .window
     }
 }

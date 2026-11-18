@@ -453,6 +453,17 @@ private struct SidebarTopActions: View {
                 }
                 .accessibilityLabel(Text("Keep Sidebar Open"))
                 .accessibilityAddTraits(coordinator.keepsMinimalSidebarOpen ? .isSelected : [])
+                // The bar is detached: this is the way back to the window, as the tab list is the only place it is not.
+                if coordinator.barFloats {
+                    QuietIconButton(
+                        symbol: "dock.rectangle",
+                        isOn: false,
+                        help: String(localized: "Dock Toolbar")
+                    ) {
+                        coordinator.dockToolbar()
+                    }
+                    .accessibilityLabel(Text("Dock Toolbar"))
+                }
             }
             QuietIconButton(
                 symbol: "magnifyingglass",
