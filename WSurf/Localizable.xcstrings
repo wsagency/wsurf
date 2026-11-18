@@ -2164,6 +2164,9 @@
     "Choose files, not folders." : {
 
     },
+    "Choose Files…" : {
+      "comment" : "Row in the assistant’s add menu, under the Files heading. Opens the file picker. Keep the ellipsis."
+    },
     "Choose From Menus" : {
       "comment" : "Tool name in assistant settings: picking an option in a dropdown on a web page."
     },
@@ -4909,6 +4912,9 @@
     "Reading speed" : {
 
     },
+    "Reading text in attachments…" : {
+      "comment" : "Status above the assistant composer while on-device text recognition runs on attached images. Shown only for models that can’t read images, because Send waits for it."
+    },
     "Reading this page…" : {
 
     },
@@ -5471,6 +5477,9 @@
     },
     "Search suggestions" : {
       "comment" : "Title of the row that turns on completions offered by the search engine while typing, and the same wording in the Settings search index. A noun phrase. Sentence case."
+    },
+    "Search tabs" : {
+      "comment" : "Placeholder and accessibility label of the search field in the assistant’s add menu, which lists the window’s open tabs to attach. Lowercase after the first word."
     },
     "Search Symbols" : {
       "comment" : "Placeholder and VoiceOver label of the search field in the Icon… popover of a sidebar folder; it searches SF Symbols by name and by the words they are found by. Title Case."
@@ -6272,7 +6281,7 @@
 
     },
     "Tabs" : {
-      "comment" : "Heading of the tab commands in the ⌘K command palette: new tab, close tab, reopen, pin. Title Case, plural noun."
+      "comment" : "Heading of the tab commands in the ⌘K command palette: new tab, close tab, reopen, pin. Title Case, plural noun. Also the section header over the list of open tabs in the assistant’s add menu."
     },
     "Tabs and folders" : {
       "comment" : "Something a profile keeps separately from every other profile."
@@ -7038,6 +7047,9 @@
     },
     "View downloads and their saved locations." : {
       "comment" : "Caption describing the Recent downloads list in the Settings search results. Where it was saved means which folder the file went to."
+    },
+    "View More" : {
+      "comment" : "Row at the end of the tab list in the assistant’s add menu. Shows the rest of the open tabs. Title Case."
     },
     "View the installed version and check for updates." : {
       "comment" : "Caption describing the Software update section in the Settings search results. A sentence fragment naming what the section reports."
@@ -9288,7 +9300,7 @@
       "comment" : "Brief notice above the Credentials list after the user saved a decrypted copy of a file attached to a credential. Title Case, short."
     },
     "Files" : {
-      "comment" : "Section header in the credential editor over the files attached to the credential. Also a section chip on the Vault tab and a row title in the History panel. Plural noun."
+      "comment" : "Section header in the credential editor over the files attached to the credential. Also a section chip on the Vault tab and a row title in the History panel. Plural noun. Also the section header over the Choose Files row in the assistant’s add menu."
     },
     "Files from an earlier vault were found without the store that owns them." : {
       "comment" : "One explanation under the title “Credentials can’t be opened”: files of an earlier vault exist, but the store that should own them is not there. Sentence."

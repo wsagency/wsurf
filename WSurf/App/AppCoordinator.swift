@@ -913,14 +913,12 @@ final class AppCoordinator {
         showsInChrome: Bool = true
     ) async -> Bool {
         let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        let attachmentTextOnly = !ModelImageSupport.acceptsImages(
-            for: selectedProvider, model: selectedModel, settings: modelSettings
-        )
+        let attachmentTextOnly = self.attachmentTextOnly
         guard !text.isEmpty || !attachments.isEmpty else { return false }
         do {
             try AttachmentRequest.validate(
                 attachments, message: text, textOnly: attachmentTextOnly,
-                windowTokens: ContextWindow.tokens(for: selectedProvider, model: selectedModel, settings: modelSettings),
+                windowTokens: attachmentWindowTokens,
                 imageTokens: AttachmentRequest.imageTokens(for: selectedProvider)
             )
         } catch {
@@ -945,6 +943,17 @@ final class AppCoordinator {
 }
 
 extension AppCoordinator {
+    /// Whether the selected model reads only text, by THIS window's profile settings (`modelSettings`). The composer, the
+    /// send path and the agent all ask here, so a window in a named or private profile cannot disagree with the agent
+    /// (`LLMSettings.current` is the original profile's store).
+    var attachmentTextOnly: Bool {
+        !ModelImageSupport.acceptsImages(for: selectedProvider, model: selectedModel, settings: modelSettings)
+    }
+
+    var attachmentWindowTokens: Int {
+        ContextWindow.tokens(for: selectedProvider, model: selectedModel, settings: modelSettings)
+    }
+
     /// Called about once a frame while the full-screen strip slides, so only a real change reaches the views.
     func hostDidChange(visible: Bool, controlsInset: CGFloat, titleStripInset: CGFloat) {
         guard visible != browserVisible || controlsInset != windowControlsInset || titleStripInset != self.titleStripInset

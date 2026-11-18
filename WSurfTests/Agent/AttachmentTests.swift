@@ -6,6 +6,7 @@
 import AppKit
 import CoreText
 import GRDB
+import os
 import PDFKit
 import Testing
 import UniformTypeIdentifiers
@@ -223,6 +224,120 @@ struct AttachmentTests {
         #expect(draft.files.map(\.name) == ["new.txt"])
     }
 
+    @Test func anImageAttachesBeforeItsTextIsRead() async throws {
+        let gate = AsyncStream<Void>.makeStream()
+        let draft = AttachmentDraft { _ in
+            for await _ in gate.stream {
+                break
+            }
+            return "INVOICE 42"
+        }
+        draft.add([.bytes(try image(), name: "receipt.png", type: .png)])
+
+        #expect(await waitForObservation { !draft.isImporting })
+        #expect(draft.files.count == 1)
+        #expect(draft.files.first?.images.count == 1)
+        #expect(draft.files.first?.text == "")
+        #expect(draft.isRecognizing)
+        #expect(draft.isReady(textOnly: false))
+        #expect(!draft.isReady(textOnly: true))
+
+        gate.continuation.yield()
+        #expect(await waitForObservation { !draft.isRecognizing })
+        #expect(draft.files.first?.text == "INVOICE 42")
+        #expect(draft.isReady(textOnly: true))
+    }
+
+    @Test func clearingDuringRecognitionDiscardsTheText() async throws {
+        let gate = AsyncStream<Void>.makeStream()
+        let draft = AttachmentDraft { _ in
+            for await _ in gate.stream {
+                break
+            }
+            return "Late text"
+        }
+        draft.add([.bytes(try image(), name: "receipt.png", type: .png)])
+        #expect(await waitForObservation { draft.isRecognizing })
+
+        draft.clear()
+        gate.continuation.yield()
+
+        #expect(!draft.isRecognizing)
+        #expect(draft.files.isEmpty)
+    }
+
+    @Test func removingAnImageDuringRecognitionKeepsTheOthers() async throws {
+        let gate = AsyncStream<Void>.makeStream()
+        let draft = AttachmentDraft { _ in
+            for await _ in gate.stream {
+                break
+            }
+            return "Read"
+        }
+        draft.add([
+            .bytes(try image(), name: "one.png", type: .png),
+            .bytes(try image(), name: "two.png", type: .png),
+        ])
+        #expect(await waitForObservation { draft.files.count == 2 })
+
+        draft.files.removeAll { $0.name == "one.png" }
+        gate.continuation.yield()
+        gate.continuation.yield()
+
+        #expect(await waitForObservation { !draft.isRecognizing })
+        #expect(draft.files.map(\.name) == ["two.png"])
+        #expect(draft.files.first?.text == "Read")
+    }
+
+    /// WSurf difference from Linen: a file removed, or a draft cleared, while its text is being read stops that
+    /// reading, and Send is no longer held back for it by a model that reads only text.
+    @Test func removingAnImageWhileItsTextIsReadCancelsTheReading() async throws {
+        let probe = ReadingProbe()
+        let draft = AttachmentDraft { _ in await probe.read() }
+        draft.add([.bytes(try image(), name: "receipt.png", type: .png)])
+        #expect(await waitUntil { probe.started })
+        #expect(draft.isRecognizing)
+        #expect(!draft.isReady(textOnly: true))
+
+        draft.files.removeAll { $0.name == "receipt.png" }
+
+        #expect(!draft.isRecognizing)
+        #expect(draft.isReady(textOnly: true))
+        #expect(await waitUntil { probe.cancelled == true })
+        #expect(draft.files.isEmpty)
+    }
+
+    @Test func clearingTheDraftWhileItsTextIsReadCancelsTheReading() async throws {
+        let probe = ReadingProbe()
+        let draft = AttachmentDraft { _ in await probe.read() }
+        draft.add([.bytes(try image(), name: "receipt.png", type: .png)])
+        #expect(await waitUntil { probe.started })
+
+        draft.clear()
+
+        #expect(draft.isReady(textOnly: true))
+        #expect(await waitUntil { probe.cancelled == true })
+    }
+
+    @Test func aDraftWithoutTextReportsThatItNeedsRecognition() throws {
+        let image = try AttachmentImporter.draft(data: try image(), name: "receipt.png", type: .png)
+        #expect(image.needsRecognition)
+        #expect(image.file.text.isEmpty)
+        #expect(image.file.images.count == 1)
+
+        let notes = try AttachmentImporter.draft(data: Data("Hello".utf8), name: "notes.md")
+        #expect(!notes.needsRecognition)
+        #expect(notes.file.text == "Hello")
+    }
+
+    @Test func thePreviewTakesTheShapeOfTheImage() {
+        #expect(AttachmentPreviewLayout.fitted(CGSize(width: 1_600, height: 1_000)) == CGSize(width: 900, height: 563))
+        #expect(AttachmentPreviewLayout.fitted(CGSize(width: 800, height: 1_600)) == CGSize(width: 360, height: 640))
+        #expect(AttachmentPreviewLayout.fitted(CGSize(width: 500, height: 400)) == CGSize(width: 500, height: 400))
+        #expect(AttachmentPreviewLayout.fitted(CGSize(width: 100, height: 40)) == CGSize(width: 360, height: 200))
+        #expect(AttachmentPreviewLayout.fitted(.zero) == AttachmentPreviewLayout.document)
+    }
+
     private func image() throws -> Data {
         let image = NSImage(size: NSSize(width: 600, height: 160))
         image.lockFocus()
@@ -256,5 +371,28 @@ struct AttachmentTests {
         }
         context.closePDF()
         return data as Data
+    }
+}
+
+/// A text reading that stays open until its task is cancelled, and says whether it was.
+nonisolated private final class ReadingProbe: @unchecked Sendable {
+    private let gate = AsyncStream<Void>.makeStream()
+    private let state = OSAllocatedUnfairLock(initialState: (started: false, cancelled: Bool?.none))
+
+    var started: Bool {
+        state.withLock { $0.started }
+    }
+
+    var cancelled: Bool? {
+        state.withLock { $0.cancelled }
+    }
+
+    func read() async -> String {
+        state.withLock { $0.started = true }
+        for await _ in gate.stream {
+            break
+        }
+        state.withLock { $0.cancelled = Task.isCancelled }
+        return "Late text"
     }
 }
