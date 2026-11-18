@@ -116,7 +116,7 @@ nonisolated final class ChromiumAccessibilityElement: NSAccessibilityElement, @u
     }
 
     override func accessibilityPerformPress() -> Bool {
-        let (mirror, key, host) = (mirror, key, host)
+        let (mirror, key, host, generation) = (mirror, key, host, generation)
         return MainActor.assumeIsolated {
             guard let mirror, let host else { return false }
             return host.press(key, in: mirror, generation: generation)
