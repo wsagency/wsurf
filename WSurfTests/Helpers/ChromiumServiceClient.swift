@@ -50,6 +50,7 @@ nonisolated final class ChromiumServiceClient: @unchecked Sendable {
         var firstReplyNoted = false
         /// `XPC_ERROR_CONNECTION_INTERRUPTED` events: the instance this connection talked to ended (exited or crashed).
         var interruptions = 0
+        var connectionEnded = false
         var events: [(op: String, message: CefRemoteMessage)] = []
     }
 
@@ -57,6 +58,10 @@ nonisolated final class ChromiumServiceClient: @unchecked Sendable {
     /// this client talks to; after that only that instance may answer `stats` (a relaunched one would answer 0 and look healthy).
     var pid: pid_t? {
         state.withLock { $0.pid }
+    }
+
+    var hasEndedConnection: Bool {
+        state.withLock { $0.connectionEnded }
     }
 
     var questionsAsked: Int {
@@ -97,7 +102,14 @@ nonisolated final class ChromiumServiceClient: @unchecked Sendable {
     /// service waits for; a host that "never answers" leaves it unanswered.
     private func handle(_ event: xpc_object_t) {
         if event === XPC_ERROR_CONNECTION_INTERRUPTED {
-            state.withLock { $0.interruptions += 1 }
+            state.withLock {
+                $0.interruptions += 1
+                $0.connectionEnded = true
+            }
+            return
+        }
+        if event === XPC_ERROR_CONNECTION_INVALID {
+            state.withLock { $0.connectionEnded = true }
             return
         }
         guard let message = CefRemoteMessage(wrapping: event) else { return }

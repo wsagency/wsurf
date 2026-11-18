@@ -37,7 +37,7 @@ extension ChromiumServiceHardeningTests {
     }
 
     @Test(.enabled(if: ChromiumServiceBundle.isPresent))
-    func onlyInputAndControlConnectionsCanSendInputAndClosingControlEndsThem() throws {
+    func onlyInputAndControlConnectionsCanSendInputAndClosingControlEndsThem() async throws {
         let host = try ChromiumServiceClient()
         host.hostAnswersQuestions = true
         defer { host.finish() }
@@ -70,22 +70,11 @@ extension ChromiumServiceHardeningTests {
         #expect(try Self.inputCount(on: input) == Int64(Self.inputOps.count * 2))
 
         let pid = try #require(host.pid)
+        let attached = Array(peers.dropFirst())
+        try #require(attached.allSatisfy { !$0.hasEndedConnection })
         host.close()
+        // Observe the transport's actual errors; another request on an interrupted connection could relaunch the service.
+        #expect(await waitUntil(timeout: .seconds(3)) { attached.allSatisfy(\.hasEndedConnection) })
         try #require(ChromiumServiceClient.secondsUntilGone(pid, within: 8) != nil)
-        for peer in peers.dropFirst() {
-            Self.sendInputBatch(on: peer)
-            // A closed channel must fail, rather than return zero-valued statistics for a missing browser.
-            do {
-                _ = try peer.call(CefRemoteMessage(CefRemote.Op.debugStats, browser: 1), timeout: 1)
-                Issue.record("a side connection still answered after its control connection and service ended")
-            } catch let error as ChromiumServiceClient.Failure {
-                switch error {
-                case .connection, .serviceEnded:
-                    break
-                case .noAnswer, .setup:
-                    throw error
-                }
-            }
-        }
     }
 }
