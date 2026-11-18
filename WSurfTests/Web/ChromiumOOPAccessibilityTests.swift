@@ -92,11 +92,28 @@ struct ChromiumOOPAccessibilityTests {
         }
 
         func end() async {
-            window.contentView = nil
-            window.close()
+            await Self.close(window)
             connection.disconnect()
             await page.close()
             await context.endPrivateSession()
+            await Self.settle()
+        }
+
+        /// Takes a window away so that nothing of it is left running: a closing window animates (an `NSAnimation` thread of its own),
+        /// and this suite runs just before the first in-process Chromium load of its serial part. That load installs CEF's allocator
+        /// hooks, and run3 of this PR crashed in the free of a dispatch block while it did, with two such animation threads alive
+        /// (`$P/pr152-review/run3-E2-crash`). So the windows here do not animate, and the next test starts after the close is done.
+        static func close(_ window: NSWindow) async {
+            window.contentView = nil
+            window.orderOut(nil)
+            window.close()
+        }
+
+        /// A few turns of the main run loop with nothing queued behind the test: blocks it left on the main queue run now.
+        static func settle() async {
+            for _ in 0..<3 {
+                try? await Task.sleep(for: .milliseconds(20))
+            }
         }
     }
 
@@ -118,6 +135,7 @@ struct ChromiumOOPAccessibilityTests {
         remote.markCreated()
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1000, height: 600), styleMask: .borderless, backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
+        window.animationBehavior = .none
         window.contentView = page
         window.orderBack(nil)
         native.attachRemoteFrameLayer(to: remote)
@@ -423,6 +441,7 @@ struct ChromiumOOPAccessibilityTests {
             page = BrowserPage(chromium: native)
             window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 800, height: 600), styleMask: .borderless, backing: .buffered, defer: false)
             window.isReleasedWhenClosed = false
+            window.animationBehavior = .none
             window.contentView = page
             window.orderBack(nil)
             page.onContentProcessTerminated = { [weak page] in
@@ -453,13 +472,13 @@ struct ChromiumOOPAccessibilityTests {
 
         func finish() async {
             page.onContentProcessTerminated = nil
-            window.contentView = nil
-            window.close()
+            await Rig.close(window)
             await page.close()
             await context.endPrivateSession()
             connection.disconnect()
             let gone = await waitUntil(timeout: .seconds(10)) { kill(pid, 0) == -1 && errno == ESRCH }
             #expect(gone, "the service \(pid) did not leave after its connection closed")
+            await Rig.settle()
         }
     }
 
