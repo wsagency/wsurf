@@ -134,6 +134,42 @@ struct OnboardingModelTests {
         #expect(settings.windowStyle == .standard)
     }
 
+    @Test func setAsDefaultIsOfferedUntilWSurfIsTheDefaultBrowser() async {
+        let (defaults, suite) = makeDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+        var isDefault = false
+        var requests = 0
+        let model = OnboardingModel(
+            defaults: defaults,
+            defaultBrowserCheck: { isDefault },
+            defaultBrowserRequest: {
+                requests += 1
+                return .answered
+            }
+        )
+
+        #expect(!model.isDefaultBrowser)
+        #expect(model.canRequestDefaultBrowser)
+
+        isDefault = true
+        #expect(model.canRequestDefaultBrowser, "Nothing is read before the screen asks")
+        model.refreshDefaultBrowser()
+        #expect(model.isDefaultBrowser)
+        #expect(!model.canRequestDefaultBrowser)
+        // Disabled means disabled: a request now must never reach the system.
+        model.requestDefaultBrowser()
+        for _ in 0..<5 {
+            await Task.yield()
+        }
+        #expect(requests == 0)
+
+        isDefault = false
+        model.refreshDefaultBrowser()
+        #expect(model.canRequestDefaultBrowser)
+        model.requestDefaultBrowser()
+        #expect(await waitUntil { requests == 1 })
+    }
+
     private func makeDefaults() -> (UserDefaults, String) {
         let suite = AppDatabase.defaultsSuite("WSurf.OnboardingModelTests.\(UUID().uuidString)")
         let defaults = UserDefaults(suiteName: suite)!
