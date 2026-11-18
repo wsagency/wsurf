@@ -15,9 +15,9 @@
 #       prints what is looked for (tests compare it with the sources).
 #
 # What is looked for, and why two kinds of evidence (measured on the service, review M1 of PR #153):
-# 1. TEXTS. `strings` sees only text that is kept in the file's string table, and a Swift string literal of 15 bytes or fewer is
-#    not: it is built from immediates in the code. So every debug op and creation flag logs one text of 16 bytes or more from its
-#    handler (`DebugOps.swift`), and those texts are what `strings` looks for. They are read from that file, the one place.
+# 1. TEXTS. A Swift string literal of 15 bytes or fewer is not kept as text in the file: it is built from immediates in the code,
+#    which a search for text cannot see. So every debug op and creation flag logs one text of 16 bytes or more from its
+#    handler (`DebugOps.swift`), and those texts are what is searched for, in the bytes of the file. They are read from that file, the one place.
 # 2. SHORT NAMES. A wire name of 8 to 15 bytes (`debug.stats`, `closeFirst`) is compared as immediates in the code
 #    (`mov`/`movk` of 16 bits each), which `strings` cannot see (`Tools/check-service-immediates.py`). The names are read from CefKit's `@_alwaysEmitIntoClient` debug
 #    names (`CefRemoteProtocol.swift`), and the disassembly (`otool -tV`, arm64) is searched for the run of immediates that builds
@@ -79,12 +79,18 @@ for text in "${textList[@]}"; do
     [[ "${#text}" -ge 16 ]] || { echo "error: the debug text \"$text\" in DebugOps.swift is shorter than 16 bytes: strings cannot see it" >&2; exit 2; }
 done
 
-# 1. texts, from the file's string table.
-contents=$(/usr/bin/strings -a "$target")
+# The file must be a Mach-O program (thin or universal): anything else cannot be judged, and a file that is not one would pass.
+magic=$(/usr/bin/head -c 4 "$target" | /usr/bin/xxd -p)
+case "$magic" in
+    cffaedfe|feedfacf|cafebabe|bebafeca) ;;
+    *) echo "error: $target is not a Mach-O program" >&2; exit 2 ;;
+esac
+
+# 1. texts, anywhere in the file's bytes (not only where `strings` looks: it skips bytes that no section covers).
 foundTexts=()
 missingTexts=()
 for text in "${textList[@]}"; do
-    if grep -q -F -- "$text" <<<"$contents"; then foundTexts+=("$text"); else missingTexts+=("$text"); fi
+    if LC_ALL=C /usr/bin/grep -a -q -F -- "$text" "$target"; then foundTexts+=("$text"); else missingTexts+=("$text"); fi
 done
 
 # 2. short names, from the code: the immediates a name is built from, in a run of instructions.
@@ -103,9 +109,8 @@ if [[ "${#shortNames[@]}" -gt 0 ]]; then
 fi
 
 extraFound=()
-symbols=$(/usr/bin/nm -a "$target" 2>/dev/null || true)
 for extra in "${EXTRA[@]}"; do
-    if grep -q -F -- "$extra" <<<"$contents" || grep -q -F -- "$extra" <<<"$symbols"; then extraFound+=("$extra"); fi
+    if LC_ALL=C /usr/bin/grep -a -q -F -- "$extra" "$target"; then extraFound+=("$extra"); fi
 done
 
 if [[ -n "$expectDebug" ]]; then
