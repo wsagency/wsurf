@@ -309,12 +309,7 @@ extension VaultSync {
             engine?.add([.saveRecord(failure.id)])
             return false
         case .quotaExceeded:
-            if row.status == .active {
-                var next = row
-                next.status = .iCloudFull
-                try? database.write { try $0.save(next) }
-                refresh(key)
-            }
+            markICloudFull(key, database: database, row: row)
             return false
         case .other:
             SyncLog.logger.error("sync: a vault record save failed; the next heartbeat tries again")
@@ -335,14 +330,7 @@ extension VaultSync {
     /// tries. After that the vault stays active with its upload pending, and the next heartbeat clears the counts and tries again. A zone
     /// that never existed was not removed, so nothing here reports a removal.
     private func zoneMissing(_ id: SyncRecordID, key: VaultKey, database: VaultSyncDatabase, row: VaultRow) {
-        // A read that fails counts as "stored": the answer that stays on today's side, which is removal.
-        let serverFields: Bool
-        do {
-            serverFields = try database.read { try $0.systemFields(key.vaultID, Self.vaultRecordName) } != nil
-        } catch {
-            serverFields = true
-        }
-        guard row.uploadedMark == nil, row.pendingVault != nil, !serverFields else {
+        guard firstUploadPending(key, database: database, row: row) else {
             zoneRemoved(id.zone, reason: .deleted)
             return
         }
@@ -387,6 +375,24 @@ extension VaultSync {
         row.status = .removalFailed
         try? database.write { try $0.save(row) }
         refresh(key)
+    }
+
+    /// The account's iCloud storage is full: the vault says so until a save goes through (`confirmVaultRecord`, `confirmItems`).
+    private func markICloudFull(_ key: VaultKey, database: VaultSyncDatabase, row: VaultRow) {
+        guard row.status == .active else { return }
+        var next = row
+        next.status = .iCloudFull
+        try? database.write { try $0.save(next) }
+        refresh(key)
+    }
+
+    /// The engine could not create the vault's zone because iCloud is full. The records then only find their zone missing, so without
+    /// this the vault would wait on "Sending changes to iCloud…" with nothing for the person to act on.
+    func zoneSaveOverQuota(_ zone: String) {
+        guard let ids = SyncZone.vaultIDs(zone), !excluded.contains(ids.profileID) else { return }
+        let key = VaultKey(ids)
+        guard let (database, row) = enabledRow(key) else { return }
+        markICloudFull(key, database: database, row: row)
     }
 
     /// Ends this Mac's syncing of the vault with `status` as the reason, and drops everything it kept for it.

@@ -451,6 +451,84 @@ struct VaultSyncEdgeTests {
         #expect(Set(va.accounts.keys) == Set(held.map(\.id)))
     }
 
+    @Test func anEditAfterTheLimitAsksForTheZoneAtMostThreeTimesMore() async throws {
+        let rig = Rig()
+        defer { rig.finish() }
+        let all = syncAccounts(3)
+        let (a, va) = try rig.mac(holding: Array(all.prefix(2)))
+        a.engine.losesZoneSaves = 100
+        try await a.sync.enable(profileID: rig.profile, vaultID: rig.vaultID)
+        try await a.pump()
+        #expect(a.engine.losesZoneSaves == 96)
+
+        // The `Vault` record is at its limit. A new entry asks for the zone itself, three times, and then waits like the others.
+        va.add(all[2])
+        await a.wrote(va)
+        try await a.pump()
+
+        #expect(a.engine.losesZoneSaves == 93)
+        #expect(a.engine.saveAttempts[all[2].id.uuidString] == 4)
+        #expect(a.engine.saveAttempts[VaultSync.vaultRecordName] == 4, "the Vault record asked no more than its four times")
+        #expect(a.engine.pending.isEmpty && isSending(rig.status(a)))
+        #expect(Set(va.accounts.keys) == Set(all.map(\.id)))
+    }
+
+    @Test func theHeartbeatMakesNoZoneForAVaultWhoseServerFieldsAreStored() async throws {
+        let rig = Rig()
+        defer { rig.finish() }
+        let held = syncAccounts(1)
+        let (a, va) = try rig.mac(holding: held)
+        try await a.sync.enable(profileID: rig.profile, vaultID: rig.vaultID)
+
+        // Another Mac enabled the vault at the same moment: its record is on the server, and this Mac's first save was turned down.
+        let id = SyncRecordID(zone: rig.zone, name: VaultSync.vaultRecordName)
+        let theirs = SyncRecord(id: id, type: .vault, schema: 1, payload: Data("theirs".utf8), systemFields: FakeSyncCloud.fields(for: 1))
+        await a.sync.handle(.sent(saved: [], deleted: [], failed: [SyncFailedSave(id: id, failure: .serverRecordChanged(theirs))]))
+        await a.sync.settle()
+        // The zone is made and the entries land, but the `Vault` record is turned down for another reason: it is still waiting.
+        a.engine.refusesVaultRecord = true
+        try await a.pump()
+        #expect(rig.cloud.zones[rig.zone] != nil && rig.item(held[0]) != nil)
+        #expect(a.engine.pending.isEmpty && isSending(rig.status(a)))
+
+        // Another Mac removes the vault from iCloud, and this Mac has not been told when its heartbeat comes.
+        rig.cloud.removeZoneSilently(rig.zone)
+        a.sync.beat()
+        await a.sync.settle()
+
+        #expect(!a.engine.pending.contains(.saveZone(rig.zone)), "the heartbeat does not make a zone another Mac may have removed")
+        #expect(a.engine.pending.contains(.saveRecord(id)))
+        a.engine.refusesVaultRecord = false
+        try await a.pump()
+
+        #expect(rig.status(a) == .removed(.deleted))
+        #expect(rig.cloud.zones[rig.zone] == nil, "and nothing made it")
+        #expect(Set(va.accounts.keys) == Set(held.map(\.id)))
+    }
+
+    @Test func aZoneSaveRefusedBecauseICloudIsFullReadsAsFullAndRecoversWhenThereIsRoom() async throws {
+        let rig = Rig()
+        defer { rig.finish() }
+        let held = syncAccounts(2)
+        let (a, va) = try rig.mac(holding: held)
+        a.engine.refusesZoneSaves = true
+
+        try await a.sync.enable(profileID: rig.profile, vaultID: rig.vaultID)
+        try await a.pump()
+
+        #expect(rig.status(a) == .iCloudFull, "something the person can act on, not Sending… for ever and not removed")
+        #expect(rig.cloud.zones[rig.zone] == nil)
+        #expect(Set(va.accounts.keys) == Set(held.map(\.id)), "nothing local was deleted")
+
+        a.engine.refusesZoneSaves = false
+        a.sync.beat()
+        await a.sync.settle()
+        try await a.pump()
+
+        #expect(rig.status(a) == .synced)
+        #expect(held.allSatisfy { rig.item($0) != nil })
+    }
+
     @Test func aVaultWhoseServerFieldsAreStoredIsRemovedWhenItsZoneGoesMissingEvenWithNoUploadedMark() async throws {
         let rig = Rig()
         defer { rig.finish() }

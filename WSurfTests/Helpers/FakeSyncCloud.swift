@@ -201,6 +201,8 @@ final class FakeSyncEngine: SyncEngine {
     var failsZoneDeletes = false
     /// The next N zone creations are lost, as a zone save that failed or lost the race with its records.
     var losesZoneSaves = 0
+    /// The server refuses to create a zone because the account's iCloud storage is full: the engine reports it and keeps nothing.
+    var refusesZoneSaves = false
     /// The failed saves of one send are reported in the opposite order: the real engine does not promise one.
     var reversesFailures = false
     /// A save of the `Vault` record fails with an error that is not a missing zone (the entries still find their zone missing).
@@ -310,10 +312,13 @@ final class FakeSyncEngine: SyncEngine {
     private func send(_ batch: [SyncChange]) async {
         var refused: [String] = []
         var removedZones: [String] = []
+        var overQuotaZones: [String] = []
         for change in batch {
             switch change {
             case .saveZone(let zone):
-                if losesZoneSaves > 0 {
+                if refusesZoneSaves {
+                    overQuotaZones.append(zone)
+                } else if losesZoneSaves > 0 {
                     losesZoneSaves -= 1
                 } else {
                     cloud.createZone(zone)
@@ -331,6 +336,9 @@ final class FakeSyncEngine: SyncEngine {
             case .saveRecord, .deleteRecord:
                 break
             }
+        }
+        if !overQuotaZones.isEmpty {
+            await delegate?.handle(.zoneSavesOverQuota(overQuotaZones))
         }
         if !refused.isEmpty {
             // The engine keeps a delete it could not do and tries again.
