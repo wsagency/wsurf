@@ -230,4 +230,74 @@ struct TabContextMenuTests {
 
         #expect(marks(menu) == ["WKMenuItemIdentifierInspectElement"])
     }
+
+    // MARK: - Pick Credential…
+
+    private func pickCredentialView() throws -> (view: TabWebView, event: NSEvent) {
+        let view = TabWebView(frame: NSRect(x: 0, y: 0, width: 400, height: 300), configuration: WebViewPool.makeConfiguration())
+        let event = try #require(NSEvent.mouseEvent(
+            with: .rightMouseDown, location: NSPoint(x: 10, y: 10), modifierFlags: [], timestamp: 0, windowNumber: 0, context: nil,
+            eventNumber: 0, clickCount: 1, pressure: 1
+        ))
+        return (view, event)
+    }
+
+    private static let editable = ["WKMenuItemIdentifierCopy", "WKMenuItemIdentifierPaste", "WKMenuItemIdentifierSpellingMenu"]
+
+    /// The WebKit menu hook tells the log why it has no usable item, by its fixed reason only (`AutofillDiagnostics.menuRefusal`).
+    @Test(.boundedWebViews) func theMenuHookLogsWhyItHasNoUsableItem() throws {
+        let (view, event) = try pickCredentialView()
+        var offered = true
+        var reason: CredentialPicker.Refusal?
+        view.canPickCredential = { offered }
+        view.credentialRefusal = { reason }
+        @MainActor func logged(_ identifiers: [String]) -> [AutofillDiagnostics.Event] {
+            AutofillDiagnostics.watch(view)
+            view.willOpenMenu(menu(identifiers.map { Optional($0) }), with: event)
+            return AutofillDiagnostics.offered(to: view)
+        }
+
+        #expect(logged(Self.editable).isEmpty, "an offered item is no refusal")
+        #expect(logged(["WKMenuItemIdentifierCopy"]) == [.menuNotEditable])
+        offered = false
+        #expect(logged(Self.editable) == [.menuNotOffered], "editable, not offered, and no reason to show")
+        reason = .agentControl
+        #expect(logged(Self.editable) == [.agentControlled])
+        reason = .insecurePage
+        #expect(logged(Self.editable) == [.insecurePage])
+    }
+
+    /// WebKit's menu for a `readonly` or disabled field has Paste, like a writable field's, so only the page's own hit test can
+    /// tell them apart (Chromium's `is_editable` is false for them): no item, whether the answer comes before the menu or after it.
+    @Test(.boundedWebViews) func aReadOnlyOrDisabledFieldGetsNoItemWhicheverComesFirstTheMenuOrTheAnswer() throws {
+        let (view, event) = try pickCredentialView()
+        view.canPickCredential = { true }
+        view.onPickCredential = { _ in }
+        @MainActor func hasItem(_ menu: NSMenu) -> Bool {
+            menu.items.contains { $0.identifier == CredentialPicker.menuItemIdentifier }
+        }
+        @MainActor func opened() -> NSMenu {
+            let built = menu(Self.editable.map { Optional($0) })
+            view.willOpenMenu(built, with: event)
+            return built
+        }
+
+        // The answer first: the item is never added.
+        view.contextFieldResolved(locked: true)
+        let early = opened()
+        #expect(!hasItem(early) && early.items.count == Self.editable.count)
+
+        // The menu first: the item and its rule are taken out when the answer comes, and nothing else.
+        view.contextFieldResolved(locked: false)
+        let late = opened()
+        #expect(hasItem(late) && late.items[1].isSeparatorItem)
+        view.contextFieldResolved(locked: true)
+        #expect(!hasItem(late) && late.items.compactMap { $0.identifier?.rawValue } == Self.editable)
+
+        // An answer that says the field is writable leaves the item where it is.
+        view.contextFieldResolved(locked: false)
+        let writable = opened()
+        view.contextFieldResolved(locked: false)
+        #expect(hasItem(writable) && writable.items[1].isSeparatorItem)
+    }
 }

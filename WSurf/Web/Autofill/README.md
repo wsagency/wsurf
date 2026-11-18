@@ -226,7 +226,11 @@ When the automatic offer does not open, a right-click on an editable field
 offers "Pick Credential…" (`CredentialPicker`, both engines). It is never
 offered in a private window, while password autofill is off, on a page that is
 not a secure HTTPS page, on an internal page, or in a tab the assistant or a
-connected app controls; every step asks again.
+connected app controls; every step asks again. A field the page marked
+`readonly` or disabled gets no item in either engine (Chromium's `is_editable`
+says so; WebKit's menu is editable for it, so `TabWebView` asks the page's own
+hit test and takes the item out, `contextFieldResolved`), and a login form's
+editable password field beside a read-only username still gets it.
 
 - The field is the one the frame's own script saw a trusted contextmenu event
   on (`__wsurfPasswords`, action `context`), in the frame the engine reported.
