@@ -199,6 +199,14 @@ final class FakeSyncEngine: SyncEngine {
     var offline = false
     /// The server refuses to delete a zone: the engine reports the failure and keeps the change.
     var failsZoneDeletes = false
+    /// The next N zone creations are lost, as a zone save that failed or lost the race with its records.
+    var losesZoneSaves = 0
+    /// The server refuses to create a zone because the account's iCloud storage is full: the engine reports it and keeps nothing.
+    var refusesZoneSaves = false
+    /// The failed saves of one send are reported in the opposite order: the real engine does not promise one.
+    var reversesFailures = false
+    /// A save of the `Vault` record fails with an error that is not a missing zone (the entries still find their zone missing).
+    var refusesVaultRecord = false
     /// Names of records that cannot be read when a zone is read in full, as the server can fail one record of a page.
     var unreadable: Set<String> = []
     /// The queued changes by target, each with its place in the queue: a change for a target that is queued again moves to the end, and
@@ -209,6 +217,8 @@ final class FakeSyncEngine: SyncEngine {
     var pending: [SyncChange] {
         queue.values.sorted { $0.place < $1.place }.map(\.change)
     }
+    /// How many times a save of each record (by name) went out, whatever came of it.
+    private(set) var saveAttempts: [String: Int] = [:]
     private(set) var sendCount = 0
     private(set) var fetchCount = 0
     private(set) var fetchAllCount = 0
@@ -302,10 +312,17 @@ final class FakeSyncEngine: SyncEngine {
     private func send(_ batch: [SyncChange]) async {
         var refused: [String] = []
         var removedZones: [String] = []
+        var overQuotaZones: [String] = []
         for change in batch {
             switch change {
             case .saveZone(let zone):
-                cloud.createZone(zone)
+                if refusesZoneSaves {
+                    overQuotaZones.append(zone)
+                } else if losesZoneSaves > 0 {
+                    losesZoneSaves -= 1
+                } else {
+                    cloud.createZone(zone)
+                }
             case .deleteZone(let zone):
                 if cloud.zones[zone] == nil {
                     // A zone that is already gone is a zone that is deleted, as the real engine reports it.
@@ -319,6 +336,9 @@ final class FakeSyncEngine: SyncEngine {
             case .saveRecord, .deleteRecord:
                 break
             }
+        }
+        if !overQuotaZones.isEmpty {
+            await delegate?.handle(.zoneSavesOverQuota(overQuotaZones))
         }
         if !refused.isEmpty {
             // The engine keeps a delete it could not do and tries again.
@@ -336,6 +356,11 @@ final class FakeSyncEngine: SyncEngine {
             case .saveRecord(let id):
                 // A record the model no longer wants is dropped, as the real engine drops it.
                 guard let record = delegate?.record(for: id) else { continue }
+                saveAttempts[id.name, default: 0] += 1
+                if refusesVaultRecord, id.name == VaultSync.vaultRecordName {
+                    failed.append(SyncFailedSave(id: id, failure: .other))
+                    continue
+                }
                 switch cloud.save(record) {
                 case .saved(let stored):
                     saved.append(stored)
@@ -348,6 +373,9 @@ final class FakeSyncEngine: SyncEngine {
             case .saveZone, .deleteZone:
                 break
             }
+        }
+        if reversesFailures {
+            failed.reverse()
         }
         await delegate?.handle(.sent(saved: saved, deleted: deleted, failed: failed))
         await publishState()
