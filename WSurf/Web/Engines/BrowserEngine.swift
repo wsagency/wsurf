@@ -35,6 +35,8 @@ final class PageHistoryItem {
     let title: String?
     let webKit: WKBackForwardListItem?
     let chromiumIndex: Int?
+    /// A Chromium entry WSurf restored itself (`ChromiumHistoryRecord`), which Chromium does not hold: going to it loads its address.
+    let restoredID: Int?
 
     init(webKit: WKBackForwardListItem) {
         url = webKit.url
@@ -42,14 +44,16 @@ final class PageHistoryItem {
         title = webKit.title
         self.webKit = webKit
         chromiumIndex = nil
+        restoredID = nil
     }
 
-    init(url: URL, title: String?, chromiumIndex: Int) {
+    init(url: URL, title: String?, chromiumIndex: Int? = nil, restoredID: Int? = nil) {
         self.url = url
         initialURL = url
         self.title = title
         webKit = nil
         self.chromiumIndex = chromiumIndex
+        self.restoredID = restoredID
     }
 }
 
