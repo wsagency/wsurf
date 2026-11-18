@@ -343,8 +343,10 @@ struct ChromiumOOPInputTests {
             editable.set(CefRemote.Key.flag, true)
             rig.remote.remoteEvent(editable)
             #expect(rig.view.editableFocused)
+            // ⇧⌘← is not one of `ShortcutPriority.pageFirst` (no menu item has it either), so it reaches the view as a key.
             let again = try Self.key(left, code: 123, flags: [.command, .shift], in: rig.window)
-            #expect(rig.view.performKeyEquivalent(with: again))
+            #expect(!rig.view.performKeyEquivalent(with: again), "not a page-first chord: the menu is offered it")
+            rig.view.keyDown(with: again)
             rig.view.keyUp(with: try Self.key(left, code: 123, type: .keyUp, flags: [.command, .shift], in: rig.window))
             let keys = rig.sent.keys
             #expect(keys.map { $0.int(CefRemote.Key.keyType) } == [1, 2], "Home down and up, no character")
@@ -641,6 +643,12 @@ struct ChromiumOOPInputTests {
             let events = await inputEvents()
             try Self.press(button: 3, in: window)
             try Self.press(button: 4, in: window)
+            // The window passes them on when the setting is off: the page's view gets them, and swallows them.
+            let view = try #require(tab.page.chromium?.remote?.contentView)
+            for number: Int64 in [3, 4] {
+                view.otherMouseDown(with: try Self.thumbButton(number))
+                view.otherMouseUp(with: try Self.thumbButton(number))
+            }
             try await Task.sleep(for: .seconds(1))
             #expect(tab.page.url == (try server.url("/step2")), "off, neither button navigated: \(tab.urlString)")
             #expect(await inputEvents() == events, "and the page was sent nothing")

@@ -91,12 +91,12 @@ extension ChromiumRemoteContentView {
     /// (a selection). Without a field they are the menu's (Back and Forward, `ShortcutPriority`).
     private func lineKey(for event: NSEvent) -> (nativeKeyCode: Int64, windowsKeyCode: Int64)? {
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask).subtracting([.capsLock, .numericPad, .function])
-        guard editableFocused, flags == .command || flags == [.command, .shift],
-              let key = event.charactersIgnoringModifiers?.utf16.first else { return nil }
-        switch Int(key) {
-        case NSLeftArrowFunctionKey:
+        guard editableFocused, flags == .command || flags == [.command, .shift] else { return nil }
+        // By the key, not its character: the left and right arrow keys, whatever the layout says they type.
+        switch event.keyCode {
+        case 123:
             return (115, 0x24)
-        case NSRightArrowFunctionKey:
+        case 124:
             return (119, 0x23)
         default:
             return nil
