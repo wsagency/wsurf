@@ -490,8 +490,8 @@ that ships. A Debug app is 477 MB on disk (a 145 MB debug dylib, coverage counte
 
 - **Build** with `xcodebuild archive -configuration Release -destination 'generic/platform=macOS' -IDEPackageEnablePrebuilts=NO`, the
   `release.yml` command with the development identity and profiles, and `ENABLE_DEBUG_DYLIB=NO ENABLE_PREVIEWS=NO`.
-  `-IDEPackageEnablePrebuilts=NO` builds every package from its pinned source instead of using prebuilt binaries (such as
-  swift-syntax macro prebuilts) that Xcode downloads. An archive strips the executables and writes
+  `-IDEPackageEnablePrebuilts=NO` stops SwiftPM from downloading prebuilt swift-syntax (macro) binaries, so they are built from the
+  pinned source. Sparkle is still a binary artifact, verified against the checksum in its own package manifest. An archive strips the executables and writes
   `dSYMs/`: keep them with the build's evidence, they are what symbolicates a crash of that exact build. A plain `xcodebuild build`
   of the scheme turns on code coverage, because the scheme's test action enables it, and leaves the debug map in the binary. An
   archive does neither, and `xcodebuild` refuses `-enableCodeCoverage` for it ("only supported when testing").
