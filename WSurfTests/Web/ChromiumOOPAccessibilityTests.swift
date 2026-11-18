@@ -332,6 +332,7 @@ struct ChromiumOOPAccessibilityTests {
 
     // MARK: Elements and the threads they are freed on (review S2)
 
+    #if DEBUG
     /// The mirror lets go of an element on the decode queue (an update that drops its node), inside its lock. With a client registered
     /// the element's dealloc may call into AppKit and back into our overrides, so the mirror hands it to the main thread to free.
     @Test func elementsTheMirrorLetsGoOfAreFreedOnTheMainThreadAndNeverOnTheDecodeQueue() async {
@@ -356,6 +357,7 @@ struct ChromiumOOPAccessibilityTests {
         #expect(after.other == before.other, "\(after.other - before.other) element(s) were freed off the main thread")
         await rig.end()
     }
+    #endif
 
     // MARK: The press is bound to its document (review S1)
 
@@ -572,6 +574,7 @@ struct ChromiumOOPAccessibilityTests {
         }
     }
 
+    #if DEBUG
     /// The review's S1: a press is sent some time after it is made, and the page may navigate in between. The click must not land on
     /// the next document at the old element's point.
     @Test(.enabled(if: ChromiumServiceBundle.isPresent), .boundedWebViews)
@@ -605,6 +608,7 @@ struct ChromiumOOPAccessibilityTests {
             #expect(!button.accessibilityPerformPress(), "an element of the document before is refused, whether or not its node is in the new tree")
         }
     }
+    #endif
 
     @Test(.enabled(if: ChromiumServiceBundle.isPresent), .boundedWebViews)
     func aDomChangeShowsInTheTreeWithinASecondAndTheNewNodeKnowsItsParent() async throws {
