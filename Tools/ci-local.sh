@@ -2,7 +2,9 @@
 # SPDX-FileCopyrightText: 2026 wsagency
 # SPDX-License-Identifier: BUSL-1.1
 #
-# Tools/ci-local.sh: the "Build and test" job of .github/workflows/ci.yml, step for step, on this Mac.
+# Shared native validation for local worktrees and the GitHub CI and release jobs.
+#   Tools/ci-local.sh [--tier quick|minor] [--base REF] [--suite SUITE[/CASE] ...]
+# Quick is the default. Minor is the complete functional and performance gate, followed by resource benchmarks.
 # Exit 0 only if every step passed; a one-line PASS/FAIL/SKIP per step at the end.
 #
 # NOTE: the performance budgets in Tools/check-performance.sh are tuned for the CI runner. The Pro is faster, so a green
@@ -10,7 +12,7 @@
 #
 # Differences from CI, on purpose:
 #   - Runner-only steps are printed and skipped: actions caches, artifact uploads, the hosted Metal download, the SwiftLint
-#     download (the pinned SwiftLint must already be on PATH, or set SWIFTLINT_BIN; otherwise lint is SKIPPED, not installed).
+#     download (put the pinned SwiftLint on PATH or set SWIFTLINT_BIN).
 #   - The whole run holds the shared Pro lock (WSURF_PRO_LOCK, a with-pro-lock.sh; set it empty on a Mac without one).
 #   - One fixed test identity (WSURF_BUNDLE_ID_SUFFIX, default .ci-local), reused run after run, so CI's last step, which
 #     removes a per-run identity with rm -rf and defaults delete, is skipped.
@@ -20,6 +22,11 @@
 #   Set WSURF_CEF_PACKAGE only to a CefSwift package with the same sources; a fresh worktree otherwise downloads CEF once.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+
+if [[ "${1:-}" == --help ]]; then
+  python3 -B Tools/select-validation-tests.py plan --help
+  exit 0
+fi
 
 LOCK="${WSURF_PRO_LOCK-/Users/klukacin/Library/Application Support/Claude/side-session-notes/local_a84c7367-175a-4e1d-8e46-7298dec65c7f/release-0-1-1/with-pro-lock.sh}"
 if [ -n "$LOCK" ] && [ -z "${WSURF_CI_LOCAL_LOCKED:-}" ]; then
@@ -33,9 +40,16 @@ XCODE=$(sed -n "s/^  XCODE: '\(.*\)'$/\1/p" .github/workflows/ci.yml)
 SWIFTLINT=$(sed -n "s/^  SWIFTLINT: '\(.*\)'$/\1/p" .github/workflows/ci.yml)
 export WSURF_BUNDLE_ID_SUFFIX="${WSURF_BUNDLE_ID_SUFFIX:-.ci-local}"
 DD="$PWD/build/DD"
-OUT="build/ci-local/$(date -u +%Y%m%dT%H%M%SZ)"
+OUT="${WSURF_CI_OUTPUT:-build/ci-local/$(date -u +%Y%m%dT%H%M%SZ)}"
+[ ! -e "$OUT" ] || { echo "error: validation output already exists: $OUT" >&2; exit 2; }
 mkdir -p "$OUT/results"
-OUT="$PWD/$OUT"
+OUT="$(cd "$OUT" && pwd -P)"
+manifest="$OUT/validation-plan.json"
+python3 -B Tools/select-validation-tests.py plan --tier quick "$@" > "$manifest"
+tier=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["tier"])' "$manifest")
+echo "Validation: $tier ($manifest)"
+coverage=NO
+[ "$tier" != minor ] || coverage=YES
 # The watchdog appends every build and test output line, byte for byte, to this file and prints a compact console
 # (host os_log mirror noise dropped, every result, failure, crash and time-limit line kept). WSURF_CI_VERBOSE=1 prints it all.
 export WSURF_CI_RAW_LOG="$OUT/console.raw.log"
@@ -43,7 +57,7 @@ export WSURF_CI_RAW_LOG="$OUT/console.raw.log"
 for key in $(env | sed -n 's/^\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/p'); do
   case "$key" in
     WSURF_STAGE*|TEST_RUNNER_WSURF_STAGE*|*WSURF_*LIVE_*|*WSURF_*FOREGROUND_TEST*|*WSURF_*VOICE_UI_TEST*|*WSURF_*OAUTH_UI_TEST*|\
-    *WSURF_*MIC_CAPTURE_TEST*|*WSURF_*VAULT_BENCHMARK*|*WSURF_*REAL_FULLSCREEN*)
+    *WSURF_*MIC_CAPTURE_TEST*|*WSURF_*VAULT_BENCHMARK*|*WSURF_*PERF_BENCH*|*WSURF_*PERF_SOAK*|*WSURF_*REAL_FULLSCREEN*)
       echo "error: refusing opt-in or Stage environment: $key" >&2; exit 2 ;;
   esac
 done
@@ -82,10 +96,10 @@ select_xcode() {
 lint() {
   local bin="${SWIFTLINT_BIN:-$(command -v swiftlint || true)}"
   if [ -z "$bin" ] || [ "$("$bin" version)" != "$SWIFTLINT" ]; then
-    skip "Check format" "SwiftLint $SWIFTLINT not on PATH (found: ${bin:-none}${bin:+ $("$bin" version)}); set SWIFTLINT_BIN"
-    return
+    echo "error: put SwiftLint $SWIFTLINT on PATH or set SWIFTLINT_BIN" >&2
+    return 1
   fi
-  step "Check format" env PATH="$(dirname "$bin"):$PATH" Tools/check-format.sh
+  env PATH="$(dirname "$bin"):$PATH" Tools/check-format.sh
 }
 
 acknowledgements() {
@@ -97,13 +111,13 @@ acknowledgements() {
   }
 }
 
-test_runs() {
+build_for_testing() {
   python3 Tools/run-xcodebuild-with-watchdog.py -- xcodebuild build-for-testing -quiet \
     -project "$PROJECT" -scheme "$SCHEME" \
     -destination 'platform=macOS,arch=arm64' \
     -derivedDataPath "$DD" \
     -skipMacroValidation \
-    -enableCodeCoverage YES \
+    -enableCodeCoverage "$coverage" \
     -disableAutomaticPackageResolution \
     CODE_SIGN_STYLE=Manual \
     CODE_SIGN_IDENTITY=- \
@@ -112,25 +126,52 @@ test_runs() {
     WSURF_BUNDLE_ID_SUFFIX="$WSURF_BUNDLE_ID_SUFFIX" || return
   set -- "$DD"/Build/Products/*.xctestrun
   [ "$#" -eq 1 ] && [ -f "$1" ] || { echo "error: expected exactly one generated .xctestrun in $DD/Build/Products" >&2; return 1; }
-  local xctestrun="$1" total="${WSURF_CI_TEST_LIMIT_SECONDS:-5400}" start=$SECONDS failed="" plan remaining
+  xctestrun="$1"
   python3 Tools/check-built-identity.py "$DD" "$xctestrun" || return
-  for plan in WSurf-Serial-1 WSurf-Serial-2 WSurf-Serial-3 WSurf-Rest; do
-    remaining=$((total - (SECONDS - start)))
-    [ "$remaining" -gt 0 ] || { echo "error: test budget of ${total}s spent before $plan started" >&2; return 124; }
+}
+
+run_test_plan() {
+  local plan="$1" limit="$2"
+  shift 2
+  WSURF_CI_TEST_LIMIT_SECONDS="$limit" python3 Tools/run-xcodebuild-with-watchdog.py -- xcodebuild test-without-building \
+    -xctestrun "$xctestrun" \
+    -destination 'platform=macOS,arch=arm64' \
+    -resultBundlePath "$OUT/results/$plan.xcresult" \
+    "$@"
+}
+
+test_runs() {
+  local total="${WSURF_CI_TEST_LIMIT_SECONDS:-5400}" start=$SECONDS failed="" plans plan remaining
+  plans=$(python3 -B Tools/select-validation-tests.py runs "$manifest") || return
+  while IFS= read -r plan; do
+    python3 -B Tools/select-validation-tests.py args "$manifest" "$plan" > "$OUT/results/$plan.args" || return
     local selection=()
-    while IFS= read -r line; do selection+=("$line"); done < <(python3 Tools/check-test-partition.py --args "$plan")
+    local line
+    while IFS= read -r line; do selection+=("$line"); done < "$OUT/results/$plan.args"
     echo "--- $plan (${#selection[@]} selection arguments, $((SECONDS - start))s into the tests)"
-    WSURF_CI_TEST_LIMIT_SECONDS="$remaining" python3 Tools/run-xcodebuild-with-watchdog.py -- xcodebuild test-without-building \
-      -xctestrun "$xctestrun" \
-      -destination 'platform=macOS,arch=arm64' \
-      -resultBundlePath "$OUT/results/$plan.xcresult" \
-      -enableCodeCoverage YES \
-      "${selection[@]}" || failed="$failed $plan"
+    case "$plan" in
+      WSurf-*)
+        remaining=$((total - (SECONDS - start)))
+        [ "$remaining" -gt 0 ] || { echo "error: test budget of ${total}s spent before $plan started" >&2; return 124; }
+        run_test_plan "$plan" "$remaining" -enableCodeCoverage "$coverage" "${selection[@]}" || failed="$failed $plan"
+        ;;
+      Vault-Scale)
+        TEST_RUNNER_WSURF_VAULT_BENCHMARK=1 run_test_plan "$plan" 9000 -enableCodeCoverage NO \
+          -default-test-execution-time-allowance 3600 -maximum-test-execution-time-allowance 3600 \
+          "${selection[@]}" || failed="$failed $plan"
+        ;;
+      WebKit-Resources|Chromium-Resources|Chromium-First-Tab|Chromium-Engine)
+        TEST_RUNNER_WSURF_PERF_BENCH=1 TEST_RUNNER_WSURF_PERF_SOAK=1 run_test_plan "$plan" 1800 -enableCodeCoverage NO \
+          -default-test-execution-time-allowance 600 -maximum-test-execution-time-allowance 900 \
+          "${selection[@]}" || failed="$failed $plan"
+        ;;
+      *) echo "error: unknown run $plan" >&2; return 2 ;;
+    esac
     if [ -f "$OUT/results/$plan.xcresult/Info.plist" ]; then
       xcrun xcresulttool get test-results tests --path "$OUT/results/$plan.xcresult" --compact \
         > "$OUT/results/$plan-tests.json" || echo "warning: could not export the test cases of $plan"
     fi
-  done
+  done <<< "$plans"
   [ -z "$failed" ] || { echo "error: failed test runs:$failed" >&2; return 1; }
 }
 
@@ -141,9 +182,10 @@ export_metrics() {
 
 step "Select Xcode" select_xcode
 step "Verify Metal toolchain" xcrun metal --version
-lint
+step "Check format" lint
 step "Check watchdog" python3 Tools/check-watchdog.py
 step "Check coverage script" python3 Tools/check-coverage-script.py
+step "Check validation selector" python3 -B Tools/check-validation-selection.py
 step "Check test partition" python3 Tools/check-test-partition.py
 skip "Cache Swift packages/CEF" "runner cache; build/DD and Packages/CefSwift/.cef persist here"
 gate
@@ -152,14 +194,20 @@ step "Resolve packages" xcodebuild -resolvePackageDependencies \
 gate
 step "Check acknowledgements" acknowledgements
 gate
+step "Build for testing" build_for_testing
+gate
 step "Test" test_runs
 # After the tests every check runs, so one run shows the test, coverage and performance verdicts together.
-step "Check runs cover every test" bash -c 'python3 Tools/check-test-partition.py --verify-results "$1"/results/*-tests.json' _ "$OUT"
-step "Merge test results" xcrun xcresulttool merge "$OUT/results/WSurf-Serial-1.xcresult" "$OUT/results/WSurf-Serial-2.xcresult" \
-  "$OUT/results/WSurf-Serial-3.xcresult" "$OUT/results/WSurf-Rest.xcresult" --output-path "$OUT/TestResults.xcresult"
-step "Check coverage" Tools/check-coverage.sh "$OUT/TestResults.xcresult" 24.0
-step "Export performance metrics" export_metrics
-step "Check performance budgets" Tools/check-performance.sh "$OUT/performance-metrics.json"
+step "Check selected results" python3 -B Tools/select-validation-tests.py verify "$manifest" "$OUT/results"
+if [ "$tier" = minor ]; then
+  step "Merge test results" xcrun xcresulttool merge "$OUT/results/WSurf-Serial-1.xcresult" "$OUT/results/WSurf-Serial-2.xcresult" \
+    "$OUT/results/WSurf-Serial-3.xcresult" "$OUT/results/WSurf-Rest.xcresult" --output-path "$OUT/TestResults.xcresult"
+  step "Check coverage" Tools/check-coverage.sh "$OUT/TestResults.xcresult" 24.0
+  step "Export performance metrics" export_metrics
+  step "Check performance budgets" Tools/check-performance.sh "$OUT/performance-metrics.json"
+else
+  skip "Coverage and budgets" "minor validation"
+fi
 skip "Uploads" "artifacts stay in $OUT"
 skip "Remove test identity" "fixed identity io.wsagency.wsurf$WSURF_BUNDLE_ID_SUFFIX is reused; no rm -rf or defaults delete"
 finish

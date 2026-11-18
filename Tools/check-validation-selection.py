@@ -5,7 +5,11 @@
 """Exercise quick selection and result checking without compiling the app."""
 
 import importlib.util
+import json
 from pathlib import Path
+import subprocess
+import sys
+import tempfile
 import unittest
 
 
@@ -77,6 +81,52 @@ class SelectionTests(unittest.TestCase):
         self.assertEqual(self.select.result_problems(expected, good), [])
         for bad in (good[:1], good + good[:1], [good[0], ('MenuTests/showMenu()', 'Skipped')]):
             self.assertTrue(self.select.result_problems(expected, bad))
+
+
+class ReleaseSelectionTests(unittest.TestCase):
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.repo = Path(self.directory.name)
+        self.git('init', '-q')
+        self.git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', 'commit', '-q', '--allow-empty', '-m', 'Base')
+        self.git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', 'tag', '-a', 'v0.1.28', '-m', 'Published')
+        self.git('tag', 'v0.9.6')
+        self.git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', 'commit', '-q', '--allow-empty', '-m', 'Candidate')
+
+    def git(self, *args):
+        return subprocess.check_output(['git', *args], cwd=self.repo, text=True).strip()
+
+    def classify(self, tag, published):
+        script = Path(__file__).with_name('select-release-validation.py')
+        if not script.is_file():
+            raise AssertionError('release validation must choose its tier from published releases')
+        self.git('tag', tag)
+        records = [dict(tag_name=name, draft=False, prerelease=False) for name in published]
+        records.extend([dict(tag_name='tip', draft=False, prerelease=True), dict(tag_name='v9.9', draft=True, prerelease=False)])
+        return subprocess.run([sys.executable, str(script), '--tag', tag], cwd=self.repo, input=json.dumps([records]),
+                              capture_output=True, text=True)
+
+    def test_patch_uses_the_published_annotated_tag_as_its_base(self):
+        run = self.classify('v0.1.29', ['v0.1.28'])
+        self.assertEqual(run.returncode, 0, run.stderr)
+        self.assertEqual(dict(line.split('=', 1) for line in run.stdout.splitlines()),
+                         {'tier': 'quick', 'source': self.git('rev-parse', 'HEAD'),
+                          'base': self.git('rev-parse', 'v0.1.28^{commit}')})
+
+    def test_first_release_and_minor_change_require_the_full_tier(self):
+        for tag, published in [('v0.1.29', []), ('v0.2.29', ['v0.1.28']), ('v1.0', ['v0.1.28'])]:
+            with self.subTest(tag=tag):
+                run = self.classify(tag, published)
+                self.assertEqual(run.returncode, 0, run.stderr)
+                self.assertIn('tier=minor\n', run.stdout)
+
+    def test_invalid_or_decreasing_version_fails(self):
+        for tag in ['v0.1.bad', 'v0.1.27']:
+            with self.subTest(tag=tag):
+                run = self.classify(tag, ['v0.1.28'])
+                self.assertNotEqual(run.returncode, 0)
+                self.assertEqual(run.stdout, '')
 
 
 if __name__ == '__main__':

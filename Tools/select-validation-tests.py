@@ -18,6 +18,13 @@ ROOT = Path(__file__).resolve().parent.parent
 PARTITION = runpy.run_path(str(ROOT / 'Tools/check-test-partition.py'))
 SERIAL = PARTITION['SERIAL_PART_PLANS']
 REST = PARTITION['REST_PLAN']
+MINOR_BENCHMARKS = {
+    'WebKit-Resources': (['ResourceBenchmarkTests'], []),
+    'Chromium-Resources': (['ChromiumResourceBenchmarkTests'], []),
+    'Chromium-First-Tab': (['EngineBenchmarkTests/startingChromiumForTheFirstTab()'], []),
+    'Chromium-Engine': (['EngineBenchmarkTests'], ['EngineBenchmarkTests/startingChromiumForTheFirstTab()']),
+    'Vault-Scale': (['VaultMoveBenchmark', 'VaultVerificationBenchmark'], []),
+}
 
 
 def matches(value, patterns):
@@ -106,6 +113,8 @@ def make_plan(tier, base_ref, extra):
         if extra:
             raise ValueError('--suite is only for quick validation')
         runs.update({name: {'arguments': PARTITION['arguments'](name)} for name in (*SERIAL, REST)})
+        for name, (choices, exclusions) in MINOR_BENCHMARKS.items():
+            runs[name] = test_run(suites, choices, exclusions)
         return manifest
     base = git('rev-parse', '--verify', '--end-of-options', (base_ref or 'origin/main') + '^{commit}')
     if git('merge-base', base, head) != base:
@@ -153,21 +162,24 @@ def check_source(manifest):
 
 
 def verify(manifest, results):
-    paths = [results / f'{name}-tests.json' for name in manifest['runs']]
-    if manifest['tier'] == 'minor':
-        return PARTITION['verify_results'](paths)
     aliases = PARTITION['display_names']()
     count = Counter()
-    failed = False
+    minor = manifest['tier'] == 'minor'
+    failed = minor and PARTITION['verify_results']([results / f'{name}-tests.json' for name in (*SERIAL, REST)]) != 0
     for name, run in manifest['runs'].items():
+        if 'cases' not in run:
+            continue
         actual = list(actual_cases(results / f'{name}-tests.json', aliases))
         count.update(outcome for _, outcome in actual)
-        problems = result_problems(run['cases'], actual, manifest['allowed_skips'])
+        problems = result_problems(run['cases'], actual, manifest.get('allowed_skips', ()))
         if problems:
             failed = True
             print(f'{name}: {len(problems)} result mismatches', file=sys.stderr)
             print('\n'.join(problems[:25]), file=sys.stderr)
-    print(f"Quick results: {count['Passed']} passed, {count['Skipped']} skipped. Deferred: {', '.join(manifest['deferred'])}.")
+    if minor:
+        print(f"Minor benchmark results: {count['Passed']} passed, {count['Skipped']} skipped.")
+    else:
+        print(f"Quick results: {count['Passed']} passed, {count['Skipped']} skipped. Deferred: {', '.join(manifest['deferred'])}.")
     return int(failed)
 
 
