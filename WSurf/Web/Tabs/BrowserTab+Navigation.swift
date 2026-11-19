@@ -106,9 +106,9 @@ extension BrowserTab {
         pendingNavigationTask?.cancel()
         lastRequestedNavigation = nil
         pendingNavigationTask = Task { [weak self] in
-            guard let self else { return nil }
+            guard let self, !Task.isCancelled else { return nil }
+            noteNavigation(to: left.url, startedByUser: true)
             let desired = preferredEngine(for: left.url)
-            guard !Task.isCancelled else { return nil }
             pageBeforeEngineSwitch = nil
             urlString = left.url.absoluteString
             pendingTransition = .backForward

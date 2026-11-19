@@ -117,7 +117,8 @@ struct EngineRoutingTests {
         #expect(browser.engine(for: a) == .webKit)
     }
 
-    @Test func backAcrossEnginesDoesNotAskToSwitch() async throws {
+    @Test(arguments: [false, true])
+    func backAcrossEnginesDoesNotAskToSwitch(signInInProgress: Bool) async throws {
         let site = "https://back-\(UUID().uuidString.prefix(8).lowercased()).example"
         let (browser, a, _) = try browserWithTwoTabs(site: site)
         #expect(await browser.setEngine(.chromium, for: a))
@@ -127,11 +128,16 @@ struct EngineRoutingTests {
         #expect(browser.engine(for: a) == .webKit)
         // Nothing commits in a test, so name the page the load left, as a committed one would be.
         a.pageBeforeEngineSwitch = (url: try #require(URL(string: site)), state: nil)
+        if signInInProgress {
+            let signIn = try #require(URL(string: "https://auth.openai.com/authorize"))
+            a.noteNavigation(to: signIn, startedByUser: false)
+        }
         // A prompt would block on a modal alert here; Back must go straight to the page it left.
         a.isPlayingAudio = true
         a.goBack()
         _ = await a.waitForPendingNavigation()
-        #expect(browser.engine(for: a) == .chromium)
+        #expect(a.engine == .chromium)
+        #expect(a.signInEngine == nil)
     }
 
     @Test func aComparisonTabSwitchesOnlyItself() async throws {

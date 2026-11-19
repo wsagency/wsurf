@@ -24,7 +24,7 @@
     "VaultMoveBenchmark/*", "VaultVerificationBenchmark/*"
   ],
   "areas": [
-    {"paths": ["*.md", "branding/*", "docs/*", "wsurf.app/*", "wrangler.jsonc", "LICENSE*", "NOTICE", ".gitignore", ".omp/*", "WSurf/Localizable.xcstrings"], "suites": []},
+    {"paths": ["*.md", "branding/*", "docs/*", "wsurf.app/*", "wrangler.jsonc", "LICENSE*", "NOTICE", ".gitignore", ".omp/*"], "suites": []},
     {"paths": ["Tools/*", ".github/*", ".swiftlint.yml", "WSurf*.xctestplan", "WSurf/AppIcon.icon/*", "WSurfTests/Helpers/*"], "suites": []},
     {
       "paths": ["WSurf/App/*", "WSurf/main.swift", "WSurf/Onboarding/*", "WSurf/Profiles/*", "WSurf/UI/Chrome/*", "WSurf/UI/Shell/*", "WSurf/UI/Content/*"],
