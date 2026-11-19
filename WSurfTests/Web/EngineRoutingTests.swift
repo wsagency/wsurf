@@ -34,13 +34,41 @@ struct EngineRoutingTests {
         #expect(tab.preferredEngine(for: mail) == .chromium)
     }
 
-    @Test func websiteSettingsKeepGoogleSignInInWebKit() async {
+    @Test(arguments: ["https://accounts.google.com", "https://auth.openai.com"])
+    func websiteSettingsKeepSignInInWebKit(signIn: String) async {
         let browser = BrowserModel(database: .temporary(), sitePermissions: temporaryPermissions())
-        let signIn = "https://accounts.google.com"
         #expect(await browser.setEngine(.chromium, for: signIn) == false)
         #expect(await browser.setEngine(.webKit, for: signIn))
         #expect(browser.sitePermissions.engine(for: signIn) == .webKit)
         #expect(!browser.sitePermissions.engineOrigins.contains(signIn))
+    }
+
+    @Test func openAISignInStartsInWebKitWithAStoredChromiumChoice() throws {
+        let file = FileManager.default.temporaryDirectory
+            .appendingPathComponent("OpenAISignIn-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: file) }
+        try Data("""
+            {"engines":{"https://auth.openai.com":"chromium","https://chatgpt.com":"chromium"}}
+            """.utf8).write(to: file)
+        let permissions = SitePermissions(storageURL: file)
+        let browser = BrowserModel(database: .temporary(), sitePermissions: permissions)
+        let start = try #require(URL(string: "https://auth.openai.com/authorize?state=fixture"))
+        let google = try #require(URL(string: "https://accounts.google.com/o/oauth2/v2/auth"))
+        let callback = try #require(URL(string: "https://auth.openai.com/api/accounts/callback/google?code=fixture"))
+        let chatGPT = try #require(URL(string: "https://chatgpt.com/"))
+        let tab = browser.makeTab(for: start)
+        #expect(permissions.engine(for: "https://auth.openai.com") == .webKit)
+        #expect(tab.preferredEngine(for: chatGPT) == .chromium)
+
+        tab.noteNavigation(to: start, startedByUser: true)
+        try #require(tab.preferredEngine(for: start) == .webKit, "Keep the session set before going to Google in WebKit")
+        #expect(tab.permitsEngineNavigation(URLRequest(url: google), isMainFrame: true))
+        #expect(tab.permitsEngineNavigation(URLRequest(url: callback), isMainFrame: true))
+        #expect(tab.permitsEngineNavigation(URLRequest(url: chatGPT), isMainFrame: true))
+        #expect(tab.preferredEngine(for: chatGPT) == .webKit)
+
+        tab.noteNavigation(to: chatGPT, startedByUser: true)
+        #expect(tab.preferredEngine(for: chatGPT) == .chromium)
     }
 
     /// Tabs that only hold an address, so a switch changes what each is set to run without loading a page.
@@ -89,7 +117,8 @@ struct EngineRoutingTests {
         #expect(browser.engine(for: a) == .webKit)
     }
 
-    @Test func backAcrossEnginesDoesNotAskToSwitch() async throws {
+    @Test(arguments: [false, true])
+    func backAcrossEnginesDoesNotAskToSwitch(signInInProgress: Bool) async throws {
         let site = "https://back-\(UUID().uuidString.prefix(8).lowercased()).example"
         let (browser, a, _) = try browserWithTwoTabs(site: site)
         #expect(await browser.setEngine(.chromium, for: a))
@@ -99,11 +128,16 @@ struct EngineRoutingTests {
         #expect(browser.engine(for: a) == .webKit)
         // Nothing commits in a test, so name the page the load left, as a committed one would be.
         a.pageBeforeEngineSwitch = (url: try #require(URL(string: site)), state: nil)
+        if signInInProgress {
+            let signIn = try #require(URL(string: "https://auth.openai.com/authorize"))
+            a.noteNavigation(to: signIn, startedByUser: false)
+        }
         // A prompt would block on a modal alert here; Back must go straight to the page it left.
         a.isPlayingAudio = true
         a.goBack()
         _ = await a.waitForPendingNavigation()
-        #expect(browser.engine(for: a) == .chromium)
+        #expect(a.engine == .chromium)
+        #expect(a.signInEngine == nil)
     }
 
     @Test func aComparisonTabSwitchesOnlyItself() async throws {

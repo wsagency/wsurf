@@ -385,7 +385,7 @@ private struct SiteDetailPage: View {
             DetailRow(
                 title: "Browser engine",
                 caption: SitePermissions.webKitOnlyOrigins.contains(origin)
-                    ? "Google blocks sign-in from embedded Chromium, so this page always opens in WebKit." as LocalizedStringResource
+                    ? "This sign-in page uses WebKit to keep the same session through redirects." as LocalizedStringResource
                     : "Changing this reloads the website and resets Back/Forward history. Sign-ins are separate. Unloaded Chromium tabs restore only their URL."
             ) {
                 SettingsMenu(

@@ -173,8 +173,7 @@ extension BrowserTab {
         refreshChrome()
     }
 
-    /// Google sign-in completes only in WebKit. The navigations its pages make next (the redirect back to the service that
-    /// asked) stay there: a site set to Chromium would get them without the sign-in and send the tab back to sign in again.
+    /// Keep sign-in in one engine from the first request to the return redirect so every hop uses the same session.
     /// A navigation the user starts ends the hold. `startedByUser` is false for those the engine asks a decision for.
     func noteNavigation(to url: URL, startedByUser: Bool) {
         if SitePermissions.webKitOnlyOrigins.contains(SitePermissions.origin(for: url)) {

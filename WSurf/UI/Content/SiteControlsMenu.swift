@@ -265,7 +265,7 @@ private struct SiteHandlingSection: View {
                 }
                 .help("Changing engines reloads the website and resets Back/Forward history. Sign-ins are separate. Unloaded Chromium tabs restore only their URL.")
                 if SitePermissions.webKitOnlyOrigins.contains(siteOrigin) {
-                    Text("Google blocks sign-in from embedded Chromium, so this page always opens in WebKit.")
+                    Text("This sign-in page uses WebKit to keep the same session through redirects.")
                         .font(Theme.Font.caption)
                         .foregroundStyle(.secondary)
                         .padding(.horizontal, SiteControlsMetrics.inset)
