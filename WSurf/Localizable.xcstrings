@@ -9350,9 +9350,6 @@
     "Glass shows your desktop through the window. It uses more GPU." : {
       "comment" : "Caption under the Material row in Settings › Appearance › Theme, explaining the Glass choice of the Plain / Glass control. GPU is the graphics processor. Sentence case."
     },
-    "Google blocks sign-in from embedded Chromium, so this page always opens in WebKit." : {
-      "comment" : "Caption of the Browser engine row, with the menu disabled, for Google sign-in websites; in Settings › Websites and in the toolbar’s site controls popover. WebKit and Chromium are engine names, not translated. Sentence."
-    },
     "Gruvbox" : {
       "comment" : "Name of a built-in color theme in Settings › Appearance. Proper name of a community palette; do not translate."
     },
@@ -11209,6 +11206,9 @@
     },
     "This saves the selected passwords to a CSV file that is NOT encrypted: anyone who can open the file can read every password in it. You choose where it goes, and WSurf never deletes it for you. Delete it as soon as you have imported it elsewhere. Don’t open it in a spreadsheet app, which may change or run cells that start with = + - or @." : {
       "comment" : "Warning paragraph in the Export Passwords to CSV sheet: the CSV file is not encrypted and should be deleted after use. “NOT” is capitalised for emphasis, so keep the emphasis. The characters = + - and @ are literal and stay as they are."
+    },
+    "This sign-in page uses WebKit to keep the same session through redirects." : {
+      "comment" : "Caption of the disabled Browser engine row for a sign-in website that must keep one session across redirects. Also shown in the toolbar’s site controls popover. WebKit is an engine name. Full sentence."
     },
     "This theme" : {
       "comment" : "Row title in Settings › Appearance › Theme, shown only for a saved theme, in front of the Rename…, Duplicate and Delete… buttons that act on the selected theme. Sentence case."
