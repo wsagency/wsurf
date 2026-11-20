@@ -53,6 +53,8 @@ nonisolated struct MacSettingChannel: Codable {
         var pending: MacSettingPayload?
         /// The engine can finish an earlier save after the user has restored the previous value.
         var inFlight: MacSettingPayload?
+        /// Last shared definition before this enrollment handed an obsolete provider reset to the engine.
+        var valueBeforePrivateReset: Data?
         var conflict = false
     }
 
@@ -75,21 +77,32 @@ nonisolated struct MacSettingChannel: Codable {
         "mac-prefs-" + category.rawValue + (cloudProfileID.map { "-" + $0.uuidString } ?? "")
     }
 
-    /// Older checkpoints can hold a reset for a provider that is still present privately on this Mac.
-    mutating func preserveLocalOnlyValue(for key: String) -> Data? {
-        guard var record = records[key] else { return observed[key] }
-        let retained = observed[key] ?? record.inFlight?.value ?? record.server?.value
-        if let queued = record.pending ?? record.inFlight, queued.value == nil {
-            // A reset already handed to the engine can still complete after recovery.
-            if let inFlight = record.inFlight, inFlight.value == nil, let retained {
-                record.pending = MacSettingPayload(key: key, value: retained)
-            } else {
+    /// A provider with a private endpoint follows its shared definition until the owner shares an edit or removes it.
+    mutating func preserveLocalOnlyProviders(_ keys: Set<String>, in values: inout [String: Data]) {
+        for (key, record) in records where record.valueBeforePrivateReset != nil && !keys.contains(key) {
+            records[key]?.valueBeforePrivateReset = nil
+            let choice = MacSettingPayload(key: key, value: values[key])
+            if let inFlight = record.inFlight, inFlight != choice {
+                records[key]?.pending = choice
+            }
+        }
+        for key in keys {
+            guard var record = records[key] else {
+                observed[key] = nil
+                continue
+            }
+            if record.valueBeforePrivateReset == nil {
+                if record.inFlight == MacSettingPayload(key: key, value: nil) {
+                    record.valueBeforePrivateReset = record.server?.value ?? observed[key]
+                }
                 record.pending = nil
             }
             record.conflict = false
             records[key] = record
+            let shared = record.pending?.value ?? record.server?.value
+            values[key] = shared
+            observed[key] = shared
         }
-        return retained
     }
 
     /// An absent value is a reset only after this Mac has actually observed the setting.
@@ -110,18 +123,33 @@ nonisolated struct MacSettingChannel: Codable {
     }
 
     mutating func receive(
-        _ payload: MacSettingPayload, fields: Data?, modified: Date? = nil,
+        _ payload: MacSettingPayload, from sender: UUID? = nil, fields: Data?, modified: Date? = nil,
         apply: (Data?, String) throws -> Void
     ) rethrows {
         var record = records[payload.key] ?? Record()
         if let modified, let last = record.modified, modified < last {
             return
         }
-        if record.inFlight == payload {
+        if sender == enrollment && record.inFlight == payload {
             acknowledge(payload, fields: fields, modified: modified)
             return
         }
-        if record.pending == payload {
+        if record.valueBeforePrivateReset != nil {
+            let reset = MacSettingPayload(key: payload.key, value: nil)
+            if record.server != payload {
+                try apply(payload.value, payload.key)
+            }
+            // The conditional reset can still land only while the fetched revision matches its base.
+            if payload != reset || sender != enrollment {
+                let awaitingReset = record.inFlight == reset && record.fields == fields && payload.value != nil
+                record.pending = nil
+                if !awaitingReset {
+                    record.valueBeforePrivateReset = nil
+                    record.inFlight = nil
+                }
+            }
+            observed[payload.key] = record.pending?.value ?? payload.value
+        } else if record.pending == payload {
             if record.inFlight == nil {
                 record.pending = nil
             }
@@ -147,6 +175,11 @@ nonisolated struct MacSettingChannel: Codable {
         }
         if record.inFlight == payload {
             record.inFlight = nil
+            if payload.value == nil, let retained = record.valueBeforePrivateReset {
+                record.pending = MacSettingPayload(key: payload.key, value: retained)
+            } else {
+                record.valueBeforePrivateReset = nil
+            }
         }
         if record.pending == payload && record.inFlight == nil {
             record.pending = nil

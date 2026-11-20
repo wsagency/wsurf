@@ -92,12 +92,8 @@ final class MacSettingsSyncAdapter {
     func snapshot(_ channel: inout MacSettingChannel) throws -> [String: Data] {
         var values = try values(for: channel.category, profileID: channel.localProfileID)
         if channel.category == .providers, channel.localProfileID == nil {
-            for provider in catalog.custom {
-                let key = "custom|" + provider.id
-                if values[key] == nil {
-                    values[key] = channel.preserveLocalOnlyValue(for: key)
-                }
-            }
+            let localOnly = catalog.custom.map { "custom|" + $0.id }.filter { values[$0] == nil }
+            channel.preserveLocalOnlyProviders(Set(localOnly), in: &values)
         }
         return values
     }

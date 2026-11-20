@@ -51,11 +51,12 @@ extension CloudSettingsSync {
 
     func receive(_ record: SyncRecord) throws {
         guard var channel = state.channels[record.id.zone] else { return }
-        let payload = try decoded(record).setting
+        let submitted = try decoded(record)
+        let payload = submitted.setting
         let profile = channel.localProfileID
         let category = channel.category
         let before = channel.records[payload.key]?.server
-        try channel.receive(payload, fields: record.systemFields, modified: record.modifiedAt) {
+        try channel.receive(payload, from: submitted.enrollment, fields: record.systemFields, modified: record.modifiedAt) {
             try apply($0, $1, category, profile)
         }
         // Some values, such as a remote camera grant, await local approval in the store.

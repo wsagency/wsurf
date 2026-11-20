@@ -91,6 +91,9 @@ struct MacWebsiteSyncTests {
         #expect(air.catalog.provider(id: shared.id)?.baseURL == shared.baseURL)
 
         var local = shared
+        local.name = "Queued public edit"
+        studio.catalog.save(local)
+        try sender.collectChanges()
         local.baseURL = URL(string: "https://ai.example.test/v1?tenant=private-fixture")
         studio.catalog.save(local)
         try sender.collectChanges()
@@ -117,8 +120,12 @@ struct MacWebsiteSyncTests {
         #expect(air.catalog.provider(id: shared.id) == nil)
     }
 
-    @Test(arguments: [true, false], [true, false])
-    func anOlderQueuedProviderResetCannotDeleteAPrivateEditOnUpgrade(knewServerValue: Bool, wasSending: Bool) async throws {
+    enum ProviderBaseline: CaseIterable {
+        case known, firstRead, removedByPeer, resetByStudio
+    }
+
+    @Test(arguments: ProviderBaseline.allCases, [true, false])
+    func anOlderQueuedProviderResetCannotDeleteAPrivateEditOnUpgrade(baseline: ProviderBaseline, wasSending: Bool) async throws {
         let profile = Profile.original(), root = URL.temporaryDirectory.appending(path: UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
         let studio = try MacSettingsFixture(profile: profile, folder: root.appending(path: "studio"))
@@ -140,7 +147,8 @@ struct MacWebsiteSyncTests {
 
         // An older offline capture saw the provider disappear from its list of shareable definitions.
         var channel = try #require(peer.channel(.providers, localProfileID: nil))
-        if !knewServerValue {
+        channel.enrollment = UUID()
+        if baseline == .firstRead {
             channel.records[key]?.server = nil
             channel.records[key]?.fields = nil
         }
@@ -153,6 +161,20 @@ struct MacWebsiteSyncTests {
         var checkpoint = peer.state
         checkpoint.channels[channel.zone] = channel
         try JSONEncoder().encode(checkpoint).write(to: file, options: .atomic)
+        if baseline == .removedByPeer {
+            air.catalog.remove(provider)
+            try peer.collectChanges()
+            try await peerEngine.sendNow()
+        } else if baseline == .resetByStudio {
+            let id = SyncRecordID(zone: channel.zone, name: reset.recordName)
+            var resetRecord = try #require(cloud.record(id))
+            resetRecord.payload = try MacSettingRecord(reset, enrollment: channel.enrollment).encoded()
+            guard case .saved = cloud.save(resetRecord) else {
+                Issue.record("Expected the old Studio reset to reach iCloud")
+                return
+            }
+            try await peerEngine.fetchNow()
+        }
         provider.baseURL = URL(string: "https://ai.example.test/v1?tenant=private-fixture")
         studio.catalog.save(provider)
         let reopened = try MacSettingsFixture(profile: profile, folder: studio.folder, makeDefaults: { _ in UserDefaults(suiteName: studio.suite) })
@@ -165,9 +187,18 @@ struct MacWebsiteSyncTests {
         try await peerEngine.fetchNow()
         let repaired = try #require(sync.channel(.providers, localProfileID: nil)?.records[key])
         #expect(repaired.pending == nil && !repaired.conflict)
-        #expect(repaired.server?.value == original)
-        #expect(air.catalog.provider(id: provider.id)?.baseURL?.absoluteString == "https://ai.example.test/v1")
+        let removed = baseline == .removedByPeer || (baseline == .resetByStudio && !wasSending)
+        #expect(repaired.server?.value == (removed ? nil : original))
+        let sharedURL = removed ? nil : "https://ai.example.test/v1"
+        #expect(air.catalog.provider(id: provider.id)?.baseURL?.absoluteString == sharedURL)
         #expect(reopened.catalog.provider(id: provider.id)?.baseURL == provider.baseURL)
+
+        provider.baseURL = URL(string: "https://new.example.test/v1")
+        reopened.catalog.save(provider)
+        try sync.collectChanges()
+        try await engine.sendNow()
+        try await peerEngine.fetchNow()
+        #expect(air.catalog.provider(id: provider.id)?.baseURL == provider.baseURL)
     }
 
     @Test func checkpointAndZoomReopenTogetherWithoutRepublishingTheOldValue() async throws {
