@@ -46,6 +46,7 @@ final class CloudSettingsSync: SyncZoneHandler {
     }
 
     typealias Read = @MainActor (MacSettingsCategory, UUID?) throws -> [String: Data]
+    typealias Snapshot = @MainActor (MacSettingChannel) throws -> [String: Data]
     typealias Apply = @MainActor (Data?, String, MacSettingsCategory, UUID?) throws -> Void
 
     private(set) var state: State
@@ -62,7 +63,7 @@ final class CloudSettingsSync: SyncZoneHandler {
     @ObservationIgnored var onAccountVerification: ((CloudSharedSpaces.AccountVerification) -> Void)?
     var onNeedsEngine: (() -> Void)?
     @ObservationIgnored var registerProfile: ((Profile) -> Void)?
-    @ObservationIgnored let read: Read
+    @ObservationIgnored let snapshot: Snapshot
     @ObservationIgnored let apply: Apply
     @ObservationIgnored private let stateFile: URL
     @ObservationIgnored private let discardWebsiteApprovals: (UUID) throws -> Void
@@ -87,7 +88,8 @@ final class CloudSettingsSync: SyncZoneHandler {
     convenience init(stateFile: URL, profiles: [Profile], adapter: MacSettingsSyncAdapter? = nil) {
         let adapter = adapter ?? MacSettingsSyncAdapter(profiles: profiles)
         self.init(
-            stateFile: stateFile, read: adapter.values(for:profileID:), apply: adapter.apply(_:key:for:profileID:),
+            stateFile: stateFile, snapshot: { try adapter.values(for: $0.category, profileID: $0.localProfileID, preserving: $0.observed) },
+            apply: adapter.apply(_:key:for:profileID:),
             discardWebsiteApprovals: adapter.discardWebsiteApprovals(profileID:)
         )
         registerProfile = adapter.register
@@ -108,12 +110,20 @@ final class CloudSettingsSync: SyncZoneHandler {
         }
     }
 
-    init(
+    convenience init(
         stateFile: URL, read: @escaping Read, apply: @escaping Apply,
         discardWebsiteApprovals: @escaping (UUID) throws -> Void = { _ in }, clock: any Clock<Duration> = ContinuousClock()
     ) {
+        self.init(stateFile: stateFile, snapshot: { try read($0.category, $0.localProfileID) }, apply: apply,
+                  discardWebsiteApprovals: discardWebsiteApprovals, clock: clock)
+    }
+
+    private init(
+        stateFile: URL, snapshot: @escaping Snapshot, apply: @escaping Apply,
+        discardWebsiteApprovals: @escaping (UUID) throws -> Void = { _ in }, clock: any Clock<Duration> = ContinuousClock()
+    ) {
         self.stateFile = stateFile
-        self.read = read
+        self.snapshot = snapshot
         self.apply = apply
         self.discardWebsiteApprovals = discardWebsiteApprovals
         do {
@@ -203,7 +213,7 @@ final class CloudSettingsSync: SyncZoneHandler {
                 }
             }
             // Observe the starting values before any account or baseline read can suspend.
-            proposed.collect(try read(category, localProfileID))
+            proposed.collect(try snapshot(proposed))
             updateChannel(proposed)
             do {
                 try save()
@@ -329,7 +339,7 @@ final class CloudSettingsSync: SyncZoneHandler {
     /// Fetched records and deletions must see edits made since the last notification.
     func collectLocalChanges(in zone: String) throws {
         guard var channel = state.channels[zone] else { return }
-        channel.collect(try read(channel.category, channel.localProfileID))
+        channel.collect(try snapshot(channel))
         updateChannel(channel)
     }
 
@@ -362,7 +372,7 @@ final class CloudSettingsSync: SyncZoneHandler {
         let profile = channel.localProfileID
         try channel.resolve(key, useCloud: useCloud) { try apply($0, $1, category, profile) }
         if useCloud {
-            channel.observed[key] = try read(category, profile)[key]
+            channel.observed[key] = try snapshot(channel)[key]
         }
         state.channels[zone] = channel
         try save()

@@ -67,6 +67,56 @@ struct MacWebsiteSyncTests {
         checkDisk(zoomLevel: nil, proposed: false)
     }
 
+    @Test func aLocalOnlyProviderEditPreservesTheSharedDefinitionUntilExplicitRemoval() async throws {
+        let profile = Profile.original(), root = URL.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let studio = try MacSettingsFixture(profile: profile, folder: root.appending(path: "studio"))
+        let air = try MacSettingsFixture(profile: profile, folder: root.appending(path: "air"))
+        defer { studio.cleanup(); air.cleanup() }
+        let cloud = FakeSyncCloud()
+        func open(_ mac: MacSettingsFixture) async throws -> (CloudSettingsSync, FakeSyncEngine) {
+            let sync = CloudSettingsSync(stateFile: mac.folder.appending(path: "settings"), profiles: [profile], adapter: mac.adapter)
+            let engine = FakeSyncEngine(cloud: cloud, delegate: sync)
+            sync.attach(engine)
+            try await sync.enable(.providers, localProfileID: nil, cloudProfileID: nil)
+            return (sync, engine)
+        }
+        var shared = ProviderCatalog.newCustom()
+        shared.name = "Shared"
+        shared.baseURL = URL(string: "https://ai.example.test/v1")
+        studio.catalog.save(shared)
+        let (sender, studioEngine) = try await open(studio)
+        try await studioEngine.sendNow()
+        let (receiver, airEngine) = try await open(air)
+        #expect(air.catalog.provider(id: shared.id)?.baseURL == shared.baseURL)
+
+        var local = shared
+        local.baseURL = URL(string: "https://ai.example.test/v1?tenant=private-fixture")
+        studio.catalog.save(local)
+        try sender.collectChanges()
+        try await studioEngine.sendNow()
+        try await airEngine.fetchNow()
+        #expect(air.catalog.provider(id: shared.id)?.baseURL == shared.baseURL)
+        let key = "custom|" + shared.id
+        let id = SyncRecordID(zone: "mac-prefs-providers", name: MacSettingPayload(key: key, value: nil).recordName)
+        let row = try #require(cloud.record(id))
+        let definition = try #require(MacSettingRecord.decode(row.payload, recordName: id.name)?.value)
+        #expect(try JSONSerialization.jsonObject(with: definition) as? [String: String] == ["name": "Shared", "endpoint": "https://ai.example.test/v1"])
+
+        let (reopened, restartedEngine) = try await open(studio)
+        shared.name = "Edited on Air"
+        air.catalog.save(shared)
+        try receiver.collectChanges()
+        try await airEngine.sendNow()
+        try await restartedEngine.fetchNow()
+        #expect(studio.catalog.provider(id: shared.id)?.baseURL == local.baseURL)
+        studio.catalog.remove(local)
+        try reopened.collectChanges()
+        try await restartedEngine.sendNow()
+        try await airEngine.fetchNow()
+        #expect(air.catalog.provider(id: shared.id) == nil)
+    }
+
     @Test func checkpointAndZoomReopenTogetherWithoutRepublishingTheOldValue() async throws {
         let profile = Profile.original(), root = URL.temporaryDirectory.appending(path: UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }

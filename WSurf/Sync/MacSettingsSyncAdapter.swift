@@ -90,6 +90,10 @@ final class MacSettingsSyncAdapter {
     }
 
     func values(for category: MacSettingsCategory, profileID: UUID?) throws -> [String: Data] {
+        try values(for: category, profileID: profileID, preserving: [:])
+    }
+
+    func values(for category: MacSettingsCategory, profileID: UUID?, preserving observed: [String: Data]) throws -> [String: Data] {
         switch category {
         case .websiteSettings:
             return try websiteValues(scoped(profileID))
@@ -97,8 +101,12 @@ final class MacSettingsSyncAdapter {
             try flush(catalog.defaults)
             var result: [String: Data] = [:]
             for provider in catalog.custom {
+                let key = "custom|" + provider.id
+                // A locally edited endpoint can be private. Only removing the provider should publish a reset.
                 if let definition = Definition(provider) {
-                    result["custom|" + provider.id] = try Self.encode(definition)
+                    result[key] = try Self.encode(definition)
+                } else {
+                    result[key] = observed[key]
                 }
             }
             return result
@@ -203,7 +211,8 @@ final class MacSettingsSyncAdapter {
 
         init(from decoder: Decoder) throws {
             let fields = try decoder.singleValueContainer().decode([String: String].self)
-            guard fields.count == 2, let name = fields["name"], let endpoint = fields["endpoint"].flatMap(URL.init(string:)) else {
+            guard fields.count == 2, let name = fields["name"], Self.validName(name),
+                  let endpoint = ProviderKeySharing.validEndpoint(fields["endpoint"].flatMap(URL.init(string:))) else {
                 throw Failure.invalidValue
             }
             self.name = name
@@ -220,13 +229,17 @@ final class MacSettingsSyncAdapter {
         let (kind, id) = try Self.parts(key)
         guard kind == "custom", id.hasPrefix("custom."), Self.providerID(id) else { throw Failure.invalidKey }
         let old = catalog.provider(id: id)
-        guard let definition = try Self.decoded(data, as: Definition.self) else {
+        let incoming = try Self.decoded(data, as: Definition.self)
+        if let old, Definition(old) == nil {
+            return
+        }
+        guard let definition = incoming else {
             if let old {
                 catalog.remove(old, received: true)
             }
             return
         }
-        guard Definition.validName(definition.name), let url = ProviderKeySharing.validEndpoint(definition.endpoint) else { throw Failure.invalidValue }
+        let url = definition.endpoint
         var next = old ?? ProviderCatalog.newCustom(id: id)
         next.name = definition.name
         next.baseURL = url
