@@ -564,6 +564,11 @@ exports requires Production grants, production push and deployment of the Produc
 schema. Signing permits access to CloudKit. The test user gives consent separately
 with the launch-time feature preference and per-profile or per-vault switch below.
 
+To check private CloudKit transport on Studio and Air, use the standalone probe
+from the reviewed merge commit. Studio writes a synthetic marker, Air acknowledges
+it, and Studio confirms the reply and removes the trial's zone.
+[Two-Mac CloudKit transport trial](Tools/CloudKitTransportProbe/README.md)
+
 For the tab-sharing trial, use two fresh macOS test users with the same dedicated
 Apple Account. In each test user run
 `defaults write io.wsagency.wsurf experiments.iCloudTabs -bool YES`, relaunch
