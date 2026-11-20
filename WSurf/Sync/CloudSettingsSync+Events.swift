@@ -4,11 +4,28 @@
 import Foundation
 import WSurfCore
 
+/// Each Mac reads the setting. Its sender also checks the enrollment in the encrypted payload on replies.
+private nonisolated struct MacSettingRecord: Codable {
+    let key: String
+    let value: Data?
+    let enrollment: UUID?
+
+    var setting: MacSettingPayload {
+        MacSettingPayload(key: key, value: value)
+    }
+
+    init(_ setting: MacSettingPayload, enrollment: UUID) {
+        key = setting.key
+        value = setting.value
+        self.enrollment = enrollment
+    }
+}
+
 extension CloudSettingsSync {
-    private func decoded(_ record: SyncRecord) throws -> MacSettingPayload {
+    private func decoded(_ record: SyncRecord) throws -> MacSettingRecord {
         guard record.type == .macSetting, record.schema == 1, record.payload.count <= 768 * 1024,
-            let payload = try? JSONDecoder().decode(MacSettingPayload.self, from: record.payload),
-            !payload.key.isEmpty, payload.key.utf8.count <= 4096, payload.recordName == record.id.name
+            let payload = try? JSONDecoder().decode(MacSettingRecord.self, from: record.payload),
+            !payload.key.isEmpty, payload.key.utf8.count <= 4096, payload.setting.recordName == record.id.name
         else {
             throw Issue.invalidRecord
         }
@@ -34,7 +51,8 @@ extension CloudSettingsSync {
         guard ready.contains(id.zone), sendingAllowed, trustedUser != nil, trustedUser == state.account,
             let key = names[id], var channel = state.channels[id.zone], let record = channel.records[key],
             !record.conflict, let pending = record.pending, pending.recordName == id.name,
-            let data = try? JSONEncoder().encode(pending), data.count <= 768 * 1024
+            let data = try? JSONEncoder().encode(MacSettingRecord(pending, enrollment: channel.enrollment)),
+            data.count <= 768 * 1024
         else { return nil }
         if record.inFlight != pending {
             channel.records[key]?.inFlight = pending
@@ -51,7 +69,7 @@ extension CloudSettingsSync {
 
     func receive(_ record: SyncRecord) throws {
         guard var channel = state.channels[record.id.zone] else { return }
-        let payload = try decoded(record)
+        let payload = try decoded(record).setting
         let profile = channel.localProfileID
         let category = channel.category
         let before = channel.records[payload.key]?.server
@@ -116,10 +134,10 @@ extension CloudSettingsSync {
                 guard !state.channels.isEmpty else { return }
                 try await verifyAccount(generation)
                 try fetched(records, deleted: deleted)
-            case .sent(let saved, let deleted, let failed):
+            case .sent(let saved, _, let failed):
                 guard !state.channels.isEmpty else { return }
                 try await verifyAccount(generation)
-                try sent(saved, deleted: deleted, failed: failed)
+                try sent(saved, failed: failed)
             }
         } catch {
             // An unrecognized future record must not be overwritten by this version.
@@ -137,39 +155,51 @@ extension CloudSettingsSync {
 
     private func fetched(_ records: [SyncRecord], deleted: [SyncRecordID]) throws {
         guard trustedUser != nil, trustedUser == state.account else { return }
-        for record in records where state.channels[record.id.zone] != nil {
-            if loading[record.id.zone] != nil {
-                buffered[record.id.zone, default: []].append(.save(record))
-            } else if ready.contains(record.id.zone) {
-                try receive(record)
-            }
-        }
-        for id in deleted {
-            if loading[id.zone] != nil {
-                buffered[id.zone, default: []].append(.remove(id))
-            } else if ready.contains(id.zone) {
-                try removed(id)
+        let modifiedByZone = Dictionary(grouping: records) { $0.id.zone }
+        let removedByZone = Dictionary(grouping: deleted) { $0.zone }
+        for zone in Set(modifiedByZone.keys).union(removedByZone.keys) where state.channels[zone] != nil {
+            let modified = modifiedByZone[zone] ?? []
+            let deletions = removedByZone[zone] ?? []
+            if loading[zone] != nil {
+                buffered[zone, default: []] += modified.map(BufferedChange.save) + deletions.map(BufferedChange.remove)
+            } else if ready.contains(zone) {
+                do {
+                    try collectLocalChanges(in: zone)
+                    try modified.forEach(receive)
+                    try deletions.forEach(removed)
+                } catch {
+                    ready.remove(zone)
+                    reportError()
+                }
             }
         }
         try save()
     }
 
-    private func sent(_ saved: [SyncRecord], deleted: [SyncRecordID], failed: [SyncFailedSave]) throws {
+    private func currentSubmission(_ record: SyncRecord) -> MacSettingPayload? {
+        guard ready.contains(record.id.zone), let channel = state.channels[record.id.zone],
+            let submitted = try? decoded(record), submitted.enrollment == channel.enrollment,
+            channel.records[submitted.key]?.inFlight == submitted.setting
+        else { return nil }
+        return submitted.setting
+    }
+
+    private func sent(_ saved: [SyncRecord], failed: [SyncFailedSave]) throws {
         guard trustedUser != nil, trustedUser == state.account else { return }
-        for record in saved where ready.contains(record.id.zone) {
-            let payload = try decoded(record)
-            guard var channel = state.channels[record.id.zone] else { continue }
+        for record in saved {
+            guard let payload = currentSubmission(record), var channel = state.channels[record.id.zone] else { continue }
             channel.acknowledge(payload, fields: record.systemFields, modified: record.modifiedAt)
             updateChannel(channel)
         }
-        for id in deleted where ready.contains(id.zone) {
-            try removed(id)
-        }
-        for error in failed where ready.contains(error.id.zone) {
+        // A reset is a saved setting. This channel never submits a physical record deletion.
+        for error in failed {
+            guard let attempted = error.attempted, attempted.id == error.id, currentSubmission(attempted) != nil else { continue }
             switch error.failure {
             case .serverRecordChanged(let server):
+                try collectLocalChanges(in: error.id.zone)
                 try receive(server)
             case .unknownItem:
+                try collectLocalChanges(in: error.id.zone)
                 try removed(error.id)
             case .zoneNotFound:
                 forget(zone: error.id.zone)
