@@ -42,20 +42,23 @@ final class SpaceStore {
     let profileID: UUID
     private(set) var spaces: [Space]
     @ObservationIgnored private let file: URL?
+    @ObservationIgnored private var unreadableFallback: Space?
     @ObservationIgnored weak var sharedSpacesHost: CloudSharedSpaces?
 
     /// `file` nil keeps the spaces in memory only (tests, or a second copy of the app that owns no session).
     init(profile: Profile, file: URL?) {
         profileID = profile.id
         self.file = file
-        let stored = file
-            .flatMap { try? Data(contentsOf: $0) }
-            .flatMap { try? JSONDecoder().decode([Space].self, from: $0) } ?? []
-        var seen: Set<UUID> = []
-        spaces = stored.filter { seen.insert($0.id).inserted }
+        let stored = file.flatMap { try? Self.readSpaces(from: $0) }
+        spaces = stored ?? []
         if spaces.isEmpty {
-            spaces = [Space(id: UUID(), name: profile.name, symbol: profile.symbol, color: profile.color)]
-            save()
+            let home = Space(id: UUID(), name: profile.name, symbol: profile.symbol, color: profile.color)
+            spaces = [home]
+            if file != nil && stored == nil {
+                unreadableFallback = home
+            } else {
+                save()
+            }
         }
     }
 
@@ -66,16 +69,28 @@ final class SpaceStore {
 
     @discardableResult
     func add(name: String, symbol: String = Space.defaultSymbol, color: TabFolderColor? = nil) -> Space {
-        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        let space = Space(
-            id: UUID(),
-            name: trimmed.isEmpty ? String(localized: "New Space") : trimmed,
-            symbol: symbol,
-            color: color ?? nextColor
-        )
+        let space = Self.makeSpace(id: UUID(), name: name, symbol: symbol, color: color ?? nextColor)
         spaces.append(space)
         save()
         return space
+    }
+
+    func ensureJoinedSpace(id: UUID, name: String, symbol: String, color: TabFolderColor?) throws {
+        guard let file else { throw CocoaError(.fileWriteNoPermission) }
+        var next = try spacesForWriting(to: file)
+        let index = next.firstIndex { $0.id == id }
+        let joined = Self.makeSpace(id: id, name: name, symbol: symbol, color: color ?? .gray, fallbackName: index.map { next[$0].name })
+        if let index {
+            next[index] = joined
+        } else {
+            next.append(joined)
+        }
+        try persist(next, to: file)
+    }
+
+    private static func makeSpace(id: UUID, name: String, symbol: String, color: TabFolderColor, fallbackName: String? = nil) -> Space {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        return Space(id: id, name: trimmed.isEmpty ? fallbackName ?? String(localized: "New Space") : trimmed, symbol: symbol, color: color)
     }
 
     /// The first color no space of this profile wears yet, as Linen picks it.
@@ -109,6 +124,33 @@ final class SpaceStore {
 
     private func save() {
         guard let file else { return }
-        JSONFileStore.encodeAndWrite(spaces, to: file, sortedKeys: true)
+        try? persist(spacesForWriting(to: file), to: file)
+    }
+
+    private func persist(_ next: [Space], to file: URL) throws {
+        try JSONFileStore.writeAtomically(next, to: file, sortedKeys: true)
+        unreadableFallback = nil
+        if spaces != next {
+            spaces = next
+        }
+    }
+
+    private static func readSpaces(from file: URL) throws -> [Space] {
+        do {
+            let saved = try JSONDecoder().decode([Space].self, from: Data(contentsOf: file))
+            var seen: Set<UUID> = []
+            return saved.filter { seen.insert($0.id).inserted }
+        } catch CocoaError.fileReadNoSuchFile {
+            return []
+        }
+    }
+
+    private func spacesForWriting(to file: URL) throws -> [Space] {
+        // A failed initial read can hide other Spaces. Recover them before replacing their file.
+        guard let unreadableFallback else { return spaces }
+        let saved = try Self.readSpaces(from: file)
+        guard !saved.isEmpty else { return spaces }
+        let ids = Set(saved.map(\.id))
+        return saved + spaces.filter { $0 != unreadableFallback && !ids.contains($0.id) }
     }
 }

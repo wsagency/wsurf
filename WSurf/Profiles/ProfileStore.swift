@@ -182,14 +182,24 @@ final class ProfileStore {
     func remove(
         _ profile: Profile, beforeErasing: () async -> Void = {},
         settingsSync: CloudSettingsSync? = CloudSync.shared?.settingsSync,
+        sharedSpaces: CloudSharedSpaces? = CloudSync.shared?.sharedSpaces,
         eraseData: (Profile) async -> Void = Profile.erase
     ) async -> Result<Void, Error> {
         guard !profile.isOriginal, !profile.isPrivate, index(of: profile) != nil else { return .success(()) }
-        do {
+        // An installation without a running iCloud service can still have consent saved by a prior launch.
+        let sharedSpaces = sharedSpaces ?? CloudSharedSpaces(
+            stateFile: file.deletingLastPathComponent().appending(path: "iCloudSharedSpaces.json"), windows: { [] }
+        )
+        func detachSync() throws {
+            let catalogResult = Result { try sharedSpaces.forgetProfile(profile.id) }
             try settingsSync?.forgetProfile(profile.id)
+            try catalogResult.get()
+        }
+        do {
+            try detachSync()
             await beforeErasing()
             // A different window can enroll the profile again while the active window switches away.
-            try settingsSync?.forgetProfile(profile.id)
+            try detachSync()
         } catch {
             return .failure(error)
         }

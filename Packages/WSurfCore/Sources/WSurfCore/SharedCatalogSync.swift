@@ -333,6 +333,20 @@ public final class SharedCatalogSync: SyncZoneHandler {
         save()
     }
 
+    /// Erasing a local profile also revokes edits parked for a signed-out account.
+    public func discardEdits(for profile: UUID) {
+        sending = sending.filter { $0.value.profile != profile }
+        state.pending = state.pending.filter { $0.value.profile != profile }
+        state.conflicts = state.conflicts.filter { $0.value.profile != profile }
+        state.pausedAccounts = state.pausedAccounts?.mapValues { parked in
+            var remaining = parked
+            remaining.pending = parked.pending.filter { $0.value.profile != profile }
+            remaining.conflicts = parked.conflicts.filter { $0.value.profile != profile }
+            return remaining
+        }
+        save()
+    }
+
     public func resolve(_ id: SyncRecordID, keepingLocal: Bool) {
         guard let edit = state.conflicts.removeValue(forKey: id) else { return }
         if keepingLocal {

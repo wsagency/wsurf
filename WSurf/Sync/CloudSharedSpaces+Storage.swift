@@ -5,7 +5,7 @@ import Foundation
 import Observation
 import WSurfCore
 
-/// The journal contains only the choices revoked against the last saved checkpoint.
+/// Keeps local revocations replayable until the catalog checkpoint includes them.
 @Observable
 final class SharedCatalogStorage {
     struct OptOut: Codable, Hashable {
@@ -25,6 +25,9 @@ final class SharedCatalogStorage {
     private struct Journal: Codable {
         let checkpoint: UUID?
         let choices: Set<OptOut>
+        var erasingProfiles: Set<UUID>?
+        /// Removals requested before the checkpoint could be read.
+        var unboundProfiles: Set<UUID>?
     }
 
     private let url: URL
@@ -39,16 +42,28 @@ final class SharedCatalogStorage {
     @ObservationIgnored var applyingOptOuts = false
     private(set) var readable = false
     var pending: Set<OptOut> = []
+    private(set) var erasingProfiles: Set<UUID> = []
+    private var unboundProfiles: Set<UUID> = []
     var pendingAccountReset: UUID?
     private(set) var unreadableJournal = false
 
     var hasOptOuts: Bool {
-        unreadableJournal || pendingAccountReset != nil || !pending.isEmpty
+        unreadableJournal || pendingAccountReset != nil || !pending.isEmpty || !erasingProfiles.isEmpty
     }
 
     init(_ file: URL) {
         url = file
         _ = reload()
+    }
+
+    func requestProfileRemoval(_ id: UUID) throws {
+        erasingProfiles.insert(id)
+        guard !readable else { return }
+        // Keep earlier choices bound to their original checkpoint while recording this removal.
+        unboundProfiles.insert(id)
+        var journal = try read(Journal.self, from: journalURL) ?? Journal(checkpoint: nil, choices: [])
+        journal.unboundProfiles = (journal.unboundProfiles ?? []).union(unboundProfiles)
+        try JSONEncoder().encode(journal).write(to: journalURL, options: .atomic)
     }
 
     /// A temporarily unreadable checkpoint may contain other enrollments and links. Wait for it before replacing it.
@@ -74,6 +89,9 @@ final class SharedCatalogStorage {
             return false
         }
         pending.formUnion(journal?.choices ?? [])
+        erasingProfiles.formUnion(journal?.erasingProfiles ?? [])
+        unboundProfiles.formUnion(journal?.unboundProfiles ?? [])
+        defer { erasingProfiles.formUnion(unboundProfiles) }
         do {
             data = try JSONDecoder().decode(State.self, from: Data(contentsOf: url))
             written = data
@@ -103,7 +121,10 @@ final class SharedCatalogStorage {
         } else if let journal, journal.checkpoint != data.checkpoint {
             // The checkpoint advanced before a previous process could remove its journal.
             pending = []
-            try? files.removeItem(at: journalURL)
+            erasingProfiles = []
+            if unboundProfiles.isEmpty {
+                try? files.removeItem(at: journalURL)
+            }
         }
         return true
     }
@@ -121,6 +142,11 @@ final class SharedCatalogStorage {
         let files = FileManager.default
         do {
             try files.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            if !unboundProfiles.isEmpty {
+                // Bind these removals before advancing the checkpoint. A stale journal must allow a later enrollment.
+                try writeBoundJournal()
+                unboundProfiles = []
+            }
             try JSONEncoder().encode(next).write(to: url, options: .atomic)
         } catch {
             try writeRecoveryFiles()
@@ -130,6 +156,7 @@ final class SharedCatalogStorage {
         data = next
         if hasOptOuts {
             pending = []
+            erasingProfiles = []
             if pendingAccountReset != nil {
                 pendingAccountReset = nil
                 try? files.removeItem(at: accountResetURL)
@@ -144,10 +171,14 @@ final class SharedCatalogStorage {
         if let reset = pendingAccountReset {
             try JSONEncoder().encode(reset).write(to: accountResetURL, options: .atomic)
         }
-        if readable && (unreadableJournal || !pending.isEmpty) {
-            let journal = Journal(checkpoint: written?.checkpoint, choices: pending)
-            try JSONEncoder().encode(journal).write(to: journalURL, options: .atomic)
+        if readable && (unreadableJournal || !pending.isEmpty || !erasingProfiles.isEmpty) {
+            try writeBoundJournal()
         }
+    }
+
+    private func writeBoundJournal() throws {
+        let journal = Journal(checkpoint: written?.checkpoint, choices: pending, erasingProfiles: erasingProfiles.isEmpty ? nil : erasingProfiles)
+        try JSONEncoder().encode(journal).write(to: journalURL, options: .atomic)
     }
 
     private func read<T: Decodable>(_ type: T.Type, from file: URL) throws -> T? {

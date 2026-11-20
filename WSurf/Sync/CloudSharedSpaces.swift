@@ -18,6 +18,8 @@ nonisolated struct SharedProfileLinks: Codable, Equatable {
 
     var profile: UUID?
     var spaces: [UUID: UUID] = [:]
+    /// Remote Space to reserved local ID until both Spaces.json and the link are committed.
+    var joiningSpaces: [UUID: UUID]?
     var slots: [UUID: Slot] = [:]
     var pins: [UUID: UUID] = [:]
     var pinFolders: [UUID: UUID]?
@@ -151,7 +153,38 @@ final class CloudSharedSpaces {
     }
 
     func hasPendingOptOut(_ category: SharedCatalogCategory, for profile: Profile) -> Bool {
-        storage.unreadableJournal || storage.pendingAccountReset != nil || storage.pending.contains { $0.category == category && $0.profile == profile.id }
+        storage.unreadableJournal || storage.pendingAccountReset != nil || storage.erasingProfiles.contains(profile.id)
+            || storage.pending.contains { $0.profile == profile.id && $0.category == category }
+    }
+
+    func forgetProfile(_ id: UUID) throws {
+        if !storage.readable {
+            try storage.requestProfileRemoval(id)
+            guard retryOptOuts() else { throw SharedCatalogError.storage }
+        }
+        let prior = storage.data
+        let needsRetry = storage.hasOptOuts || !catalog.storageAvailable
+        storage.applyingOptOuts = true
+        discardProfile(id)
+        storage.applyingOptOuts = false
+        if storage.data != prior {
+            try storage.requestProfileRemoval(id)
+        } else if !needsRetry {
+            return
+        }
+        guard catalog.persistLocalState() else { throw SharedCatalogError.storage }
+    }
+
+    private func discardProfile(_ id: UUID) {
+        profiles[id] = nil
+        links[id] = nil
+        storage.data.pausedLinks = storage.data.pausedLinks?.mapValues { parked in
+            parked.filter { $0.key != id }
+        }
+        for category in SharedCatalogCategory.allCases {
+            catalog.setEnabled(false, category, for: id)
+        }
+        catalog.discardEdits(for: id)
     }
 
     /// The last category can be turned off while offline, before an engine exists.
@@ -186,6 +219,9 @@ final class CloudSharedSpaces {
                 } else {
                     catalog.setEnabled(false, choice.category, for: choice.profile)
                 }
+            }
+            for id in storage.erasingProfiles {
+                discardProfile(id)
             }
             if storage.pendingAccountReset != nil {
                 catalog.resetAccount(to: nil)
@@ -224,7 +260,7 @@ final class CloudSharedSpaces {
 
     @discardableResult
     func linkProfile(_ localID: UUID, to cloudID: UUID) -> Bool {
-        guard localID != Profile.privateID, cloudID != Profile.privateID, catalog.trustedUser != nil,
+        guard localID != Profile.privateID, cloudID != Profile.privateID, profiles[localID] != nil, catalog.trustedUser != nil,
               catalog.trustedUser == catalog.state.user,
               links[localID]?.profile == nil || links[localID]?.profile == cloudID,
               !links.contains(where: { $0.key != localID && $0.value.profile == cloudID }) else { return false }
@@ -258,7 +294,10 @@ final class CloudSharedSpaces {
     }
 
     func availableSpaces(for profile: Profile) -> [SharedSpaceItem] {
-        available(.spaces, for: profile).filter { $0.kind == .space && links[profile.id]?.spaces.values.contains($0.id) != true }
+        let candidates = available(.spaces, for: profile).filter { $0.kind == .space }
+        guard !candidates.isEmpty, let linked = links[profile.id]?.spaces else { return candidates }
+        let joined = Set(spaces(profile)?.spaces.compactMap { linked[$0.id] } ?? [])
+        return candidates.filter { !joined.contains($0.id) }
     }
 
     func availablePins(for profile: Profile) -> [SharedSpaceItem] {
@@ -267,6 +306,13 @@ final class CloudSharedSpaces {
 
     func share(_ space: Space, in profile: Profile) async throws {
         try await enable(.spaces, for: profile)
+        if let pending = links[profile.id]?.joiningSpaces?.first(where: { $0.value == space.id })?.key {
+            if let item = catalog.item(pending, in: .spaces), !item.removed {
+                try await join(item, in: profile)
+                return
+            }
+            links[profile.id]?.joiningSpaces?[pending] = nil
+        }
         let group = try linkedProfileID(for: profile)
         guard spaces(profile)?.space(id: space.id) != nil else { throw SharedCatalogError.unavailable }
         let sharedID = links[profile.id]?.spaces[space.id] ?? UUID()
@@ -282,11 +328,27 @@ final class CloudSharedSpaces {
         try await enable(.spaces, for: profile)
         guard let item = catalog.item(remote.id, in: .spaces), item.kind == .space, !item.removed,
               let store = spaces(profile) else { throw SharedCatalogError.unavailable }
-        guard linkProfile(profile.id, to: item.profileID) else { throw SharedCatalogError.unavailable }
-        guard links[profile.id]?.spaces.values.contains(item.id) != true else { return }
-        let local = store.add(name: item.title, symbol: item.symbol ?? Space.defaultSymbol, color: .init(rawValue: item.color ?? ""))
-        links[profile.id, default: .init()].spaces[local.id] = item.id
-        guard persistLinks() else { throw SharedCatalogError.storage }
+        guard linkProfile(profile.id, to: item.profileID), var link = links[profile.id] else { throw SharedCatalogError.unavailable }
+        let linked = link.spaces.first { $0.value == item.id }?.key
+        let local = linked ?? link.joiningSpaces?[item.id] ?? UUID()
+        if linked == nil, link.joiningSpaces?[item.id] == nil {
+            var joining = link.joiningSpaces ?? [:]
+            joining[item.id] = local
+            link.joiningSpaces = joining
+            links[profile.id] = link
+            guard persistLinks() else { throw SharedCatalogError.storage }
+        }
+        try store.ensureJoinedSpace(id: local, name: item.title, symbol: item.symbol ?? Space.defaultSymbol, color: item.color.flatMap(TabFolderColor.init))
+        if linked == nil {
+            let pending = link
+            link.spaces[local] = item.id
+            link.joiningSpaces?[item.id] = nil
+            links[profile.id] = link
+            guard persistLinks() else {
+                links[profile.id] = pending
+                throw SharedCatalogError.storage
+            }
+        }
         applyCatalog()
     }
 
