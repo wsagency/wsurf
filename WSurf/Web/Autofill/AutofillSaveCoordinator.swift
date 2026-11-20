@@ -141,12 +141,6 @@ final class AutofillSaveSession: NSObject {
         self.username = step
     }
 
-    /// A displayed account may spell its email domain differently. Saving a submitted username still uses its exact value.
-    func usernameForDisplayHint(_ hint: String?, origin: String) -> String? {
-        guard let hint, let value = username?.value, CredentialAccountSelection.sameUsername(value, hint, origin: origin) else { return hint }
-        return value
-    }
-
     /// The account picked in this tab for `origin` and `username` while that pick is live, as `selectedAccount` checks it, but read
     /// without retiring it, so a caller that has not confirmed its document yet may ask.
     func livePick(origin: String, username value: String) -> (accountID: UUID, epoch: UInt64)? {

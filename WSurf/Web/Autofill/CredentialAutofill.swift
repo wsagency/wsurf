@@ -465,3 +465,11 @@ nonisolated extension AutofillSuggestion {
         year = nil
     }
 }
+
+extension AutofillSaveSession {
+    /// A displayed account may spell its email domain differently. Saving a submitted username still uses its exact value.
+    func usernameForDisplayHint(_ hint: String?, origin: String) -> String? {
+        guard let hint, let value = username?.value, CredentialAccountSelection.sameUsername(value, hint, origin: origin) else { return hint }
+        return value
+    }
+}
