@@ -763,6 +763,9 @@
     "Your passwords are imported. Remove the old list in Credential Manager when you’re ready." : {
 
     },
+    "Your saved sync settings are temporarily unavailable. Try again to load them." : {
+      "comment" : "Shown when this Mac cannot read its saved sync choices."
+    },
     "Your saved passwords are now only in Credential Manager." : {
 
     },
@@ -2498,6 +2501,12 @@
     },
     "Confirm" : {
 
+    },
+    "Confirm Sharing" : {
+      "comment" : "Button in Sync settings that approves the selected category for the current Apple Account."
+    },
+    "Confirm to share these settings with your current Apple Account." : {
+      "comment" : "Shown for a category selected while the Apple Account could not be verified."
     },
     "Connect an external assistant to tabs you choose." : {
 
