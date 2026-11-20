@@ -5,7 +5,7 @@ This file preserves release notes inherited from the upstream
 describe upstream Linen releases, not releases published by WSurf. New WSurf
 release notes will be added above this provenance record.
 
-## 0.2.0 (build 32) — 2026-11-20
+## 0.2.0 (build 32) — 2026-11-21
 
 - Settings → Sync lets you choose which Spaces, pins and Favorites to share through iCloud. Join a shared Space on another Mac to follow tab opens, moves, reordering and closes. Each Mac keeps its local Spaces and current selection.
 - The Personal profile can also list tabs open on your other devices in the sidebar. Open one to make a local copy.
