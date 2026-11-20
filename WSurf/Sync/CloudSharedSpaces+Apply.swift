@@ -166,10 +166,10 @@ extension CloudSharedSpaces {
         }
         let unmapped = active.filter { localIDs[$0.id] == nil }
         let occupied = unmapped.isEmpty ? Set<UUID>() : BrowserModel.occupiedSidebarIDs(in: models)
-        // A row already in a saved, closed window waits for that window. An unseen row goes into one regular window.
+        let windows = Dictionary(models.map { ($0.windowID, $0) }, uniquingKeysWith: { first, _ in first })
         for item in unmapped {
-            let parentOwner = item.parentID.flatMap { localIDs[$0] }.flatMap { link.slots[$0]?.window }
-            guard let target = parentOwner.flatMap({ owner in models.first { $0.windowID == owner } }) ?? models.first else { continue }
+            let owner = folderWindow(for: item) { localIDs[$0].flatMap { link.slots[$0]?.window } } ?? models.first?.windowID
+            guard let owner, let target = windows[owner] else { continue }
             if let pin = pinsByTab[item.id], let page = target.tabs.first(where: { $0.pinID == pin }), link.slots[page.id] == nil {
                 localIDs[item.id] = page.id
                 link.slots[page.id] = .init(cloudID: item.id, window: target.windowID, last: item, pinID: pin)
@@ -179,8 +179,9 @@ extension CloudSharedSpaces {
             localIDs[item.id] = id
             link.slots[id] = .init(cloudID: item.id, window: target.windowID)
         }
+        let placed = placeRows(active, ids: localIDs, windows: windows, link: &link)
         for model in models {
-            let rows = active.filter { item in
+            let rows = placed.filter { item in
                 guard let id = localIDs[item.id] else { return false }
                 guard let slot = link.slots[id], slot.window == model.windowID else { return false }
                 return slot.pinID == nil || model.tab(id: id)?.pinID == nil

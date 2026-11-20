@@ -180,7 +180,7 @@ extension CloudSharedSpaces {
                 }
                 lower = item.order
                 if link.slots[local]?.last != item {
-                    edits.append(item)
+                    edits.append(outgoingRow(item, after: link.slots[local]?.last, window: browser.windowID, link: link))
                     link.slots[local]?.last = item
                 }
             }
