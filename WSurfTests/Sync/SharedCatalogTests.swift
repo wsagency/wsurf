@@ -229,12 +229,19 @@ struct SharedCatalogTests {
     }
 
     @Test func anUnmappableCatalogRowKeepsAFullReadIncompleteWhileVaultAssetsStayFiltered() {
-        for (zone, type) in [("mac-prefs-providers", "MacSetting"), (SharedCatalogCategory.spaces.zone, "SharedSpaceItem"), (SharedCatalogCategory.pins.zone, "FutureType")] {
+        let incompleteRows = [
+            ("mac-prefs-providers", "MacSetting"),
+            (SharedCatalogCategory.spaces.zone, "SharedSpaceItem"),
+            (SharedCatalogCategory.pins.zone, "FutureType"),
+            (SyncZone.devices, SyncRecordType.device.rawValue),
+            (SyncZone.profile(UUID()), SyncRecordType.deviceSession.rawValue),
+        ]
+        for (zone, type) in incompleteRows {
             let id = CloudKitMapping.recordID(.init(zone: zone, name: "existing-row"))
             let record = CKRecord(recordType: type, recordID: id)
             var read = SyncZoneRead(records: [])
             CloudKitMapping.include(record, in: &read)
-            #expect(read.records.isEmpty && read.skipped == 1)
+            #expect(read.records.isEmpty && read.skipped == 1, "Unreadable \(type) row")
         }
         let vault = CloudKitMapping.recordID(.init(zone: SyncZone.vault(profileID: UUID(), vaultID: UUID()), name: "asset"))
         var read = SyncZoneRead(records: [])

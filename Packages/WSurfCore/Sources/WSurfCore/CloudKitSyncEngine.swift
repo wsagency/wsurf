@@ -231,13 +231,15 @@ nonisolated extension CloudKitMapping {
         }
     }
 
-    /// A complete settings or shared catalog read infers removals from absence. An unmappable row makes the read incomplete.
+    /// Readers that infer deletions from absence need to know if a row they mirror was unreadable.
     static func include(_ record: CKRecord, in read: inout SyncZoneRead) {
         if let value = syncRecord(record) {
             read.records.append(value)
         } else {
             let zone = record.recordID.zoneID.zoneName
-            if zone.hasPrefix("mac-prefs-") || SharedCatalogCategory.allCases.contains(where: { $0.zone == zone }) {
+            let mirroredTabRow = (zone == SyncZone.devices && record.recordType == SyncRecordType.device.rawValue)
+                || (SyncZone.profileID(zone) != nil && record.recordType == SyncRecordType.deviceSession.rawValue)
+            if mirroredTabRow || zone.hasPrefix("mac-prefs-") || SharedCatalogCategory.allCases.contains(where: { $0.zone == zone }) {
                 read.skipped += 1
             }
         }
