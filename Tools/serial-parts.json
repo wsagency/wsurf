@@ -215,6 +215,7 @@
    "ChromiumHistoryRestoreTests",
    "ChromiumPrewarmTests",
    "ChromiumScrollWakeTests",
+   "CloudVaultEnrollmentTests",
    "ColourChooserDismissalTests",
    "CredentialListLifetimeTests",
    "CrossSiteFramePasskeyTests",
@@ -322,7 +323,10 @@
    "TabSleepScheduleTests",
    "TabSleepSparesTests",
    "TabSwitchWorkTests",
-   "VaultSyncAssetTests"
+   "VaultAssetTransferTests",
+   "VaultSyncApplyRecoveryTests",
+   "VaultSyncAssetTests",
+   "VaultSyncEnrollmentTests"
   ],
   [
    "AgentActionPolicyTests",
@@ -562,6 +566,8 @@
    "ToolbarSpeakerTests",
    "UpdateSurfaceTests",
    "UserAgentTests",
+   "VaultAdoptionSettingsTests",
+   "VaultAssetDeviceTransferTests",
    "VaultAttachmentIsolationTests",
    "VaultAttachmentLifecycleTests",
    "VaultAttachmentTests",
@@ -575,7 +581,9 @@
    "VaultMoveBenchmark",
    "VaultSettingsRoutingTests",
    "VaultStoreLifecycleTests",
+   "VaultSyncAdoptionRetryTests",
    "VaultSyncDeviceTests",
+   "VaultSyncFileCapacityTests",
    "VaultSyncMemoryDeviceTests",
    "VaultSyncStoreTests",
    "VaultTransferLifecycleTests",

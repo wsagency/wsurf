@@ -61,16 +61,28 @@
       "suites": ["ChromiumOOPAccessibilityTests", "ChromiumOOPAccessibilityTransportTests"]
     },
     {
+      "paths": ["Packages/WSurfCore/Sources/WSurfCore/TabSync*.swift", "WSurf/Sync/CloudTabs.swift", "WSurf/Settings/Pages/ProfileICloudTabsSection.swift"],
+      "suites": ["CloudTabsTests", "TabSyncTests", "NeverSyncTests"]
+    },
+    {
+      "paths": ["Packages/WSurfCore/Sources/WSurfCore/CloudKit*Mapping.swift", "Packages/WSurfCore/Sources/WSurfCore/CloudKitSyncEngine.swift"],
+      "suites": ["SharedCatalogTests", "VaultSyncAssetTests", "MacSettingsSyncTests"]
+    },
+    {
       "paths": ["Packages/WSurfCore/Sources/WSurfCore/Shared*", "WSurf/Sync/CloudSharedSpaces*", "WSurf/Settings/Pages/SharedSpacesSettingsView.swift", "WSurf/Web/Model/BrowserModel+SharedSpaces.swift", "WSurf/Sync/CloudSync*.swift"],
       "suites": ["SharedCatalogTests", "SharedSpacesTests", "CloudSyncGateTests", "NeverSyncTests"]
     },
     {
       "paths": ["WSurf/Sync/MacSetting*", "WSurf/Sync/CloudSettingsSync*", "WSurf/Settings/Pages/MacSyncSettings.swift", "WSurf/Settings/Pages/ProviderKeySyncSection.swift", "WSurf/Agent/Providers/CredentialStore.swift"],
-      "suites": ["MacSettingsSyncTests", "MacWebsiteSyncTests", "SettingsNavigatorTests", "CredentialStoreTests"]
+      "suites": ["MacSettingsSyncTests", "MacWebsiteSyncTests", "SettingsNavigatorTests", "SettingsRowMetricsTests", "CredentialStoreTests"]
     },
     {
       "paths": ["Packages/WSurfCore/Sources/WSurfCore/Vault*", "Packages/WSurfCore/Sources/WSurfVault/Sync/*", "WSurf/Sync/CredentialVaultSyncHost.swift", "WSurf/Web/Credentials/CredentialManager+Sync.swift"],
-      "suites": ["VaultSyncAssetTests", "VaultSyncCodecTests", "VaultSyncDeviceTests", "CredentialSyncMergeTests"]
+      "suites": ["VaultSyncAssetTests", "VaultAssetTransferTests", "VaultAssetDeviceTransferTests", "VaultSyncApplyRecoveryTests", "VaultSyncFileCapacityTests", "VaultSyncEnrollmentTests", "VaultSyncCodecTests", "VaultSyncDeviceTests", "CredentialSyncMergeTests"]
+    },
+    {
+      "paths": ["WSurf/Sync/CloudSync*.swift", "WSurf/Settings/Pages/MacSyncSettings.swift", "WSurf/Settings/Pages/VaultSyncCard.swift", "WSurf/Web/Credentials/CredentialSettingsModel+Sync.swift", "Packages/WSurfCore/Sources/WSurfCore/VaultSync*.swift"],
+      "suites": ["CloudVaultEnrollmentTests", "VaultAdoptionSettingsTests", "VaultSyncAdoptionRetryTests"]
     },
     {
       "paths": ["Packages/WSurfCore/*", "WSurf/Sync/*", "WSurf.xcodeproj/*", "WSurf/Web/Credentials/*", "WSurf/Profiles/*", "WSurfTests/Web/Vault*Support.swift"],
