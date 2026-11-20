@@ -34,6 +34,50 @@ struct EngineRoutingTests {
         #expect(tab.preferredEngine(for: mail) == .chromium)
     }
 
+    @Test(.boundedWebViews) func reopeningAnUnloadedFavoriteAtItsPinUsesThePinnedWebsitesEngine() async throws {
+        let origin = "http://127.0.0.1:1"
+        let pinned = try #require(URL(string: origin + "/calendar/u/0/r/week"))
+        let returned = try #require(URL(string: pinned.absoluteString + "?pli=1"))
+        let signIn = try #require(URL(string: "https://accounts.google.com/ServiceLogin"))
+        let permissions = temporaryPermissions()
+        permissions.setEngine(.chromium, for: origin)
+        let browser = BrowserModel(database: .temporary(), sitePermissions: permissions)
+        defer { browser.closeAllTabs(saving: false) }
+        let favorite = browser.newTab()
+        favorite.urlString = pinned.absoluteString
+        browser.addFavorite(favorite)
+
+        try #require(favorite.permitsEngineNavigation(URLRequest(url: signIn), isMainFrame: true))
+        try #require(favorite.permitsEngineNavigation(URLRequest(url: returned), isMainFrame: true))
+        favorite.urlString = returned.absoluteString
+        try #require(favorite.loadedEngine == .webKit)
+        try #require(browser.unload(favorite))
+        try #require(favorite.isDeferred && favorite.urlString == pinned.absoluteString)
+
+        browser.activate(favorite)
+        _ = await favorite.waitForPendingNavigation()
+        #expect(favorite.loadedEngine == .chromium, "the fresh load of the pinned address has its own engine choice")
+    }
+
+    @Test(.boundedWebViews) func aFavoriteRestoredAtLaunchUsesTheSavedWebsiteEngine() throws {
+        let origin = "http://127.0.0.1:1"
+        let database = AppDatabase.temporary()
+        let permissions = temporaryPermissions()
+        let first = BrowserModel(database: database, sitePermissions: permissions)
+        let favorite = first.newTab()
+        favorite.urlString = origin + "/calendar/u/0/r/week?pli=1"
+        first.addFavorite(favorite)
+        first.closeAllTabs()
+        permissions.setEngine(.chromium, for: origin)
+
+        let reopened = BrowserModel(database: database, sitePermissions: permissions)
+        defer { reopened.closeAllTabs(saving: false) }
+        reopened.restoreSession()
+        let restored = try #require(reopened.favorites.first)
+        #expect(restored.id == favorite.id)
+        #expect(restored.loadedEngine == .chromium)
+    }
+
     @Test(arguments: ["https://accounts.google.com", "https://auth.openai.com"])
     func websiteSettingsKeepSignInInWebKit(signIn: String) async {
         let browser = BrowserModel(database: .temporary(), sitePermissions: temporaryPermissions())

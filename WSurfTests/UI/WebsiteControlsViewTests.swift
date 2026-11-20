@@ -98,4 +98,48 @@ struct WebsiteControlsViewTests {
         }
     }
 
+    @Test func aSignInReturnNamesItsSessionAndWebsiteDefaultInSiteControls() throws {
+        let store = SitePermissions(storageURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString), persists: false)
+        let browser = BrowserModel(database: .temporary(), sitePermissions: store)
+        defer { browser.closeAllTabs(saving: false) }
+        let tab = browser.newTab()
+        let calendar = try #require(URL(string: "https://calendar.google.com/calendar/u/0/r/week?pli=1"))
+        let signIn = try #require(URL(string: "https://accounts.google.com/ServiceLogin"))
+        tab.urlString = calendar.absoluteString
+        let section = SiteHandlingSection(browser: browser, tab: tab)
+        #expect(section.engineExplanation == nil)
+        store.setEngine(.chromium, for: SitePermissions.origin(for: calendar))
+        var submitted = URLRequest(url: calendar)
+        submitted.httpMethod = "POST"
+        submitted.httpBody = Data("selection=week".utf8)
+        try #require(tab.permitsEngineNavigation(submitted, isMainFrame: true))
+        let postExplanation = String(localized: try #require(section.engineExplanation))
+        try #require(tab.permitsEngineNavigation(URLRequest(url: signIn), isMainFrame: true))
+        try #require(tab.permitsEngineNavigation(URLRequest(url: calendar), isMainFrame: true))
+        try #require(tab.loadedEngine == .webKit)
+        let signInExplanation = String(localized: try #require(section.engineExplanation))
+        #expect(signInExplanation != postExplanation)
+        #expect(signInExplanation.contains(String(localized: BrowserEngine.chromium.label)))
+    }
+
+    @Test(.boundedWebViews) func aSignInPostStillInChromiumNamesItsActualEngine() throws {
+        let store = SitePermissions(storageURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString), persists: false)
+        let browser = BrowserModel(database: .temporary(), sitePermissions: store)
+        defer { browser.closeAllTabs(saving: false) }
+        let calendar = try #require(URL(string: "https://calendar.google.com"))
+        let signIn = try #require(URL(string: "https://accounts.google.com/ServiceLogin"))
+        store.setEngine(.chromium, for: SitePermissions.origin(for: calendar))
+        let tab = browser.makeTab(for: calendar)
+        browser.tabs.append(tab)
+        tab.urlString = calendar.absoluteString
+        try #require(tab.page.engine == .chromium)
+        var submitted = URLRequest(url: signIn)
+        submitted.httpMethod = "POST"
+        submitted.httpBody = Data("prompt=select_account".utf8)
+        try #require(tab.permitsEngineNavigation(submitted, isMainFrame: true))
+        tab.urlString = signIn.absoluteString
+        let explanation = try #require(SiteHandlingSection(browser: browser, tab: tab).engineExplanation)
+        #expect(String(localized: explanation).contains(String(localized: BrowserEngine.chromium.label)))
+    }
+
 }
