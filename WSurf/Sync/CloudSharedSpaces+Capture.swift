@@ -79,8 +79,35 @@ extension CloudSharedSpaces {
         let profile = browser.context.profile
         guard !applying, !browser.opensPrivately, !browser.isApplyingProfilePins, !browser.isReadingSharedSession, isEnabled(.spaces, for: profile),
               let entry = links[profile.id]?.slots[id], let prior = entry.last else { return }
-        links[profile.id]?.slots[id] = nil
+        links[profile.id]?.slots[id]?.closedAfterRevision = browser.sessionRevision
+        links[profile.id]?.slots[id]?.last = prior.tombstone
         catalog.stage(prior.tombstone, for: profile.id)
+        persistLinks()
+    }
+
+    func sharesRow(_ id: UUID, in browser: BrowserModel) -> Bool {
+        let profile = browser.context.profile
+        guard isEnabled(.spaces, for: profile), let slot = links[profile.id]?.slots[id] else { return false }
+        return slot.window == browser.windowID && slot.last?.removed == false
+    }
+
+    func applyPendingCloses(in browser: BrowserModel) {
+        guard let slots = links[browser.context.profile.id]?.slots else { return }
+        for (id, slot) in slots where slot.window == browser.windowID && slot.closedAfterRevision != nil {
+            browser.removeSharedRow(id)
+        }
+    }
+
+    func didSaveWindow(_ browser: BrowserModel, revision: Int64) {
+        let profileID = browser.context.profile.id
+        guard browser.sessionRevision == revision, let slots = links[profileID]?.slots else { return }
+        let saved = slots.filter { id, slot in
+            guard slot.window == browser.windowID, let closed = slot.closedAfterRevision, revision > closed else { return false }
+            return browser.tab(id: id) == nil && browser.folder(id: id) == nil
+        }
+        guard !saved.isEmpty else { return }
+        links[profileID]?.slots = slots.filter { saved[$0.key] == nil }
+        persistLinks()
     }
 
     func capture(_ browser: BrowserModel) {
@@ -101,7 +128,8 @@ extension CloudSharedSpaces {
             case .folder(let id), .tab(let id):
                 local = id
             }
-            let previous = link.slots[local]
+            // A restored stale row is removed before capture. An explicit Undo can publish a new shared tab.
+            let previous = link.slots[local].flatMap { $0.closedAfterRevision == nil ? $0 : nil }
             let cloudID = previous?.cloudID ?? (catalog.item(local, in: .spaces) == nil ? local : UUID())
             if case .tab = row, let tab = browser.tab(id: local), let previous, previous.last?.removed == false {
                 if let pinID = tab.pinID {

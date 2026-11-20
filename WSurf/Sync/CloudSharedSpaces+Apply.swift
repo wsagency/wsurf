@@ -149,8 +149,12 @@ extension CloudSharedSpaces {
         for (local, slot) in link.slots where !activeIDs.contains(slot.cloudID) {
             guard slot.last?.removed != true, let model = models.first(where: { $0.windowID == slot.window }),
                   catalog.item(slot.cloudID, in: .spaces) != nil else { continue }
-            model.removeSharedRow(local)
-            link.slots[local] = nil
+            if model.removeSharedRow(local) {
+                link.slots[local]?.closedAfterRevision = model.sessionRevision
+                link.slots[local]?.last = slot.last?.tombstone
+            } else {
+                link.slots[local] = nil
+            }
         }
         var pinsByTab: [UUID: UUID] = [:]
         if isEnabled(.pins, for: profile) {
@@ -160,8 +164,10 @@ extension CloudSharedSpaces {
                 pinsByTab[tab] = local
             }
         }
+        let unmapped = active.filter { localIDs[$0.id] == nil }
+        let occupied = unmapped.isEmpty ? Set<UUID>() : BrowserModel.occupiedSidebarIDs(in: models)
         // A row already in a saved, closed window waits for that window. An unseen row goes into one regular window.
-        for item in active where localIDs[item.id] == nil {
+        for item in unmapped {
             let parentOwner = item.parentID.flatMap { localIDs[$0] }.flatMap { link.slots[$0]?.window }
             guard let target = parentOwner.flatMap({ owner in models.first { $0.windowID == owner } }) ?? models.first else { continue }
             if let pin = pinsByTab[item.id], let page = target.tabs.first(where: { $0.pinID == pin }), link.slots[page.id] == nil {
@@ -169,7 +175,7 @@ extension CloudSharedSpaces {
                 link.slots[page.id] = .init(cloudID: item.id, window: target.windowID, last: item, pinID: pin)
                 continue
             }
-            let id = target.tab(id: item.id) == nil && target.folder(id: item.id) == nil && link.slots[item.id] == nil ? item.id : UUID()
+            let id = occupied?.contains(item.id) == false && link.slots[item.id] == nil ? item.id : UUID()
             localIDs[item.id] = id
             link.slots[id] = .init(cloudID: item.id, window: target.windowID)
         }

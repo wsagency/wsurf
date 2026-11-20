@@ -44,6 +44,18 @@ extension BrowserModel {
         }
     }
 
+    /// SQLite's session rows share a profile-wide namespace, including windows that have closed.
+    static func occupiedSidebarIDs(in models: [BrowserModel]) -> Set<UUID>? {
+        guard let database = models.first?.database, var occupied = try? database.writer.read({ db in
+            Set(try UUID.fetchAll(db, sql: "SELECT id FROM sessionTab UNION ALL SELECT id FROM sessionFolder"))
+        }) else { return nil }
+        for model in models {
+            occupied.formUnion(model.tabs.map(\.id))
+            occupied.formUnion(model.folders.map(\.id))
+        }
+        return occupied
+    }
+
     @discardableResult
     static func remapSavedWindow(in database: AppDatabase, from oldID: UUID, to newID: UUID) -> Bool {
         do {
@@ -226,6 +238,9 @@ extension BrowserModel {
                 try await database.writer.write { db in
                     try Self.persist(snapshot, in: db)
                 }
+                if let self {
+                    self.sharedSpaceService?.didSaveWindow(self, revision: snapshot.revision)
+                }
             } catch {
                 Pipeline.log.error("session: write failed")
                 self?.forgetWrittenState(of: snapshot)
@@ -270,6 +285,7 @@ extension BrowserModel {
             try database.writer.write { db in
                 try Self.persist(snapshot, in: db)
             }
+            sharedSpaceService?.didSaveWindow(self, revision: snapshot.revision)
             Pipeline.log.notice("session: wrote \(snapshot.tabs.count) tabs, \(snapshot.folders.count) folders")
         } catch {
             Pipeline.log.error("session: final write failed")
@@ -502,6 +518,7 @@ extension BrowserModel {
         guard tabs.isEmpty, folders.isEmpty else { return }
         isReadingSharedSession = true
         readSession()
+        sharedSpaceService?.applyPendingCloses(in: self)
         isReadingSharedSession = false
         sharedSpaceService?.applyCatalog(to: self)
     }

@@ -9,15 +9,19 @@ extension BrowserModel {
         sharedSpacesHost ?? CloudSync.shared?.sharedSpaces
     }
 
-    func removeSharedRow(_ id: UUID) {
+    @discardableResult
+    func removeSharedRow(_ id: UUID) -> Bool {
         if let tab = tab(id: id) {
+            guard !tab.isPinnedForProfile else { return false }
             close(tab, recordForReopening: false)
         } else if let folder = folder(id: id) {
+            guard !folder.isPinned, !profileFolderIDs.contains(id) else { return false }
             storedTree = reconciledTree().dissolving(folder.id)
             folders.removeAll { $0 === folder }
             sidebarDidChange()
             scheduleSave()
         }
+        return true
     }
 
     func applySharedRows(_ rows: [SharedSpaceItem], spaces: [UUID: UUID], ids: [UUID: UUID]) {

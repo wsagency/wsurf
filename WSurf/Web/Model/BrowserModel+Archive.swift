@@ -31,6 +31,7 @@ extension BrowserModel {
                 && !tab.isPinnedForProfile
                 && !tab.isFavorite
                 && !tab.isPrivate
+                && sharedSpaceService?.sharesRow(tab.id, in: self) != true
                 && !paired.contains(tab.id)
                 && folder(containing: tab) == nil
                 && protectionReason(for: tab) == nil

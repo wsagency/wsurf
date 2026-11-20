@@ -12,6 +12,8 @@ nonisolated struct SharedProfileLinks: Codable, Equatable {
         var window: UUID
         var last: SharedSpaceItem?
         var pinID: UUID?
+        /// Keep a close until the window has committed a newer session without this row.
+        var closedAfterRevision: Int64?
     }
 
     var profile: UUID?

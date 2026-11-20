@@ -10,7 +10,16 @@ import WSurfCore
 @MainActor
 @Suite(.serialized, .boundedWebViews)
 struct SharedSpacesTests {
-    private final class Mac {
+    final class Mac {
+        private final class Windows {
+            var models: [BrowserModel] = []
+        }
+
+        private let openWindows = Windows()
+        var windows: [BrowserModel] {
+            openWindows.models
+        }
+
         let profile = Profile.original()
         let store: SpaceStore
         let browser: BrowserModel
@@ -26,8 +35,10 @@ struct SharedSpacesTests {
             browser = model
             model.adoptSpaces(spaceStore.spaces.map(\.id))
             model.attachProfilePins()
+            let windows = openWindows
+            windows.models = [model]
             host = CloudSharedSpaces(
-                stateFile: dir.appending(path: "shared.json"), windows: { [weak model] in [model].compactMap { $0 } },
+                stateFile: dir.appending(path: "shared.json"), windows: { windows.models },
                 spaces: { _ in spaceStore }, pins: { _ in model.pinStore }
             )
             model.sharedSpacesHost = host
@@ -35,8 +46,19 @@ struct SharedSpacesTests {
             host.attach(engine)
         }
 
+        func addWindow() -> BrowserModel {
+            let model = BrowserModel(context: browser.context, windowID: UUID(), database: browser.database)
+            model.sharedSpacesHost = host
+            model.adoptSpaces(store.spaces.map(\.id))
+            model.attachProfilePins()
+            openWindows.models.append(model)
+            return model
+        }
+
         func finish() {
-            browser.closeAllTabs(saving: false)
+            for window in windows {
+                window.closeAllTabs(saving: false)
+            }
             try? FileManager.default.removeItem(at: dir)
         }
 
