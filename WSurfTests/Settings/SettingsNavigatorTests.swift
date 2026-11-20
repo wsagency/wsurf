@@ -22,6 +22,7 @@ struct SettingsNavigatorTests {
         let sync = try #require(SettingsCategory(rawValue: "sync"))
         #expect(sync.matches("icloud"))
         #expect(SettingsIndex.all.contains { $0.category == sync && $0.id == "sync.spaces" })
+        #expect(SettingsIndex.all.contains { $0.category == sync && $0.id == "sync.otherDevices" })
         #expect(SettingsIndex.all.contains { $0.category == sync && $0.id == "sync.vaults" })
         #expect(SettingsIndex.all.contains { $0.category == sync && $0.id == "sync.keys" })
     }

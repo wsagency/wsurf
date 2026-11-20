@@ -22,6 +22,8 @@ struct MacSyncSettings: View {
                 }
             SharedSpacesSettingsView(profile: profile, cloud: cloud)
                 .settingsAnchor("sync.spaces")
+            ProfileICloudTabsSection(profile: profile)
+                .settingsAnchor("sync.otherDevices")
             VaultSharingSettings(coordinator: coordinator, cloud: cloud)
                 .settingsAnchor("sync.vaults")
             MacSettingOptions(settings: settings, profile: profile, cloudProfileID: cloud.sharedSpaces?.cloudProfileID(for: profile.id))

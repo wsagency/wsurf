@@ -370,26 +370,25 @@ statically, which adds no framework to the bundle. The tests stay in `WSurfTests
 without linking it, so the app is the only copy of the vault code in a test process. A resource the package reads through
 `Bundle.main`, such as the public suffix list, stays in the app.
 
-The second target, `WSurfCore`, holds the CloudKit sync of tabs and of vaults. One `CKSyncEngine` on the account's private
-database sits behind the `SyncEngine` protocol, and `CloudKitSyncEngine` is the only place that creates a `CKContainer`. The
-app's `CloudSync` creates that one engine and `SyncRouter` is its one delegate: the router keeps the engine's state and hands
-each zone to the feature that owns it. Tab sync (`TabSync`) uses the `Device` and `DeviceSession` records: a device publishes the
-Favorites, pins and open tabs of its Personal profile's regular windows and lists the other devices' in the sidebar, read-only.
-Vault sync (`VaultSync`) uses one zone per vault, `v-<profile UUID>-<vault UUID>`, with one `Vault` record (the wrapper list,
-the sealed name and the profile's name and color) and one `Item` record per entry. Every entry is sealed with AES-256-GCM
-under a sync key that HKDF derives from the vault's key, so the record opens only on a Mac that opened the vault with the
-synced unlock passkey. Each Mac merges what arrives into its own store through its own commit, part by part against a sync
-base it keeps sealed in `Credentials.sync` in the profile's folder; it works only while the vault is unlocked and never
-prompts or touches a lease. A row is never sent over a record that was fetched and not merged, a record only a newer WSurf
-reads parks that one entry, a store older than the last state it synced reads and sends nothing, and a pass that would delete
-many entries at once waits for the owner. A removed entry's `Item` carries what the entry stood for as keyed digests (its
-import trace, HMAC under a vault-derived subkey), and entries removed before the vault synced are sent once as removed states, so a
-Mac that never held an entry keeps it as a tombstone and an import there does not bring it back; a merge is part of what an entry
-syncs. Store rows, History, Trash, files, settings and Input History never sync. Nothing
-reaches CloudKit unless the feature's hidden flag (`experiments.iCloudTabs`, `experiments.iCloudVault`) is on and the signed
-binary carries the iCloud, CloudKit and push entitlements (`CloudSyncGate`); a build that is unsigned, staged or has a bundle ID
-suffix never creates the container. Private windows, the private profile, page state, history, autofill, cookies, permissions
-and favicons never sync, and `NeverSyncTests` pins the record types and scans the sync sources for them.
+The second target, `WSurfCore`, holds the CloudKit transport and merge rules. An entitled Mac shares a private
+`CKSyncEngine` between the categories selected in Settings → Sync. `SyncRouter` checkpoints the engine and routes each
+zone to its handler. Each category records its enrollment against the Apple Account. Test hosts, staged apps and
+secondary app instances with no session lock keep their data local.
+
+`TabSync` publishes the Personal profile’s open tabs, pins and favorites for the sidebar’s device list. Opening a link
+there creates a local copy. `SharedCatalogSync` tracks edits to explicitly shared Spaces and selected pins using stable
+record IDs. `CloudSharedSpaces` maps those IDs to local windows and saves shared closes until session storage catches up.
+Each Mac keeps its own selected Space and focused tab.
+
+`CloudSettingsSync` reconciles website settings, custom providers and per-profile model choices. Sensitive website
+grants require confirmation on the receiving Mac. Saved provider keys have a separate opt-in through iCloud Keychain.
+A Mac must approve the provider endpoint before using a shared key.
+
+`VaultSync` uses a private zone per shared vault, with a passkey-wrapped vault key, a sealed name and a sealed record
+for each entry. Large entries and attached files travel as authenticated encrypted chunks. Each Mac applies entries to
+its own store while unlocked, rewraps file keys locally and keeps its History and Trash. Sync keeps its merge state in
+`Credentials.sync`. Newer unreadable entries wait for a compatible version. Large sets of deletions wait for the owner’s
+confirmation. Turning on vault discovery and choosing the vaults to sync are separate actions.
 
 ## Tests
 

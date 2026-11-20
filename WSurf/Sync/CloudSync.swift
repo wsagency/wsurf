@@ -17,7 +17,7 @@ final class CloudSync {
 
     let router: SyncRouter
     /// Also `CloudTabs.shared`, which the tab hooks read.
-    let tabs: CloudTabs?
+    private(set) var tabs: CloudTabs?
     private(set) var vaults: VaultSync?
     let sharedSpaces: CloudSharedSpaces?
     let settingsSync: CloudSettingsSync?
@@ -28,6 +28,7 @@ final class CloudSync {
     private let clock: any Clock<Duration>
     private let makeEngine: @MainActor (any SyncEngineDelegate, Data?) -> any SyncEngine
     private var engine: (any SyncEngine)?
+    @ObservationIgnored private var startOtherDevices: (() -> CloudTabs?)?
     private var attachedTabs = false
     private var attachedVaults = false
     @ObservationIgnored private var vaultCatalogTask: Task<Void, Never>?
@@ -42,10 +43,10 @@ final class CloudSync {
     static func startIfAvailable(profiles: [Profile]) -> CloudSync? {
         shared = start(
             gate: .live, installIDs: KeychainInstallIDStorage(), stateFile: stateFile, profiles: profiles,
+            rememberOtherDevices: { UserDefaults.standard.set(true, forKey: CloudSyncGate.tabsFlagKey) },
             rememberVaultDiscovery: { UserDefaults.standard.set($0, forKey: CloudSyncGate.vaultFlagKey) }
         )
         shared?.settingsSync?.startMonitoringAccount()
-        CloudTabs.shared = shared?.tabs
         return shared
     }
 
@@ -57,20 +58,22 @@ final class CloudSync {
         stateFile: URL,
         profiles: [Profile],
         host: @escaping @MainActor () -> any VaultSyncHost = { CredentialVaultSyncHost() },
+        rememberOtherDevices: @escaping @MainActor () -> Void = {},
         rememberVaultDiscovery: @escaping @MainActor (Bool) -> Void = { _ in },
         optInDefaults: @escaping @MainActor (Profile) -> UserDefaults = ProfileSettingsStore.defaults(for:),
         windows: @escaping @MainActor () -> [BrowserModel] = CloudTabs.liveWindows,
         clock: any Clock<Duration> = ContinuousClock(),
         makeEngine: @escaping @MainActor (any SyncEngineDelegate, Data?) -> any SyncEngine = CloudSync.cloudKitEngine
     ) -> CloudSync? {
-        let tabs = CloudSyncGate.allowsTabs(gate)
-            ? InstallID.resolve(installIDs).map {
+        let makeTabs = {
+            InstallID.resolve(installIDs).map {
                 CloudTabs.make(
                     installID: $0, stateFile: CloudTabs.stateFile(besides: stateFile), profiles: profiles, optInDefaults: optInDefaults,
                     windows: windows, clock: clock
                 )
             }
-            : nil
+        }
+        let tabs = CloudSyncGate.allowsTabs(gate) ? makeTabs() : nil
         let allowsVaults = CloudSyncGate.allowsVaults(gate)
         let offersMacSync = CloudSyncGate.canOfferMacSync(gate)
         guard tabs != nil || allowsVaults || offersMacSync else { return nil }
@@ -103,6 +106,11 @@ final class CloudSync {
         keeper.router = router
         let cloudSync = CloudSync(router: router, tabs: tabs, vaults: vaults, sharedSpaces: spaces, settingsSync: settings, clock: clock, makeEngine: makeEngine)
         if offersMacSync {
+            cloudSync.startOtherDevices = {
+                guard let sharing = makeTabs() else { return nil }
+                rememberOtherDevices()
+                return sharing
+            }
             cloudSync.makeVaults = makeVaults
             cloudSync.rememberVaultDiscovery = rememberVaultDiscovery
             router.accountChanged = { [weak cloudSync] change in
@@ -151,6 +159,21 @@ final class CloudSync {
         self.settingsSync = settingsSync
         self.clock = clock
         self.makeEngine = makeEngine
+    }
+
+    /// Other Devices starts on the first explicit choice and reuses the existing Personal session on later launches.
+    @discardableResult
+    func setOtherDeviceSharing(_ on: Bool, for profile: Profile) -> Bool {
+        guard CloudTabs.canShare(profile) else { return false }
+        if tabs == nil {
+            guard on else { return true }
+            guard let sharing = startOtherDevices?() else { return false }
+            sharing.needsEngine = { [weak self] in self?.ensureEngine() }
+            router.routeTabs(to: sharing.sync)
+            tabs = sharing
+        }
+        tabs?.setOptIn(on, for: profile)
+        return true
     }
 
     /// The category switch controls discovery. Each individual vault still requires its own opt-in.

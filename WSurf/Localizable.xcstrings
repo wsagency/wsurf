@@ -463,6 +463,9 @@
     "Tabs cannot move between profiles or private sessions." : {
 
     },
+    "Tabs on other devices" : {
+      "comment" : "Title of the Personal profile setting that lists open tabs from the owner’s other devices."
+    },
     "Tabs open in this profile appear on your other devices, and theirs appear in the sidebar here. Private windows are never shared." : {
       "comment" : "Caption of the Share tabs through iCloud switch. It says what sharing does and that private windows are left out. “Private windows” is the app’s name for windows of Private Browsing."
     },
@@ -2645,6 +2648,9 @@
     },
     "Couldn’t reach %@" : {
       "comment" : "Error shown when the model provider's server does not answer. %@ is the server address, e.g. http://localhost:11434 — an address, not a name. Curly apostrophe."
+    },
+    "Couldn’t read this Mac’s device identifier from Keychain. Try again." : {
+      "comment" : "Shown when the Mac cannot read its local identifier while turning on tab sharing."
     },
     "Couldn’t reach iCloud. Check your connection and try again." : {
       "comment" : "Error shown when turning on Sync with iCloud or adding a synced vault could not reach iCloud."

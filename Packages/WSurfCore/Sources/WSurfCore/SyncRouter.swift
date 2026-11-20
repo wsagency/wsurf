@@ -34,7 +34,7 @@ public final class SyncRouter: SyncEngineDelegate {
     public private(set) var state: SyncRouterState
 
     @ObservationIgnored private let persist: (SyncRouterState) -> Void
-    @ObservationIgnored private let handlers: [any SyncZoneHandler]
+    @ObservationIgnored private var handlers: [any SyncZoneHandler]
     @ObservationIgnored private var vaultHandler: VaultSync?
     @ObservationIgnored public var accountChanged: ((SyncAccountChange) -> Void)?
 
@@ -67,6 +67,11 @@ public final class SyncRouter: SyncEngineDelegate {
                 await handler.handle(owned)
             }
         }
+    }
+
+    public func routeTabs(to tabs: TabSync) {
+        handlers.removeAll { $0 is TabSync }
+        handlers.append(tabs)
     }
 
     public func routeVaults(to vaults: VaultSync?) {
