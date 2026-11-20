@@ -241,12 +241,27 @@ private struct SiteZoomSection: View {
     }
 }
 
-private struct SiteHandlingSection: View {
+struct SiteHandlingSection: View {
     let browser: BrowserModel
     let tab: BrowserTab
 
     private var siteOrigin: String {
         browser.siteOrigin(for: tab)
+    }
+
+    var engineExplanation: LocalizedStringResource? {
+        guard let loaded = tab.loadedEngine else { return nil }
+        if loaded == .webKit, SitePermissions.webKitOnlyOrigins.contains(siteOrigin) {
+            return "This sign-in page uses WebKit to keep the same session through redirects."
+        }
+        let tabChoice = browser.engine(for: tab)
+        if tab.signInEngine == loaded {
+            let saved = browser.sitePermissions.engine(for: siteOrigin)
+            guard loaded != saved || loaded != tabChoice else { return nil }
+            return "This page stays in \(String(localized: loaded.label)) for its sign-in session. The website default is \(String(localized: saved.label))."
+        }
+        guard loaded != tabChoice else { return nil }
+        return "Current page: \(String(localized: loaded.label)). Submitted requests stay in their original engine."
     }
 
     var body: some View {
@@ -265,13 +280,8 @@ private struct SiteHandlingSection: View {
                     .disabled(SitePermissions.webKitOnlyOrigins.contains(siteOrigin))
                 }
                 .help("Changing engines reloads this tab and resets its Back/Forward history. Each engine keeps its own sign-ins.")
-                if SitePermissions.webKitOnlyOrigins.contains(siteOrigin) {
-                    Text("This sign-in page uses WebKit to keep the same session through redirects.")
-                        .font(Theme.Font.caption)
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, SiteControlsMetrics.inset)
-                } else if tab.isMaterialised, tab.engine != browser.engine(for: tab) {
-                    Text("Current page: \(String(localized: tab.engine.label)). Submitted requests stay in their original engine.")
+                if let engineExplanation {
+                    Text(engineExplanation)
                         .font(Theme.Font.caption)
                         .foregroundStyle(.secondary)
                         .padding(.horizontal, SiteControlsMetrics.inset)

@@ -62,7 +62,7 @@ struct ChromiumHistoryRestoreTests {
         "/form": .html(#"<!doctype html><title>Form</title><form method="post" action="/result"><input name="q" value="1"></form>"#, headers: noStore),
     ]
 
-    private func withRig(engine: BrowserEngine = .chromium, _ body: (LiveWindowRig, RequestLog) async throws -> Void) async throws {
+    func withRig(engine: BrowserEngine = .chromium, _ body: (LiveWindowRig, RequestLog) async throws -> Void) async throws {
         let log = RequestLog()
         try await LiveWindowRig.with(engine: engine, routes: Self.routes, respond: { request in
             log.record(request)
@@ -84,7 +84,7 @@ struct ChromiumHistoryRestoreTests {
     }
 
     /// Waits until `tab` has finished loading `path` with these lists.
-    private func settles(_ tab: BrowserTab, at path: String, back: [String], forward: [String]) async -> Bool {
+    func settles(_ tab: BrowserTab, at path: String, back: [String], forward: [String]) async -> Bool {
         let expected = "\(path) back \(back) forward \(forward)"
         return await waitUntil(timeout: .seconds(30)) {
             !tab.page.isLoading && tab.page.backForwardList.currentItem?.url == tab.page.url && lists(tab) == expected
@@ -99,7 +99,7 @@ struct ChromiumHistoryRestoreTests {
     }
 
     /// a → b → c, then `back` native Back presses.
-    private func history(in rig: LiveWindowRig, back presses: Int = 0) async throws -> BrowserTab {
+    func history(in rig: LiveWindowRig, back presses: Int = 0) async throws -> BrowserTab {
         let tab = try await rig.open("/a")
         try await visit("/b", in: tab, rig)
         try await visit("/c", in: tab, rig)
@@ -715,6 +715,114 @@ struct ChromiumHistoryRestoreTests {
             _ = await tab.waitForPendingNavigation()
             #expect(await settles(tab, at: "/b", back: [], forward: []), "\(lists(tab))")
             #expect(tab.page.engine == .webKit)
+        }
+    }
+
+    @Test func aFavoriteWithNativeWebKitHistoryKeepsItsSignInSessionOnWake() async throws {
+        try await withRig(engine: .webKit) { rig, log in
+            let tab = try await history(in: rig, back: 1)
+            let pinned = try rig.server.url("/b")
+            let google = try #require(URL(string: "https://accounts.google.com/ServiceLogin"))
+            tab.engineOverride = nil
+            rig.browser.addFavorite(tab)
+            try #require(tab.pinnedURL == pinned)
+            try #require(tab.permitsEngineNavigation(URLRequest(url: google), isMainFrame: true))
+            rig.browser.sitePermissions.setEngine(.chromium, for: SitePermissions.origin(for: pinned))
+            try #require(tab.permitsEngineNavigation(URLRequest(url: pinned), isMainFrame: true))
+
+            _ = try await sleepAndWake(tab, in: rig, log: log)
+            #expect(tab.loadedEngine == .webKit)
+            #expect(await settles(tab, at: "/b", back: ["/a"], forward: ["/c"]), "\(lists(tab))")
+        }
+    }
+
+    @Test func relaunchRestoresASignedInFavoritesWebKitHistory() async throws {
+        try await withRig(engine: .webKit) { rig, _ in
+            let tab = try await history(in: rig, back: 1)
+            let pinned = try rig.server.url("/b")
+            let signIn = try #require(URL(string: "https://accounts.google.com/ServiceLogin"))
+            tab.engineOverride = nil
+            rig.browser.addFavorite(tab)
+            try #require(tab.permitsEngineNavigation(URLRequest(url: signIn), isMainFrame: true))
+            rig.browser.sitePermissions.setEngine(.chromium, for: SitePermissions.origin(for: pinned))
+            try #require(tab.permitsEngineNavigation(URLRequest(url: pinned), isMainFrame: true))
+            try #require(await settles(tab, at: "/b", back: ["/a"], forward: ["/c"]))
+
+            rig.browser.closeAllTabs()
+            let reopened = BrowserModel(context: rig.browser.context, windowID: rig.browser.windowID)
+            defer { reopened.closeAllTabs(saving: false) }
+            reopened.restoreSession()
+            let favorite = try #require(reopened.activeTab)
+            try #require(favorite.id == tab.id && favorite.isFavorite)
+            try #require(favorite.loadedEngine == .webKit)
+            #expect(await settles(favorite, at: "/b", back: ["/a"], forward: ["/c"]), "\(lists(favorite))")
+            #expect(favorite.permitsEngineNavigation(URLRequest(url: pinned), isMainFrame: true))
+        }
+    }
+
+    @Test func duplicatingASignedInFavoriteKeepsItsWebKitHistory() async throws {
+        try await withRig(engine: .webKit) { rig, _ in
+            let tab = try await history(in: rig, back: 1)
+            try #require(await settles(tab, at: "/b", back: ["/a"], forward: ["/c"]))
+            let address = try rig.server.url("/b")
+            tab.engineOverride = nil
+            rig.browser.addFavorite(tab)
+            let signIn = try #require(URL(string: "https://accounts.google.com/ServiceLogin"))
+            try #require(tab.permitsEngineNavigation(URLRequest(url: signIn), isMainFrame: true))
+            rig.browser.sitePermissions.setEngine(.chromium, for: SitePermissions.origin(for: address))
+
+            let copy = rig.browser.duplicate(tab)
+            try #require(copy.id != tab.id && copy.pinnedURL == address)
+            try #require(copy.loadedEngine == .webKit)
+            #expect(await settles(copy, at: "/b", back: ["/a"], forward: ["/c"]))
+            #expect(copy.permitsEngineNavigation(URLRequest(url: address), isMainFrame: true))
+        }
+    }
+
+    @Test(arguments: ["tab choice", "comparison tab", "legacy tagged", "legacy raw", "rejected sign-in"])
+    func aFavoriteLoadsItsChosenEngineWhenTheSignedInHistoryCannotBeUsed(_ fixture: String) async throws {
+        try await withRig(engine: .webKit) { rig, log in
+            let source = try await history(in: rig, back: 1)
+            try #require(await settles(source, at: "/b", back: ["/a"], forward: ["/c"]))
+            let address = try rig.server.url("/b")
+            let native = try #require(source.page.webKit?.interactionState as? Data)
+            let state: Data
+            switch fixture {
+            case "legacy tagged":
+                state = try JSONSerialization.data(withJSONObject: ["engine": "webkit", "webKit": native.base64EncodedString()])
+            case "legacy raw":
+                state = native
+            case "rejected sign-in":
+                state = Data(#"{"engine":"webkit","webKit":"AAECAw==","keepsWebKitSignIn":true}"#.utf8)
+            default:
+                let signIn = try #require(URL(string: "https://accounts.google.com/ServiceLogin"))
+                try #require(source.permitsEngineNavigation(URLRequest(url: signIn), isMainFrame: true))
+                state = try #require(source.sessionState)
+            }
+
+            let restored = rig.browser.makeTab(for: address, restoring: true)
+            restored.urlString = address.absoluteString
+            rig.browser.insert(restored, after: source)
+            rig.browser.addFavorite(restored)
+            restored.deferRestore(state: state, url: address)
+            try #require(restored.isFavorite && restored.isDeferred)
+            switch fixture {
+            case "tab choice":
+                try #require(await rig.browser.setEngine(.chromium, for: restored))
+            case "comparison tab":
+                restored.engineOverride = .chromium
+            default:
+                rig.browser.sitePermissions.setEngine(.chromium, for: SitePermissions.origin(for: address))
+            }
+
+            let mark = log.count
+            rig.browser.activate(restored)
+            try #require(rig.browser.activeTab === restored)
+            _ = await restored.waitForPendingNavigation()
+            try #require(restored.loadedEngine == .chromium)
+            #expect(restored.signInEngine == nil)
+            #expect(await settles(restored, at: "/b", back: [], forward: []), "\(lists(restored))")
+            #expect(await requests(log, since: mark, are: ["GET /b"]), "\(log.since(mark))")
         }
     }
 

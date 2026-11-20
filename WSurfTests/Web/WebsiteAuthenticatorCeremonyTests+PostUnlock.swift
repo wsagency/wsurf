@@ -16,8 +16,12 @@ extension WebsiteAuthenticatorCeremonyTests {
     /// A window whose attached sheet the test sets, the way the system's unlock sheet stays attached while it closes.
     final class SheetWindow: NSWindow {
         var attached: NSWindow?
+        private(set) var waitedForSheet = false
         override var attachedSheet: NSWindow? {
-            attached
+            if attached != nil {
+                waitedForSheet = true
+            }
+            return attached
         }
     }
 
@@ -26,6 +30,33 @@ extension WebsiteAuthenticatorCeremonyTests {
         defer { WebAuthnRefusal.recordedForTesting[fixture.profile.id] = nil }
         try await body()
         return WebAuthnRefusal.recordedForTesting[fixture.profile.id] ?? []
+    }
+
+    @Test(.boundedWebViews) func aSiteSignInReusesTheUnlockCompletedWhileItsOfferSheetWasClosing() async throws {
+        try await withFixture { fixture in
+            try await seed(fixture, 1)
+            fixture.manager.lock(reason: .manual)
+            let user = User()
+            user.respond = { .approved(choice: $0.choices.first?.id) }
+            let window = SheetWindow()
+            window.attached = NSWindow()
+            defer { window.attached = nil }
+            let signIn = Task {
+                try await WebsiteAuthenticator.perform(
+                    assertion(userVerification: .required), context: fixture.context(.get), manager: fixture.manager,
+                    in: window, interaction: user
+                )
+            }
+            try #require(await waitUntil { window.waitedForSheet })
+            try await fixture.manager.unlock(in: VaultManagerFixture.anchor())
+            let epoch = try #require(fixture.manager.authorizationEpoch)
+            window.attached = nil
+
+            let outcome = try await signIn.value
+            #expect(outcome.epoch == epoch && outcome.result.signature != nil)
+            #expect(fixture.passkeys.assertions.count == 1)
+            #expect(user.prompts.count == 1 && user.verifications == 1)
+        }
     }
 
     /// GitHub's shape, a discoverable passkey (no allowCredentials) as a modal request and as a discovery: the account step

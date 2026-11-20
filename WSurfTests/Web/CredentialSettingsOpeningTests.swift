@@ -111,6 +111,27 @@ struct CredentialSettingsOpeningTests {
         }
     }
 
+    @Test func anUnlockButtonStillOnScreenReusesTheOtherWindowsUnlock() async throws {
+        try await VaultManagerFixture.with(vaults: [.locked]) { profile, passkeys, vaults in
+            let first = CredentialSettingsModel(profile: profile)
+            let second = CredentialSettingsModel(profile: profile)
+            let copyGrace = CopyGrace()
+            second.copyGrace = copyGrace
+            await first.load()
+            await second.load()
+
+            await first.unlock(in: VaultManagerFixture.anchor())
+            let epoch = try #require(first.authorizationEpoch)
+            let confirmations = passkeys.assertions
+            await second.unlock(in: VaultManagerFixture.anchor())
+
+            #expect(second.presentation == .content)
+            #expect(second.authorizationEpoch == epoch, "the first window’s unlock time still applies")
+            #expect(passkeys.assertions == confirmations, "the vault was already open")
+            #expect(!copyGrace.holds(vaults[0].vaultID), "loading the open vault confirmed no copy")
+        }
+    }
+
     @Test func aLoadThatWasCancelledHasNotSeenTheVaultSoThePageKeepsOpening() async throws {
         try await VaultManagerFixture.with(vaults: [.locked]) { profile, _, _ in
             let model = CredentialSettingsModel(profile: profile)

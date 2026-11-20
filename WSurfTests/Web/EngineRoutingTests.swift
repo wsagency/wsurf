@@ -34,6 +34,158 @@ struct EngineRoutingTests {
         #expect(tab.preferredEngine(for: mail) == .chromium)
     }
 
+    @Test(.boundedWebViews, arguments: ["POST", "GET with body", "GET with stream"])
+    func aSubmittedSignInKeepsEveryAutomaticCallbackInChromium(kind: String) throws {
+        let first = try #require(URL(string: "https://source.example"))
+        let google = try #require(URL(string: "https://accounts.google.com/ServiceLogin"))
+        let callback = try #require(URL(string: "https://auth.openai.com/api/accounts/callback/google"))
+        let service = try #require(URL(string: "https://service.example/signed-in"))
+        let permissions = temporaryPermissions()
+        permissions.setEngine(.chromium, for: first.absoluteString)
+        let browser = BrowserModel(database: .temporary(), sitePermissions: permissions)
+        defer { browser.closeAllTabs(saving: false) }
+        let tab = browser.makeTab(for: first)
+        browser.tabs.append(tab)
+        tab.urlString = first.absoluteString
+        try #require(tab.page.engine == .chromium)
+        var request = URLRequest(url: google)
+        request.httpMethod = kind == "POST" ? "POST" : "GET"
+        if kind == "GET with body" {
+            request.httpBody = Data("fixture".utf8)
+        } else if kind == "GET with stream" {
+            request.httpBodyStream = InputStream(data: Data("fixture".utf8))
+        }
+        try #require(tab.permitsEngineNavigation(request, isMainFrame: true))
+        #expect(tab.permitsEngineNavigation(URLRequest(url: callback), isMainFrame: true))
+        #expect(tab.permitsEngineNavigation(URLRequest(url: service), isMainFrame: true))
+        // The person may choose a provider or its return link while completing this same sign-in.
+        #expect(tab.permitsEngineNavigation(URLRequest(url: callback), isMainFrame: true, userLinkFrom: SitePermissions.origin(for: google)))
+        #expect(tab.permitsEngineNavigation(URLRequest(url: service), isMainFrame: true, userLinkFrom: SitePermissions.origin(for: callback)))
+        #expect(tab.preferredEngine(for: service) == .chromium)
+        tab.noteNavigation(to: google, startedByUser: true)
+        #expect(tab.preferredEngine(for: google) == .webKit)
+    }
+
+    @Test func sameWebsiteLinksSubframesAndSubmittedRequestsKeepTheSignIn() throws {
+        let permissions = temporaryPermissions()
+        let browser = BrowserModel(database: .temporary(), sitePermissions: permissions)
+        defer { browser.closeAllTabs(saving: false) }
+        let google = try #require(URL(string: "https://accounts.google.com/ServiceLogin"))
+        let calendar = try #require(URL(string: "https://calendar.google.com/day"))
+        let elsewhere = try #require(URL(string: "https://elsewhere.example/confirm"))
+        let source = "https://mail.google.com"
+        let tab = browser.makeTab(for: google)
+        try #require(tab.permitsEngineNavigation(URLRequest(url: google), isMainFrame: true))
+        permissions.setEngine(.chromium, for: SitePermissions.origin(for: calendar))
+        permissions.setEngine(.chromium, for: SitePermissions.origin(for: elsewhere))
+        #expect(tab.permitsEngineNavigation(URLRequest(url: calendar), isMainFrame: true, userLinkFrom: source))
+        #expect(tab.permitsEngineNavigation(URLRequest(url: elsewhere), isMainFrame: false, userLinkFrom: source))
+        var submission = URLRequest(url: elsewhere)
+        submission.httpMethod = "POST"
+        submission.httpBody = Data("confirm=1".utf8)
+        #expect(tab.permitsEngineNavigation(submission, isMainFrame: true, userLinkFrom: source))
+        #expect(tab.signInEngine == .webKit)
+    }
+
+    @Test(arguments: ["regular commit", "superseded", "provider redirect"])
+    func publicNavigationCallbacksBindTheDepartureWhenTheActionHasNoNavigation(_ next: String) throws {
+        let browser = BrowserModel(database: .temporary(), sitePermissions: temporaryPermissions())
+        defer { browser.closeAllTabs(saving: false) }
+        let tab = browser.newTab()
+        let home = try #require(URL(string: "https://mail.google.com/inbox"))
+        let outside = try #require(URL(string: "https://outside.example/article"))
+        let provider = try #require(URL(string: "https://accounts.google.com/ServiceLogin"))
+        try #require(tab.permitsEngineNavigation(URLRequest(url: provider), isMainFrame: true))
+        let first = PageNavigation()
+        try #require(tab.permitsEngineNavigation(URLRequest(url: outside), isMainFrame: true, userLinkFrom: SitePermissions.origin(for: home)))
+        tab.navigationStarted(first, url: outside)
+        if next == "provider redirect" {
+            try #require(tab.permitsEngineNavigation(URLRequest(url: provider), isMainFrame: true, isRedirect: true))
+        } else if next == "superseded" {
+            let newer = PageNavigation()
+            try #require(tab.permitsEngineNavigation(URLRequest(url: provider), isMainFrame: true, navigation: newer))
+            tab.navigationStarted(newer, url: provider)
+            tab.navigationFailed(first, error: URLError(.cancelled))
+        }
+        tab.navigationCommitted(first)
+        #expect(tab.signInEngine == (next == "regular commit" ? nil : .webKit))
+    }
+
+    @Test(.boundedWebViews) func reopeningAnUnloadedFavoriteAtItsPinUsesThePinnedWebsitesEngine() async throws {
+        let origin = "http://127.0.0.1:1"
+        let pinned = try #require(URL(string: origin + "/calendar/u/0/r/week"))
+        let returned = try #require(URL(string: pinned.absoluteString + "?pli=1"))
+        let signIn = try #require(URL(string: "https://accounts.google.com/ServiceLogin"))
+        let permissions = temporaryPermissions()
+        permissions.setEngine(.chromium, for: origin)
+        let browser = BrowserModel(database: .temporary(), sitePermissions: permissions)
+        defer { browser.closeAllTabs(saving: false) }
+        let favorite = browser.newTab()
+        favorite.urlString = pinned.absoluteString
+        browser.addFavorite(favorite)
+
+        try #require(favorite.permitsEngineNavigation(URLRequest(url: signIn), isMainFrame: true))
+        try #require(favorite.permitsEngineNavigation(URLRequest(url: returned), isMainFrame: true))
+        favorite.urlString = returned.absoluteString
+        try #require(favorite.loadedEngine == .webKit)
+        try #require(browser.unload(favorite))
+        try #require(favorite.isDeferred && favorite.urlString == pinned.absoluteString)
+
+        browser.activate(favorite)
+        _ = await favorite.waitForPendingNavigation()
+        #expect(favorite.loadedEngine == .chromium, "the fresh load of the pinned address has its own engine choice")
+    }
+
+    @Test(.boundedWebViews, arguments: ["no state", "Chromium", "invalid WebKit"])
+    func reopeningTheExactFavoriteWithoutNativeWebKitHistoryMakesAFreshVisit(saved: String) async throws {
+        let origin = "http://127.0.0.1:1"
+        let pinned = try #require(URL(string: origin + "/calendar/u/0/r/week?pli=1"))
+        let signIn = try #require(URL(string: "https://accounts.google.com/ServiceLogin"))
+        let permissions = temporaryPermissions()
+        permissions.setEngine(.chromium, for: origin)
+        let browser = BrowserModel(database: .temporary(), sitePermissions: permissions)
+        defer { browser.closeAllTabs(saving: false) }
+        let favorite = browser.newTab()
+        favorite.urlString = pinned.absoluteString
+        browser.addFavorite(favorite)
+        try #require(favorite.permitsEngineNavigation(URLRequest(url: signIn), isMainFrame: true))
+        try #require(favorite.permitsEngineNavigation(URLRequest(url: pinned), isMainFrame: true))
+        try #require(browser.unload(favorite))
+        let state: Data? = switch saved {
+        case "Chromium":
+            Data(#"{"engine":"chromium","chromium":{"back":[],"forward":[]}}"#.utf8)
+        case "invalid WebKit":
+            Data(#"{"engine":"webkit","webKit":"AAECAw=="}"#.utf8)
+        default:
+            nil
+        }
+        favorite.deferRestore(state: state, url: pinned)
+        try #require(favorite.isShowingPin)
+
+        browser.activate(favorite)
+        _ = await favorite.waitForPendingNavigation()
+        #expect(favorite.loadedEngine == .chromium)
+    }
+
+    @Test(.boundedWebViews) func aFavoriteRestoredAtLaunchUsesTheSavedWebsiteEngine() throws {
+        let origin = "http://127.0.0.1:1"
+        let database = AppDatabase.temporary()
+        let permissions = temporaryPermissions()
+        let first = BrowserModel(database: database, sitePermissions: permissions)
+        let favorite = first.newTab()
+        favorite.urlString = origin + "/calendar/u/0/r/week?pli=1"
+        first.addFavorite(favorite)
+        first.closeAllTabs()
+        permissions.setEngine(.chromium, for: origin)
+
+        let reopened = BrowserModel(database: database, sitePermissions: permissions)
+        defer { reopened.closeAllTabs(saving: false) }
+        reopened.restoreSession()
+        let restored = try #require(reopened.favorites.first)
+        #expect(restored.id == favorite.id)
+        #expect(restored.loadedEngine == .chromium)
+    }
+
     @Test(arguments: ["https://accounts.google.com", "https://auth.openai.com"])
     func websiteSettingsKeepSignInInWebKit(signIn: String) async {
         let browser = BrowserModel(database: .temporary(), sitePermissions: temporaryPermissions())

@@ -409,40 +409,39 @@ final class BrowserPage: NSView {
             currentItem: webKit.backForwardList.currentItem.map(PageHistoryItem.init(webKit:)))
     }
 
-    /// `chromium` is absent from WebKit's state, so its bytes are as before; a build that predates it ignores the key and loads the
-    /// tab's address.
     private struct SavedState: Codable {
         let engine: BrowserEngine
         let webKit: Data?
         var chromium: ChromiumHistoryRecord.Saved?
+        var keepsWebKitSignIn: Bool?
     }
 
-    static func canRestore(_ data: Data, using engine: BrowserEngine) -> Bool {
-        guard engine == .webKit else { return false }
-        guard let saved = try? JSONDecoder().decode(SavedState.self, from: data) else { return true }
-        return saved.engine == .webKit && saved.webKit != nil
+    static func webKitHistory(in data: Data) -> (data: Data, keepsSignIn: Bool)? {
+        guard let saved = try? JSONDecoder().decode(SavedState.self, from: data) else {
+            // Older sessions contain WebKit's untagged native state.
+            return (data, false)
+        }
+        guard saved.engine == .webKit, let native = saved.webKit else { return nil }
+        return (native, saved.keepsWebKitSignIn == true)
     }
 
-    /// A Chromium page saves its Back and Forward entries (addresses and titles) and is never restored through this setter: the tab
-    /// loads its address after `seedHistory(from:)`, and the other entries load by GET only when visited (owner decision 2026-11-07).
-    var interactionState: Any? {
-        get {
-            if let chromium {
-                return chromium.savedHistory().flatMap { try? JSONEncoder().encode(SavedState(engine: .chromium, webKit: nil, chromium: $0)) }
-            }
-            guard let data = webKit?.interactionState as? Data else { return nil }
-            return try? JSONEncoder().encode(SavedState(engine: .webKit, webKit: data))
+    func savedInteractionState(keepingWebKitSignIn: Bool) -> Data? {
+        if let chromium {
+            return chromium.savedHistory().flatMap { try? JSONEncoder().encode(SavedState(engine: .chromium, webKit: nil, chromium: $0)) }
         }
-        set {
-            guard let webKit, let data = newValue as? Data else { return }
-            if let saved = try? JSONDecoder().decode(SavedState.self, from: data) {
-                guard saved.engine == .webKit, let state = saved.webKit else { return }
-                webKit.interactionState = state
-            } else {
-                // Existing sessions contain WebKit's untagged native state.
-                webKit.interactionState = data
-            }
-        }
+        guard let data = webKit?.interactionState as? Data else { return nil }
+        return try? JSONEncoder().encode(SavedState(engine: .webKit, webKit: data, keepsWebKitSignIn: keepingWebKitSignIn ? true : nil))
+    }
+
+    /// WebKit silently ignores unusable state. An accepted restore sets the current item or starts a provisional load.
+    @discardableResult
+    func restoreWebKitHistory(_ data: Data) -> Bool {
+        guard let webKit else { return false }
+        let previous = webKit.backForwardList.currentItem
+        let wasLoading = webKit.isLoading
+        webKit.interactionState = data
+        let restored = webKit.backForwardList.currentItem
+        return (restored != nil && restored !== previous) || (!wasLoading && webKit.isLoading)
     }
 
     /// Gives a Chromium page the Back and Forward entries of a saved Chromium state, before the caller loads the tab's address. Any

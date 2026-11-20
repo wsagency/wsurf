@@ -113,11 +113,9 @@ struct ChromiumHistoryRecordTests {
         let untagged = Data([0, 1, 2, 3])
         let chromium = Data(#"{"engine":"chromium","chromium":{"back":[{"url":"https://a.test/a","title":"A"}],"forward":[{"url":"https://a.test/c","title":"C"}]}}"#.utf8)
 
-        #expect(BrowserPage.canRestore(tagged, using: .webKit))
-        #expect(BrowserPage.canRestore(untagged, using: .webKit))
-        #expect(!BrowserPage.canRestore(tagged, using: .chromium))
-        #expect(!BrowserPage.canRestore(chromium, using: .webKit))
-        #expect(!BrowserPage.canRestore(chromium, using: .chromium), "a Chromium state is never set as native state")
+        #expect(BrowserPage.webKitHistory(in: tagged)?.data == Data([0, 1, 2]))
+        #expect(BrowserPage.webKitHistory(in: untagged)?.data == untagged)
+        #expect(BrowserPage.webKitHistory(in: chromium) == nil)
 
         #expect(BrowserPage.chromiumHistory(in: chromium) == .init(back: [entry("a")], forward: [entry("c")]))
         #expect(BrowserPage.chromiumHistory(in: tagged) == nil)
