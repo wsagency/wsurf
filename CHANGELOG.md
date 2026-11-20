@@ -5,6 +5,25 @@ This file preserves release notes inherited from the upstream
 describe upstream Linen releases, not releases published by WSurf. New WSurf
 release notes will be added above this provenance record.
 
+## 0.1.29 (build 29) — 2026-11-20
+
+### Sign-in and browsing
+
+- OpenAI sign-in stays in WebKit from the first request through Google's return. Back returns to the previous page in its own engine.
+- Free Memory keeps unloaded WebKit tabs asleep until you show them, even when a presentation callback arrives late.
+- Chromium preserves Back and Forward when you stop a load before it begins or go back again during a failed history restore.
+
+### Windows and the assistant
+
+- Minimal windows can detach the toolbar so you can move it around the screen.
+- An optional site menu after Help follows the front window and shows the current site's address.
+- The assistant's add menu accepts tabs and files. Image previews appear while the assistant reads text from the image.
+
+### Credentials and iCloud
+
+- In WebKit, right-click and Control-click leave Pick Credential out of the menu on read-only and disabled fields on the main page.
+- Vault sync can recover a missing iCloud zone on the first upload and reports when iCloud storage is full.
+
 ## 0.1.28 (build 28) — 2026-11-16
 
 Everything since 0.1.27 (build 27). None of the screens and prompts below has been checked by hand.
