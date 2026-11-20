@@ -9,8 +9,6 @@ import Foundation
 /// turns each key into a `KeyInput`; `reduce` says what happens to it. Bounded: the rows are indexed once when the dropdown
 /// opens, a keystroke is one pass over those keys, and the query is capped.
 nonisolated enum AutofillSuggestionSearch {
-    /// Search exists only above this many rows. A shorter list is always fully visible.
-    static let threshold = 5
     /// Further characters are consumed and ignored, so the query and the work per keystroke stay bounded.
     static let queryLimit = 100
 
@@ -28,13 +26,13 @@ nonisolated enum AutofillSuggestionSearch {
     /// The folded text of every row, built once per dropdown. Positions are indexes into the dropdown's row list.
     struct Index: Sendable {
         let ids: [UUID]
-        /// Whether this dropdown has a search row: only a password list, and only above `threshold` rows.
+        /// The password dropdown offers search when the person has a choice.
         let isSearchable: Bool
         private let keys: [String]
 
         init(_ rows: [AutofillSuggestion], searchable: Bool) {
             ids = rows.map(\.id)
-            isSearchable = searchable && rows.count > AutofillSuggestionSearch.threshold
+            isSearchable = searchable && rows.count > 1
             keys = isSearchable ? rows.map { AutofillSuggestionSearch.fold($0.title + "\n" + $0.detail) } : []
         }
 

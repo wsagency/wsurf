@@ -143,7 +143,7 @@ final class AutofillSaveSession: NSObject {
 
     /// The account picked in this tab for `origin` and `username` while that pick is live, as `selectedAccount` checks it, but read
     /// without retiring it, so a caller that has not confirmed its document yet may ask.
-    private func livePick(origin: String, username value: String) -> (accountID: UUID, epoch: UInt64)? {
+    func livePick(origin: String, username value: String) -> (accountID: UUID, epoch: UInt64)? {
         guard let page, let context, page.context === context, let step = username, let accountID = step.accountID,
               let epoch = step.epoch, let deadline = step.deadline, step.contextID == context.contextID,
               step.tab == ObjectIdentifier(page), step.origin == origin, step.value == value, ContinuousClock.now < deadline else { return nil }

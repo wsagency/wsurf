@@ -26,7 +26,7 @@ struct PasswordAutofillScriptTests {
         }
     }
 
-    private func load(_ html: String) async throws -> (BrowserPage, Sink) {
+    private func load(_ html: String, url: String = "https://login.example/") async throws -> (BrowserPage, Sink) {
         let configuration = interactiveWebViewConfiguration()
         configuration.websiteDataStore = .nonPersistent()
         let sink = Sink()
@@ -38,26 +38,125 @@ struct PasswordAutofillScriptTests {
         ))
         let context = BrowserProfileContext(profile: .privateBrowsing())
         let view = BrowserPage(webKit: WKWebView(frame: NSRect(x: 0, y: 0, width: 800, height: 600), configuration: configuration), context: context)
-        view.loadHTMLString("<!doctype html>" + html, baseURL: URL(string: "https://login.example/"))
+        view.loadHTMLString("<!doctype html>" + html, baseURL: URL(string: url))
         #expect(await PageSettle.untilIdle(view, timeout: .seconds(20)))
         _ = try await view.callAsyncJavaScript("globalThis.__wsurfPasswords.setEnabled(true);", arguments: [:], in: nil, contentWorld: PasswordAutofill.world)
         sink.body = nil
         return (view, sink)
     }
 
-    private func select(in view: BrowserPage, sink: Sink) async throws -> String {
-        _ = try await view.callAsyncJavaScript("document.getElementById('password').focus();", arguments: [:], in: nil, contentWorld: PasswordAutofill.world)
+    private func select(in view: BrowserPage, sink: Sink, field: String = "password") async throws -> String {
+        _ = try await view.callAsyncJavaScript("document.getElementById(field).focus();", arguments: ["field": field], in: nil, contentWorld: PasswordAutofill.world)
         #expect(await waitUntil { sink.body?["token"] is String })
         return try #require(sink.body?["token"] as? String)
     }
 
-    private func fill(_ token: String, in view: BrowserPage) async throws -> Int {
+    private func fill(_ token: String, in view: BrowserPage, url: String = "https://login.example/", username: String = "ada@example.test") async throws -> Int {
         let result = try await view.callAsyncJavaScript(
             "return globalThis.__wsurfPasswords.fill(token,url,login);",
-            arguments: ["token": token, "url": "https://login.example/", "login": ["username": "ada@example.test", "password": "dummy-secret"]],
+            arguments: ["token": token, "url": url, "login": ["username": username, "password": "dummy-secret"]],
             in: nil, contentWorld: PasswordAutofill.world
         )
         return try #require(result as? Int)
+    }
+
+    @Test(.boundedWebViews) func pickingAnotherGoogleLoginOpensTheSitesAccountChooserBeforeAnyPasswordIsFilled() async throws {
+        let url = "https://accounts.google.com/v3/signin/challenge/pwd"
+        let (page, sink) = try await load(#"""
+        <button type="button" onclick="document.body.dataset.chooser='open'"><span id="profileIdentifier">ada@example.test</span></button>
+        <form><input type="password" id="password" autocomplete="current-password"></form>
+        """#, url: url)
+        let token = try await select(in: page, sink: sink)
+        #expect(sink.body?["username"] as? String == "ada@example.test")
+        #expect(try await fill(token, in: page, url: url, username: "other@example.test") == PasswordAutofillScript.openedAccountChooser)
+        #expect(try await page.evaluateJavaScript("password.value === '' && document.body.dataset.chooser === 'open'") as? Bool == true)
+        #expect(try await fill(token, in: page, url: url, username: "ada@example.test") == 0)
+
+        _ = try await page.evaluateJavaScript("document.getElementById('profileIdentifier').textContent = 'other@example.test'; password.blur()")
+        sink.body = nil
+        let next = try await select(in: page, sink: sink)
+        #expect(try await fill(next, in: page, url: url, username: "other@example.test") == 1)
+        #expect(try await page.evaluateJavaScript("password.value === 'dummy-secret'") as? Bool == true)
+    }
+
+    @Test(.boundedWebViews) func theSelectedUsernameMustRemainEditableForTheRestOfItsFill() async throws {
+        let (page, sink) = try await load(#"""
+        <form><input id="account" autocomplete="username" onchange="this.disabled = true">
+        <input id="password" type="password" autocomplete="current-password"></form>
+        """#)
+        let token = try await select(in: page, sink: sink, field: "account")
+        let count = try await page.callAsyncJavaScript(
+            "return globalThis.__wsurfPasswords.fill(token, location.href, {username:'fixture',password:''});",
+            arguments: ["token": token], in: nil, contentWorld: PasswordAutofill.world
+        )
+        #expect(count as? Int == 1)
+        #expect(try await page.evaluateJavaScript("account.disabled && account.value === 'fixture'") as? Bool == true)
+    }
+
+    @Test(.boundedWebViews) func theGoogleAccountChipAcceptsTheSameEmailDomainInAnotherCase() async throws {
+        let url = "https://accounts.google.com/v3/signin/challenge/pwd"
+        let (page, sink) = try await load(#"""
+        <span id="profileIdentifier" data-email="ada@EXAMPLE.TEST">ada@example.test</span>
+        <form><input type="password" id="password" autocomplete="current-password"></form>
+        """#, url: url)
+        let token = try await select(in: page, sink: sink)
+        #expect(sink.body?["username"] as? String == "ada@example.test")
+        #expect(try await fill(token, in: page, url: url, username: "ada@Example.Test") == 1)
+    }
+
+    @Test(.boundedWebViews) func anUnidentifiedGooglePasswordChallengeKeepsTheFieldAvailableForTyping() async throws {
+        let url = "https://accounts.google.com/signin/v2/challenge/pwd"
+        let (page, sink) = try await load(#"<form><input type="password" id="password" autocomplete="current-password"></form>"#, url: url)
+        let token = try await select(in: page, sink: sink)
+        #expect(try await fill(token, in: page, url: url) == PasswordAutofillScript.differentAccount)
+        #expect(try await page.evaluateJavaScript("password.value === '' && !password.disabled && !password.readOnly") as? Bool == true)
+    }
+
+    @Test(.boundedWebViews) func aGoogleAccountLinkLeavingTheSiteIsNotUsedToSwitchThePassword() async throws {
+        let url = "https://accounts.google.com/v3/signin/challenge/pwd"
+        let (page, sink) = try await load(#"""
+        <a href="https://other.example/" onclick="event.preventDefault(); document.body.dataset.clicked='yes'">
+          <span id="profileIdentifier">ada@example.test</span>
+        </a><form><input type="password" id="password" autocomplete="current-password"></form>
+        """#, url: url)
+        let token = try await select(in: page, sink: sink)
+        #expect(try await fill(token, in: page, url: url, username: "other@example.test") == PasswordAutofillScript.differentAccount)
+        #expect(try await page.evaluateJavaScript("password.value === '' && !document.body.dataset.clicked") as? Bool == true)
+    }
+
+    @Test(.boundedWebViews) func aGooglePasswordFormSubmitButtonIsNeverUsedToSwitchAccounts() async throws {
+        let url = "https://accounts.google.com/v3/signin/challenge/pwd"
+        let (page, sink) = try await load(#"""
+        <form onsubmit="event.preventDefault(); this.dataset.submitted='yes'">
+          <button><span id="profileIdentifier">ada@example.test</span></button>
+          <input type="password" id="password" autocomplete="current-password">
+        </form>
+        """#, url: url)
+        let token = try await select(in: page, sink: sink)
+        #expect(try await fill(token, in: page, url: url, username: "other@example.test") == PasswordAutofillScript.differentAccount)
+        #expect(try await page.evaluateJavaScript("password.value === '' && !password.form.dataset.submitted") as? Bool == true)
+    }
+
+    @Test(.boundedWebViews) func aConflictingOrChangingGoogleAccountLeavesItsPasswordEmpty() async throws {
+        let url = "https://accounts.google.com/v3/signin/challenge/pwd"
+        let (page, sink) = try await load(#"""
+        <span id="profileIdentifier" data-email="ada@example.test">other@example.test</span>
+        <form><input type="password" id="password" autocomplete="current-password"></form>
+        """#, url: url)
+        let first = try await select(in: page, sink: sink)
+        #expect(try await fill(first, in: page, url: url) == PasswordAutofillScript.differentAccount)
+        #expect(try await page.evaluateJavaScript("password.value === ''") as? Bool == true)
+
+        _ = try await page.evaluateJavaScript(#"""
+        const chip = document.getElementById('profileIdentifier');
+        chip.removeAttribute('data-email'); chip.textContent = 'ada@example.test';
+        password.addEventListener('beforeinput', () => { chip.textContent = 'other@example.test'; }, {once:true});
+        password.blur();
+        """#)
+        sink.body = nil
+        let next = try await select(in: page, sink: sink)
+        #expect(try await fill(next, in: page, url: url) == PasswordAutofillScript.differentAccount)
+        #expect(try await page.evaluateJavaScript("password.value === ''") as? Bool == true)
     }
 
     @Test(.boundedWebViews) func fillsOnlyLoginFieldsRedactsTheirValuesAndDoesNotSubmit() async throws {

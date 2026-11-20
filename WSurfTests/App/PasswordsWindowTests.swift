@@ -31,7 +31,7 @@ final class PasswordsWindowRig {
         self.built = built
         self.catalog = catalog
         self.selection = selection
-        controller = PasswordsWindow(profiles: selection, autosaveName: nil) { profile in
+        controller = PasswordsWindow(profiles: { selection }, autosaveName: nil) { profile in
             built.profileIDs.append(profile.id)
             let controller = NSViewController()
             controller.view = NSView(frame: NSRect(x: 0, y: 0, width: 100, height: 100))
@@ -172,6 +172,18 @@ struct PasswordsWindowTests {
         workWindow.closeWindow()
         #expect(app.externalLinkTarget(for: work) == nil, "no window of the profile: the caller opens a new one")
         #expect(app.externalLinkTarget(for: .original()) === personal)
+    }
+
+    @Test func refocusingTheOpenWindowRebindsItsContentToTheLastBrowserProfile() throws {
+        let rig = PasswordsWindowRig()
+        defer { rig.tearDown() }
+        let work = rig.catalog.add(name: "Work")
+        rig.selection.markCurrent(work)
+        rig.controller.show()
+        let window = try #require(rig.controller.window)
+        rig.selection.markCurrent(.original())
+        NotificationCenter.default.post(name: NSWindow.didBecomeKeyNotification, object: window)
+        #expect(rig.builtProfileIDs == [work.id, Profile.original().id])
     }
 
     @Test func aProfileSwitchRebindsTheContentOfTheOpenWindow() throws {

@@ -39,6 +39,35 @@ struct AutofillUnlockRowTests {
         #expect(!privateLocked)
     }
 
+    @Test func aPreviouslyChosenLoginLeadsThePasswordStepAcrossUnlockedVaults() async throws {
+        try await VaultManagerFixture.with(vaults: [.unlocked, .unlocked, .unlocked]) { profile, _, vaults in
+            let other = account("a@example.test")
+            let chosen = account("z@example.test")
+            let hidden = account("locked@example.test")
+            var differentSite = account("elsewhere@example.test")
+            differentSite.origins = ["https://different.example.test"]
+            try await VaultManagerFixture.save([other, differentSite], in: vaults[0])
+            try await VaultManagerFixture.save([chosen], in: vaults[1])
+            try await VaultManagerFixture.save([hidden], in: vaults[2])
+            vaults[2].manager.lock(reason: .manual)
+
+            var reads: [(id: UUID, label: String?, accounts: [AutofillCandidate])] = []
+            for manager in CredentialManager.unlockedManagers(for: profile) {
+                reads.append((manager.vaultID, nil, try await manager.autofillCandidates().candidates))
+            }
+            let list = CredentialAccountSelection.listed(
+                in: reads, origin: Self.origin, pageURL: nil, entered: chosen.username, field: .password,
+                isUsernameField: false, pinned: (vaults[1].vaultID, chosen.id)
+            ) { _, _ in nil }
+            #expect(list.map(\.account) == [chosen.id, other.id])
+            #expect(list.map(\.vault) == [vaults[1].vaultID, vaults[0].vaultID])
+            let withoutPick = CredentialAccountSelection.listed(
+                in: reads, origin: Self.origin, pageURL: nil, entered: chosen.username, field: .password, isUsernameField: false
+            ) { _, _ in nil }
+            #expect(withoutPick == list, "the account shown on the password page leads and the other login stays available")
+        }
+    }
+
     @Test func theOnlyVaultIsUnlockedWithoutAChoiceAndTheLookupThenReadsIt() async throws {
         let passkeys = VaultPasskeys()
         try await VaultManagerFixture.with(passkeys: passkeys, vaults: [.unlocked]) { profile, _, vaults in

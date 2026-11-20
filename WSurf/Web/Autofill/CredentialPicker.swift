@@ -32,6 +32,8 @@ final class CredentialPicker {
         /// The frame's origin: what "this website" means for the list, the fill and the website a credential may be given.
         let origin: String
         let field: Field
+        /// Present on a Google password challenge. An empty value means it displays no unambiguous account.
+        var googleUsername: String?
         let received: ContinuousClock.Instant
     }
 
@@ -69,6 +71,7 @@ final class CredentialPicker {
         let searchKey: String
         /// When it was last used on this website (`AutofillLastUsed`); only a credential saved for this website has one.
         var lastUsed: Date?
+        var matchesUsername = false
     }
 
     enum Answer: Equatable {
@@ -78,11 +81,12 @@ final class CredentialPicker {
         case code(String)
     }
 
-    enum Failure: Equatable {
+    enum Failure: Error, Equatable {
         /// The field, the page or the vault changed, or the page took nothing.
         case noField
         /// The password or code would have gone to a form that sends it to another website: nothing was filled.
         case unsafeForm
+        case differentAccount
     }
 
     enum Outcome: Equatable {
@@ -173,7 +177,7 @@ final class CredentialPicker {
         }
         targets[ObjectIdentifier(page)] = Target(
             page: page, context: page.context, frame: frame, token: token, documentID: documentID, frameURL: frameURL, origin: origin,
-            field: field, received: .now
+            field: field, googleUsername: origin == "https://accounts.google.com" ? body["googleUsername"] as? String : nil, received: .now
         )
         return true
     }
@@ -367,10 +371,18 @@ final class CredentialPicker {
                 used[candidate.id] = lastUsed.date(uses, account: candidate.id, origin: target.origin)
             }
             reading.rows += Self.rows(
-                candidates.candidates, vaultID: vault.vaultID, origin: target.origin, vault: listing.count > 1 ? vault.label : nil, used: used
+                candidates.candidates, vaultID: vault.vaultID, origin: target.origin, vault: listing.count > 1 ? vault.label : nil,
+                used: used, googleUsername: target.googleUsername
             )
         }
         reading.rows = Self.ordered(reading.rows, for: target.field)
+        if let hint = target.googleUsername, let page = target.page, let session = AutofillSaveCoordinator.shared.session(for: page),
+           let username = session.usernameForDisplayHint(hint, origin: target.origin), let pick = session.livePick(origin: target.origin, username: username),
+           let index = reading.rows.firstIndex(where: { row in
+               row.matchesUsername && row.accountID == pick.accountID && reading.grants[row.vaultID]?.epoch == pick.epoch
+           }), index > 0 {
+            reading.rows.insert(reading.rows.remove(at: index), at: 0)
+        }
         return reading
     }
 
@@ -380,7 +392,7 @@ final class CredentialPicker {
         }
         guard let host = WebsiteLookalike.displayHost(of: target.origin) else { return nil }
         return await CredentialPickerSheet.present(
-            rows: reading.rows, host: host, canUnlock: reading.hasLockedVault, offersCode: Self.offersMessagesCode(for: target.field),
+            rows: reading.rows, host: host, canUnlock: reading.hasLockedVault, offersCode: target.googleUsername == nil && Self.offersMessagesCode(for: target.field),
             profileID: target.context.profile.id, page: target.page, in: window
         )
     }
@@ -459,7 +471,7 @@ final class CredentialPicker {
     private func fill(
         code: String, target: Target, in page: BrowserPage, isCurrent: @escaping @MainActor @Sendable () -> Bool
     ) async -> Outcome {
-        guard await field(of: target, in: page) != nil else { return isCurrent() ? .failed(.noField) : .nothing }
+        guard target.googleUsername == nil, await field(of: target, in: page) != nil else { return isCurrent() ? .failed(.noField) : .nothing }
         guard isCurrent() else { return .nothing }
         nonisolated(unsafe) let fields: [String: Any] = ["code": code]
         let token = target.token, url = target.frameURL.absoluteString, documentID = target.documentID
@@ -483,9 +495,28 @@ final class CredentialPicker {
         } catch {
             return isCurrent() ? .failed(.noField) : .nothing
         }
+        do {
+            return try Self.deliveredCount(answer).map(Outcome.filled) ?? .nothing
+        } catch {
+            return .failed(error)
+        }
+    }
+
+    /// Both native pickers receive the field count. Opening the site's chooser ends this pick without a fill.
+    static func deliveredCount(_ answer: Any?) throws(Failure) -> Int? {
         let count = (answer as? NSNumber)?.intValue ?? 0
-        guard count > 0 else { return count < 0 ? .failed(.unsafeForm) : .failed(.noField) }
-        return .filled(count)
+        switch count {
+        case 1...:
+            return count
+        case PasswordAutofillScript.openedAccountChooser:
+            return nil
+        case PasswordAutofillScript.differentAccount:
+            throw .differentAccount
+        case ..<0:
+            throw .unsafeForm
+        default:
+            throw .noField
+        }
     }
 
     /// The unlocked manager of `vaultID`, only under the unlock `epoch` a list or a sheet was made under.
@@ -498,6 +529,8 @@ final class CredentialPicker {
         let alert = NSAlert()
         alert.messageText = String(localized: "Couldn’t Fill Saved Details")
         alert.informativeText = switch failure {
+        case .differentAccount:
+            PasswordAutofillScript.chooseAccountMessage
         case .unsafeForm:
             String(localized: "This form sends what you type to another website, so nothing was filled.")
         case .noField:
@@ -517,25 +550,29 @@ final class CredentialPicker {
     /// addresses and identities are not offered here. `used` dates only a credential saved for `origin`. Titles and search keys follow
     /// the Credential Manager's rule (`CredentialSummary.naming`), item titles included, from what a list may read of a credential.
     nonisolated static func rows(
-        _ accounts: [some AutofillListable], vaultID: UUID, origin: String, vault: String?, used: [UUID: Date] = [:]
+        _ accounts: [some AutofillListable], vaultID: UUID, origin: String, vault: String?, used: [UUID: Date] = [:], googleUsername: String? = nil
     ) -> [Row] {
         accounts.flatMap { account -> [Row] in
             let named = CredentialSummary.naming(account)
-            let matches = account.origins.contains(origin) || CredentialAccountSelection.isSibling(account, of: origin)
+            let exactSite = account.origins.contains(origin)
+            let matches = exactSite || CredentialAccountSelection.isSibling(account, of: origin)
+            let matchesUsername = exactSite && !account.usernameIsConcealed && googleUsername.map {
+                !$0.isEmpty && CredentialAccountSelection.sameUsername(account.username, $0, origin: origin)
+            } == true
             let website = account.origins.lazy.compactMap(WebsiteLookalike.displayHost(of:)).first
             func row(_ fill: Row.Fill, _ first: String?) -> Row {
                 let parts = [first, website, vault].compactMap { $0 }.filter { !$0.isEmpty && $0 != named.title }
                 return Row(
                     id: UUID(), vaultID: vaultID, accountID: account.id, fill: fill, title: named.title,
                     detail: parts.joined(separator: " · "), matchesSite: matches, searchKey: named.searchKey,
-                    lastUsed: account.origins.contains(origin) ? used[account.id] : nil
+                    lastUsed: exactSite ? used[account.id] : nil, matchesUsername: matchesUsername
                 )
             }
             var rows: [Row] = []
             if account.hasPassword || !account.username.isEmpty {
                 rows.append(row(.login, named.username))
             }
-            if account.hasTOTP {
+            if account.hasTOTP, googleUsername == nil {
                 rows.append(row(.code, String(localized: "Verification code")))
             }
             return rows
@@ -558,7 +595,7 @@ final class CredentialPicker {
             return order == .orderedSame ? left.offset < right.offset : order == .orderedAscending
         }
         .map(\.element)
-        return CredentialAccountSelection.lastUsedFirst(sorted) { $0.fill == preferred ? $0.lastUsed : nil }
+        return CredentialAccountSelection.lastUsedFirst(sorted, typed: { $0.matchesUsername }) { $0.fill == preferred ? $0.lastUsed : nil }
     }
 
     /// The rows whose title, username (unless concealed) or website holds `query`, ignoring case and accents.

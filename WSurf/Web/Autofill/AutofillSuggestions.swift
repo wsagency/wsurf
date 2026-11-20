@@ -329,20 +329,18 @@ final class AutofillSuggestions {
         // Frame, focus and field must still be the ones asked about before the pick is read (and possibly invalidated).
         guard (try? await validate(request, in: request.page, requiresFocus: true)) != nil,
               presentation == presentationID, requests[ObjectIdentifier(request.page)] === request else { return nil }
-        // A picked account names exactly one lease (epochs are process-unique): ask on its owner's behalf while that lease is
-        // live, otherwise on any live lease's, which retires the pick. A live pick answers alone, from its own vault.
+        // The earlier pick belongs to a process-unique lease. Ask with its owner's epoch while that lease is live.
         let session = AutofillSaveCoordinator.shared.session(for: request.page)
         let owner = reads.first { $0.epoch == session?.username?.epoch } ?? reads[0]
-        let pinned = session?.selectedAccount(
-            in: request.page, origin: origin, enteredUsername: request.enteredUsername, epoch: owner.epoch)
-        // The unlocked vaults' accounts for this website (with several vaults open, a row says which one it is in), the one typed exactly
-        // first, then the one used last here.
+        let entered = session?.usernameForDisplayHint(request.enteredUsername, origin: origin)
+        let pinned = session?.selectedAccount(in: request.page, origin: origin, enteredUsername: entered, epoch: owner.epoch)
         let lastUsed = context.autofillLastUsed
         let result = CredentialAccountSelection.listed(
-            in: (pinned == nil ? reads : [owner]).map {
+            in: reads.map {
                 (id: $0.manager.vaultID, label: reads.count > 1 ? $0.label : nil, accounts: $0.candidates.candidates)
             },
-            origin: origin, pageURL: request.topURL, entered: request.enteredUsername, field: request.field, pinned: pinned
+            origin: origin, pageURL: request.topURL, entered: request.enteredUsername, field: request.field,
+            isUsernameField: request.typeToSearch, pinned: pinned.map { (owner.manager.vaultID, $0) }
         ) { vault, account in
             lastUsed.date(reads.first { $0.manager.vaultID == vault }?.uses, account: account, origin: origin)
         }.map { row in
@@ -350,8 +348,12 @@ final class AutofillSuggestions {
             request.rows[rowID] = (row.vault, row.account)
             return AutofillSuggestion(id: rowID, title: row.title, detail: row.detail, origin: origin)
         }
-        guard result.isEmpty else { return result }
-        let anotherIsLocked = reads.count < listing.count
+        let anotherIsLocked = listing.contains { vault in
+            !unlocked.contains { $0.vaultID == vault.vaultID && $0.isUnlocked }
+        }
+        if !result.isEmpty {
+            return anotherIsLocked ? result + Self.unlockRow(for: request, origin: origin) : result
+        }
         var siblings: [AutofillSuggestion] = []
         for read in reads {
             for (account, website) in CredentialAccountSelection.siblings(
@@ -375,15 +377,8 @@ final class AutofillSuggestions {
         request.siblings = siblings
         let rowID = UUID()
         request.actions[rowID] = .siblings
-        return [AutofillSuggestion(id: rowID, title: String(localized: "Check other logins for *.\(site)"), detail: "", origin: origin)]
-    }
-
-    /// The one row that unlocks: every vault is locked, or the open ones hold nothing for this field while another is locked and may
-    /// (the request then keeps the grants it read, and `unlock(_:in:)` offers the locked vaults only). Nothing is read before.
-    private static func unlockRow(for request: Request, origin: String) -> [AutofillSuggestion] {
-        let rowID = UUID()
-        request.actions[rowID] = .unlock
-        return [AutofillSuggestion(id: rowID, title: String(localized: "Unlock Credentials…"), detail: "", origin: origin)]
+        let row = AutofillSuggestion(id: rowID, title: String(localized: "Check other logins for *.\(site)"), detail: "", origin: origin)
+        return anotherIsLocked ? [row] + Self.unlockRow(for: request, origin: origin) : [row]
     }
 
     /// Cards or addresses of the profile's unlocked vaults, after the ones still in the old Keychain lists: the rows the vault builds
@@ -575,7 +570,8 @@ final class AutofillSuggestions {
             area = area.intersection(screen.visibleFrame)
         }
         let width = min(360.0, area.width - 16), availableBelow = max(0, field.minY - area.minY - 12), availableAbove = max(0, area.maxY - field.maxY - 12)
-        let index = AutofillSuggestionSearch.Index(records, searchable: request.kind == .password)
+        let searchable = request.kind == .password && (request.field == .password || records.count > AutofillSuggestionLayout.visibleRowLimit)
+        let index = AutofillSuggestionSearch.Index(records, searchable: searchable)
         let desired = AutofillSuggestionLayout.height(for: records.count, searchable: index.isSearchable)
         let below = availableBelow >= desired || (availableAbove < desired && availableBelow >= availableAbove)
         let height = min(desired, below ? availableBelow : availableAbove)
@@ -878,7 +874,7 @@ final class AutofillSuggestions {
                     contentWorld: request.world,
                     prepareArguments: prepare
                 )
-                guard (delivered as? Int ?? 0) > 0 else { throw ContactAutofillError.noField }
+                guard try CredentialPicker.deliveredCount(delivered) != nil else { return }
                 // The page spent the request's token on this fill, so `validate`, which asks the page about that token, can no
                 // longer pass: a fill the page took is never reported as failed. The pick is recorded only under the request's
                 // native authority.
@@ -916,7 +912,8 @@ final class AutofillSuggestions {
                       !page.isHiddenOrHasHiddenAncestor else { return }
                 let alert = NSAlert()
                 alert.messageText = String(localized: "Couldn’t Fill Saved Details")
-                alert.informativeText = String(localized: "Select the field again to try again.")
+                alert.informativeText = (error as? CredentialPicker.Failure) == .differentAccount
+                    ? PasswordAutofillScript.chooseAccountMessage : String(localized: "Select the field again to try again.")
                 await alert.beginSheetModal(for: window)
             }
         }
