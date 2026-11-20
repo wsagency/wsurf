@@ -157,6 +157,20 @@ struct SharedCatalogTests {
         #expect(mac.box.ended == [nil] && !mac.sync.needsEngine && cloud.recordCount == 0)
     }
 
+    @Test func aNewTabInstallationCanFetchOtherDevicesBeforeItsFirstUpload() async throws {
+        let cloud = FakeSyncCloud()
+        let profile = UUID()
+        let existing = SyncDevice(cloud: cloud, installID: "existing")
+        existing.start(sharing: [profile])
+        try await existing.engine.sendNow()
+        let fresh = SyncDevice(cloud: cloud, installID: "fresh")
+        fresh.start(sharing: [profile])
+        try await fresh.engine.fetchNow()
+        #expect(fresh.sync.state.devices[existing.installID] != nil)
+        try await fresh.engine.sendNow()
+        #expect(fresh.box.ended.isEmpty && cloud.record(fresh.id(in: SyncZone.devices)) != nil)
+    }
+
     @Test func signingBackIntoTheOriginalAccountRequiresConsentBeforeReplayingItsOwnOutbox() async throws {
         let cloud = FakeSyncCloud()
         let client = Client(cloud)

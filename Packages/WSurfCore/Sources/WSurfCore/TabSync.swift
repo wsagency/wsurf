@@ -84,6 +84,7 @@ public final class TabSync: SyncEngineDelegate {
 
     @ObservationIgnored private let persist: (TabSyncState) -> Void
     @ObservationIgnored private var engine: (any SyncEngine)?
+    @ObservationIgnored private var restoredUnidentifiedRecords: Bool
     @ObservationIgnored private var desired: Set<UUID> = []
     @ObservationIgnored private var ensuredZones: Set<String> = []
     /// Zone name to the fitted, compressed payload of this device's next session record.
@@ -102,6 +103,10 @@ public final class TabSync: SyncEngineDelegate {
         self.device = device
         self.state = state
         self.persist = persist
+        // A fresh installation may fetch other devices before its first upload. Only pre-existing records lack a verified owner.
+        restoredUnidentifiedRecords = state.accountUser == nil && (
+            !state.ownSystemFields.isEmpty || state.publishedDevice != nil || !state.devices.isEmpty || !state.sessions.isEmpty
+        )
     }
 
     // MARK: - Engine and sharing
@@ -393,11 +398,7 @@ public final class TabSync: SyncEngineDelegate {
     }
 
     private func matchesAccount(_ user: String) -> Bool {
-        if let previous = state.accountUser {
-            return previous == user
-        }
-        // An older installation may have cloud records without a saved user. Only a fresh installation can bind its first user.
-        return state.ownSystemFields.isEmpty && state.publishedDevice == nil && state.devices.isEmpty && state.sessions.isEmpty
+        state.accountUser.map { $0 == user } ?? !restoredUnidentifiedRecords
     }
 
     private func endSharing() {
@@ -408,6 +409,7 @@ public final class TabSync: SyncEngineDelegate {
 
     /// Everything the account's database gave this device, and the marks that say it was written there.
     private func clearAccountData() {
+        restoredUnidentifiedRecords = false
         state.devices = [:]
         state.sessions = [:]
         state.ownSystemFields = [:]
