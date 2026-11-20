@@ -102,12 +102,7 @@ extension CloudSettingsSync {
                     beat()
                 }
             case .zonesDeleted(let zones):
-                guard !state.channels.isEmpty else { return }
-                try await verifyAccount(generation)
-                for zone in zones.keys where state.channels[zone] != nil {
-                    forget(zone: zone)
-                }
-                try save()
+                try await zonesDeleted(zones)
             case .zoneSavesOverQuota(let zones):
                 if zones.contains(where: { state.channels[$0] != nil }) {
                     notice = String(localized: "Your iCloud storage is full. Settings changes are waiting on this Mac.")
@@ -133,6 +128,18 @@ extension CloudSettingsSync {
             }
             reportError()
         }
+    }
+
+    private func zonesDeleted(_ zones: [String: SyncZoneDeletionReason]) async throws {
+        let enrolled = state.channels.filter { zones[$0.key] != nil && !$0.value.needsConfirmation }.mapValues(\.enrollment)
+        guard !enrolled.isEmpty else { return }
+        let started = generation
+        try await verifyAccount(started)
+        guard generation == started else { return }
+        for (zone, epoch) in enrolled where state.channels[zone]?.enrollment == epoch {
+            forget(zone: zone)
+        }
+        try save()
     }
 
     private func fetched(_ records: [SyncRecord], deleted: [SyncRecordID]) throws {

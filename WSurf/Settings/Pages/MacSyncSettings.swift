@@ -62,7 +62,9 @@ private struct MacSettingOptions: View {
         } else if let notice = settings.notice {
             HStack {
                 Text(verbatim: notice).foregroundStyle(.secondary)
-                Button("Try Again") { settings.beat(confirmingEnrollment: true) }
+                if settings.checkpointUnavailable || settings.hasConfirmedChannels {
+                    Button("Try Again") { settings.beat() }
+                }
             }
         }
     }
@@ -78,25 +80,24 @@ private struct MacSettingOptions: View {
                     get: { channel != nil || turningOff },
                     set: { enabled in
                         if enabled {
-                            working = true
-                            Task {
-                                defer { working = false }
-                                do {
-                                    try await settings.enable(category, localProfileID: local, cloudProfileID: global ? nil : cloudProfileID)
-                                } catch is CancellationError {
-                                    // The user turned the channel off during its first read.
-                                } catch {
-                                    settings.reportError()
-                                }
-                            }
+                            enroll { try await settings.enable(category, localProfileID: local, cloudProfileID: global ? nil : cloudProfileID) }
                         } else {
                             do { try settings.disable(category, localProfileID: local) } catch { settings.reportError() }
                         }
                     })
             )
-            .disabled(turningOff || (channel == nil && (working || (!global && cloudProfileID == nil))))
+            .disabled(settings.checkpointUnavailable || turningOff || (channel == nil && (working || (!global && cloudProfileID == nil))))
         }
         if let channel {
+            if channel.needsConfirmation {
+                HStack {
+                    Text("Confirm to share these settings with your current Apple Account.").foregroundStyle(.secondary)
+                    Button("Confirm Sharing") {
+                        enroll { try await settings.confirmEnrollment(channel) }
+                    }
+                    .disabled(working)
+                }
+            }
             let pending = channel.records.values.filter { $0.pending != nil && !$0.conflict }.count
             if pending > 0 {
                 Text("\(pending) changes waiting to sync.").foregroundStyle(.secondary)
@@ -109,6 +110,20 @@ private struct MacSettingOptions: View {
                     Button("Use This Mac") { resolve(key, channel, cloud: false) }
                     Button("Use iCloud") { resolve(key, channel, cloud: true) }
                 }
+            }
+        }
+    }
+
+    private func enroll(_ action: @escaping @MainActor () async throws -> Void) {
+        working = true
+        Task {
+            defer { working = false }
+            do {
+                try await action()
+            } catch is CancellationError {
+                // The enrollment changed while this action was waiting.
+            } catch {
+                settings.reportError()
             }
         }
     }

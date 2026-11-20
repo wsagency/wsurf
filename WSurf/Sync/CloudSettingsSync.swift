@@ -22,6 +22,15 @@ final class CloudSettingsSync: SyncZoneHandler {
         var account: String?
         var channels: [String: MacSettingChannel] = [:]
         fileprivate var optOuts: [String: OptOut]?
+
+        static func read(from file: URL) throws -> Self {
+            var saved = try JSONDecoder().decode(Self.self, from: Data(contentsOf: file))
+            // A legacy baseline identifies an enrolled channel. An unfinished choice may predate the account binding.
+            for (zone, channel) in saved.channels where channel.awaitingAccountConfirmation == nil || saved.account == nil {
+                saved.channels[zone]?.awaitingAccountConfirmation = saved.account == nil || !channel.fetched
+            }
+            return saved
+        }
     }
 
     fileprivate struct OptOut: Codable {
@@ -46,7 +55,8 @@ final class CloudSettingsSync: SyncZoneHandler {
     }
 
     @ObservationIgnored private var optOutsToFinish: Set<String> = []
-    @ObservationIgnored private var reloadBeforeOptOut = false
+    private(set) var checkpointUnavailable = false
+    @ObservationIgnored private var checkpointRetry: Task<Void, Never>?
     @ObservationIgnored private var profilesForRecovery: Set<UUID>?
     var notice: String?
     @ObservationIgnored var onAccountVerification: ((CloudSharedSpaces.AccountVerification) -> Void)?
@@ -82,11 +92,11 @@ final class CloudSettingsSync: SyncZoneHandler {
         )
         registerProfile = adapter.register
         let live = Set(profiles.map(\.id)).subtracting([Profile.privateID])
-        if reloadBeforeOptOut {
+        if checkpointUnavailable {
             profilesForRecovery = live
         }
         pruneChannels(outside: live)
-        if hasPendingOptOuts && !reloadBeforeOptOut {
+        if hasPendingOptOuts && !checkpointUnavailable {
             do { try save() } catch { reportError() }
         }
         observation = Task { [weak self] in
@@ -98,24 +108,41 @@ final class CloudSettingsSync: SyncZoneHandler {
         }
     }
 
-    init(stateFile: URL, read: @escaping Read, apply: @escaping Apply, discardWebsiteApprovals: @escaping (UUID) throws -> Void = { _ in }) {
+    init(
+        stateFile: URL, read: @escaping Read, apply: @escaping Apply,
+        discardWebsiteApprovals: @escaping (UUID) throws -> Void = { _ in }, clock: any Clock<Duration> = ContinuousClock()
+    ) {
         self.stateFile = stateFile
         self.read = read
         self.apply = apply
         self.discardWebsiteApprovals = discardWebsiteApprovals
         do {
-            state = try JSONDecoder().decode(State.self, from: Data(contentsOf: stateFile))
+            state = try State.read(from: stateFile)
+        } catch CocoaError.fileReadNoSuchFile {
+            state = State()
+        } catch is DecodingError {
+            state = State()
+            notice = String(localized: "The saved sync settings could not be read. Choose what to share again.")
         } catch {
             state = State()
-            if FileManager.default.fileExists(atPath: stateFile.path) {
-                reloadBeforeOptOut = !(error is DecodingError) && FileManager.default.fileExists(atPath: optOutFile.path)
-                notice = String(localized: "The saved sync settings could not be read. Choose what to share again.")
-            }
+            checkpointUnavailable = true
+            notice = String(localized: "Your saved sync settings are temporarily unavailable. Try again to load them.")
         }
         restorePendingOptOuts()
+        if checkpointUnavailable {
+            // The shared engine's heartbeat may be off until we can read this Mac's enrollments.
+            checkpointRetry = Task { [weak self] in
+                while self?.checkpointUnavailable == true {
+                    do { try await clock.sleep(for: .seconds(30)) } catch { return }
+                    guard !Task.isCancelled else { return }
+                    self?.beat()
+                }
+            }
+        }
     }
 
     deinit {
+        checkpointRetry?.cancel()
         observation?.cancel()
         accountNotifications?.cancel()
         accountLookup?.cancel()
@@ -186,11 +213,28 @@ final class CloudSettingsSync: SyncZoneHandler {
             }
         }
 
-        let started = generation
+        try await confirmEnrollment(proposed)
+    }
+
+    /// A confirmation from Settings belongs to the displayed enrollment, even if the account lookup suspends.
+    func confirmEnrollment(_ channel: MacSettingChannel) async throws {
+        guard state.channels[channel.zone]?.enrollment == channel.enrollment else { throw CancellationError() }
         onNeedsEngine?()
-        try await verifyAccount(started, confirmingEnrollment: true)
-        guard state.channels[proposed.zone]?.enrollment == proposed.enrollment else { throw CancellationError() }
-        try await prepare(zone: proposed.zone)
+        let started = generation
+        let user = try await verifyAccount(started)
+        guard generation == started, let current = state.channels[channel.zone], current.enrollment == channel.enrollment else { throw CancellationError() }
+        if current.needsConfirmation {
+            let previous = state
+            state.account = user
+            state.channels[channel.zone]?.awaitingAccountConfirmation = false
+            do {
+                try save()
+            } catch {
+                state = previous
+                throw error
+            }
+        }
+        try await prepare(zone: channel.zone)
     }
 
     var hasPendingOptOuts: Bool {
@@ -217,7 +261,15 @@ final class CloudSettingsSync: SyncZoneHandler {
         try finishOptOuts { _, removal in removal.localProfileID == id }
     }
 
-    func beat(confirmingEnrollment: Bool = false) {
+    private var confirmedChannels: [MacSettingChannel] {
+        state.channels.values.filter { !$0.needsConfirmation }
+    }
+
+    var hasConfirmedChannels: Bool {
+        !confirmedChannels.isEmpty
+    }
+
+    func beat() {
         // Retrying local cleanup works offline, even after the last opt-out.
         do {
             try reloadStateIfNeeded()
@@ -233,22 +285,18 @@ final class CloudSettingsSync: SyncZoneHandler {
                 return
             }
         }
-        guard work == nil, !state.channels.isEmpty else { return }
+        guard work == nil, hasConfirmedChannels else { return }
         if engine == nil {
             onNeedsEngine?()
-        }
-        if state.account == nil && !confirmingEnrollment {
-            reportError()
-            return
         }
         work = Task { [weak self] in
             guard let self else { return }
             defer { work = nil }
             let started = generation
             do {
-                try await verifyAccount(started, confirmingEnrollment: confirmingEnrollment)
+                try await verifyAccount(started)
                 var preparationFailed = false
-                for zone in state.channels.keys.sorted() where !ready.contains(zone) {
+                for zone in confirmedChannels.map(\.zone).sorted() where !ready.contains(zone) {
                     do {
                         try await prepare(zone: zone)
                     } catch {
@@ -267,7 +315,9 @@ final class CloudSettingsSync: SyncZoneHandler {
                 try save()
                 if preparationFailed || readFailure != nil {
                     reportError()
-                } else if ready.count == state.channels.count && state.channels.values.allSatisfy({ channel in channel.records.values.allSatisfy { $0.pending == nil } }) {
+                } else if confirmedChannels.allSatisfy({ channel in
+                    ready.contains(channel.zone) && channel.records.values.allSatisfy { $0.pending == nil }
+                }) {
                     notice = nil
                 }
             } catch {
@@ -319,9 +369,8 @@ final class CloudSettingsSync: SyncZoneHandler {
         queuePending(zone)
     }
 
-    func verifyAccount(_ started: UUID, confirmingEnrollment: Bool = false) async throws {
-        // Only a user action may bind a first, offline enrollment to a previously unknown account.
-        guard state.account != nil || state.channels.isEmpty || confirmingEnrollment else { throw Issue.unavailable }
+    @discardableResult
+    func verifyAccount(_ started: UUID) async throws -> String {
         guard let identity = engine as? any SyncAccountIdentity else { throw Issue.unavailable }
         do {
             let user = try await identity.currentAccountUser()
@@ -330,14 +379,11 @@ final class CloudSettingsSync: SyncZoneHandler {
                 try resetAccount(to: user)
                 throw Issue.changedAccount
             }
-            if state.account == nil {
-                state.account = user
-                try save()
-            }
             trustedUser = user
             if accountNotifications != nil {
                 ProviderKeySharing.shared.setAccountIdentifier(user)
             }
+            return user
         } catch {
             if generation == started {
                 suspendAccount()
@@ -350,6 +396,7 @@ final class CloudSettingsSync: SyncZoneHandler {
     }
 
     private func prepare(zone: String) async throws {
+        guard state.channels[zone]?.needsConfirmation == false else { throw Issue.unavailable }
         guard !ready.contains(zone) else { return }
         if let existing = preparations[zone] {
             try await existing.value
@@ -481,7 +528,7 @@ final class CloudSettingsSync: SyncZoneHandler {
         if hasJournal {
             readOptOutJournal()
         }
-        guard !reloadBeforeOptOut else { return }
+        guard !checkpointUnavailable else { return }
         if hasPendingOptOuts {
             optOutsToFinish.formUnion(pendingOptOuts.keys)
             do { try save() } catch { reportError() }
@@ -514,16 +561,14 @@ final class CloudSettingsSync: SyncZoneHandler {
         }
     }
 
-    /// A journal may be the only readable file during an outage. Recover other channels before replacing their checkpoint.
-    private func reloadStateIfNeeded() throws {
-        guard reloadBeforeOptOut else { return }
+    /// Restore the checkpoint and replay any pending revocations before allowing a write.
+    func reloadStateIfNeeded() throws {
+        guard checkpointUnavailable else { return }
         let revoked = pendingOptOuts
-        do {
-            state = try JSONDecoder().decode(State.self, from: Data(contentsOf: stateFile))
-        } catch CocoaError.fileReadNoSuchFile {
-            state = State()
-        }
-        reloadBeforeOptOut = false
+        state = try State.read(from: stateFile)
+        checkpointUnavailable = false
+        checkpointRetry?.cancel()
+        checkpointRetry = nil
         notice = nil
         restore(revoked)
         if FileManager.default.fileExists(atPath: optOutFile.path) {
@@ -559,8 +604,11 @@ final class CloudSettingsSync: SyncZoneHandler {
     func resetAccount(to user: String?) throws {
         generation = UUID()
         trustedUser = nil
-        // An account reset revokes every channel, including rows in an unreadable checkpoint.
-        reloadBeforeOptOut = false
+        // An explicit account reset revokes every enrollment, even when its checkpoint is still inaccessible.
+        if checkpointUnavailable {
+            try? reloadStateIfNeeded()
+        }
+        checkpointUnavailable = false
         profilesForRecovery = nil
         for zone in Array(state.channels.keys) {
             forget(zone: zone)

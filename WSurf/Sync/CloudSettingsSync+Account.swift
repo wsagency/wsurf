@@ -62,7 +62,8 @@ extension CloudSettingsSync {
 
     func accountDidResolve(_ identity: String?) throws {
         defer { onAccountVerification?(.resolved(identity)) }
-        // A first offline choice has no verified owner yet. An explicit retry binds its saved edits.
+        try reloadStateIfNeeded()
+        // Observing an identity can revoke an old account, but only the chosen enrollment can be confirmed.
         if let prior = state.account, prior != identity {
             try resetAccount(to: identity)
         }

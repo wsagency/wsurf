@@ -8,7 +8,7 @@ import WSurfCore
 @testable import WSurf
 
 extension MacSettingsSyncTests {
-    private func lifecycleDirectory() throws -> URL {
+    func lifecycleDirectory() throws -> URL {
         let root = URL.temporaryDirectory.appending(path: UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
         return root
@@ -212,8 +212,10 @@ extension MacSettingsSyncTests {
         #expect(reopened.state.account == nil)
         #expect(reopened.ready.isEmpty)
         #expect(cloud.zones.isEmpty)
-        reopened.beat(confirmingEnrollment: true)
-        #expect(await waitUntil { cloud.recordCount == 1 })
+        let waiting = try #require(reopened.channel(.websiteSettings, localProfileID: local))
+        try await reopened.confirmEnrollment(waiting)
+        try await engine.sendNow()
+        #expect(cloud.recordCount == 1)
         #expect(reopened.state.account == cloud.user)
     }
 

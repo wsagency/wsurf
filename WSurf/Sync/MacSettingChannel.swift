@@ -60,6 +60,11 @@ nonisolated struct MacSettingChannel: Codable {
     let localProfileID: UUID?
     let cloudProfileID: UUID?
     var enrollment = UUID()
+    /// Optional on disk for checkpoints written before per-enrollment approval.
+    var awaitingAccountConfirmation: Bool? = true
+    var needsConfirmation: Bool {
+        awaitingAccountConfirmation != false
+    }
     var fetched = false
     var lastSync: Date?
     var observed: [String: Data] = [:]
