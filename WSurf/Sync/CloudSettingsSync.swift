@@ -193,18 +193,28 @@ final class CloudSettingsSync: SyncZoneHandler {
         queuePending(zone)
     }
 
-    private func verifyAccount(_ started: UUID) async throws {
+    func verifyAccount(_ started: UUID) async throws {
         guard let identity = engine as? any SyncAccountIdentity else { throw Issue.unavailable }
-        let user = try await identity.currentAccountUser()
-        guard !user.isEmpty, generation == started else { throw Issue.changedAccount }
-        if let previous = state.account, previous != user {
-            try resetAccount(to: user)
-            throw Issue.changedAccount
-        }
-        state.account = user
-        trustedUser = user
-        if accountNotifications != nil {
-            ProviderKeySharing.shared.setAccountIdentifier(user)
+        do {
+            let user = try await identity.currentAccountUser()
+            guard !user.isEmpty, generation == started else { throw Issue.changedAccount }
+            if let previous = state.account, previous != user {
+                try resetAccount(to: user)
+                throw Issue.changedAccount
+            }
+            state.account = user
+            trustedUser = user
+            if accountNotifications != nil {
+                ProviderKeySharing.shared.setAccountIdentifier(user)
+            }
+        } catch {
+            if generation == started {
+                suspendAccount()
+                if accountNotifications != nil {
+                    ProviderKeySharing.shared.suspendAccountVerification()
+                }
+            }
+            throw error
         }
     }
 
@@ -230,10 +240,12 @@ final class CloudSettingsSync: SyncZoneHandler {
 
     private func readBaseline(zone: String, token: UUID) async throws {
         guard let channel = state.channels[zone], let engine, loading[zone] == token else { throw Issue.unavailable }
+        let started = generation
         let baseline: SyncZoneRead
         do {
             baseline = try await engine.fetchAll(zone: zone)
         } catch where Self.missingZone(error) {
+            try await verifyAccount(started)
             guard loading[zone] == token, state.channels[zone]?.enrollment == channel.enrollment else { throw CancellationError() }
             guard !channel.fetched else {
                 forget(zone: zone)
@@ -244,6 +256,7 @@ final class CloudSettingsSync: SyncZoneHandler {
             try await engine.sendNow()
             baseline = try await engine.fetchAll(zone: zone)
         }
+        try await verifyAccount(started)
         guard loading[zone] == token, state.channels[zone]?.enrollment == channel.enrollment else { throw CancellationError() }
         guard baseline.skipped == 0 else { throw Issue.incomplete }
         try collectChanges()

@@ -102,6 +102,8 @@ extension CloudSettingsSync {
                     beat()
                 }
             case .zonesDeleted(let zones):
+                guard !state.channels.isEmpty else { return }
+                try await verifyAccount(generation)
                 for zone in zones.keys where state.channels[zone] != nil {
                     forget(zone: zone)
                 }
@@ -111,8 +113,12 @@ extension CloudSettingsSync {
                     notice = String(localized: "Your iCloud storage is full. Settings changes are waiting on this Mac.")
                 }
             case .fetched(let records, let deleted):
+                guard !state.channels.isEmpty else { return }
+                try await verifyAccount(generation)
                 try fetched(records, deleted: deleted)
             case .sent(let saved, let deleted, let failed):
+                guard !state.channels.isEmpty else { return }
+                try await verifyAccount(generation)
                 try sent(saved, deleted: deleted, failed: failed)
             }
         } catch {

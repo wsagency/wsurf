@@ -9,8 +9,8 @@ import os
 ///
 /// Creating a container in a process whose signed entitlements lack the iCloud keys raises an Objective-C exception that Swift
 /// cannot catch, so the owner creates this object only after `CloudSyncGate` has read the entitlements.
-public final class CloudKitSyncEngine: SyncEngine {
-    private let container: CKContainer
+public final class CloudKitSyncEngine: SyncEngine, SyncAccountIdentity {
+    let container: CKContainer
     private let bridge: Bridge
     private let engine: CKSyncEngine
 
@@ -65,7 +65,9 @@ public final class CloudKitSyncEngine: SyncEngine {
         var skipped = 0
         var token: CKServerChangeToken?
         while true {
-            let page = try await database.recordZoneChanges(inZoneWith: CloudKitMapping.zoneID(zone), since: token)
+            let page = try await database.recordZoneChanges(
+                inZoneWith: CloudKitMapping.zoneID(zone), since: token, desiredKeys: [CloudKitMapping.payloadKey, CloudKitMapping.schemaKey]
+            )
             for (_, result) in page.modificationResultsByID {
                 // A record that failed to arrive is skipped and counted: the read finishes, and one bad record never holds the rest.
                 guard let modification = try? result.get() else {
@@ -88,6 +90,10 @@ public final class CloudKitSyncEngine: SyncEngine {
 
     public func accountIsAvailable() async -> Bool {
         (try? await container.accountStatus()) == .available
+    }
+
+    public func currentAccountUser() async throws -> String {
+        try await container.userRecordID().recordName
     }
 }
 
@@ -159,6 +165,13 @@ private nonisolated final class Bridge: CKSyncEngineDelegate {
         }
     }
 
+    func nextFetchChangesOptions(_ context: CKSyncEngine.FetchChangesContext, syncEngine: CKSyncEngine) async -> CKSyncEngine.FetchChangesOptions {
+        let enrolled = await (delegate as? any VaultZoneReading)?.enrolledVaultZones ?? []
+        var options = context.options
+        options.scope = CloudKitMapping.fetchScope(options.scope, pending: syncEngine.state.zoneIDsWithUnfetchedServerChanges, enrolled: enrolled)
+        return options
+    }
+
     func nextRecordZoneChangeBatch(
         _ context: CKSyncEngine.SendChangesContext,
         syncEngine: CKSyncEngine
@@ -177,9 +190,29 @@ private nonisolated final class Bridge: CKSyncEngineDelegate {
 
 /// The two-way mapping between sync types and CloudKit types. `syncRecord` is the allowlist boundary: a record of another type,
 /// or one without the encrypted `payload`, never reaches the model.
-private nonisolated enum CloudKitMapping {
+nonisolated enum CloudKitMapping {
     static let payloadKey = "payload"
     static let schemaKey = "schemaVersion"
+
+    /// CloudKit asks again between requests, including after it learns which zones have changes.
+    static func fetchScope(
+        _ scope: CKSyncEngine.FetchChangesOptions.Scope, pending: [CKRecordZone.ID], enrolled: Set<String>
+    ) -> CKSyncEngine.FetchChangesOptions.Scope {
+        func allowed(_ id: CKRecordZone.ID) -> Bool {
+            !SyncZone.isVault(id.zoneName) || enrolled.contains(id.zoneName)
+        }
+        let denied = pending.filter { !allowed($0) }
+        switch scope {
+        case .all:
+            return .allExcluding(denied)
+        case .allExcluding(let excluded):
+            return .allExcluding(Array(Set(excluded).union(denied)))
+        case .zoneIDs(let selected):
+            return .zoneIDs(selected.filter(allowed))
+        @unknown default:
+            return .zoneIDs(pending.filter { scope.contains($0) && allowed($0) })
+        }
+    }
 
     static func zoneID(_ zone: String) -> CKRecordZone.ID {
         CKRecordZone.ID(zoneName: zone, ownerName: CKCurrentUserDefaultName)

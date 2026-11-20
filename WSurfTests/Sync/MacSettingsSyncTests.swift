@@ -128,6 +128,70 @@ struct MacSettingsSyncTests {
         #expect(studio.values[key] == original)
     }
 
+    @Test(arguments: [false, true])
+    func accountSwitchDuringFirstReadRequiresFreshConsent(zoneExists: Bool) async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let cloud = FakeSyncCloud()
+        let work = UUID()
+        if zoneExists {
+            let studio = Mac(cloud, root: root, values: ["popup/studio": Data([1])])
+            try await studio.join(work)
+            try await studio.engine.sendNow()
+        }
+        let air = Mac(cloud, root: root, values: ["engine/air": Data([2])])
+        air.engine.afterFullZoneRead = {
+            air.engine.afterFullZoneRead = nil
+            cloud.switchUser("second")
+        }
+        do {
+            try await air.join(work)
+            Issue.record("The account changed while this Mac was joining")
+        } catch CloudSettingsSync.Issue.changedAccount {}
+        #expect(!air.sync.isEnabled(.websiteSettings, localProfileID: air.localID))
+        #expect(air.values == ["engine/air": Data([2])])
+        try await air.engine.sendNow()
+        #expect(cloud.zones.isEmpty)
+    }
+
+    @Test func failedAccountVerificationSuspendsAnOutstandingSave() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let cloud = FakeSyncCloud()
+        let work = UUID()
+        let key = "engine/site"
+        let mac = Mac(cloud, root: root, values: [key: Data([1])])
+        try await mac.join(work)
+        let channel = try #require(mac.sync.channel(.websiteSettings, localProfileID: mac.localID))
+        let id = SyncRecordID(zone: channel.zone, name: MacSettingPayload(key: key, value: nil).recordName)
+        mac.engine.available = false
+        await #expect(throws: (any Error).self) { try await mac.join(work) }
+        #expect(mac.sync.record(for: id) == nil)
+        #expect(mac.sync.isEnabled(.websiteSettings, localProfileID: mac.localID))
+        mac.engine.available = true
+        try await mac.join(work)
+        #expect(mac.sync.record(for: id) != nil)
+    }
+
+    @Test func incomingChangeFromAnotherAccountWaitsForConsent() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let cloud = FakeSyncCloud()
+        let work = UUID()
+        let mac = Mac(cloud, root: root, values: [:])
+        try await mac.join(work)
+        cloud.switchUser("second")
+        let other = Mac(cloud, root: root, values: ["engine/other": Data([2])])
+        try await other.join(work)
+        try await other.engine.sendNow()
+        try await mac.engine.fetchNow()
+        #expect(mac.values.isEmpty)
+        #expect(!mac.sync.isEnabled(.websiteSettings, localProfileID: mac.localID))
+    }
+
     @Test func accountSwitchRequiresNewConsentForQueuedEdits() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)

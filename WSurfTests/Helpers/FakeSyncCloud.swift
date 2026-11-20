@@ -40,6 +40,7 @@ final class FakeSyncCloud {
 
     /// Zone name to record name to what the server holds.
     private(set) var zones: [String: [String: Stored]] = [:]
+    var encryptedVaultAssets: [SyncRecordID: Data] = [:]
     private(set) var user: String
     /// How many records were written. It does not move when a save fails or is dropped.
     private(set) var writeCount = 0
@@ -104,12 +105,14 @@ final class FakeSyncCloud {
     func deleteZone(_ zone: String, reason: SyncZoneDeletionReason) {
         clock += 1
         zones[zone] = nil
+        encryptedVaultAssets = encryptedVaultAssets.filter { $0.key.zone != zone }
         zoneDeletions.append(ZoneDeletion(at: clock, zone: zone, reason: reason))
     }
 
     /// The zone is gone and nobody was told.
     func removeZoneSilently(_ zone: String) {
         zones[zone] = nil
+        encryptedVaultAssets = encryptedVaultAssets.filter { $0.key.zone != zone }
     }
 
     func deleteRecord(_ id: SyncRecordID) {
@@ -120,6 +123,7 @@ final class FakeSyncCloud {
     func switchUser(_ user: String) {
         self.user = user
         zones = [:]
+        encryptedVaultAssets = [:]
         zoneDeletions = []
         recordDeletions = []
     }
@@ -189,7 +193,7 @@ final class FakeSyncCloud {
 /// An engine over a `FakeSyncCloud`. `sendNow` keeps sending until the model has nothing more to retry, as the real one keeps
 /// scheduling failed changes.
 @MainActor
-final class FakeSyncEngine: SyncEngine {
+final class FakeSyncEngine: SyncEngine, SyncAccountIdentity {
     let cloud: FakeSyncCloud
     weak var delegate: (any SyncEngineDelegate)?
     var available = true
@@ -197,6 +201,8 @@ final class FakeSyncEngine: SyncEngine {
     var hangsOnSend = false
     /// No network: a fetch or a send throws.
     var offline = false
+    var beforeVaultUpload: ((String) async throws -> Void)?
+    var beforeVaultDownload: ((String) async throws -> Void)?
     /// The server refuses to delete a zone: the engine reports the failure and keeps the change.
     var failsZoneDeletes = false
     /// The next N zone creations are lost, as a zone save that failed or lost the race with its records.
@@ -222,6 +228,7 @@ final class FakeSyncEngine: SyncEngine {
     private(set) var sendCount = 0
     private(set) var fetchCount = 0
     private(set) var fetchAllCount = 0
+    var afterFullZoneRead: (() -> Void)?
     private var fetchedAt = 0
     private var stateRevision = 0
 
@@ -283,6 +290,7 @@ final class FakeSyncEngine: SyncEngine {
     /// that is gone is an error.
     func fetchAll(zone: String) async throws -> SyncZoneRead {
         fetchAllCount += 1
+        defer { afterFullZoneRead?() }
         if offline {
             throw URLError(.notConnectedToInternet)
         }
@@ -293,6 +301,11 @@ final class FakeSyncEngine: SyncEngine {
 
     func accountIsAvailable() async -> Bool {
         available
+    }
+
+    func currentAccountUser() async throws -> String {
+        guard available, !offline else { throw URLError(.notConnectedToInternet) }
+        return cloud.user
     }
 
     /// The server no longer knows the engine's change token (it expired, or the state was lost): the next fetch is a read from scratch.
