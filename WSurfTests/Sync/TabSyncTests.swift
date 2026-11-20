@@ -465,6 +465,8 @@ struct TabSyncTests {
     @Test(arguments: [false, true])
     func changesDeliveredDuringTheBaselineWinEvenAtTheSameServerDate(delete: Bool) async throws {
         let cloud = FakeSyncCloud(), air = device(cloud, "air"), studio = device(cloud, "studio", name: "Studio")
+        let router = SyncRouter(state: .init(), persist: { _ in }, tabs: air.sync, vaults: nil)
+        air.engine.delegate = router
         studio.start(sharing: [personal])
         try await publish(studio, SyncSamples.session(tabs: ["https://old.test/"]))
         try await air.engine.fetchNow()
@@ -501,7 +503,7 @@ struct TabSyncTests {
         air.sync.attach(held)
         await air.sync.refresh()
         let old = try #require(cloud.record(studio.id(in: personalZone)))
-        held.duringIncremental = {
+        held.duringIncremental = { receive in
             air.sync.reconcile(sharing: [])
             if switchAccount {
                 cloud.switchUser("next-account")
@@ -511,15 +513,224 @@ struct TabSyncTests {
             }
             air.sync.reconcile(sharing: [personal])
             // The engine has already fetched these old responses when the person re-enrolls.
-            await air.sync.handle(.fetched(modified: [old], deleted: []))
+            await receive(.fetched(modified: [old], deleted: []))
             #expect(air.sync.state.sessions[personalZone]?["studio"] == nil)
-            await air.sync.handle(.zonesDeleted([personalZone: .deleted]))
+            await receive(.zonesDeleted([personalZone: .deleted]))
         }
         await air.sync.refresh()
         #expect(air.box.ended == (switchAccount ? [nil] : []))
         #expect(air.sync.needsEngine)
         await air.sync.refresh()
         #expect(air.sync.state.sessions[personalZone]?["studio"] == nil)
+    }
+
+    enum OldFetch: CaseIterable { case beforeAttachment, priorEdit, priorDeletion, priorZoneRemoval }
+
+    @Test(arguments: OldFetch.allCases)
+    func sharedFetchCannotOverwriteAReenrollmentOrLoseALaterChange(old: OldFetch) async throws {
+        let cloud = FakeSyncCloud(), studio = device(cloud, "studio"), air = device(cloud, "air")
+        studio.start(sharing: [personal])
+        try await publish(studio, SyncSamples.session(tabs: ["https://before.test/"]))
+        let id = studio.id(in: personalZone)
+        let router = SyncRouter(state: .init(), persist: { _ in }, tabs: nil, vaults: nil)
+        air.engine.delegate = router
+        if old != .beforeAttachment {
+            router.routeTabs(to: air.sync)
+            air.start(sharing: [personal])
+            await air.sync.refresh()
+        }
+        switch old {
+        case .beforeAttachment, .priorEdit:
+            cloud.bump(id)
+        case .priorDeletion:
+            cloud.deleteRecord(id)
+        case .priorZoneRemoval:
+            cloud.deleteZone(personalZone, reason: .purged)
+        }
+        var observedBaseline = false
+        air.engine.beforeFetchDelivery = {
+            air.engine.beforeFetchDelivery = nil
+            air.sync.reconcile(sharing: [])
+            // A later write recreates the same ID, with the same server date.
+            if old == .priorZoneRemoval {
+                cloud.createZone(personalZone)
+            }
+            try await publish(studio, SyncSamples.session(tabs: ["https://baseline.test/"]))
+            router.routeTabs(to: air.sync)
+            air.start(sharing: [personal])
+            observedBaseline = await waitUntil(timeout: .seconds(3)) {
+                air.sync.state.sessions[personalZone]?["studio"]?.payload.windows.first?.nodes.first?.url == "https://baseline.test/"
+            }
+        }
+        // Settings (or the automatic transport) starts this fetch independently of TabSync.refresh().
+        try await air.engine.fetchNow()
+        #expect(observedBaseline)
+        #expect(air.box.ended.isEmpty)
+        #expect(air.sync.state.sessions[personalZone]?["studio"]?.payload.windows.first?.nodes.first?.url == "https://baseline.test/")
+
+        try await publish(studio, SyncSamples.session(tabs: ["https://later.test/"]))
+        try await air.engine.fetchNow()
+        #expect(air.sync.state.sessions[personalZone]?["studio"]?.payload.windows.first?.nodes.first?.url == "https://later.test/")
+        #expect(air.sync.state.sessions[personalZone]?["studio"]?.modifiedAt == cloud.now())
+        cloud.deleteRecord(id)
+        try await air.engine.fetchNow()
+        #expect(air.sync.state.sessions[personalZone]?["studio"] == nil)
+    }
+
+    @Test(arguments: [false, true])
+    func coalescedFetchAcrossReenrollmentRecoversLaterServerChanges(delete: Bool) async throws {
+        let cloud = FakeSyncCloud(), air = device(cloud, "air"), studio = device(cloud, "studio")
+        let router = SyncRouter(state: .init(), persist: { _ in }, tabs: air.sync, vaults: nil)
+        air.engine.delegate = router
+        studio.start(sharing: [personal])
+        try await publish(studio, SyncSamples.session(tabs: ["https://before.test/"]))
+        let id = studio.id(in: personalZone)
+        air.start(sharing: [personal])
+        await air.sync.refresh()
+        let oldFetch = router.beginFetch()
+        air.sync.reconcile(sharing: [])
+        try await publish(studio, SyncSamples.session(tabs: ["https://baseline.test/"]))
+        air.sync.reconcile(sharing: [personal])
+        await air.sync.refresh()
+        // A later page advances the old fetch's cursor past a new write. The server can also change again before delivery.
+        try await publish(studio, SyncSamples.session(tabs: ["https://coalesced.test/"]))
+        let page = try #require(cloud.record(id))
+        let latestURL: String?
+        if delete {
+            cloud.deleteRecord(id)
+            latestURL = nil
+        } else {
+            try await publish(studio, SyncSamples.session(tabs: ["https://latest.test/"]))
+            latestURL = "https://latest.test/"
+        }
+        await oldFetch(.fetched(modified: [page], deleted: []))
+        #expect(await waitUntil(timeout: .seconds(3)) {
+            air.sync.state.sessions[personalZone]?["studio"]?.payload.windows.first?.nodes.first?.url == latestURL
+        })
+        let reads = air.engine.fetchAllCount
+        await air.sync.refresh()
+        #expect(air.engine.fetchAllCount == reads)
+    }
+
+    @Test(arguments: [false, true])
+    func overlappingSharedFetchesCannotRestoreAnOlderRow(delete: Bool) async throws {
+        let cloud = FakeSyncCloud(), studio = device(cloud, "studio"), air = device(cloud, "air")
+        let router = SyncRouter(state: .init(), persist: { _ in }, tabs: air.sync, vaults: nil)
+        air.engine.delegate = router
+        studio.start(sharing: [personal])
+        try await publish(studio, SyncSamples.session(tabs: ["https://old.test/"]))
+        air.start(sharing: [personal])
+        await air.sync.refresh()
+        let id = studio.id(in: personalZone)
+        cloud.bump(id)
+        air.engine.beforeFetchDelivery = {
+            air.engine.beforeFetchDelivery = nil
+            if delete {
+                cloud.deleteRecord(id)
+            } else {
+                try await publish(studio, SyncSamples.session(tabs: ["https://later.test/"]))
+            }
+            try await air.engine.fetchNow()
+        }
+        try await air.engine.fetchNow()
+        #expect(await waitUntil(timeout: .seconds(3)) {
+            air.sync.state.sessions[personalZone]?["studio"]?.payload.windows.first?.nodes.first?.url == (delete ? nil : "https://later.test/")
+        })
+    }
+
+    @Test func aNewBaselineDuringSharedFetchVerificationStillWins() async throws {
+        let cloud = FakeSyncCloud(), studio = device(cloud, "studio"), air = device(cloud, "air")
+        let router = SyncRouter(state: .init(), persist: { _ in }, tabs: air.sync, vaults: nil)
+        air.engine.delegate = router
+        studio.start(sharing: [personal])
+        try await publish(studio, SyncSamples.session(tabs: ["https://old.test/"]))
+        let old = try #require(cloud.record(studio.id(in: personalZone)))
+        air.engine.unreadable = ["studio"]
+        air.start(sharing: [personal])
+        await air.sync.refresh()
+        let deliver = router.beginFetch()
+        try await publish(studio, SyncSamples.session(tabs: ["https://new.test/"]))
+        air.engine.duringAccountLookup = {
+            air.engine.duringAccountLookup = nil
+            air.engine.unreadable = []
+            await air.sync.refresh()
+        }
+        await deliver(.fetched(modified: [old], deleted: []))
+        #expect(air.sync.state.sessions[personalZone]?["studio"]?.payload.windows.first?.nodes.first?.url == "https://new.test/")
+    }
+
+    enum Recheck: CaseIterable { case missing, survived, switchedAccount, freshOptIn, devicesGone }
+
+    @Test(arguments: Recheck.allCases)
+    func unresolvedZoneRemovalSurvivesBothCheckpointsAndPrecedesSends(recheck: Recheck) async throws {
+        let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let tabFile = directory.appending(path: "tabs.json"), routerFile = directory.appending(path: "router.json")
+        let cloud = FakeSyncCloud(), studio = device(cloud, "studio"), air = device(cloud, "air")
+        let zone = recheck == .devicesGone ? SyncZone.devices : personalZone
+        studio.start(sharing: [personal])
+        try await publish(studio, SyncSamples.session(tabs: ["https://studio.test/"]))
+        let tabs = TabSync(installID: "air", device: air.sync.device, state: .init()) {
+            do { try JSONEncoder().encode($0).write(to: tabFile, options: .atomic) } catch { Issue.record(error) }
+        }
+        let router = SyncRouter(state: .init(), persist: {
+            do { try JSONEncoder().encode($0).write(to: routerFile, options: .atomic) } catch { Issue.record(error) }
+        }, tabs: tabs, vaults: nil)
+        air.engine.delegate = router
+        tabs.reconcile(sharing: [personal])
+        tabs.attach(air.engine)
+        await tabs.refresh()
+        air.engine.available = false
+        cloud.deleteZone(zone, reason: .purged)
+        try await air.engine.fetchNow()
+        if recheck == .survived {
+            cloud.createZone(zone)
+        }
+        // A fresh model and engine restore both files; the database cursor is already past the deletion.
+        let saved = try JSONDecoder().decode(TabSyncState.self, from: Data(contentsOf: tabFile))
+        let checkpoint = try JSONDecoder().decode(SyncRouterState.self, from: Data(contentsOf: routerFile))
+        let restored = SyncDevice(cloud: cloud, installID: "air", state: saved)
+        let nextRouter = SyncRouter(state: checkpoint, persist: { _ in }, tabs: restored.sync, vaults: nil)
+        let cursor = try #require(checkpoint.engineState)
+        let engine = FakeSyncEngine(cloud: cloud, delegate: nextRouter, state: cursor)
+        engine.available = false
+        #expect(engine.pending.contains(.saveZone(zone)), "the old engine checkpoint carries a zone creation")
+        restored.sync.reconcile(sharing: [personal])
+        restored.sync.attach(engine)
+        restored.sync.share(SyncSamples.session(tabs: ["https://air.test/"]), profileID: personal, force: true)
+        #expect(restored.sync.record(for: restored.id(in: personalZone)) == nil)
+        try await engine.sendNow()
+        #expect((cloud.zones[zone] != nil) == (recheck == .survived))
+        #expect(restored.box.ended.isEmpty)
+        restored.sync.attach(engine)
+        restored.sync.share(SyncSamples.session(tabs: ["https://air.test/"]), profileID: personal, force: true)
+        #expect(engine.pending.isEmpty, "replay and a new local snapshot wait for the zone check")
+        await restored.sync.refresh()
+        engine.available = true
+        try await engine.sendNow()
+        #expect((cloud.zones[zone] != nil) == (recheck == .survived))
+        #expect(cloud.record(restored.id(in: personalZone)) == nil)
+        if recheck == .switchedAccount {
+            cloud.switchUser("next-user")
+        } else if recheck == .freshOptIn {
+            restored.sync.reconcile(sharing: [])
+            restored.sync.reconcile(sharing: [personal])
+            restored.sync.share(SyncSamples.session(tabs: ["https://new-opt-in.test/"]), profileID: personal, force: true)
+        }
+        await restored.sync.refresh()
+        try await engine.sendNow()
+        switch recheck {
+        case .missing, .devicesGone, .switchedAccount:
+            #expect(restored.box.ended == (recheck == .missing ? [personal] : [nil]))
+            #expect(cloud.zones[zone] == nil)
+            #expect(cloud.record(restored.id(in: personalZone)) == nil)
+        case .survived, .freshOptIn:
+            #expect(restored.box.ended.isEmpty)
+            let sent = try #require(cloud.record(restored.id(in: personalZone)))
+            let url = try SessionCodec.decodeSession(sent.payload).windows.first?.nodes.first?.url
+            #expect(url == (recheck == .survived ? "https://air.test/" : "https://new-opt-in.test/"))
+        }
     }
 
     enum DuringTabRead: CaseIterable { case optOut, rejoin, signOut, switchUser, unavailable }
@@ -583,6 +794,40 @@ struct TabSyncTests {
         #expect((air.sync.record(for: air.id(in: personalZone)) == nil) == removed)
     }
 
+    @Test func aRemovalWithoutAVerifiedOwnerCannotAuthorizeTheNextAccount() async throws {
+        let cloud = FakeSyncCloud(user: "previous-user")
+        let air = device(cloud, "air")
+        air.engine.available = false
+        air.start(sharing: [personal])
+        cloud.deleteZone(personalZone, reason: .purged)
+        try await air.engine.fetchNow()
+        let bytes = try JSONEncoder().encode(#require(air.box.state))
+        let saved = try JSONDecoder().decode(TabSyncState.self, from: bytes)
+        #expect(saved.accountUser == nil)
+        cloud.switchUser("different-user")
+        cloud.createZone(personalZone)
+        let restored = SyncDevice(cloud: cloud, installID: "air", state: saved)
+        restored.start(sharing: [personal])
+        restored.sync.share(SyncSamples.session(tabs: ["https://air.test/"]), profileID: personal, force: true)
+        await restored.sync.refresh()
+        try await restored.engine.sendNow()
+        #expect(restored.box.ended == [nil])
+        #expect(cloud.recordCount == 0)
+    }
+
+    @Test func legacyCheckpointWithoutRemovalChecksStillReadsExistingDevices() async throws {
+        let old = Data(#"{"accountUser":"user-1","seq":4,"ownSystemFields":{},"devices":{},"sessions":{}}"#.utf8)
+        let state = try JSONDecoder().decode(TabSyncState.self, from: old)
+        let cloud = FakeSyncCloud(), studio = device(cloud, "studio")
+        studio.start(sharing: [personal])
+        try await publish(studio, SyncSamples.session(tabs: ["https://existing.test/"]))
+        let air = SyncDevice(cloud: cloud, installID: "air", state: state)
+        air.start(sharing: [personal])
+        await air.sync.refresh()
+        #expect(air.sync.state.seq == 4)
+        #expect(air.sync.remoteSessions(profileID: personal, fallbackLabel: "Device").map(\.id) == ["studio"])
+    }
+
     @Test func optedOutIncrementalAndAnUnverifiedCheckpointCannotBecomeTheNewMirror() async throws {
         let cloud = FakeSyncCloud(), air = device(cloud, "air"), studio = device(cloud, "studio")
         studio.start(sharing: [personal])
@@ -616,7 +861,7 @@ struct TabSyncTests {
 private final class HeldTabRead: SyncEngine, SyncAccountIdentity {
     let base: FakeSyncEngine
     var beforeReturn: ((String) async throws -> Void)?
-    var duringIncremental: (() async throws -> Void)?
+    var duringIncremental: ((SyncFetchDelivery) async throws -> Void)?
 
     init(_ base: FakeSyncEngine) {
         self.base = base
@@ -630,7 +875,8 @@ private final class HeldTabRead: SyncEngine, SyncAccountIdentity {
     func fetchNow() async throws {
         if let duringIncremental {
             self.duringIncremental = nil
-            try await duringIncremental()
+            let receive = try #require(base.delegate?.beginFetch())
+            try await duringIncremental(receive)
         } else {
             try await base.fetchNow()
         }

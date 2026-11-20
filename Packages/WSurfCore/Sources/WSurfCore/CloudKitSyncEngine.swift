@@ -26,6 +26,7 @@ public final class CloudKitSyncEngine: SyncEngine, SyncAccountIdentity {
             stateSerialization: restored,
             delegate: bridge
         ))
+        bridge.discardUnapprovedCreations(in: engine)
     }
 
     public func add(_ changes: [SyncChange]) {
@@ -122,6 +123,9 @@ private nonisolated final class Bridge: CKSyncEngineDelegate {
     let delegate: any SyncEngineDelegate
     let container: CKContainer
 
+    // CloudKit serializes these events. Concurrent requests can coalesce into the same will/did fetch pair.
+    @MainActor private var fetchCycle = SyncFetchCycle()
+
     init(delegate: any SyncEngineDelegate, container: CKContainer) {
         self.delegate = delegate
         self.container = container
@@ -139,17 +143,24 @@ private nonisolated final class Bridge: CKSyncEngineDelegate {
             await delegate.handle(.state(data))
         case .accountChange(let change):
             await delegate.handle(.account(CloudKitMapping.accountChange(change.changeType)))
+        case .willFetchChanges:
+            await MainActor.run { fetchCycle.begin(delegate.beginFetch()) }
+        case .didFetchChanges:
+            await MainActor.run { fetchCycle.end() }
+        case .willSendChanges:
+            await discardUnapprovedCreations(in: syncEngine)
         case .fetchedDatabaseChanges(let changes):
             guard !changes.deletions.isEmpty else { return }
             let zones = changes.deletions.map { ($0.zoneID.zoneName, CloudKitMapping.reason($0.reason)) }
-            await delegate.handle(.zonesDeleted(Dictionary(zones, uniquingKeysWith: { first, _ in first })))
+            await fetchCycle.deliver?(.zonesDeleted(Dictionary(zones, uniquingKeysWith: { first, _ in first })))
+            await discardUnapprovedCreations(in: syncEngine)
         case .fetchedRecordZoneChanges(let changes):
             let modified = changes.modifications.compactMap { CloudKitMapping.syncRecord($0.record) }
             let deleted = changes.deletions
                 .filter { SyncRecordType(rawValue: $0.recordType) != nil }
                 .map { CloudKitMapping.syncID($0.recordID) }
             guard !modified.isEmpty || !deleted.isEmpty else { return }
-            await delegate.handle(.fetched(modified: modified, deleted: deleted))
+            await fetchCycle.deliver?(.fetched(modified: modified, deleted: deleted))
         case .sentRecordZoneChanges(let sent):
             if !sent.failedRecordDeletes.isEmpty {
                 SyncLog.logger.error("sync: \(sent.failedRecordDeletes.count) record deletes failed")
@@ -178,11 +189,20 @@ private nonisolated final class Bridge: CKSyncEngineDelegate {
             if !failed.isEmpty {
                 await delegate.handle(.zoneDeletesFailed(failed))
             }
-        case .willFetchChanges, .willFetchRecordZoneChanges, .didFetchRecordZoneChanges, .didFetchChanges,
-             .willSendChanges, .didSendChanges:
+        case .willFetchRecordZoneChanges, .didFetchRecordZoneChanges, .didSendChanges:
             break
         @unknown default:
             break
+        }
+    }
+
+    @MainActor func discardUnapprovedCreations(in engine: CKSyncEngine) {
+        let refused = engine.state.pendingDatabaseChanges.filter { change in
+            guard case .saveZone(let zone) = change else { return false }
+            return !delegate.allowsZoneCreation(zone.zoneID.zoneName)
+        }
+        if !refused.isEmpty {
+            engine.state.remove(pendingDatabaseChanges: refused)
         }
     }
 

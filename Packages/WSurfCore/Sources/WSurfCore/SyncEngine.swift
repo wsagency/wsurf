@@ -154,10 +154,37 @@ nonisolated public enum SyncEvent: Sendable {
     case zoneSavesOverQuota([String])
 }
 
-/// The model side of an engine. Both requirements run on the main actor; an engine hops there.
+/// Delivers the database and record events of one actual fetch, including automatically scheduled fetches.
+public typealias SyncFetchDelivery = @MainActor @Sendable (SyncEvent) async -> Void
+
+/// Fetched rows carry no request ID. If will/did pairs overlap, the oldest receiver makes ambiguous tab pages recheck the server.
+struct SyncFetchCycle {
+    private var active = 0
+    private(set) var deliver: SyncFetchDelivery?
+
+    mutating func begin(_ delivery: SyncFetchDelivery?) {
+        if active == 0 {
+            deliver = delivery
+        }
+        active += 1
+    }
+
+    mutating func end() {
+        guard active > 0 else { return }
+        active -= 1
+        if active == 0 {
+            deliver = nil
+        }
+    }
+}
+
+/// The model side of an engine. The engine delivers callbacks on the main actor.
 /// `Sendable` because the engine's own delegate object holds it and is itself `Sendable`.
 public protocol SyncEngineDelegate: AnyObject, Sendable {
     func handle(_ event: SyncEvent) async
+    func beginFetch() -> SyncFetchDelivery
+    /// Database changes can outlive the opt-in that requested them, independently of record batches.
+    func allowsZoneCreation(_ zone: String) -> Bool
     /// A fresh lookup precedes each outgoing record batch. A mismatch closes this feature's previous account approvals.
     func acceptsUploadAccount(_ user: String) -> Bool
     /// Only legacy tab sharing issues physical record deletes. A restored engine queue is never consent on its own.
@@ -167,6 +194,14 @@ public protocol SyncEngineDelegate: AnyObject, Sendable {
 }
 
 extension SyncEngineDelegate {
+    public func beginFetch() -> SyncFetchDelivery {
+        { event in await self.handle(event) }
+    }
+
+    public func allowsZoneCreation(_: String) -> Bool {
+        true
+    }
+
     public func wantsRecordDeletion(_: SyncRecordID) -> Bool {
         false
     }

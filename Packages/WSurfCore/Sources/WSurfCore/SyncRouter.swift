@@ -64,18 +64,41 @@ public final class SyncRouter: SyncEngineDelegate {
         self.handlers = handlers
     }
 
+    private var tabs: TabSync? {
+        handlers.lazy.compactMap { $0 as? TabSync }.first
+    }
+
+    public func allowsZoneCreation(_ zone: String) -> Bool {
+        guard zone == SyncZone.devices || SyncZone.profileID(zone) != nil else { return true }
+        return tabs?.allowsZoneCreation(zone) == true
+    }
+
+    public func beginFetch() -> SyncFetchDelivery {
+        let start = tabs?.markFetchStart()
+        return { [weak self] event in
+            await self?.route(event) { tabs, owned in await tabs.receive(owned, from: start) }
+        }
+    }
+
     public func handle(_ event: SyncEvent) async {
         if case .state(let data) = event {
             state.engineState = data
             persist(state)
             return
         }
+        await route(event)
+    }
+
+    private func route(_ event: SyncEvent, tabDelivery: ((TabSync, SyncEvent) async -> Void)? = nil) async {
         let active = vaultHandler.map { handlers + [$0] } ?? handlers
         if case .account(let change) = event {
             accountChanged?(change)
         }
         for handler in active {
-            if let owned = event.filtered(to: handler.owns) {
+            guard let owned = event.filtered(to: handler.owns) else { continue }
+            if let tabs = handler as? TabSync, let tabDelivery {
+                await tabDelivery(tabs, owned)
+            } else {
                 await handler.handle(owned)
             }
         }

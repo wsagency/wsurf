@@ -3,7 +3,7 @@
 
 import Foundation
 import Synchronization
-import WSurfCore
+@testable import WSurfCore
 
 /// One account's private database, in memory. Engines of several devices share it, each with its own idea of what it has fetched.
 /// It keeps the rules of the real one that sync relies on: a save carries the change tag it read, a stale tag fails with the
@@ -228,14 +228,28 @@ final class FakeSyncEngine: SyncEngine, SyncAccountIdentity {
     private(set) var sendCount = 0
     private(set) var fetchCount = 0
     private(set) var fetchAllCount = 0
+    var beforeFetchDelivery: (() async throws -> Void)?
     var afterFullZoneRead: (() -> Void)?
     var duringAccountLookup: (() async throws -> Void)?
+    private var fetchCycle = SyncFetchCycle()
     private var fetchedAt = 0
     private var stateRevision = 0
 
-    init(cloud: FakeSyncCloud, delegate: (any SyncEngineDelegate)? = nil) {
+    // Restore the shared cursor and queued database creations for a simulated process restart.
+    private struct Checkpoint: Codable {
+        var cursor: Int
+        var revision: Int
+        var zoneSaves: [String]
+    }
+
+    init(cloud: FakeSyncCloud, delegate: (any SyncEngineDelegate)? = nil, state: Data? = nil) {
         self.cloud = cloud
         self.delegate = delegate
+        if let state, let checkpoint = try? JSONDecoder().decode(Checkpoint.self, from: state) {
+            fetchedAt = checkpoint.cursor
+            stateRevision = checkpoint.revision
+            add(checkpoint.zoneSaves.map(SyncChange.saveZone))
+        }
     }
 
     func add(_ changes: [SyncChange]) {
@@ -274,15 +288,18 @@ final class FakeSyncEngine: SyncEngine, SyncAccountIdentity {
         if offline {
             throw URLError(.notConnectedToInternet)
         }
+        fetchCycle.begin(delegate?.beginFetch())
+        defer { fetchCycle.end() }
         let changes = cloud.changes(since: fetchedAt)
         fetchedAt = cloud.clock
+        try await beforeFetchDelivery?()
         if !changes.zones.isEmpty {
-            await delegate?.handle(.zonesDeleted(changes.zones))
+            await fetchCycle.deliver?(.zonesDeleted(changes.zones))
         }
         // A record the server cannot return does not reach the model in a fetch either.
         let modified = changes.modified.filter { !unreadable.contains($0.id.name) }
         if !modified.isEmpty || !changes.deleted.isEmpty {
-            await delegate?.handle(.fetched(modified: modified, deleted: changes.deleted))
+            await fetchCycle.deliver?(.fetched(modified: modified, deleted: changes.deleted))
         }
         await publishState()
     }
@@ -339,6 +356,7 @@ final class FakeSyncEngine: SyncEngine, SyncAccountIdentity {
         for change in batch {
             switch change {
             case .saveZone(let zone):
+                guard delegate?.allowsZoneCreation(zone) != false else { continue }
                 if refusesZoneSaves {
                     overQuotaZones.append(zone)
                 } else if losesZoneSaves > 0 {
@@ -426,7 +444,14 @@ final class FakeSyncEngine: SyncEngine, SyncAccountIdentity {
 
     private func publishState() async {
         stateRevision += 1
-        await delegate?.handle(.state(Data("state-\(stateRevision)".utf8)))
+        let zones = queue.values.compactMap { queued -> String? in
+            guard case .saveZone(let zone) = queued.change else { return nil }
+            return zone
+        }
+        let checkpoint = Checkpoint(cursor: fetchedAt, revision: stateRevision, zoneSaves: zones)
+        if let data = try? JSONEncoder().encode(checkpoint) {
+            await delegate?.handle(.state(data))
+        }
     }
 
     private static func target(of change: SyncChange) -> String {
