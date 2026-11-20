@@ -503,6 +503,39 @@ extension CredentialStoreTests {
         #expect(throws: ProviderKeySharing.Failure.noLocalKey) { try sharing.shareLocal(provider) }
     }
 
+    @Test func endpointApprovalCanRetryAfterUnlockingThePriorKey() throws {
+        let suite = AppDatabase.defaultsSuite("KeyTransfer.\(UUID())")
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let store = CredentialStore.Storage.fixture(), locked = Mutex(false)
+        var first = ProviderCatalog.newCustom()
+        first.baseURL = URL(string: "https://primary.test/v1")
+        var next = first
+        next.baseURL = URL(string: "https://replacement.test/v1")
+        let address = ProviderKeySharing.localAddress(first)
+        let local = CredentialStore.Storage(
+            read: { name in name == address && locked.withLock { $0 } ? nil : store.read(name) },
+            write: store.write, delete: store.delete, readForTransfer: { name in
+                if name == address && locked.withLock({ $0 }) {
+                    throw ProviderKeySharing.Failure.refused
+                }
+                return store.read(name)
+            }
+        )
+        let sharing = ProviderKeySharing(defaults: defaults, local: local, cloud: .fixture())
+        let catalog = ProviderCatalog(defaults: defaults, keySharing: sharing)
+        catalog.save(first)
+        #expect(sharing.saveLocal("synthetic", for: first) == nil)
+        catalog.save(next, received: true)
+        locked.withLock { $0 = true }
+        #expect(throws: (any Error).self) { try sharing.approveLocalEndpoint(next) }
+        #expect(sharing.needsEndpointApproval(next))
+        #expect(sharing.savedKey(for: next) == nil)
+        locked.withLock { $0 = false }
+        try sharing.approveLocalEndpoint(next)
+        #expect(sharing.savedKey(for: next) == "synthetic")
+    }
+
     @Test func providerMetadataKeepsSelectionsAndEndpointBoundLocalKeys() throws {
         let profile = Profile.original(), folder = URL.temporaryDirectory.appending(path: UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: folder) }

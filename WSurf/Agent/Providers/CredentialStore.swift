@@ -31,6 +31,12 @@ nonisolated enum CredentialStore {
         var read: @Sendable (String) -> String?
         var write: @Sendable (String, String) -> OSStatus
         var delete: @Sendable (String) -> OSStatus
+        var readForTransfer: (@Sendable (String) throws -> String?)?
+
+        func transferValue(at name: String) throws -> String? {
+            guard let readForTransfer else { return read(name) }
+            return try readForTransfer(name)
+        }
 
         static let keychain = keychainStorage(service: CredentialStore.service)
 
@@ -41,7 +47,14 @@ nonisolated enum CredentialStore {
                     guard $0 != CredentialStore.tombstoneString else { return errSecParam }
                     return CredentialStore.write(Data($0.utf8), account: $1, service: service)
                 },
-                delete: { CredentialStore.delete(account: $0, service: service) }
+                delete: { CredentialStore.delete(account: $0, service: service) },
+                readForTransfer: { account in
+                    let classic = CredentialStore.lookup(CredentialStore.query(account: account, service: service))
+                    if case .missing = classic {
+                        return try CredentialStore.lookup(CredentialStore.legacyQuery(account: account, service: service)).valueIfReadable
+                    }
+                    return try classic.valueIfReadable
+                }
             )
         }
     }
@@ -175,6 +188,21 @@ nonisolated enum CredentialStore {
         case found(Data?)
         case missing
         case failure(OSStatus)
+
+        var valueIfReadable: String? {
+            get throws {
+                switch self {
+                case .found(let data?):
+                    return CredentialStore.nonemptyString(data)
+                case .missing:
+                    return nil
+                case .found(nil):
+                    throw NSError(domain: NSOSStatusErrorDomain, code: Int(errSecDecode))
+                case .failure(let status):
+                    throw NSError(domain: NSOSStatusErrorDomain, code: Int(status))
+                }
+            }
+        }
     }
 
     private static func query(
@@ -522,8 +550,10 @@ nonisolated final class ProviderKeySharing: @unchecked Sendable {
         try lock.withLock {
             guard endpointBlocked(provider), validLocalTarget(provider) else { throw Failure.unavailable }
             if let previous = defaults.string(forKey: Pref.trusted + provider.id),
-               !defaults.bool(forKey: Pref.canonical + Self.fingerprint(provider)), local.read(Self.localAddress(provider)) == nil {
-                let old = local.read("provider-endpoint:" + previous) ?? legacyKey(id: provider.id, endpoint: previous)
+               try local.transferValue(at: Self.localAddress(provider)) == nil {
+                // A locked item is different from a missing item. Keep the confirmation available until the copy succeeds.
+                let old = try local.transferValue(at: "provider-endpoint:" + previous)
+                    ?? (mayReadLegacy(id: provider.id, endpoint: previous) ? local.transferValue(at: "provider:" + provider.id) : nil)
                 if let old, writeLocal(old, for: provider) != errSecSuccess {
                     throw Failure.refused
                 }
@@ -550,14 +580,13 @@ nonisolated final class ProviderKeySharing: @unchecked Sendable {
         if let value = local.read(Self.localAddress(provider)) {
             return value
         }
-        guard provider.isCustom else { return nil }
-        return legacyKey(id: provider.id, endpoint: Self.fingerprint(provider))
+        guard provider.isCustom, mayReadLegacy(id: provider.id, endpoint: Self.fingerprint(provider)) else { return nil }
+        return local.read("provider:" + provider.id)
     }
 
-    private func legacyKey(id: String, endpoint: String) -> String? {
+    private func mayReadLegacy(id: String, endpoint: String) -> Bool {
         let bound = defaults.string(forKey: Pref.legacy + id)
-        guard !defaults.bool(forKey: Pref.canonical + endpoint), bound == nil || bound == endpoint else { return nil }
-        return local.read("provider:" + id)
+        return !defaults.bool(forKey: Pref.canonical + endpoint) && (bound == nil || bound == endpoint)
     }
 
     private func writeLocal(_ value: String, for provider: Provider) -> OSStatus {
