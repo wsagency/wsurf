@@ -1,0 +1,85 @@
+// SPDX-FileCopyrightText: 2026 WSurf Agency
+// SPDX-License-Identifier: BUSL-1.1
+
+import Foundation
+import Testing
+import WSurfCore
+
+@MainActor
+struct SharedCatalogTests {
+    private final class Client {
+        let sync: SharedCatalogSync
+        let engine: FakeSyncEngine
+        let profile: UUID
+
+        init(_ cloud: FakeSyncCloud, profile: UUID = UUID(), state: SharedCatalogState = .init()) {
+            self.profile = profile
+            sync = SharedCatalogSync(state: state, persist: { _ in })
+            let router = SyncRouter(state: .init(), persist: { _ in }, tabs: nil, vaults: nil, additional: [sync])
+            self.router = router
+            engine = FakeSyncEngine(cloud: cloud, delegate: router)
+            sync.attach(engine)
+        }
+        let router: SyncRouter
+
+        func enable() async throws {
+            sync.setEnabled(true, .spaces, for: profile)
+            try await sync.prepare(.spaces)
+        }
+    }
+
+    @Test func competingCloseAndMovePreserveTheDeletionAndBothVersionsForReview() async throws {
+        let cloud = FakeSyncCloud()
+        let a = Client(cloud)
+        let b = Client(cloud)
+        try await a.enable()
+        let item = SharedSpaceItem(id: UUID(), kind: .tab, profileID: UUID(), spaceID: UUID(), order: "V", title: "Tab", url: "https://site.test/")
+        a.sync.stage(item, for: a.profile)
+        try await a.engine.sendNow()
+        try await b.enable()
+        var moved = item
+        moved.spaceID = UUID()
+        b.sync.stage(moved, for: b.profile)
+        let persisted = try JSONEncoder().encode(b.sync.state)
+        let restarted = Client(cloud, profile: b.profile, state: try JSONDecoder().decode(SharedCatalogState.self, from: persisted))
+        a.sync.stage(item.tombstone, for: a.profile)
+        try await a.engine.sendNow()
+        try await restarted.sync.prepare(.spaces)
+        try await restarted.engine.sendNow()
+        #expect(restarted.sync.item(item.id, in: .spaces) == item.tombstone)
+        #expect(restarted.sync.state.conflicts[item.recordID]?.item == moved)
+        #expect(cloud.record(item.recordID).flatMap(SharedSpaceItem.init(record:)) == item.tombstone)
+    }
+
+    @Test func aNewAccountAtRelaunchCannotReceiveThePreviousOutbox() async throws {
+        let cloud = FakeSyncCloud()
+        let client = Client(cloud)
+        try await client.enable()
+        let item = SharedSpaceItem(id: UUID(), kind: .space, profileID: UUID(), title: "Old account")
+        client.sync.stage(item, for: client.profile)
+        let restarted = Client(cloud, profile: client.profile, state: client.sync.state)
+        cloud.switchUser("unrelated-user")
+        try await #require(throws: SharedCatalogError.self) { try await restarted.sync.prepare(.spaces) }
+        #expect(!restarted.sync.needsEngine)
+        #expect(restarted.router.record(for: item.recordID) == nil)
+        try await restarted.engine.sendNow()
+        #expect(cloud.recordCount == 0)
+    }
+
+    @Test func codecChecksIdentityMembershipAndWebURLBeforeSendingOrOpening() throws {
+        let id = UUID()
+        let row = SharedSpaceItem(id: id, kind: .pin, profileID: UUID(), title: "A", url: "https://example.test")
+        var wire = try #require(row.record(fields: nil))
+        #expect(SharedSpaceItem(record: wire) == row)
+        wire.id.name = UUID().uuidString
+        #expect(SharedSpaceItem(record: wire) == nil)
+        var altered = row
+        altered.url = "file:///private/local"
+        #expect(altered.record(fields: nil) == nil)
+        altered = row
+        altered.spaceID = UUID()
+        #expect(altered.record(fields: nil) == nil)
+        let deletion = try #require(row.tombstone.record(fields: nil))
+        #expect(!String(decoding: deletion.payload, as: UTF8.self).contains("example.test"))
+    }
+}

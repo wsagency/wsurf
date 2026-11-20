@@ -16,93 +16,102 @@ nonisolated public struct SyncRouterState: Codable, Equatable, Sendable {
     }
 }
 
-/// The one delegate of the one engine. It owns the engine's state and splits everything else by zone: `v-` zones belong to
-/// `VaultSync`, `devices` and `p-` zones to `TabSync`; an account change goes to both. A zone it does not know, or a feature that is
-/// not running, is dropped here, so no feature ever sees another's records.
+extension TabSync: SyncZoneHandler {
+    public func owns(zone: String) -> Bool {
+        zone == SyncZone.devices || SyncZone.profileID(zone) != nil
+    }
+}
+
+extension VaultSync: SyncZoneHandler {
+    public func owns(zone: String) -> Bool {
+        SyncZone.isVault(zone)
+    }
+}
+
+/// One delegate owns the engine checkpoint. Feature caches and opt-ins have independent lifetimes.
 @Observable
 public final class SyncRouter: SyncEngineDelegate {
     public private(set) var state: SyncRouterState
 
     @ObservationIgnored private let persist: (SyncRouterState) -> Void
-    @ObservationIgnored private let tabs: TabSync?
-    @ObservationIgnored private let vaults: VaultSync?
+    @ObservationIgnored private let handlers: [any SyncZoneHandler]
+    @ObservationIgnored private var vaultHandler: VaultSync?
+    @ObservationIgnored public var accountChanged: ((SyncAccountChange) -> Void)?
 
-    public init(state: SyncRouterState, persist: @escaping (SyncRouterState) -> Void, tabs: TabSync?, vaults: VaultSync?) {
+    public init(
+        state: SyncRouterState, persist: @escaping (SyncRouterState) -> Void,
+        tabs: TabSync?, vaults: VaultSync?, additional: [any SyncZoneHandler] = []
+    ) {
         self.state = state
         self.persist = persist
-        self.tabs = tabs
-        self.vaults = vaults
+        var handlers = additional
+        if let tabs {
+            handlers.append(tabs)
+        }
+        vaultHandler = vaults
+        self.handlers = handlers
     }
 
     public func handle(_ event: SyncEvent) async {
-        switch event {
-        case .state(let data):
+        if case .state(let data) = event {
             state.engineState = data
             persist(state)
-        case .account:
-            await tabs?.handle(event)
-            await vaults?.handle(event)
-        case .zonesDeleted(let zones):
-            let tabZones = zones.filter { isTabZone($0.key) }
-            let vaultZones = zones.filter { SyncZone.isVault($0.key) }
-            if !tabZones.isEmpty {
-                await tabs?.handle(.zonesDeleted(tabZones))
-            }
-            if !vaultZones.isEmpty {
-                await vaults?.handle(.zonesDeleted(vaultZones))
-            }
-        case .fetched(let modified, let deleted):
-            let tabModified = modified.filter { isTabZone($0.id.zone) }
-            let tabDeleted = deleted.filter { isTabZone($0.zone) }
-            let vaultModified = modified.filter { SyncZone.isVault($0.id.zone) }
-            let vaultDeleted = deleted.filter { SyncZone.isVault($0.zone) }
-            if !tabModified.isEmpty || !tabDeleted.isEmpty {
-                await tabs?.handle(.fetched(modified: tabModified, deleted: tabDeleted))
-            }
-            if !vaultModified.isEmpty || !vaultDeleted.isEmpty {
-                await vaults?.handle(.fetched(modified: vaultModified, deleted: vaultDeleted))
-            }
-        case .zoneDeletesFailed(let zones):
-            let vaultZones = zones.filter(SyncZone.isVault)
-            if !vaultZones.isEmpty {
-                await vaults?.handle(.zoneDeletesFailed(vaultZones))
-            }
-        case .zoneSavesOverQuota(let zones):
-            let vaultZones = zones.filter(SyncZone.isVault)
-            if !vaultZones.isEmpty {
-                await vaults?.handle(.zoneSavesOverQuota(vaultZones))
-            }
-        case .sent(let saved, let deleted, let failed):
-            let tabSaved = saved.filter { isTabZone($0.id.zone) }
-            let tabDeleted = deleted.filter { isTabZone($0.zone) }
-            let tabFailed = failed.filter { isTabZone($0.id.zone) }
-            let vaultSaved = saved.filter { SyncZone.isVault($0.id.zone) }
-            let vaultDeleted = deleted.filter { SyncZone.isVault($0.zone) }
-            let vaultFailed = failed.filter { SyncZone.isVault($0.id.zone) }
-            if !tabSaved.isEmpty || !tabDeleted.isEmpty || !tabFailed.isEmpty {
-                await tabs?.handle(.sent(saved: tabSaved, deleted: tabDeleted, failed: tabFailed))
-            }
-            if !vaultSaved.isEmpty || !vaultDeleted.isEmpty || !vaultFailed.isEmpty {
-                await vaults?.handle(.sent(saved: vaultSaved, deleted: vaultDeleted, failed: vaultFailed))
+            return
+        }
+        let active = vaultHandler.map { handlers + [$0] } ?? handlers
+        if case .account(let change) = event {
+            accountChanged?(change)
+        }
+        for handler in active {
+            if let owned = event.filtered(to: handler.owns) {
+                await handler.handle(owned)
             }
         }
+    }
+
+    public func routeVaults(to vaults: VaultSync?) {
+        vaultHandler = vaults
     }
 
     public func record(for id: SyncRecordID) -> SyncRecord? {
         if SyncZone.isVault(id.zone) {
-            return vaults?.record(for: id)
+            return vaultHandler?.record(for: id)
         }
-        return isTabZone(id.zone) ? tabs?.record(for: id) : nil
+        return handlers.first { $0.owns(zone: id.zone) }?.record(for: id)
     }
 
-    /// `VaultSync` hands its app-level cache here whenever it changes; it rides in this router's file.
     public func setVaults(_ vaults: VaultSyncAppState) {
         guard state.vaults != vaults else { return }
         state.vaults = vaults
         persist(state)
     }
+}
 
-    private func isTabZone(_ zone: String) -> Bool {
-        zone == SyncZone.devices || SyncZone.profileID(zone) != nil
+private extension SyncEvent {
+    func filtered(to owns: (String) -> Bool) -> Self? {
+        switch self {
+        case .state:
+            return nil
+        case .account:
+            return self
+        case .zonesDeleted(let all):
+            let zones = all.filter { owns($0.key) }
+            return zones.isEmpty ? nil : .zonesDeleted(zones)
+        case .zoneDeletesFailed(let all):
+            let zones = all.filter(owns)
+            return zones.isEmpty ? nil : .zoneDeletesFailed(zones)
+        case .zoneSavesOverQuota(let all):
+            let zones = all.filter(owns)
+            return zones.isEmpty ? nil : .zoneSavesOverQuota(zones)
+        case .fetched(let all, let removed):
+            let records = all.filter { owns($0.id.zone) }
+            let deleted = removed.filter { owns($0.zone) }
+            return records.isEmpty && deleted.isEmpty ? nil : .fetched(modified: records, deleted: deleted)
+        case .sent(let all, let removed, let errors):
+            let saved = all.filter { owns($0.id.zone) }
+            let deleted = removed.filter { owns($0.zone) }
+            let failed = errors.filter { owns($0.id.zone) }
+            return saved.isEmpty && deleted.isEmpty && failed.isEmpty ? nil : .sent(saved: saved, deleted: deleted, failed: failed)
+        }
     }
 }

@@ -66,6 +66,9 @@ nonisolated public enum SyncRecordType: String, CaseIterable, Codable, Sendable 
     case deviceSession = "DeviceSession"
     case vault = "Vault"
     case item = "Item"
+    case sharedSpaceItem = "SharedSpaceItem"
+    case sharedPin = "SharedPin"
+    case macSetting = "MacSetting"
 }
 
 nonisolated public struct SyncRecord: Equatable, Sendable {
@@ -154,6 +157,11 @@ public protocol SyncEngineDelegate: AnyObject, Sendable {
     func handle(_ event: SyncEvent) async
     /// The record to send for `id`, or nil when it is no longer wanted.
     func record(for id: SyncRecordID) -> SyncRecord?
+}
+
+/// A feature owns its records and consent, and receives only events in its own zones.
+public protocol SyncZoneHandler: SyncEngineDelegate {
+    func owns(zone: String) -> Bool
 }
 
 /// What a full read of one zone returned.

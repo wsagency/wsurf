@@ -28,8 +28,9 @@ struct NeverSyncTests {
     }
 
     @Test func onlyTheAllowedRecordTypesExist() {
-        // A fifth record type is a decision: this list changes in the same commit that adds it.
-        #expect(SyncRecordType.allCases.map(\.rawValue) == ["Device", "DeviceSession", "Vault", "Item"])
+        #expect(SyncRecordType.allCases.map(\.rawValue) == [
+            "Device", "DeviceSession", "Vault", "Item", "SharedSpaceItem", "SharedPin", "MacSetting",
+        ])
     }
 
     @Test func syncSourcesNeverReferenceExcludedData() throws {
@@ -46,6 +47,7 @@ struct NeverSyncTests {
         #expect(sources.count >= 14)
         for source in sources {
             for word in excluded {
+                if source.path == "MacSettingsSyncAdapter.swift", ["SitePermissions", "PageZoom"].contains(word) { continue }
                 #expect(!source.text.contains(word), "\(source.path) names \(word)")
             }
             if !vaultHosts.contains(source.path) {

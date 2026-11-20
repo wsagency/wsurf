@@ -263,8 +263,8 @@ public final class TabSync: SyncEngineDelegate {
                 state.sessions[record.id.zone, default: [:]][record.id.name] = MirroredSession(
                     payload: payload, modifiedAt: modifiedAt
                 )
-            case .vault, .item:
-                // The router never hands vault records to a tab zone; one that arrives anyway is not ours.
+            default:
+                // A record of another feature does not belong in a tab zone.
                 continue
             }
         }
