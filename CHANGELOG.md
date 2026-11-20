@@ -5,6 +5,16 @@ This file preserves release notes inherited from the upstream
 describe upstream Linen releases, not releases published by WSurf. New WSurf
 release notes will be added above this provenance record.
 
+## 0.1.30 (build 30) — 2026-11-20
+
+- Minimal windows remember a docked sidebar when you hide and show it again. The page moves back alongside it, and pinning or unpinning a page gives visible feedback.
+- Click WK or CR in the address bar to switch the current tab. Website Settings and the badge’s context menu can save a default engine for every path on that website in this profile.
+- Website Settings puts location, camera, microphone and notification permissions in its first panel.
+- The assistant’s provider settings show the full Save Key button below the key field. The attachment menu makes its search field easier to see.
+- A favorite reopened at its pinned address after unloading uses the engine saved for that website. Website Settings explains when a Google sign-in keeps the current page in WebKit.
+- Opening an already-unlocked vault from a second window keeps the original lock deadline. A timed vault also locks on schedule when its window has been busy.
+- Chromium pages resize with their attached window, including when a tab is being closed.
+
 ## 0.1.29 (build 29) — 2026-11-20
 
 ### Sign-in and browsing
