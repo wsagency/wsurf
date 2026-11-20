@@ -114,7 +114,7 @@ extension VaultSync {
         let user = state.accountUser
         let joining = row.needsFetch && row.pendingVault != nil && row.uploadedMark == nil
         guard let read = try await readZone(key, engine: engine, session: mine, user: user) else {
-            if joining {
+            if row.needsFetch || row.uploadedMark != nil {
                 zoneRemoved(key.zone, reason: .deleted)
             }
             throw VaultSyncFailure.unavailable
@@ -138,7 +138,7 @@ extension VaultSync {
             }
         }
         takeZoneRead(read, key: key, database: database)
-        if joining {
+        if row.needsFetch {
             readd(key)
         }
     }

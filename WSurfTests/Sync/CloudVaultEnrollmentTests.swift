@@ -105,6 +105,8 @@ struct CloudVaultEnrollmentTests {
         otherVault.add(remote)
         await peer.wrote(otherVault)
         try await peer.pump()
+        // Other Devices continues fetching through the shared engine while the vault handler is detached.
+        try await engine?.fetchNow()
 
         app.setVaultDiscovery(true)
         let resumed = try #require(app.vaults)

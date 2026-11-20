@@ -46,6 +46,13 @@ extension VaultSync {
     }
 
     public func pauseDiscovery() {
+        // Other categories can advance the shared cursor while vaults are detached. Preserve a full read on this Mac for each joined zone.
+        for key in enabledKeys {
+            guard let (database, row) = enabledRow(key), !row.needsFetch, !firstUploadPending(key, database: database, row: row) else { continue }
+            var next = row
+            next.needsFetch = true
+            try? database.write { try $0.save(next) }
+        }
         engine = nil
         let keys = Set(chains.keys).union(enabledKeys)
         for key in keys {

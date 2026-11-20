@@ -163,6 +163,30 @@ struct VaultSyncEnrollmentTests {
         #expect((rig.cloud.zones[rig.zone] == nil) == known)
     }
 
+    @Test func aPausedAdoptionStillReadsChangesMadeBeforeItsFirstUnlock() async throws {
+        let rig = VaultSyncRig()
+        defer { rig.finish() }
+        let (publisher, source) = try await rig.syncedMac(holding: [])
+        let (mac, vault) = try await rig.addedMac(unlock: false)
+        mac.sync.pauseDiscovery()
+        let entry = syncAccounts(1)[0]
+        source.add(entry)
+        await publisher.wrote(source)
+        try await publisher.pump()
+
+        let engine = FakeSyncEngine(cloud: rig.cloud)
+        try await engine.fetchNow()
+        let resumed = VaultSync(host: mac.host, state: mac.sync.state, persist: { _ in }, excludedProfiles: [])
+        engine.delegate = resumed
+        resumed.attach(engine)
+        await resumed.settle()
+        #expect(vault.isLocked && vault.accounts.isEmpty)
+        vault.unlock()
+        resumed.vaultUnlocked(profileID: rig.profile, vaultID: rig.vaultID)
+        await resumed.settle()
+        #expect(vault.accounts[entry.id] == entry)
+    }
+
     @Test(arguments: [false, true])
     func attachingWithAnExistingLeaseSendsEditsMadeWhileDiscoveryWasOff(verifiesAfterAttach: Bool) async throws {
         let rig = VaultSyncRig()
