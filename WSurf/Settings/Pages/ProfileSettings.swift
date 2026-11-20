@@ -255,6 +255,7 @@ private struct ProfileDetailPage: View {
     @State private var draft: String
     @State private var facts = ProfileFacts.empty
     @State private var deleting = false
+    @State private var deletionError: String?
     @State private var vaultNote: String?
     @State private var clearing = false
     @FocusState private var editing: Bool
@@ -315,6 +316,10 @@ private struct ProfileDetailPage: View {
                         }
                     }
             }
+        }
+
+        if let deletionError {
+            Text(verbatim: deletionError).font(.callout).foregroundStyle(.red).textSelection(.enabled)
         }
 
         heading(profile)
@@ -430,11 +435,18 @@ private struct ProfileDetailPage: View {
 
     private func delete(_ profile: Profile) async {
         deleting = false
-        onBack()
-        if isCurrent, let fallback = store.profiles.first(where: { $0.id != profile.id }) {
-            await coordinator.switchProfile(to: fallback)
+        deletionError = nil
+        let result = await store.remove(profile, beforeErasing: {
+            if isCurrent, let fallback = store.profiles.first(where: { $0.id != profile.id }) {
+                await coordinator.switchProfile(to: fallback)
+            }
+        })
+        switch result {
+        case .success:
+            onBack()
+        case .failure(let error):
+            deletionError = error.localizedDescription
         }
-        await store.remove(profile)
     }
 }
 

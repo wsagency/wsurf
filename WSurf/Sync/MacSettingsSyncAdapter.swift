@@ -53,20 +53,14 @@ final class MacSettingsSyncAdapter {
     private var profiles: [UUID: Profile]
     private let observedWebSettings = NSHashTable<BrowserSettings>.weakObjects()
     private let catalog: ProviderCatalog
-    private let stores: @MainActor (Profile) -> MacSettingsStores
+    private let stores: (@MainActor (Profile) -> MacSettingsStores)?
     private let account: @MainActor () -> String?
     private let refreshWindows: @MainActor (MacSettingsCategory, UUID?, String) -> Void
 
     init(
         profiles: [Profile],
         catalog: ProviderCatalog = .shared,
-        stores: @escaping @MainActor (Profile) -> MacSettingsStores = { profile in
-            let context = BrowserProfileContext.shared(for: profile)
-            return MacSettingsStores(
-                web: context.settings, permissions: context.sitePermissions,
-                blocker: context.contentBlocker, zoom: context.pageZoom, models: context.modelSettings
-            )
-        },
+        stores: (@MainActor (Profile) -> MacSettingsStores)? = nil,
         account: @escaping @MainActor () -> String? = { ProviderKeySharing.shared.accountContext },
         refreshWindows: @escaping @MainActor (MacSettingsCategory, UUID?, String) -> Void = MacSettingsSyncAdapter.refreshWindows
     ) {
@@ -84,7 +78,15 @@ final class MacSettingsSyncAdapter {
 
     private func scoped(_ id: UUID?) throws -> MacSettingsStores {
         guard let id, let profile = profiles[id] else { throw Failure.invalidScope }
-        return stores(profile)
+        if let stores {
+            return stores(profile)
+        }
+        guard ProfileStore.shared.profiles.contains(where: { $0.id == id }) else { throw Failure.invalidScope }
+        let context = BrowserProfileContext.shared(for: profile)
+        return MacSettingsStores(
+            web: context.settings, permissions: context.sitePermissions,
+            blocker: context.contentBlocker, zoom: context.pageZoom, models: context.modelSettings
+        )
     }
 
     func values(for category: MacSettingsCategory, profileID: UUID?) throws -> [String: Data] {
@@ -92,6 +94,7 @@ final class MacSettingsSyncAdapter {
         case .websiteSettings:
             return try websiteValues(scoped(profileID))
         case .providers where profileID == nil:
+            try flush(catalog.defaults)
             var result: [String: Data] = [:]
             for provider in catalog.custom {
                 if let definition = Definition(provider) {
@@ -101,6 +104,7 @@ final class MacSettingsSyncAdapter {
             return result
         case .providers:
             let models = try scoped(profileID).models
+            try flush(models.defaults)
             var result: [String: Data] = [:]
             if let id = models.explicitProviderID, Self.providerID(id) {
                 result["selection"] = try Self.encode(id)
@@ -127,13 +131,22 @@ final class MacSettingsSyncAdapter {
             switch category {
             case .websiteSettings:
                 try applyWebsite(value, key: key, stores: scoped(profileID))
+                refreshWindows(category, profileID, key)
             case .providers where profileID == nil:
                 try applyDefinition(value, key: key)
+                defer { refreshWindows(category, profileID, key) }
+                try flush(catalog.defaults)
             case .providers:
-                try applySelection(value, key: key, models: scoped(profileID).models)
+                let models = try scoped(profileID).models
+                try applySelection(value, key: key, models: models)
+                defer { refreshWindows(category, profileID, key) }
+                try flush(models.defaults)
             }
-            refreshWindows(category, profileID, key)
         }
+    }
+
+    private func flush(_ defaults: UserDefaults) throws {
+        guard defaults.synchronize() else { throw CocoaError(.fileWriteUnknown) }
     }
 
     static func refreshWindows(category: MacSettingsCategory, profileID: UUID?, key: String) {
@@ -292,6 +305,8 @@ final class MacSettingsSyncAdapter {
 
     private func websiteValues(_ stores: MacSettingsStores) throws -> [String: Data] {
         let sites = stores.permissions
+        try stores.zoom.prepareForSync()
+        try sites.prepareForSync()
         var result: [String: Data] = [:]
         func add(_ kind: String, _ address: String, _ value: some Encodable) throws {
             let key = kind + "|" + address
@@ -302,6 +317,7 @@ final class MacSettingsSyncAdapter {
         observeWebDefaults(stores.web)
         // The website and model settings use the same profile domain. Read only explicit website preferences.
         let defaults = stores.models.defaults
+        try flush(defaults)
         for (name, toggle) in Self.webSwitches where defaults.object(forKey: toggle.preference) != nil {
             try add("webDefault", name, stores.web[keyPath: toggle.path])
         }
@@ -375,43 +391,50 @@ final class MacSettingsSyncAdapter {
     private func applyWebsite(_ data: Data?, key: String, stores: MacSettingsStores) throws {
         let (kind, address) = try Self.websiteKey(key)
         let sites = stores.permissions
+        if kind != "zoom" && kind != "trackers" && kind != "webDefault" {
+            try sites.loadIfNeeded()
+        }
         if let permission = WebPermission(rawValue: kind) {
             let policy = try Self.decoded(data, as: PermissionPolicy.self)
             guard policy != .ask else { throw Failure.invalidValue }
             if policy == .allow && sites.policy(for: address, permission) != .allow {
                 try propose(policy?.rawValue, key: key, in: sites)
             } else {
-                sites.set(policy ?? .ask, for: address, permission)
+                try sites.applyDurably { $0.set(policy ?? .ask, for: address, permission) }
             }
             return
         }
         switch kind {
         case "webDefault":
             try applyWebDefault(data, name: address, settings: stores.web)
+            try flush(stores.models.defaults)
         case "default", "assistant":
             try applyAccess(data, kind: kind, key: key, address: address, sites: sites)
         case "engine":
             let engine = try Self.decoded(data, as: BrowserEngine.self) ?? .webKit
             guard engine == .webKit || !SitePermissions.webKitOnlyOrigins.contains(address) else { throw Failure.invalidValue }
-            sites.setEngine(engine, for: address)
+            try sites.applyDurably { $0.setEngine(engine, for: address) }
         case "autoplay":
-            sites.setAutoplay(try Self.decoded(data, as: AutoplayPolicy.self), for: address)
+            let policy = try Self.decoded(data, as: AutoplayPolicy.self)
+            try sites.applyDurably { $0.setAutoplay(policy, for: address) }
         case "popups":
-            sites.setPopups(try Self.decoded(data, as: PopupPolicy.self), for: address)
+            let policy = try Self.decoded(data, as: PopupPolicy.self)
+            try sites.applyDurably { $0.setPopups(policy, for: address) }
         case "zoom":
             let zoom = try Self.decoded(data, as: Double.self)
             guard zoom.map({ TabWebView.zoomRange.contains(CGFloat($0)) }) != false else { throw Failure.invalidValue }
-            stores.zoom.setOverride(zoom, for: address)
+            try stores.zoom.receiveOverride(zoom, for: address)
         case "keepActive", "blockPicture", "trackers":
             let flag = try Self.decoded(data, as: Bool.self)
             guard flag != false else { throw Failure.invalidValue }
             switch kind {
             case "keepActive":
-                sites.setKeepsActive(flag == true, for: address)
+                try sites.applyDurably { $0.setKeepsActive(flag == true, for: address) }
             case "blockPicture":
-                sites.setAllowsAutomaticPicture(flag != true, for: address)
+                try sites.applyDurably { $0.setAllowsAutomaticPicture(flag != true, for: address) }
             default:
                 stores.blocker.setExempt(flag == true, for: address)
+                try flush(stores.models.defaults)
             }
         default:
             throw Failure.invalidKey
@@ -426,12 +449,12 @@ final class MacSettingsSyncAdapter {
             if SitePermissions.stricter(policy, sites.assistantDefault) != policy {
                 try propose(policy.rawValue, key: key, in: sites)
             } else {
-                sites.setAssistantDefault(policy)
+                try sites.applyDurably { $0.setAssistantDefault(policy) }
             }
         case "default":
             let policy = try Self.decoded(data, as: PermissionPolicy.self)
             guard let permission = WebPermission(rawValue: address), policy == nil || policy == .deny else { throw Failure.invalidValue }
-            sites.setDefault(policy ?? .ask, for: permission)
+            try sites.applyDurably { $0.setDefault(policy ?? .ask, for: permission) }
         default:
             let policy = try Self.decoded(data, as: AssistantAccessPolicy.self)
             let effective = policy ?? sites.assistantDefault
@@ -440,39 +463,49 @@ final class MacSettingsSyncAdapter {
             if (effective == .readOnly || effective == .control) && SitePermissions.stricter(effective, existing) != effective {
                 try propose(policy?.rawValue, key: key, in: sites)
             } else {
-                sites.setAssistantAccess(policy, for: address)
+                try sites.applyDurably { $0.setAssistantAccess(policy, for: address) }
             }
         }
     }
 
     private func propose(_ value: String?, key: String, in sites: SitePermissions) throws {
         guard let account = account() else { throw Failure.accountUnavailable }
+        let grant: SitePermissions.SyncGrant
         if let previous = sites.pendingSyncGrants[key], previous.account == account, previous.value == value {
-            return
+            grant = previous
+        } else {
+            grant = SitePermissions.SyncGrant(account: account, value: value, inheritedAccess: value == nil ? sites.assistantDefault : nil)
         }
-        sites.setSyncGrant(.init(account: account, value: value, inheritedAccess: value == nil ? sites.assistantDefault : nil), for: key)
+        try sites.applyDurably { $0.setSyncGrant(grant, for: key) }
     }
 
-    func reviewWebsiteGrant(_ grant: SitePermissions.SyncGrant, key: String, profileID: UUID, allow: Bool) {
+    @discardableResult
+    func reviewWebsiteGrant(_ grant: SitePermissions.SyncGrant, key: String, profileID: UUID, allow: Bool) -> Result<Void, Error> {
         guard let sites = try? scoped(profileID).permissions, grant.account == account(),
-              grant.dismissed != true, sites.pendingSyncGrants[key] == grant, let (kind, address) = try? Self.websiteKey(key) else { return }
-        if !allow {
-            var declined = grant
-            declined.dismissed = true
-            sites.setSyncGrant(declined, for: key)
-        } else if kind == "default", address == "assistant", let value = grant.value, let policy = AssistantAccessPolicy(rawValue: value) {
-            sites.setAssistantDefault(policy)
-        } else if let permission = WebPermission(rawValue: kind) {
-            sites.set(.allow, for: address, permission)
-        } else if kind == "assistant" {
-            sites.setAssistantAccess(grant.value.flatMap(AssistantAccessPolicy.init(rawValue:)), for: address)
+              grant.dismissed != true, sites.pendingSyncGrants[key] == grant, let (kind, address) = try? Self.websiteKey(key) else { return .success(()) }
+        return Result {
+            try sites.applyDurably { target in
+                if !allow {
+                    var declined = grant
+                    declined.dismissed = true
+                    target.setSyncGrant(declined, for: key)
+                } else if kind == "default", address == "assistant", let value = grant.value, let policy = AssistantAccessPolicy(rawValue: value) {
+                    target.setAssistantDefault(policy)
+                } else if let permission = WebPermission(rawValue: kind) {
+                    target.set(.allow, for: address, permission)
+                } else if kind == "assistant" {
+                    target.setAssistantAccess(grant.value.flatMap(AssistantAccessPolicy.init(rawValue:)), for: address)
+                }
+            }
         }
     }
 
-    func discardWebsiteApprovals(profileID: UUID) {
-        guard let sites = try? scoped(profileID).permissions else { return }
-        MacSettingsChange.receive {
-            sites.discardSyncGrants()
-        }
+    func discardWebsiteApprovals(profileID: UUID) throws {
+        guard profileID != Profile.privateID else { return }
+        // Startup pruning can lose the catalog entry before the permission file. Opening a browser context would recreate an erased profile.
+        let injected = profiles[profileID].flatMap { stores?($0).permissions }
+        let sites = injected ?? BrowserProfileContext.existing(for: profileID)?.sitePermissions
+            ?? SitePermissions(storageURL: Profile.permissionsFile(for: profileID))
+        try sites.discardSyncGrants()
     }
 }

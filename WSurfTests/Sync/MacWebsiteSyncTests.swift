@@ -5,6 +5,7 @@ import Foundation
 import Synchronization
 import Testing
 import WebKit
+import WSurfCore
 
 @testable import WSurf
 
@@ -25,6 +26,371 @@ struct MacWebsiteSyncTests {
         #expect(changes.withLock { $0 } == 2)
         await zoom.waitForPendingSave()
         #expect(PageZoomStore(file: folder.appending(path: "zoom")).level(for: "zoom.test") == nil)
+    }
+
+    @Test func receivedWebsiteEditsAndResetsSurviveImmediateDiskReopen() async throws {
+        let profile = Profile.original()
+        let folder = URL.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let fixture = try MacSettingsFixture(profile: profile, folder: folder)
+        defer { fixture.cleanup() }
+        let host = "edited.test", origin = "https://edited.test"
+        let zoomFile = folder.appending(path: "zoom"), sitesFile = folder.appending(path: "sites")
+        let zoom = fixture.stores.zoom, sites = fixture.stores.permissions
+        let camera = "camera|" + origin
+        func receive(_ value: Data?, _ key: String) throws {
+            try fixture.adapter.apply(value, key: key, for: .websiteSettings, profileID: profile.id)
+        }
+        zoom.set(1.25, for: host, defaultZoom: 1)
+        sites.set(.deny, for: origin, .camera)
+        await zoom.waitForPendingSave()
+        await sites.waitForPendingSave()
+        // These older writes may still be queued when the channel receives the newer revision.
+        zoom.set(2, for: "local.test", defaultZoom: 1)
+        sites.setPopups(.block, for: "https://local.test")
+        try receive(JSONEncoder().encode(1.5), "zoom|" + host)
+        try receive(JSONEncoder().encode(PermissionPolicy.allow), camera)
+        func checkDisk(zoomLevel: CGFloat?, proposed: Bool) {
+            let reopened = SitePermissions(storageURL: sitesFile)
+            #expect(PageZoomStore(file: zoomFile).level(for: host) == zoomLevel)
+            #expect(PageZoomStore(file: zoomFile).level(for: "local.test") == 2)
+            #expect(reopened.popups(for: "https://local.test") == .block)
+            #expect(reopened.pendingSyncGrants[camera]?.value == (proposed ? PermissionPolicy.allow.rawValue : nil))
+            #expect(reopened.policy(for: origin, .camera) == (proposed ? .deny : .ask))
+        }
+        checkDisk(zoomLevel: 1.5, proposed: true)
+        try receive(nil, "zoom|" + host)
+        try receive(nil, camera)
+        checkDisk(zoomLevel: nil, proposed: false)
+        await zoom.waitForPendingSave()
+        await sites.waitForPendingSave()
+        checkDisk(zoomLevel: nil, proposed: false)
+    }
+
+    @Test func checkpointAndZoomReopenTogetherWithoutRepublishingTheOldValue() async throws {
+        let profile = Profile.original(), root = URL.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let sender = try MacSettingsFixture(profile: profile, folder: root.appending(path: "studio"))
+        let receiver = try MacSettingsFixture(profile: profile, folder: root.appending(path: "air"))
+        defer { sender.cleanup(); receiver.cleanup() }
+        func open(_ fixture: MacSettingsFixture) -> CloudSettingsSync {
+            CloudSettingsSync(stateFile: fixture.folder.appending(path: "checkpoint"),
+                              read: fixture.adapter.values(for:profileID:), apply: fixture.adapter.apply(_:key:for:profileID:))
+        }
+        let host = "common.test", key = "zoom|" + host, sharedID = UUID()
+        sender.stores.zoom.set(1.25, for: host, defaultZoom: 1)
+        receiver.stores.zoom.set(1.25, for: host, defaultZoom: 1)
+        receiver.stores.zoom.set(2, for: "local.test", defaultZoom: 1)
+        await receiver.stores.zoom.waitForPendingSave()
+        let cloud = FakeSyncCloud(), studio = open(sender), air = open(receiver)
+        let studioEngine = FakeSyncEngine(cloud: cloud, delegate: studio), airEngine = FakeSyncEngine(cloud: cloud, delegate: air)
+        studio.attach(studioEngine)
+        air.attach(airEngine)
+        try await studio.enable(.websiteSettings, localProfileID: profile.id, cloudProfileID: sharedID)
+        try await studioEngine.sendNow()
+        try await air.enable(.websiteSettings, localProfileID: profile.id, cloudProfileID: sharedID)
+        try await airEngine.sendNow()
+        sender.stores.zoom.set(1.5, for: host, defaultZoom: 1)
+        try studio.collectChanges()
+        try await studioEngine.sendNow()
+        let zone = try #require(air.channel(.websiteSettings, localProfileID: profile.id)?.zone)
+        let payload = MacSettingPayload(key: key, value: try JSONEncoder().encode(1.5))
+        let record = try #require(cloud.record(SyncRecordID(zone: zone, name: payload.recordName)))
+
+        // The receiver may exit directly after saving its channel checkpoint, without yielding for local writes.
+        try air.receive(record)
+        try air.save()
+        let reopened = try MacSettingsFixture(profile: profile, folder: receiver.folder)
+        defer { reopened.cleanup() }
+        let restored = open(reopened)
+        #expect(reopened.stores.zoom.level(for: host) == 1.5)
+        #expect(reopened.stores.zoom.level(for: "local.test") == 2)
+        try restored.collectChanges()
+        let recovered = try #require(restored.channel(.websiteSettings, localProfileID: profile.id))
+        #expect(recovered.records[key]?.server == payload)
+        #expect(recovered.records[key]?.pending == nil)
+    }
+
+    @Test func unwritableWebsiteFilesRefuseCheckpointAndRetryTheSameValue() async throws {
+        let profile = Profile.original()
+        let folder = URL.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let fixture = try MacSettingsFixture(profile: profile, folder: folder)
+        defer { fixture.cleanup() }
+        let zoom = folder.appending(path: "zoom"), sites = folder.appending(path: "sites")
+        let key = "camera|https://failure.test"
+        let level = try JSONEncoder().encode(1.75), grant = try JSONEncoder().encode(PermissionPolicy.allow)
+        func receive(_ value: Data, _ key: String) throws {
+            try fixture.adapter.apply(value, key: key, for: .websiteSettings, profileID: profile.id)
+        }
+        for file in [zoom, sites] {
+            try FileManager.default.createDirectory(at: file, withIntermediateDirectories: true)
+        }
+        #expect(throws: (any Error).self) { try receive(level, "zoom|failure.test") }
+        #expect(throws: (any Error).self) { try receive(grant, key) }
+        #expect(fixture.stores.zoom.level(for: "failure.test") == nil)
+        #expect(fixture.stores.permissions.pendingSyncGrants[key] == nil)
+        for file in [zoom, sites] {
+            try FileManager.default.removeItem(at: file)
+        }
+        try receive(level, "zoom|failure.test")
+        try receive(grant, key)
+        #expect(PageZoomStore(file: zoom).level(for: "failure.test") == 1.75)
+        #expect(SitePermissions(storageURL: sites).pendingSyncGrants[key]?.value == PermissionPolicy.allow.rawValue)
+        await fixture.stores.zoom.waitForPendingSave()
+        await fixture.stores.permissions.waitForPendingSave()
+    }
+
+    @Test func localEditsCannotBeCollectedUntilTheirDiskWritesSucceed() async throws {
+        let profile = Profile.original(), folder = URL.temporaryDirectory.appending(path: UUID().uuidString)
+        let files = FileManager.default
+        defer { try? files.removeItem(at: folder) }
+        let fixture = try MacSettingsFixture(profile: profile, folder: folder)
+        defer { fixture.cleanup() }
+        let zoom = folder.appending(path: "zoom"), sites = folder.appending(path: "sites")
+        let origin = "https://local.test"
+        for file in [zoom, sites] {
+            try files.createDirectory(at: file, withIntermediateDirectories: false)
+        }
+        fixture.stores.zoom.set(1.75, for: "local.test", defaultZoom: 1)
+        fixture.stores.permissions.set(.deny, for: origin, .camera)
+        await fixture.stores.zoom.waitForPendingSave()
+        await fixture.stores.permissions.waitForPendingSave()
+        func capture() throws -> [String: Data] {
+            try fixture.adapter.values(for: .websiteSettings, profileID: profile.id)
+        }
+        #expect(throws: (any Error).self) { try capture() }
+        try files.removeItem(at: zoom)
+        #expect(throws: (any Error).self) { try capture() }
+        try files.removeItem(at: sites)
+        #expect(try capture()["zoom|local.test"] == JSONEncoder().encode(1.75))
+        #expect(PageZoomStore(file: zoom).level(for: "local.test") == 1.75)
+        #expect(SitePermissions(storageURL: sites).policy(for: origin, .camera) == .deny)
+    }
+
+    @Test func unreadableInitialSnapshotsCannotBePublishedOrReplacedByIncomingEdits() throws {
+        let profile = Profile.original(), folder = URL.temporaryDirectory.appending(path: UUID().uuidString)
+        let files = FileManager.default
+        try files.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? files.removeItem(at: folder) }
+        let zoom = folder.appending(path: "zoom"), sites = folder.appending(path: "sites")
+        let broken = Data(#"{"preserve.test":2,"defaults":"incompatible"}"#.utf8)
+        try broken.write(to: zoom)
+        try broken.write(to: sites)
+        let fixture = try MacSettingsFixture(profile: profile, folder: folder)
+        defer { fixture.cleanup() }
+        func receive(_ data: Data, _ key: String) throws {
+            try fixture.adapter.apply(data, key: key, for: .websiteSettings, profileID: profile.id)
+        }
+        let level = try JSONEncoder().encode(1.5), policy = try JSONEncoder().encode(PopupPolicy.block)
+        #expect(throws: (any Error).self) { try fixture.adapter.values(for: .websiteSettings, profileID: profile.id) }
+        #expect(throws: (any Error).self) { try receive(level, "zoom|new.test") }
+        #expect(throws: (any Error).self) { try receive(policy, "popups|https://new.test") }
+        #expect(try Data(contentsOf: zoom) == broken)
+        #expect(try Data(contentsOf: sites) == broken)
+        try JSONEncoder().encode(["preserve.test": 2.0]).write(to: zoom)
+        try files.removeItem(at: sites)
+        let recoveredSites = SitePermissions(storageURL: sites)
+        try recoveredSites.applyDurably { $0.set(.deny, for: "https://preserve.test", .camera) }
+        try receive(level, "zoom|new.test")
+        try receive(policy, "popups|https://new.test")
+        #expect(PageZoomStore(file: zoom).level(for: "preserve.test") == 2)
+        #expect(SitePermissions(storageURL: sites).policy(for: "https://preserve.test", .camera) == .deny)
+    }
+
+    @Test func aFailedApprovalClearIsRetriedFromDiskAfterRestart() throws {
+        let profile = Profile.original(), folder = URL.temporaryDirectory.appending(path: UUID().uuidString)
+        let files = FileManager.default
+        defer { try? files.removeItem(at: folder) }
+        let fixture = try MacSettingsFixture(profile: profile, folder: folder)
+        defer { fixture.cleanup() }
+        let file = folder.appending(path: "sites"), saved = folder.appending(path: "saved")
+        let origin = "https://fixture.test", key = "camera|" + origin
+        let deny = try JSONEncoder().encode(PermissionPolicy.deny), allow = try JSONEncoder().encode(PermissionPolicy.allow)
+        try fixture.adapter.apply(deny, key: key, for: .websiteSettings, profileID: profile.id)
+        try fixture.adapter.apply(allow, key: key, for: .websiteSettings, profileID: profile.id)
+        var fields = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: file)) as? [String: Any])
+        fields["otherWebsitePreference"] = ["keep": true]
+        try JSONSerialization.data(withJSONObject: fields).write(to: file, options: .atomic)
+        // Atomic replacement needs a writable directory even when the existing settings are readable.
+        try files.setAttributes([.posixPermissions: 0o500], ofItemAtPath: folder.path)
+        defer { try? files.setAttributes([.posixPermissions: 0o700], ofItemAtPath: folder.path) }
+        #expect { try fixture.adapter.discardWebsiteApprovals(profileID: profile.id) } throws: { error in
+            (error as? CocoaError)?.code == .fileWriteNoPermission
+        }
+        #expect(fixture.stores.permissions.pendingSyncGrants.isEmpty)
+        #expect(SitePermissions(storageURL: file).pendingSyncGrants[key] != nil)
+        try files.setAttributes([.posixPermissions: 0o700], ofItemAtPath: folder.path)
+        try files.moveItem(at: file, to: saved)
+        try files.createDirectory(at: file, withIntermediateDirectories: false)
+        #expect(throws: (any Error).self) { try fixture.adapter.discardWebsiteApprovals(profileID: profile.id) }
+        #expect(fixture.stores.permissions.pendingSyncGrants.isEmpty)
+        let restarted = try MacSettingsFixture(profile: profile, folder: folder)
+        defer { restarted.cleanup() }
+        #expect(throws: (any Error).self) { try restarted.adapter.discardWebsiteApprovals(profileID: profile.id) }
+        try files.removeItem(at: file)
+        try files.moveItem(at: saved, to: file)
+        #expect(SitePermissions(storageURL: file).pendingSyncGrants[key] != nil)
+        try restarted.adapter.discardWebsiteApprovals(profileID: profile.id)
+        let cleared = SitePermissions(storageURL: file)
+        #expect(cleared.pendingSyncGrants.isEmpty && cleared.policy(for: origin, .camera) == .deny)
+        let remaining = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: file)) as? [String: Any])
+        #expect(remaining["otherWebsitePreference"] as? [String: Bool] == ["keep": true])
+        try files.removeItem(at: folder)
+        try restarted.adapter.discardWebsiteApprovals(profileID: profile.id)
+        #expect(!files.fileExists(atPath: folder.path))
+    }
+
+    @Test(arguments: [true, false])
+    func clearingAClosedProfilesApprovalsCreatesNoBrowserContextOrErasedStore(registered: Bool) throws {
+        let profile = Profile(id: UUID(), name: "Closed fixture", symbol: "person", color: .gray)
+        let adapter = MacSettingsSyncAdapter(profiles: registered ? [profile] : [])
+        try #require(AppDatabase.isRunningTests)
+        let files = FileManager.default
+        defer { try? files.removeItem(at: profile.supportDirectory) }
+        try adapter.discardWebsiteApprovals(profileID: profile.id)
+        #expect(!files.fileExists(atPath: profile.supportDirectory.path))
+        try files.createDirectory(at: profile.permissionsFile, withIntermediateDirectories: true)
+        #expect(throws: (any Error).self) { try adapter.discardWebsiteApprovals(profileID: profile.id) }
+        try files.removeItem(at: profile.permissionsFile)
+        let stored = SitePermissions(storageURL: profile.permissionsFile)
+        try stored.applyDurably { $0.setSyncGrant(.init(account: "fixture", value: "allow"), for: "camera|https://fixture.test") }
+        try adapter.discardWebsiteApprovals(profileID: profile.id)
+        #expect(SitePermissions(storageURL: profile.permissionsFile).pendingSyncGrants.isEmpty)
+        adapter.register(profile)
+        #expect(throws: (any Error).self) { try adapter.values(for: .providers, profileID: profile.id) }
+        #expect(BrowserProfileContext.existing(for: profile.id) == nil)
+    }
+
+    @Test func receivedPreferencesAreInTheProfilePlistAtEachCheckpoint() throws {
+        let profile = Profile.original(), folder = URL.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let fixture = try MacSettingsFixture(profile: profile, folder: folder)
+        defer { fixture.cleanup() }
+        try #require(fixture.suite.hasPrefix("/"))
+        let plist = URL(filePath: fixture.suite + ".plist")
+        func persisted() throws -> [String: Any] {
+            let data = try Data(contentsOf: plist)
+            return try #require(PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any])
+        }
+        func apply(_ data: Data?, _ key: String, _ category: MacSettingsCategory, _ id: UUID?) throws {
+            try fixture.adapter.apply(data, key: key, for: category, profileID: id)
+        }
+        try apply(JSONEncoder().encode(false), "webDefault|javascript", .websiteSettings, profile.id)
+        #expect(try persisted()[BrowserSettings.Key.javaScript] as? Bool == false)
+        try apply(nil, "webDefault|javascript", .websiteSettings, profile.id)
+        #expect(try persisted()[BrowserSettings.Key.javaScript] == nil)
+        try apply(JSONEncoder().encode(true), "trackers|fixture.test", .websiteSettings, profile.id)
+        #expect(try persisted()["content.blockerExceptions"] as? [String] == ["fixture.test"])
+        try apply(nil, "trackers|fixture.test", .websiteSettings, profile.id)
+        #expect(try persisted()["content.blockerExceptions"] as? [String] == [])
+
+        let provider = "custom.fixture"
+        try apply(JSONEncoder().encode(provider), "selection", .providers, profile.id)
+        #expect(try persisted()["llm.provider"] as? String == provider)
+        try apply(nil, "selection", .providers, profile.id)
+        #expect(try persisted()["llm.provider"] == nil)
+        let definition = try JSONEncoder().encode(["name": "Fixture", "endpoint": "https://provider.test/v1"])
+        try apply(definition, "custom|" + provider, .providers, nil)
+        func catalogIDs() throws -> [String] {
+            let data = try #require(try persisted()["llm.customProviders"] as? Data)
+            return try JSONDecoder().decode([Provider].self, from: data).map(\.id)
+        }
+        #expect(try catalogIDs() == [provider])
+        try apply(nil, "custom|" + provider, .providers, nil)
+        #expect(try catalogIDs().isEmpty)
+    }
+
+    @Test func failedPreferenceFlushCannotBeCheckpointedAsALocalEdit() throws {
+        let profile = Profile.original(), root = URL.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fixture = try MacSettingsFixture(profile: profile, folder: root, makeDefaults: FlushControlledDefaults.init(suiteName:))
+        defer { fixture.cleanup() }
+        let defaults = try #require(fixture.stores.models.defaults as? FlushControlledDefaults)
+        var refreshed = false
+        let adapter = MacSettingsSyncAdapter(profiles: [profile], catalog: fixture.catalog, stores: { _ in fixture.stores },
+                                             refreshWindows: { _, _, _ in refreshed = true })
+        defaults.refuseFlush = true
+        let value = try JSONEncoder().encode("custom.fixture")
+        #expect(throws: (any Error).self) { try adapter.apply(value, key: "selection", for: .providers, profileID: profile.id) }
+        #expect(throws: (any Error).self) { try adapter.values(for: .providers, profileID: profile.id) }
+        #expect(refreshed)
+        defaults.refuseFlush = false
+        #expect(try adapter.values(for: .providers, profileID: profile.id)["selection"] == value)
+    }
+
+    @Test func settingsDetachmentPrecedesProfileDeletionAndFailureKeepsTheProfile() async throws {
+        let folder = URL.temporaryDirectory.appending(path: UUID().uuidString)
+        let files = FileManager.default
+        try files.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? files.removeItem(at: folder) }
+        let catalogFile = folder.appending(path: "profiles"), stateFile = folder.appending(path: "sync")
+        let store = ProfileStore(file: catalogFile)
+        let profile = store.add(name: "Remove"), other = store.add(name: "Keep")
+        store.markCurrent(profile)
+        store.setLaunchProfile(profile.id)
+        let marker = folder.appending(path: "profile-data")
+        let contents = Data("Synthetic profile".utf8)
+        try contents.write(to: marker)
+        func reopenSync() -> CloudSettingsSync {
+            CloudSettingsSync(stateFile: stateFile, read: { _, _ in [:] }, apply: { _, _, _, _ in })
+        }
+        let sync = reopenSync()
+        let engine = FakeSyncEngine(cloud: FakeSyncCloud(), delegate: sync)
+        sync.attach(engine)
+        for id in [profile.id, other.id] {
+            try await sync.enable(.providers, localProfileID: id, cloudProfileID: id)
+        }
+
+        var prepared = 0, erased = 0
+        func remove(_ target: Profile) async -> Result<Void, Error> {
+            await store.remove(target, beforeErasing: {
+                prepared += 1
+                #expect(store.currentID == profile.id)
+                #expect(!reopenSync().isEnabled(.providers, localProfileID: profile.id))
+                // A second window can enable the channel while the first is switching profiles.
+                do {
+                    try await sync.enable(.providers, localProfileID: profile.id, cloudProfileID: profile.id)
+                } catch { Issue.record(error) }
+            }, settingsSync: sync, eraseData: { removed in
+                #expect(removed.id == profile.id && prepared == 1)
+                erased += 1
+                try? files.removeItem(at: marker)
+            })
+        }
+        _ = await remove(.original())
+        _ = await remove(.privateBrowsing())
+        let saved = folder.appending(path: "saved-sync")
+        try files.moveItem(at: stateFile, to: saved)
+        try files.createDirectory(at: stateFile, withIntermediateDirectories: false)
+        let failure = await remove(profile)
+        if case .success = failure { Issue.record("Profile deletion accepted a failed settings write") }
+        #expect(prepared == 0 && erased == 0)
+        #expect(try Data(contentsOf: marker) == contents)
+        let reopened = ProfileStore(file: catalogFile)
+        #expect(reopened.currentID == profile.id && reopened.launchProfileID == profile.id)
+        #expect(reopened.profiles.contains { $0.id == profile.id })
+
+        try files.removeItem(at: stateFile)
+        try files.moveItem(at: saved, to: stateFile)
+        let parkedCatalog = folder.appending(path: "saved-profiles")
+        try files.moveItem(at: catalogFile, to: parkedCatalog)
+        try files.createDirectory(at: catalogFile, withIntermediateDirectories: false)
+        let unwritableCatalog = await store.remove(profile, settingsSync: sync, eraseData: { _ in erased += 1 })
+        if case .success = unwritableCatalog { Issue.record("Profile erasure accepted an unwritable catalog") }
+        #expect(store.profiles.contains { $0.id == profile.id })
+        #expect(erased == 0)
+        #expect(try Data(contentsOf: marker) == contents)
+        try files.removeItem(at: catalogFile)
+        try files.moveItem(at: parkedCatalog, to: catalogFile)
+        try await remove(profile).get()
+        #expect(prepared == 1 && erased == 1)
+        #expect(!files.fileExists(atPath: marker.path))
+        let remaining = ProfileStore(file: catalogFile)
+        #expect(remaining.profiles.map(\.id) == [Profile.originalID, other.id])
+        #expect(remaining.currentID == Profile.originalID && remaining.launchProfileID == nil)
+        #expect(!reopenSync().isEnabled(.providers, localProfileID: profile.id))
+        #expect(reopenSync().isEnabled(.providers, localProfileID: other.id))
     }
 
     @Test func lateRegisteredProfileReceivesOnlyItsOwnWebsiteSettings() async throws {
@@ -62,9 +428,9 @@ struct MacWebsiteSyncTests {
         try fixture.adapter.apply(value, key: key, for: .websiteSettings, profileID: profile.id)
         let proposal = try #require(sites.pendingSyncGrants[key])
         fixture.adapter.reviewWebsiteGrant(proposal, key: key, profileID: profile.id, allow: false)
-        await sites.waitForPendingSave()
         let reopened = try MacSettingsFixture(profile: profile, folder: folder)
         defer { reopened.cleanup() }
+        #expect(reopened.stores.permissions.pendingSyncGrants[key]?.dismissed == true)
         try reopened.adapter.apply(value, key: key, for: .websiteSettings, profileID: profile.id)
         #expect(reopened.stores.permissions.pendingSyncGrants[key]?.dismissed == true)
         reopened.adapter.reviewWebsiteGrant(proposal, key: key, profileID: profile.id, allow: true)
@@ -219,11 +585,11 @@ struct MacSettingsFixture {
     let catalog: ProviderCatalog
     let adapter: MacSettingsSyncAdapter
 
-    init(profile: Profile, folder: URL) throws {
+    init(profile: Profile, folder: URL, makeDefaults: (String) -> UserDefaults? = { UserDefaults(suiteName: $0) }) throws {
         self.folder = folder
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         suite = AppDatabase.defaultsSuite("MacSettingsTests.\(UUID())")
-        let defaults = try #require(UserDefaults(suiteName: suite))
+        let defaults = try #require(makeDefaults(suite))
         let settings = BrowserSettings(defaults: defaults)
         webSettings = settings
         settings.blocksTrackers = false
@@ -239,5 +605,17 @@ struct MacSettingsFixture {
 
     func cleanup() {
         stores.models.defaults.removePersistentDomain(forName: suite)
+    }
+}
+
+private nonisolated final class FlushControlledDefaults: UserDefaults, @unchecked Sendable {
+    private let refused = Mutex(false)
+    var refuseFlush: Bool {
+        get { refused.withLock { $0 } }
+        set { refused.withLock { $0 = newValue } }
+    }
+
+    override func synchronize() -> Bool {
+        !refuseFlush && super.synchronize()
     }
 }

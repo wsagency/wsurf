@@ -48,11 +48,15 @@ nonisolated struct Profile: Identifiable, Codable, Hashable, Sendable {
 
 extension Profile {
     var supportDirectory: URL {
-        if isPrivate {
+        Self.supportDirectory(for: id)
+    }
+
+    private static func supportDirectory(for id: UUID) -> URL {
+        if id == privateID {
             return URL(filePath: NSTemporaryDirectory())
                 .appending(path: "WSurf-private", directoryHint: .isDirectory)
         }
-        guard !isOriginal else { return AppDatabase.supportDirectory }
+        guard id != originalID else { return AppDatabase.supportDirectory }
         return AppDatabase.supportDirectory
             .appendingPathComponent("Profiles", isDirectory: true)
             .appendingPathComponent(id.uuidString, isDirectory: true)
@@ -84,7 +88,11 @@ extension Profile {
     }
 
     var permissionsFile: URL {
-        supportDirectory.appendingPathComponent("SitePermissions.json")
+        Self.permissionsFile(for: id)
+    }
+
+    static func permissionsFile(for id: UUID) -> URL {
+        supportDirectory(for: id).appendingPathComponent("SitePermissions.json")
     }
 
     var autofillLastUsedFile: URL {

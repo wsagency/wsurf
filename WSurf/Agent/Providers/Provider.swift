@@ -216,7 +216,7 @@ final class ProviderCatalog {
     private(set) var all: [Provider]
 
     let keySharing: ProviderKeySharing
-    private let defaults: UserDefaults
+    let defaults: UserDefaults
 
     init(defaults: UserDefaults = .standard, keySharing: ProviderKeySharing = .shared) {
         self.defaults = defaults

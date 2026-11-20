@@ -174,25 +174,59 @@ final class ProfileStore {
         profiles.filter { !$0.isOriginal }
     }
 
-    func remove(_ profile: Profile) async {
-        guard !profile.isOriginal, let index = index(of: profile) else { return }
-        profiles.remove(at: index)
+    @discardableResult
+    func remove(
+        _ profile: Profile, beforeErasing: () async -> Void = {},
+        settingsSync: CloudSettingsSync? = CloudSync.shared?.settingsSync,
+        eraseData: (Profile) async -> Void = Profile.erase
+    ) async -> Result<Void, Error> {
+        guard !profile.isOriginal, !profile.isPrivate, index(of: profile) != nil else { return .success(()) }
+        do {
+            try settingsSync?.forgetProfile(profile.id)
+            await beforeErasing()
+            // A different window can enroll the profile again while the active window switches away.
+            try settingsSync?.forgetProfile(profile.id)
+        } catch {
+            return .failure(error)
+        }
+        guard let index = index(of: profile) else { return .success(()) }
+        var remaining = profiles
+        remaining.remove(at: index)
         var dates = lastUsed
         dates[profile.id] = nil
+        let opening = isPrivate ? (catalog?.currentID ?? lastPersistentID) : currentID
+        let savedCurrent = opening == profile.id ? Profile.originalID : opening
+        let launch = launchProfileID == profile.id ? nil : launchProfileID
+        do {
+            try JSONFileStore.writeAtomically(
+                Stored(profiles: remaining, currentID: savedCurrent, launchProfileID: launch, lastUsed: dates),
+                to: file, sortedKeys: true
+            )
+        } catch {
+            return .failure(error)
+        }
+        profiles = remaining
         lastUsed = dates
+        launchProfileID = launch
         if currentID == profile.id {
             currentID = Profile.originalID
         }
-        if launchProfileID == profile.id {
-            launchProfileID = nil
+        if lastPersistentID == profile.id {
+            lastPersistentID = Profile.originalID
+        }
+        if let catalog {
+            catalog.currentID = savedCurrent
+            if !isPrivate || catalog.lastPersistentID == profile.id {
+                catalog.lastPersistentID = savedCurrent
+            }
         }
         // Stops the profile's watches and waits for their last write, so nothing lands in the folder the erase removes.
         await BrowserProfileContext.existing(for: profile.id)?.pageWatches?.close()
         BrowserProfileContext.forget(profile.id)
         SpaceStore.forget(profile.id)
-        save()
         ReaderViewSpare.discard()
-        await Profile.erase(profile)
+        await eraseData(profile)
+        return .success(())
     }
 
     func markCurrent(_ profile: Profile) {

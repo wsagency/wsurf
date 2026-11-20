@@ -5,6 +5,7 @@
 
 import Foundation
 import Observation
+import os
 import SwiftUI
 import WSurfVault
 
@@ -183,15 +184,28 @@ final class SitePermissions {
     private(set) var pendingSyncGrants: [String: SyncGrant] = [:]
 
     func setSyncGrant(_ grant: SyncGrant?, for key: String) {
+        guard canEdit else { return }
         guard pendingSyncGrants[key] != grant else { return }
         pendingSyncGrants[key] = grant
         scheduleSave()
     }
 
-    func discardSyncGrants() {
-        guard !pendingSyncGrants.isEmpty else { return }
+    /// Disable live proposals immediately. Retry from disk even when a previous attempt already cleared memory.
+    func discardSyncGrants() throws {
         pendingSyncGrants.removeAll()
-        scheduleSave()
+        try writes?.withFile { url in
+            let data: Data
+            do {
+                data = try Data(contentsOf: url)
+            } catch CocoaError.fileReadNoSuchFile {
+                return
+            }
+            guard var fields = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                throw CocoaError(.fileReadCorruptFile)
+            }
+            guard fields.removeValue(forKey: "pendingSyncGrants") != nil else { return }
+            try JSONSerialization.data(withJSONObject: fields, options: [.sortedKeys]).write(to: url, options: .atomic)
+        }
     }
 
     private(set) var records: [String: [WebPermission: PermissionPolicy]] = [:]
@@ -232,16 +246,51 @@ final class SitePermissions {
     }
     var onEngineChanged: ((String) -> Void)?
 
-    private let file: URL
     private let persists: Bool
-    private var saveTask: Task<Void, Never>?
+    private let writes: QueuedJSONFile?
+    @ObservationIgnored private var alreadySaved = false
 
     init(storageURL: URL, persists: Bool = true) {
-        file = storageURL
         self.persists = persists
-        if persists {
-            load()
+        writes = persists ? QueuedJSONFile(storageURL, sortedKeys: true) : nil
+        try? loadIfNeeded()
+    }
+
+    func loadIfNeeded() throws {
+        try writes?.readIfNeeded(Snapshot.self, apply: load)
+    }
+
+    private var canEdit: Bool {
+        do {
+            try loadIfNeeded()
+            return true
+        } catch {
+            Pipeline.log.error("Could not read the website permissions file before changing a setting")
+            return false
         }
+    }
+
+    func prepareForSync() throws {
+        try loadIfNeeded()
+        try writes?.flushPending(snapshot())
+    }
+
+    private init(staging source: SitePermissions) {
+        persists = source.persists
+        writes = nil
+        load(source.snapshot())
+    }
+
+    /// Validate and persist the proposed state before the normal setters publish it to live tabs.
+    func applyDurably(_ edit: (SitePermissions) -> Void) throws {
+        guard let writes else { throw CocoaError(.fileWriteNoPermission) }
+        try loadIfNeeded()
+        let draft = SitePermissions(staging: self)
+        edit(draft)
+        try writes.saveNow(draft.snapshot())
+        alreadySaved = true
+        defer { alreadySaved = false }
+        edit(self)
     }
 
     // MARK: - Reading
@@ -314,6 +363,7 @@ final class SitePermissions {
     }
 
     func setEngine(_ engine: BrowserEngine, for origin: String) {
+        guard canEdit else { return }
         let key = normalizeEngineOrigin(origin)
         // A WebKit-only site takes no Chromium choice; WebKit clears a record left from before.
         guard !key.isEmpty, engine == .webKit || !Self.webKitOnlyOrigins.contains(key) else { return }
@@ -346,6 +396,7 @@ final class SitePermissions {
     }
 
     func allowExternalApp(_ app: ExternalAppPermission, for origin: String) {
+        guard canEdit else { return }
         let origin = Self.webOrigin(for: URL(string: origin))
         guard !origin.isEmpty, !app.scheme.isEmpty, !app.bundleIdentifier.isEmpty else { return }
         var apps = externalAppRecords[origin] ?? []
@@ -356,6 +407,7 @@ final class SitePermissions {
     }
 
     func removeExternalApp(_ app: ExternalAppPermission, for origin: String) {
+        guard canEdit else { return }
         let origin = Self.webOrigin(for: URL(string: origin))
         externalAppRecords[origin]?.removeAll { $0.id == app.id }
         if externalAppRecords[origin]?.isEmpty == true {
@@ -365,6 +417,7 @@ final class SitePermissions {
     }
 
     func removeExternalApps(for origin: String) {
+        guard canEdit else { return }
         externalAppRecords[Self.webOrigin(for: URL(string: origin))] = nil
         scheduleSave()
     }
@@ -372,6 +425,7 @@ final class SitePermissions {
     // MARK: - Writing
 
     func set(_ policy: PermissionPolicy, for origin: String, _ permission: WebPermission) {
+        guard canEdit else { return }
         let origin = normalize(origin)
         guard !origin.isEmpty else { return }
         pendingSyncGrants["\(permission.rawValue)|\(origin)"] = nil
@@ -395,12 +449,14 @@ final class SitePermissions {
     var onCaptureChanged: (([String]) -> Void)?
 
     func setDefault(_ policy: PermissionPolicy, for permission: WebPermission) {
+        guard canEdit else { return }
         defaults[permission] = policy == .deny ? .deny :
             nil
         scheduleSave()
     }
 
     func removeAll(for permission: WebPermission) {
+        guard canEdit else { return }
         pendingSyncGrants = pendingSyncGrants.filter { !$0.key.hasPrefix(permission.rawValue + "|") }
         let origins = self.origins(for: permission)
         for origin in records.keys {
@@ -422,6 +478,7 @@ final class SitePermissions {
     /// `nil` removes the record, so the website follows the default again. Ask is a record like any other. The record is
     /// kept for the whole website the origin belongs to.
     func setAssistantAccess(_ policy: AssistantAccessPolicy?, for origin: String) {
+        guard canEdit else { return }
         let origin = Self.site(for: normalize(origin))
         guard !origin.isEmpty else { return }
         pendingSyncGrants["assistant|\(origin)"] = nil
@@ -433,6 +490,7 @@ final class SitePermissions {
     /// No Access is a choice for one website, never for all of them: it is stored as Ask. A store that does not
     /// persist (a private window) has no default.
     func setAssistantDefault(_ policy: AssistantAccessPolicy) {
+        guard canEdit else { return }
         guard persists else { return }
         let next = policy == .deny ? AssistantAccessPolicy.ask : policy
         let hadProposal = pendingSyncGrants.removeValue(forKey: "default|assistant") != nil
@@ -448,12 +506,14 @@ final class SitePermissions {
 
     /// A store that does not persist (a private window) always asks.
     func setAssistantTabClosing(_ setting: AssistantTabClosing) {
+        guard canEdit else { return }
         guard persists, setting != assistantTabClosing else { return }
         assistantTabClosing = setting
         scheduleSave()
     }
 
     func removeAllAssistantAccess() {
+        guard canEdit else { return }
         pendingSyncGrants = pendingSyncGrants.filter { !$0.key.hasPrefix("assistant|") }
         assistantRecords = [:]
         scheduleSave()
@@ -461,6 +521,7 @@ final class SitePermissions {
     }
 
     func setKeepsActive(_ keepsActive: Bool, for origin: String) {
+        guard canEdit else { return }
         let origin = normalize(origin)
         guard !origin.isEmpty else { return }
         if keepsActive {
@@ -473,6 +534,7 @@ final class SitePermissions {
     }
 
     func setAllowsAutomaticPicture(_ allows: Bool, for origin: String) {
+        guard canEdit else { return }
         let origin = normalize(origin)
         guard !origin.isEmpty else { return }
         if allows {
@@ -485,6 +547,7 @@ final class SitePermissions {
     }
 
     func setAutoplay(_ policy: AutoplayPolicy?, for origin: String) {
+        guard canEdit else { return }
         let origin = normalize(origin)
         guard !origin.isEmpty else { return }
         autoplayRecords[origin] = policy
@@ -492,6 +555,7 @@ final class SitePermissions {
     }
 
     func setPopups(_ policy: PopupPolicy?, for origin: String) {
+        guard canEdit else { return }
         let origin = normalize(origin)
         guard !origin.isEmpty else { return }
         popupRecords[origin] = policy
@@ -499,6 +563,7 @@ final class SitePermissions {
     }
 
     func removeEverything() {
+        guard canEdit else { return }
         pendingSyncGrants = [:]
         let origins = Array(records.keys)
         records = [:]
@@ -517,7 +582,7 @@ final class SitePermissions {
     }
 
     func waitForPendingSave() async {
-        await saveTask?.value
+        await writes?.waitForPendingSave()
     }
 
     // MARK: - What counts as one site
@@ -724,10 +789,16 @@ final class SitePermissions {
     }
 
     private func scheduleSave() {
-        guard persists else { return }
+        guard let writes else { return }
+        if !alreadySaved {
+            writes.schedule(snapshot())
+        }
+        // The setter can notify tabs which make another, independent edit.
+        alreadySaved = false
         MacSettingsChange.post(self)
-        let previous = saveTask
-        previous?.cancel()
+    }
+
+    private func snapshot() -> Snapshot {
         var snapshot = Snapshot(
             records: records,
             defaults:
@@ -744,19 +815,10 @@ final class SitePermissions {
             externalApps: externalAppRecords
         )
         snapshot.pendingSyncGrants = pendingSyncGrants.isEmpty ? nil : pendingSyncGrants
-        let url = file
-        saveTask = Task {
-            await previous?.value
-            guard !Task.isCancelled else { return }
-            await JSONFileStore.shared.write(snapshot, to: url, sortedKeys: true)
-        }
+        return snapshot
     }
 
-    private func load() {
-        guard persists,
-              let data = try? Data(contentsOf: file),
-              let snapshot = try? JSONDecoder().decode(Snapshot.self, from: data)
-        else { return }
+    private func load(_ snapshot: Snapshot) {
         pendingSyncGrants = snapshot.pendingSyncGrants ?? [:]
         for (key, policies) in snapshot.records {
             let origin = normalize(key)

@@ -154,6 +154,7 @@ struct ProviderKeySyncSection: View {
 
 struct MacWebsiteSyncApprovalSection: View {
     let profile: Profile
+    @State private var writeError: String?
     @State private var account = ProviderKeySharing.shared.accountContext
 
     private var isSharingWebsites: Bool {
@@ -167,6 +168,9 @@ struct MacWebsiteSyncApprovalSection: View {
             Group {
                 if !pending.isEmpty {
                     SettingsSection(title: "Website permissions to review", symbol: "hand.raised") {
+                        if let writeError {
+                            Text(verbatim: writeError).font(.caption).textSelection(.enabled)
+                        }
                         ForEach(pending.keys.sorted(), id: \.self) { key in
                             if let grant = pending[key] {
                                 review(key, grant: grant)
@@ -200,7 +204,13 @@ struct MacWebsiteSyncApprovalSection: View {
     }
     private func decide(_ grant: SitePermissions.SyncGrant, key: String, allow: Bool) {
         guard isSharingWebsites else { return }
-        MacSettingsSyncAdapter(profiles: [profile]).reviewWebsiteGrant(grant, key: key, profileID: profile.id, allow: allow)
+        let result = MacSettingsSyncAdapter(profiles: [profile]).reviewWebsiteGrant(grant, key: key, profileID: profile.id, allow: allow)
+        do {
+            try result.get()
+            writeError = nil
+        } catch {
+            writeError = error.localizedDescription
+        }
     }
 
 }
