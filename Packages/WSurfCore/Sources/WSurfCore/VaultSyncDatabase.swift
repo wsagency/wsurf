@@ -60,6 +60,13 @@ nonisolated struct BaseRow: Equatable {
     var parts: Data
 }
 
+/// The exact server versions verified for this sealed pointer, retained until its Item is acknowledged.
+nonisolated struct VaultAssetPublication: Codable, Equatable {
+    let owner: String
+    let manifest: VaultAssetRef
+    let tags: [VaultAssetRef: String]
+}
+
 /// An envelope sealed and waiting to go up, with the sealed parts that become the base once the server confirms it.
 nonisolated struct OutboxRow: Equatable {
     var accountID: UUID
@@ -67,6 +74,7 @@ nonisolated struct OutboxRow: Equatable {
     var envelope: Data
     var parts: Data
     var remainingAssets: [VaultAssetRef] = []
+    var publication: VaultAssetPublication?
 }
 
 /// A fetched envelope not yet applied: the highest version of the account. Version 0 parks a record in a format this build cannot
@@ -157,6 +165,9 @@ nonisolated final class VaultSyncDatabase: Sendable {
                 ALTER TABLE vault ADD COLUMN serverVault BLOB;
                 ALTER TABLE vault ADD COLUMN pendingLocalWrappers BLOB;
                 """)
+        }
+        migrator.registerMigration("vaultAssetPublication") { (db: Database) throws in
+            try db.execute(sql: "ALTER TABLE outbox ADD COLUMN assetPublication BLOB")
         }
         try migrator.migrate(queue)
         return VaultSyncDatabase(queue: queue)
@@ -326,7 +337,8 @@ nonisolated final class VaultSyncDatabase: Sendable {
         // MARK: Outbox
 
         func outbox(_ vault: UUID, unfinishedOnly: Bool = false) throws -> [OutboxRow] {
-            let filter = unfinishedOnly ? " AND remainingAssets IS NOT NULL" : ""
+            // Older ready pointers have no publication proof. Rebuild or recheck them before handing them out.
+            let filter = unfinishedOnly ? " AND (remainingAssets IS NOT NULL OR (substr(envelope, 1, 1) = x'02' AND assetPublication IS NULL))" : ""
             return try Row.fetchAll(db, sql: "SELECT * FROM outbox WHERE vaultID = ?\(filter) ORDER BY accountID", arguments: [vault.sqlText])
                 .map(Self.outboxRow)
         }
@@ -341,14 +353,17 @@ nonisolated final class VaultSyncDatabase: Sendable {
             let encoded: Data? = row["remainingAssets"]
             let assets = try encoded.map { try JSONDecoder().decode([VaultAssetRef].self, from: $0) } ?? []
             guard assets.allSatisfy(\.valid) else { throw VaultSyncError.malformed }
-            return OutboxRow(accountID: id, version: version(row), envelope: row["envelope"], parts: row["parts"], remainingAssets: assets)
+            let saved: Data? = row["assetPublication"]
+            let publication = try saved.map { try JSONDecoder().decode(VaultAssetPublication.self, from: $0) }
+            return OutboxRow(accountID: id, version: version(row), envelope: row["envelope"], parts: row["parts"], remainingAssets: assets, publication: publication)
         }
 
         func save(_ row: OutboxRow, vault: UUID) throws {
             let remaining = row.remainingAssets.isEmpty ? nil : try JSONEncoder().encode(row.remainingAssets)
+            let publication = try row.publication.map { try JSONEncoder().encode($0) }
             try db.execute(
-                sql: "INSERT OR REPLACE INTO outbox(vaultID, accountID, version, envelope, parts, remainingAssets) VALUES (?, ?, ?, ?, ?, ?)",
-                arguments: [vault.sqlText, row.accountID.sqlText, Int64(clamping: row.version), row.envelope, row.parts, remaining]
+                sql: "INSERT OR REPLACE INTO outbox(vaultID, accountID, version, envelope, parts, remainingAssets, assetPublication) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                arguments: [vault.sqlText, row.accountID.sqlText, Int64(clamping: row.version), row.envelope, row.parts, remaining, publication]
             )
         }
 

@@ -228,7 +228,8 @@ extension VaultSync {
             try database.write { tx in
                 for record in records {
                     guard let account = Self.accountID(record.id.name) else { continue }
-                    if let outgoing = try tx.outbox(key.vaultID, account), outgoing.remainingAssets.isEmpty, outgoing.envelope == record.payload {
+                    if let outgoing = try tx.outbox(key.vaultID, account), outgoing.remainingAssets.isEmpty, outgoing.envelope == record.payload,
+                       outgoing.envelope.first != VaultSyncCodec.assetFormat || handedOut[key]?.contains(account) == true {
                         try tx.setSystemFields(record.systemFields, vault: key.vaultID, name: record.id.name)
                         try tx.save(BaseRow(accountID: account, version: outgoing.version, parts: outgoing.parts), vault: key.vaultID)
                         try tx.deleteOutbox(key.vaultID, account)

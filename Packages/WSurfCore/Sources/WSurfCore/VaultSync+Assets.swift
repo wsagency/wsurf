@@ -41,7 +41,7 @@ extension VaultSync {
     func pruneAssets(_ key: VaultKey, database: VaultSyncDatabase) {
         guard let root = assetDirectory(key), FileManager.default.fileExists(atPath: root.path),
               let owned = try? database.read({ tx in
-                  try [("out", Set(tx.outbox(key.vaultID, unfinishedOnly: true).map(\.accountID))), ("in", tx.inboxAccounts(key.vaultID).union(tx.conflictAccounts(key.vaultID)))]
+                  try [("out", tx.assetOutboxAccounts(key.vaultID)), ("in", tx.inboxAccounts(key.vaultID).union(tx.conflictAccounts(key.vaultID)))]
               }) else { return }
         for (name, accounts) in owned {
             let folder = root.appending(path: name)
@@ -127,12 +127,15 @@ extension VaultSync {
                 let folder = try directory(transfer, account: row.accountID, incoming: false)
                 let assets = try Self.stagedAssets(row, in: folder, syncKey: syncKey)
                 let completed = assets.count - row.remainingAssets.count
+                var tags: [VaultAssetRef: String] = [:]
                 for (index, ref) in assets.enumerated() {
                     let chunk = index < assets.count - 1
-                    let receipt = chunk ? try database.read { try $0.assetTag(ref, key: key, user: user) } : nil
+                    let manifestTag = row.publication?.owner == user ? row.publication?.tags[ref] : nil
+                    let receipt = chunk ? try database.read { try $0.assetTag(ref, key: key, user: user) } : manifestTag
                     let tag = try await transport.uploadVaultAsset(ref, from: folder.appending(path: ref.name), zone: key.zone, user: user, acknowledged: receipt)
                     guard current(transfer) else { return }
-                    if index < completed && receipt == tag {
+                    tags[ref] = tag
+                    if chunk && index < completed && receipt == tag {
                         continue
                     }
                     try database.write { tx in
@@ -143,11 +146,16 @@ extension VaultSync {
                         }
                         if index >= completed {
                             row.remainingAssets.removeFirst()
+                        }
+                        if !chunk {
+                            row.publication = VaultAssetPublication(owner: user, manifest: ref, tags: tags)
+                        }
+                        if index >= completed || !chunk {
                             try tx.save(row, vault: key.vaultID)
                         }
                     }
                 }
-                clearAssets(key, account: row.accountID)
+                // The Item receipt releases staging. An uploaded manifest can still disappear with its zone.
                 engine?.add([.saveRecord(key.itemRecord(row.accountID))])
             } catch VaultSyncError.authenticationFailed, VaultSyncError.malformed, VaultFileError.missing {
                 // Recheck staging on the next pass so lost or damaged local files can be rebuilt from the store.
@@ -164,7 +172,10 @@ extension VaultSync {
     }
 
     func staged(_ row: OutboxRow, key: VaultKey, syncKey: VaultSyncKey) -> Bool {
-        guard !row.remainingAssets.isEmpty else { return true }
+        guard row.envelope.first == VaultSyncCodec.assetFormat else { return true }
+        if row.remainingAssets.isEmpty, row.publication != nil {
+            return true
+        }
         guard let folder = assetDirectory(key)?.appending(path: "out/\(row.accountID.sqlText)"),
               let assets = try? Self.stagedAssets(row, in: folder, syncKey: syncKey) else { return false }
         return assets.dropLast().allSatisfy { (try? Self.cached($0, in: folder)) != nil }

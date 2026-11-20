@@ -139,6 +139,9 @@ final class FakeSyncCloud {
     func save(_ record: SyncRecord) -> SaveResult {
         guard zones[record.id.zone] != nil else { return .failed(.zoneNotFound) }
         guard !quotaFull else { return .failed(.quotaExceeded) }
+        if let parent = record.assetManifestName, encryptedVaultAssets[SyncRecordID(zone: record.id.zone, name: parent)] == nil {
+            return .failed(.other)
+        }
         let held = Self.tag(in: record.systemFields)
         if let existing = zones[record.id.zone]?[record.id.name] {
             guard held == existing.tag else { return .failed(.serverRecordChanged(existing.record)) }
@@ -203,6 +206,7 @@ final class FakeSyncEngine: SyncEngine, SyncAccountIdentity {
     var offline = false
     var beforeVaultUpload: ((String) async throws -> Void)?
     var beforeVaultDownload: ((String) async throws -> Void)?
+    var beforeRecordSave: ((SyncRecord) -> Void)?
     /// The server refuses to delete a zone: the engine reports the failure and keeps the change.
     var failsZoneDeletes = false
     /// The next N zone creations are lost, as a zone save that failed or lost the race with its records.
@@ -399,12 +403,13 @@ final class FakeSyncEngine: SyncEngine, SyncAccountIdentity {
             switch change {
             case .saveRecord(let id):
                 // A record the model no longer wants is dropped, as the real engine drops it.
-                guard let record = delegate?.record(for: id) else { continue }
+                guard let record = await delegate?.recordForUpload(id) else { continue }
                 saveAttempts[id.name, default: 0] += 1
                 if refusesVaultRecord, id.name == VaultSync.vaultRecordName {
                     failed.append(SyncFailedSave(id: id, failure: .other, attempted: record))
                     continue
                 }
+                beforeRecordSave?(record)
                 switch cloud.save(record) {
                 case .saved(let stored):
                     saved.append(stored)

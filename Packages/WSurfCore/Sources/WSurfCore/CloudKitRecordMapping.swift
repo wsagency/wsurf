@@ -44,6 +44,9 @@ nonisolated enum CloudKitMapping {
         let result = restoredRecord(from: record.systemFields, matching: id, type: record.type)
             ?? CKRecord(recordType: record.type.rawValue, recordID: id)
         result[schemaKey] = record.schema as NSNumber
+        if record.type == .item {
+            result.parent = record.assetManifestName.map { CKRecord.Reference(recordID: CKRecord.ID(recordName: $0, zoneID: id.zoneID), action: .none) }
+        }
         result.encryptedValues[payloadKey] = record.payload
         return result
     }

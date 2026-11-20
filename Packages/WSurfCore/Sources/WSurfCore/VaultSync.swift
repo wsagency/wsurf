@@ -562,6 +562,53 @@ public final class VaultSync: SyncEngineDelegate {
     // MARK: - SyncEngineDelegate
 
     public func record(for id: SyncRecordID) -> SyncRecord? {
+        guard let (record, _) = candidate(for: id), record.type != .item || record.payload.first != VaultSyncCodec.assetFormat else { return nil }
+        return handOut(record)
+    }
+
+    public func recordForUpload(_ id: SyncRecordID) async -> SyncRecord? {
+        guard let (record, publication) = candidate(for: id) else { return nil }
+        guard record.type == .item, record.payload.first == VaultSyncCodec.assetFormat else { return handOut(record) }
+        guard let proof = publication, proof.owner == state.accountUser, proof.tags[proof.manifest] != nil,
+              let ids = SyncZone.vaultIDs(id.zone), let account = Self.accountID(id.name),
+              let transport = engine as? any VaultAssetTransport else { return nil }
+        let key = VaultKey(ids)
+        let session = token(key)
+        do {
+            let present = try await transport.vaultAssetVersionsMatch(proof.tags, zone: id.zone, user: proof.owner)
+            guard engine === transport, token(key) == session, state.accountUser == proof.owner,
+                  let (fresh, latest) = candidate(for: id), fresh.payload == record.payload, latest == proof else { return nil }
+            if present {
+                var pointer = fresh
+                pointer.assetManifestName = proof.manifest.name
+                return handOut(pointer)
+            }
+            // Check the complete authenticated manifest again on the next unlocked pass, including the preceding chunks.
+            guard let database = database(key.profileID) else { return nil }
+            try database.write { tx in
+                guard var row = try tx.outbox(key.vaultID, account), row.envelope == record.payload,
+                      row.remainingAssets.isEmpty, row.publication == proof else { throw VaultSyncFailure.unavailable }
+                row.remainingAssets = [proof.manifest]
+                try tx.save(row, vault: key.vaultID)
+            }
+            handedOut[key]?.remove(account)
+            pendingBases[key] = nil
+            enqueue(key) { [weak self] in await self?.produce(key) }
+        } catch {
+            // A failed metadata read leaves the sealed row available for the next heartbeat.
+            return nil
+        }
+        return nil
+    }
+
+    private func handOut(_ record: SyncRecord) -> SyncRecord {
+        if record.type == .item, let ids = SyncZone.vaultIDs(record.id.zone), let account = Self.accountID(record.id.name) {
+            handedOut[VaultKey(ids), default: []].insert(account)
+        }
+        return record
+    }
+
+    private func candidate(for id: SyncRecordID) -> (SyncRecord, VaultAssetPublication?)? {
         guard !launchCheck, accountAvailable != false, let ids = SyncZone.vaultIDs(id.zone), !excluded.contains(ids.profileID) else { return nil }
         let key = VaultKey(ids)
         guard let (database, row) = runningRow(key), !row.needsFetch else { return nil }
@@ -569,7 +616,7 @@ public final class VaultSync: SyncEngineDelegate {
         if id.name == Self.vaultRecordName {
             guard let payload = row.pendingVault, row.uploadedMark == nil || (row.serverVault != nil && row.pendingLocalWrappers != nil && fields != nil) else { return nil }
             // A first write always asks to create. A cached change tag must never authorize replacing another Mac's header.
-            return SyncRecord(id: id, type: .vault, schema: 1, payload: payload, systemFields: row.uploadedMark == nil ? nil : fields)
+            return (SyncRecord(id: id, type: .vault, schema: 1, payload: payload, systemFields: row.uploadedMark == nil ? nil : fields), nil)
         }
         guard row.uploadedMark != nil, let account = Self.accountID(id.name),
               let outgoing = (try? database.read { try $0.outbox(key.vaultID, account) }) ?? nil, outgoing.remainingAssets.isEmpty
@@ -580,8 +627,7 @@ public final class VaultSync: SyncEngineDelegate {
            waiting == 0 || waiting >= outgoing.version {
             return nil
         }
-        handedOut[key, default: []].insert(account)
-        return SyncRecord(id: id, type: .item, schema: 1, payload: outgoing.envelope, systemFields: fields)
+        return (SyncRecord(id: id, type: .item, schema: 1, payload: outgoing.envelope, systemFields: fields), outgoing.publication)
     }
 
     public func handle(_ event: SyncEvent) async {

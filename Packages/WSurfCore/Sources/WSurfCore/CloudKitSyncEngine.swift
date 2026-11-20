@@ -242,7 +242,7 @@ extension CloudKitMapping {
             }
         }
         return await CKSyncEngine.RecordZoneChangeBatch(pendingChanges: approved) { recordID in
-            if let record = await delegate.record(for: syncID(recordID)) {
+            if let record = await delegate.recordForUpload(syncID(recordID)) {
                 return CloudKitMapping.ckRecord(record)
             }
             // A save that is no longer wanted must not come back on the next batch.

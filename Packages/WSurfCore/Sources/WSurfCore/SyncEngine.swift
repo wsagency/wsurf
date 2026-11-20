@@ -79,6 +79,8 @@ nonisolated public struct SyncRecord: Equatable, Sendable {
     public var payload: Data
     /// The engine's change tag and ID of this record, opaque to everything above it.
     public var systemFields: Data?
+    /// An asset Item's private-zone parent. CloudKit requires this encrypted manifest to exist at the actual save.
+    public var assetManifestName: String?
     /// The server's modification date. No client clock is ever written.
     public var modifiedAt: Date?
 
@@ -191,9 +193,15 @@ public protocol SyncEngineDelegate: AnyObject, Sendable {
     func wantsRecordDeletion(_ id: SyncRecordID) -> Bool
     /// The record to send for `id`, or nil when it is no longer wanted.
     func record(for id: SyncRecordID) -> SyncRecord?
+    /// Asset pointers check their remote dependencies immediately before the engine builds its save.
+    func recordForUpload(_ id: SyncRecordID) async -> SyncRecord?
 }
 
 extension SyncEngineDelegate {
+    public func recordForUpload(_ id: SyncRecordID) async -> SyncRecord? {
+        record(for: id)
+    }
+
     public func beginFetch() -> SyncFetchDelivery {
         { event in await self.handle(event) }
     }

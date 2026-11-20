@@ -24,6 +24,7 @@ public protocol VaultCatalogReading: AnyObject {
 public protocol VaultAssetTransport: AnyObject {
     func uploadVaultAsset(_ reference: VaultAssetRef, from source: URL, zone: String, user: String, acknowledged: String?) async throws -> String
     func downloadVaultAsset(_ reference: VaultAssetRef, zone: String, user: String) async throws -> (data: Data, tag: String)
+    func vaultAssetVersionsMatch(_ tags: [VaultAssetRef: String], zone: String, user: String) async throws -> Bool
 }
 
 extension CloudKitSyncEngine: VaultCatalogReading, VaultAssetTransport {
@@ -51,19 +52,25 @@ extension CloudKitSyncEngine: VaultCatalogReading, VaultAssetTransport {
 
     private var assetRequests: VaultAssetRequests {
         let db = container.privateCloudDatabase
-        return VaultAssetRequests(currentUser: currentAccountUser, fetch: { id, keys in
-            let results = try await db.records(for: [id], desiredKeys: keys)
-            guard let result = results[id] else { throw VaultSyncFailure.unavailable }
-            let record = try result.get()
-            guard record.recordType == "VaultAsset", let tag = record.recordChangeTag else { throw VaultSyncError.malformed }
-            return (tag, (record["ciphertext"] as? CKAsset)?.fileURL)
+        return VaultAssetRequests(currentUser: currentAccountUser, fetch: { ids, keys in
+            let results = try await db.records(for: ids, desiredKeys: keys)
+            return results.mapValues { item in
+                Result {
+                    let record = try item.get()
+                    guard let tag = record.recordChangeTag else { throw VaultSyncError.malformed }
+                    return (record: record, tag: tag)
+                }
+            }
         }, save: { record in
             let result = try await db.modifyRecords(saving: [record], deleting: [], savePolicy: .ifServerRecordUnchanged)
-            guard let saved = result.saveResults[record.recordID], let tag = try saved.get().recordChangeTag else {
-                throw VaultSyncFailure.unavailable
-            }
+            guard let saved = try result.saveResults[record.recordID]?.get(), saved.recordID == record.recordID,
+                  saved.recordType == record.recordType, let tag = saved.recordChangeTag else { throw VaultSyncFailure.unavailable }
             return tag
         })
+    }
+
+    public func vaultAssetVersionsMatch(_ tags: [VaultAssetRef: String], zone: String, user: String) async throws -> Bool {
+        try await assetRequests.versionsMatch(tags, zone: zone, user: user)
     }
 
     public func uploadVaultAsset(_ reference: VaultAssetRef, from source: URL, zone: String, user: String, acknowledged: String?) async throws -> String {
@@ -76,58 +83,112 @@ extension CloudKitSyncEngine: VaultCatalogReading, VaultAssetTransport {
 }
 
 struct VaultAssetRequests {
+    typealias Version = (record: CKRecord, tag: String)
+    typealias Results = [CKRecord.ID: Result<Version, any Error>]
+
     let currentUser: () async throws -> String
-    let fetch: (CKRecord.ID, [CKRecord.FieldKey]) async throws -> (tag: String, file: URL?)
+    let fetch: ([CKRecord.ID], [CKRecord.FieldKey]?) async throws -> Results
     let save: (CKRecord) async throws -> String
+
+    /// Confirm all dependencies of this pending Item without fetching their ciphertext.
+    func versionsMatch(_ tags: [VaultAssetRef: String], zone: String, user: String) async throws -> Bool {
+        guard !tags.isEmpty else { return false }
+        let expected = try tags.map { (try assetID($0.key, zone: zone, user: user), $0.value) }
+        do {
+            for start in stride(from: 0, to: expected.count, by: 200) {
+                let batch = expected[start..<min(start + 200, expected.count)]
+                let values = try await fields(batch.map(\.0), keys: [], user: user)
+                for (id, tag) in batch where try version(in: values, id: id).tag != tag {
+                    return false
+                }
+            }
+        } catch let error as CKError where error.code == .unknownItem {
+            return false
+        }
+        return true
+    }
 
     func upload(_ ref: VaultAssetRef, from source: URL, zone: String, user: String, acknowledged: String?) async throws -> String {
         let id = try assetID(ref, zone: zone, user: user)
         if let acknowledged {
             do {
-                let metadata = try await fields(id, keys: [], user: user)
+                let metadata = try version(in: await fields([id], keys: [], user: user), id: id)
                 if metadata.tag == acknowledged {
                     return acknowledged
                 }
-                return try await verified(ref, id: id, user: user).tag
+                return try await verifyOrRepair(ref, id: id, source: source, user: user)
             } catch let error as CKError where error.code == .unknownItem {
-                // A receipt can outlive its record when the zone is recreated.
+                // The receipt can outlive the record. A fresh conditional create still detects another writer.
             }
         }
-        guard FileManager.default.fileExists(atPath: source.path) else { throw VaultFileError.missing }
-        guard try source.resourceValues(forKeys: [.fileSizeKey]).fileSize == ref.size,
-              ref.matches(try Data(contentsOf: source)) else { throw VaultSyncError.authenticationFailed }
-        try await check(user)
         let record = CKRecord(recordType: "VaultAsset", recordID: id)
-        record["ciphertext"] = CKAsset(fileURL: source)
         do {
-            let tag = try await save(record)
-            try await check(user)
-            return tag
+            return try await store(record, ref: ref, from: source, user: user)
         } catch let error as CKError where error.code == .serverRecordChanged {
-            // A lost save reply or another Mac can account for the existing record.
-            return try await verified(ref, id: id, user: user).tag
+            return try await verifyOrRepair(ref, id: id, source: source, user: user)
         }
     }
 
     func download(_ ref: VaultAssetRef, zone: String, user: String) async throws -> (data: Data, tag: String) {
-        try await verified(ref, id: assetID(ref, zone: zone, user: user), user: user)
+        let id = try assetID(ref, zone: zone, user: user)
+        let remote = try version(in: await fields([id], keys: ["ciphertext"], user: user), id: id)
+        guard let data = try verifiedBytes(ref, at: assetFile(remote.record)) else { throw VaultSyncError.authenticationFailed }
+        return (data, remote.tag)
     }
 
-    private func verified(_ ref: VaultAssetRef, id: CKRecord.ID, user: String) async throws -> (data: Data, tag: String) {
-        let result = try await fields(id, keys: ["ciphertext"], user: user)
-        guard let file = result.file, try file.resourceValues(forKeys: [.fileSizeKey]).fileSize == ref.size else {
-            throw VaultSyncError.malformed
+    private func verifyOrRepair(_ ref: VaultAssetRef, id: CKRecord.ID, source: URL, user: String) async throws -> String {
+        // Keep all server fields and the actual change tag on the fetched record used for the conditional repair.
+        let remote = try version(in: await fields([id], keys: nil, user: user), id: id)
+        if try verifiedBytes(ref, at: assetFile(remote.record)) != nil {
+            return remote.tag
         }
-        let data = try Data(contentsOf: file)
-        guard ref.matches(data) else { throw VaultSyncError.authenticationFailed }
-        return (data, result.tag)
+
+        return try await store(remote.record, ref: ref, from: source, user: user)
     }
 
-    private func fields(_ id: CKRecord.ID, keys: [CKRecord.FieldKey], user: String) async throws -> (tag: String, file: URL?) {
+    private func store(_ record: CKRecord, ref: VaultAssetRef, from source: URL, user: String) async throws -> String {
+        // CKAsset reads its URL asynchronously. Keep the exact bytes whose SHA-256 names this record until the conditional save returns.
+        let data = try localBytes(ref, at: source)
+        let folder = source.deletingLastPathComponent().appending(path: "upload-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let file = folder.appending(path: ref.name)
+        try data.write(to: file, options: .withoutOverwriting)
+        record["ciphertext"] = CKAsset(fileURL: file)
         try await check(user)
-        let result = try await fetch(id, keys)
+        let tag = try await save(record)
+        try await check(user)
+        return tag
+    }
+
+    private func fields(_ ids: [CKRecord.ID], keys: [CKRecord.FieldKey]?, user: String) async throws -> Results {
+        try await check(user)
+        let result = try await fetch(ids, keys)
         try await check(user)
         return result
+    }
+
+    private func version(in results: Results, id: CKRecord.ID) throws -> Version {
+        guard let value = try results[id]?.get() else { throw VaultSyncFailure.unavailable }
+        guard value.record.recordID == id, value.record.recordType == "VaultAsset" else { throw VaultSyncError.malformed }
+        return value
+    }
+
+    private func assetFile(_ record: CKRecord) throws -> URL {
+        guard let file = (record["ciphertext"] as? CKAsset)?.fileURL else { throw VaultSyncError.malformed }
+        return file
+    }
+
+    private func verifiedBytes(_ ref: VaultAssetRef, at file: URL) throws -> Data? {
+        guard try file.resourceValues(forKeys: [.fileSizeKey]).fileSize == ref.size else { return nil }
+        let data = try Data(contentsOf: file)
+        return ref.matches(data) ? data : nil
+    }
+
+    private func localBytes(_ ref: VaultAssetRef, at source: URL) throws -> Data {
+        guard FileManager.default.fileExists(atPath: source.path) else { throw VaultFileError.missing }
+        guard let bytes = try verifiedBytes(ref, at: source) else { throw VaultSyncError.authenticationFailed }
+        return bytes
     }
 
     private func check(_ user: String) async throws {

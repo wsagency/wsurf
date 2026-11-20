@@ -126,6 +126,13 @@ public final class SyncRouter: SyncEngineDelegate {
         handlers.first { $0.owns(zone: id.zone) }?.wantsRecordDeletion(id) ?? false
     }
 
+    public func recordForUpload(_ id: SyncRecordID) async -> SyncRecord? {
+        if SyncZone.isVault(id.zone) {
+            return await vaultHandler?.recordForUpload(id)
+        }
+        return await handlers.first { $0.owns(zone: id.zone) }?.recordForUpload(id)
+    }
+
     public func record(for id: SyncRecordID) -> SyncRecord? {
         if SyncZone.isVault(id.zone) {
             return vaultHandler?.record(for: id)
