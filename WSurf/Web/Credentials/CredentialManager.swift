@@ -566,7 +566,7 @@ final class CredentialManager {
             lock(reason: .timeout)
         } else {
             access.shorten(to: end)
-            arm(timerFor: access, until: end, from: instant)
+            arm(timerFor: access, until: end)
         }
     }
 
@@ -955,16 +955,17 @@ final class CredentialManager {
         // ponytail: "When WSurf quits" is a ten-year deadline and no timer; a lock event is its only end. Upgrade: an optional deadline.
         access.beginLease(until: end ?? instant.advanced(by: .seconds(315_360_000)))
         leaseStart = instant
-        arm(timerFor: access, until: end, from: instant)
+        arm(timerFor: access, until: end)
     }
 
     /// The one timer that ends `access` at `end`; none when the vault stays open until a lock event.
-    private func arm(timerFor access: VaultAccess, until end: ContinuousClock.Instant?, from instant: ContinuousClock.Instant) {
+    private func arm(timerFor access: VaultAccess, until end: ContinuousClock.Instant?) {
         timer?.cancel()
         timer = nil
         guard let end else { return }
-        timer = Task { [weak self] in
-            try? await ContinuousClock().sleep(for: end - instant)
+        timer = Task { [weak self, now] in
+            // The main actor can start this task late. Only the time left on the lease belongs to the timer.
+            try? await ContinuousClock().sleep(for: end - now())
             guard !Task.isCancelled, let self, self.current === access else { return }
             self.lock(reason: .timeout)
         }

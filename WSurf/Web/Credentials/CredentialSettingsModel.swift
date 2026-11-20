@@ -227,11 +227,6 @@ final class CredentialSettingsModel {
 
     // MARK: Vaults
 
-    /// The selected manager's own list, never a copy: a non-fatal note that never changes whether the vault opened.
-    var scratchCleanupWarnings: [URL] {
-        manager?.scratchCleanupWarnings ?? []
-    }
-
     /// The vault autofill and saving use when they don't need to ask: the stored choice while it is still listed, else the
     /// lowest-numbered one.
     var defaultVaultID: UUID? {
@@ -359,7 +354,7 @@ final class CredentialSettingsModel {
         do {
             let snapshot = try await manager.snapshot()
             // Task cancellation is per UI task; the epoch check is the separate, global authorization check.
-            guard !Task.isCancelled, manager.authorizationEpoch == epoch else { return }
+            guard !Task.isCancelled, authorizationEpoch == epoch else { return }
             session = CredentialVaultSession(epoch: epoch, snapshot: snapshot)
             error = nil
             vaultExists = true
@@ -367,7 +362,7 @@ final class CredentialSettingsModel {
             healthKey = nil
             scheduleHealthIfNeeded()
         } catch {
-            guard !Task.isCancelled, manager.authorizationEpoch == epoch else { return }
+            guard !Task.isCancelled, authorizationEpoch == epoch else { return }
             session = nil
             self.error = noteClosed(error) ? nil : Self.message(for: error)
         }
@@ -662,6 +657,12 @@ final class CredentialSettingsModel {
     func unlock(
         in anchor: @autoclosure () -> ASPresentationAnchor, confirmMigration: Bool = false, verifying: (@Sendable (Bool) -> Void)? = nil
     ) async {
+        guard let selected = manager, !isLoaded else { return }
+        // Another window may have unlocked this vault while our Unlock button was still on screen.
+        if selected.isUnlocked {
+            await load()
+            return
+        }
         unlockInFlight = true
         defer {
             unlockInFlight = false
@@ -675,15 +676,18 @@ final class CredentialSettingsModel {
                 }
             }
         }
-        if await perform({ try await $0.unlock(in: anchor(), confirmMigration: confirmMigration, verifying: report) }) {
-            beginCopyGraceAfterUnlock()
-            // An upgraded vault is a new state of the store: read it again before the page offers anything from the old one.
-            if store != nil, openState?.isProvisional != true {
-                await discoverVault()
-            }
-            await refreshListing()
-            await load()
+        let unlocked = await guarded {
+            try await selected.unlock(in: anchor(), confirmMigration: confirmMigration, verifying: report)
         }
+        guard unlocked, !Task.isCancelled, manager === selected else { return }
+        beginCopyGraceAfterUnlock()
+        // An upgraded vault is a new state of the store: read it again before the page offers anything from the old one.
+        if store != nil, openState?.isProvisional != true {
+            await discoverVault()
+        }
+        await refreshListing()
+        guard manager === selected else { return }
+        await load()
     }
 
     func addUnlock(in anchor: @autoclosure () -> ASPresentationAnchor) async {

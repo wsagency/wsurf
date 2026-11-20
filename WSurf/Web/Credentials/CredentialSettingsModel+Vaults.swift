@@ -5,6 +5,11 @@ import Foundation
 import WSurfVault
 
 extension CredentialSettingsModel {
+    /// The selected manager's own list, never a copy: a non-fatal note that never changes whether the vault opened.
+    var scratchCleanupWarnings: [URL] {
+        manager?.scratchCleanupWarnings ?? []
+    }
+
     /// Reads the vault listing again and changes nothing else. A vault's name is sealed in its head and listed only while that
     /// vault is unlocked, so the list changes whenever one unlocks or locks. A read that fails, is cancelled or straddles a lock or
     /// an unlock of any of the profile's vaults is dropped: the lock or unlock that changed the state reads again, so a name read before a lock is
