@@ -73,6 +73,23 @@ nonisolated struct MacSettingChannel: Codable {
         "mac-prefs-" + category.rawValue + (cloudProfileID.map { "-" + $0.uuidString } ?? "")
     }
 
+    /// Older checkpoints can hold a reset for a provider that is still present privately on this Mac.
+    mutating func preserveLocalOnlyValue(for key: String) -> Data? {
+        guard var record = records[key] else { return observed[key] }
+        let retained = observed[key] ?? record.inFlight?.value ?? record.server?.value
+        if let queued = record.pending ?? record.inFlight, queued.value == nil {
+            // A reset already handed to the engine can still complete after recovery.
+            if let inFlight = record.inFlight, inFlight.value == nil, let retained {
+                record.pending = MacSettingPayload(key: key, value: retained)
+            } else {
+                record.pending = nil
+            }
+            record.conflict = false
+            records[key] = record
+        }
+        return retained
+    }
+
     /// An absent value is a reset only after this Mac has actually observed the setting.
     mutating func collect(_ values: [String: Data]) {
         for key in Set(values.keys).union(observed.keys) where values[key] != observed[key] {

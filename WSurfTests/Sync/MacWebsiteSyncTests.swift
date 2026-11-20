@@ -117,6 +117,59 @@ struct MacWebsiteSyncTests {
         #expect(air.catalog.provider(id: shared.id) == nil)
     }
 
+    @Test(arguments: [true, false], [true, false])
+    func anOlderQueuedProviderResetCannotDeleteAPrivateEditOnUpgrade(knewServerValue: Bool, wasSending: Bool) async throws {
+        let profile = Profile.original(), root = URL.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let studio = try MacSettingsFixture(profile: profile, folder: root.appending(path: "studio"))
+        let air = try MacSettingsFixture(profile: profile, folder: root.appending(path: "air"))
+        defer { studio.cleanup(); air.cleanup() }
+        let file = studio.folder.appending(path: "settings")
+        let cloud = FakeSyncCloud()
+        var provider = ProviderCatalog.newCustom()
+        provider.name = "Shared"
+        provider.baseURL = URL(string: "https://ai.example.test/v1")
+        air.catalog.save(provider)
+        let peer = CloudSettingsSync(stateFile: air.folder.appending(path: "settings"), profiles: [profile], adapter: air.adapter)
+        let peerEngine = FakeSyncEngine(cloud: cloud, delegate: peer)
+        peer.attach(peerEngine)
+        try await peer.enable(.providers, localProfileID: nil, cloudProfileID: nil)
+        try await peerEngine.sendNow()
+        let key = "custom|" + provider.id
+        let original = try #require(air.adapter.values(for: .providers, profileID: nil)[key])
+
+        // An older offline capture saw the provider disappear from its list of shareable definitions.
+        var channel = try #require(peer.channel(.providers, localProfileID: nil))
+        if !knewServerValue {
+            channel.records[key]?.server = nil
+            channel.records[key]?.fields = nil
+        }
+        channel.collect([:])
+        let reset = MacSettingPayload(key: key, value: nil)
+        #expect(channel.records[key]?.pending == reset)
+        if wasSending {
+            channel.records[key]?.inFlight = reset
+        }
+        var checkpoint = peer.state
+        checkpoint.channels[channel.zone] = channel
+        try JSONEncoder().encode(checkpoint).write(to: file, options: .atomic)
+        provider.baseURL = URL(string: "https://ai.example.test/v1?tenant=private-fixture")
+        studio.catalog.save(provider)
+        let reopened = try MacSettingsFixture(profile: profile, folder: studio.folder, makeDefaults: { _ in UserDefaults(suiteName: studio.suite) })
+        defer { reopened.cleanup() }
+        let sync = CloudSettingsSync(stateFile: file, profiles: [profile], adapter: reopened.adapter)
+        let engine = FakeSyncEngine(cloud: cloud, delegate: sync)
+        sync.attach(engine)
+        try await sync.enable(.providers, localProfileID: nil, cloudProfileID: nil)
+        try await engine.sendNow()
+        try await peerEngine.fetchNow()
+        let repaired = try #require(sync.channel(.providers, localProfileID: nil)?.records[key])
+        #expect(repaired.pending == nil && !repaired.conflict)
+        #expect(repaired.server?.value == original)
+        #expect(air.catalog.provider(id: provider.id)?.baseURL?.absoluteString == "https://ai.example.test/v1")
+        #expect(reopened.catalog.provider(id: provider.id)?.baseURL == provider.baseURL)
+    }
+
     @Test func checkpointAndZoomReopenTogetherWithoutRepublishingTheOldValue() async throws {
         let profile = Profile.original(), root = URL.temporaryDirectory.appending(path: UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }

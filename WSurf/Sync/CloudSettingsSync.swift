@@ -46,7 +46,7 @@ final class CloudSettingsSync: SyncZoneHandler {
     }
 
     typealias Read = @MainActor (MacSettingsCategory, UUID?) throws -> [String: Data]
-    typealias Snapshot = @MainActor (MacSettingChannel) throws -> [String: Data]
+    typealias Snapshot = @MainActor (inout MacSettingChannel) throws -> [String: Data]
     typealias Apply = @MainActor (Data?, String, MacSettingsCategory, UUID?) throws -> Void
 
     private(set) var state: State
@@ -88,7 +88,7 @@ final class CloudSettingsSync: SyncZoneHandler {
     convenience init(stateFile: URL, profiles: [Profile], adapter: MacSettingsSyncAdapter? = nil) {
         let adapter = adapter ?? MacSettingsSyncAdapter(profiles: profiles)
         self.init(
-            stateFile: stateFile, snapshot: { try adapter.values(for: $0.category, profileID: $0.localProfileID, preserving: $0.observed) },
+            stateFile: stateFile, snapshot: adapter.snapshot,
             apply: adapter.apply(_:key:for:profileID:),
             discardWebsiteApprovals: adapter.discardWebsiteApprovals(profileID:)
         )
@@ -213,7 +213,8 @@ final class CloudSettingsSync: SyncZoneHandler {
                 }
             }
             // Observe the starting values before any account or baseline read can suspend.
-            proposed.collect(try snapshot(proposed))
+            let values = try snapshot(&proposed)
+            proposed.collect(values)
             updateChannel(proposed)
             do {
                 try save()
@@ -339,7 +340,8 @@ final class CloudSettingsSync: SyncZoneHandler {
     /// Fetched records and deletions must see edits made since the last notification.
     func collectLocalChanges(in zone: String) throws {
         guard var channel = state.channels[zone] else { return }
-        channel.collect(try snapshot(channel))
+        let values = try snapshot(&channel)
+        channel.collect(values)
         updateChannel(channel)
     }
 
@@ -372,7 +374,8 @@ final class CloudSettingsSync: SyncZoneHandler {
         let profile = channel.localProfileID
         try channel.resolve(key, useCloud: useCloud) { try apply($0, $1, category, profile) }
         if useCloud {
-            channel.observed[key] = try snapshot(channel)[key]
+            let values = try snapshot(&channel)
+            channel.observed[key] = values[key]
         }
         state.channels[zone] = channel
         try save()

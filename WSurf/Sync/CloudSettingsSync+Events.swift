@@ -60,7 +60,8 @@ extension CloudSettingsSync {
         }
         // Some values, such as a remote camera grant, await local approval in the store.
         if before != channel.records[payload.key]?.server, channel.records[payload.key]?.pending == nil {
-            channel.observed[payload.key] = try snapshot(channel)[payload.key]
+            let values = try snapshot(&channel)
+            channel.observed[payload.key] = values[payload.key]
         }
         names[record.id] = payload.key
         updateChannel(channel)
@@ -76,7 +77,8 @@ extension CloudSettingsSync {
             try apply($0, $1, category, profile)
         }
         if channel.records[key]?.pending == nil {
-            channel.observed[key] = try snapshot(channel)[key]
+            let values = try snapshot(&channel)
+            channel.observed[key] = values[key]
         }
         updateChannel(channel)
     }

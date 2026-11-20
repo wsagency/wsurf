@@ -89,11 +89,20 @@ final class MacSettingsSyncAdapter {
         )
     }
 
-    func values(for category: MacSettingsCategory, profileID: UUID?) throws -> [String: Data] {
-        try values(for: category, profileID: profileID, preserving: [:])
+    func snapshot(_ channel: inout MacSettingChannel) throws -> [String: Data] {
+        var values = try values(for: channel.category, profileID: channel.localProfileID)
+        if channel.category == .providers, channel.localProfileID == nil {
+            for provider in catalog.custom {
+                let key = "custom|" + provider.id
+                if values[key] == nil {
+                    values[key] = channel.preserveLocalOnlyValue(for: key)
+                }
+            }
+        }
+        return values
     }
 
-    func values(for category: MacSettingsCategory, profileID: UUID?, preserving observed: [String: Data]) throws -> [String: Data] {
+    func values(for category: MacSettingsCategory, profileID: UUID?) throws -> [String: Data] {
         switch category {
         case .websiteSettings:
             return try websiteValues(scoped(profileID))
@@ -101,12 +110,8 @@ final class MacSettingsSyncAdapter {
             try flush(catalog.defaults)
             var result: [String: Data] = [:]
             for provider in catalog.custom {
-                let key = "custom|" + provider.id
-                // A locally edited endpoint can be private. Only removing the provider should publish a reset.
                 if let definition = Definition(provider) {
-                    result[key] = try Self.encode(definition)
-                } else {
-                    result[key] = observed[key]
+                    result["custom|" + provider.id] = try Self.encode(definition)
                 }
             }
             return result
