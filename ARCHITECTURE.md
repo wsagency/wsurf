@@ -384,11 +384,17 @@ Each Mac keeps its own selected Space and focused tab.
 grants require confirmation on the receiving Mac. Saved provider keys have a separate opt-in through iCloud Keychain.
 A Mac must approve the provider endpoint before using a shared key.
 
-`VaultSync` uses a private zone per shared vault, with a passkey-wrapped vault key, a sealed name and a sealed record
-for each entry. Large entries and attached files travel as authenticated encrypted chunks. Each Mac applies entries to
-its own store while unlocked, rewraps file keys locally and keeps its History and Trash. Sync keeps its merge state in
-`Credentials.sync`. Newer unreadable entries wait for a compatible version. Large sets of deletions wait for the owner’s
-confirmation. Turning on vault discovery and choosing the vaults to sync are separate actions.
+`VaultSync` uses one private zone per vault, `v-<profile UUID>-<vault UUID>`, with one `Vault` record holding the
+passkey wrappers, sealed name and profile card. An `Item` record carries each entry. AES-256-GCM protects the entry
+under a sync key that HKDF derives from the vault key. Large entries and attached files travel as authenticated
+encrypted chunks. Each Mac rewraps attachment keys for its own store and preserves files referenced by entries,
+History and Trash.
+
+While unlocked, each Mac merges incoming changes part by part against the sealed base in `Credentials.sync` and
+commits them through the local store. A pending merge holds back writes to that entry. An entry from a newer format
+waits for a compatible version. Restoring an older local store pauses its sync. Large sets of deletions wait for the
+owner’s confirmation. A removed item keeps its keyed import trace so another Mac can recognize a later import of
+the same entry. Turning on vault discovery and choosing individual vaults to sync are separate actions.
 
 ## Tests
 

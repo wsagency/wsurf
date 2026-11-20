@@ -28,11 +28,12 @@ merged into `main` through a PR and wait for CI to pass on that commit. Never
 deploy a feature branch or an uncommitted working tree. Release tags must point
 to commits on `main`. See [Releasing](RELEASING.md) for the existing release and
 preview gates.
-Every candidate build increments `CURRENT_PROJECT_VERSION` and, while the version
-is 0.x, the patch number with it: build 123 is `0.1.123`. It adds its own
-`## <version> (build <n>) — <date>` section to `CHANGELOG.md`;
-`Tools/check-changelog.sh` runs in the candidate gate and fails unless the patch
-number equals the build number. Every candidate build also
+Every candidate increments `CURRENT_PROJECT_VERSION`. Starting with 0.2.0,
+a minor version starts at patch zero and the build number continues across
+versions. For example, 0.2.0 is build 32, following 0.1.31 build 31.
+Add a `## <version> (build <n>) — <date>` section at the top of `CHANGELOG.md`.
+`Tools/check-changelog.sh` verifies that the section matches the Xcode settings
+and the build number increased. Every candidate also
 passes `WSURF_CANDIDATE=<label>` (for now the version, for example `0.1.4`) and
 `WSURF_COMMIT=$(git rev-parse --short=8 HEAD)` to `xcodebuild`, so its About panel
 and Settings › About show which candidate it is. Without them the build is a `dev`

@@ -5,6 +5,13 @@ This file preserves release notes inherited from the upstream
 describe upstream Linen releases, not releases published by WSurf. New WSurf
 release notes will be added above this provenance record.
 
+## 0.2.0 (build 32) — 2026-11-20
+
+- Settings → Sync lets you choose which Spaces, pins and Favorites to share through iCloud. Join a shared Space on another Mac to follow tab opens, moves, reordering and closes. Each Mac keeps its local Spaces and current selection.
+- The Personal profile can also list tabs open on your other devices in the sidebar. Open one to make a local copy.
+- Choose which credential vaults to share. Passwords, passkeys, verification codes, secure notes and file attachments sync in encrypted form. Use the vault’s unlock passkey to add it to another Mac.
+- Website settings and AI providers have separate switches. Review sensitive website permissions on each Mac. To share a saved provider key through iCloud Keychain, select the key and approve the provider endpoint on the receiving Mac.
+
 ## 0.1.31 (build 31) — 2026-11-20
 
 - When signing in to Google, click a filled username to see the saved logins for that site again. Search is available as soon as there are two choices. On the password step, WSurf puts the account shown by Google first and asks you to switch accounts on the website if you choose a different one.
