@@ -3,6 +3,7 @@
 // Modified for WSurf by wsagency in 2026; based on Linen by Kavoye.
 // Linen portions: Apache-2.0; WSurf modifications: BUSL-1.1. See NOTICE.
 
+import CryptoKit
 import Foundation
 import Security
 
@@ -45,25 +46,52 @@ nonisolated enum CredentialStore {
         }
     }
 
+    /// Exact, synchronizable Data Protection items in a namespace separate from all existing local credentials.
+    static var synchronizableProviderKeys: Storage {
+        @Sendable func query(_ name: String) -> [String: Any] {
+            [
+                kSecClass as String: kSecClassGenericPassword,
+                kSecUseDataProtectionKeychain as String: true,
+                kSecAttrSynchronizable as String: true,
+                kSecAttrService as String: service + ".shared-provider-key.v1",
+                kSecAttrAccount as String: name,
+            ]
+        }
+        return Storage(
+            read: { name in
+                guard case .found(let data) = lookup(query(name)) else { return nil }
+                return nonemptyString(data)
+            },
+            write: { value, name in
+                let match = query(name), data = Data(value.utf8)
+                let status = SecItemUpdate(match as CFDictionary, [kSecValueData as String: data] as CFDictionary)
+                guard status == errSecItemNotFound else { return status }
+                var item = match
+                item[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlocked
+                item[kSecValueData as String] = data
+                return SecItemAdd(item as CFDictionary, nil)
+            },
+            delete: { SecItemDelete(query($0) as CFDictionary) }
+        )
+    }
+
     enum Source: Equatable, Sendable {
         case keychain
         case environment(String)
         case none
     }
 
-    private static func account(for provider: Provider) -> String {
-        "provider:\(provider.id)"
-    }
-
     static func key(for provider: Provider) -> String? {
         guard provider.needsKey else { return nil }
-        if let stored = read(account: account(for: provider)), !stored.isEmpty {
-            return stored
+        if let saved = ProviderKeySharing.shared.savedKey(for: provider) {
+            return saved
         }
-        guard let name = provider.environmentKey,
-              let value = ProcessInfo.processInfo.environment[name],
-              !value.isEmpty
-        else { return nil }
+        return environmentValue(for: provider)
+    }
+
+    private static func environmentValue(for provider: Provider) -> String? {
+        guard let name = provider.environmentKey, ProviderKeySharing.shared.allowsEnvironment(for: provider),
+              let value = ProcessInfo.processInfo.environment[name], !value.isEmpty else { return nil }
         return value
     }
 
@@ -73,12 +101,10 @@ nonisolated enum CredentialStore {
 
     static func source(for provider: Provider) -> Source {
         guard provider.needsKey else { return .none }
-        if let stored = read(account: account(for: provider)), !stored.isEmpty {
+        if ProviderKeySharing.shared.savedKey(for: provider) != nil {
             return .keychain
         }
-        if let name = provider.environmentKey,
-           let value = ProcessInfo.processInfo.environment[name],
-           !value.isEmpty {
+        if let name = provider.environmentKey, environmentValue(for: provider) != nil {
             return .environment(name)
         }
         return .none
@@ -90,9 +116,16 @@ nonisolated enum CredentialStore {
     }
 
     @discardableResult
-    static func save(_ key: String, for provider: Provider, storage: Storage = .keychain) -> String? {
+    static func save(_ key: String, for provider: Provider) -> String? {
+        ProviderKeySharing.shared.saveLocal(key, for: provider)
+    }
+
+    static func save(_ key: String, for provider: Provider, storage: Storage) -> String? {
+        store(key, at: ProviderKeySharing.localAddress(provider), in: storage)
+    }
+
+    fileprivate static func store(_ key: String, at account: String, in storage: Storage) -> String? {
         let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
-        let account = account(for: provider)
         if trimmed.isEmpty {
             let status = storage.delete(account)
             guard status == errSecSuccess || status == errSecItemNotFound else { return errorMessage(status) }
@@ -104,8 +137,7 @@ nonisolated enum CredentialStore {
 
     @discardableResult
     static func delete(for provider: Provider) -> String? {
-        let status = delete(account: account(for: provider))
-        return status == errSecSuccess ? nil : errorMessage(status)
+        ProviderKeySharing.shared.saveLocal("", for: provider)
     }
 
     static func mcpAuthorization(providerID: String, serverID: UUID, storage: Storage = .keychain) -> String? {
@@ -290,5 +322,340 @@ nonisolated enum CredentialStore {
     private static func errorMessage(_ status: OSStatus) -> String {
         SecCopyErrorMessageString(status, nil) as String?
             ?? String(localized: "The Keychain refused to store the key (error \(status)).")
+    }
+}
+
+/// The transport supplies a verified account identity. Neither local browsing nor a settings snapshot opens the shared Keychain.
+nonisolated final class ProviderKeySharing: @unchecked Sendable {
+    static let shared: ProviderKeySharing = {
+        #if DEBUG
+        let defaults = StageMode.defaults
+        let available = !StageMode.isActive && !AppDatabase.isRunningTests
+        #else
+        let defaults = UserDefaults.standard
+        let available = !AppDatabase.isRunningTests
+        #endif
+        return ProviderKeySharing(defaults: defaults, local: .keychain, cloud: CredentialStore.synchronizableProviderKeys, available: available)
+    }()
+
+    enum Failure: LocalizedError {
+        case unavailable, noLocalKey, noSharedKey, refused
+        var errorDescription: String? {
+            switch self {
+            case .unavailable:
+                String(localized: "Enable key sharing for this Apple Account first.")
+            case .noLocalKey:
+                String(localized: "There is no saved key for this endpoint on this Mac.")
+            case .noSharedKey:
+                String(localized: "A shared key for this endpoint is unavailable.")
+            case .refused:
+                String(localized: "The Keychain could not update the saved key.")
+            }
+        }
+    }
+
+    private let lock = NSLock()
+    private let defaults: UserDefaults
+    private let local: CredentialStore.Storage
+    private let cloud: CredentialStore.Storage
+    private var verifiedAccount: String?
+    private let available: Bool
+
+    private enum Pref {
+        static let account = "sync.providerKeys.lastAccount"
+        static let epoch = "sync.providerKeys.consentID"
+        static let enabled = "sync.providerKeys.enabled"
+        static let approved = "sync.providerKeys.approved."
+        static let trusted = "sync.providerKeys.localEndpoint."
+        static let blocked = "sync.providerKeys.unapproved."
+        static let legacy = "sync.providerKeys.legacy."
+        static let canonical = "sync.providerKeys.savedAtEndpoint."
+    }
+
+    init(defaults: UserDefaults, local: CredentialStore.Storage, cloud: CredentialStore.Storage, available: Bool = true) {
+        self.available = available
+        self.defaults = defaults
+        self.local = local
+        self.cloud = cloud
+    }
+
+    static func validEndpoint(_ url: URL?) -> URL? {
+        guard let url, let parts = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              let scheme = parts.scheme?.lowercased(), let host = parts.host, !host.isEmpty,
+              parts.user == nil, parts.password == nil, parts.query == nil, parts.fragment == nil,
+              scheme == "https" || (scheme == "http" && IntelligenceViewModel.isLoopback(url)),
+              url.absoluteString.utf8.count <= 4096 else { return nil }
+        return url
+    }
+
+    private static func digest(_ value: String) -> String {
+        SHA256.hash(data: Data(value.utf8)).map { String(format: "%02x", $0) }.joined()
+    }
+
+    static func localAddress(_ provider: Provider) -> String {
+        if provider.isCustom || provider.id.hasPrefix("custom.") {
+            return "provider-endpoint:" + fingerprint(provider)
+        }
+        return "provider:" + provider.id
+    }
+
+    static func fingerprint(_ provider: Provider) -> String {
+        digest(provider.id + "\u{0}" + (provider.baseURL?.absoluteString ?? ""))
+    }
+
+    /// A remote catalog addition cannot claim an old ID-only password left by a previous installation of that provider.
+    func catalogChanged(from old: Provider?, to new: Provider?, received: Bool) {
+        guard let id = old?.id ?? new?.id, old?.baseURL != new?.baseURL else { return }
+        lock.withLock {
+            if defaults.string(forKey: Pref.legacy + id) == nil {
+                if let old {
+                    defaults.set(Self.fingerprint(old), forKey: Pref.legacy + id)
+                } else if received {
+                    defaults.set("", forKey: Pref.legacy + id)
+                }
+            }
+            let previous = old.map(Self.fingerprint)
+            let blocked = defaults.string(forKey: Pref.blocked + id)
+            let trusted = defaults.string(forKey: Pref.trusted + id) ?? (previous == blocked ? nil : previous)
+            if let trusted {
+                defaults.set(trusted, forKey: Pref.trusted + id)
+            }
+            if let new {
+                let endpoint = Self.fingerprint(new)
+                if (received || trusted != nil) && trusted != endpoint {
+                    defaults.set(endpoint, forKey: Pref.blocked + id)
+                    defaults.removeObject(forKey: Pref.approved + endpoint)
+                } else {
+                    defaults.set(endpoint, forKey: Pref.trusted + id)
+                    defaults.removeObject(forKey: Pref.blocked + id)
+                }
+            }
+        }
+    }
+
+    /// Also scopes outstanding website approvals. Re-entering the same account after sign-out gets a fresh consent ID.
+    var accountContext: String? {
+        lock.withLock { verifiedAccount == nil ? nil : defaults.string(forKey: Pref.epoch) }
+    }
+
+    @MainActor func setAccountIdentifier(_ id: String?) {
+        let changed = lock.withLock {
+            let next = available ? id.flatMap { $0.isEmpty ? nil : Self.digest($0) } : nil
+            let previous = defaults.string(forKey: Pref.account)
+            let changed = verifiedAccount != next || previous != next
+            if previous != next || next == nil {
+                defaults.removeObject(forKey: Pref.enabled)
+                defaults.set(next, forKey: Pref.account)
+                defaults.set(next.map { _ in UUID().uuidString }, forKey: Pref.epoch)
+            }
+            verifiedAccount = next
+            return changed
+        }
+        if changed {
+            announceConsentChange()
+        }
+    }
+
+    /// A temporary verification failure blocks shared reads and writes while preserving consent for the same account.
+    @MainActor func suspendAccountVerification() {
+        let changed = lock.withLock {
+            let wasVerified = verifiedAccount != nil
+            verifiedAccount = nil
+            return wasVerified
+        }
+        if changed {
+            announceConsentChange()
+        }
+    }
+
+    @MainActor private func announceConsentChange() {
+        NotificationCenter.default.post(name: .wsurfProviderKeyConsentDidChange, object: self)
+    }
+
+    var wantsSharing: Bool {
+        lock.withLock { defaults.bool(forKey: Pref.enabled) }
+    }
+
+    var isEnabled: Bool {
+        lock.withLock { enabled }
+    }
+
+    private var enabled: Bool {
+        verifiedAccount != nil && defaults.bool(forKey: Pref.enabled)
+    }
+
+    func setEnabled(_ enabled: Bool) throws {
+        try lock.withLock {
+            guard !enabled || verifiedAccount != nil else { throw Failure.unavailable }
+            defaults.set(enabled, forKey: Pref.enabled)
+        }
+    }
+
+    private func cloudAddress(_ provider: Provider) -> String? {
+        guard enabled, let verifiedAccount, provider.needsKey, Self.validEndpoint(provider.baseURL) != nil else { return nil }
+        return verifiedAccount + "." + Self.fingerprint(provider)
+    }
+
+    private func approved(_ provider: Provider) -> Bool {
+        guard let epoch = defaults.string(forKey: Pref.epoch) else { return false }
+        return defaults.string(forKey: Pref.approved + Self.fingerprint(provider)) == epoch
+    }
+
+    func participates(_ provider: Provider) -> Bool {
+        lock.withLock { cloudAddress(provider) != nil && approved(provider) }
+    }
+
+    private func legacyAllowed(_ provider: Provider) -> Bool {
+        guard let bound = defaults.string(forKey: Pref.legacy + provider.id) else { return true }
+        return bound == Self.fingerprint(provider)
+    }
+
+    func needsEndpointApproval(_ provider: Provider) -> Bool {
+        lock.withLock { endpointBlocked(provider) }
+    }
+
+    private func endpointBlocked(_ provider: Provider) -> Bool {
+        defaults.string(forKey: Pref.blocked + provider.id) == Self.fingerprint(provider)
+    }
+
+    func approveLocalEndpoint(_ provider: Provider) throws {
+        try lock.withLock {
+            guard endpointBlocked(provider), validLocalTarget(provider) else { throw Failure.unavailable }
+            if let previous = defaults.string(forKey: Pref.trusted + provider.id),
+               !defaults.bool(forKey: Pref.canonical + Self.fingerprint(provider)), local.read(Self.localAddress(provider)) == nil {
+                let old = local.read("provider-endpoint:" + previous) ?? legacyKey(id: provider.id, endpoint: previous)
+                if let old, writeLocal(old, for: provider) != errSecSuccess {
+                    throw Failure.refused
+                }
+            }
+            defaults.set(Self.fingerprint(provider), forKey: Pref.trusted + provider.id)
+            defaults.removeObject(forKey: Pref.blocked + provider.id)
+        }
+    }
+
+    func allowsEnvironment(for provider: Provider) -> Bool {
+        lock.withLock { validLocalTarget(provider) && !endpointBlocked(provider) && legacyAllowed(provider) }
+    }
+
+    private func validLocalTarget(_ provider: Provider) -> Bool {
+        guard provider.needsKey else { return false }
+        if let builtin = ProviderCatalog.builtIn.first(where: { $0.id == provider.id }) {
+            return provider.baseURL == builtin.baseURL
+        }
+        return true
+    }
+
+    private func localValue(_ provider: Provider) -> String? {
+        guard validLocalTarget(provider) else { return nil }
+        if let value = local.read(Self.localAddress(provider)) {
+            return value
+        }
+        guard provider.isCustom else { return nil }
+        return legacyKey(id: provider.id, endpoint: Self.fingerprint(provider))
+    }
+
+    private func legacyKey(id: String, endpoint: String) -> String? {
+        let bound = defaults.string(forKey: Pref.legacy + id)
+        guard !defaults.bool(forKey: Pref.canonical + endpoint), bound == nil || bound == endpoint else { return nil }
+        return local.read("provider:" + id)
+    }
+
+    private func writeLocal(_ value: String, for provider: Provider) -> OSStatus {
+        let status = local.write(value, Self.localAddress(provider))
+        if status == errSecSuccess, provider.isCustom {
+            defaults.set(true, forKey: Pref.canonical + Self.fingerprint(provider))
+        }
+        return status
+    }
+
+    func savedKey(for provider: Provider) -> String? {
+        lock.withLock {
+            guard validLocalTarget(provider), !endpointBlocked(provider) else { return nil }
+            if let name = cloudAddress(provider), approved(provider), let value = cloud.read(name) {
+                if local.read(Self.localAddress(provider)) != value {
+                    _ = writeLocal(value, for: provider)
+                }
+                return value
+            }
+            return localValue(provider)
+        }
+    }
+
+    func saveLocal(_ key: String, for provider: Provider) -> String? {
+        lock.withLock {
+            let value = key.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard validLocalTarget(provider) || (provider.isCustom && value.isEmpty) else { return Failure.refused.localizedDescription }
+            let address = Self.localAddress(provider)
+            if let error = CredentialStore.store(value, at: address, in: local) {
+                return error
+            }
+            if provider.isCustom {
+                defaults.set(true, forKey: Pref.canonical + Self.fingerprint(provider))
+            }
+            if !value.isEmpty {
+                let target = Self.fingerprint(provider)
+                let blocked = defaults.string(forKey: Pref.blocked + provider.id)
+                if blocked == target || (blocked == nil && defaults.string(forKey: Pref.trusted + provider.id) == nil) {
+                    defaults.set(target, forKey: Pref.trusted + provider.id)
+                    defaults.removeObject(forKey: Pref.blocked + provider.id)
+                }
+            }
+            if value.isEmpty {
+                if provider.isCustom, legacyAllowed(provider) {
+                    if let error = CredentialStore.store("", at: "provider:" + provider.id, in: local) {
+                        return error
+                    }
+                }
+                clearApproval(for: provider)
+            } else if approved(provider) {
+                // A local edit made while paused or unverified must survive the next shared read.
+                guard let name = cloudAddress(provider) else {
+                    defaults.removeObject(forKey: Pref.approved + Self.fingerprint(provider))
+                    return nil
+                }
+                if cloud.write(value, name) != errSecSuccess {
+                    defaults.removeObject(forKey: Pref.approved + Self.fingerprint(provider))
+                    return Failure.refused.localizedDescription
+                }
+            }
+            return nil
+        }
+    }
+
+    func shareLocal(_ provider: Provider) throws {
+        try lock.withLock {
+            guard let name = cloudAddress(provider), validLocalTarget(provider), !endpointBlocked(provider) else { throw Failure.unavailable }
+            guard let value = localValue(provider) else { throw Failure.noLocalKey }
+            guard cloud.write(value, name) == errSecSuccess else { throw Failure.refused }
+            defaults.set(defaults.string(forKey: Pref.epoch), forKey: Pref.approved + Self.fingerprint(provider))
+        }
+    }
+
+    func useCloud(_ provider: Provider) throws {
+        try lock.withLock {
+            guard let name = cloudAddress(provider), validLocalTarget(provider), !endpointBlocked(provider) else { throw Failure.unavailable }
+            guard let value = cloud.read(name) else { throw Failure.noSharedKey }
+            guard writeLocal(value, for: provider) == errSecSuccess else { throw Failure.refused }
+            defaults.set(defaults.string(forKey: Pref.epoch), forKey: Pref.approved + Self.fingerprint(provider))
+        }
+    }
+
+    private func clearApproval(for provider: Provider) {
+        if approved(provider) {
+            defaults.removeObject(forKey: Pref.approved + Self.fingerprint(provider))
+        }
+    }
+
+    func pause(_ provider: Provider) {
+        lock.withLock { clearApproval(for: provider) }
+    }
+
+    func removeCloudCopy(_ provider: Provider) throws {
+        try lock.withLock {
+            guard let name = cloudAddress(provider) else { throw Failure.unavailable }
+            let status = cloud.delete(name)
+            guard status == errSecSuccess || status == errSecItemNotFound else { throw Failure.refused }
+            clearApproval(for: provider)
+        }
     }
 }

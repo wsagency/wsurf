@@ -7,9 +7,10 @@ import Foundation
 
 @MainActor
 final class PageZoomStore {
-    private var levels: [String: Double]
+    private(set) var levels: [String: Double]
     private let file: URL
     private let persists: Bool
+    private var saveTask: Task<Void, Never>?
 
     init(file: URL, persists: Bool = true) {
         self.file = file
@@ -24,17 +25,26 @@ final class PageZoomStore {
     }
 
     func set(_ zoom: CGFloat, for host: String, defaultZoom: CGFloat) {
-        guard !host.isEmpty else { return }
-        if abs(zoom - defaultZoom) < 0.005 {
-            guard levels.removeValue(forKey: host) != nil else { return }
-        } else {
-            let value = Double(zoom)
-            guard levels[host] != value else { return }
-            levels[host] = value
-        }
-        guard persists else { return }
-        let snapshot = levels
-        Task { await JSONFileStore.shared.write(snapshot, to: file) }
+        setOverride(abs(zoom - defaultZoom) < 0.005 ? nil : Double(zoom), for: host)
     }
 
+    func setOverride(_ value: Double?, for host: String) {
+        guard !host.isEmpty, levels[host] != value else { return }
+        levels[host] = value
+        guard persists else { return }
+        MacSettingsChange.post(self)
+        let snapshot = levels
+        let previous = saveTask
+        previous?.cancel()
+        let file = self.file
+        saveTask = Task {
+            await previous?.value
+            guard !Task.isCancelled else { return }
+            await JSONFileStore.shared.write(snapshot, to: file)
+        }
+    }
+
+    func waitForPendingSave() async {
+        await saveTask?.value
+    }
 }

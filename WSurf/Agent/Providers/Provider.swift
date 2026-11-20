@@ -167,15 +167,62 @@ nonisolated struct Provider: Identifiable, Hashable, Codable, Sendable {
 @MainActor
 @Observable
 final class ProviderCatalog {
-    static let shared = ProviderCatalog()
+    #if DEBUG
+    static let shared = ProviderCatalog(defaults: StageMode.defaults)
+    #else
+    static let shared = ProviderCatalog(defaults: .standard)
+    #endif
 
     private static let customKey = "llm.customProviders"
+    private static let retiredKey = "llm.retiredProviderIDs"
+    private static let oldEndpointsKey = "llm.retiredKeyEndpoints"
+    private var oldEndpoints: [String: OldEndpoint]
+
+    private struct OldEndpoint: Codable {
+        let id: String
+        let name: String
+        let url: URL
+
+        var provider: Provider {
+            var result = ProviderCatalog.newCustom(id: id)
+            result.name = name
+            result.baseURL = url
+            return result
+        }
+    }
+
+    /// Older profiles may still have model choices for IDs that disappeared from the shared catalog.
+    var retiredIDs: [String] {
+        defaults.stringArray(forKey: Self.retiredKey) ?? []
+    }
+
+    struct KeyEndpoint: Identifiable {
+        let provider: Provider
+        let isRetired: Bool
+
+        var id: String {
+            ProviderKeySharing.fingerprint(provider)
+        }
+    }
+
+    var keyEndpoints: [KeyEndpoint] {
+        let active = all.filter { $0.needsKey && ProviderKeySharing.validEndpoint($0.baseURL) != nil }.map { KeyEndpoint(provider: $0, isRetired: false) }
+        let current = Set(active.map(\.id))
+        let retired = oldEndpoints.filter { !current.contains($0.key) }.values.map { $0.provider }
+        return active + Self.alphabetized(retired).map { KeyEndpoint(provider: $0, isRetired: true) }
+    }
 
     private(set) var custom: [Provider]
     private(set) var all: [Provider]
 
-    private init() {
-        let custom = Self.loadCustom()
+    let keySharing: ProviderKeySharing
+    private let defaults: UserDefaults
+
+    init(defaults: UserDefaults = .standard, keySharing: ProviderKeySharing = .shared) {
+        self.defaults = defaults
+        self.keySharing = keySharing
+        oldEndpoints = defaults.data(forKey: Self.oldEndpointsKey).flatMap { try? JSONDecoder().decode([String: OldEndpoint].self, from: $0) } ?? [:]
+        let custom = Self.loadCustom(from: defaults)
         self.custom = custom
         all = Self.alphabetized(Self.builtIn + custom)
     }
@@ -184,11 +231,23 @@ final class ProviderCatalog {
         all.first { $0.id == id }
     }
 
+    func selection(for settings: LLMSettings) -> Provider {
+        let id = settings.providerID
+        if let current = provider(id: id) {
+            return current
+        }
+        guard id.hasPrefix("custom.") else { return Self.openAI }
+        // Its profile keeps the choice until the definition returns. Never substitute a different hosted endpoint.
+        var missing = Self.newCustom(id: id)
+        missing.name = oldEndpoints.values.first { $0.id == id }?.name ?? id
+        return missing
+    }
+
     // MARK: Custom providers
 
-    static func newCustom() -> Provider {
+    static func newCustom(id: String = "custom.\(UUID().uuidString.lowercased())") -> Provider {
         Provider(
-            id: "custom.\(UUID().uuidString.prefix(8).lowercased())",
+            id: id,
             name: "",
             blurb: String(localized: "OpenAI-compatible endpoint"),
             symbol: "point.3.connected.trianglepath.dotted",
@@ -200,8 +259,13 @@ final class ProviderCatalog {
         )
     }
 
-    func save(_ provider: Provider) {
-        guard provider.isCustom else { return }
+    func save(_ provider: Provider, received: Bool = false) {
+        guard provider.isCustom, !Self.builtIn.contains(where: { $0.id == provider.id }) else { return }
+        let old = self.provider(id: provider.id)
+        if let old, old.baseURL != provider.baseURL {
+            rememberKeyEndpoint(old)
+        }
+        keySharing.catalogChanged(from: old, to: provider, received: received)
         if let index = custom.firstIndex(where: { $0.id == provider.id }) {
             custom[index] = provider
         } else {
@@ -211,12 +275,28 @@ final class ProviderCatalog {
         persistCustom()
     }
 
-    func remove(_ provider: Provider) {
+    func remove(_ provider: Provider, received: Bool = false) {
         guard provider.isCustom else { return }
+        keySharing.catalogChanged(from: provider, to: nil, received: received)
+        rememberKeyEndpoint(provider)
+        if !retiredIDs.contains(provider.id) {
+            defaults.set(retiredIDs + [provider.id], forKey: Self.retiredKey)
+        }
         custom.removeAll { $0.id == provider.id }
-        CredentialStore.delete(for: provider)
+        if !received {
+            _ = keySharing.saveLocal("", for: provider)
+        }
         refreshAll()
         persistCustom()
+    }
+
+    /// Endpoint history is local metadata. Managing a previously shared key must survive removal of its catalog definition.
+    private func rememberKeyEndpoint(_ provider: Provider) {
+        guard provider.needsKey, let endpoint = ProviderKeySharing.validEndpoint(provider.baseURL) else { return }
+        oldEndpoints[ProviderKeySharing.fingerprint(provider)] = OldEndpoint(id: provider.id, name: provider.name, url: endpoint)
+        if let data = try? JSONEncoder().encode(oldEndpoints) {
+            defaults.set(data, forKey: Self.oldEndpointsKey)
+        }
     }
 
     private func refreshAll() {
@@ -232,11 +312,12 @@ final class ProviderCatalog {
 
     private func persistCustom() {
         guard let data = try? JSONEncoder().encode(custom) else { return }
-        UserDefaults.standard.set(data, forKey: Self.customKey)
+        defaults.set(data, forKey: Self.customKey)
+        MacSettingsChange.post(self)
     }
 
-    private static func loadCustom() -> [Provider] {
-        guard let data = UserDefaults.standard.data(forKey: customKey),
+    private static func loadCustom(from defaults: UserDefaults) -> [Provider] {
+        guard let data = defaults.data(forKey: customKey),
               let elements = try? JSONSerialization.jsonObject(with: data) as? [Any]
         else { return [] }
         return elements.compactMap { element in
@@ -257,7 +338,7 @@ final class ProfileProviderCatalog: ProviderCatalogProtocol {
         ProviderCatalog.shared.all
     }
     var selected: Provider {
-        provider(id: settings.providerID) ?? ProviderCatalog.openAI
+        ProviderCatalog.shared.selection(for: settings)
     }
 
     func provider(id: String) -> Provider? {
@@ -476,30 +557,68 @@ nonisolated final class LLMSettings: @unchecked Sendable {
     private static let providerKey = "llm.provider"
     private static let reasoningKey = "llm.reasoningEffort"
 
-    private static func modelKey(for provider: Provider) -> String {
-        "llm.model.\(provider.id)"
+    private static func modelKey(_ id: String) -> String {
+        "llm.model.\(id)"
     }
 
-    private static func reasoningKey(for provider: Provider) -> String {
-        "llm.reasoningEffort.\(provider.id)"
+    private static func reasoningKey(_ id: String) -> String {
+        "llm.reasoningEffort.\(id)"
+    }
+
+    private static let configuredIDsKey = "llm.configuredProviderIDs"
+    private static let indexLock = NSLock()
+
+    /// Keeps explicit settings addressable even while their custom definition is absent.
+    private func rememberProviderID(_ id: String) {
+        guard id.hasPrefix("custom.") else { return }
+        Self.indexLock.withLock {
+            let previous = configuredIDs
+            if !previous.contains(id) {
+                defaults.set(previous + [id], forKey: Self.configuredIDsKey)
+            }
+        }
+    }
+
+    var configuredIDs: [String] {
+        defaults.stringArray(forKey: Self.configuredIDsKey) ?? []
+    }
+
+    var explicitProviderID: String? {
+        get { defaults.string(forKey: Self.providerKey) }
+        set { setExplicit(newValue, for: Self.providerKey) }
     }
 
     var providerID: String {
-        get { defaults.string(forKey: Self.providerKey) ?? ProviderCatalog.openAI.id }
-        set { defaults.set(newValue, forKey: Self.providerKey) }
+        get { explicitProviderID ?? ProviderCatalog.openAI.id }
+        set { explicitProviderID = newValue }
+    }
+
+    private func setExplicit(_ value: String?, for key: String) {
+        guard defaults.string(forKey: key) != value else { return }
+        defaults.set(value, forKey: key)
+        if !(defaults is InMemoryUserDefaults) {
+            MacSettingsChange.post(self)
+        }
+    }
+
+    func explicitModel(_ id: String) -> String? {
+        defaults.string(forKey: Self.modelKey(id)).flatMap { $0.isEmpty ? nil : $0 }
+    }
+
+    func setExplicitModel(_ model: String?, for id: String) {
+        if model != nil {
+            rememberProviderID(id)
+        }
+        setExplicit(model, for: Self.modelKey(id))
     }
 
     func model(for provider: Provider) -> String {
-        let stored = defaults.string(forKey: Self.modelKey(for: provider))
-        if let stored, !stored.isEmpty {
-            return stored
-        }
-        return provider.defaultModel
+        explicitModel(provider.id) ?? provider.defaultModel
     }
 
     func setModel(_ model: String, for provider: Provider) {
         let trimmed = model.trimmingCharacters(in: .whitespacesAndNewlines)
-        defaults.set(trimmed, forKey: Self.modelKey(for: provider))
+        setExplicitModel(trimmed.isEmpty ? nil : trimmed, for: provider.id)
     }
 
     enum ReasoningEffort: String, CaseIterable, Identifiable {
@@ -554,22 +673,32 @@ nonisolated final class LLMSettings: @unchecked Sendable {
         }
     }
 
+    var explicitReasoning: ReasoningEffort? {
+        get { defaults.string(forKey: Self.reasoningKey).flatMap(ReasoningEffort.init(rawValue:)) }
+        set { setExplicit(newValue?.rawValue, for: Self.reasoningKey) }
+    }
+
     var reasoningEffort: ReasoningEffort {
-        get {
-            ReasoningEffort(rawValue: defaults.string(forKey: Self.reasoningKey) ?? "") ?? .low
+        get { explicitReasoning ?? .low }
+        set { explicitReasoning = newValue }
+    }
+
+    func explicitReasoning(_ id: String) -> ReasoningEffort? {
+        defaults.string(forKey: Self.reasoningKey(id)).flatMap(ReasoningEffort.init(rawValue:))
+    }
+
+    func setExplicitReasoning(_ effort: ReasoningEffort?, for id: String) {
+        if effort != nil {
+            rememberProviderID(id)
         }
-        set { defaults.set(newValue.rawValue, forKey: Self.reasoningKey) }
+        setExplicit(effort?.rawValue, for: Self.reasoningKey(id))
     }
 
     func reasoningEffort(for provider: Provider) -> ReasoningEffort {
-        let stored = defaults.string(forKey: Self.reasoningKey(for: provider))
-        guard let stored, let effort = ReasoningEffort(rawValue: stored) else {
-            return reasoningEffort
-        }
-        return effort
+        explicitReasoning(provider.id) ?? reasoningEffort
     }
 
     func setReasoningEffort(_ effort: ReasoningEffort, for provider: Provider) {
-        defaults.set(effort.rawValue, forKey: Self.reasoningKey(for: provider))
+        setExplicitReasoning(effort, for: provider.id)
     }
 }

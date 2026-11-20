@@ -172,6 +172,28 @@ nonisolated enum AssistantAccessPolicy: String, Codable, CaseIterable, Sendable 
 @Observable
 final class SitePermissions {
 
+    /// Pending proposals are device-local. Only the effective records below grant website access.
+    nonisolated struct SyncGrant: Codable, Equatable, Sendable {
+        let account: String
+        let value: String?
+        var dismissed: Bool?
+        var inheritedAccess: AssistantAccessPolicy?
+    }
+
+    private(set) var pendingSyncGrants: [String: SyncGrant] = [:]
+
+    func setSyncGrant(_ grant: SyncGrant?, for key: String) {
+        guard pendingSyncGrants[key] != grant else { return }
+        pendingSyncGrants[key] = grant
+        scheduleSave()
+    }
+
+    func discardSyncGrants() {
+        guard !pendingSyncGrants.isEmpty else { return }
+        pendingSyncGrants.removeAll()
+        scheduleSave()
+    }
+
     private(set) var records: [String: [WebPermission: PermissionPolicy]] = [:]
 
     private(set) var defaults: [WebPermission: PermissionPolicy] = [:]
@@ -352,6 +374,7 @@ final class SitePermissions {
     func set(_ policy: PermissionPolicy, for origin: String, _ permission: WebPermission) {
         let origin = normalize(origin)
         guard !origin.isEmpty else { return }
+        pendingSyncGrants["\(permission.rawValue)|\(origin)"] = nil
         if policy == .ask {
             records[origin]?[permission] = nil
             if records[origin]?.isEmpty == true {
@@ -378,6 +401,7 @@ final class SitePermissions {
     }
 
     func removeAll(for permission: WebPermission) {
+        pendingSyncGrants = pendingSyncGrants.filter { !$0.key.hasPrefix(permission.rawValue + "|") }
         let origins = self.origins(for: permission)
         for origin in records.keys {
             records[origin]?[permission] = nil
@@ -400,6 +424,7 @@ final class SitePermissions {
     func setAssistantAccess(_ policy: AssistantAccessPolicy?, for origin: String) {
         let origin = Self.site(for: normalize(origin))
         guard !origin.isEmpty else { return }
+        pendingSyncGrants["assistant|\(origin)"] = nil
         assistantRecords[origin] = policy
         scheduleSave()
         onAssistantAccessChanged?()
@@ -410,8 +435,13 @@ final class SitePermissions {
     func setAssistantDefault(_ policy: AssistantAccessPolicy) {
         guard persists else { return }
         let next = policy == .deny ? AssistantAccessPolicy.ask : policy
-        guard next != assistantDefault else { return }
+        let hadProposal = pendingSyncGrants.removeValue(forKey: "default|assistant") != nil
+        guard next != assistantDefault || hadProposal else { return }
         assistantDefault = next
+        // A reset inherits this default. Invalidate an approval still showing the earlier permission level.
+        for (key, grant) in pendingSyncGrants where key.hasPrefix("assistant|") && grant.value == nil {
+            pendingSyncGrants[key]?.inheritedAccess = next
+        }
         scheduleSave()
         onAssistantAccessChanged?()
     }
@@ -424,6 +454,7 @@ final class SitePermissions {
     }
 
     func removeAllAssistantAccess() {
+        pendingSyncGrants = pendingSyncGrants.filter { !$0.key.hasPrefix("assistant|") }
         assistantRecords = [:]
         scheduleSave()
         onAssistantAccessChanged?()
@@ -468,6 +499,7 @@ final class SitePermissions {
     }
 
     func removeEverything() {
+        pendingSyncGrants = [:]
         let origins = Array(records.keys)
         records = [:]
         assistantRecords = [:]
@@ -587,6 +619,7 @@ final class SitePermissions {
     // MARK: - Persistence
 
     private nonisolated struct Snapshot: Codable, Sendable {
+        var pendingSyncGrants: [String: SyncGrant]?
         var records: [String: [WebPermission: PermissionPolicy]] = [:]
         var defaults: [WebPermission: PermissionPolicy] = [:]
         var assistantAccess: [String: AssistantAccessPolicy] = [:]
@@ -634,6 +667,7 @@ final class SitePermissions {
 
         init(from decoder: Decoder) throws {
             let values = try decoder.container(keyedBy: CodingKeys.self)
+            pendingSyncGrants = try values.decodeIfPresent([String: SyncGrant].self, forKey: .pendingSyncGrants)
             records = try values.decodeIfPresent(
                 [String: [WebPermission: PermissionPolicy]].self,
                 forKey: .records
@@ -691,8 +725,10 @@ final class SitePermissions {
 
     private func scheduleSave() {
         guard persists else { return }
-        saveTask?.cancel()
-        let snapshot = Snapshot(
+        MacSettingsChange.post(self)
+        let previous = saveTask
+        previous?.cancel()
+        var snapshot = Snapshot(
             records: records,
             defaults:
                 defaults,
@@ -707,8 +743,11 @@ final class SitePermissions {
             engines: engineRecords,
             externalApps: externalAppRecords
         )
+        snapshot.pendingSyncGrants = pendingSyncGrants.isEmpty ? nil : pendingSyncGrants
         let url = file
         saveTask = Task {
+            await previous?.value
+            guard !Task.isCancelled else { return }
             await JSONFileStore.shared.write(snapshot, to: url, sortedKeys: true)
         }
     }
@@ -718,6 +757,7 @@ final class SitePermissions {
               let data = try? Data(contentsOf: file),
               let snapshot = try? JSONDecoder().decode(Snapshot.self, from: data)
         else { return }
+        pendingSyncGrants = snapshot.pendingSyncGrants ?? [:]
         for (key, policies) in snapshot.records {
             let origin = normalize(key)
             guard !origin.isEmpty else { continue }
