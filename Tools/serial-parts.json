@@ -318,6 +318,7 @@
    "SecretClipboardTests",
    "SettingsRowAccessibilityTests",
    "SharedCatalogTests",
+   "SharedProfileLifecycleTests",
    "SharedSpacesTests",
    "SidebarListHeightTests",
    "TabSleepScheduleTests",
