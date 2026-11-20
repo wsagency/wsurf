@@ -3,6 +3,7 @@
 
 import CryptoKit
 import Foundation
+import GRDB
 import Testing
 
 @testable import WSurfCore
