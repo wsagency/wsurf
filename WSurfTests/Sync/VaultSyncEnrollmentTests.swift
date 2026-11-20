@@ -208,6 +208,7 @@ struct VaultSyncEnrollmentTests {
         #expect(restored.status(profileID: rig.profile, vaultID: unowned.vaultID) == .accountChanged)
         #expect(restored.status(profileID: rig.profile, vaultID: rig.vaultID) == .removalFailed)
         restored.removeFromICloud(profileID: rig.profile, vaultID: rig.vaultID)
+        await restored.settle()
         try await engine.sendNow()
         #expect(rig.cloud.zones[rig.zone] == nil)
         #expect(restored.status(profileID: rig.profile, vaultID: rig.vaultID) == .removed(.deleted))

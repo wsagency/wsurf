@@ -48,6 +48,7 @@ nonisolated struct VaultSyncSummary: Equatable {
     var notSyncable = 0
     var unreadable = 0
     var pendingAdoptionUser: String?
+    var removalToCheck: String?
     var parked = 0
     var holding = 0
 }
@@ -112,6 +113,8 @@ public final class VaultSync: SyncEngineDelegate {
     @ObservationIgnored var releasing: [VaultKey: Int] = [:]
     /// Enrolled zones already scheduled for reconciliation under this attachment.
     @ObservationIgnored var checkedAtAttach: Set<VaultKey> = []
+    @ObservationIgnored var checkingRemovals: Set<VaultKey> = []
+    @ObservationIgnored var verifiedRemovals: [VaultKey: String] = [:]
     /// Vaults whose owed second read of the zone was started in this run, and how many records the last read of each skipped.
     @ObservationIgnored var rereadTried: Set<VaultKey> = []
     @ObservationIgnored var skippedRecords: [VaultKey: Int] = [:]
@@ -151,6 +154,7 @@ public final class VaultSync: SyncEngineDelegate {
     public func attach(_ engine: any SyncEngine) {
         self.engine = engine
         checkedAtAttach = []
+        verifiedRemovals = [:]
         launchCheck = true
         loadDatabases()
         for key in enabledKeys {
@@ -181,6 +185,7 @@ public final class VaultSync: SyncEngineDelegate {
     /// The host may already hold the lease when sync attaches or learns the account. Resume without asking the owner to unlock again.
     func resumeEnrolledVaults() {
         guard engine != nil, !launchCheck, accountAvailable != false else { return }
+        scheduleRemovalChecks()
         var fetch = true
         for key in enabledKeys {
             guard let (database, row) = runningRow(key) else { continue }
@@ -288,6 +293,8 @@ public final class VaultSync: SyncEngineDelegate {
                 return .removed(.encryptedDataReset)
             case .removalFailed:
                 return .removalFailed
+            case .removalPending:
+                return .removalPending
             case .accountChanged:
                 return .accountChanged
             case .active, .iCloudFull, .needsUpdate, .rolledBack:
@@ -385,26 +392,11 @@ public final class VaultSync: SyncEngineDelegate {
     public func removeFromICloud(profileID: UUID, vaultID: UUID) {
         let key = VaultKey(profileID: profileID, vaultID: vaultID)
         guard !excluded.contains(profileID) else { return }
-        if retryRemoval(key) {
-            return
+        if status(profileID: profileID, vaultID: vaultID) == .removalFailed {
+            retryRemoval(key)
+        } else {
+            deleteZone(key)
         }
-        deleteZone(key)
-    }
-
-    /// A removal that failed is asked for again, from the status that said so.
-    private func retryRemoval(_ key: VaultKey) -> Bool {
-        guard let engine, accountAvailable != false, let database = database(key.profileID), var row = (try? database.read { try $0.vault(key.vaultID) }) ?? nil,
-              !row.enabled, row.status == .removalFailed, let user = state.accountUser, row.approvedUser == user
-        else { return false }
-        row.status = .removedDeleted
-        do {
-            try database.write { try $0.save(row) }
-        } catch {
-            return false
-        }
-        engine.add([.deleteZone(key.zone)])
-        refresh(key)
-        return true
     }
 
     /// The app added the vault from a `Vault` record: it syncs here now. It stays locked, so nothing is applied until the first unlock.
@@ -543,6 +535,7 @@ public final class VaultSync: SyncEngineDelegate {
     /// The heartbeat: re-add what is still waiting to go up, finish a read that did not, and fetch (once, for every vault).
     public func beat() {
         guard engine != nil else { return }
+        scheduleRemovalChecks()
         let keys = enabledKeys
         for (position, key) in keys.enumerated() {
             zoneRetries[key] = nil
@@ -734,6 +727,7 @@ public final class VaultSync: SyncEngineDelegate {
     /// Everything in memory for the vault goes, and steps still running for it stop before they write.
     func forget(_ key: VaultKey) {
         sessions[key, default: 0] += 1
+        verifiedRemovals[key] = nil
         debounced[key]?.cancel()
         debounced[key] = nil
         unlocked.remove(key)
@@ -764,13 +758,17 @@ public final class VaultSync: SyncEngineDelegate {
             return
         }
         let (row, counts) = loaded
-        let canSend = row.enabled || row.status == .removalFailed || row.status == .removedDeleted
-        let otherAccount = canSend && (row.approvedUser == nil || row.approvedUser != state.accountUser)
+        let isRemoval = row.status == .removalPending || row.status == .removalFailed || row.status == .removedDeleted
+        let owner = isRemoval ? row.removalOwner : row.approvedUser
+        let otherAccount = (row.enabled || isRemoval) && (owner == nil || owner != state.accountUser)
+        let needsCheck = row.status == .removalPending || (row.status == .removalFailed && verifiedRemovals[key] != owner)
+        let stored = needsCheck ? VaultSyncStatus.Stored.removalPending : row.status
         let tally = tallies[key] ?? (0, 0)
         let next = VaultSyncSummary(
-            enabled: row.enabled && !otherAccount, stored: otherAccount ? .accountChanged : row.status, outbox: counts.outbox, inbox: counts.inbox, review: counts.review,
+            enabled: row.enabled && !otherAccount, stored: otherAccount ? .accountChanged : stored, outbox: counts.outbox, inbox: counts.inbox, review: counts.review,
             hasPendingVault: row.pendingMark != nil, isHeldBack: row.dirty, isReading: row.needsFetch,
-            isUnlocked: unlocked.contains(key), notSyncable: tally.notSyncable, unreadable: tally.unreadable, pendingAdoptionUser: row.pendingAdoptionUser, parked: counts.parked,
+            isUnlocked: unlocked.contains(key), notSyncable: tally.notSyncable, unreadable: tally.unreadable, pendingAdoptionUser: row.pendingAdoptionUser,
+            removalToCheck: needsCheck ? owner : nil, parked: counts.parked,
             holding: holding[key] ?? 0
         )
         if summaries[key] != next {

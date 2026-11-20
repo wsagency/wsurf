@@ -2,10 +2,15 @@
 // SPDX-License-Identifier: BUSL-1.1
 
 import Foundation
-import WSurfCore
+@testable import WSurfCore
 import WSurfVault
 
-extension FakeSyncEngine: VaultCatalogReading, VaultAssetTransport {
+extension FakeSyncEngine: VaultCatalogReading, VaultAssetTransport, VaultZoneChecking {
+    func vaultZoneExists(_ zone: String) async throws -> Bool {
+        _ = try await currentAccountUser()
+        return cloud.zones[zone] != nil
+    }
+
     func fetchVaultCards() async throws -> [SyncRecord] {
         _ = try await currentAccountUser()
         return cloud.zones.compactMap { zone, records in

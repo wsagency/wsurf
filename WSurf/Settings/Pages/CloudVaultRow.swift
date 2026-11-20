@@ -27,7 +27,7 @@ struct CloudVaultRow: View {
                 verbatimCaption: Self.caption(status: status, held: held, isUnlocked: model.isUnlocked, tally: tally)
             ) {
                 SettingsToggle(Binding(get: { isOn }, set: { turn($0, from: status) }))
-                    .disabled(model.isBusy || (!isOn && !model.isUnlocked))
+                    .disabled(model.isBusy || status == .removalPending || (!isOn && !model.isUnlocked))
                     .accessibilityLabel("Sync with iCloud")
             }
             .confirmationDialog(
@@ -54,18 +54,11 @@ struct CloudVaultRow: View {
                     Text("WSurf moves them to Trash on your other devices that sync this vault. You can restore them there.")
                 }
             }
-            if status == .removalFailed {
+            if isOn || status == .removalFailed {
                 RowSeparator()
                 DetailRow(title: "Remove from iCloud") {
-                    Button("Try Again") { model.removeSelectedVaultFromICloud() }
-                        .buttonStyle(.bordered)
-                        .disabled(model.isBusy)
-                }
-            }
-            if isOn {
-                RowSeparator()
-                DetailRow(title: "Remove from iCloud") {
-                    Button("Remove from iCloud…", role: .destructive) { confirmsRemoval = true }
+                    let label: LocalizedStringKey = isOn ? "Remove from iCloud…" : "Try Again"
+                    Button(label, role: .destructive) { confirmsRemoval = true }
                         .buttonStyle(.bordered)
                         .disabled(model.isBusy)
                 }
@@ -100,7 +93,7 @@ struct CloudVaultRow: View {
     /// On means this Mac syncs the vault, whatever it is doing right now.
     static func isOn(_ status: VaultSyncStatus) -> Bool {
         switch status {
-        case .off, .removed, .removalFailed, .accountChanged:
+        case .off, .removed, .removalPending, .removalFailed, .accountChanged:
             false
         case .synced, .sending, .waitingForUnlock, .needsReview, .holdingRemovals, .iCloudFull, .signedOut, .needsUpdate, .rolledBack:
             true
@@ -181,6 +174,8 @@ struct CloudVaultRow: View {
             String(localized: "Your iCloud encrypted data was reset. This Mac keeps its copy. Turn on Sync with iCloud to upload it again.")
         case .removalFailed:
             String(localized: "Couldn’t remove this vault from iCloud. It’s still there, and this Mac no longer syncs it.")
+        case .removalPending:
+            String(localized: "Waiting for iCloud to confirm removal. This Mac keeps its copy.")
         case .accountChanged:
             String(localized: """
                 You’re signed in with a different Apple Account. This Mac keeps its copy. Turn on Sync with iCloud to upload it to this \

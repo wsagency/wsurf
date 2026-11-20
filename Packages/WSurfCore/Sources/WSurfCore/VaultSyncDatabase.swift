@@ -9,7 +9,10 @@ import WSurfVault
 nonisolated struct VaultRow: Equatable {
     var vaultID: UUID
     var enabled: Bool
+    /// Written only by a per-vault choice. An older build can only populate the separate legacy column.
     var approvedUser: String?
+    /// Historical account to check for a possible interrupted removal. Confers no permission to write or delete.
+    var legacyRemovalUser: String?
     var status: VaultSyncStatus.Stored
     /// Local name and wrappers at the last acknowledged header or join. Other Macs keep their own unlock methods.
     var uploadedMark: Data?
@@ -33,6 +36,11 @@ nonisolated struct VaultRow: Equatable {
     /// Add to This Mac recorded the source account before creating the local vault. This row authorizes no sync.
     var pendingAdoptionUser: String? {
         !enabled && status == .active ? approvedUser : nil
+    }
+
+    var removalOwner: String? {
+        guard !enabled, status == .removalPending || status == .removalFailed || status == .removedDeleted else { return nil }
+        return approvedUser ?? legacyRemovalUser
     }
 
     init(vaultID: UUID, enabled: Bool = true, status: VaultSyncStatus.Stored = .active, needsFetch: Bool = false, approvedUser: String? = nil) {
@@ -166,6 +174,15 @@ nonisolated final class VaultSyncDatabase: Sendable {
                 ALTER TABLE vault ADD COLUMN pendingLocalWrappers BLOB;
                 """)
         }
+        migrator.registerMigration("vaultExplicitConsent") { db in
+            // Only the disabled Add receipt had an unambiguous explicit origin before this migration.
+            try db.execute(sql: """
+                ALTER TABLE vault ADD COLUMN consentUser TEXT;
+                UPDATE vault SET consentUser = approvedUser WHERE enabled = 0 AND status = 'active';
+                UPDATE vault SET status = 'removalPending' WHERE enabled = 0 AND approvedUser IS NOT NULL
+                    AND status IN ('removedDeleted', 'removalFailed');
+                """)
+        }
         migrator.registerMigration("vaultAssetPublication") { (db: Database) throws in
             try db.execute(sql: "ALTER TABLE outbox ADD COLUMN assetPublication BLOB")
         }
@@ -203,13 +220,13 @@ nonisolated final class VaultSyncDatabase: Sendable {
             try db.execute(
                 sql: """
                     INSERT OR REPLACE INTO vault(vaultID, enabled, status, uploadedMark, pendingVaultPayload, pendingMark, dirty,
-                        needsFetch, lastHeadRevision, rereadOwed, approvedUser, localWrappers, serverVault, pendingLocalWrappers)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        needsFetch, lastHeadRevision, rereadOwed, consentUser, localWrappers, serverVault, pendingLocalWrappers, approvedUser)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                 arguments: [
                     row.vaultID.sqlText, row.enabled, row.status.rawValue, row.uploadedMark, row.pendingVault, row.pendingMark,
                     row.dirty, row.needsFetch, Int64(clamping: row.lastHeadRevision), row.rereadOwed, row.approvedUser,
-                    row.localWrappers, row.serverVault, row.pendingLocalWrappers,
+                    row.localWrappers, row.serverVault, row.pendingLocalWrappers, row.legacyRemovalUser,
                 ]
             )
         }
@@ -229,7 +246,10 @@ nonisolated final class VaultSyncDatabase: Sendable {
         private static func vaultRow(_ row: Row) -> VaultRow? {
             guard let id = UUID(uuidString: row["vaultID"]), let status = VaultSyncStatus.Stored(rawValue: row["status"]) else { return nil }
             var result = VaultRow(vaultID: id, enabled: row["enabled"], status: status)
-            result.approvedUser = row["approvedUser"]
+            result.approvedUser = row["consentUser"]
+            if !result.enabled, status == .removalPending || status == .removalFailed || status == .removedDeleted {
+                result.legacyRemovalUser = row["approvedUser"]
+            }
             result.uploadedMark = row["uploadedMark"]
             result.pendingVault = row["pendingVaultPayload"]
             result.pendingMark = row["pendingMark"]

@@ -10,14 +10,14 @@ nonisolated public struct SyncRouterState: Codable, Equatable, Sendable {
     public var engineState: Data?
     public var vaults = VaultSyncAppState()
     /// Earlier native checkpoints can contain zone changes without a per-vault owner. The first new engine starts with a clean queue.
-    private let accountBoundVaultChanges = true
+    private let explicitVaultChanges = true
 
-    private enum CodingKeys: String, CodingKey { case engineState, vaults, accountBoundVaultChanges }
+    private enum CodingKeys: String, CodingKey { case engineState, vaults, explicitVaultChanges }
 
     public init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         vaults = try values.decode(VaultSyncAppState.self, forKey: .vaults)
-        if try values.decodeIfPresent(Bool.self, forKey: .accountBoundVaultChanges) == true {
+        if try values.decodeIfPresent(Bool.self, forKey: .explicitVaultChanges) == true {
             engineState = try values.decodeIfPresent(Data.self, forKey: .engineState)
         }
     }

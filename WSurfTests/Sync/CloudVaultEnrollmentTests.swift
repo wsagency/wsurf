@@ -12,7 +12,11 @@ import WSurfVault
 @MainActor
 struct CloudVaultEnrollmentTests {
     enum LegacyCheckpoint: CaseIterable {
-        case missing, noVaultAccount, copiedFromTabs
+        case missing, noVaultAccount, copiedFromTabs, intermediateApproval, intermediateApprovalWithNativeQueue
+
+        var intermediate: Bool {
+            self == .intermediateApproval || self == .intermediateApprovalWithNativeQueue
+        }
     }
 
     enum LegacyRestart: CaseIterable {
@@ -45,10 +49,25 @@ struct CloudVaultEnrollmentTests {
                 INSERT INTO legacyInbox SELECT vaultID, accountID, version, envelope FROM inbox;
                 DROP TABLE inbox;
                 ALTER TABLE legacyInbox RENAME TO inbox;
-                ALTER TABLE outbox DROP COLUMN remainingAssets;
+                CREATE TABLE legacyOutbox(vaultID TEXT NOT NULL, accountID TEXT NOT NULL, version INTEGER NOT NULL,
+                    envelope BLOB NOT NULL, parts BLOB NOT NULL, PRIMARY KEY(vaultID, accountID));
+                INSERT INTO legacyOutbox SELECT vaultID, accountID, version, envelope, parts FROM outbox;
+                DROP TABLE outbox;
+                ALTER TABLE legacyOutbox RENAME TO outbox;
                 DROP TABLE assetReceipt;
                 DELETE FROM grdb_migrations WHERE identifier NOT IN ('v1', 'v2');
                 """)
+            if checkpoint.intermediate {
+                // The intermediate v4 release populated approvedUser from the tab-derived account on sign-in.
+                try tx.db.execute(sql: """
+                    ALTER TABLE vault ADD COLUMN approvedUser TEXT;
+                    UPDATE vault SET approvedUser = 'tabs-only-account';
+                    ALTER TABLE outbox ADD COLUMN remainingAssets BLOB;
+                    CREATE TABLE assetReceipt(vaultID TEXT NOT NULL, profileID TEXT NOT NULL, owner TEXT NOT NULL,
+                        digest BLOB NOT NULL, tag TEXT NOT NULL, PRIMARY KEY(vaultID, profileID, owner, digest));
+                    INSERT INTO grdb_migrations(identifier) VALUES ('v3'), ('v4');
+                    """)
+            }
         }
 
         let file = rig.root.appending(path: "router.json")
@@ -56,10 +75,13 @@ struct CloudVaultEnrollmentTests {
         let oldQueue = Data("0.1.31 opaque engine checkpoint".utf8)
         if checkpoint != .missing {
             var vaults: [String: Any] = ["remote": [:]]
-            if checkpoint == .copiedFromTabs {
+            if checkpoint == .copiedFromTabs || checkpoint.intermediate {
                 vaults["accountUser"] = rig.cloud.user
             }
-            let legacy: [String: Any] = ["engineState": oldQueue.base64EncodedString(), "vaults": vaults]
+            var legacy: [String: Any] = ["engineState": oldQueue.base64EncodedString(), "vaults": vaults]
+            if checkpoint == .intermediateApprovalWithNativeQueue {
+                legacy["accountBoundVaultChanges"] = true
+            }
             try JSONSerialization.data(withJSONObject: legacy).write(to: file)
         }
         var tabs = TabSyncState()
@@ -116,6 +138,110 @@ struct CloudVaultEnrollmentTests {
         await enrolling.settle()
         try await transport.sendNow()
         #expect(rig.cloud.recordCount == 2)
+    }
+
+    enum InterruptedRemoval: CaseIterable {
+        case exists, missing, completedAfterRefusal, removedAfterCheck, offline, otherAccount, switchesBeforeRetry
+    }
+
+    @Test(arguments: InterruptedRemoval.allCases, [false, true])
+    func aLostNativeRemovalIsCheckedBeforeOfferingRetry(zone: InterruptedRemoval, predatesConsent: Bool) async throws {
+        let rig = VaultSyncRig()
+        defer { rig.finish() }
+        let (old, vault) = try await rig.syncedMac(holding: syncAccounts(1))
+        let user = rig.cloud.user
+        let gone = zone == .missing || zone == .completedAfterRefusal
+        old.sync.removeFromICloud(profileID: rig.profile, vaultID: rig.vaultID)
+        if zone == .completedAfterRefusal {
+            old.engine.failsZoneDeletes = true
+            try await old.engine.sendNow()
+            #expect(rig.status(old) == .removalFailed)
+        }
+        old.sync.pauseDiscovery()
+        if predatesConsent {
+            let db = try #require(old.sync.database(rig.profile))
+            try db.write { tx in
+                try tx.db.execute(sql: """
+                    CREATE TABLE oldVault(vaultID TEXT PRIMARY KEY, enabled INTEGER NOT NULL, status TEXT NOT NULL, approvedUser TEXT,
+                        uploadedMark BLOB, pendingVaultPayload BLOB, pendingMark BLOB, dirty INTEGER NOT NULL DEFAULT 0,
+                        needsFetch INTEGER NOT NULL DEFAULT 0, lastHeadRevision INTEGER NOT NULL DEFAULT 0, rereadOwed INTEGER NOT NULL DEFAULT 0,
+                        localWrappers BLOB, serverVault BLOB, pendingLocalWrappers BLOB);
+                    INSERT INTO oldVault(vaultID, enabled, status, approvedUser)
+                        SELECT vaultID, 0, CASE WHEN status = 'removalPending' THEN 'removedDeleted' ELSE status END, approvedUser FROM vault;
+                    DROP TABLE vault;
+                    ALTER TABLE oldVault RENAME TO vault;
+                    DELETE FROM grdb_migrations WHERE identifier = 'vaultExplicitConsent';
+                    """)
+                try tx.db.execute(sql: "UPDATE vault SET approvedUser = ?", arguments: [user])
+            }
+        }
+        let shared = rig.root.appending(path: "interrupted.json")
+        let legacy: [String: Any] = ["engineState": Data([9]).base64EncodedString(), "vaults": ["accountUser": user, "remote": [:]]]
+        try JSONSerialization.data(withJSONObject: legacy).write(to: shared)
+        if zone == .otherAccount {
+            rig.cloud.switchUser("another-apple-account")
+            rig.cloud.createZone(rig.zone)
+        } else if gone {
+            rig.cloud.removeZoneSilently(rig.zone)
+        }
+        let held = CloudTabsTests.Launch.entitlements
+        let gate = CloudSyncGate.Inputs(tabsFlag: false, vaultFlag: true, isRunningTests: false, isStaged: false, ownsSession: true, entitlement: { held[$0] })
+        var transport: FakeSyncEngine?
+        let started = CloudSync.start(
+            gate: gate, installIDs: MemoryInstallIDStorage(), stateFile: shared, profiles: [], host: { old.host }, windows: { [] }, clock: TestClock(),
+            makeEngine: { delegate, queue in
+                #expect(queue == nil)
+                let engine = FakeSyncEngine(cloud: rig.cloud, delegate: delegate)
+                engine.offline = zone == .offline
+                transport = engine
+                return engine
+            }
+        )
+        let app = try #require(started)
+        defer { app.prepareToTerminate() }
+        let sync = try #require(app.vaults)
+        let engine = try #require(transport)
+        await sync.settle()
+        func status() -> VaultSyncStatus {
+            sync.status(profileID: rig.profile, vaultID: rig.vaultID)
+        }
+        if zone == .offline {
+            #expect(status() == .removalPending)
+            engine.offline = false
+            sync.beat()
+            await sync.settle()
+        }
+        if gone {
+            #expect(status() == .removed(.deleted))
+        } else if zone == .otherAccount {
+            #expect(status() == .accountChanged)
+            sync.removeFromICloud(profileID: rig.profile, vaultID: rig.vaultID)
+            try await engine.sendNow()
+            #expect(rig.cloud.zones[rig.zone] != nil)
+        } else {
+            #expect(status() == .removalFailed)
+            try await engine.sendNow()
+            #expect(rig.cloud.zones[rig.zone] != nil && !engine.pending.contains(.deleteZone(rig.zone)))
+            if zone == .removedAfterCheck {
+                rig.cloud.deleteZone(rig.zone, reason: .deleted)
+                try await engine.fetchNow()
+            } else {
+                if zone == .switchesBeforeRetry {
+                    rig.cloud.switchUser("another-apple-account")
+                    rig.cloud.createZone(rig.zone)
+                }
+                sync.removeFromICloud(profileID: rig.profile, vaultID: rig.vaultID)
+                await sync.settle()
+                try await engine.sendNow()
+            }
+            await sync.settle()
+            if zone == .switchesBeforeRetry {
+                #expect(status() == .accountChanged && rig.cloud.zones[rig.zone] != nil)
+            } else {
+                #expect(status() == .removed(.deleted) && rig.cloud.zones[rig.zone] == nil)
+            }
+        }
+        #expect(vault.accounts.count == 1 && !sync.isSyncing(profileID: rig.profile, vaultID: rig.vaultID))
     }
 
     @Test func togglingDiscoveryResumesBothDirectionsUnderTheExistingLease() async throws {

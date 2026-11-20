@@ -385,9 +385,10 @@ extension VaultSync {
         let key = VaultKey(ids)
         state.remote[zone] = nil
         guard let (database, row) = enabledRow(key) else {
-            // A removal this Mac asked for that failed is done now that the zone is gone.
+            // A deletion event completes a pending removal for this account, including one checked after an upgrade.
             if let database = database(ids.profileID), var left = (try? database.read { try $0.vault(ids.vaultID) }) ?? nil,
-               !left.enabled, left.status == .removalFailed, let user = state.accountUser, left.approvedUser == user {
+               left.status == .removalFailed || left.status == .removalPending, accountAvailable != false, let user = state.accountUser,
+               left.removalOwner == user, left.approvedUser == user || verifiedRemovals[key] == user {
                 left.status = .removedDeleted
                 try? database.write { try $0.save(left) }
                 refresh(key)
@@ -401,7 +402,7 @@ extension VaultSync {
     func zoneDeleteFailed(_ zone: String) {
         guard let ids = SyncZone.vaultIDs(zone), !excluded.contains(ids.profileID), let database = database(ids.profileID) else { return }
         let key = VaultKey(ids)
-        guard var row = (try? database.read { try $0.vault(key.vaultID) }) ?? nil, !row.enabled, row.status == .removedDeleted,
+        guard var row = (try? database.read { try $0.vault(key.vaultID) }) ?? nil, !row.enabled, row.status == .removalPending,
               let user = state.accountUser, row.approvedUser == user else { return }
         row.status = .removalFailed
         try? database.write { try $0.save(row) }
@@ -429,7 +430,7 @@ extension VaultSync {
     /// Ends this Mac's syncing of the vault with `status` as the reason, and drops everything it kept for it.
     func leave(_ key: VaultKey, database: VaultSyncDatabase, row: VaultRow, status: VaultSyncStatus.Stored) {
         var next = VaultRow(vaultID: key.vaultID, enabled: false, status: status)
-        if status == .removedDeleted {
+        if status == .removedDeleted || status == .removalPending {
             next.approvedUser = row.approvedUser
         }
         next.lastHeadRevision = row.lastHeadRevision
@@ -454,6 +455,7 @@ extension VaultSync {
             catalogUser = nil
             accountAvailable = false
             checkedAtAttach = []
+            verifiedRemovals = [:]
             state.remote = [:]
             for key in summaries.keys {
                 sessions[key, default: 0] += 1
@@ -476,7 +478,7 @@ extension VaultSync {
                 guard let database = database(profileID), let rows = try? database.read({ try $0.vaults() }) else { continue }
                 for row in rows {
                     let key = VaultKey(profileID: profileID, vaultID: row.vaultID)
-                    if row.pendingAdoptionUser != nil || row.approvedUser == user {
+                    if row.pendingAdoptionUser != nil || row.approvedUser == user || row.removalOwner != nil {
                         // Invalidate work from the old session. Per-vault consent still belongs to its recorded owner.
                         forget(key)
                         checkedAtAttach.remove(key)
@@ -499,8 +501,10 @@ extension VaultSync {
     /// Deletes the vault's zone in iCloud, drops its rows and says why.
     func deleteZone(_ key: VaultKey) {
         guard let (database, row) = enabledRow(key) else { return }
+        leave(key, database: database, row: row, status: .removalPending)
+        guard !halted.contains(key) else { return }
+        verifiedRemovals[key] = row.approvedUser
         engine?.add([.deleteZone(key.zone)])
-        leave(key, database: database, row: row, status: .removed(.deleted))
         state.remote[key.zone] = nil
         persist(state)
     }

@@ -7294,6 +7294,9 @@
     "Waiting for iCloud. Local changes are saved." : {
 
     },
+    "Waiting for iCloud to confirm removal. This Mac keeps its copy." : {
+      "comment" : "Credential vault removal has been requested. The zone is checked again after an interruption."
+    },
     "Waiting for sign-in…" : {
 
     },
