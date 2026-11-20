@@ -52,10 +52,15 @@ private struct MacSettingOptions: View {
             switchRow("Share model choices for this profile", category: .providers, global: false)
         }
         .settingsAnchor("sync.providers")
-        if let notice = settings.notice {
+        if settings.hasPendingOptOuts {
+            HStack {
+                Text("Sync is paused for the settings you turned off. Try again to save this choice.").foregroundStyle(.secondary)
+                Button("Try Again") { settings.beat() }
+            }
+        } else if let notice = settings.notice {
             HStack {
                 Text(verbatim: notice).foregroundStyle(.secondary)
-                Button("Try Again") { settings.beat() }
+                Button("Try Again") { settings.beat(confirmingEnrollment: true) }
             }
         }
     }
@@ -64,25 +69,30 @@ private struct MacSettingOptions: View {
     private func switchRow(_ title: LocalizedStringResource, category: MacSettingsCategory, global: Bool) -> some View {
         let local = global ? nil : profile.id
         let channel = settings.channel(category, localProfileID: local)
+        let turningOff = settings.isTurningOff(category, localProfileID: local)
         DetailRow(title: title, caption: global || cloudProfileID != nil ? nil : "Choose an iCloud profile above to share these settings.") {
             SettingsToggle(
                 Binding(
-                    get: { channel != nil },
+                    get: { channel != nil || turningOff },
                     set: { enabled in
-                        working = true
-                        Task {
-                            defer { working = false }
-                            do {
-                                if enabled {
+                        if enabled {
+                            working = true
+                            Task {
+                                defer { working = false }
+                                do {
                                     try await settings.enable(category, localProfileID: local, cloudProfileID: global ? nil : cloudProfileID)
-                                } else {
-                                    try settings.disable(category, localProfileID: local)
+                                } catch is CancellationError {
+                                    // The user turned the channel off during its first read.
+                                } catch {
+                                    settings.reportError()
                                 }
-                            } catch { settings.reportError() }
+                            }
+                        } else {
+                            do { try settings.disable(category, localProfileID: local) } catch { settings.reportError() }
                         }
                     })
             )
-            .disabled(working || (channel == nil && !global && cloudProfileID == nil))
+            .disabled(turningOff || (channel == nil && (working || (!global && cloudProfileID == nil))))
         }
         if let channel {
             let pending = channel.records.values.filter { $0.pending != nil && !$0.conflict }.count

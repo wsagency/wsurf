@@ -23,16 +23,24 @@ final class CloudSettingsSync: SyncZoneHandler {
         var channels: [String: MacSettingChannel] = [:]
     }
 
+    private struct OptOut: Codable {
+        let category: MacSettingsCategory
+        let localProfileID: UUID?
+        let enrollment: UUID
+    }
+
     typealias Read = @MainActor (MacSettingsCategory, UUID?) throws -> [String: Data]
     typealias Apply = @MainActor (Data?, String, MacSettingsCategory, UUID?) throws -> Void
 
     private(set) var state: State
+    private var pendingOptOuts: [String: OptOut] = [:]
     var notice: String?
     var onNeedsEngine: (() -> Void)?
     @ObservationIgnored var registerProfile: ((Profile) -> Void)?
     @ObservationIgnored let read: Read
     @ObservationIgnored let apply: Apply
     @ObservationIgnored private let stateFile: URL
+    @ObservationIgnored private let discardWebsiteApprovals: (UUID) -> Void
     @ObservationIgnored var engine: (any SyncEngine)?
     @ObservationIgnored var ready: Set<String> = []
     @ObservationIgnored var loading: [String: UUID] = [:]
@@ -42,20 +50,31 @@ final class CloudSettingsSync: SyncZoneHandler {
     @ObservationIgnored var trustedUser: String?
     @ObservationIgnored var sendingAllowed = false
     @ObservationIgnored var generation = UUID()
-    @ObservationIgnored private var requesting = 0
     @ObservationIgnored private var work: Task<Void, Never>?
     @ObservationIgnored var accountNotifications: Task<Void, Never>?
     @ObservationIgnored var accountLookup: Task<Void, Never>?
     @ObservationIgnored private var observation: Task<Void, Never>?
 
     var needsEngine: Bool {
-        requesting > 0 || !state.channels.isEmpty
+        !state.channels.isEmpty
     }
 
-    convenience init(stateFile: URL, profiles: [Profile]) {
-        let adapter = MacSettingsSyncAdapter(profiles: profiles)
-        self.init(stateFile: stateFile, read: adapter.values(for:profileID:), apply: adapter.apply(_:key:for:profileID:))
+    convenience init(stateFile: URL, profiles: [Profile], adapter: MacSettingsSyncAdapter? = nil) {
+        let adapter = adapter ?? MacSettingsSyncAdapter(profiles: profiles)
+        self.init(
+            stateFile: stateFile, read: adapter.values(for:profileID:), apply: adapter.apply(_:key:for:profileID:),
+            discardWebsiteApprovals: adapter.discardWebsiteApprovals(profileID:)
+        )
         registerProfile = adapter.register
+        let live = Set(profiles.map(\.id)).subtracting([Profile.privateID])
+        for channel in state.channels.values {
+            if let id = channel.localProfileID, !live.contains(id) {
+                forget(zone: channel.zone)
+            }
+        }
+        if hasPendingOptOuts {
+            do { try save() } catch { reportError() }
+        }
         observation = Task { [weak self] in
             for await _ in NotificationCenter.default.notifications(named: .wsurfMacSettingsDidChange).map({ _ in () }) {
                 guard let self, !Task.isCancelled else { return }
@@ -65,10 +84,11 @@ final class CloudSettingsSync: SyncZoneHandler {
         }
     }
 
-    init(stateFile: URL, read: @escaping Read, apply: @escaping Apply) {
+    init(stateFile: URL, read: @escaping Read, apply: @escaping Apply, discardWebsiteApprovals: @escaping (UUID) -> Void = { _ in }) {
         self.stateFile = stateFile
         self.read = read
         self.apply = apply
+        self.discardWebsiteApprovals = discardWebsiteApprovals
         do {
             state = try JSONDecoder().decode(State.self, from: Data(contentsOf: stateFile))
         } catch {
@@ -77,6 +97,7 @@ final class CloudSettingsSync: SyncZoneHandler {
                 notice = String(localized: "The saved sync settings could not be read. Choose what to share again.")
             }
         }
+        restorePendingOptOuts()
     }
 
     deinit {
@@ -117,49 +138,102 @@ final class CloudSettingsSync: SyncZoneHandler {
         guard localProfileID != Profile.privateID, cloudProfileID != Profile.privateID,
             (localProfileID == nil) == (cloudProfileID == nil), category == .providers || localProfileID != nil
         else { throw Issue.unavailable }
-        requesting += 1
-        defer { requesting -= 1 }
-        let started = generation
-        onNeedsEngine?()
-        try await verifyAccount(started)
-        let proposed = MacSettingChannel(category: category, localProfileID: localProfileID, cloudProfileID: cloudProfileID)
+        var proposed = MacSettingChannel(category: category, localProfileID: localProfileID, cloudProfileID: cloudProfileID)
         if let existing = channel(category, localProfileID: localProfileID), existing.zone != proposed.zone {
             throw Issue.duplicateLink
         }
-        if let existing = state.channels[proposed.zone], existing.localProfileID != localProfileID {
-            throw Issue.duplicateLink
-        }
-        if state.channels[proposed.zone] == nil {
-            state.channels[proposed.zone] = proposed
+        if hasPendingOptOuts {
             try save()
         }
+        if let existing = state.channels[proposed.zone] {
+            guard existing.localProfileID == localProfileID else { throw Issue.duplicateLink }
+            proposed = existing
+        } else {
+            // Observe the starting values before any account or baseline read can suspend.
+            proposed.collect(try read(category, localProfileID))
+            updateChannel(proposed)
+            do {
+                try save()
+            } catch {
+                state.channels[proposed.zone] = nil
+                throw error
+            }
+        }
+
+        let started = generation
+        onNeedsEngine?()
+        try await verifyAccount(started, confirmingEnrollment: true)
+        guard state.channels[proposed.zone]?.enrollment == proposed.enrollment else { throw CancellationError() }
         try await prepare(zone: proposed.zone)
     }
 
-    func disable(_ category: MacSettingsCategory, localProfileID: UUID?) throws {
-        guard let channel = channel(category, localProfileID: localProfileID) else { return }
-        forget(zone: channel.zone)
-        try save()
+    var hasPendingOptOuts: Bool {
+        !pendingOptOuts.isEmpty
     }
 
-    func beat() {
-        guard work == nil, needsEngine else { return }
+    func isTurningOff(_ category: MacSettingsCategory, localProfileID: UUID?) -> Bool {
+        pendingOptOuts.values.contains { $0.category == category && $0.localProfileID == localProfileID }
+    }
+
+    func disable(_ category: MacSettingsCategory, localProfileID: UUID?) throws {
+        if let channel = channel(category, localProfileID: localProfileID) {
+            forget(zone: channel.zone)
+        }
+        if isTurningOff(category, localProfileID: localProfileID) {
+            try save()
+        }
+    }
+
+    func forgetProfile(_ id: UUID) throws {
+        for channel in state.channels.values where channel.localProfileID == id {
+            forget(zone: channel.zone)
+        }
+        if pendingOptOuts.values.contains(where: { $0.localProfileID == id }) {
+            try save()
+        }
+    }
+
+    func beat(confirmingEnrollment: Bool = false) {
+        // Turning a channel off needs only the local file, even after the last opt-out.
+        if hasPendingOptOuts {
+            do {
+                try save()
+            } catch {
+                return
+            }
+        }
+        guard work == nil, !state.channels.isEmpty else { return }
+        if state.account == nil && !confirmingEnrollment {
+            reportError()
+            return
+        }
         work = Task { [weak self] in
             guard let self else { return }
             defer { work = nil }
+            let started = generation
             do {
-                try await verifyAccount(generation)
+                try await verifyAccount(started, confirmingEnrollment: confirmingEnrollment)
+                var preparationFailed = false
                 for zone in state.channels.keys.sorted() where !ready.contains(zone) {
-                    try await prepare(zone: zone)
+                    do {
+                        try await prepare(zone: zone)
+                    } catch {
+                        guard generation == started else { throw error }
+                        preparationFailed = true
+                    }
                 }
-                try collectChanges()
+                let readFailure = try collectAvailableChanges()
                 try await engine?.fetchNow()
+                guard generation == started else { throw Issue.changedAccount }
                 try await engine?.sendNow()
+                guard generation == started else { throw Issue.changedAccount }
                 for zone in ready {
                     state.channels[zone]?.lastSync = .now
                 }
                 try save()
-                if state.channels.values.allSatisfy({ channel in channel.records.values.allSatisfy { $0.pending == nil } }) {
+                if preparationFailed || readFailure != nil {
+                    reportError()
+                } else if ready.count == state.channels.count && state.channels.values.allSatisfy({ channel in channel.records.values.allSatisfy { $0.pending == nil } }) {
                     notice = nil
                 }
             } catch {
@@ -168,16 +242,34 @@ final class CloudSettingsSync: SyncZoneHandler {
         }
     }
 
+    /// Fetched records and deletions must see edits made since the last notification.
+    func collectLocalChanges(in zone: String) throws {
+        guard var channel = state.channels[zone] else { return }
+        channel.collect(try read(channel.category, channel.localProfileID))
+        updateChannel(channel)
+    }
+
     func collectChanges() throws {
+        if let failure = try collectAvailableChanges() {
+            throw failure
+        }
+    }
+
+    private func collectAvailableChanges() throws -> Error? {
+        var failure: Error?
         for zone in state.channels.keys.sorted() {
-            guard var channel = state.channels[zone] else { continue }
-            channel.collect(try read(channel.category, channel.localProfileID))
-            state.channels[zone] = channel
+            do {
+                try collectLocalChanges(in: zone)
+            } catch {
+                ready.remove(zone)
+                failure = error
+            }
         }
         try save()
         for zone in ready {
             queuePending(zone)
         }
+        return failure
     }
 
     func resolve(_ key: String, in zone: String, useCloud: Bool) throws {
@@ -193,7 +285,9 @@ final class CloudSettingsSync: SyncZoneHandler {
         queuePending(zone)
     }
 
-    func verifyAccount(_ started: UUID) async throws {
+    func verifyAccount(_ started: UUID, confirmingEnrollment: Bool = false) async throws {
+        // Only a user action may bind a first, offline enrollment to a previously unknown account.
+        guard state.account != nil || state.channels.isEmpty || confirmingEnrollment else { throw Issue.unavailable }
         guard let identity = engine as? any SyncAccountIdentity else { throw Issue.unavailable }
         do {
             let user = try await identity.currentAccountUser()
@@ -202,7 +296,10 @@ final class CloudSettingsSync: SyncZoneHandler {
                 try resetAccount(to: user)
                 throw Issue.changedAccount
             }
-            state.account = user
+            if state.account == nil {
+                state.account = user
+                try save()
+            }
             trustedUser = user
             if accountNotifications != nil {
                 ProviderKeySharing.shared.setAccountIdentifier(user)
@@ -259,7 +356,7 @@ final class CloudSettingsSync: SyncZoneHandler {
         try await verifyAccount(started)
         guard loading[zone] == token, state.channels[zone]?.enrollment == channel.enrollment else { throw CancellationError() }
         guard baseline.skipped == 0 else { throw Issue.incomplete }
-        try collectChanges()
+        try collectLocalChanges(in: zone)
         for record in baseline.records {
             try receive(record)
         }
@@ -285,12 +382,61 @@ final class CloudSettingsSync: SyncZoneHandler {
 
     func save() throws {
         sendingAllowed = false
-        try JSONEncoder().encode(state).write(to: stateFile, options: .atomic)
+        do {
+            try JSONEncoder().encode(state).write(to: stateFile, options: .atomic)
+        } catch {
+            if hasPendingOptOuts {
+                // Remember the revoked enrollments across a restart if just the main file is unwritable.
+                try JSONEncoder().encode(pendingOptOuts).write(to: optOutFile, options: .atomic)
+            }
+            throw error
+        }
         sendingAllowed = true
+        if hasPendingOptOuts {
+            pendingOptOuts.removeAll()
+            try? FileManager.default.removeItem(at: optOutFile)
+            if state.channels.isEmpty {
+                notice = nil
+            }
+        }
+    }
+
+    private var optOutFile: URL {
+        stateFile.appendingPathExtension("opt-outs")
+    }
+
+    private func restorePendingOptOuts() {
+        guard FileManager.default.fileExists(atPath: optOutFile.path) else { return }
+        do {
+            pendingOptOuts = try JSONDecoder().decode([String: OptOut].self, from: Data(contentsOf: optOutFile))
+        } catch {
+            // A damaged revocation list cannot authorize an old enrollment.
+            for zone in state.channels.keys {
+                forget(zone: zone)
+            }
+            notice = String(localized: "The saved sync settings could not be read. Choose what to share again.")
+        }
+        for (zone, removal) in pendingOptOuts {
+            if let current = state.channels[zone] {
+                if current.enrollment == removal.enrollment {
+                    forget(zone: zone)
+                } else {
+                    pendingOptOuts[zone] = nil
+                }
+            }
+        }
+        if hasPendingOptOuts {
+            do { try save() } catch { reportError() }
+        }
     }
 
     func forget(zone: String) {
-        state.channels[zone] = nil
+        if let channel = state.channels.removeValue(forKey: zone) {
+            pendingOptOuts[zone] = OptOut(category: channel.category, localProfileID: channel.localProfileID, enrollment: channel.enrollment)
+            if channel.category == .websiteSettings, let id = channel.localProfileID {
+                discardWebsiteApprovals(id)
+            }
+        }
         ready.remove(zone)
         loading[zone] = nil
         buffered[zone] = nil
@@ -310,7 +456,7 @@ final class CloudSettingsSync: SyncZoneHandler {
     }
 
     func reportError() {
-        if notice == nil {
+        if notice == nil && !hasPendingOptOuts {
             notice = String(localized: "Settings could not finish syncing. Try again on this Mac.")
         }
     }
