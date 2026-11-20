@@ -713,38 +713,6 @@ extension VaultSync {
         work = ProduceWork(held: held)
     }
 
-    /// Compares the vault's name and wrapper list with what was last uploaded (§5.6 step 4). True when a new `Vault` record waits.
-    private func settleVaultRecord(_ key: VaultKey, snapshot: VaultSyncSnapshot, syncKey: VaultSyncKey, database: VaultSyncDatabase) -> Bool {
-        guard let encoded = try? VaultWrapperList.encode(snapshot.wrappers) else { return false }
-        let mark = VaultSyncCodec.vaultMark(name: snapshot.name, wrappers: encoded, key: syncKey)
-        var addRecord = false
-        let payload = try? vaultPayload(key, snapshot: snapshot, syncKey: syncKey)
-        do {
-            try database.write { tx in
-                guard var current = try tx.vault(key.vaultID), current.enabled else { return }
-                let before = current
-                if current.uploadedMark == nil, current.pendingMark == nil {
-                    // Just added or rejoined: the record already says what this Mac holds, so nothing goes up.
-                    current.uploadedMark = mark
-                } else if current.uploadedMark == mark {
-                    current.pendingVault = nil
-                    current.pendingMark = nil
-                } else if current.pendingMark != mark, let payload {
-                    current.pendingVault = payload.data
-                    current.pendingMark = payload.mark
-                    addRecord = true
-                }
-                current.lastHeadRevision = max(current.lastHeadRevision, snapshot.revision)
-                if current != before {
-                    try tx.save(current)
-                }
-            }
-        } catch {
-            return false
-        }
-        return addRecord
-    }
-
     // MARK: - Resolve and conflicts
 
     /// Answers review rows: keep this Mac's version or take iCloud's. The version not kept stays recoverable in History or Trash.

@@ -6,13 +6,14 @@ import Foundation
 import WSurfVault
 
 extension VaultSync {
-    func enrollmentAccount(_ engine: any SyncEngine, key: VaultKey, session: Int, expecting user: String?) async throws -> String {
+    func enrollmentAccount(_ engine: any SyncEngine, key: VaultKey, session: Int, expecting user: String?, explicit: Bool = false) async throws -> String {
         let actual = try await (engine as? any SyncAccountIdentity)?.currentAccountUser() ?? user
         guard let actual, !actual.isEmpty, self.engine === engine, token(key) == session, state.accountUser == user, accountAvailable != false else {
             throw VaultSyncFailure.unavailable
         }
-        if actual != user, !acceptDiscoveryAccount(actual) {
-            throw VaultSyncFailure.unavailable
+        if actual != user {
+            let restored = acceptDiscoveryAccount(actual)
+            guard user == nil, restored || explicit else { throw VaultSyncFailure.unavailable }
         }
         return actual
     }
@@ -20,8 +21,9 @@ extension VaultSync {
     func enableNow(_ key: VaultKey, joiningFor expectedUser: String? = nil) async throws {
         guard let engine else { throw VaultSyncFailure.unavailable }
         guard accountAvailable != false else { throw VaultSyncFailure.signedOut }
+        let user = try await enrollmentAccount(engine, key: key, session: token(key), expecting: state.accountUser, explicit: expectedUser == nil)
+        // Verifying a first explicit choice may have quarantined an unowned row from the previous release.
         let mine = token(key)
-        let user = try await enrollmentAccount(engine, key: key, session: mine, expecting: state.accountUser)
         if let expectedUser, user != expectedUser {
             throw VaultSyncFailure.unavailable
         }
@@ -50,15 +52,19 @@ extension VaultSync {
         if let expectedUser, read == nil || catalogUser != expectedUser {
             throw VaultSyncFailure.unavailable
         }
-        let payload = try vaultPayload(key, snapshot: snapshot, syncKey: syncKey)
+        let wrappers = try VaultWrapperList.encode(snapshot.wrappers)
+        let mark = VaultSyncCodec.vaultMark(name: snapshot.name, wrappers: wrappers, key: syncKey)
         var row = VaultRow(vaultID: key.vaultID, needsFetch: read != nil, approvedUser: user)
         row.lastHeadRevision = snapshot.revision
         if let read {
             try Self.verifyHeader(in: read, key: key, syncKey: syncKey)
-            row.uploadedMark = payload.mark
+            row.uploadedMark = mark
+            row.localWrappers = wrappers
         } else {
-            row.pendingVault = payload.data
-            row.pendingMark = payload.mark
+            guard let card = host.profileCard(profileID: key.profileID) else { throw VaultSyncFailure.unavailable }
+            row.pendingVault = try VaultSyncHeader.seal(name: snapshot.name, wrappers: wrappers, profile: card, key: syncKey)
+            row.pendingMark = mark
+            row.pendingLocalWrappers = wrappers
         }
         try database.write { tx in
             try tx.clear(key.vaultID)
@@ -109,10 +115,8 @@ extension VaultSync {
     }
 
     private static func verifyHeader(in read: SyncZoneRead, key: VaultKey, syncKey: VaultSyncKey) throws {
-        guard let header = read.records.first(where: { $0.id == key.vaultRecord && $0.type == .vault && $0.schema == 1 }),
-              let payload = VaultRecordPayload.decode(header.payload), payload.keyGeneration == VaultSyncCodec.generation else { throw VaultSyncFailure.unavailable }
-        _ = try VaultSyncCodec.openVault(payload.sealed, wrappers: payload.wrappers, key: syncKey)
-        _ = try VaultWrapperList.decode(payload.wrappers)
+        guard let header = read.records.first(where: { $0.id == key.vaultRecord && $0.type == .vault && $0.schema == 1 }) else { throw VaultSyncFailure.unavailable }
+        _ = try VaultSyncHeader(header.payload, key: syncKey)
     }
 
     func fetchAllNow(_ key: VaultKey, force: Bool = false) async throws {
@@ -138,9 +142,7 @@ extension VaultSync {
             let mark = VaultSyncCodec.vaultMark(name: snapshot.name, wrappers: wrappers, key: syncKey)
             try database.write { tx in
                 guard var current = try tx.vault(key.vaultID) else { throw VaultSyncFailure.unavailable }
-                current.uploadedMark = mark
-                current.pendingVault = nil
-                current.pendingMark = nil
+                current.acknowledgeHeader(mark: mark, local: wrappers)
                 try tx.save(current)
             }
         }
@@ -158,8 +160,14 @@ extension VaultSync {
         skippedRecords[key] = read.skipped
         // A read that could not keep every record is still owed. A read that skipped some owes one more, which holds nothing back.
         if !incomplete.contains(key) {
+            let hasHeader = read.records.contains { $0.id == key.vaultRecord }
             try? database.write { tx in
                 if var current = try tx.vault(key.vaultID) {
+                    if !hasHeader, current.uploadedMark != nil {
+                        current.serverVault = nil
+                        current.pendingVault = nil
+                        try tx.deleteSystemFields(key.vaultID, Self.vaultRecordName)
+                    }
                     current.needsFetch = false
                     current.rereadOwed = read.skipped > 0
                     try tx.save(current)
@@ -168,14 +176,5 @@ extension VaultSync {
         }
         incomplete.remove(key)
         refresh(key)
-    }
-
-    /// The `Vault` record's payload for the vault as it is now, with the mark it stands for.
-    func vaultPayload(_ key: VaultKey, snapshot: VaultSyncSnapshot, syncKey: VaultSyncKey) throws -> (data: Data, mark: Data) {
-        guard let card = host.profileCard(profileID: key.profileID) else { throw VaultSyncFailure.unavailable }
-        let wrappers = try VaultWrapperList.encode(snapshot.wrappers)
-        let sealed = try VaultSyncCodec.sealVault(name: snapshot.name, wrappers: wrappers, key: syncKey)
-        let payload = VaultRecordPayload(keyGeneration: VaultSyncCodec.generation, profile: card, wrappers: wrappers, sealed: sealed)
-        return (try payload.encoded(), VaultSyncCodec.vaultMark(name: snapshot.name, wrappers: wrappers, key: syncKey))
     }
 }

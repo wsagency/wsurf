@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 
 import Foundation
+import GRDB
 import Testing
 
 @testable import WSurf
@@ -10,8 +11,18 @@ import WSurfVault
 
 @MainActor
 struct CloudVaultEnrollmentTests {
-    @Test(arguments: [false, true], [false, true])
-    func tabsCannotAuthorizeALegacyVaultAtStartup(discovery: Bool, deleteLocally: Bool) async throws {
+    enum LegacyCheckpoint: CaseIterable {
+        case missing, noVaultAccount, copiedFromTabs
+    }
+
+    enum LegacyRestart: CaseIterable {
+        case save, delete, discoverySave, discoveryDelete
+    }
+
+    @Test(arguments: LegacyCheckpoint.allCases, LegacyRestart.allCases)
+    func tabsCannotAuthorizeALegacyVaultAtStartup(checkpoint: LegacyCheckpoint, restart: LegacyRestart) async throws {
+        let discovery = restart == .discoverySave || restart == .discoveryDelete
+        let deleteLocally = restart == .delete || restart == .discoveryDelete
         let rig = VaultSyncRig()
         defer { rig.finish() }
         let (old, vault) = try rig.mac(holding: syncAccounts(1))
@@ -20,13 +31,37 @@ struct CloudVaultEnrollmentTests {
         let directory = try #require(old.host.syncDirectory(profileID: rig.profile))
         let db = try #require(try VaultSyncDatabase.open(directory: directory, create: false))
         try db.write { tx in
-            var row = try #require(try tx.vault(rig.vaultID))
-            row.approvedUser = nil
-            try tx.save(row)
+            // Recreate the 0.1.31 v2 file, which predates both per-vault owners and the asset outbox.
+            try tx.db.execute(sql: """
+                CREATE TABLE legacyVault(vaultID TEXT PRIMARY KEY, enabled INTEGER NOT NULL, status TEXT NOT NULL, uploadedMark BLOB,
+                    pendingVaultPayload BLOB, pendingMark BLOB, dirty INTEGER NOT NULL DEFAULT 0,
+                    needsFetch INTEGER NOT NULL DEFAULT 0, lastHeadRevision INTEGER NOT NULL DEFAULT 0, rereadOwed INTEGER NOT NULL DEFAULT 0);
+                INSERT INTO legacyVault SELECT vaultID, enabled, status, uploadedMark, pendingVaultPayload, pendingMark, dirty,
+                    needsFetch, lastHeadRevision, rereadOwed FROM vault;
+                DROP TABLE vault;
+                ALTER TABLE legacyVault RENAME TO vault;
+                CREATE TABLE legacyInbox(vaultID TEXT NOT NULL, accountID TEXT NOT NULL, version INTEGER NOT NULL, envelope BLOB NOT NULL,
+                    PRIMARY KEY(vaultID, accountID));
+                INSERT INTO legacyInbox SELECT vaultID, accountID, version, envelope FROM inbox;
+                DROP TABLE inbox;
+                ALTER TABLE legacyInbox RENAME TO inbox;
+                ALTER TABLE outbox DROP COLUMN remainingAssets;
+                DROP TABLE assetReceipt;
+                DELETE FROM grdb_migrations WHERE identifier NOT IN ('v1', 'v2');
+                """)
         }
 
         let file = rig.root.appending(path: "router.json")
         rig.cloud.switchUser("tabs-only-account")
+        let oldQueue = Data("0.1.31 opaque engine checkpoint".utf8)
+        if checkpoint != .missing {
+            var vaults: [String: Any] = ["remote": [:]]
+            if checkpoint == .copiedFromTabs {
+                vaults["accountUser"] = rig.cloud.user
+            }
+            let legacy: [String: Any] = ["engineState": oldQueue.base64EncodedString(), "vaults": vaults]
+            try JSONSerialization.data(withJSONObject: legacy).write(to: file)
+        }
         var tabs = TabSyncState()
         tabs.accountUser = rig.cloud.user
         try JSONEncoder().encode(tabs).write(to: CloudTabs.stateFile(besides: file))
@@ -44,8 +79,11 @@ struct CloudVaultEnrollmentTests {
         let started = CloudSync.start(
             gate: gate, installIDs: MemoryInstallIDStorage(), stateFile: file, profiles: [], host: { old.host },
             rememberVaultDiscovery: { optedIn = $0 }, optInDefaults: { _ in defaults }, windows: { [] }, clock: TestClock(),
-            makeEngine: { delegate, _ in
+            makeEngine: { delegate, restoredQueue in
                 let made = FakeSyncEngine(cloud: rig.cloud, delegate: delegate)
+                if restoredQueue == oldQueue {
+                    made.add([deleteLocally ? .deleteZone(rig.zone) : .saveZone(rig.zone)])
+                }
                 engine = made
                 return made
             }
@@ -55,7 +93,7 @@ struct CloudVaultEnrollmentTests {
         let sync = try #require(app.vaults)
         let transport = try #require(engine)
         if discovery {
-            _ = await waitUntil { !optedIn || transport.pending.contains(.saveZone(rig.zone)) }
+            _ = await waitUntil { !optedIn || sync.engine != nil }
         }
         await sync.settle()
         if deleteLocally {
@@ -66,10 +104,20 @@ struct CloudVaultEnrollmentTests {
         #expect(rig.cloud.recordCount == 0)
         #expect((rig.cloud.zones[rig.zone] != nil) == deleteLocally)
         #expect(vault.accounts.count == 1)
-        if discovery {
-            #expect(!optedIn && app.vaults == nil)
+        #expect(!sync.isSyncing(profileID: rig.profile, vaultID: rig.vaultID))
+        guard !deleteLocally else { return }
+        if discovery, !optedIn {
+            app.setVaultDiscovery(true)
+            #expect(await waitUntil { app.vaults?.engine != nil })
         }
+        let enrolling = try #require(app.vaults)
+        try await enrolling.enable(profileID: rig.profile, vaultID: rig.vaultID)
+        try await transport.sendNow()
+        await enrolling.settle()
+        try await transport.sendNow()
+        #expect(rig.cloud.recordCount == 2)
     }
+
     @Test func togglingDiscoveryResumesBothDirectionsUnderTheExistingLease() async throws {
         let rig = VaultSyncRig()
         defer { rig.finish() }
@@ -118,5 +166,4 @@ struct CloudVaultEnrollmentTests {
         #expect(try VaultSyncCodec.openItem(record.payload, accountID: local.id, key: rig.key).account?.password == "While off")
         #expect(vault.accounts[remote.id] != nil && vault.lease == lease)
     }
-
 }

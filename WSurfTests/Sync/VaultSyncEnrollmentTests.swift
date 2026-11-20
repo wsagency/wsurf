@@ -133,7 +133,7 @@ struct VaultSyncEnrollmentTests {
     }
 
     @Test(arguments: [false, true])
-    func retryingALegacyRemovalUsesTheVaultsOwnAccountCheckpoint(known: Bool) async throws {
+    func anUnownedLegacyRemovalAlwaysRequiresFreshVaultConsent(known: Bool) async throws {
         let rig = VaultSyncRig()
         defer { rig.finish() }
         let (mac, _) = try await rig.syncedMac(holding: [])
@@ -160,7 +160,7 @@ struct VaultSyncEnrollmentTests {
         await resumed.settle()
         resumed.removeFromICloud(profileID: rig.profile, vaultID: rig.vaultID)
         try await engine.sendNow()
-        #expect((rig.cloud.zones[rig.zone] == nil) == known)
+        #expect(rig.cloud.zones[rig.zone] != nil)
     }
 
     @Test func aPausedAdoptionStillReadsChangesMadeBeforeItsFirstUnlock() async throws {
@@ -185,6 +185,32 @@ struct VaultSyncEnrollmentTests {
         resumed.vaultUnlocked(profileID: rig.profile, vaultID: rig.vaultID)
         await resumed.settle()
         #expect(vault.accounts[entry.id] == entry)
+    }
+
+    @Test func anApprovedRemovalCanRetryBesideAnUnownedVault() async throws {
+        let rig = VaultSyncRig()
+        defer { rig.finish() }
+        let (mac, _) = try await rig.syncedMac(holding: [])
+        let unowned = try mac.host.addVault(profile: rig.profile, name: "Needs consent")
+        let database = try #require(mac.sync.database(rig.profile))
+        try database.write { try $0.save(VaultRow(vaultID: unowned.vaultID)) }
+        mac.engine.failsZoneDeletes = true
+        mac.sync.removeFromICloud(profileID: rig.profile, vaultID: rig.vaultID)
+        try await mac.pump()
+        mac.sync.pauseDiscovery()
+        var checkpoint = mac.sync.state
+        checkpoint.accountUser = "stale-account"
+        let restored = VaultSync(host: mac.host, state: checkpoint, persist: { _ in }, excludedProfiles: [])
+        let engine = FakeSyncEngine(cloud: rig.cloud, delegate: restored)
+        #expect(restored.acceptDiscoveryAccount(rig.cloud.user))
+        restored.attach(engine)
+        await restored.settle()
+        #expect(restored.status(profileID: rig.profile, vaultID: unowned.vaultID) == .accountChanged)
+        #expect(restored.status(profileID: rig.profile, vaultID: rig.vaultID) == .removalFailed)
+        restored.removeFromICloud(profileID: rig.profile, vaultID: rig.vaultID)
+        try await engine.sendNow()
+        #expect(rig.cloud.zones[rig.zone] == nil)
+        #expect(restored.status(profileID: rig.profile, vaultID: rig.vaultID) == .removed(.deleted))
     }
 
     @Test(arguments: [false, true])

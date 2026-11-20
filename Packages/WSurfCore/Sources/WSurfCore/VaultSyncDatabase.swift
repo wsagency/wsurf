@@ -11,11 +11,15 @@ nonisolated struct VaultRow: Equatable {
     var enabled: Bool
     var approvedUser: String?
     var status: VaultSyncStatus.Stored
-    /// `VaultSyncCodec.vaultMark` of the name and wrapper list last uploaded. Nil right after this Mac added or rejoined the vault.
+    /// Local name and wrappers at the last acknowledged header or join. Other Macs keep their own unlock methods.
     var uploadedMark: Data?
-    /// The `Vault` record's payload waiting to go up, and the mark it stands for.
+    var localWrappers: Data?
+    /// Latest header observed in this zone, paired with its server change tag.
+    var serverVault: Data?
+    /// The merged wire payload waiting to go up and the local state it acknowledges.
     var pendingVault: Data?
     var pendingMark: Data?
+    var pendingLocalWrappers: Data?
     /// A change was held back because its record was on its way; produce again after the `.sent`.
     var dirty = false
     /// The zone was joined or added and a full read of it did not finish yet.
@@ -147,6 +151,13 @@ nonisolated final class VaultSyncDatabase: Sendable {
                     PRIMARY KEY(vaultID, profileID, owner, digest))
                 """)
         }
+        migrator.registerMigration("v5") { (db: Database) throws in
+            try db.execute(sql: """
+                ALTER TABLE vault ADD COLUMN localWrappers BLOB;
+                ALTER TABLE vault ADD COLUMN serverVault BLOB;
+                ALTER TABLE vault ADD COLUMN pendingLocalWrappers BLOB;
+                """)
+        }
         try migrator.migrate(queue)
         return VaultSyncDatabase(queue: queue)
     }
@@ -181,11 +192,13 @@ nonisolated final class VaultSyncDatabase: Sendable {
             try db.execute(
                 sql: """
                     INSERT OR REPLACE INTO vault(vaultID, enabled, status, uploadedMark, pendingVaultPayload, pendingMark, dirty,
-                        needsFetch, lastHeadRevision, rereadOwed, approvedUser) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        needsFetch, lastHeadRevision, rereadOwed, approvedUser, localWrappers, serverVault, pendingLocalWrappers)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                 arguments: [
                     row.vaultID.sqlText, row.enabled, row.status.rawValue, row.uploadedMark, row.pendingVault, row.pendingMark,
                     row.dirty, row.needsFetch, Int64(clamping: row.lastHeadRevision), row.rereadOwed, row.approvedUser,
+                    row.localWrappers, row.serverVault, row.pendingLocalWrappers,
                 ]
             )
         }
@@ -209,6 +222,9 @@ nonisolated final class VaultSyncDatabase: Sendable {
             result.uploadedMark = row["uploadedMark"]
             result.pendingVault = row["pendingVaultPayload"]
             result.pendingMark = row["pendingMark"]
+            result.localWrappers = row["localWrappers"]
+            result.serverVault = row["serverVault"]
+            result.pendingLocalWrappers = row["pendingLocalWrappers"]
             result.dirty = row["dirty"]
             result.needsFetch = row["needsFetch"]
             result.lastHeadRevision = UInt64(clamping: row["lastHeadRevision"] as Int64)

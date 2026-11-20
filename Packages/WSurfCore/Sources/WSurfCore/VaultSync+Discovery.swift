@@ -17,20 +17,23 @@ extension VaultSync {
         return sameAccount
     }
 
-    /// Without the vault checkpoint, each pending writer or deletion needs a per-vault owner. Its row remains scoped to that account.
+    /// The account preserves discovery preferences. Each writer and removal must still pass its own per-vault approval check.
     func canRestoreAccount(_ user: String) -> Bool {
-        if let previous = state.accountUser {
-            return previous == user
+        if state.accountUser == user {
+            return true
         }
-        return host.profileIDs().allSatisfy { profile in
-            guard let database = database(profile) else { return true }
-            return (try? database.read { tx in
-                try tx.vaults().allSatisfy { row in
-                    let canWrite = row.enabled || row.status == .removalFailed || row.status == .removedDeleted
-                    return !canWrite || row.approvedUser != nil
+        var priorEnrollment = false
+        for profile in host.profileIDs() {
+            guard let database = database(profile) else { continue }
+            guard let rows = try? database.read({ try $0.vaults() }) else { return false }
+            for row in rows where row.enabled || row.status == .removalFailed || row.status == .removedDeleted {
+                priorEnrollment = true
+                if row.approvedUser == user {
+                    return true
                 }
-            }) == true
+            }
         }
+        return state.accountUser == nil && !priorEnrollment
     }
 
     public func refreshAvailableVaults(_ records: [SyncRecord], for user: String) {
@@ -48,20 +51,14 @@ extension VaultSync {
     }
 
     public func pauseDiscovery() {
-        // Other categories can advance the shared cursor while vaults are detached. Preserve a full read on this Mac for each joined zone.
-        for key in enabledKeys {
-            guard let (database, row) = enabledRow(key), !row.needsFetch, !firstUploadPending(key, database: database, row: row) else { continue }
-            var next = row
-            next.needsFetch = true
-            try? database.write { try $0.save(next) }
-        }
         catalogUser = nil
         engine = nil
         let keys = Set(chains.keys).union(enabledKeys)
+        let previouslyHalted = halted
         for key in keys {
             forget(key)
         }
-        halted.formUnion(keys)
+        halted = previouslyHalted
         housekeeping.forEach { $0.cancel() }
         housekeeping = []
     }

@@ -78,7 +78,8 @@ struct SyncRouterTests {
 
         let state = try #require(setup.saved.router?.engineState)
         #expect(setup.router.state.engineState == state)
-        let relaunched = SyncRouter(state: SyncRouterState(engineState: state), persist: { _ in }, tabs: nil, vaults: nil)
+        let restored = try JSONDecoder().decode(SyncRouterState.self, from: JSONEncoder().encode(setup.router.state))
+        let relaunched = SyncRouter(state: restored, persist: { _ in }, tabs: nil, vaults: nil)
         #expect(relaunched.state.engineState == state)
         let json = try JSONEncoder().encode(TabSyncState())
         #expect(String(decoding: json, as: UTF8.self).contains("engineState") == false, "tab sync keeps none of it")
