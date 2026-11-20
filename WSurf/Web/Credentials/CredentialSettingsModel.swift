@@ -344,7 +344,8 @@ final class CredentialSettingsModel {
                 finishOpening()
             }
         }
-        if manager?.isUnlocked != true {
+        // Another window can migrate the store on unlock, so its old format must be discovered again before showing this page.
+        if !isUnlocked || (store != nil && openState?.isProvisional != true) {
             session = nil
             await discoverVault()
         }
@@ -383,7 +384,7 @@ final class CredentialSettingsModel {
             return
         }
         await load()
-        // An already unlocked vault is not discovered again by `load`, so its listing is read here.
+        // An already unlocked v2 vault can skip discovery in `load`, so read its listing here.
         await refreshListing()
     }
 
@@ -407,12 +408,13 @@ final class CredentialSettingsModel {
             if let store {
                 let state = await store.openState()
                 guard !Task.isCancelled else { return }
-                openState = state
                 switch state {
                 case .failClosed(let closed):
+                    openState = state
                     enterFailClosed(closed)
                     return
                 case .firstRun:
+                    openState = state
                     failClosed = nil
                     vaults = []
                     enrolledPasskeys = []
@@ -445,6 +447,7 @@ final class CredentialSettingsModel {
                     bind(try vaultManager(id))
                 }
                 needsMigrationConfirmation = migrates
+                openState = state
             }
             guard let manager else { return }
             try await manager.discoverUnlocks()
@@ -657,12 +660,7 @@ final class CredentialSettingsModel {
     func unlock(
         in anchor: @autoclosure () -> ASPresentationAnchor, confirmMigration: Bool = false, verifying: (@Sendable (Bool) -> Void)? = nil
     ) async {
-        guard let selected = manager, !isLoaded else { return }
-        // Another window may have unlocked this vault while our Unlock button was still on screen.
-        if selected.isUnlocked {
-            await load()
-            return
-        }
+        guard let selected = manager, !isLoaded || needsMigrationConfirmation else { return }
         unlockInFlight = true
         defer {
             unlockInFlight = false
@@ -676,17 +674,16 @@ final class CredentialSettingsModel {
                 }
             }
         }
-        let unlocked = await guarded {
-            try await selected.unlock(in: anchor(), confirmMigration: confirmMigration, verifying: report)
+        var result: CredentialUnlockResult?
+        _ = await guarded {
+            result = try await selected.unlock(in: anchor(), confirmMigration: confirmMigration, verifying: report)
         }
-        guard unlocked, !Task.isCancelled, manager === selected else { return }
-        beginCopyGraceAfterUnlock()
-        // An upgraded vault is a new state of the store: read it again before the page offers anything from the old one.
-        if store != nil, openState?.isProvisional != true {
-            await discoverVault()
+        guard let result, !Task.isCancelled, manager === selected, authorizationEpoch == result.epoch else { return }
+        if case .confirmed(let epoch) = result {
+            copyGrace?.begin(for: selected, epoch: epoch)
         }
         await refreshListing()
-        guard manager === selected else { return }
+        guard !Task.isCancelled, manager === selected, authorizationEpoch == result.epoch else { return }
         await load()
     }
 

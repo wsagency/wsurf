@@ -45,13 +45,6 @@ extension CredentialSettingsModel {
         return epoch
     }
 
-    /// A successful unlock of the vault is itself a confirmation (passkey with user verification), so it begins the window too.
-    func beginCopyGraceAfterUnlock() {
-        if let copyGrace, let manager, let epoch = manager.authorizationEpoch {
-            copyGrace.begin(for: manager, epoch: epoch)
-        }
-    }
-
     /// Whether the open editor shows its verification code and lets its password field show what it holds.
     var editorIsVerified: Bool {
         live?.editorIsVerified ?? false
