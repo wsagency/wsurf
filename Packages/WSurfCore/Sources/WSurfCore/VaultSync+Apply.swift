@@ -515,7 +515,9 @@ extension VaultSync {
         if addVaultRecord {
             engine?.add([.saveRecord(key.vaultRecord)])
         }
-        await uploadAssets(transfer, database: database)
+        if let (_, current) = runningRow(key), current.uploadedMark != nil, !current.needsFetch {
+            await uploadAssets(transfer, database: database)
+        }
         refresh(key)
     }
 
@@ -698,7 +700,7 @@ extension VaultSync {
             queued[key]?.remove(id)
         }
         let ready = written.filter { $0.remainingAssets.isEmpty }
-        if !ready.isEmpty {
+        if !ready.isEmpty, let (_, row) = runningRow(key), row.uploadedMark != nil, !row.needsFetch {
             engine?.add(ready.map { .saveRecord(key.itemRecord($0.accountID)) })
         }
         work = ProduceWork(held: held)

@@ -11,10 +11,26 @@ extension VaultSync {
     /// Loads the persisted enrollments before checking the signed-in account, including on a fresh process.
     public func acceptDiscoveryAccount(_ user: String) -> Bool {
         loadDatabases()
-        let sameAccount = state.accountUser.map { $0 == user } ?? enabledKeys.isEmpty
+        let sameAccount = canRestoreAccount(user)
         applyAccount(sameAccount ? .signIn(user: user) : .switchAccounts(user: user))
         persist(state)
         return sameAccount
+    }
+
+    /// Without the vault checkpoint, each pending writer or deletion needs a per-vault owner. Its row remains scoped to that account.
+    func canRestoreAccount(_ user: String) -> Bool {
+        if let previous = state.accountUser {
+            return previous == user
+        }
+        return host.profileIDs().allSatisfy { profile in
+            guard let database = database(profile) else { return true }
+            return (try? database.read { tx in
+                try tx.vaults().allSatisfy { row in
+                    let canWrite = row.enabled || row.status == .removalFailed || row.status == .removedDeleted
+                    return !canWrite || row.approvedUser != nil
+                }
+            }) == true
+        }
     }
 
     public func refreshAvailableVaults(_ records: [SyncRecord]) {

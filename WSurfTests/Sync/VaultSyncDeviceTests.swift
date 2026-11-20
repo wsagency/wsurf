@@ -541,12 +541,12 @@ struct VaultSyncDeviceTests {
         cloudSync.prepareToTerminate()
     }
 
-    @Test func theVaultsKnowTheAccountTheTabsAlreadySawWhenTheyStart() async throws {
+    @Test func vaultsLearnTheirFirstAccountFromTheEngine() async throws {
         let directory = FileManager.default.temporaryDirectory.appending(path: "cloud-sync-\(UUID().uuidString)", directoryHint: .isDirectory)
         defer { try? FileManager.default.removeItem(at: directory) }
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let file = directory.appending(path: "iCloudSync.json")
-        // The tabs ran before the vault flag was turned on, and know the account; the vaults’ own state does not.
+        // Tab sharing and vault sync keep separate account approvals.
         var tabState = TabSyncState()
         tabState.accountUser = "user-1"
         try JSONEncoder().encode(tabState).write(to: CloudTabs.stateFile(besides: file))
@@ -565,7 +565,10 @@ struct VaultSyncDeviceTests {
         )
 
         let cloudSync = try #require(started)
-        #expect(cloudSync.vaults?.state.accountUser == "user-1")
+        #expect(cloudSync.vaults?.state.accountUser == nil)
+        let transport = try #require(engines.first)
+        await transport.simulateAccount(.signIn(user: cloud.user))
+        #expect(cloudSync.vaults?.state.accountUser == cloud.user)
         cloudSync.prepareToTerminate()
     }
 

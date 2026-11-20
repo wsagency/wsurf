@@ -52,6 +52,10 @@ extension VaultSync {
         guard let payload = VaultRecordPayload.decode(record.payload) else { return }
         state.remote[key.zone] = RemoteVault(profileID: key.profileID, vaultID: key.vaultID, payload: payload)
         guard let (database, row) = enabledRow(key) else { return }
+        if row.uploadedMark == nil, row.pendingVault != nil {
+            awaitFirstHeader(key, database: database, row: row, server: record)
+            return
+        }
         var next = row
         if payload.keyGeneration != VaultSyncCodec.generation {
             next.status = .needsUpdate
@@ -66,7 +70,7 @@ extension VaultSync {
     /// Stores each record's change tag and queues its envelope when it is newer than what this Mac agreed on. A record in a format
     /// only a newer WSurf reads is parked, as it came. Returns whether anything was queued or parked.
     private func takeItems(_ records: [SyncRecord], key: VaultKey) -> Bool {
-        guard !records.isEmpty, let (database, _) = enabledRow(key) else { return false }
+        guard !records.isEmpty, let (database, row) = enabledRow(key), row.uploadedMark != nil || row.pendingVault == nil else { return false }
         var queuedAny = false
         do {
             try database.write { tx in
@@ -163,7 +167,7 @@ extension VaultSync {
     }
 
     private func confirmVaultRecord(_ record: SyncRecord, key: VaultKey) {
-        guard let (database, row) = enabledRow(key) else { return }
+        guard let (database, row) = enabledRow(key), !row.needsFetch else { return }
         guard record.payload == row.pendingVault else {
             // A rename can overtake a save. Only the current account's zone can confirm its change tag.
             if record.systemFields != (try? database.read { try $0.systemFields(key.vaultID, record.id.name) }) {
@@ -173,7 +177,6 @@ extension VaultSync {
         }
         var next = row
         zoneRetries[key] = nil
-        itemRetries[key] = nil
         next.uploadedMark = row.pendingMark
         next.pendingVault = nil
         next.pendingMark = nil
@@ -185,6 +188,9 @@ extension VaultSync {
             try tx.save(next)
         }
         refresh(key)
+        if row.uploadedMark == nil {
+            readd(key)
+        }
     }
 
     /// A matching receipt can release a queued edit. An unexpected newer receipt needs verification in the current account.
@@ -194,7 +200,7 @@ extension VaultSync {
     }
 
     private func confirmItems(_ records: [SyncRecord], key: VaultKey) -> Confirmed {
-        guard let (database, row) = enabledRow(key) else { return Confirmed() }
+        guard let (database, row) = enabledRow(key), row.uploadedMark != nil else { return Confirmed() }
         var result = Confirmed()
         var promoted: [(outgoing: OutboxRow, account: UUID)] = []
         var next = row
@@ -255,12 +261,12 @@ extension VaultSync {
 
     /// What a failed save asks for. True when a newer record from the server waits to be taken in.
     private func retry(_ failure: SyncFailedSave, key: VaultKey) -> Bool {
-        guard let (database, row) = enabledRow(key) else { return false }
+        guard let (database, row) = enabledRow(key), !row.needsFetch else { return false }
         let isVaultRecord = failure.id.name == Self.vaultRecordName
         let account = Self.accountID(failure.id.name)
         guard let attempted = failure.attempted, attempted.id == failure.id else { return false }
         if let account {
-            guard let current = try? database.read({ try $0.outbox(key.vaultID, account) }), current.envelope == attempted.payload else { return false }
+            guard row.uploadedMark != nil, let current = try? database.read({ try $0.outbox(key.vaultID, account) }), current.envelope == attempted.payload else { return false }
             handedOut[key]?.remove(account)
             queued[key]?.remove(account)
         } else if !isVaultRecord || row.pendingVault != attempted.payload {
@@ -268,46 +274,7 @@ extension VaultSync {
         }
         switch failure.failure {
         case .serverRecordChanged(let server):
-            // Whether the server holds a version this Mac has not agreed on: it is merged, and this Mac's row never goes up over it.
-            // A record this build cannot read is parked and waits the same way.
-            var ahead = false
-            var parked = false
-            try? database.write { tx in
-                try tx.setSystemFields(server.systemFields, vault: key.vaultID, name: failure.id.name)
-                guard let account else { return }
-                let version: UInt64
-                do {
-                    version = try VaultSyncCodec.version(of: server.payload)
-                } catch VaultSyncError.unsupportedFormat {
-                    try tx.save(InboxRow(accountID: account, version: 0, envelope: server.payload), vault: key.vaultID)
-                    parked = true
-                    return
-                } catch {
-                    return
-                }
-                guard version > (try tx.base(key.vaultID, account)?.version ?? 0) else { return }
-                ahead = true
-                if version > (try tx.inboxVersion(key.vaultID, account) ?? 0) {
-                    try tx.save(InboxRow(accountID: account, version: version, envelope: server.payload), vault: key.vaultID)
-                }
-            }
-            if parked {
-                refresh(key)
-                return false
-            }
-            if isVaultRecord {
-                // This Mac's list wins on the server's tag: every list in it was sealed by a holder of the vault's key.
-                engine?.add([.saveRecord(failure.id)])
-                return false
-            }
-            if ahead {
-                return true
-            }
-            // The server holds nothing newer than the base: the engine dropped the save, so send this Mac's row again on its tag.
-            if let account, (try? database.read { try $0.outbox(key.vaultID, account) }) != nil {
-                engine?.add([.saveRecord(failure.id)])
-            }
-            return false
+            return takeConflict(server, key: key, id: failure.id, database: database, row: row, account: account)
         case .zoneNotFound:
             zoneMissing(failure.id, key: key, database: database, row: row)
             return false
@@ -324,6 +291,55 @@ extension VaultSync {
         }
     }
 
+    private func takeConflict(_ server: SyncRecord, key: VaultKey, id: SyncRecordID, database: VaultSyncDatabase, row: VaultRow, account: UUID?) -> Bool {
+        let isVaultRecord = id == key.vaultRecord
+        guard server.id == id else { return false }
+        if isVaultRecord, row.uploadedMark == nil {
+            awaitFirstHeader(key, database: database, row: row, server: server)
+            return false
+        }
+        // Whether the server holds a version this Mac has not agreed on: it is merged, and this Mac's row never goes up over it.
+        // A record this build cannot read is parked and waits the same way.
+        var ahead = false
+        var parked = false
+        try? database.write { tx in
+            try tx.setSystemFields(server.systemFields, vault: key.vaultID, name: id.name)
+            guard let account else { return }
+            let version: UInt64
+            do {
+                version = try VaultSyncCodec.version(of: server.payload)
+            } catch VaultSyncError.unsupportedFormat {
+                try tx.save(InboxRow(accountID: account, version: 0, envelope: server.payload), vault: key.vaultID)
+                parked = true
+                return
+            } catch {
+                return
+            }
+            guard version > (try tx.base(key.vaultID, account)?.version ?? 0) else { return }
+            ahead = true
+            if version > (try tx.inboxVersion(key.vaultID, account) ?? 0) {
+                try tx.save(InboxRow(accountID: account, version: version, envelope: server.payload), vault: key.vaultID)
+            }
+        }
+        if parked {
+            refresh(key)
+            return false
+        }
+        if isVaultRecord {
+            // This Mac's list wins on the server's tag: every list in it was sealed by a holder of the vault's key.
+            engine?.add([.saveRecord(id)])
+            return false
+        }
+        if ahead {
+            return true
+        }
+        // The server holds nothing newer than the base: the engine dropped the save, so send this Mac's row again on its tag.
+        if let account, (try? database.read { try $0.outbox(key.vaultID, account) }) != nil {
+            engine?.add([.saveRecord(id)])
+        }
+        return false
+    }
+
     /// A save found its zone missing. For a zone this Mac made whose `Vault` record never landed, the zone was lost on the way up (the
     /// engine only logs a failed zone save, as `readd` assumes after a lost queue): ask for it again with the save. Any other missing
     /// zone was removed.
@@ -332,25 +348,14 @@ extension VaultSync {
     /// record was seen on the server (a rename that overtook the first save, or another Mac that enabled the vault at the same moment),
     /// and then a missing zone is another Mac's removal, which this Mac never undoes.
     ///
-    /// The retry is bounded between two heartbeats: the `Vault` record asks `zoneRetryLimit` times, and each entry asks that often for
-    /// itself, counted apart, so the order of the failures in one `.sent` changes nothing and an entry never ends the `Vault` record's
-    /// tries. After that the vault stays active with its upload pending, and the next heartbeat clears the counts and tries again. A zone
-    /// that never existed was not removed, so nothing here reports a removal.
+    /// Entries and file chunks wait for the first header, including while the heartbeat retries a lost zone creation.
     private func zoneMissing(_ id: SyncRecordID, key: VaultKey, database: VaultSyncDatabase, row: VaultRow) {
         guard firstUploadPending(key, database: database, row: row) else {
             zoneRemoved(id.zone, reason: .deleted)
             return
         }
-        if id.name == Self.vaultRecordName {
-            guard zoneRetries[key, default: 0] < Self.zoneRetryLimit else {
-                SyncLog.logger.error("sync: a vault's zone could not be made; the next heartbeat tries again")
-                return
-            }
-            zoneRetries[key, default: 0] += 1
-        } else {
-            guard itemRetries[key, default: [:]][id.name, default: 0] < Self.zoneRetryLimit else { return }
-            itemRetries[key, default: [:]][id.name, default: 0] += 1
-        }
+        guard id == key.vaultRecord, zoneRetries[key, default: 0] < Self.zoneRetryLimit else { return }
+        zoneRetries[key, default: 0] += 1
         engine?.add([.saveZone(id.zone), .saveRecord(id)])
     }
 
@@ -405,6 +410,9 @@ extension VaultSync {
     /// Ends this Mac's syncing of the vault with `status` as the reason, and drops everything it kept for it.
     func leave(_ key: VaultKey, database: VaultSyncDatabase, row: VaultRow, status: VaultSyncStatus.Stored) {
         var next = VaultRow(vaultID: key.vaultID, enabled: false, status: status)
+        if status == .removedDeleted {
+            next.approvedUser = row.approvedUser ?? state.accountUser
+        }
         next.lastHeadRevision = row.lastHeadRevision
         forget(key)
         do {
@@ -434,9 +442,10 @@ extension VaultSync {
                     }
                 }
             }
-        case .signIn(let user) where state.accountUser == user || (state.accountUser == nil && enabledKeys.isEmpty):
+        case .signIn(let user) where canRestoreAccount(user):
             state.accountUser = user
             accountAvailable = true
+            refreshAll()
             for key in enabledKeys {
                 // Migrate an existing enrollment using the previously confirmed app-level account.
                 if let (database, row) = enabledRow(key), row.approvedUser == nil {
@@ -449,8 +458,8 @@ extension VaultSync {
                         continue
                     }
                 }
-                readd(key)
             }
+            resumeEnrolledVaults()
         case .signIn(let user), .switchAccounts(let user):
             // Another Apple Account: nothing of the old one is kept, and nothing goes up until the person turns sync on again.
             state.accountUser = user
@@ -475,102 +484,5 @@ extension VaultSync {
         guard let (database, row) = enabledRow(key) else { return }
         engine?.add([.deleteZone(key.zone)])
         leave(key, database: database, row: row, status: .removed(.deleted))
-    }
-
-    // MARK: - Enable and join
-
-    func enrollmentAccount(_ engine: any SyncEngine, key: VaultKey, session: Int, expecting user: String?) async throws -> String? {
-        let actual = try await (engine as? any SyncAccountIdentity)?.currentAccountUser() ?? user
-        guard self.engine === engine, token(key) == session, state.accountUser == user, accountAvailable != false else {
-            throw VaultSyncFailure.unavailable
-        }
-        if let actual, actual != user, !acceptDiscoveryAccount(actual) {
-            throw VaultSyncFailure.unavailable
-        }
-        return actual
-    }
-
-    func enableNow(_ key: VaultKey) async throws {
-        guard let engine else { throw VaultSyncFailure.unavailable }
-        guard accountAvailable != false else { throw VaultSyncFailure.signedOut }
-        let mine = token(key)
-        let user = try await enrollmentAccount(engine, key: key, session: mine, expecting: state.accountUser)
-        guard let lease = host.currentLease(profileID: key.profileID, vaultID: key.vaultID) else { throw VaultSyncFailure.locked }
-        guard let database = database(key.profileID, create: true) else { throw VaultSyncFailure.unavailable }
-        // The zone either exists (another Mac made it) or does not; a fetch that cannot run stops here and changes nothing.
-        try await engine.fetchNow()
-        guard let syncKey = await host.syncKey(profileID: key.profileID, vaultID: key.vaultID) else { throw VaultSyncFailure.locked }
-        let snapshot = try await host.snapshot(profileID: key.profileID, vaultID: key.vaultID)
-        _ = try await enrollmentAccount(engine, key: key, session: mine, expecting: user)
-        guard snapshot.lease == lease, host.currentLease(profileID: key.profileID, vaultID: key.vaultID) == lease else { throw VaultSyncFailure.locked }
-        clearAssets(key)
-        let enrollment = begin(key)
-        unlocked.insert(key)
-        var row = VaultRow(vaultID: key.vaultID, approvedUser: user)
-        row.lastHeadRevision = snapshot.revision
-        if state.remote[key.zone] == nil {
-            let payload = try vaultPayload(key, snapshot: snapshot, syncKey: syncKey)
-            row.pendingVault = payload.data
-            row.pendingMark = payload.mark
-            try database.write { tx in
-                try tx.clear(key.vaultID)
-                try tx.save(row)
-            }
-            engine.add([.saveZone(key.zone), .saveRecord(key.vaultRecord)])
-        } else {
-            row.needsFetch = true
-            try database.write { tx in
-                try tx.clear(key.vaultID)
-                try tx.save(row)
-            }
-            do {
-                try await fetchAllNow(key)
-            } catch {
-                if token(key) == enrollment {
-                    try? database.write { try $0.remove(key.vaultID) }
-                    forget(key)
-                    summaries[key] = nil
-                }
-                throw error
-            }
-        }
-        refresh(key)
-        await drain(key)
-        await produce(key)
-    }
-
-    /// Reads the whole zone into the inbox: what a Mac that joins or adds a vault missed before it was one of its writers.
-    func fetchAllNow(_ key: VaultKey, force: Bool = false) async throws {
-        guard let engine, let (database, row) = runningRow(key), row.needsFetch || (force && row.rereadOwed) else { return }
-        let mine = token(key)
-        let user = try await enrollmentAccount(engine, key: key, session: mine, expecting: state.accountUser)
-        let read = try await engine.fetchAll(zone: key.zone)
-        _ = try await enrollmentAccount(engine, key: key, session: mine, expecting: user)
-        incomplete.remove(key)
-        applyFetched(modified: read.records, deleted: [])
-        // The count is of the records the last read skipped, not of every read added up.
-        tallies[key, default: (0, 0)].unreadable += read.skipped - (skippedRecords[key] ?? 0)
-        skippedRecords[key] = read.skipped
-        // A read that could not keep every record is still owed. A read that skipped some owes one more, which holds nothing back.
-        if !incomplete.contains(key) {
-            try? database.write { tx in
-                if var current = try tx.vault(key.vaultID) {
-                    current.needsFetch = false
-                    current.rereadOwed = read.skipped > 0
-                    try tx.save(current)
-                }
-            }
-        }
-        incomplete.remove(key)
-        refresh(key)
-    }
-
-    /// The `Vault` record's payload for the vault as it is now, with the mark it stands for.
-    func vaultPayload(_ key: VaultKey, snapshot: VaultSyncSnapshot, syncKey: VaultSyncKey) throws -> (data: Data, mark: Data) {
-        guard let card = host.profileCard(profileID: key.profileID) else { throw VaultSyncFailure.unavailable }
-        let wrappers = try VaultWrapperList.encode(snapshot.wrappers)
-        let sealed = try VaultSyncCodec.sealVault(name: snapshot.name, wrappers: wrappers, key: syncKey)
-        let payload = VaultRecordPayload(keyGeneration: VaultSyncCodec.generation, profile: card, wrappers: wrappers, sealed: sealed)
-        return (try payload.encoded(), VaultSyncCodec.vaultMark(name: snapshot.name, wrappers: wrappers, key: syncKey))
     }
 }

@@ -241,14 +241,19 @@ struct VaultSyncRaceTests {
         await mac.engine.simulateAccount(.switchAccounts(user: rig.cloud.user))
         vault.edit(syncChanging(entry, password: "new account"))
         try await mac.sync.enable(profileID: rig.profile, vaultID: rig.vaultID)
-        let current = try #require(mac.sync.record(for: id))
+        let directory = try #require(mac.host.syncDirectory(profileID: rig.profile))
+        let database = try #require(try VaultSyncDatabase.open(directory: directory, create: false))
+        let current = try #require(try database.read { try $0.outbox(rig.vaultID, entry.id)?.envelope })
+        #expect(mac.sync.record(for: id) == nil, "the new account's own header has not landed")
         let currentHeader = try #require(mac.sync.record(for: header))
         await mac.sync.handle(.sent(saved: [old, oldHeader], deleted: [], failed: [
+            SyncFailedSave(id: header, failure: .serverRecordChanged(oldHeader), attempted: oldHeader),
             SyncFailedSave(id: header, failure: .zoneNotFound, attempted: oldHeader),
             SyncFailedSave(id: id, failure: .quotaExceeded, attempted: old),
         ]))
         await mac.sync.settle()
-        #expect(mac.sync.record(for: id) == current && mac.sync.record(for: header) == currentHeader)
+        #expect(try database.read { try $0.outbox(rig.vaultID, entry.id)?.envelope } == current)
+        #expect(mac.sync.record(for: id) == nil && mac.sync.record(for: header) == currentHeader)
         #expect(try await mac.sync.conflicts(profileID: rig.profile, vaultID: rig.vaultID).isEmpty)
         try await mac.pump()
         let saved = try #require(rig.item(entry))
