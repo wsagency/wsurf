@@ -562,11 +562,12 @@ Developer ID release and tip use their regular profiles. Enabling CloudKit for t
 exports requires Production grants, production push and deployment of the Production
 schema. Each category requires the test user’s consent in **Settings → Sync**.
 
-To check private CloudKit transport on Studio and Air, use the standalone probe
-from the reviewed merge commit. Studio writes a synthetic marker, Air acknowledges
-it, and Studio confirms the reply. Cleanup clears that record's encrypted payload
-using its fetched change tag. The empty record remains in a dedicated Development zone.
-[Two-Mac CloudKit transport trial](Tools/CloudKitTransportProbe/README.md)
+Use the standalone probe from the validated merge to check private CloudKit
+on Studio and Air. The automated website settings trial sends a disposable
+zoom value from Studio to Air, returns Air’s edit to Studio, and verifies a
+reset. It uses the same settings encoding and encrypted CloudKit field as the
+app. The simpler transport trial exchanges a synthetic marker.
+[Two-Mac CloudKit trials](Tools/CloudKitTransportProbe/README.md)
 
 For the in-app trial, sign in to the same Apple Account in a fresh macOS test
 user on each Mac. Enable iCloud Keychain for the test passkey. Start with a
