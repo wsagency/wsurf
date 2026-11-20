@@ -254,11 +254,13 @@ struct SiteHandlingSection: View {
         if loaded == .webKit, SitePermissions.webKitOnlyOrigins.contains(siteOrigin) {
             return "This sign-in page uses WebKit to keep the same session through redirects."
         }
-        guard loaded != browser.engine(for: tab) else { return nil }
+        let tabChoice = browser.engine(for: tab)
         if tab.signInEngine == loaded {
             let saved = browser.sitePermissions.engine(for: siteOrigin)
+            guard loaded != saved || loaded != tabChoice else { return nil }
             return "This page stays in \(String(localized: loaded.label)) for its sign-in session. The website default is \(String(localized: saved.label))."
         }
+        guard loaded != tabChoice else { return nil }
         return "Current page: \(String(localized: loaded.label)). Submitted requests stay in their original engine."
     }
 

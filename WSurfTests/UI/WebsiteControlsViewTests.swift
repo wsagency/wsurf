@@ -147,4 +147,22 @@ struct WebsiteControlsViewTests {
         #expect(returned.contains(String(localized: BrowserEngine.webKit.label)))
     }
 
+    @Test func aTabsMatchingChoiceStillExplainsTheDifferentWebsiteDefault() async throws {
+        let store = SitePermissions(storageURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString), persists: false)
+        let browser = BrowserModel(database: .temporary(), sitePermissions: store)
+        defer { browser.closeAllTabs(saving: false) }
+        let tab = browser.newTab()
+        let calendar = try #require(URL(string: "https://calendar.google.com/calendar"))
+        let google = try #require(URL(string: "https://accounts.google.com/ServiceLogin"))
+        tab.urlString = calendar.absoluteString
+        store.setEngine(.chromium, for: SitePermissions.origin(for: calendar))
+        try #require(await browser.setEngine(.webKit, for: tab))
+        try #require(tab.permitsEngineNavigation(URLRequest(url: google), isMainFrame: true))
+        try #require(tab.permitsEngineNavigation(URLRequest(url: calendar), isMainFrame: true))
+        try #require(tab.loadedEngine == .webKit && browser.engine(for: tab) == .webKit)
+        let caption = String(localized: try #require(SiteHandlingSection(browser: browser, tab: tab).engineExplanation))
+        #expect(caption.contains(String(localized: BrowserEngine.chromium.label)))
+        #expect(caption.contains(String(localized: BrowserEngine.webKit.label)))
+    }
+
 }

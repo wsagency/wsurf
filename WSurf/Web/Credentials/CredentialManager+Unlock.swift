@@ -109,7 +109,7 @@ extension CredentialManager {
         do {
             let epoch = try await authenticateUnlock(in: anchor(), attempt: attempt, verifying: verifying)
             guard nativeUnlockAttempt === attempt, authorizationEpoch == epoch else { throw CredentialVaultError.unauthorized }
-            try Task.checkCancellation()
+            // The lease is already active. Its owner's later cancellation cannot undo the unlock the other windows awaited.
             attempt.finish(.success(epoch))
             return .confirmed(epoch)
         } catch {

@@ -271,7 +271,14 @@ final class BrowserTab: Identifiable {
     var engineOverride: BrowserEngine?  // A tab opened to compare engines: wins over the site's setting, never written to it.
     /// The engine chosen for this tab on one origin. Explicitly setting the website default clears it.
     var pinnedEngine: (origin: String, engine: BrowserEngine)?
-    var signInEngine: BrowserEngine?  // Holds a sign-in's redirects in the engine that accepted its first request.
+    /// Holds a sign-in's redirects in the engine that accepted its first request.
+    var signInEngine: BrowserEngine? {
+        didSet {
+            if signInEngine != oldValue {
+                invalidateSessionState()
+            }
+        }
+    }
     /// The page a load left when it moved the tab to the other engine, whose history starts empty: Back from its first page
     /// returns there (`goBackAcrossEngines`), with its engine's saved history.
     var pageBeforeEngineSwitch: (url: URL, state: Data?)?
@@ -697,7 +704,7 @@ final class BrowserTab: Identifiable {
             return cachedSessionState
         }
         if !hasFreshSessionState {
-            cachedSessionState = page.interactionState as? Data
+            cachedSessionState = page.savedInteractionState(keepingWebKitSignIn: signInEngine == .webKit)
             hasFreshSessionState = true
         }
         return cachedSessionState
@@ -744,21 +751,20 @@ final class BrowserTab: Identifiable {
         if let url {
             urlString = url.absoluteString
         }
-        if let state, BrowserPage.canRestore(state, using: preferredEngine(for: url)) {
-            let view = page
-            let previous = view.webKit?.backForwardList.currentItem
-            let wasLoading = view.webKit?.isLoading == true
-            view.interactionState = state
-            // WebKit silently ignores unusable bytes. A native restore sets the current item or starts a provisional load.
-            let restored = view.webKit?.backForwardList.currentItem
-            if (restored != nil && restored !== previous) || (!wasLoading && view.webKit?.isLoading == true) {
+        if let state, let native = BrowserPage.webKitHistory(in: state) {
+            if native.keepsSignIn, isPinnedForProfile || isFavorite, signInEngine != .chromium {
+                // The saved session keeps its engine unless this tab was explicitly set to Chromium on the restored site.
+                let siteChoice = pinnedEngine?.origin == SitePermissions.origin(for: url) ? pinnedEngine?.engine : nil
+                signInEngine = (engineOverride ?? siteChoice) == .chromium ? nil : .webKit
+            }
+            if preferredEngine(for: url) == .webKit, page.restoreWebKitHistory(native.data) {
                 wakeScroll.disarm()
                 return nil
             }
         }
         if let url {
-            if pinnedURL == url, signInEngine != nil {
-                // A GET of the pin starts a new visit once there is no signed-in page to restore.
+            if isPinnedForProfile || isFavorite {
+                // A GET starts a new visit once there is no signed-in page to restore.
                 noteNavigation(to: url, startedByUser: true)
                 if let loadedEngine, loadedEngine != preferredEngine(for: url) {
                     return load(url, transition: pendingTransition, byPerson: byPerson)

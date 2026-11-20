@@ -5,6 +5,7 @@ import AppKit
 import Darwin
 import Foundation
 import GRDB
+import Observation
 import Synchronization
 import Testing
 
@@ -176,6 +177,40 @@ struct VaultManagerTests {
             await waiting.value
             #expect(manager.isUnlocked)
             #expect(prompt.requestCount == 1)
+        }
+    }
+
+    @Test func cancellingTheOwnerAfterPublicationLeavesItsEpochAvailableToAWaitingWindow() async throws {
+        try await VaultManagerFixture.with(vaults: [.locked]) { profile, passkeys, vaults in
+            let manager = vaults[0].manager
+            let second = CredentialSettingsModel(profile: profile)
+            let copies = CopyGrace()
+            second.copyGrace = copies
+            await second.load()
+            let prompt = ResponseGate()
+            passkeys.beforeAssert = { await withCheckedContinuation { answer in prompt.submit { answer.resume() } } }
+            defer { prompt.open() }
+            let first = Task { try await manager.unlock(in: VaultManagerFixture.anchor()) }
+            try #require(await prompt.waitForRequest())
+            let waiting = Task { await second.unlock(in: VaultManagerFixture.anchor()) }
+            try #require(await waitUntil { second.isBusy })
+
+            // The key check is published synchronously after the verified access and its lease have become current.
+            withObservationTracking {
+                _ = manager.lastKeyCheck
+            } onChange: {
+                first.cancel()
+            }
+            prompt.open()
+            let ownerResult = await first.result
+            await waiting.value
+
+            let epoch = try #require(manager.authorizationEpoch)
+            #expect(first.isCancelled)
+            #expect(second.isLoaded && second.authorizationEpoch == epoch)
+            #expect(!copies.holds(manager.vaultID))
+            #expect(passkeys.assertions.count == 1)
+            #expect(try ownerResult.get().epoch == epoch)
         }
     }
 

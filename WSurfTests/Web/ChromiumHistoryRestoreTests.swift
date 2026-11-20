@@ -736,6 +736,77 @@ struct ChromiumHistoryRestoreTests {
         }
     }
 
+    @Test func relaunchRestoresASignedInFavoritesWebKitHistory() async throws {
+        try await withRig(engine: .webKit) { rig, _ in
+            let tab = try await history(in: rig, back: 1)
+            let pinned = try rig.server.url("/b")
+            let signIn = try #require(URL(string: "https://accounts.google.com/ServiceLogin"))
+            tab.engineOverride = nil
+            rig.browser.addFavorite(tab)
+            try #require(tab.permitsEngineNavigation(URLRequest(url: signIn), isMainFrame: true))
+            rig.browser.sitePermissions.setEngine(.chromium, for: SitePermissions.origin(for: pinned))
+            try #require(tab.permitsEngineNavigation(URLRequest(url: pinned), isMainFrame: true))
+            try #require(await settles(tab, at: "/b", back: ["/a"], forward: ["/c"]))
+
+            rig.browser.closeAllTabs()
+            let reopened = BrowserModel(context: rig.browser.context, windowID: rig.browser.windowID)
+            defer { reopened.closeAllTabs(saving: false) }
+            reopened.restoreSession()
+            let favorite = try #require(reopened.activeTab)
+            try #require(favorite.id == tab.id && favorite.isFavorite)
+            try #require(favorite.loadedEngine == .webKit)
+            #expect(await settles(favorite, at: "/b", back: ["/a"], forward: ["/c"]), "\(lists(favorite))")
+            #expect(favorite.permitsEngineNavigation(URLRequest(url: pinned), isMainFrame: true))
+        }
+    }
+
+    @Test(arguments: ["tab choice", "comparison tab", "legacy tagged", "legacy raw", "rejected sign-in"])
+    func aFavoriteLoadsItsChosenEngineWhenTheSignedInHistoryCannotBeUsed(_ fixture: String) async throws {
+        try await withRig(engine: .webKit) { rig, log in
+            let source = try await history(in: rig, back: 1)
+            try #require(await settles(source, at: "/b", back: ["/a"], forward: ["/c"]))
+            let address = try rig.server.url("/b")
+            let native = try #require(source.page.webKit?.interactionState as? Data)
+            let state: Data
+            switch fixture {
+            case "legacy tagged":
+                state = try JSONSerialization.data(withJSONObject: ["engine": "webkit", "webKit": native.base64EncodedString()])
+            case "legacy raw":
+                state = native
+            case "rejected sign-in":
+                state = Data(#"{"engine":"webkit","webKit":"AAECAw==","keepsWebKitSignIn":true}"#.utf8)
+            default:
+                let signIn = try #require(URL(string: "https://accounts.google.com/ServiceLogin"))
+                try #require(source.permitsEngineNavigation(URLRequest(url: signIn), isMainFrame: true))
+                state = try #require(source.sessionState)
+            }
+
+            let restored = rig.browser.makeTab(for: address, restoring: true)
+            restored.urlString = address.absoluteString
+            rig.browser.insert(restored, after: source)
+            rig.browser.addFavorite(restored)
+            restored.deferRestore(state: state, url: address)
+            try #require(restored.isFavorite && restored.isDeferred)
+            switch fixture {
+            case "tab choice":
+                try #require(await rig.browser.setEngine(.chromium, for: restored))
+            case "comparison tab":
+                restored.engineOverride = .chromium
+            default:
+                rig.browser.sitePermissions.setEngine(.chromium, for: SitePermissions.origin(for: address))
+            }
+
+            let mark = log.count
+            rig.browser.activate(restored)
+            try #require(rig.browser.activeTab === restored)
+            _ = await restored.waitForPendingNavigation()
+            try #require(restored.loadedEngine == .chromium)
+            #expect(restored.signInEngine == nil)
+            #expect(await settles(restored, at: "/b", back: [], forward: []), "\(lists(restored))")
+            #expect(await requests(log, since: mark, are: ["GET /b"]), "\(log.since(mark))")
+        }
+    }
+
     /// WebKit restores its own state natively, as before, and a state the previous build wrote (`{"engine":"webkit","webKit":…}`,
     /// made here by hand, not by the code under test) keeps its meaning.
     @Test func aWebKitTabStillWakesWithItsListsFromAStateSavedBeforeThisChange() async throws {
