@@ -180,6 +180,7 @@ extension MacSettingsSyncTests {
         defer { fixture.cleanup() }
         let startup = CloudSettingsSync(stateFile: file, profiles: [kept], adapter: fixture.adapter)
         #expect(startup.state.channels.count == 2)
+        #expect(!startup.hasPendingOptOuts)
         let reopened = CloudSettingsSync(stateFile: file, read: { _, _ in [:] }, apply: { _, _, _, _ in })
         #expect(reopened.isEnabled(.websiteSettings, localProfileID: kept.id))
         #expect(reopened.isEnabled(.providers, localProfileID: nil))
@@ -233,6 +234,144 @@ extension MacSettingsSyncTests {
         sync.beat()
         #expect(await waitUntil { sync.state.channels.isEmpty })
         #expect(cloud.zones.isEmpty)
+    }
+
+    @Test(arguments: [false, true])
+    func aFailedPermissionClearStaysOffAcrossRestart(blockSettingsFile: Bool) async throws {
+        let root = try lifecycleDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let local = UUID(), oldLink = UUID(), newLink = UUID()
+        let file = root.appending(path: "settings"), backup = root.appending(path: "backup")
+        let permissions = root.appending(path: "proposals"), files = FileManager.default
+        let proposal = MacSettingPayload(key: "camera|https://fixture.test", value: Data([1]))
+        let cloud = FakeSyncCloud()
+        var refuseClear = false, providerValues: [String: Data] = [:]
+        func clear(_ profile: UUID) throws {
+            #expect(profile == local)
+            if refuseClear {
+                throw CocoaError(.fileWriteNoPermission)
+            }
+            if files.fileExists(atPath: permissions.path) {
+                try files.removeItem(at: permissions)
+            }
+        }
+        func open() -> CloudSettingsSync {
+            CloudSettingsSync(
+                stateFile: file, read: { category, _ in
+                    if category == .providers {
+                        return providerValues
+                    }
+                    guard files.fileExists(atPath: permissions.path) else { return [:] }
+                    return [proposal.key: try Data(contentsOf: permissions)]
+                }, apply: { _, _, _, _ in }, discardWebsiteApprovals: clear)
+        }
+        let original = open()
+        let first = FakeSyncEngine(cloud: cloud, delegate: original)
+        original.attach(first)
+        try await original.enable(.providers, localProfileID: nil, cloudProfileID: nil)
+        try await original.enable(.websiteSettings, localProfileID: local, cloudProfileID: oldLink)
+        try Data([1]).write(to: permissions)
+        try original.collectChanges()
+        let former = try #require(original.channel(.websiteSettings, localProfileID: local))
+        let oldID = SyncRecordID(zone: former.zone, name: proposal.recordName)
+        refuseClear = true
+        if blockSettingsFile {
+            try files.moveItem(at: file, to: backup)
+            try files.createDirectory(at: file, withIntermediateDirectories: false)
+        }
+        #expect(throws: (any Error).self) { try original.disable(.websiteSettings, localProfileID: local) }
+        #expect(original.isTurningOff(.websiteSettings, localProfileID: local))
+        #expect(original.record(for: oldID) == nil)
+        let recovered = open(), second = FakeSyncEngine(cloud: cloud)
+        if blockSettingsFile {
+            #expect(recovered.isTurningOff(.websiteSettings, localProfileID: local))
+            try files.removeItem(at: file)
+            try files.moveItem(at: backup, to: file)
+        }
+        second.delegate = recovered
+        recovered.attach(second)
+        #expect(recovered.isTurningOff(.websiteSettings, localProfileID: local))
+        #expect(!recovered.isEnabled(.websiteSettings, localProfileID: local))
+        await #expect(throws: (any Error).self) {
+            try await recovered.enable(.websiteSettings, localProfileID: local, cloudProfileID: newLink)
+        }
+        #expect(throws: (any Error).self) { try recovered.forgetProfile(local) }
+        providerValues["model"] = Data([2])
+        recovered.beat()
+        let provider = SyncRecordID(zone: "mac-prefs-providers", name: MacSettingPayload(key: "model", value: nil).recordName)
+        #expect(await waitUntil(timeout: .seconds(3)) { cloud.record(provider) != nil })
+        #expect(cloud.record(oldID) == nil)
+        #expect(open().isTurningOff(.websiteSettings, localProfileID: local))
+        refuseClear = false
+        second.offline = true
+        recovered.beat()
+        #expect(!recovered.hasPendingOptOuts)
+        #expect(!files.fileExists(atPath: permissions.path))
+        let clean = open()
+        let third = FakeSyncEngine(cloud: cloud, delegate: clean)
+        clean.attach(third)
+        try await clean.enable(.websiteSettings, localProfileID: local, cloudProfileID: newLink)
+        let fresh = try #require(clean.channel(.websiteSettings, localProfileID: local))
+        #expect(fresh.observed[proposal.key] == nil)
+        try await third.sendNow()
+        #expect(cloud.names(in: fresh.zone).isEmpty)
+    }
+
+    @Test func recoveryReadsTheOptOutJournalBeforeReusingAnOldCheckpoint() async throws {
+        let root = try lifecycleDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let local = UUID(), file = root.appending(path: "settings"), saved = root.appending(path: "saved")
+        let files = FileManager.default, journal = file.appendingPathExtension("opt-outs")
+        func open() -> CloudSettingsSync {
+            CloudSettingsSync(stateFile: file, read: { _, _ in ["key": Data([1])] }, apply: { _, _, _, _ in })
+        }
+        let first = open(), cloud = FakeSyncCloud()
+        let engine = FakeSyncEngine(cloud: cloud, delegate: first)
+        first.attach(engine)
+        try await first.enable(.websiteSettings, localProfileID: local, cloudProfileID: local)
+        try files.moveItem(at: file, to: saved)
+        try files.createDirectory(at: file, withIntermediateDirectories: false)
+        #expect(throws: (any Error).self) { try first.disable(.websiteSettings, localProfileID: local) }
+        let revoked = try Data(contentsOf: journal)
+        try Data().write(to: journal)
+        let reopened = open()
+        // Both files become readable again after the restart.
+        try files.removeItem(at: file)
+        try files.moveItem(at: saved, to: file)
+        try revoked.write(to: journal)
+        let retry = FakeSyncEngine(cloud: cloud, delegate: reopened)
+        reopened.attach(retry)
+        reopened.beat()
+        #expect(!reopened.isEnabled(.websiteSettings, localProfileID: local))
+        #expect(!open().isEnabled(.websiteSettings, localProfileID: local))
+    }
+
+    @Test func anotherWebsiteEnrollmentClearsProposalsLeftByAnEarlierVersion() async throws {
+        let root = try lifecycleDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let local = UUID(), firstLink = UUID(), nextLink = UUID()
+        let payload = MacSettingPayload(key: "camera|https://old.test", value: Data([1]))
+        let file = root.appending(path: "settings")
+        var disk: [String: Data] = [:]
+        func open(discard: @escaping (UUID) -> Void) -> CloudSettingsSync {
+            CloudSettingsSync(stateFile: file, read: { _, _ in disk }, apply: { _, _, _, _ in }, discardWebsiteApprovals: discard)
+        }
+        let cloud = FakeSyncCloud()
+        let old = open { _ in } // An earlier adapter returned success after its permission-file write failed.
+        let first = FakeSyncEngine(cloud: cloud, delegate: old)
+        old.attach(first)
+        try await old.enable(.websiteSettings, localProfileID: local, cloudProfileID: firstLink)
+        disk[payload.key] = payload.value
+        try old.disable(.websiteSettings, localProfileID: local)
+        let reopened = open { _ in disk.removeAll() }
+        let second = FakeSyncEngine(cloud: cloud, delegate: reopened)
+        reopened.attach(second)
+        try await reopened.enable(.websiteSettings, localProfileID: local, cloudProfileID: nextLink)
+        let channel = try #require(reopened.channel(.websiteSettings, localProfileID: local))
+        #expect(disk.isEmpty)
+        #expect(channel.observed.isEmpty)
+        try await second.sendNow()
+        #expect(cloud.names(in: channel.zone).isEmpty)
     }
 
     @Test func perZoneSampleLeavesOtherZonesDiskAndQueueAlone() async throws {
@@ -289,5 +428,65 @@ extension MacSettingsSyncTests {
         try await sync.enable(.websiteSettings, localProfileID: profile.id, cloudProfileID: UUID())
         fixture.adapter.reviewWebsiteGrant(old, key: key, profileID: profile.id, allow: true)
         #expect(sites.policy(for: origin, .camera) == .deny)
+    }
+
+    @Test(arguments: [false, true])
+    func permissionFileFailureKeepsWebsiteSharingPausedAfterRelaunch(profileWasErased: Bool) async throws {
+        let files = FileManager.default, root = try lifecycleDirectory()
+        let stores = root.appending(path: "profile"), settings = root.appending(path: "settings")
+        defer {
+            try? files.setAttributes([.posixPermissions: 0o700], ofItemAtPath: stores.path)
+            try? files.removeItem(at: root)
+        }
+        let profile = Profile(id: UUID(), name: "Fixture", symbol: "person", color: .gray)
+        let fixture = try MacSettingsFixture(profile: profile, folder: stores)
+        defer { fixture.cleanup() }
+        let sync = CloudSettingsSync(stateFile: settings, profiles: [profile], adapter: fixture.adapter)
+        let cloud = FakeSyncCloud(), first = FakeSyncEngine(cloud: cloud, delegate: sync)
+        sync.attach(first)
+        try await sync.enable(.websiteSettings, localProfileID: profile.id, cloudProfileID: UUID())
+        let origin = "https://permission.test", key = "camera|" + origin
+        let sites = fixture.stores.permissions, permissionFile = stores.appending(path: "sites")
+        let allow = try JSONEncoder().encode(PermissionPolicy.allow)
+        sites.set(.deny, for: origin, .camera)
+        try fixture.adapter.apply(allow, key: key, for: .websiteSettings, profileID: profile.id)
+        await sites.waitForPendingSave()
+        let grant = try #require(SitePermissions(storageURL: permissionFile).pendingSyncGrants[key])
+
+        // The channel checkpoint is writable. Only the atomic replacement of the permission file fails.
+        try files.setAttributes([.posixPermissions: 0o500], ofItemAtPath: stores.path)
+        #expect(throws: (any Error).self) { try sync.disable(.websiteSettings, localProfileID: profile.id) }
+        #expect(sync.isTurningOff(.websiteSettings, localProfileID: profile.id))
+        #expect(sites.pendingSyncGrants.isEmpty)
+        #expect(SitePermissions(storageURL: permissionFile).pendingSyncGrants[key] == grant)
+        if profileWasErased {
+            try files.setAttributes([.posixPermissions: 0o700], ofItemAtPath: stores.path)
+            try files.removeItem(at: stores)
+            let adapter = MacSettingsSyncAdapter(profiles: [], catalog: fixture.catalog, stores: { _ in
+                Issue.record("A removed profile has no permission store to open")
+                return fixture.stores
+            })
+            let pruned = CloudSettingsSync(stateFile: settings, profiles: [], adapter: adapter)
+            #expect(!pruned.hasPendingOptOuts)
+            #expect(!files.fileExists(atPath: stores.path))
+            return
+        }
+        let fresh = try MacSettingsFixture(profile: profile, folder: stores)
+        defer { fresh.cleanup() }
+        let reopened = CloudSettingsSync(stateFile: settings, profiles: [profile], adapter: fresh.adapter)
+        let second = FakeSyncEngine(cloud: cloud, delegate: reopened)
+        reopened.attach(second)
+        #expect(reopened.isTurningOff(.websiteSettings, localProfileID: profile.id))
+        let link = UUID()
+        await #expect(throws: (any Error).self) { try await reopened.enable(.websiteSettings, localProfileID: profile.id, cloudProfileID: link) }
+        try files.setAttributes([.posixPermissions: 0o700], ofItemAtPath: stores.path)
+        reopened.beat()
+        #expect(!reopened.hasPendingOptOuts)
+        let saved = SitePermissions(storageURL: permissionFile)
+        #expect(saved.pendingSyncGrants.isEmpty && saved.policy(for: origin, .camera) == .deny)
+        try await reopened.enable(.websiteSettings, localProfileID: profile.id, cloudProfileID: link)
+        #expect(reopened.channel(.websiteSettings, localProfileID: profile.id)?.observed[key] != allow)
+        fresh.adapter.reviewWebsiteGrant(grant, key: key, profileID: profile.id, allow: true)
+        #expect(fresh.stores.permissions.policy(for: origin, .camera) == .deny)
     }
 }

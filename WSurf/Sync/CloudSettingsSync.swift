@@ -21,26 +21,40 @@ final class CloudSettingsSync: SyncZoneHandler {
     struct State: Codable {
         var account: String?
         var channels: [String: MacSettingChannel] = [:]
+        fileprivate var optOuts: [String: OptOut]?
     }
 
-    private struct OptOut: Codable {
+    fileprivate struct OptOut: Codable {
         let category: MacSettingsCategory
         let localProfileID: UUID?
         let enrollment: UUID
+
+        init(_ channel: MacSettingChannel) {
+            category = channel.category
+            localProfileID = channel.localProfileID
+            enrollment = channel.enrollment
+        }
     }
 
     typealias Read = @MainActor (MacSettingsCategory, UUID?) throws -> [String: Data]
     typealias Apply = @MainActor (Data?, String, MacSettingsCategory, UUID?) throws -> Void
 
     private(set) var state: State
-    private var pendingOptOuts: [String: OptOut] = [:]
+    private var pendingOptOuts: [String: OptOut] {
+        get { state.optOuts ?? [:] }
+        set { state.optOuts = newValue.isEmpty ? nil : newValue }
+    }
+
+    @ObservationIgnored private var optOutsToFinish: Set<String> = []
+    @ObservationIgnored private var reloadBeforeOptOut = false
+    @ObservationIgnored private var profilesForRecovery: Set<UUID>?
     var notice: String?
     var onNeedsEngine: (() -> Void)?
     @ObservationIgnored var registerProfile: ((Profile) -> Void)?
     @ObservationIgnored let read: Read
     @ObservationIgnored let apply: Apply
     @ObservationIgnored private let stateFile: URL
-    @ObservationIgnored private let discardWebsiteApprovals: (UUID) -> Void
+    @ObservationIgnored private let discardWebsiteApprovals: (UUID) throws -> Void
     @ObservationIgnored var engine: (any SyncEngine)?
     @ObservationIgnored var ready: Set<String> = []
     @ObservationIgnored var loading: [String: UUID] = [:]
@@ -67,12 +81,11 @@ final class CloudSettingsSync: SyncZoneHandler {
         )
         registerProfile = adapter.register
         let live = Set(profiles.map(\.id)).subtracting([Profile.privateID])
-        for channel in state.channels.values {
-            if let id = channel.localProfileID, !live.contains(id) {
-                forget(zone: channel.zone)
-            }
+        if reloadBeforeOptOut {
+            profilesForRecovery = live
         }
-        if hasPendingOptOuts {
+        pruneChannels(outside: live)
+        if hasPendingOptOuts && !reloadBeforeOptOut {
             do { try save() } catch { reportError() }
         }
         observation = Task { [weak self] in
@@ -84,7 +97,7 @@ final class CloudSettingsSync: SyncZoneHandler {
         }
     }
 
-    init(stateFile: URL, read: @escaping Read, apply: @escaping Apply, discardWebsiteApprovals: @escaping (UUID) -> Void = { _ in }) {
+    init(stateFile: URL, read: @escaping Read, apply: @escaping Apply, discardWebsiteApprovals: @escaping (UUID) throws -> Void = { _ in }) {
         self.stateFile = stateFile
         self.read = read
         self.apply = apply
@@ -94,6 +107,7 @@ final class CloudSettingsSync: SyncZoneHandler {
         } catch {
             state = State()
             if FileManager.default.fileExists(atPath: stateFile.path) {
+                reloadBeforeOptOut = !(error is DecodingError) && FileManager.default.fileExists(atPath: optOutFile.path)
                 notice = String(localized: "The saved sync settings could not be read. Choose what to share again.")
             }
         }
@@ -138,17 +152,28 @@ final class CloudSettingsSync: SyncZoneHandler {
         guard localProfileID != Profile.privateID, cloudProfileID != Profile.privateID,
             (localProfileID == nil) == (cloudProfileID == nil), category == .providers || localProfileID != nil
         else { throw Issue.unavailable }
+        try reloadStateIfNeeded()
         var proposed = MacSettingChannel(category: category, localProfileID: localProfileID, cloudProfileID: cloudProfileID)
         if let existing = channel(category, localProfileID: localProfileID), existing.zone != proposed.zone {
             throw Issue.duplicateLink
         }
-        if hasPendingOptOuts {
-            try save()
+        try finishOptOuts { zone, removal in
+            zone == proposed.zone || (removal.category == category && removal.localProfileID == localProfileID)
         }
         if let existing = state.channels[proposed.zone] {
             guard existing.localProfileID == localProfileID else { throw Issue.duplicateLink }
             proposed = existing
         } else {
+            // Older versions could detach a website channel while its proposals were still on disk.
+            if category == .websiteSettings, let localProfileID {
+                do {
+                    try discardWebsiteApprovals(localProfileID)
+                } catch {
+                    pendingOptOuts[proposed.zone] = OptOut(proposed)
+                    try save()
+                    throw error
+                }
+            }
             // Observe the starting values before any account or baseline read can suspend.
             proposed.collect(try read(category, localProfileID))
             updateChannel(proposed)
@@ -176,26 +201,31 @@ final class CloudSettingsSync: SyncZoneHandler {
     }
 
     func disable(_ category: MacSettingsCategory, localProfileID: UUID?) throws {
+        try reloadStateIfNeeded()
         if let channel = channel(category, localProfileID: localProfileID) {
             forget(zone: channel.zone)
         }
-        if isTurningOff(category, localProfileID: localProfileID) {
-            try save()
-        }
+        try finishOptOuts { _, removal in removal.category == category && removal.localProfileID == localProfileID }
     }
 
     func forgetProfile(_ id: UUID) throws {
+        try reloadStateIfNeeded()
         for channel in state.channels.values where channel.localProfileID == id {
             forget(zone: channel.zone)
         }
-        if pendingOptOuts.values.contains(where: { $0.localProfileID == id }) {
-            try save()
-        }
+        try finishOptOuts { _, removal in removal.localProfileID == id }
     }
 
     func beat(confirmingEnrollment: Bool = false) {
-        // Turning a channel off needs only the local file, even after the last opt-out.
+        // Retrying local cleanup works offline, even after the last opt-out.
+        do {
+            try reloadStateIfNeeded()
+        } catch {
+            reportError()
+            return
+        }
         if hasPendingOptOuts {
+            optOutsToFinish.formUnion(pendingOptOuts.keys)
             do {
                 try save()
             } catch {
@@ -203,6 +233,9 @@ final class CloudSettingsSync: SyncZoneHandler {
             }
         }
         guard work == nil, !state.channels.isEmpty else { return }
+        if engine == nil {
+            onNeedsEngine?()
+        }
         if state.account == nil && !confirmingEnrollment {
             reportError()
             return
@@ -380,24 +413,61 @@ final class CloudSettingsSync: SyncZoneHandler {
         (error as? CKError)?.code == .zoneNotFound || (error as? URLError)?.code == .fileDoesNotExist
     }
 
+    private func finishOptOuts(where matches: (String, OptOut) -> Bool) throws {
+        let zones = Set(pendingOptOuts.filter { matches($0.key, $0.value) }.keys)
+        if !zones.isEmpty {
+            try save(requiring: zones)
+        }
+    }
+
     func save() throws {
+        try save(requiring: [])
+    }
+
+    private func save(requiring zones: Set<String>) throws {
+        try reloadStateIfNeeded()
         sendingAllowed = false
         do {
+            // Persist the revocation before touching the separate permission store.
             try JSONEncoder().encode(state).write(to: stateFile, options: .atomic)
         } catch {
             if hasPendingOptOuts {
-                // Remember the revoked enrollments across a restart if just the main file is unwritable.
                 try JSONEncoder().encode(pendingOptOuts).write(to: optOutFile, options: .atomic)
             }
             throw error
         }
         sendingAllowed = true
-        if hasPendingOptOuts {
-            pendingOptOuts.removeAll()
-            try? FileManager.default.removeItem(at: optOutFile)
-            if state.channels.isEmpty {
+        let attempts = optOutsToFinish.union(zones)
+        guard !attempts.isEmpty else { return }
+        optOutsToFinish.removeAll()
+        var remaining = pendingOptOuts
+        var requiredFailure: Error?
+        for zone in attempts {
+            guard let removal = remaining[zone] else { continue }
+            do {
+                if removal.category == .websiteSettings, let id = removal.localProfileID {
+                    try discardWebsiteApprovals(id)
+                }
+                remaining[zone] = nil
+            } catch {
+                if zones.contains(zone) {
+                    requiredFailure = error
+                }
+            }
+        }
+        if remaining.count != pendingOptOuts.count {
+            var completed = state
+            completed.optOuts = remaining.isEmpty ? nil : remaining
+            try JSONEncoder().encode(completed).write(to: stateFile, options: .atomic)
+            state.optOuts = completed.optOuts
+            if remaining.isEmpty && state.channels.isEmpty {
                 notice = nil
             }
+        }
+        // The primary file now includes every unfinished revocation.
+        try? FileManager.default.removeItem(at: optOutFile)
+        if let requiredFailure {
+            throw requiredFailure
         }
     }
 
@@ -406,9 +476,22 @@ final class CloudSettingsSync: SyncZoneHandler {
     }
 
     private func restorePendingOptOuts() {
-        guard FileManager.default.fileExists(atPath: optOutFile.path) else { return }
+        let hasJournal = FileManager.default.fileExists(atPath: optOutFile.path)
+        if hasJournal {
+            readOptOutJournal()
+        }
+        guard !reloadBeforeOptOut else { return }
+        if hasPendingOptOuts {
+            optOutsToFinish.formUnion(pendingOptOuts.keys)
+            do { try save() } catch { reportError() }
+        } else if hasJournal {
+            try? FileManager.default.removeItem(at: optOutFile)
+        }
+    }
+
+    private func readOptOutJournal() {
         do {
-            pendingOptOuts = try JSONDecoder().decode([String: OptOut].self, from: Data(contentsOf: optOutFile))
+            restore(try JSONDecoder().decode([String: OptOut].self, from: Data(contentsOf: optOutFile)))
         } catch {
             // A damaged revocation list cannot authorize an old enrollment.
             for zone in state.channels.keys {
@@ -416,26 +499,54 @@ final class CloudSettingsSync: SyncZoneHandler {
             }
             notice = String(localized: "The saved sync settings could not be read. Choose what to share again.")
         }
-        for (zone, removal) in pendingOptOuts {
+    }
+
+    private func restore(_ revoked: [String: OptOut]) {
+        for (zone, removal) in revoked {
             if let current = state.channels[zone] {
                 if current.enrollment == removal.enrollment {
                     forget(zone: zone)
-                } else {
-                    pendingOptOuts[zone] = nil
                 }
+            } else if pendingOptOuts[zone] == nil && channel(removal.category, localProfileID: removal.localProfileID) == nil {
+                pendingOptOuts[zone] = removal
             }
         }
-        if hasPendingOptOuts {
-            do { try save() } catch { reportError() }
+    }
+
+    /// A journal may be the only readable file during an outage. Recover other channels before replacing their checkpoint.
+    private func reloadStateIfNeeded() throws {
+        guard reloadBeforeOptOut else { return }
+        let revoked = pendingOptOuts
+        do {
+            state = try JSONDecoder().decode(State.self, from: Data(contentsOf: stateFile))
+        } catch CocoaError.fileReadNoSuchFile {
+            state = State()
+        }
+        reloadBeforeOptOut = false
+        notice = nil
+        restore(revoked)
+        if FileManager.default.fileExists(atPath: optOutFile.path) {
+            readOptOutJournal()
+        }
+        if let live = profilesForRecovery {
+            pruneChannels(outside: live)
+            profilesForRecovery = nil
+        }
+        optOutsToFinish.formUnion(pendingOptOuts.keys)
+    }
+
+    private func pruneChannels(outside live: Set<UUID>) {
+        for channel in state.channels.values {
+            if let id = channel.localProfileID, !live.contains(id) {
+                forget(zone: channel.zone)
+            }
         }
     }
 
     func forget(zone: String) {
         if let channel = state.channels.removeValue(forKey: zone) {
-            pendingOptOuts[zone] = OptOut(category: channel.category, localProfileID: channel.localProfileID, enrollment: channel.enrollment)
-            if channel.category == .websiteSettings, let id = channel.localProfileID {
-                discardWebsiteApprovals(id)
-            }
+            pendingOptOuts[zone] = OptOut(channel)
+            optOutsToFinish.insert(zone)
         }
         ready.remove(zone)
         loading[zone] = nil
@@ -446,11 +557,14 @@ final class CloudSettingsSync: SyncZoneHandler {
 
     func resetAccount(to user: String?) throws {
         generation = UUID()
+        trustedUser = nil
+        // An account reset revokes every channel, including rows in an unreadable checkpoint.
+        reloadBeforeOptOut = false
+        profilesForRecovery = nil
         for zone in Array(state.channels.keys) {
             forget(zone: zone)
         }
         state.account = user
-        trustedUser = nil
         try save()
         notice = String(localized: "The Apple Account changed. Choose what to sync with this account.")
     }
