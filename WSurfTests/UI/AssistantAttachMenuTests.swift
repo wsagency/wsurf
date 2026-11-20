@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 WSurf Agency
 // SPDX-License-Identifier: BUSL-1.1
 
-import Foundation
+import SwiftUI
 import Testing
 
 @testable import WSurf
@@ -9,6 +9,31 @@ import Testing
 /// The add menu lists tabs for the assistant to read. It must keep to the window it is open in.
 @MainActor
 struct AssistantAttachMenuTests {
+    @Test func theSearchFieldClearsTheRoundedEdgesOfTheAttachMenu() throws {
+        let browser = model()
+        defer { browser.closeAllTabs(saving: false) }
+        let menu = AssistantAttachMenu(browser: browser, attachedTabIDs: [], onAttachTab: { _ in }, onChooseFiles: {}, onCancel: {})
+        let host = NSHostingView(rootView: menu)
+        let window = NSWindow(contentRect: CGRect(origin: .zero, size: host.fittingSize), styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        defer { window.close() }
+        window.contentView = host
+        host.layoutSubtreeIfNeeded()
+
+        func editor(in view: NSView) -> NSTextField? {
+            if let field = view as? MentionTextField {
+                return field
+            }
+            return view.subviews.lazy.compactMap { editor(in: $0) }.first
+        }
+        window.orderBack(nil)
+        RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.05))
+        host.layoutSubtreeIfNeeded()
+        let field = try #require(editor(in: host))
+        let frame = host.convert(field.bounds, from: field)
+        #expect(frame.minX >= 17 && host.bounds.maxX - frame.maxX >= 17, "search field \(frame) in \(host.bounds)")
+    }
+
     private func model(privately: Bool = false, profile: Profile? = nil) -> BrowserModel {
         let context = profile.map { BrowserProfileContext(profile: $0) }
             ?? (privately ? BrowserProfileContext(profile: .privateBrowsing()) : nil)

@@ -404,7 +404,7 @@ struct MicroShellTests {
 
     @Test func theBadgeSitsBesideReaderAndThePin() throws {
         let row = try source("WSurf/UI/Ask/AskSurfaceRow.swift")
-        let pin = try #require(row.range(of: "PinBadge(browser: model.browser)"))
+        let pin = try #require(row.range(of: "PinBadge("))
         let micro = try #require(row.range(of: "MicroWindowBadge(browser: model.browser, coordinator: model.coordinator)"))
         let reader = try #require(row.range(of: "ReaderBadge("))
         #expect(reader.lowerBound < pin.lowerBound && pin.lowerBound < micro.lowerBound)

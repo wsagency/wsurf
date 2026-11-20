@@ -48,7 +48,7 @@ struct BrowserView: View {
 
     /// The Minimal window docks its tab list beside the page instead of floating it over the page.
     private var pinsTabList: Bool {
-        isMinimal && (keepsSidebarOpen ?? BrowserSettings.application.keepsMinimalSidebarOpen)
+        isMinimal && (keepsSidebarOpen ?? coordinator.keepsMinimalSidebarOpen)
     }
 
     private var chromeSitsOnALightPage: Bool {

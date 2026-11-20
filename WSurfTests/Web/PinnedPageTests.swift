@@ -16,6 +16,20 @@ struct PinnedPageTests {
         BrowserModel(database: .temporary())
     }
 
+    @Test func pinningFromTheToolbarConfirmsWhichPageWasPinned() {
+        let model = model()
+        defer { model.closeAllTabs(saving: false) }
+        let tab = page("https://fixture.example/article", in: model, activate: true)
+        let coordinator = AppCoordinator(browser: model)
+        coordinator.togglePin()
+        #expect(tab.isShowingPin)
+        let pinned = coordinator.notice
+        #expect(pinned?.isEmpty == false)
+        coordinator.togglePin()
+        #expect(tab.pinnedURL == nil)
+        #expect(coordinator.notice?.isEmpty == false && coordinator.notice != pinned)
+    }
+
     /// A loaded tab showing `address`, set by hand so nothing navigates.
     private func page(_ address: String, in model: BrowserModel, activate: Bool = false) -> BrowserTab {
         let tab = model.newTab(activate: activate)

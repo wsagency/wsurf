@@ -3,7 +3,7 @@
 // Modified for WSurf by wsagency in 2026; based on Linen by Kavoye.
 // Linen portions: Apache-2.0; WSurf modifications: BUSL-1.1. See NOTICE.
 
-import Foundation
+import SwiftUI
 import Testing
 
 @testable import WSurf
@@ -99,6 +99,26 @@ struct AssistantToolSettingsTests {
 
             #expect(model.subject.id == Self.other.id)
             #expect(model.enabledTools == AgentToolCatalog.defaultIDs(for: .core))
+        }
+    }
+
+    @Test func theKeyPopoverHasRoomForTheMaskedKeyAndSaveButton() {
+        withCleanDefaults { model, _, _ in
+            model.keyDraft = "fixture-only-000000000000000000000000"
+            let host = NSHostingView(rootView: APIKeyEntry(model: model, dismiss: {}).background(.background))
+            #expect(host.fittingSize.width >= 280, "the popover must fit a readable field and the action")
+            let window = NSWindow(contentRect: CGRect(origin: .zero, size: host.fittingSize),
+                                  styleMask: [.borderless], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false
+            defer { window.close() }
+            window.contentView = host
+            host.layoutSubtreeIfNeeded()
+            if let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) {
+                host.cacheDisplay(in: host.bounds, to: rep)
+                if let png = rep.representation(using: .png, properties: [:]) {
+                    Attachment.record(png, named: "provider-key-entry.png")
+                }
+            }
         }
     }
 

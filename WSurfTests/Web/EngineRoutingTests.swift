@@ -89,7 +89,7 @@ struct EngineRoutingTests {
         let (browser, a, b) = try browserWithTwoTabs(site: site)
         let inSite = try #require(URL(string: "\(site)/other"))
         #expect(await browser.setEngine(.chromium, for: a))
-        #expect(browser.sitePermissions.engine(for: site) == .chromium, "the website's setting is saved")
+        #expect(browser.sitePermissions.engine(for: site) == .webKit, "switching this tab does not choose a website default")
         #expect(browser.engine(for: a) == .chromium)
         #expect(browser.engine(for: b) == .webKit)
         #expect(b.preferredEngine(for: inSite) == .webKit, "and it keeps it when it navigates within the site")
@@ -97,9 +97,9 @@ struct EngineRoutingTests {
         #expect(b.preferredEngine(for: inSite) == .webKit)
         // A tab opened afterwards follows the setting.
         let c = browser.makeTab(for: nil)
-        #expect(c.preferredEngine(for: inSite) == .chromium)
+        #expect(c.preferredEngine(for: inSite) == .webKit)
         // The pin is for this website; another one follows its own setting.
-        #expect(b.preferredEngine(for: try #require(URL(string: "https://other.example/"))) == .webKit)
+        #expect(a.preferredEngine(for: try #require(URL(string: "https://other.example/"))) == .webKit)
         // Choosing the engine on the pinned tab moves it and no one else.
         #expect(await browser.setEngine(.chromium, for: b))
         #expect(b.preferredEngine(for: inSite) == .chromium)
@@ -158,10 +158,13 @@ struct EngineRoutingTests {
         let site = "https://default-\(UUID().uuidString.prefix(8).lowercased()).example"
         let (browser, a, b) = try browserWithTwoTabs(site: site)
         #expect(await browser.setEngine(.chromium, for: a))
-        #expect(b.pinnedEngine != nil)
-        // The setting says Chromium now; choosing WebKit as the default reaches every tab.
+        #expect(a.preferredEngine(for: URL(string: site)) == .chromium)
+        // Explicitly choosing the existing default must also clear local tab choices.
         #expect(await browser.setEngine(.webKit, for: site))
         #expect(a.pinnedEngine == nil && b.pinnedEngine == nil)
         #expect(a.preferredEngine(for: try #require(URL(string: site))) == .webKit)
+        #expect(await browser.setEngine(.chromium, for: site))
+        #expect(b.preferredEngine(for: URL(string: site)) == .chromium)
+        #expect(browser.makeTab(for: nil).preferredEngine(for: URL(string: site)) == .chromium)
     }
 }

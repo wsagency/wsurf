@@ -53,7 +53,7 @@ struct SiteControlsMenu: View {
     }
 }
 
-private struct SiteControlsPanel: View {
+struct SiteControlsPanel: View {
     let browser: BrowserModel
     let tab: BrowserTab
 
@@ -253,14 +253,15 @@ private struct SiteHandlingSection: View {
         VStack(spacing: 0) {
             if !siteOrigin.isEmpty {
                 SiteControlRow(symbol: "globe", title: "Browser Engine") {
-                    SitePolicyMenu(
-                        options: BrowserEngine.allCases.map {
-                            ($0, String(localized: $0.label))
-                        },
-                        selection: browser.engine(for: tab)
-                    ) { engine in
-                        Task { _ = await browser.setEngine(engine, for: tab) }
+                    Menu {
+                        SiteEngineChoices(browser: browser, tab: tab)
+                    } label: {
+                        Text((tab.loadedEngine ?? browser.engine(for: tab)).label)
+                            .font(Theme.Font.label)
                     }
+                    .menuStyle(.borderlessButton)
+                    .controlSize(.small)
+                    .fixedSize()
                     .disabled(SitePermissions.webKitOnlyOrigins.contains(siteOrigin))
                 }
                 .help("Changing engines reloads the website and resets Back/Forward history. Sign-ins are separate. Unloaded Chromium tabs restore only their URL.")
@@ -292,6 +293,38 @@ private struct SiteHandlingSection: View {
                     )
                 }
             }
+        }
+    }
+}
+
+/// Shared by Website Settings and the badge in the address bar.
+struct SiteEngineChoices: View {
+    let browser: BrowserModel
+    let tab: BrowserTab
+
+    var body: some View {
+        let origin = browser.siteOrigin(for: tab)
+        let selected = tab.loadedEngine ?? browser.engine(for: tab)
+        Section("This Tab") {
+            ForEach(BrowserEngine.allCases, id: \.self) { engine in
+                Button {
+                    Task { _ = await browser.setEngine(engine, for: tab) }
+                } label: {
+                    if engine == selected {
+                        Label {
+                            Text(engine.label)
+                        } icon: {
+                            Image(systemName: "checkmark")
+                        }
+                    } else {
+                        Text(engine.label)
+                    }
+                }
+            }
+        }
+        Divider()
+        Button("Set \(String(localized: selected.label)) as Default for This Website") {
+            Task { _ = await browser.setEngine(selected, for: origin) }
         }
     }
 }
@@ -336,14 +369,6 @@ private struct SiteSafetySection: View {
     let tab: BrowserTab
     let blockableHost: String?
 
-    private var visiblePermissions: [WebPermission] {
-        WebPermission.allCases.filter { permission in
-            tab.permissions.live.contains(permission)
-                || tab.permissions.sessionGrants.contains(permission)
-                || tab.permissions.menuPolicy(for: permission) == .allow
-        }
-    }
-
     var body: some View {
         SiteControlGroup {
             if let blockableHost {
@@ -363,74 +388,13 @@ private struct SiteSafetySection: View {
             }
 
             if !tab.permissions.origin.isEmpty {
-                ForEach(visiblePermissions, id: \.self) { permission in
+                ForEach(WebPermission.allCases, id: \.self) { permission in
                     SiteControlRow(symbol: permission.symbol, title: permission.label) {
                         PermissionPolicyMenu(tab: tab, permission: permission)
                     }
                 }
-
-                SitePermissionsMenu(tab: tab)
             }
         }
-    }
-}
-
-private struct SitePermissionsMenu: View {
-    let tab: BrowserTab
-
-    @State private var isPresented = false
-    @State private var isHovering = false
-
-    var body: some View {
-        Button {
-            isPresented.toggle()
-        } label: {
-            SiteControlRow(symbol: "hand.raised", title: "Permissions…") {
-                Image(systemName: "chevron.forward")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(.secondary)
-            }
-            .contentShape(Rectangle())
-            .background {
-                if isHovering || isPresented {
-                    UnevenRoundedRectangle(
-                        topLeadingRadius: 6,
-                        bottomLeadingRadius: 14,
-                        bottomTrailingRadius: 14,
-                        topTrailingRadius: 6
-                    )
-                    .fill(.quaternary)
-                    .padding(.horizontal, 6)
-                }
-            }
-        }
-        .buttonStyle(.plain)
-        .onHover { isHovering = $0 }
-        .popover(isPresented: $isPresented, arrowEdge: .trailing) {
-            SitePermissionsPanel(tab: tab)
-        }
-    }
-}
-
-private struct SitePermissionsPanel: View {
-    let tab: BrowserTab
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Text("Permissions")
-                .font(.system(size: 13, weight: .semibold))
-                .padding(.horizontal, SiteControlsMetrics.inset)
-                .padding(.vertical, 10)
-
-            ForEach(WebPermission.allCases, id: \.self) { permission in
-                SiteControlRow(symbol: permission.symbol, title: permission.label) {
-                    PermissionPolicyMenu(tab: tab, permission: permission)
-                }
-            }
-        }
-        .padding(.bottom, 6)
-        .frame(width: 280)
-        .background(.ultraThickMaterial)
     }
 }
 

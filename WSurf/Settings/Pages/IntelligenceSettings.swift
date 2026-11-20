@@ -649,7 +649,7 @@ private struct APIKeyRow: View {
     }
 }
 
-private struct APIKeyEntry: View {
+struct APIKeyEntry: View {
     @Bindable var model: IntelligenceViewModel
     let dismiss: () -> Void
 
@@ -664,19 +664,18 @@ private struct APIKeyEntry: View {
             Text(model.keySource == .none ? "Add \(model.subject.name) key" : "Replace \(model.subject.name) key")
                 .font(.system(size: 12, weight: .semibold))
 
-            HStack(spacing: 7) {
-                FieldChrome(isFocused: focused) {
-                    SecureField("Paste your key…", text: $model.keyDraft)
-                        .textFieldStyle(.plain)
-                        .font(Theme.Font.mono)
-                        .frame(maxWidth: 240)
-                        .focused($focused)
-                        .onSubmit { save() }
-                }
-
-                SettingsButton(title: "Save", isProminent: true) { save() }
-                    .disabled(!canSave)
+            FieldChrome(isFocused: focused) {
+                SecureField("Paste your key…", text: $model.keyDraft)
+                    .textFieldStyle(.plain)
+                    .font(Theme.Font.mono)
+                    .focused($focused)
+                    .onSubmit { save() }
             }
+
+            Button("Save Key", action: save)
+                .buttonStyle(.borderedProminent)
+                .disabled(!canSave)
+                .frame(maxWidth: .infinity, alignment: .trailing)
 
             if let keyError = model.keyError {
                 SettingsNotice(symbol: "exclamationmark.triangle.fill", text: keyError)
@@ -684,6 +683,7 @@ private struct APIKeyEntry: View {
             }
         }
         .padding(14)
+        .frame(width: 340)
         .onAppear { focused = true }
     }
 

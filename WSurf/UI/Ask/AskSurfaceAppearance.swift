@@ -164,10 +164,12 @@ extension PageSecurity {
 }
 
 struct AskRestingLine: View {
-    let placement: AskSurface.Placement
+    let model: AskSurfaceModel
+    private var placement: AskSurface.Placement {
+        model.placement
+    }
     let content: AskRestingContent
     let security: PageSecurity
-    let engine: BrowserEngine?
     @Environment(\.windowColorScheme) private var windowColorScheme
 
     var body: some View {
@@ -222,30 +224,49 @@ struct AskRestingLine: View {
                     Image(systemName: symbol)
                         .font(.system(size: 9.5, weight: .medium))
                         .foregroundStyle(Theme.controlOverride(in: windowColorScheme) ?? security.tint)
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
                 }
-                if let engine {
-                    Text(verbatim: engine == .webKit ? "WK" : "Cr")
-                        .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
-                        .foregroundStyle(Theme.controlOverride(in: windowColorScheme) ?? .secondary)
-                        .padding(.horizontal, 3)
-                        .padding(.vertical, 1)
-                        .background(.quaternary, in: .rect(cornerRadius: 3))
-                        .fixedSize()
+                if let engine = model.addressEngine, let tab = model.browser.activeTab {
+                    let origin = model.browser.siteOrigin(for: tab)
+                    let next: BrowserEngine = engine == .webKit ? .chromium : .webKit
+                    Button {
+                        Task { _ = await model.browser.setEngine(next, for: tab) }
+                    } label: {
+                        Text(verbatim: engine == .webKit ? "WK" : "CR")
+                            .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(Theme.controlOverride(in: windowColorScheme) ?? .secondary)
+                            .frame(width: 20, height: 14, alignment: .center)
+                            .background(.quaternary, in: .rect(cornerRadius: 3))
+                            .frame(height: 24)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .fixedSize()
+                    .contextMenu { SiteEngineChoices(browser: model.browser, tab: tab) }
+                    .disabled(origin.isEmpty || SitePermissions.webKitOnlyOrigins.contains(origin))
+                    .accessibilityLabel(Text("Browser Engine"))
+                    .accessibilityValue(Text(engine.label))
+                    .help("Switch this tab to \(String(localized: next.label))")
                 }
-                if scheme.isEmpty {
-                    Text(verbatim: host)
-                        .font(.system(size: placement.textSize))
-                        .foregroundStyle(hostStyle)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                } else {
-                    FullAddressLine(
-                        address: AddressText(scheme: scheme, host: host, rest: rest),
-                        fontSize: placement.textSize,
-                        hostStyle: urlInk.map { AnyShapeStyle($0) } ?? AnyShapeStyle(.primary),
-                        detailStyle: urlInk.map { AnyShapeStyle($0.opacity(0.6)) } ?? AnyShapeStyle(.tertiary)
-                    )
+                Group {
+                    if scheme.isEmpty {
+                        Text(verbatim: host)
+                            .font(.system(size: placement.textSize))
+                            .foregroundStyle(hostStyle)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                    } else {
+                        FullAddressLine(
+                            address: AddressText(scheme: scheme, host: host, rest: rest),
+                            fontSize: placement.textSize,
+                            hostStyle: urlInk.map { AnyShapeStyle($0) } ?? AnyShapeStyle(.primary),
+                            detailStyle: urlInk.map { AnyShapeStyle($0.opacity(0.6)) } ?? AnyShapeStyle(.tertiary)
+                        )
+                    }
                 }
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
             }
         }
     }

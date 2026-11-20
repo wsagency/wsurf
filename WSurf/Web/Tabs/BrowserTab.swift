@@ -269,9 +269,7 @@ final class BrowserTab: Identifiable {
     }
 
     var engineOverride: BrowserEngine?  // A tab opened to compare engines: wins over the site's setting, never written to it.
-    /// The engine a tab keeps on one website after another tab of it changed the website's engine, until the tab closes
-    /// (`BrowserModel.setEngine(_:for:)`). Unlike `engineOverride` it is only for `origin`, and a change of the website's
-    /// default in Settings drops it (`BrowserModel.setEngine(_:for:origin)`).
+    /// The engine chosen for this tab on one origin. Explicitly setting the website default clears it.
     var pinnedEngine: (origin: String, engine: BrowserEngine)?
     var signInEngine: BrowserEngine?  // Holds a sign-in's redirect chain in WebKit (`noteNavigation`).
     /// The page a load left when it moved the tab to the other engine, whose history starts empty: Back from its first page

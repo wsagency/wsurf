@@ -418,6 +418,9 @@
     "same website and username as entry %lld with another password. Choose what to do with each of them." : {
 
     },
+    "Save Key" : {
+      "comment" : "Button to store the API key typed in the provider key popover."
+    },
     "Save passwords in Credential Manager?" : {
 
     },
@@ -438,6 +441,9 @@
     },
     "Search in current tab" : {
 
+    },
+    "Set %@ as Default for This Website" : {
+      "comment" : "Action that remembers the named rendering engine for this website."
     },
     "Set Up Vault…" : {
 
@@ -480,6 +486,9 @@
     },
     "This page changed, so nothing was saved." : {
 
+    },
+    "This Tab" : {
+      "comment" : "Heading above the engines that can be selected just for the current tab."
     },
     "This website can open this app without asking." : {
 
@@ -6259,6 +6268,9 @@
     "Switch Tabs" : {
       "comment" : "Tool name in assistant settings: switching between tabs."
     },
+    "Switch this tab to %@" : {
+      "comment" : "Tooltip on the engine badge. The argument is WebKit or Chromium."
+    },
     "Switch to Tab" : {
       "comment" : "Section heading in the address bar results list over rows for tabs that are already open; choosing one switches to it rather than loading a second copy. Title Case."
     },
@@ -6282,6 +6294,9 @@
     },
     "Tab" : {
       "comment" : "Legend printed on a key cap in the shortcut recorder in Settings, where the user records the key that activates the assistant. Use the word your language's Apple keyboards print on that key; the cap is only a few characters wide. This one is the Tab key on the keyboard — not a browser tab."
+    },
+    "Tab pinned" : {
+      "comment" : "Brief confirmation after pinning the current tab."
     },
     "Tab to share:" : {
 
@@ -10831,6 +10846,9 @@
     },
     "Tab titles, icons and the address, unless one is colored below." : {
       "comment" : "Caption of the Primary text row in the Colors card in Settings › Appearance: where this text color applies, unless the Tab text, Icons or URL text row below sets its own."
+    },
+    "Tab unpinned" : {
+      "comment" : "Brief confirmation after unpinning the current tab."
     },
     "Take Over" : {
       "comment" : "Button in the popover of the “AI” badge on a tab. It ends the external app’s access to that tab only, so the person uses it again themselves. Title Case, a verb phrase; sits next to “Stop”."

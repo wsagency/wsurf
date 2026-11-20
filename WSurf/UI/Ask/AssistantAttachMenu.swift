@@ -81,7 +81,7 @@ struct AssistantAttachMenu: View {
         VStack(alignment: .leading, spacing: 0) {
             MentionField(
                 text: $query,
-                placeholder: String(localized: "Search tabs"),
+                placeholder: "",
                 fontSize: 13,
                 isFocused: true,
                 accessibilityLabel: String(localized: "Search tabs"),
@@ -90,7 +90,18 @@ struct AssistantAttachMenu: View {
                 onMove: move(by:jumping:)
             )
             .frame(height: 22)
-            .padding(.horizontal, Self.textInset)
+            .overlay(alignment: .leading) {
+                if query.isEmpty {
+                    Text("Search tabs")
+                        .font(.system(size: 13))
+                        .foregroundStyle(.secondary)
+                        .padding(.leading, 2)
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
+                }
+            }
+            .clipped()
+            .padding(.horizontal, 10)
             .padding(.vertical, 4)
             .background(
                 RoundedRectangle(cornerRadius: Self.plateRadius, style: .continuous)
