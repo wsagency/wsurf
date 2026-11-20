@@ -855,7 +855,7 @@ final class MainMenu: NSObject, NSMenuItemValidation {
             title = coordinator.settings.minimalBarPlacement == .floating ? "Dock Toolbar" : "Detach Toolbar"
         case #selector(toggleMinimalSidebarPin):
             title = "Keep Sidebar Open"
-            menuItem.state = coordinator.keepsMinimalSidebarOpen ? .on : .off
+            menuItem.state = coordinator.settings.keepsMinimalSidebarOpen ? .on : .off
         default:
             if isMinimal {
                 title = coordinator.isMinimalTabListOpen || coordinator.keepsMinimalSidebarOpen ? "Hide Tabs" : "Show Tabs"

@@ -28,7 +28,8 @@ struct WebsiteControlsViewTests {
         #expect(abs(panelHeight() - fresh) < 1, "changing a policy keeps the same rows in place")
     }
 
-    @Test func clickingTheBadgeSwitchesOnlyTheCurrentTabAndLeavesTheAddressEditable() async throws {
+    @Test(arguments: [true, false])
+    func theEngineBadgeAndAddressHaveSeparateClickTargets(clickBadge: Bool) async throws {
         let browser = BrowserModel(database: .temporary())
         let coordinator = AppCoordinator(browser: browser)
         defer { browser.closeAllTabs(saving: false) }
@@ -53,21 +54,48 @@ struct WebsiteControlsViewTests {
             host.layoutSubtreeIfNeeded()
             return address.width > 30
         })
-        func click(at x: CGFloat) throws {
-            let point = host.convert(CGPoint(x: x, y: host.bounds.midY), to: nil)
-            for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
-                let event = try #require(NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
-                                                           windowNumber: window.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: 1))
-                window.sendEvent(event)
-            }
-        }
         // With no padlock, the engine is the first item on the address line. The address text follows it.
         let focusRequests = model.selectAllToken
-        try click(at: address.minX + 10)
-        #expect(await waitUntil(timeout: .seconds(4)) { tab.loadedEngine == .chromium })
-        #expect(browser.sitePermissions.engine(for: browser.siteOrigin(for: tab)) == .webKit)
-        #expect(model.selectAllToken == focusRequests)
-        try click(at: address.midX)
-        #expect(await waitUntil(timeout: .seconds(2)) { model.selectAllToken > focusRequests }, "text click at \(address) in \(host.bounds)")
+        if clickBadge {
+            try click(x: address.minX + 10, in: host, window: window)
+            #expect(await waitUntil(timeout: .seconds(4)) { tab.loadedEngine == .chromium })
+            #expect(browser.sitePermissions.engine(for: browser.siteOrigin(for: tab)) == .webKit)
+            #expect(model.selectAllToken == focusRequests)
+        } else {
+            try click(x: address.midX, in: host, window: window)
+            #expect(await waitUntil(timeout: .seconds(2)) { model.selectAllToken > focusRequests })
+            #expect(tab.loadedEngine == .webKit)
+        }
     }
+    @Test func clickingTheToolbarPinPinsAndUnpinsThePage() throws {
+        let browser = BrowserModel(database: .temporary())
+        let coordinator = AppCoordinator(browser: browser)
+        defer { browser.closeAllTabs(saving: false) }
+        let tab = browser.newTab()
+        tab.urlString = "https://article.example/read"
+        let host = NSHostingView(rootView: PinBadge(coordinator: coordinator).frame(width: 42, height: 32))
+        let window = NSWindow(contentRect: CGRect(origin: .zero, size: host.fittingSize),
+                              styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        defer { window.close() }
+        window.contentView = host
+        window.orderBack(nil)
+        host.layoutSubtreeIfNeeded()
+        try click(x: host.bounds.midX, in: host, window: window)
+        #expect(tab.isShowingPin)
+        try click(x: host.bounds.midX, in: host, window: window)
+        #expect(tab.pinnedURL == nil)
+    }
+
+    private func click(x: CGFloat, in host: NSView, window: NSWindow) throws {
+        let point = host.convert(CGPoint(x: x, y: host.bounds.midY), to: nil)
+        for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+            let event = try #require(NSEvent.mouseEvent(
+                with: type, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                windowNumber: window.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: 1
+            ))
+            window.sendEvent(event)
+        }
+    }
+
 }

@@ -30,8 +30,8 @@ struct AssistantAttachMenuTests {
         RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.05))
         host.layoutSubtreeIfNeeded()
         let field = try #require(editor(in: host))
-        let frame = host.convert(field.bounds, from: field)
-        #expect(frame.minX >= 17 && host.bounds.maxX - frame.maxX >= 17, "search field \(frame) in \(host.bounds)")
+        let frame = host.convert(field.alignmentRect(forFrame: field.frame), from: field.superview)
+        #expect(frame.minX >= 18 && host.bounds.maxX - frame.maxX >= 18, "search field \(frame) in \(host.bounds)")
     }
 
     private func model(privately: Bool = false, profile: Profile? = nil) -> BrowserModel {

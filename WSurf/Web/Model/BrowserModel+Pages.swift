@@ -183,7 +183,9 @@ extension BrowserModel {
             sitePermissions.setEngine(.webKit, for: canonical)
             return engine == .webKit
         }
-        let affected = openTabs(of: canonical).filter { $0.engineOverride == nil && $0.isMaterialised && $0.engine != engine }
+        let affected = context.tabs(sharingSitePermissionsWith: self).filter {
+            siteOrigin(for: $0) == canonical && $0.engineOverride == nil && $0.signInEngine == nil && $0.isMaterialised && $0.engine != engine
+        }
         let protected = affected.contains {
             $0.intrinsicProtectionReason != nil || downloads.hasActiveDownload(for: $0.id)
         }
@@ -196,8 +198,8 @@ extension BrowserModel {
         }
         guard sitePermissions === permissions else { return false }
 
-        // A default chosen for the website is the user's word for every open tab of it: pins no longer hold.
-        for tab in openTabs(of: canonical) {
+        // A tab can be away from the website for which it has a temporary choice.
+        for tab in context.tabs(sharingSitePermissionsWith: self) where tab.pinnedEngine?.origin == canonical {
             tab.pinnedEngine = nil
         }
         sitePermissions.setEngine(engine, for: canonical)
@@ -235,12 +237,6 @@ extension BrowserModel {
         return true
     }
 
-    /// The tabs of `origin` in this window and the profile's other windows.
-    private func openTabs(of origin: String) -> [BrowserTab] {
-        let own = tabs.filter { siteOrigin(for: $0) == origin }
-        return own + context.tabs(of: origin).filter { other in !own.contains { $0 === other } }
-    }
-
     /// The engine `tab` is set to run: its own (comparison or pinned), else the website's.
     func engine(for tab: BrowserTab) -> BrowserEngine {
         let origin = siteOrigin(for: tab)
@@ -255,9 +251,9 @@ extension BrowserModel {
 
     func applyStoredEngine(to origin: String) async {
         let engine = sitePermissions.engine(for: origin)
-        // A comparison tab or a tab with its own choice keeps its engine.
+        // A comparison tab, an explicit tab choice and a live sign-in chain keep their current engine.
         for tab in tabs where siteOrigin(for: tab) == origin && tab.isMaterialised && tab.engineOverride == nil
-            && tab.pinnedEngine?.origin != origin {
+            && tab.pinnedEngine?.origin != origin && tab.signInEngine == nil {
             guard tab.page.engine != engine else { continue }
             _ = await tab.switchEngine(to: engine)
         }

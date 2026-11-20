@@ -22,12 +22,13 @@ extension AppCoordinator {
             showBrowser()
         }
         if isMinimal {
-            if isMinimalTabListOpen {
+            if keepsMinimalSidebarOpen {
+                hidesPinnedSidebar = true
                 isMinimalTabListOpen = false
-            } else if settings.keepsMinimalSidebarOpen {
-                hidesPinnedSidebar.toggle()
+            } else if settings.keepsMinimalSidebarOpen && !isMinimalTabListOpen {
+                hidesPinnedSidebar = false
             } else {
-                isMinimalTabListOpen = true
+                isMinimalTabListOpen.toggle()
             }
             return
         }
@@ -41,7 +42,7 @@ extension AppCoordinator {
         if !browserVisible {
             showBrowser()
         }
-        settings.keepsMinimalSidebarOpen = !keepsMinimalSidebarOpen
+        settings.keepsMinimalSidebarOpen.toggle()
         hidesPinnedSidebar = false
         isMinimalTabListOpen = false
     }

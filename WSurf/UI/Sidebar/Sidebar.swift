@@ -445,14 +445,14 @@ private struct SidebarTopActions: View {
             // The Minimal window's tab list slides away when it is not pointed at; the pin keeps it open.
             if coordinator.isMinimal {
                 QuietIconButton(
-                    symbol: coordinator.keepsMinimalSidebarOpen ? "pin.fill" : "pin",
-                    isOn: coordinator.keepsMinimalSidebarOpen,
+                    symbol: coordinator.settings.keepsMinimalSidebarOpen ? "pin.fill" : "pin",
+                    isOn: coordinator.settings.keepsMinimalSidebarOpen,
                     help: String(localized: "Keep Sidebar Open")
                 ) {
                     coordinator.toggleMinimalSidebarPin()
                 }
                 .accessibilityLabel(Text("Keep Sidebar Open"))
-                .accessibilityAddTraits(coordinator.keepsMinimalSidebarOpen ? .isSelected : [])
+                .accessibilityAddTraits(coordinator.settings.keepsMinimalSidebarOpen ? .isSelected : [])
                 // The bar is detached: this is the way back to the window, as the tab list is the only place it is not.
                 if coordinator.barFloats {
                     QuietIconButton(

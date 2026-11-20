@@ -154,6 +154,33 @@ struct EngineRoutingTests {
         #expect(origin.preferredEngine(for: inSite) == .chromium, "the origin tab was never touched")
     }
 
+    @Test func savingADefaultOnlyClearsPinsForThatOriginEvenWhileAnotherSiteIsShowing() async throws {
+        let original = "https://one.example"
+        let other = "https://two.example"
+        let (browser, tab, _) = try browserWithTwoTabs(site: original)
+        #expect(await browser.setEngine(.chromium, for: tab))
+        tab.urlString = other + "/article"
+        #expect(await browser.setEngine(.webKit, for: other))
+        #expect(tab.preferredEngine(for: URL(string: original)) == .chromium)
+        #expect(await browser.setEngine(.chromium, for: tab))
+        tab.urlString = original
+        #expect(await browser.setEngine(.webKit, for: other))
+        #expect(tab.preferredEngine(for: URL(string: other)) == .webKit)
+    }
+
+    @Test func savingTheWebsiteDefaultLeavesAnotherTabsSignInReturnInWebKit() async throws {
+        let site = "http://127.0.0.1:1"
+        let (browser, tab, _) = try browserWithTwoTabs(site: site)
+        defer { browser.closeAllTabs(saving: false) }
+        let heldPage = tab.page
+        browser.sitePermissions.setEngine(.chromium, for: site)
+        tab.noteNavigation(to: try #require(URL(string: "https://accounts.google.com/")), startedByUser: false)
+        tab.noteNavigation(to: try #require(URL(string: tab.urlString)), startedByUser: false)
+        #expect(await browser.setEngine(.chromium, for: site))
+        #expect(tab.liveView === heldPage)
+        #expect(tab.loadedEngine == .webKit)
+    }
+
     @Test func websiteSettingsStillMoveEveryTabOfTheSite() async throws {
         let site = "https://default-\(UUID().uuidString.prefix(8).lowercased()).example"
         let (browser, a, b) = try browserWithTwoTabs(site: site)

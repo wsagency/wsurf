@@ -667,6 +667,8 @@ private struct PermissionPolicyMenu: View {
                 .font(Theme.Font.label)
         }
         .menuStyle(.borderlessButton)
+        .accessibilityLabel(Text(permission.label))
+        .accessibilityValue(Text(center.menuPolicy(for: permission).label))
         .foregroundStyle(.secondary)
         .controlSize(.small)
         .fixedSize()

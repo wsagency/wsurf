@@ -64,6 +64,10 @@ struct MinimalPinnedSidebarTests {
         first.toggleMinimalSidebarPin()
         first.toggleSidebar()
         #expect(first.isMinimalTabListOpen && !first.keepsMinimalSidebarOpen, "an explicitly unpinned list still floats")
+        other.toggleMinimalSidebarPin()
+        first.toggleSidebar()
+        #expect(!first.keepsMinimalSidebarOpen && !first.isMinimalTabListOpen, "another window pinned the open list")
+        #expect(other.keepsMinimalSidebarOpen)
     }
 
     private struct Layout {

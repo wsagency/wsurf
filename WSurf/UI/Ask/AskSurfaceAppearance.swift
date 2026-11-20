@@ -249,7 +249,7 @@ struct AskRestingLine: View {
                     .accessibilityValue(Text(engine.label))
                     .help("Switch this tab to \(String(localized: next.label))")
                 }
-                Group {
+                Button(action: model.focusForEditing) {
                     if scheme.isEmpty {
                         Text(verbatim: host)
                             .font(.system(size: placement.textSize))
@@ -265,7 +265,7 @@ struct AskRestingLine: View {
                         )
                     }
                 }
-                .allowsHitTesting(false)
+                .buttonStyle(.plain)
                 .accessibilityHidden(true)
             }
         }
