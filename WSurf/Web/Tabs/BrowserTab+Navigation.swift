@@ -9,6 +9,7 @@ import WebKit
 
 extension BrowserTab {
     func stopLoading() {
+        leavingSignIn = nil
         pendingNavigationTask?.cancel()
         page.stopLoading()
         stoppedNavigation = true
@@ -72,6 +73,7 @@ extension BrowserTab {
     @discardableResult
     func load(_ url: URL, transition: HistoryStore.Transition = .typed, startedByUser: Bool = true, byPerson: Bool = false) -> PageNavigation? {
         guard !isClosed else { return nil }
+        let sourceSignIn = signInEngine
         noteNavigation(to: url, startedByUser: startedByUser)
         pendingNavigationTask?.cancel()
         pendingTransition = transition
@@ -81,7 +83,7 @@ extension BrowserTab {
             lastRequestedNavigation = nil
             // A Chromium hop back through restored entries leaves a page that is ahead of the new one: Back must not return there.
             let left = liveView.flatMap { $0.engine != desired && $0.chromium?.hopsBackward != true ? committedURL : nil }
-                .map { (url: $0, state: page.interactionState as? Data) }
+                .map { (url: $0, state: page.savedInteractionState(keepingWebKitSignIn: sourceSignIn == .webKit)) }
             pendingNavigationTask = Task { [weak self] in
                 guard let self else { return nil }
                 // A new address ends this page's work anyway, so unlike a same-page engine switch it is not confirmed.
@@ -108,21 +110,18 @@ extension BrowserTab {
         pendingNavigationTask = Task { [weak self] in
             guard let self, !Task.isCancelled else { return nil }
             noteNavigation(to: left.url, startedByUser: true)
+            if let state = left.state, BrowserPage.webKitHistory(in: state)?.keepsSignIn == true {
+                resumeFavoriteSignIn(for: left.url)
+            }
             let desired = preferredEngine(for: left.url)
             pageBeforeEngineSwitch = nil
             urlString = left.url.absoluteString
             pendingTransition = .backForward
             guard await replaceEngine(with: desired), !Task.isCancelled else { return nil }
-            if let state = left.state, BrowserPage.canRestore(state, using: desired) {
-                page.interactionState = state
-                return nil
-            }
-            if let state = left.state {
-                page.seedHistory(from: state)
-            }
-            let result = loadDirect(left.url)
+            pendingNavigationTask = nil
+            let result = restoreDeferredState(left.state, url: left.url, byPerson: false)
             lastRequestedNavigation = result
-            return result
+            return await pendingNavigationTask?.value ?? result
         }
     }
 

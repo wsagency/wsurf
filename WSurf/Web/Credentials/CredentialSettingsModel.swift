@@ -227,11 +227,6 @@ final class CredentialSettingsModel {
 
     // MARK: Vaults
 
-    /// The selected manager's own list, never a copy: a non-fatal note that never changes whether the vault opened.
-    var scratchCleanupWarnings: [URL] {
-        manager?.scratchCleanupWarnings ?? []
-    }
-
     /// The vault autofill and saving use when they don't need to ask: the stored choice while it is still listed, else the
     /// lowest-numbered one.
     var defaultVaultID: UUID? {
@@ -349,7 +344,8 @@ final class CredentialSettingsModel {
                 finishOpening()
             }
         }
-        if manager?.isUnlocked != true {
+        // Another window can migrate the store on unlock, so its old format must be discovered again before showing this page.
+        if !isUnlocked || (store != nil && openState?.isProvisional != true) {
             session = nil
             await discoverVault()
         }
@@ -359,7 +355,7 @@ final class CredentialSettingsModel {
         do {
             let snapshot = try await manager.snapshot()
             // Task cancellation is per UI task; the epoch check is the separate, global authorization check.
-            guard !Task.isCancelled, manager.authorizationEpoch == epoch else { return }
+            guard !Task.isCancelled, authorizationEpoch == epoch else { return }
             session = CredentialVaultSession(epoch: epoch, snapshot: snapshot)
             error = nil
             vaultExists = true
@@ -367,7 +363,7 @@ final class CredentialSettingsModel {
             healthKey = nil
             scheduleHealthIfNeeded()
         } catch {
-            guard !Task.isCancelled, manager.authorizationEpoch == epoch else { return }
+            guard !Task.isCancelled, authorizationEpoch == epoch else { return }
             session = nil
             self.error = noteClosed(error) ? nil : Self.message(for: error)
         }
@@ -388,7 +384,7 @@ final class CredentialSettingsModel {
             return
         }
         await load()
-        // An already unlocked vault is not discovered again by `load`, so its listing is read here.
+        // An already unlocked v2 vault can skip discovery in `load`, so read its listing here.
         await refreshListing()
     }
 
@@ -412,12 +408,13 @@ final class CredentialSettingsModel {
             if let store {
                 let state = await store.openState()
                 guard !Task.isCancelled else { return }
-                openState = state
                 switch state {
                 case .failClosed(let closed):
+                    openState = state
                     enterFailClosed(closed)
                     return
                 case .firstRun:
+                    openState = state
                     failClosed = nil
                     vaults = []
                     enrolledPasskeys = []
@@ -450,6 +447,7 @@ final class CredentialSettingsModel {
                     bind(try vaultManager(id))
                 }
                 needsMigrationConfirmation = migrates
+                openState = state
             }
             guard let manager else { return }
             try await manager.discoverUnlocks()
@@ -662,6 +660,7 @@ final class CredentialSettingsModel {
     func unlock(
         in anchor: @autoclosure () -> ASPresentationAnchor, confirmMigration: Bool = false, verifying: (@Sendable (Bool) -> Void)? = nil
     ) async {
+        guard let selected = manager, !isLoaded || needsMigrationConfirmation else { return }
         unlockInFlight = true
         defer {
             unlockInFlight = false
@@ -675,15 +674,17 @@ final class CredentialSettingsModel {
                 }
             }
         }
-        if await perform({ try await $0.unlock(in: anchor(), confirmMigration: confirmMigration, verifying: report) }) {
-            beginCopyGraceAfterUnlock()
-            // An upgraded vault is a new state of the store: read it again before the page offers anything from the old one.
-            if store != nil, openState?.isProvisional != true {
-                await discoverVault()
-            }
-            await refreshListing()
-            await load()
+        var result: CredentialUnlockResult?
+        _ = await guarded {
+            result = try await selected.unlock(in: anchor(), confirmMigration: confirmMigration, verifying: report)
         }
+        guard let result, !Task.isCancelled, manager === selected, authorizationEpoch == result.epoch else { return }
+        if case .confirmed(let epoch) = result {
+            copyGrace?.begin(for: selected, epoch: epoch)
+        }
+        await refreshListing()
+        guard !Task.isCancelled, manager === selected, authorizationEpoch == result.epoch else { return }
+        await load()
     }
 
     func addUnlock(in anchor: @autoclosure () -> ASPresentationAnchor) async {

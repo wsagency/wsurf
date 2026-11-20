@@ -11225,6 +11225,9 @@
     "This saves the selected passwords to a CSV file that is NOT encrypted: anyone who can open the file can read every password in it. You choose where it goes, and WSurf never deletes it for you. Delete it as soon as you have imported it elsewhere. Don’t open it in a spreadsheet app, which may change or run cells that start with = + - or @." : {
       "comment" : "Warning paragraph in the Export Passwords to CSV sheet: the CSV file is not encrypted and should be deleted after use. “NOT” is capitalised for emphasis, so keep the emphasis. The characters = + - and @ are literal and stay as they are."
     },
+    "This page stays in %@ for its sign-in session. The website default is %@." : {
+      "comment" : "Website Settings caption for a sign-in session. The first placeholder names the rendering engine used by the page and the second names the saved engine for this website. Each is WebKit or Chromium."
+    },
     "This sign-in page uses WebKit to keep the same session through redirects." : {
       "comment" : "Caption of the disabled Browser engine row for a sign-in website that must keep one session across redirects. Also shown in the toolbar’s site controls popover. WebKit is an engine name. Full sentence."
     },
