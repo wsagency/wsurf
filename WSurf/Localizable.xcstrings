@@ -6412,6 +6412,9 @@
     "Sync" : {
 
     },
+    "Sync is paused for the settings you turned off. Try again to save this choice." : {
+      "comment" : "Shown in Sync settings when this Mac still needs to finish saving an opt-out."
+    },
     "Sync on this Mac" : {
 
     },
