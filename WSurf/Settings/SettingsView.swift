@@ -215,6 +215,9 @@ private struct SettingsDetail: View {
                         AssistantSettings(model: intelligence, coordinator: coordinator)
                     case .profiles:
                         ProfileSettings(coordinator: coordinator)
+                    case .sync:
+                        MacSyncSettings(coordinator: coordinator)
+                            .id(coordinator.context.contextID)
                     case .autofill:
                         AutofillSettings(coordinator: coordinator, highlight: highlight)
                     case .privacy:

@@ -287,6 +287,8 @@
    "MCPTransportTests",
    "MCPVisibilityTests",
    "MCPWindowScopeTests",
+   "MacSettingsSyncTests",
+   "MacWebsiteSyncTests",
    "MainMenuKeyTests",
    "MediaCaptureTests",
    "MediaCardFitTests",
@@ -314,10 +316,13 @@
    "PickCredentialRealMenuTests",
    "SecretClipboardTests",
    "SettingsRowAccessibilityTests",
+   "SharedCatalogTests",
+   "SharedSpacesTests",
    "SidebarListHeightTests",
    "TabSleepScheduleTests",
    "TabSleepSparesTests",
-   "TabSwitchWorkTests"
+   "TabSwitchWorkTests",
+   "VaultSyncAssetTests"
   ],
   [
    "AgentActionPolicyTests",

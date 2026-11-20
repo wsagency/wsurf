@@ -62,6 +62,16 @@ enum SettingsIndex {
     }
 
     static let all: [SettingsEntry] = [
+        SettingsEntry("sync.spaces", .sync, "Shared Spaces and favorites", "Choose which Spaces, tabs and pins to share with your other Macs.",
+                      ["icloud", "tabs", "shared spaces", "pin", "favorites"]),
+        SettingsEntry("sync.vaults", .sync, "Credential vaults", "Choose which vaults to share through iCloud.",
+                      ["icloud", "vault", "passwords", "credentials"]),
+        SettingsEntry("sync.websites", .sync, "Website settings", "Share this profile’s site preferences.",
+                      ["permissions", "engine", "zoom", "privacy"]),
+        SettingsEntry("sync.providers", .sync, "AI providers", "Share provider definitions and model choices.",
+                      ["assistant", "models", "icloud"]),
+        SettingsEntry("sync.keys", .sync, "Saved provider keys", "Choose which provider keys to share through iCloud Keychain.",
+                      ["api key", "provider", "secret", "icloud keychain"]),
         SettingsEntry("autofill.contacts", .autofill, "Contacts and addresses",
                       "Save and fill contact details.",
                       ["contact", "address", "email", "phone", "name", "shipping", "billing", "autofill",

@@ -38,6 +38,9 @@
     "Actions the assistant may take on these websites without asking again, such as purchases or posting." : {
       "comment" : "Caption of the Approved actions page in Settings."
     },
+    "Approve changed endpoint…" : {
+
+    },
     "Approved actions" : {
       "comment" : "Row title in Settings › Assistant and title of the page it opens: the sensitive actions, such as purchases or posting, that the assistant may take on certain websites without asking again. Sentence case. Replaces Allowed without asking."
     },
@@ -52,6 +55,9 @@
     },
     "Follows this website’s password rules." : {
       "comment" : "Shown under the generated password in the Generate Password sheet when the format is Website’s Rules and the password meets the rules the page publishes. A full sentence."
+    },
+    "%@ — previous endpoint (%@)" : {
+      "comment" : "The provider name and its previous endpoint URL."
     },
     "%@ — Private Browsing" : {
 
@@ -385,6 +391,9 @@
     "Remove Old List…" : {
 
     },
+    "Remove the iCloud Keychain copy for %@? Each Mac keeps its local key." : {
+
+    },
     "Remove the Old Passwords List?" : {
 
     },
@@ -405,6 +414,9 @@
     },
     "Review the old list before removing it." : {
 
+    },
+    "Review “%@”" : {
+      "comment" : "The title of the conflicting shared item."
     },
     "Review…" : {
 
@@ -1427,6 +1439,9 @@
     "A new profile starts with no history, tabs, or sign-ins." : {
       "comment" : "Caption on the new-profile page, saying what the profile will contain."
     },
+    "A shared key for this endpoint is unavailable." : {
+
+    },
     "A sidebar for tabs and a toolbar above the page." : {
       "comment" : "Description of the Standard window style, shown as a tooltip on its miniature in Settings and under it in setup."
     },
@@ -1595,6 +1610,9 @@
     "agent speech" : {
       "comment" : "Detail line under the Enable/Disable Voice command in the ⌘K palette; it names what the command affects — the assistant reading its replies aloud. Lowercase caption fragment; capitalise if your language capitalises nouns."
     },
+    "AI providers" : {
+
+    },
     "AI replies can be wrong. Check important info." : {
       "comment" : "AI disclosure pinned at the foot of the agent activity column. Must stay short enough to fit one line at the column’s minimum width."
     },
@@ -1609,6 +1627,9 @@
     },
     "All time" : {
       "comment" : "Option in the Time range pop-up menu on the Privacy settings page, meaning there is no limit on how far back data is cleared."
+    },
+    "all websites by default" : {
+
     },
     "All websites use the defaults" : {
       "comment" : "Shown under “Website permissions” when a profile has changed none."
@@ -1631,6 +1652,9 @@
     "Allow a hosted shell to run commands and create files. Extra charges may apply." : {
 
     },
+    "Allow assistant access for %@ on this Mac? %@" : {
+      "comment" : "The first value is the website or default scope. The second describes the requested access."
+    },
     "Allow Assistant on %@?" : {
 
     },
@@ -1638,6 +1662,9 @@
 
     },
     "Allow Control lets the assistant read and use page controls on %@. Read Only blocks this action. Password and payment fields stay blocked." : {
+
+    },
+    "Allow this provider’s previously saved key to be used at %@?" : {
 
     },
     "Allow WSurf to use the microphone under Privacy & Security > Microphone." : {
@@ -2182,6 +2209,9 @@
     "Choose From Menus" : {
       "comment" : "Tool name in assistant settings: picking an option in a dropdown on a web page."
     },
+    "Choose separately which vaults to share from this Mac." : {
+
+    },
     "Choose short, medium, or long replies." : {
 
     },
@@ -2215,6 +2245,9 @@
     "Choose voices for conversation and reading aloud. Voice features send audio or text to OpenAI." : {
 
     },
+    "Choose what this Mac shares through your Apple Account." : {
+
+    },
     "Choose what to clear and how far back to go. This can’t be undone." : {
       "comment" : "Message in that dialog, naming its two controls: the checkboxes for what, and the time-range menu for how far back. Do not list the kinds themselves here — they are the checkbox labels, and unticking one would make a list go stale. Curly apostrophe."
     },
@@ -2228,6 +2261,12 @@
 
     },
     "Choose which profile opens when WSurf starts." : {
+
+    },
+    "Choose which provider keys to share through iCloud Keychain." : {
+
+    },
+    "Choose which Spaces, tabs and pins to share with your other Macs." : {
 
     },
     "Choose Which Tab to Control" : {
@@ -2451,6 +2490,9 @@
     "Configure one hosted shell with an automatic container or an existing container ID. Local shell execution is not supported." : {
 
     },
+    "Confirm" : {
+
+    },
     "Connect an external assistant to tabs you choose." : {
 
     },
@@ -2581,6 +2623,9 @@
       "comment" : "Short notice in the address field when Clear Website Data failed or removed only part of the data. Sentence case, curly apostrophe, no full stop."
     },
     "Couldn’t compact. Context unchanged." : {
+
+    },
+    "Couldn’t complete the iCloud change. Check the linked profile and try again." : {
 
     },
     "Couldn’t Fill Saved Details" : {
@@ -2939,6 +2984,9 @@
     "empty" : {
       "comment" : "Badge shown in place of the tab count on a sidebar folder row that holds no tabs. A single adjective in a tiny capsule — deliberately lowercase and as short as possible; follow your own language's capitalisation rather than copying the English lowercase if that would look wrong."
     },
+    "Enable key sharing for this Apple Account first." : {
+
+    },
     "Enable Voice" : {
       "comment" : "Command in the ⌘K palette that turns the assistant's spoken replies back on; its detail line reads “agent speech”. Title Case; pairs with “Disable Voice”."
     },
@@ -3150,6 +3198,9 @@
     "Find embedded websites on a page." : {
 
     },
+    "Find my vaults in iCloud" : {
+
+    },
     "Find Next" : {
       "comment" : "Item in the Find submenu that jumps to the next match on the page. Title Case."
     },
@@ -3161,6 +3212,9 @@
     },
     "Find Previous" : {
       "comment" : "Item in the Find submenu that jumps to the previous match on the page. Title Case."
+    },
+    "Find Profiles" : {
+
     },
     "Find sign-in settings" : {
 
@@ -3551,6 +3605,9 @@
     "JavaScript" : {
       "comment" : "Title of the switch on the Websites settings page, and the title of that same row in Settings search. Name of the technology — leave as is."
     },
+    "Join Shared Space" : {
+
+    },
     "just now" : {
       "comment" : "Relative time on a task card and in the agent activity panel, used for anything less than 45 seconds old; older ages are written by the system in the reader's own locale. Lowercase fragment on a metadata line."
     },
@@ -3580,6 +3637,9 @@
     },
     "Keep This Mac’s" : {
       "comment" : "Button in the Review Sync Changes sheet that keeps this Mac’s version of an entry. Title Case for a command."
+    },
+    "Keep This Mac’s Version" : {
+
     },
     "Keep this website loaded" : {
 
@@ -3634,6 +3694,9 @@
     },
     "Last seen %@" : {
       "comment" : "Line at the top of the sidebar’s list of another device’s tabs when that device has not reported for a while. %@ is a phrase such as “2 hours ago”. A fragment, not a sentence. Sentence case."
+    },
+    "Last synced %@." : {
+      "comment" : "The date and time of the last synchronization."
     },
     "Last used %@" : {
       "comment" : "When a profile was last open, shown in the profile list. %@ is a phrase such as “2 days ago”. A fragment, not a sentence."
@@ -3770,6 +3833,15 @@
     "Link Copied" : {
       "comment" : "Brief notice confirming the page's address is now on the clipboard. Title Case, as the app's other short notices are; a past participle, not a command."
     },
+    "Link to Profile" : {
+
+    },
+    "Linked profile" : {
+
+    },
+    "Linked to %@ in iCloud." : {
+      "comment" : "The name of the linked WSurf profile."
+    },
     "Links Copied" : {
       "comment" : "Passing notice under the address field after several web addresses are copied at once. Plural of Link Copied. Title case."
     },
@@ -3847,6 +3919,9 @@
           }
         }
       }
+    },
+    "Manage credential vaults" : {
+
     },
     "Manage profiles" : {
       "comment" : "Subtitle under the open profile's name at the top of the Settings sidebar, saying that clicking it opens the Profiles page. A profile is a separate set of cookies, history and tabs. Sentence case, no final full stop, and short enough for a narrow sidebar."
@@ -4378,6 +4453,9 @@
     "Now Playing" : {
       "comment" : "Fallback title in the media dock when the page never said what is playing. Apple's own term for this line — use the wording your platform uses. Title Case, one narrow line."
     },
+    "Off. Existing copies stay on each Mac." : {
+
+    },
     "Offer to save contact details entered in forms." : {
 
     },
@@ -4515,6 +4593,9 @@
     },
     "Open this link in the task’s tab" : {
       "comment" : "Tooltip on a link row inside an expanded step of the agent activity panel; clicking loads that link in the tab the assistant's task belongs to. Sentence case; keep the curly apostrophe."
+    },
+    "Open Vaults…" : {
+
     },
     "Open Video in New Tab" : {
       "comment" : "Item in the web page’s right-click menu. Title Case."
@@ -4843,11 +4924,20 @@
     "Profiles" : {
 
     },
+    "Provider" : {
+
+    },
     "Provider error %lld: %@" : {
       "comment" : "Error message when the AI provider’s server rejects a request. %lld is the HTTP status code, for example 404 or 500. %@ is the error text the server itself returned, which arrives untranslated, or the separate word unknown when the response carried no message."
     },
     "Providers" : {
       "comment" : "Settings → Assistant. Section heading over the providers the user has already set up."
+    },
+    "Publish Profile" : {
+
+    },
+    "Publish this profile’s name, or choose an existing iCloud profile." : {
+
     },
     "Pulled locally" : {
       "comment" : "Heading over the group of models already downloaded onto this Mac, in the model pop-up menu. Pulled is Ollama’s word for downloading a model; locally means onto this computer. The alternative heading for a remote provider is Available to this key."
@@ -4930,6 +5020,9 @@
     "Reading text in attachments…" : {
       "comment" : "Status above the assistant composer while on-device text recognition runs on attached images. Shown only for models that can’t read images, because Send waits for it."
     },
+    "Reading the iCloud catalog…" : {
+
+    },
     "Reading this page…" : {
 
     },
@@ -4938,6 +5031,9 @@
     },
     "Ready to install" : {
       "comment" : "Status line under the Software Update heading in Settings once the update has been downloaded and unpacked. An adjective phrase describing the update, not an instruction."
+    },
+    "Ready to sync." : {
+
     },
     "Reasoning summary" : {
 
@@ -5625,6 +5721,9 @@
     "Settings" : {
       "comment" : "Heading at the top of the Settings window’s sidebar, and the name of the entry that opens Settings from the command palette. Apple’s term for what used to be called Preferences — use Apple’s own translation."
     },
+    "Settings could not finish syncing. Try again on this Mac." : {
+
+    },
     "Settings you changed for this website." : {
 
     },
@@ -5750,6 +5849,27 @@
     },
     "Share tabs through iCloud" : {
       "comment" : "Row title on a profile’s settings page: the switch that shares the tabs open in this profile with the person’s other devices through iCloud. iCloud is Apple’s product name — leave as is. Sentence case."
+    },
+    "Share this Mac’s key…" : {
+
+    },
+    "Share this profile’s site preferences." : {
+
+    },
+    "Share This Space" : {
+
+    },
+    "Share website settings" : {
+
+    },
+    "Shared pins and Favorites" : {
+
+    },
+    "Shared Spaces" : {
+
+    },
+    "Shared Spaces and favorites" : {
+
     },
     "Shared tabs: %lld · Tool calls: %lld" : {
       "comment" : "Native MCP connection settings or access prompt. MCP is the protocol name. Inserted client names, website addresses, and page titles are supplied at runtime; do not translate them."
@@ -5936,6 +6056,9 @@
     },
     "Sign in to %@" : {
       "comment" : "Title of the dialog a website shows when it asks for a username and password. %@ is the address that asks, such as https://example.com or https://example.com:8443, or a proxy’s host and port."
+    },
+    "Sign in to iCloud in System Settings to use Sync." : {
+
     },
     "Sign in to this MCP connection in OpenAI settings." : {
 
@@ -6183,6 +6306,9 @@
     "Stop Listening" : {
       "comment" : "Command that turns the microphone off. The same command reads “Start Listening” while it is off. Title Case."
     },
+    "Stop Sharing" : {
+
+    },
     "Stop Speaking" : {
       "comment" : "Tooltip on the toolbar's speaker button while the assistant is reading a reply aloud; clicking cuts the speech off mid-sentence. It does not change any setting. Title Case."
     },
@@ -6271,6 +6397,9 @@
     "Switch this tab to %@" : {
       "comment" : "Tooltip on the engine badge. The argument is WebKit or Chromium."
     },
+    "Switch to a regular profile to manage iCloud sync." : {
+
+    },
     "Switch to Tab" : {
       "comment" : "Section heading in the address bar results list over rows for tabs that are already open; choosing one switches to it rather than loading a second copy. Title Case."
     },
@@ -6279,6 +6408,12 @@
     },
     "Symbol" : {
       "comment" : "Label of the grid of symbols that stand for a profile."
+    },
+    "Sync" : {
+
+    },
+    "Sync on this Mac" : {
+
     },
     "Sync with iCloud" : {
       "comment" : "Title of the switch on a vault’s Settings that keeps the vault the same on the person’s Macs through iCloud, and the accessibility label of that switch. iCloud is Apple’s product name. Sentence case."
@@ -6425,6 +6560,9 @@
     "The Keychain could not update the MCP authorization token." : {
 
     },
+    "The Keychain could not update the saved key." : {
+
+    },
     "The Keychain could not update this MCP sign-in." : {
 
     },
@@ -6503,6 +6641,9 @@
     "The same password is saved for one other website." : {
       "comment" : "Note under the sign-in fields of the credential editor in Settings › Credentials, when the credential’s saved password is also saved for exactly one other website. A full sentence; “Also saved in %@.” can follow it."
     },
+    "The saved sync settings could not be read. Choose what to share again." : {
+
+    },
     "The server accepted the connection but never replied." : {
       "comment" : "Explanation on the error page shown when a website timed out, below the headline."
     },
@@ -6535,6 +6676,9 @@
     },
     "Theme" : {
       "comment" : "Title of the Appearance settings row that chooses light, dark or automatic, and the same word in the Settings search index. Noun; a short row title."
+    },
+    "There is no saved key for this endpoint on this Mac." : {
+
     },
     "These %lld websites will need permission again." : {
 
@@ -6637,6 +6781,9 @@
     "This form sends what you type to another website, so nothing was filled." : {
       "comment" : "Informative text of the “Couldn’t Fill Saved Details” alert after Pick Credential…, when the chosen login's password or verification code would have gone into a form whose action is on another website. Nothing was filled. Sentence."
     },
+    "This iCloud profile is already linked on this Mac." : {
+
+    },
     "This image couldn’t be prepared." : {
 
     },
@@ -6652,8 +6799,14 @@
     "This issuer does not offer dynamic client registration. Enter a registered client ID." : {
 
     },
+    "This Mac couldn’t save its sync changes. Check available storage and try again." : {
+
+    },
     "This Mac isn’t connected to the internet." : {
       "comment" : "Explanation on the error page shown when the Mac is offline, below the headline. Curly apostrophe."
+    },
+    "This Mac: %@" : {
+      "comment" : "The local URL or title of the conflicting shared item."
     },
     "This Mac’s copy is encrypted and uploaded. Entries that differ from iCloud wait for your review." : {
       "comment" : "Message of the confirmation shown when sync is turned on again."
@@ -6982,6 +7135,9 @@
     "Use HTTPS to encrypt your API key. HTTP is allowed only for localhost." : {
       "comment" : "Error under the field where a user-added endpoint address is typed, shown when a remote address uses an insecure protocol. https, http and localhost are technical terms and must stay exactly as they are, including their lowercase spelling. In the clear means unencrypted."
     },
+    "Use iCloud" : {
+
+    },
     "Use iCloud Version" : {
       "comment" : "Button in the Review Sync Changes sheet that takes iCloud’s version of an entry. Title Case for a command."
     },
@@ -6995,6 +7151,9 @@
       "comment" : "Command in the View menu and the command palette (⇧⌘M) that switches every window to the Minimal style. Title Case."
     },
     "Use recommended" : {
+
+    },
+    "Use shared key…" : {
 
     },
     "Use Standard Window Style" : {
@@ -7108,6 +7267,9 @@
     "Wait for Page Changes" : {
 
     },
+    "Waiting for iCloud. Local changes are saved." : {
+
+    },
     "Waiting for sign-in…" : {
 
     },
@@ -7143,6 +7305,9 @@
     },
     "Website Settings" : {
       "comment" : "Tooltip on the sliders button at the trailing edge of the address field. Opens settings for the current website. Title Case."
+    },
+    "Website settings" : {
+
     },
     "Website support required" : {
 
@@ -7303,6 +7468,9 @@
     "Sidebar font" : {
       "comment" : "Appearance setting for the installed font family used by sidebar tab and folder titles."
     },
+    "Choose an iCloud profile above to share these settings." : {
+
+    },
     "Choose an installed font family for tab and folder names." : {
       "comment" : "Caption for the Sidebar font setting."
     },
@@ -7377,6 +7545,9 @@
     },
     "Choose light, dark, pastel Calm, or match your Mac." : {
       "comment" : "Search result description for Appearance theme choices, including the two pastel Calm presets."
+    },
+    "Remove shared copy…" : {
+
     },
     "Remove Tab" : {
       "comment" : "Explicit destructive sidebar context-menu command that removes the tab and its saved link."
@@ -7584,6 +7755,9 @@
     "Forget Everything" : {
       "comment" : "Default, destructive button of the Also forget everything? question: turns memory off and deletes every note. Title Case."
     },
+    "Keep local permission" : {
+
+    },
     "Keep Notes" : {
       "comment" : "Button of the Also forget everything? question: turns memory off and keeps the notes. Title Case."
     },
@@ -7665,6 +7839,9 @@
     "Block on this site" : {
       "comment" : "Button in an extension's row in Website Settings (the sliders button beside the address). It stops that extension running on the website in front, and on its subdomains. It reads “Allow on this site” while the extension is blocked there. Sentence case, no final full stop."
     },
+    "Allow on this Mac" : {
+
+    },
     "Allow on this site" : {
       "comment" : "Button in an extension's row in Website Settings, shown while that extension is blocked on the website in front. It lets the extension run there again. Sentence case, no final full stop."
     },
@@ -7685,6 +7862,9 @@
     },
     "Blocked websites (%lld)" : {
       "comment" : "Label of a folded list under an extension's row in Settings > Extensions. The list holds the websites that extension is blocked on. %lld is how many there are. Sentence case; keep the number in parentheses or equivalent."
+    },
+    "Allow %@ for %@ on this Mac?" : {
+      "comment" : "The first value is the permission name. The second is the website origin."
     },
     "Allow %@ on %@ again" : {
       "comment" : "Tooltip and spoken hint of the Remove button beside a blocked website in an extension's Blocked websites list in Settings. The first %@ is the extension's name, the second the website, for example example.com. Do not translate either. Sentence case, no final full stop."
@@ -7801,6 +7981,9 @@
     "Without your sign-ins, WSurf reads the page as a visitor would." : {
       "comment" : "Explanation in the sheet that asks whether to watch a page, about the Use my sign-ins for this page checkbox."
     },
+    "The Apple Account changed. Choose what to sync with this account." : {
+
+    },
     "The assistant asked for this watch. Webpages can carry hidden instructions aimed at the assistant. Allow this only if it’s what you asked for." : {
       "comment" : "Warning in the sheet that asks whether to watch a page, when the assistant asked for the watch."
     },
@@ -7869,6 +8052,9 @@
     },
     "Resume Watching" : {
       "comment" : "Button and context menu item of a paused page watch in the Watches tab."
+    },
+    "Pause this key" : {
+
     },
     "Pause Watching" : {
       "comment" : "Button and context menu item of a page watch in the Watches tab."
@@ -7997,6 +8183,12 @@
     "Space Name" : {
       "comment" : "Placeholder and accessibility label of the name field in the New Space and Edit Space dialogs. Title Case."
     },
+    "iCloud: %@" : {
+      "comment" : "The remote URL or title of the conflicting shared item."
+    },
+    "iCloud: Closed" : {
+
+    },
     "Icon" : {
       "comment" : "Accessibility label of the icon picker in the New Space and Edit Space dialogs. Noun."
     },
@@ -8029,6 +8221,21 @@
     },
     "Don’t ask again" : {
       "comment" : "Checkbox under the question before switching to a space of another profile. When on, later switches happen without asking."
+    },
+    "Share custom providers" : {
+
+    },
+    "Share model choices for this profile" : {
+
+    },
+    "Share Pin" : {
+
+    },
+    "Share provider definitions and model choices." : {
+
+    },
+    "Share saved keys with iCloud Keychain" : {
+
     },
     "Share sign-ins with “%@”" : {
       "comment" : "Choice in the New Space dialog. %@ is a profile's name. The new space uses that profile's website sign-ins, history and passwords."
@@ -8131,6 +8338,28 @@
     },
     "%lld cards in the file couldn’t be read and are left out." : {
       "comment" : "Sentence added to the import review caption of Safari payment cards. %lld is the number of cards in the chosen file that could not be read and are skipped."
+    },
+    "%lld changes waiting to sync." : {
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld change waiting to sync."
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld changes waiting to sync."
+                }
+              }
+            }
+          }
+        }
+      }
     },
     "%lld credentials move to Trash with their history, and their passwords and codes stay in the History of “%@”. They can’t be restored while “%@” is in the vault." : {
       "comment" : "Message of the “Merge Credentials?” dialog when several credentials are merged away. %lld is how many move to Trash (at least 2); first and second %@ are the title of the primary credential and are not translated. Trash is the vault’s Trash."
@@ -8356,6 +8585,9 @@
     },
     "A verification code has settings WSurf can’t use, so it wasn’t imported." : {
       "comment" : "Note in the import review sheet (Settings › Credentials), shown after the item’s title and a colon, under the item’s row or in the “Not imported” list: a verification code (one-time code) was skipped because its settings, such as algorithm, digits or period, aren’t usable. Full sentence."
+    },
+    "A verified Apple Account is required to share saved keys." : {
+
     },
     "a website" : {
       "comment" : "Lowercase fragment inside a sentence on an import review row, such as “Merging adds a website and a passkey.” Singular; the plural is “%lld websites”. Never starts a sentence."
@@ -8699,6 +8931,9 @@
     "Changes are saved to this theme as you make them." : {
       "comment" : "First note in the Colors card in Settings › Appearance while one of the user’s own saved themes is selected: each color change is written to that theme at once."
     },
+    "Changes are waiting to upload." : {
+
+    },
     "Changes saved." : {
       "comment" : "Notice above the Credentials list after the user saved changes to an existing credential in the editor; it offers Undo. Counterpart of “Credential added.”. Full sentence."
     },
@@ -8779,6 +9014,9 @@
     },
     "Choose what to send to another app. The system passes your selection to the app you pick next, and that app can read it: any passwords, passkeys, verification code setups, notes, cards and other items you select aren’t encrypted by WSurf. WSurf doesn’t write a file, and your vault keeps its own copy." : {
       "comment" : "Explanatory paragraph in the Export Credentials sheet, the hand-off to another app: the app the user picks next can read what is sent, WSurf writes no file, and the vault keeps its own copy."
+    },
+    "Choose which vaults to share through iCloud." : {
+
     },
     "Choose WSurf, Standard, Calm, Catppuccin, Nord, Dracula, Gruvbox, or Rosé Pine." : {
       "comment" : "Settings search description for the “Theme” entry. The list names the built-in themes. WSurf, Catppuccin, Nord, Dracula, Gruvbox and Rosé Pine are proper names; Standard and Calm should match how they are translated as theme names."
@@ -8942,6 +9180,9 @@
     "Couldn’t Generate a Password" : {
       "comment" : "Title of the alert when Generate Password… (a web page field’s context menu) refuses the right-clicked field or finds no vault to save in. Title Case."
     },
+    "Couldn’t load the iCloud profiles. Try again when this Mac is online." : {
+
+    },
     "Couldn’t move Input History. It is still kept where it was." : {
       "comment" : "Error under the Input History list in Settings > Autofill when moving the entries to another vault (Keep Here) failed for any other reason. Nothing was moved."
     },
@@ -9028,6 +9269,9 @@
     },
     "Credential Manager locked before this was saved. Nothing was changed." : {
       "comment" : "Result message in the Save as Credential sheet (opened from an Input History entry): Credential Manager’s vault locked before the password was saved, so nothing was written. Two short sentences."
+    },
+    "Credential vaults" : {
+
     },
     "Credentials" : {
       "comment" : "Label of a count row in the Delete Vault sheet: how many credentials (logins) the vault holds. Also the section title of the credential list when the vault has no name, and a heading in the Merge Credentials sheet. Plural noun."
@@ -10433,6 +10677,9 @@
     "Replace Saved removes the password saved for “%@”. The other app’s login has none." : {
       "comment" : "Warning in the details of one part of an import review row: the saved credential named in the quotes has a password, but the other app’s login has none. “Replace Saved” is a menu item and must match it. %@ is a title."
     },
+    "Replace the shared key for %@ with this Mac’s saved key?" : {
+
+    },
     "Replaces the saved password for this username." : {
       "comment" : "Caption in the Save as Credential sheet of Input History when a login with this username exists and the typed password differs. Sentence."
     },
@@ -10549,6 +10796,12 @@
     },
     "Saved into “%@”, which works on %@." : {
       "comment" : "Line in the details of a part that will be saved into an existing credential. First %@ is its title, second %@ a comma-separated list of the websites it works on."
+    },
+    "Saved provider key settings updated." : {
+
+    },
+    "Saved provider keys" : {
+
     },
     "Saved to Credential Manager." : {
       "comment" : "Result text in the Save as Credential sheet of Input History after the login was saved. Credential Manager is the name of the settings area for logins. Sentence."
@@ -11156,6 +11409,9 @@
     "This contact has no details autofill can use." : {
       "comment" : "Error text under the Import rows in Settings › Autofill (Vault tab) when the single contact picked has no usable details. Singular; the plural counterpart is “These contacts have no details autofill can use.” Sentence case."
     },
+    "This copy of WSurf doesn’t have access to iCloud sync." : {
+
+    },
     "This credential changed while the list was open. Try again." : {
       "comment" : "Error on the Credentials page in Settings when Show Details or a copy found a card or ID document that the list did not hold when it was read, so nothing was shown or copied without Touch ID. The page has already read the vault again; trying again asks for Touch ID first. Full sentences."
     },
@@ -11224,6 +11480,9 @@
     },
     "This saves the selected passwords to a CSV file that is NOT encrypted: anyone who can open the file can read every password in it. You choose where it goes, and WSurf never deletes it for you. Delete it as soon as you have imported it elsewhere. Don’t open it in a spreadsheet app, which may change or run cells that start with = + - or @." : {
       "comment" : "Warning paragraph in the Export Passwords to CSV sheet: the CSV file is not encrypted and should be deleted after use. “NOT” is capitalised for emphasis, so keep the emphasis. The characters = + - and @ are literal and stay as they are."
+    },
+    "This setting differs on this Mac and in iCloud." : {
+
     },
     "This sign-in page uses WebKit to keep the same session through redirects." : {
       "comment" : "Caption of the disabled Browser engine row for a sign-in website that must keep one session across redirects. Also shown in the toolbar’s site controls popover. WebKit is an engine name. Full sentence."
@@ -11372,6 +11631,9 @@
     "Unloaded. It reloads when selected." : {
       "comment" : "Tooltip and VoiceOver label of the small down-arrow badge on a tab whose page is unloaded. “It” is the tab’s page. Two short sentences."
     },
+    "Unlock a vault, add a vault from another Mac or review changes." : {
+
+    },
     "Unlock and Choose…" : {
       "comment" : "Default button of the first passkey alert when the vault is locked: it unlocks Credential Manager and then lets the user choose an account. Title Case, a verb phrase; the ellipsis says another step follows, keep it."
     },
@@ -11474,8 +11736,17 @@
     "Use the current website’s color in the toolbar and sidebar. Off while a theme’s colors or brightness are changed." : {
       "comment" : "Caption of the Website tint switch in Settings › Appearance › Theme: the toolbar and sidebar take the color of the page being viewed. The last sentence says the tint is switched off while theme colors or brightness are being edited. Sentence case."
     },
+    "Use the shared key for %@ and save a local copy on this Mac?" : {
+
+    },
     "Use This" : {
       "comment" : "Small button at the right of a field’s title row in the History panel: copies the earlier version’s value into the editor as a draft; nothing is saved until Save. Title Case, very tight."
+    },
+    "Use This Mac" : {
+
+    },
+    "Use this profile across Macs" : {
+
     },
     "Use this version’s %@" : {
       "comment" : "VoiceOver label, not visible, of the “Use This” button. %@ is the field’s title: Name, Login, Websites, Verification code, Notes, Files or Cards and other items. Those titles start with a capital; lowercase it if your language needs to."
@@ -11560,6 +11831,9 @@
     },
     "Website Copied" : {
       "comment" : "Brief notice above the Credentials list in Settings, shown after the user copies a website address of a credential or passkey to the clipboard. Title Case, short."
+    },
+    "Website permissions to review" : {
+
     },
     "Website preferences could not be applied." : {
       "comment" : "Title of a warning alert shown when the browser’s website settings could not be applied to an open page that runs in the Chromium engine. The alert’s message is the system’s error text. Chromium is a name and is not translated."
@@ -11695,6 +11969,9 @@
     },
     "your credentials were locked" : {
       "comment" : "Reason clause inserted as %@ into “The import ended because %@, and nothing was saved. …”. Lowercase fragment, no period; the credential vault locked during the import."
+    },
+    "Your iCloud storage is full. Settings changes are waiting on this Mac." : {
+
     },
     "Your Mac will not ask for further verification." : {
       "comment" : "Last line of the passkey sheet when no further user verification will be requested. Full sentence."

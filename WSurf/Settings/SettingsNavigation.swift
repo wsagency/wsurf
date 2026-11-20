@@ -11,6 +11,7 @@ enum SettingsCategory: String, CaseIterable, Identifiable {
     case search
     case provider
     case profiles
+    case sync
     case privacy
     case autofill
     case websites
@@ -34,6 +35,8 @@ enum SettingsCategory: String, CaseIterable, Identifiable {
             "Appearance"
         case .provider:
             "Assistant"
+        case .sync:
+            "Sync"
         case .profiles:
             "Profiles"
         case .autofill:
@@ -65,6 +68,8 @@ enum SettingsCategory: String, CaseIterable, Identifiable {
             "circle.lefthalf.filled"
         case .provider:
             "sparkles"
+        case .sync:
+            "icloud"
         case .profiles:
             "person.2"
         case .autofill:
@@ -88,7 +93,7 @@ enum SettingsCategory: String, CaseIterable, Identifiable {
 
     var group: SettingsGroup? {
         switch self {
-        case .general, .search, .appearance:
+        case .general, .search, .appearance, .sync:
             .setup
         case .provider:
             .intelligence
@@ -111,7 +116,7 @@ enum SettingsCategory: String, CaseIterable, Identifiable {
             Color(nsColor: .systemIndigo)
         case .provider:
             Color(nsColor: .systemPurple)
-        case .profiles:
+        case .profiles, .sync:
             Color(nsColor: .systemCyan)
         case .autofill:
             Color(nsColor: .systemPink)
@@ -145,6 +150,8 @@ enum SettingsCategory: String, CaseIterable, Identifiable {
              "intelligence", "provider", "voice", "speech", "spoken", "push to talk", "microphone",
              "dictation", "shortcut",
              ]
+        case .sync:
+            ["icloud", "sync", "spaces", "tabs", "favorites", "pins", "vault", "passwords", "website settings", "provider", "keys"]
         case .profiles:
             ["profile", "profiles", "work", "personal", "separate", "account", "switch", "identity"]
         case .autofill:
