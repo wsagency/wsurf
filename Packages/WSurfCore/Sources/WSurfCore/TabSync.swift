@@ -249,6 +249,9 @@ public final class TabSync: SyncEngineDelegate {
             // The router owns the engine's state; a bare device in a test sees the event and has nothing to keep.
             return
         case .fetched(let modified, let deleted):
+            guard let engine, needsEngine, let identity = engine as? any SyncAccountIdentity,
+                  let user = try? await identity.currentAccountUser(), !user.isEmpty,
+                  engine === self.engine, needsEngine, acceptsUploadAccount(user) else { return }
             applyFetched(modified: modified, deleted: deleted)
         case .sent(let saved, let deleted, let failed):
             applySent(saved: saved, deleted: deleted, failed: failed)

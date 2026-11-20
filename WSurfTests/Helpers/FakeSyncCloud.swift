@@ -229,6 +229,7 @@ final class FakeSyncEngine: SyncEngine, SyncAccountIdentity {
     private(set) var fetchCount = 0
     private(set) var fetchAllCount = 0
     var afterFullZoneRead: (() -> Void)?
+    var duringAccountLookup: (() async throws -> Void)?
     private var fetchedAt = 0
     private var stateRevision = 0
 
@@ -304,6 +305,7 @@ final class FakeSyncEngine: SyncEngine, SyncAccountIdentity {
     }
 
     func currentAccountUser() async throws -> String {
+        try await duringAccountLookup?()
         guard available, !offline else { throw URLError(.notConnectedToInternet) }
         return cloud.user
     }

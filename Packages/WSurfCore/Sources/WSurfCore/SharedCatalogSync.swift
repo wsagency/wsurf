@@ -54,6 +54,7 @@ public final class SharedCatalogSync: SyncZoneHandler {
     @ObservationIgnored var engine: (any SyncEngine)?
     @ObservationIgnored private let persist: (SharedCatalogState) throws -> Void
     @ObservationIgnored private var generation = 0
+    @ObservationIgnored private var enrollments: [SharedCatalogCategory: Int] = [:]
     public private(set) var storageAvailable = true
     public private(set) var trustedUser: String?
     @ObservationIgnored private var reads: [SharedCatalogCategory: (id: UUID, task: Task<Void, Error>)] = [:]
@@ -83,7 +84,11 @@ public final class SharedCatalogSync: SyncZoneHandler {
 
     public func setEnabled(_ on: Bool, _ category: SharedCatalogCategory, for profile: UUID) {
         guard enabled(category, for: profile) != on else { return }
+        enrollments[category, default: 0] += 1
         if on {
+            if state.enabled[category]?.isEmpty != false {
+                state.lastSynced?[category] = nil
+            }
             state.enabled[category, default: []].insert(profile)
             ready.remove(category)
         } else {
@@ -100,6 +105,10 @@ public final class SharedCatalogSync: SyncZoneHandler {
 
     public func items(_ category: SharedCatalogCategory) -> [SharedSpaceItem] {
         var items = state.remote.compactMapValues { $0.item.category == category ? $0.item : nil }
+        // A remote close takes effect immediately. Other conflicts keep this Mac's editable version until the person chooses.
+        for (id, edit) in state.conflicts where edit.item.category == category && items[id]?.removed == false {
+            items[id] = edit.item
+        }
         for (id, edit) in state.pending where edit.item.category == category {
             items[id] = edit.item
         }
@@ -108,7 +117,9 @@ public final class SharedCatalogSync: SyncZoneHandler {
 
     public func item(_ id: UUID, in category: SharedCatalogCategory) -> SharedSpaceItem? {
         let key = SyncRecordID(zone: category.zone, name: id.uuidString)
-        return state.pending[key]?.item ?? state.remote[key]?.item
+        let remote = state.remote[key]?.item
+        let conflict = remote?.removed == false ? state.conflicts[key]?.item : nil
+        return state.pending[key]?.item ?? conflict ?? remote
     }
 
     public func prepare(_ category: SharedCatalogCategory) async throws {
@@ -135,7 +146,7 @@ public final class SharedCatalogSync: SyncZoneHandler {
             try await read.value
             failed.remove(category)
         } catch {
-            if epoch == generation {
+            if epoch == generation, reads[category]?.id == token, state.enabled[category]?.isEmpty == false {
                 failed.insert(category)
             }
             throw error
@@ -159,6 +170,12 @@ public final class SharedCatalogSync: SyncZoneHandler {
             read = try await engine.fetchAll(zone: category.zone)
         } catch where (error as? CKError)?.code == .zoneNotFound || (error as? URLError)?.code == .fileDoesNotExist {
             try await confirm(user, with: identity, epoch: epoch, category: category)
+            if state.lastSynced?[category] != nil {
+                zoneRemoved(category)
+                guard save() else { throw SharedCatalogError.storage }
+                onReceive?()
+                throw SharedCatalogError.paused
+            }
             engine.add([.saveZone(category.zone)])
             try await engine.sendNow()
             try check(epoch, category)
@@ -199,7 +216,11 @@ public final class SharedCatalogSync: SyncZoneHandler {
             if epoch == generation {
                 trustedUser = nil
                 failed.formUnion(ready)
+                failed.formUnion(reads.keys)
                 ready.removeAll()
+                reads.values.forEach { $0.task.cancel() }
+                reads.removeAll()
+                buffered.removeAll()
             }
             return false
         }
@@ -211,6 +232,13 @@ public final class SharedCatalogSync: SyncZoneHandler {
             return false
         }
         return true
+    }
+
+    private func verifiedIncomingCategories() async -> Set<SharedCatalogCategory> {
+        let active = state.enabled.filter { !$0.value.isEmpty }.keys
+        let before = enrollments
+        guard !active.isEmpty, let user = state.user, await verifyAccount(), state.user == user else { return [] }
+        return Set(active.filter { enrollments[$0] == before[$0] })
     }
 
     private func stamp(_ category: SharedCatalogCategory) {
@@ -243,9 +271,14 @@ public final class SharedCatalogSync: SyncZoneHandler {
         var send: [SyncChange] = []
         for item in items where enabled(item.category, for: profile) {
             let id = item.recordID
-            guard (state.pending[id]?.item ?? state.remote[id]?.item) != item,
-                  state.conflicts[id] == nil || item.removed,
-                  item.record(fields: nil, receipt: .init(submission: UUID())) != nil else { continue }
+            let known = state.conflicts[id]?.item ?? state.pending[id]?.item ?? state.remote[id]?.item
+            guard known != item, item.record(fields: nil, receipt: .init(submission: UUID())) != nil else { continue }
+            if let conflict = state.conflicts[id], !item.removed {
+                guard conflict.profile == profile else { continue }
+                state.conflicts[id]?.item = item
+                changed = true
+                continue
+            }
             if item.removed {
                 state.conflicts[id] = nil
             }
@@ -339,24 +372,26 @@ public final class SharedCatalogSync: SyncZoneHandler {
                 }
             }
         case .zonesDeleted(let zones):
-            for category in SharedCatalogCategory.allCases where zones[category.zone] != nil {
-                for profile in state.enabled[category] ?? [] {
-                    setEnabled(false, category, for: profile)
-                }
-                state.remote = state.remote.filter { $0.key.zone != category.zone }
-                state.pending = state.pending.filter { $0.key.zone != category.zone }
-                state.conflicts = state.conflicts.filter { $0.key.zone != category.zone }
+            let verified = await verifiedIncomingCategories()
+            guard !verified.isEmpty else { return }
+            for category in verified where zones[category.zone] != nil {
+                zoneRemoved(category)
             }
         case .zoneSavesOverQuota(let zones):
             failed.formUnion(SharedCatalogCategory.allCases.filter { zones.contains($0.zone) })
         case .fetched(let records, let deleted):
-            for category in Array(buffered.keys) {
+            let verified = await verifiedIncomingCategories()
+            guard !verified.isEmpty else { return }
+            for category in verified {
                 let owned = records.filter { $0.id.zone == category.zone }
                 let removed = deleted.filter { $0.zone == category.zone }
-                buffered[category]?.append(.fetched(modified: owned, deleted: removed))
+                if buffered[category] != nil {
+                    buffered[category]?.append(.fetched(modified: owned, deleted: removed))
+                } else if ready.contains(category) {
+                    owned.forEach(receive)
+                    removed.forEach(forget)
+                }
             }
-            records.filter { accepts($0.id) }.forEach(receive)
-            deleted.filter(accepts).forEach(forget)
         case .sent(let saved, _, let errors):
             guard !saved.isEmpty || !errors.isEmpty, await verifyAccount() else { return }
             for record in saved where accepts(record.id) && finishSubmission(record) {
@@ -368,6 +403,17 @@ public final class SharedCatalogSync: SyncZoneHandler {
             engine?.add(retry)
         }
         onReceive?()
+    }
+
+    private func zoneRemoved(_ category: SharedCatalogCategory) {
+        for profile in state.enabled[category] ?? [] {
+            setEnabled(false, category, for: profile)
+        }
+        state.remote = state.remote.filter { $0.key.zone != category.zone }
+        state.pending = state.pending.filter { $0.key.zone != category.zone }
+        state.conflicts = state.conflicts.filter { $0.key.zone != category.zone }
+        state.lastSynced?[category] = nil
+        failed.remove(category)
     }
 
     private func failedSaves(_ errors: [SyncFailedSave]) -> [SyncChange] {

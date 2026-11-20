@@ -84,6 +84,127 @@ struct SharedCatalogTests {
         #expect(sync.state.remote.isEmpty && sync.ready.isEmpty && !sync.needsEngine)
     }
 
+    @Test(arguments: [false, true], [false, true])
+    func incomingChangesCheckAccountBeforeTouchingTheCatalog(zoneRemoval: Bool, unavailable: Bool) async throws {
+        let cloud = FakeSyncCloud()
+        let client = Client(cloud)
+        try await client.enable()
+        var local = SharedSpaceItem(id: UUID(), kind: .space, profileID: UUID(), title: "Original")
+        client.sync.stage(local, for: client.profile)
+        try await client.engine.sendNow()
+        let saved = local
+        local.title = "Pending change"
+        client.sync.stage(local, for: client.profile)
+        let other = SharedSpaceItem(id: UUID(), kind: .space, profileID: UUID(), title: "Other account")
+        let incoming = try #require(other.record(fields: nil))
+        if unavailable {
+            client.engine.available = false
+        } else {
+            cloud.switchUser("next-user")
+        }
+        let event: SyncEvent = zoneRemoval ? .zonesDeleted([local.recordID.zone: .deleted]) : .fetched(modified: [incoming], deleted: [local.recordID])
+        await client.router.handle(event)
+        #expect(client.sync.state.remote[other.recordID] == nil)
+        if unavailable {
+            #expect(client.sync.state.pending[local.recordID]?.item == local && client.sync.state.remote[local.recordID]?.item == saved)
+            #expect(client.sync.enabled(.spaces, for: client.profile) && client.sync.trustedUser == nil)
+        } else {
+            #expect(client.sync.state.user == "next-user" && !client.sync.needsEngine && client.sync.state.remote.isEmpty)
+            #expect(client.sync.state.pausedAccounts?["user-1"]?.pending[local.recordID]?.item == local)
+        }
+    }
+
+    @Test(arguments: [false, true])
+    func anIncomingEventCannotCrossAnEnrollmentChangeDuringTheAccountLookup(zoneRemoval: Bool) async throws {
+        let cloud = FakeSyncCloud()
+        let client = Client(cloud)
+        try await client.enable()
+        let stale = SharedSpaceItem(id: UUID(), kind: .space, profileID: UUID(), title: "Previous enrollment")
+        let record = try #require(stale.record(fields: nil))
+        var changed = false
+        client.engine.duringAccountLookup = {
+            client.engine.duringAccountLookup = nil
+            client.sync.setEnabled(false, .spaces, for: client.profile)
+            try await client.enable()
+            changed = true
+        }
+        let event: SyncEvent = zoneRemoval ? .zonesDeleted([stale.recordID.zone: .deleted]) : .fetched(modified: [record], deleted: [])
+        await client.router.handle(event)
+        #expect(changed && client.sync.ready.contains(.spaces) && client.sync.state.remote[stale.recordID] == nil)
+    }
+
+    @Test func anUnverifiedEventDuringAFullReadKeepsPendingEditsForANewBaseline() async throws {
+        let cloud = FakeSyncCloud()
+        let client = Client(cloud)
+        try await client.enable()
+        let pending = SharedSpaceItem(id: UUID(), kind: .space, profileID: UUID(), title: "Local")
+        client.sync.stage(pending, for: client.profile)
+        client.sync.setEnabled(true, .spaces, for: UUID())
+        let unverified = SharedSpaceItem(id: UUID(), kind: .space, profileID: UUID(), title: "Unverified")
+        let record = try #require(unverified.record(fields: nil))
+        client.engine.afterFullZoneRead = {
+            client.engine.afterFullZoneRead = nil
+            client.engine.duringAccountLookup = {
+                client.engine.duringAccountLookup = nil
+                client.engine.available = false
+                await client.router.handle(.fetched(modified: [record], deleted: []))
+                client.engine.available = true
+            }
+        }
+        await #expect(throws: CancellationError.self) { try await client.sync.prepare(.spaces) }
+        #expect(client.sync.failed.contains(.spaces))
+        #expect(client.sync.state.remote[unverified.recordID] == nil && client.sync.state.pending[pending.recordID]?.item == pending)
+        try await client.sync.prepare(.spaces)
+        try await client.engine.sendNow()
+        #expect(cloud.record(pending.recordID).flatMap(SharedSpaceItem.init(record:)) == pending)
+    }
+
+    @Test func aZoneRemovalMissedDuringAnAccountOutageIsVerifiedBeforeRecreatingTheZone() async throws {
+        let cloud = FakeSyncCloud()
+        let client = Client(cloud)
+        try await client.enable()
+        let item = SharedSpaceItem(id: UUID(), kind: .space, profileID: UUID(), title: "Pending")
+        client.sync.stage(item, for: client.profile)
+        cloud.deleteZone(item.recordID.zone, reason: .deleted)
+        client.engine.available = false
+        await client.router.handle(.zonesDeleted([item.recordID.zone: .deleted]))
+        #expect(client.sync.state.pending[item.recordID]?.item == item && client.sync.needsEngine)
+        client.engine.available = true
+        await #expect(throws: SharedCatalogError.self) { try await client.sync.prepare(.spaces) }
+        try await client.engine.sendNow()
+        #expect(!client.sync.needsEngine && cloud.zones[item.recordID.zone] == nil)
+        try await client.enable()
+        #expect(client.sync.ready.contains(.spaces) && cloud.names(in: item.recordID.zone).isEmpty)
+    }
+
+    @Test(arguments: [false, true])
+    func choosingAConflictVersionUsesTheLastEditOnThisMac(keepingLocal: Bool) async throws {
+        let cloud = FakeSyncCloud()
+        let client = Client(cloud)
+        try await client.enable()
+        var item = SharedSpaceItem(id: UUID(), kind: .space, profileID: UUID(), title: "Initial")
+        client.sync.stage(item, for: client.profile)
+        try await client.engine.sendNow()
+        var remote = item
+        remote.title = "From another Mac"
+        item.title = "First local change"
+        client.sync.stage(item, for: client.profile)
+        cloud.overwrite(item.recordID, payload: try #require(remote.record(fields: nil)).payload)
+        try await client.engine.fetchNow()
+        #expect(client.sync.state.conflicts[item.recordID]?.item == item)
+        #expect(client.sync.item(item.id, in: .spaces) == item && client.sync.items(.spaces).contains(item))
+        item.title = "Last edit before resolving"
+        client.sync.stage(item, for: client.profile)
+        #expect(client.sync.state.conflicts[item.recordID]?.item == item && client.sync.record(for: item.recordID) == nil)
+        #expect(client.sync.item(item.id, in: .spaces) == item && client.sync.items(.spaces).contains(item))
+        let bytes = try JSONEncoder().encode(client.sync.state)
+        let resumed = Client(cloud, profile: client.profile, state: try JSONDecoder().decode(SharedCatalogState.self, from: bytes))
+        try await resumed.sync.prepare(.spaces)
+        resumed.sync.resolve(item.recordID, keepingLocal: keepingLocal)
+        try await resumed.engine.sendNow()
+        #expect(cloud.record(item.recordID).flatMap(SharedSpaceItem.init(record:)) == (keepingLocal ? item : remote))
+    }
+
     @Test func nativeAutomaticBatchesKeepOfflineEditsAndCheckOneUserForTheWholeBatch() async throws {
         let cloud = FakeSyncCloud()
         let client = Client(cloud)
@@ -157,7 +278,8 @@ struct SharedCatalogTests {
         #expect(mac.box.ended == [nil] && !mac.sync.needsEngine && cloud.recordCount == 0)
     }
 
-    @Test func aNewTabInstallationCanFetchOtherDevicesBeforeItsFirstUpload() async throws {
+    @Test(arguments: [false, true])
+    func aNewTabInstallationCanFetchOtherDevicesBeforeItsFirstUpload(relaunch: Bool) async throws {
         let cloud = FakeSyncCloud()
         let profile = UUID()
         let existing = SyncDevice(cloud: cloud, installID: "existing")
@@ -167,8 +289,31 @@ struct SharedCatalogTests {
         fresh.start(sharing: [profile])
         try await fresh.engine.fetchNow()
         #expect(fresh.sync.state.devices[existing.installID] != nil)
-        try await fresh.engine.sendNow()
-        #expect(fresh.box.ended.isEmpty && cloud.record(fresh.id(in: SyncZone.devices)) != nil)
+        let saved = try #require(fresh.box.state)
+        #expect(saved.accountUser == cloud.user)
+        let sender = relaunch ? SyncDevice(cloud: cloud, installID: fresh.installID, state: saved) : fresh
+        if relaunch {
+            sender.start(sharing: [profile])
+        }
+        try await sender.engine.sendNow()
+        #expect(sender.box.ended.isEmpty && cloud.record(sender.id(in: SyncZone.devices)) != nil)
+    }
+
+    @Test func anUnavailableFirstTabFetchDoesNotPersistUnidentifiedDevices() async throws {
+        let cloud = FakeSyncCloud()
+        let profile = UUID()
+        let existing = SyncDevice(cloud: cloud, installID: "existing")
+        existing.start(sharing: [profile])
+        try await existing.engine.sendNow()
+        let fresh = SyncDevice(cloud: cloud, installID: "fresh")
+        fresh.start(sharing: [profile])
+        fresh.engine.available = false
+        try await fresh.engine.fetchNow()
+        #expect(fresh.sync.state.accountUser == nil && fresh.sync.state.devices.isEmpty && fresh.sync.needsEngine)
+        let resumed = SyncDevice(cloud: cloud, installID: fresh.installID, state: fresh.sync.state)
+        resumed.start(sharing: [profile])
+        try await resumed.engine.fetchNow()
+        #expect(resumed.sync.state.accountUser == cloud.user && resumed.sync.state.devices[existing.installID] != nil)
     }
 
     @Test func signingBackIntoTheOriginalAccountRequiresConsentBeforeReplayingItsOwnOutbox() async throws {
@@ -203,7 +348,7 @@ struct SharedCatalogTests {
         await client.engine.simulateAccount(.switchAccounts(user: cloud.user))
         try await client.enable()
         client.sync.stage(item, for: client.profile)
-        let next = issued ? try #require(client.engine.handOut(item.recordID)) : nil
+        let next = issued ? client.engine.handOut(item.recordID) : nil
         if failed {
             let error = SyncFailedSave(id: item.recordID, failure: .zoneNotFound, attempted: old)
             await client.router.handle(.sent(saved: [], deleted: [], failed: [error]))
@@ -211,7 +356,7 @@ struct SharedCatalogTests {
             await client.router.handle(.sent(saved: [old], deleted: [], failed: []))
         }
         #expect(client.sync.state.pending[item.recordID]?.item == item && client.sync.ready.contains(.spaces))
-        let current = try #require(next ?? client.engine.handOut(item.recordID))
+        let current = try #require(issued ? next : client.engine.handOut(item.recordID))
         guard case .saved(let saved) = cloud.save(current) else {
             Issue.record("The new account must accept its own edit.")
             return
