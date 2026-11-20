@@ -96,10 +96,9 @@ struct AskSurfaceRow: View {
 
                 if let restingContent, !restingContent.isCentred {
                     AskRestingLine(
-                        placement: placement,
+                        model: model,
                         content: restingContent,
-                        security: security,
-                        engine: model.addressEngine
+                        security: security
                     )
                     .frame(maxWidth: .infinity, alignment: .topLeading)
                     .allowsHitTesting(false)
@@ -132,7 +131,7 @@ struct AskSurfaceRow: View {
                     ReaderBadge(coordinator: model.coordinator)
                     TranslationBadge(browser: model.browser, coordinator: model.coordinator)
                     PDFDownloadBadge(browser: model.browser)
-                    PinBadge(browser: model.browser)
+                    PinBadge(coordinator: model.coordinator)
                         .frame(width: placement.iconSlot)
                     MicroWindowBadge(browser: model.browser, coordinator: model.coordinator)
                     SiteControlsMenu(browser: model.browser)
@@ -152,18 +151,17 @@ struct AskSurfaceRow: View {
         .overlay {
             if let restingContent, restingContent.isCentred {
                 AskRestingLine(
-                    placement: placement,
+                    model: model,
                     content: restingContent,
-                    security: security,
-                    engine: model.addressEngine
+                    security: security
                 )
                 .onGeometryChange(for: CGRect.self) { $0.frame(in: .named(Self.space)) } action: {
                     onFrame?(.address, $0)
                 }
                 .padding(.leading, Self.centredAddressInset)
                 .padding(.trailing, max(Self.centredAddressInset, controlsWidth + placement.rowInset + placement.controlSpacing))
-                .allowsHitTesting(false)
-                .accessibilityHidden(true)
+                .allowsHitTesting(model.addressEngine != nil)
+                .accessibilityHidden(model.addressEngine == nil)
             }
         }
         .coordinateSpace(.named(Self.space))

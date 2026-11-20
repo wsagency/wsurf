@@ -180,6 +180,8 @@ final class AppCoordinator {
     var isMinimalTabListOpen = false {
         didSet { if isMinimalTabListOpen != oldValue { applyHoverShield() } }
     }
+    /// Hide Tabs temporarily collapses this window's docked list without changing the shared pin preference.
+    var hidesPinnedSidebar = false
     var profileButtonFrame: CGRect?
     /// Float on Top: above other windows (a micro window also on every desktop and over full-screen apps). Per window, never saved.
     var floatsOnTop = false {
@@ -561,11 +563,13 @@ final class AppCoordinator {
     @ObservationIgnored var heldModifiers: NSEvent.ModifierFlags = []
 
     func togglePin() {
-        guard let tab = browser.activeTab else { return }
+        guard let tab = browser.activeTab, tab.pinnableURL != nil else { return }
         if tab.isShowingPin {
             browser.unpin(tab)
+            show(notice: String(localized: "Tab unpinned"))
         } else {
             browser.pin(tab)
+            show(notice: String(localized: "Tab pinned"))
         }
     }
 

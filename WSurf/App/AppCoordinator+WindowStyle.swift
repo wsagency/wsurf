@@ -12,19 +12,21 @@ extension AppCoordinator {
 
     /// The Minimal window's tab list stays docked open: the person pinned it, and the page sits beside it.
     var keepsMinimalSidebarOpen: Bool {
-        isMinimal && settings.keepsMinimalSidebarOpen
+        isMinimal && settings.keepsMinimalSidebarOpen && !hidesPinnedSidebar
     }
 
     /// View › Hide Sidebar (⌃⌘S). In the Minimal window it shows and hides the tab list, and leaves the Standard
-    /// sidebar's own state alone. Hiding a list that was kept open lets go of the pin, so it hides.
+    /// sidebar's own state alone. Showing a pinned list restores its place beside the page.
     func toggleSidebar() {
         if !browserVisible {
             showBrowser()
         }
         if isMinimal {
             if keepsMinimalSidebarOpen {
-                settings.keepsMinimalSidebarOpen = false
+                hidesPinnedSidebar = true
                 isMinimalTabListOpen = false
+            } else if settings.keepsMinimalSidebarOpen && !isMinimalTabListOpen {
+                hidesPinnedSidebar = false
             } else {
                 isMinimalTabListOpen.toggle()
             }
@@ -41,6 +43,7 @@ extension AppCoordinator {
             showBrowser()
         }
         settings.keepsMinimalSidebarOpen.toggle()
+        hidesPinnedSidebar = false
         isMinimalTabListOpen = false
     }
 
@@ -50,6 +53,7 @@ extension AppCoordinator {
             showBrowser()
         }
         isMinimalTabListOpen = false
+        hidesPinnedSidebar = false
         settings.windowStyle = isMinimal ? .standard : .minimal
     }
 

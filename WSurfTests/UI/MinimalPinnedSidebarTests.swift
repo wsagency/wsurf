@@ -8,8 +8,7 @@ import Testing
 @testable import WSurf
 
 /// The Minimal window's tab list can be kept open: it docks at the leading edge and the page and the bar are laid out
-/// beside it, not under it. Unpinned, the window is what it was. Views take the choice as an input, so no case writes the
-/// app-wide setting.
+/// beside it, not under it. The hide/show case exercises two windows and restores the shared preference.
 @MainActor
 struct MinimalPinnedSidebarTests {
     private let spacing = LoomChrome.canvasInset
@@ -40,6 +39,36 @@ struct MinimalPinnedSidebarTests {
     }
 
     // MARK: - Where the layouts put the page and the bar
+
+    @Test func showingTabsAgainRestoresTheDockedLayoutInTheWindowThatHidIt() throws {
+        let rig = FloatingToolbarTests.Rig()
+        let savedPin = rig.settings.keepsMinimalSidebarOpen
+        defer {
+            rig.settings.keepsMinimalSidebarOpen = savedPin
+            rig.finish()
+        }
+        rig.settings.keepsMinimalSidebarOpen = true
+        let first = try rig.open()
+        let other = try rig.open()
+        let docked = layout(style: .minimal, pinned: nil, coordinator: first)
+        first.toggleSidebar()
+        #expect(!first.keepsMinimalSidebarOpen && !first.isMinimalTabListOpen)
+        #expect(other.keepsMinimalSidebarOpen, "Hide Tabs only hides the sidebar in this window")
+        let hidden = layout(style: .minimal, pinned: nil, coordinator: first)
+        first.toggleSidebar()
+        #expect(first.keepsMinimalSidebarOpen)
+        let shown = layout(style: .minimal, pinned: nil, coordinator: first)
+        let centre = try #require(docked.fieldCenters.first)
+        #expect(try #require(hidden.fieldCenters.first) < centre - 50)
+        #expect(shown.fieldCenters == docked.fieldCenters)
+        first.toggleMinimalSidebarPin()
+        first.toggleSidebar()
+        #expect(first.isMinimalTabListOpen && !first.keepsMinimalSidebarOpen, "an explicitly unpinned list still floats")
+        other.toggleMinimalSidebarPin()
+        first.toggleSidebar()
+        #expect(!first.keepsMinimalSidebarOpen && !first.isMinimalTabListOpen, "another window pinned the open list")
+        #expect(other.keepsMinimalSidebarOpen)
+    }
 
     private struct Layout {
         /// The horizontal center of every address field, left to right: the bar's, and the Start Page's.

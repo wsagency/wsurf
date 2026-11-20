@@ -590,6 +590,7 @@
    "WebViewParkingTests",
    "WebViewPoolPrivacyTests",
    "WebsiteAuthenticatorCeremonyTests",
+   "WebsiteControlsViewTests",
    "WebsiteDataTests",
    "WebsiteFieldEditingTests",
    "WebsiteTextViewTests",

@@ -12,6 +12,28 @@ import Testing
 @MainActor
 @Suite(.serialized, .boundedWebViews)
 struct ChromiumCloseTimeoutTests {
+    @Test func onlyAnAttachedBrowserViewFollowsThePageSize() async throws {
+        try await LiveWindowRig.with(engine: .chromium) { rig in
+            let tab = try await rig.open("/still")
+            let chromium = try #require(tab.page.chromium)
+            _ = try await rig.open("/still")
+            do {
+                let child = try #require(chromium.subviews.first)
+                chromium.setFrameSize(NSSize(width: 410, height: 310))
+                chromium.layout()
+                #expect(child.frame == chromium.bounds)
+
+                rig.coordinator.unloadTab(tab)
+                try #require(await waitUntil { child.superview == nil })
+                let detachedFrame = child.frame
+                chromium.setFrameSize(NSSize(width: detachedFrame.width + 80, height: detachedFrame.height + 40))
+                chromium.layout()
+                #expect(child.frame == detachedFrame)
+            }
+            await tab.waitForRetirement()
+        }
+    }
+
     @Test func anUnansweredCloseReleasesThePageAfterTheTimeout() async throws {
         try await LiveWindowRig.with(engine: .chromium) { rig in
             let tab = try await rig.open("/still")

@@ -622,32 +622,27 @@ struct SidebarTabMuteButton: View {
 }
 
 struct PinBadge: View {
-    let browser: BrowserModel
-
-    @State private var hovering = false
+    let coordinator: AppCoordinator
 
     private var tab: BrowserTab? {
-        browser.activeTab
-    }
-    private var hasPage: Bool {
-        !(tab?.urlString.isEmpty ?? true)
+        coordinator.browser.activeTab
     }
 
     var body: some View {
-        if let tab, hasPage {
+        if let tab, !tab.urlString.isEmpty, tab.pinnableURL != nil {
             ChromeIcon(
                 symbol: symbol(for: tab),
                 weight: .semibold,
+                tint: tab.isShowingPin ? Theme.systemAccent : nil,
                 help: helpText(for: tab)
             ) {
                 if tab.isAwayFromPin {
-                    browser.returnToPin(tab)
-                } else if tab.isShowingPin {
-                    browser.unpin(tab)
+                    coordinator.browser.returnToPin(tab)
                 } else {
-                    browser.pin(tab)
+                    coordinator.togglePin()
                 }
             }
+            .accessibilityLabel(Text(verbatim: helpText(for: tab)))
             .animation(.snappy(duration: 0.2), value: tab.pinnedURL)
         }
     }

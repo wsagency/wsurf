@@ -142,7 +142,7 @@ struct MinimalShellTests {
             #expect(row.contains(badge), "\(badge)")
         }
         #expect(try source("WSurf/UI/Ask/AskSurface.swift").contains("AskQuestionBlock("))
-        #expect(try source("WSurf/UI/Ask/AskSurfaceAppearance.swift").contains(#"engine == .webKit ? "WK" : "Cr""#))
+        #expect(try source("WSurf/UI/Ask/AskSurfaceAppearance.swift").contains(#"engine == .webKit ? "WK" : "CR""#))
     }
 
     /// The detached bar is the same bar: the panel hosts `IslandBar(`, so nothing the bar carries can be missing from it, and the

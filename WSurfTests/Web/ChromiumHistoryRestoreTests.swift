@@ -86,7 +86,9 @@ struct ChromiumHistoryRestoreTests {
     /// Waits until `tab` has finished loading `path` with these lists.
     private func settles(_ tab: BrowserTab, at path: String, back: [String], forward: [String]) async -> Bool {
         let expected = "\(path) back \(back) forward \(forward)"
-        return await waitUntil(timeout: .seconds(30)) { !tab.page.isLoading && lists(tab) == expected }
+        return await waitUntil(timeout: .seconds(30)) {
+            !tab.page.isLoading && tab.page.backForwardList.currentItem?.url == tab.page.url && lists(tab) == expected
+        }
     }
 
     /// Whether the requests since `mark` are exactly `expected`: waits for that many, then a moment for any extra one.
