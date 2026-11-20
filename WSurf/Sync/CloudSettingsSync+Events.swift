@@ -4,28 +4,10 @@
 import Foundation
 import WSurfCore
 
-/// Each Mac reads the setting. Its sender also checks the enrollment in the encrypted payload on replies.
-private nonisolated struct MacSettingRecord: Codable {
-    let key: String
-    let value: Data?
-    let enrollment: UUID?
-
-    var setting: MacSettingPayload {
-        MacSettingPayload(key: key, value: value)
-    }
-
-    init(_ setting: MacSettingPayload, enrollment: UUID) {
-        key = setting.key
-        value = setting.value
-        self.enrollment = enrollment
-    }
-}
-
 extension CloudSettingsSync {
     private func decoded(_ record: SyncRecord) throws -> MacSettingRecord {
-        guard record.type == .macSetting, record.schema == 1, record.payload.count <= 768 * 1024,
-            let payload = try? JSONDecoder().decode(MacSettingRecord.self, from: record.payload),
-            !payload.key.isEmpty, payload.key.utf8.count <= 4096, payload.setting.recordName == record.id.name
+        guard record.type == .macSetting, record.schema == 1,
+            let payload = MacSettingRecord.decode(record.payload, recordName: record.id.name)
         else {
             throw Issue.invalidRecord
         }
@@ -51,7 +33,7 @@ extension CloudSettingsSync {
         guard ready.contains(id.zone), sendingAllowed, trustedUser != nil, trustedUser == state.account,
             let key = names[id], var channel = state.channels[id.zone], let record = channel.records[key],
             !record.conflict, let pending = record.pending, pending.recordName == id.name,
-            let data = try? JSONEncoder().encode(MacSettingRecord(pending, enrollment: channel.enrollment)),
+            let data = try? MacSettingRecord(pending, enrollment: channel.enrollment).encoded(),
             data.count <= 768 * 1024
         else { return nil }
         if record.inFlight != pending {

@@ -18,6 +18,33 @@ nonisolated struct MacSettingPayload: Codable, Equatable {
     }
 }
 
+/// Each Mac reads the setting. Its sender also checks the enrollment in the encrypted payload on replies.
+nonisolated struct MacSettingRecord: Codable {
+    let key: String
+    let value: Data?
+    let enrollment: UUID?
+
+    var setting: MacSettingPayload {
+        MacSettingPayload(key: key, value: value)
+    }
+
+    func encoded() throws -> Data {
+        try JSONEncoder().encode(self)
+    }
+
+    static func decode(_ data: Data, recordName: String) -> Self? {
+        guard data.count <= 768 * 1024, let record = try? JSONDecoder().decode(Self.self, from: data),
+              !record.key.isEmpty, record.key.utf8.count <= 4096, record.setting.recordName == recordName else { return nil }
+        return record
+    }
+
+    init(_ setting: MacSettingPayload, enrollment: UUID) {
+        key = setting.key
+        value = setting.value
+        self.enrollment = enrollment
+    }
+}
+
 nonisolated struct MacSettingChannel: Codable {
     struct Record: Codable {
         var server: MacSettingPayload?

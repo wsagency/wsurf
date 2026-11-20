@@ -24,6 +24,61 @@ same-Mac acknowledgements, and publishing the signed bundle only after verificat
 python3 -B Tools/CloudKitTransportProbe/build.py self-test
 ```
 
+## Automated website settings trial
+
+For the 0.2.0 (32) trial, complete full minor validation and required CI on the
+reviewed merge to `main`. Build and sign the helper at that same commit using
+the instructions below. Studio and Air can use the owner's existing macOS
+sessions signed into the same personal Apple Account. Each needs access to the
+private CloudKit Development container and a working noninteractive SSH login.
+
+From the validated checkout, supply the archive, its independently recorded
+SHA-256, an owned evidence directory, and the SSH aliases for the two physical
+Macs. The runner stages and verifies the archive on both, invokes the signed
+helper directly and stores recovery progress after each step. Use `local` for
+one endpoint when running on that Mac.
+
+```sh
+python3 -B Tools/CloudKitTransportProbe/settings_pair.py \
+  "$PROBE_ZIP" "$PROBE_SHA256" "$PWD/build/icloud-transport/settings-trial-32" \
+  --studio "$STUDIO_SSH" --air "$AIR_SSH"
+```
+
+Studio publishes a 125% per-site zoom for a synthetic `.invalid` hostname. Air
+reads that setting and writes 150%. Studio reads Air's reply, writes a reset
+and fetches it again. The helper compiles the app's `MacSettingRecord` codec,
+hashed setting key and `CloudKitMapping`. It checks the expected schema,
+encrypted payload and per-run enrollments. Each peer derives its enrollment
+from the same nonce and its local product model. Duplicate models are rejected
+before the first CloudKit operation.
+
+During confirmation Studio also fetches metadata for that same record, using
+the verified user's explicit zone owner and an empty desired-key list. It
+requires the result dictionary entry for that exact ID and matches its
+change tag to the full record. The two-host receipt records this separately;
+an owner alias substitution or a changed tag fails confirmation. The helper
+keeps the account ID in memory.
+
+The trial addresses one `MacSetting` in a new `mac-prefs-websites-<UUID>`
+zone. The UUID uses version 8 to distinguish the test from regular version-4
+profile IDs. The helper fetches precisely that record and uses its returned
+system fields and change tag for conditional saves. A Studio receipt pins
+the nonce and both expected participants before the first live operation.
+Cleanup leaves one production-format reset in that zone, with a synthetic key
+and a per-run enrollment independent of either Mac. The first Development
+write may initialize this record type in the container schema.
+
+Keep `settings-trial.json` and both scratch directories until the reset is
+verified. Rerun the command with the same arguments to resume an interrupted
+step. A terminal transfer error triggers a guarded cleanup attempt. The
+evidence preserves the original error and any cleanup error. A successfully
+aborted trial can be repeated with a fresh evidence directory.
+
+This checks the feature record codec, conditional CloudKit delivery and reset
+in the owner's Development database. The probe does not launch WSurf, list
+zones, open user profiles or use Keychain, passkeys, vaults, or production
+browsing data. The raw `Device` marker trial below remains available separately.
+
 ## Sign and transfer
 
 Use the clean, reviewed merge commit after its CI passes. Refresh `origin/main` before

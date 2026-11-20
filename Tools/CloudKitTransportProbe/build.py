@@ -24,7 +24,10 @@ def compile_probe(executable, cache):
     subprocess.run([
         "/usr/bin/xcrun", "swiftc", "-swift-version", "6", "-warnings-as-errors", "-parse-as-library",
         "-target", "arm64-apple-macos26.0", "-module-cache-path", str(cache),
-        str(HERE / "Probe.swift"), str(HERE / "OfflineChecks.swift"),
+        str(HERE / "Probe.swift"), str(HERE / "SettingsTrial.swift"), str(HERE / "OfflineChecks.swift"),
+        str(ROOT / "WSurf/Sync/MacSettingChannel.swift"),
+        str(ROOT / "Packages/WSurfCore/Sources/WSurfCore/SyncEngine.swift"),
+        str(ROOT / "Packages/WSurfCore/Sources/WSurfCore/CloudKitRecordMapping.swift"),
         "-o", str(executable),
     ], env={"DEVELOPER_DIR": "/Applications/Xcode.app/Contents/Developer", **os.environ}, check=True)
 
@@ -115,6 +118,7 @@ def main():
             scratch = ROOT / "build/icloud-transport"
             scratch.mkdir(parents=True, exist_ok=True)
             subprocess.run([sys.executable, "-B", HERE / "test_build.py"], check=True)
+            subprocess.run([sys.executable, "-B", HERE / "test_settings_pair.py"], check=True)
             with tempfile.TemporaryDirectory(dir=scratch) as directory:
                 binary = Path(directory) / "offline-probe"
                 compile_probe(binary, scratch / "modules")

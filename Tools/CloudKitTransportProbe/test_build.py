@@ -12,6 +12,15 @@ from unittest.mock import patch
 
 
 class ProbeBuildTests(unittest.TestCase):
+    def test_standalone_helper_compiles_the_apps_setting_and_record_mapping(self):
+        compile_probe = runpy.run_path(str(Path(__file__).with_name("build.py")))["compile_probe"]
+        root = compile_probe.__globals__["ROOT"]
+        with patch("subprocess.run") as command:
+            compile_probe(Path("fixture"), Path("cache"))
+        inputs = {Path(value) for value in command.call_args.args[0] if str(value).endswith(".swift")}
+        self.assertIn(root / "WSurf/Sync/MacSettingChannel.swift", inputs)
+        self.assertIn(root / "Packages/WSurfCore/Sources/WSurfCore/CloudKitRecordMapping.swift", inputs)
+
     def test_failed_signing_check_leaves_the_same_destination_available_for_retry(self):
         build = runpy.run_path(str(Path(__file__).with_name("build.py")))["signed_probe"]
         settings = build.__globals__
