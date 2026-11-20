@@ -5,6 +5,19 @@ import CloudKit
 import Foundation
 
 extension CloudSettingsSync {
+    func acceptsUploadAccount(_ user: String) -> Bool {
+        guard let previous = state.account, previous != user else { return true }
+        do {
+            try resetAccount(to: user)
+        } catch {
+            reportError()
+        }
+        if accountNotifications != nil {
+            ProviderKeySharing.shared.setAccountIdentifier(user)
+        }
+        return false
+    }
+
     /// Called by the signed app only after the entitlement and session checks.
     func startMonitoringAccount() {
         guard accountNotifications == nil else { return }

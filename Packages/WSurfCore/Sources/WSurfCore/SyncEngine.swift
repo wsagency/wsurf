@@ -131,10 +131,13 @@ nonisolated public enum SyncSaveFailure: Sendable {
 nonisolated public struct SyncFailedSave: Sendable {
     public var id: SyncRecordID
     public var failure: SyncSaveFailure
+    /// The original attempted save identifies the enrollment when a callback arrives after an account change.
+    public var attempted: SyncRecord?
 
-    public init(id: SyncRecordID, failure: SyncSaveFailure) {
+    public init(id: SyncRecordID, failure: SyncSaveFailure, attempted: SyncRecord? = nil) {
         self.id = id
         self.failure = failure
+        self.attempted = attempted
     }
 }
 
@@ -155,8 +158,18 @@ nonisolated public enum SyncEvent: Sendable {
 /// `Sendable` because the engine's own delegate object holds it and is itself `Sendable`.
 public protocol SyncEngineDelegate: AnyObject, Sendable {
     func handle(_ event: SyncEvent) async
+    /// A fresh lookup precedes each outgoing record batch. A mismatch closes this feature's previous account approvals.
+    func acceptsUploadAccount(_ user: String) -> Bool
+    /// Only legacy tab sharing issues physical record deletes. A restored engine queue is never consent on its own.
+    func wantsRecordDeletion(_ id: SyncRecordID) -> Bool
     /// The record to send for `id`, or nil when it is no longer wanted.
     func record(for id: SyncRecordID) -> SyncRecord?
+}
+
+extension SyncEngineDelegate {
+    public func wantsRecordDeletion(_: SyncRecordID) -> Bool {
+        false
+    }
 }
 
 /// A feature owns its records and consent, and receives only events in its own zones.

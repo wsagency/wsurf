@@ -73,6 +73,19 @@ public final class SyncRouter: SyncEngineDelegate {
         vaultHandler = vaults
     }
 
+    public func acceptsUploadAccount(_ user: String) -> Bool {
+        let results = handlers.map { $0.acceptsUploadAccount(user) }
+        let vaultApproved = vaultHandler?.acceptsUploadAccount(user) ?? true
+        if !vaultApproved {
+            accountChanged?(.switchAccounts(user: user))
+        }
+        return vaultApproved && !results.contains(false)
+    }
+
+    public func wantsRecordDeletion(_ id: SyncRecordID) -> Bool {
+        handlers.first { $0.owns(zone: id.zone) }?.wantsRecordDeletion(id) ?? false
+    }
+
     public func record(for id: SyncRecordID) -> SyncRecord? {
         if SyncZone.isVault(id.zone) {
             return vaultHandler?.record(for: id)
@@ -84,6 +97,12 @@ public final class SyncRouter: SyncEngineDelegate {
         guard state.vaults != vaults else { return }
         state.vaults = vaults
         persist(state)
+    }
+}
+
+extension SyncRouter: VaultZoneReading {
+    var enrolledVaultZones: Set<String> {
+        vaultHandler?.enrolledVaultZones ?? []
     }
 }
 

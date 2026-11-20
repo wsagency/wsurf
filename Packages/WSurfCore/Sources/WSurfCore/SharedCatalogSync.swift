@@ -58,7 +58,7 @@ public final class SharedCatalogSync: SyncZoneHandler {
     public private(set) var trustedUser: String?
     @ObservationIgnored private var reads: [SharedCatalogCategory: (id: UUID, task: Task<Void, Error>)] = [:]
     @ObservationIgnored private var buffered: [SharedCatalogCategory: [SyncEvent]] = [:]
-    @ObservationIgnored private var sending: [SyncRecordID: SharedSpaceItem] = [:]
+    @ObservationIgnored private var sending: [SyncRecordID: (profile: UUID, item: SharedSpaceItem, receipt: SharedCatalogReceipt)] = [:]
 
     public init(state: SharedCatalogState, persist: @escaping (SharedCatalogState) throws -> Void) {
         self.state = state
@@ -88,6 +88,7 @@ public final class SharedCatalogSync: SyncZoneHandler {
             ready.remove(category)
         } else {
             state.enabled[category]?.remove(profile)
+            sending = sending.filter { $0.value.profile != profile || $0.value.item.category != category }
             if state.enabled[category]?.isEmpty == true {
                 ready.remove(category)
                 reads.removeValue(forKey: category)?.task.cancel()
@@ -204,6 +205,14 @@ public final class SharedCatalogSync: SyncZoneHandler {
         }
     }
 
+    public func acceptsUploadAccount(_ user: String) -> Bool {
+        if let prior = state.user, prior != user {
+            reset(user: user)
+            return false
+        }
+        return true
+    }
+
     private func stamp(_ category: SharedCatalogCategory) {
         var times = state.lastSynced ?? [:]
         times[category] = Date()
@@ -235,12 +244,13 @@ public final class SharedCatalogSync: SyncZoneHandler {
         for item in items where enabled(item.category, for: profile) {
             let id = item.recordID
             guard (state.pending[id]?.item ?? state.remote[id]?.item) != item,
-                  state.conflicts[id] == nil || item.removed, item.record(fields: nil) != nil else { continue }
+                  state.conflicts[id] == nil || item.removed,
+                  item.record(fields: nil, receipt: .init(submission: UUID())) != nil else { continue }
             if item.removed {
                 state.conflicts[id] = nil
             }
             let previous = state.pending[id]
-            let submitted = sending[id] ?? previous?.submitted
+            let submitted = sending[id]?.item ?? previous?.submitted
             if item == state.remote[id]?.item, submitted == nil {
                 state.pending[id] = nil
             } else {
@@ -261,6 +271,9 @@ public final class SharedCatalogSync: SyncZoneHandler {
             let key = SyncRecordID(zone: category.zone, name: id.uuidString)
             if state.pending[key]?.profile == profile {
                 state.pending[key] = nil
+            }
+            if sending[key]?.profile == profile {
+                sending[key] = nil
             }
             if state.conflicts[key]?.profile == profile {
                 state.conflicts[key] = nil
@@ -285,9 +298,21 @@ public final class SharedCatalogSync: SyncZoneHandler {
     }
 
     public func record(for id: SyncRecordID) -> SyncRecord? {
-        guard let edit = upload(for: id), let record = edit.item.record(fields: state.remote[id]?.fields) else { return nil }
-        sending[id] = edit.item
+        guard let edit = upload(for: id) else { return nil }
+        let previous = sending[id]
+        let same = previous?.profile == edit.profile && previous?.item == edit.item
+        let receipt = (same ? previous?.receipt : nil) ?? SharedCatalogReceipt(submission: UUID())
+        guard let record = edit.item.record(fields: state.remote[id]?.fields, receipt: receipt) else { return nil }
+        sending[id] = (edit.profile, edit.item, receipt)
         return record
+    }
+
+    private func finishSubmission(_ record: SyncRecord) -> Bool {
+        guard let issued = sending[record.id],
+              let receipt = try? JSONDecoder().decode(SharedCatalogReceipt.self, from: record.payload),
+              receipt == issued.receipt else { return false }
+        sending[record.id] = nil
+        return true
     }
 
     public func enqueue() {
@@ -332,9 +357,11 @@ public final class SharedCatalogSync: SyncZoneHandler {
             }
             records.filter { accepts($0.id) }.forEach(receive)
             deleted.filter(accepts).forEach(forget)
-        case .sent(let saved, let deleted, let errors):
-            saved.filter { accepts($0.id) }.forEach(acknowledge)
-            deleted.filter(accepts).forEach(forget)
+        case .sent(let saved, _, let errors):
+            guard !saved.isEmpty || !errors.isEmpty, await verifyAccount() else { return }
+            for record in saved where accepts(record.id) && finishSubmission(record) {
+                acknowledge(record)
+            }
             retry = failedSaves(errors)
         }
         if save(), !retry.isEmpty {
@@ -346,6 +373,7 @@ public final class SharedCatalogSync: SyncZoneHandler {
     private func failedSaves(_ errors: [SyncFailedSave]) -> [SyncChange] {
         var retry: [SyncChange] = []
         for error in errors where accepts(error.id) {
+            guard let attempted = error.attempted, attempted.id == error.id, finishSubmission(attempted) else { continue }
             switch error.failure {
             case .serverRecordChanged(let record):
                 receive(record)
@@ -397,7 +425,7 @@ public final class SharedCatalogSync: SyncZoneHandler {
                 }
             }
         }
-        if sending[id] == item {
+        if sending[id]?.item == item {
             sending[id] = nil
         }
         state.remote[id] = .init(item: item, fields: record.systemFields)
@@ -406,9 +434,6 @@ public final class SharedCatalogSync: SyncZoneHandler {
     private func acknowledge(_ record: SyncRecord) {
         guard let item = SharedSpaceItem(record: record) else { return }
         stamp(item.category)
-        if sending[record.id] == item {
-            sending[record.id] = nil
-        }
         if state.pending[record.id]?.submitted == item {
             state.pending[record.id]?.submitted = nil
         }

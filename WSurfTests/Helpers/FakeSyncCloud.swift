@@ -264,7 +264,7 @@ final class FakeSyncEngine: SyncEngine, SyncAccountIdentity {
             rounds += 1
             let batch = pending
             queue = [:]
-            await send(batch)
+            guard await send(batch) else { return }
         }
     }
 
@@ -322,7 +322,15 @@ final class FakeSyncEngine: SyncEngine, SyncAccountIdentity {
         await delegate?.handle(.account(change))
     }
 
-    private func send(_ batch: [SyncChange]) async {
+    private func send(_ batch: [SyncChange]) async -> Bool {
+        await sendZones(in: batch)
+        guard await permitsRecords(in: batch) else { return false }
+        await sendRecords(in: batch)
+        await publishState()
+        return true
+    }
+
+    private func sendZones(in batch: [SyncChange]) async {
         var refused: [String] = []
         var removedZones: [String] = []
         var overQuotaZones: [String] = []
@@ -361,6 +369,9 @@ final class FakeSyncEngine: SyncEngine, SyncAccountIdentity {
         if !removedZones.isEmpty {
             await delegate?.handle(.zonesDeleted(Dictionary(removedZones.map { ($0, .deleted) }) { first, _ in first }))
         }
+    }
+
+    private func sendRecords(in batch: [SyncChange]) async {
         var saved: [SyncRecord] = []
         var deleted: [SyncRecordID] = []
         var failed: [SyncFailedSave] = []
@@ -371,16 +382,17 @@ final class FakeSyncEngine: SyncEngine, SyncAccountIdentity {
                 guard let record = delegate?.record(for: id) else { continue }
                 saveAttempts[id.name, default: 0] += 1
                 if refusesVaultRecord, id.name == VaultSync.vaultRecordName {
-                    failed.append(SyncFailedSave(id: id, failure: .other))
+                    failed.append(SyncFailedSave(id: id, failure: .other, attempted: record))
                     continue
                 }
                 switch cloud.save(record) {
                 case .saved(let stored):
                     saved.append(stored)
                 case .failed(let failure):
-                    failed.append(SyncFailedSave(id: id, failure: failure))
+                    failed.append(SyncFailedSave(id: id, failure: failure, attempted: record))
                 }
             case .deleteRecord(let id):
+                guard delegate?.wantsRecordDeletion(id) == true else { continue }
                 cloud.remove(id)
                 deleted.append(id)
             case .saveZone, .deleteZone:
@@ -391,7 +403,23 @@ final class FakeSyncEngine: SyncEngine, SyncAccountIdentity {
             failed.reverse()
         }
         await delegate?.handle(.sent(saved: saved, deleted: deleted, failed: failed))
-        await publishState()
+    }
+
+    private func permitsRecords(in batch: [SyncChange]) async -> Bool {
+        let records = batch.filter {
+            switch $0 {
+            case .saveRecord, .deleteRecord:
+                true
+            case .saveZone, .deleteZone:
+                false
+            }
+        }
+        guard !records.isEmpty else { return true }
+        guard let delegate, await delegate.permitsUpload(using: currentAccountUser) else {
+            add(records.filter { queue[Self.target(of: $0)] == nil })
+            return false
+        }
+        return true
     }
 
     private func publishState() async {

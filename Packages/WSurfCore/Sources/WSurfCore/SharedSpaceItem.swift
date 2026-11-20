@@ -9,6 +9,21 @@ nonisolated public enum SharedCatalogCategory: String, CaseIterable, Codable, Se
     public var zone: String { "shared-" + rawValue }
 }
 
+nonisolated struct SharedCatalogReceipt: Codable, Equatable {
+    let submission: UUID
+}
+
+private nonisolated struct SharedCatalogPayload: Encodable {
+    let item: SharedSpaceItem
+    let receipt: SharedCatalogReceipt?
+
+    func encode(to encoder: Encoder) throws {
+        try item.encode(to: encoder)
+        // The extra key is encrypted with the row. Older clients decode the original item fields.
+        try receipt?.encode(to: encoder)
+    }
+}
+
 /// One encrypted record per row. The record name is independent of its Space, parent, title, URL or window.
 nonisolated public struct SharedSpaceItem: Codable, Equatable, Identifiable, Sendable {
     public enum Kind: String, Codable, Sendable {
@@ -71,7 +86,12 @@ nonisolated public struct SharedSpaceItem: Codable, Equatable, Identifiable, Sen
     }
 
     public func record(fields: Data?) -> SyncRecord? {
-        guard isValid, let payload = try? JSONEncoder().encode(self), payload.count <= SessionCodec.maxPayloadBytes else { return nil }
+        record(fields: fields, receipt: nil)
+    }
+
+    func record(fields: Data?, receipt: SharedCatalogReceipt?) -> SyncRecord? {
+        guard isValid, let payload = try? JSONEncoder().encode(SharedCatalogPayload(item: self, receipt: receipt)),
+              payload.count <= SessionCodec.maxPayloadBytes else { return nil }
         return SyncRecord(id: recordID, type: category == .pins ? .sharedPin : .sharedSpaceItem, schema: 1, payload: payload, systemFields: fields)
     }
 

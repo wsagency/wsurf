@@ -1,9 +1,11 @@
 // SPDX-FileCopyrightText: 2026 WSurf Agency
 // SPDX-License-Identifier: BUSL-1.1
 
+import CloudKit
 import Foundation
 import Testing
-import WSurfCore
+
+@testable import WSurfCore
 
 @MainActor
 struct SharedCatalogTests {
@@ -82,6 +84,79 @@ struct SharedCatalogTests {
         #expect(sync.state.remote.isEmpty && sync.ready.isEmpty && !sync.needsEngine)
     }
 
+    @Test func nativeAutomaticBatchesKeepOfflineEditsAndCheckOneUserForTheWholeBatch() async throws {
+        let cloud = FakeSyncCloud()
+        let client = Client(cloud)
+        try await client.enable()
+        let rows = ["One", "Two"].map { SharedSpaceItem(id: UUID(), kind: .space, profileID: UUID(), title: $0) }
+        client.sync.stage(rows, for: client.profile)
+        let pending = rows.map { CKSyncEngine.PendingRecordZoneChange.saveRecord(CloudKitMapping.recordID($0.recordID)) }
+        let disconnected = await CloudKitMapping.uploadBatch(pending, delegate: client.router, currentUser: {
+            throw URLError(.notConnectedToInternet)
+        }, discard: { _ in Issue.record("A temporarily unavailable account must keep its transport queue.") })
+        #expect(disconnected == nil && client.sync.state.pending.count == 2)
+        var lookups = 0
+        let confirmed = await CloudKitMapping.uploadBatch(pending, delegate: client.router, currentUser: {
+            lookups += 1
+            return cloud.user
+        }, discard: { _ in Issue.record("Both edits remain approved.") })
+        #expect(lookups == 1 && confirmed?.recordsToSave.count == 2)
+        let switched = await CloudKitMapping.uploadBatch(pending, delegate: client.router, currentUser: {
+            "another-user"
+        }, discard: { _ in })
+        #expect(switched == nil && !client.sync.needsEngine && client.sync.state.pending.isEmpty)
+    }
+
+    @Test func anUnmappableCatalogRowKeepsAFullReadIncompleteWhileVaultAssetsStayFiltered() {
+        for (zone, type) in [("mac-prefs-providers", "MacSetting"), (SharedCatalogCategory.spaces.zone, "SharedSpaceItem"), (SharedCatalogCategory.pins.zone, "FutureType")] {
+            let id = CloudKitMapping.recordID(.init(zone: zone, name: "existing-row"))
+            let record = CKRecord(recordType: type, recordID: id)
+            var read = SyncZoneRead(records: [])
+            CloudKitMapping.include(record, in: &read)
+            #expect(read.records.isEmpty && read.skipped == 1)
+        }
+        let vault = CloudKitMapping.recordID(.init(zone: SyncZone.vault(profileID: UUID(), vaultID: UUID()), name: "asset"))
+        var read = SyncZoneRead(records: [])
+        CloudKitMapping.include(CKRecord(recordType: "VaultAsset", recordID: vault), in: &read)
+        #expect(read.records.isEmpty && read.skipped == 0)
+    }
+
+    @Test func aQueuedTabDeleteWaitsForIdentityAndCannotDeleteInADifferentAccount() async throws {
+        let cloud = FakeSyncCloud()
+        let mac = SyncDevice(cloud: cloud, installID: "device")
+        mac.start(sharing: [UUID()])
+        try await mac.engine.sendNow()
+        let id = mac.id(in: SyncZone.devices)
+        var otherCopy = try #require(cloud.record(id))
+        mac.sync.reconcile(sharing: [])
+        mac.engine.available = false
+        try await mac.engine.sendNow()
+        #expect(mac.engine.pending.contains(.deleteRecord(id)) && cloud.record(id) != nil)
+        cloud.switchUser("another-user")
+        cloud.createZone(id.zone)
+        otherCopy.systemFields = nil
+        _ = cloud.save(otherCopy)
+        mac.engine.available = true
+        try await mac.engine.sendNow()
+        try await mac.engine.sendNow()
+        #expect(cloud.record(id) != nil && !mac.sync.needsEngine && mac.engine.pending.isEmpty)
+    }
+
+    @Test(arguments: [false, true])
+    func legacyTabSharingWithAnUnknownAccountCannotAdoptTheNextSignIn(signsOut: Bool) async throws {
+        let cloud = FakeSyncCloud(user: "new-user")
+        var prior = TabSyncState()
+        prior.ownSystemFields[SyncZone.devices] = Data([1])
+        let mac = SyncDevice(cloud: cloud, installID: "device", state: prior)
+        mac.start(sharing: [UUID()])
+        if signsOut {
+            await mac.engine.simulateAccount(.signOut)
+        }
+        await mac.engine.simulateAccount(.signIn(user: cloud.user))
+        try await mac.engine.sendNow()
+        #expect(mac.box.ended == [nil] && !mac.sync.needsEngine && cloud.recordCount == 0)
+    }
+
     @Test func signingBackIntoTheOriginalAccountRequiresConsentBeforeReplayingItsOwnOutbox() async throws {
         let cloud = FakeSyncCloud()
         let client = Client(cloud)
@@ -100,6 +175,35 @@ struct SharedCatalogTests {
         try await client.enable()
         try await client.engine.sendNow()
         #expect(cloud.record(item.recordID).flatMap(SharedSpaceItem.init(record:)) == item)
+    }
+
+    @Test(arguments: [false, true], [false, true])
+    func anOldReplyCannotFinishAnIdenticalEditInANewAccount(issued: Bool, failed: Bool) async throws {
+        let cloud = FakeSyncCloud()
+        let client = Client(cloud)
+        try await client.enable()
+        let item = SharedSpaceItem(id: UUID(), kind: .space, profileID: UUID(), title: "Both accounts")
+        client.sync.stage(item, for: client.profile)
+        let old = try #require(client.engine.handOut(item.recordID))
+        cloud.switchUser("next-account")
+        await client.engine.simulateAccount(.switchAccounts(user: cloud.user))
+        try await client.enable()
+        client.sync.stage(item, for: client.profile)
+        let next = issued ? try #require(client.engine.handOut(item.recordID)) : nil
+        if failed {
+            let error = SyncFailedSave(id: item.recordID, failure: .zoneNotFound, attempted: old)
+            await client.router.handle(.sent(saved: [], deleted: [], failed: [error]))
+        } else {
+            await client.router.handle(.sent(saved: [old], deleted: [], failed: []))
+        }
+        #expect(client.sync.state.pending[item.recordID]?.item == item && client.sync.ready.contains(.spaces))
+        let current = try #require(next ?? client.engine.handOut(item.recordID))
+        guard case .saved(let saved) = cloud.save(current) else {
+            Issue.record("The new account must accept its own edit.")
+            return
+        }
+        await client.router.handle(.sent(saved: [saved], deleted: [], failed: []))
+        #expect(cloud.record(item.recordID).flatMap(SharedSpaceItem.init(record:)) == item && client.sync.state.pending.isEmpty)
     }
 
     @Test(arguments: [false, true])

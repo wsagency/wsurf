@@ -17,7 +17,7 @@ public final class CloudKitSyncEngine: SyncEngine, SyncAccountIdentity {
     /// `state` is the bytes of the last `.state` event. A state that does not decode starts fresh, which fetches everything.
     public init(containerIdentifier: String, state: Data?, delegate: any SyncEngineDelegate) {
         let container = CKContainer(identifier: containerIdentifier)
-        let bridge = Bridge(delegate: delegate)
+        let bridge = Bridge(delegate: delegate, container: container)
         let restored = state.flatMap { try? JSONDecoder().decode(CKSyncEngine.State.Serialization.self, from: $0) }
         self.container = container
         self.bridge = bridge
@@ -61,8 +61,7 @@ public final class CloudKitSyncEngine: SyncEngine, SyncAccountIdentity {
 
     public func fetchAll(zone: String) async throws -> SyncZoneRead {
         let database = container.privateCloudDatabase
-        var records: [SyncRecord] = []
-        var skipped = 0
+        var read = SyncZoneRead(records: [])
         var token: CKServerChangeToken?
         while true {
             let page = try await database.recordZoneChanges(
@@ -71,18 +70,16 @@ public final class CloudKitSyncEngine: SyncEngine, SyncAccountIdentity {
             for (_, result) in page.modificationResultsByID {
                 // A record that failed to arrive is skipped and counted: the read finishes, and one bad record never holds the rest.
                 guard let modification = try? result.get() else {
-                    skipped += 1
+                    read.skipped += 1
                     continue
                 }
-                if let record = CloudKitMapping.syncRecord(modification.record) {
-                    records.append(record)
-                }
+                CloudKitMapping.include(modification.record, in: &read)
             }
             guard page.moreComing else {
-                if skipped > 0 {
-                    SyncLog.logger.error("sync: \(skipped) records of a zone could not be read")
+                if read.skipped > 0 {
+                    SyncLog.logger.error("sync: \(read.skipped) records of a zone could not be read")
                 }
-                return SyncZoneRead(records: records, skipped: skipped)
+                return read
             }
             token = page.changeToken
         }
@@ -101,9 +98,11 @@ public final class CloudKitSyncEngine: SyncEngine, SyncAccountIdentity {
 /// The strong cycle (model, adapter, bridge, model) is intended: the object lives for the app run.
 private nonisolated final class Bridge: CKSyncEngineDelegate {
     let delegate: any SyncEngineDelegate
+    let container: CKContainer
 
-    init(delegate: any SyncEngineDelegate) {
+    init(delegate: any SyncEngineDelegate, container: CKContainer) {
         self.delegate = delegate
+        self.container = container
     }
 
     // The engine waits for each event, so a model that stays busy here holds up the next one. `sendChanges` and `fetchChanges`
@@ -177,12 +176,35 @@ private nonisolated final class Bridge: CKSyncEngineDelegate {
         syncEngine: CKSyncEngine
     ) async -> CKSyncEngine.RecordZoneChangeBatch? {
         let pending = syncEngine.state.pendingRecordZoneChanges.filter { context.options.scope.contains($0) }
-        return await CKSyncEngine.RecordZoneChangeBatch(pendingChanges: pending) { recordID in
-            if let record = await self.delegate.record(for: CloudKitMapping.syncID(recordID)) {
+        // CKSyncEngine sends pendingDatabaseChanges (zone creation and explicit zone removal) through its separate database path.
+        return await CloudKitMapping.uploadBatch(pending, delegate: delegate, currentUser: { [container] in
+            try await container.userRecordID().recordName
+        }, discard: { syncEngine.state.remove(pendingRecordZoneChanges: [$0]) })
+    }
+}
+
+extension CloudKitMapping {
+    static func uploadBatch(
+        _ pending: [CKSyncEngine.PendingRecordZoneChange], delegate: any SyncEngineDelegate,
+        currentUser: @escaping @MainActor @Sendable () async throws -> String,
+        discard: @escaping @Sendable (CKSyncEngine.PendingRecordZoneChange) -> Void
+    ) async -> CKSyncEngine.RecordZoneChangeBatch? {
+        guard !pending.isEmpty, await delegate.permitsUpload(using: currentUser) else { return nil }
+        let approved = await MainActor.run {
+            pending.filter { change in
+                if case .deleteRecord(let id) = change, !delegate.wantsRecordDeletion(syncID(id)) {
+                    discard(change)
+                    return false
+                }
+                return true
+            }
+        }
+        return await CKSyncEngine.RecordZoneChangeBatch(pendingChanges: approved) { recordID in
+            if let record = await delegate.record(for: syncID(recordID)) {
                 return CloudKitMapping.ckRecord(record)
             }
             // A save that is no longer wanted must not come back on the next batch.
-            syncEngine.state.remove(pendingRecordZoneChanges: [.saveRecord(recordID)])
+            discard(.saveRecord(recordID))
             return nil
         }
     }
@@ -224,6 +246,18 @@ nonisolated enum CloudKitMapping {
 
     static func syncID(_ id: CKRecord.ID) -> SyncRecordID {
         SyncRecordID(zone: id.zoneID.zoneName, name: id.recordName)
+    }
+
+    /// A complete settings or shared catalog read infers removals from absence. An unmappable row makes the read incomplete.
+    static func include(_ record: CKRecord, in read: inout SyncZoneRead) {
+        if let value = syncRecord(record) {
+            read.records.append(value)
+        } else {
+            let zone = record.recordID.zoneID.zoneName
+            if zone.hasPrefix("mac-prefs-") || SharedCatalogCategory.allCases.contains(where: { $0.zone == zone }) {
+                read.skipped += 1
+            }
+        }
     }
 
     static func syncRecord(_ record: CKRecord) -> SyncRecord? {
@@ -302,6 +336,6 @@ nonisolated enum CloudKitMapping {
         default:
             failure = .other
         }
-        return SyncFailedSave(id: syncID(record.recordID), failure: failure)
+        return SyncFailedSave(id: syncID(record.recordID), failure: failure, attempted: syncRecord(record))
     }
 }

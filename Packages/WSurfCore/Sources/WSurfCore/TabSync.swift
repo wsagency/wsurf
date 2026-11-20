@@ -211,6 +211,23 @@ public final class TabSync: SyncEngineDelegate {
 
     // MARK: - SyncEngineDelegate
 
+    public func acceptsUploadAccount(_ user: String) -> Bool {
+        guard matchesAccount(user) else {
+            applyAccount(.switchAccounts(user: user))
+            persist(state)
+            return false
+        }
+        if state.accountUser == nil, needsEngine {
+            state.accountUser = user
+            persist(state)
+        }
+        return true
+    }
+
+    public func wantsRecordDeletion(_ id: SyncRecordID) -> Bool {
+        id.name == installID && state.ownSystemFields[id.zone] != nil && !wants(zone: id.zone)
+    }
+
     public func record(for id: SyncRecordID) -> SyncRecord? {
         guard id.name == installID else { return nil }
         if id.zone == SyncZone.devices {
@@ -359,19 +376,34 @@ public final class TabSync: SyncEngineDelegate {
         case .signOut:
             clearAccountData()
             accountAvailable = false
-        case .signIn(let user) where state.accountUser == nil || state.accountUser == user:
+            if state.accountUser == nil, !desired.isEmpty {
+                endSharing()
+            }
+        case .signIn(let user) where matchesAccount(user):
             state.accountUser = user
             accountAvailable = true
             replay()
         case .signIn(let user), .switchAccounts(let user):
             // Another Apple Account: nothing of the old one is shown, and nothing is uploaded until the person opts in again.
             clearAccountData()
-            outgoing = [:]
-            desired = []
             state.accountUser = user
             accountAvailable = true
-            onSharingEnded?(nil)
+            endSharing()
         }
+    }
+
+    private func matchesAccount(_ user: String) -> Bool {
+        if let previous = state.accountUser {
+            return previous == user
+        }
+        // An older installation may have cloud records without a saved user. Only a fresh installation can bind its first user.
+        return state.ownSystemFields.isEmpty && state.publishedDevice == nil && state.devices.isEmpty && state.sessions.isEmpty
+    }
+
+    private func endSharing() {
+        outgoing = [:]
+        desired = []
+        onSharingEnded?(nil)
     }
 
     /// Everything the account's database gave this device, and the marks that say it was written there.

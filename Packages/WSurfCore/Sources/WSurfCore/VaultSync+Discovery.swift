@@ -4,6 +4,10 @@
 import Foundation
 
 extension VaultSync {
+    public func acceptsUploadAccount(_ user: String) -> Bool {
+        state.accountUser == user || acceptDiscoveryAccount(user)
+    }
+
     /// Loads the persisted enrollments before checking the signed-in account, including on a fresh process.
     public func acceptDiscoveryAccount(_ user: String) -> Bool {
         loadDatabases()
