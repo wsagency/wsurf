@@ -5,6 +5,7 @@
 """Round-trip one synthetic MacSetting between two signed-in Macs over noninteractive SSH."""
 
 import argparse
+import base64
 import fcntl
 import hashlib
 import json
@@ -54,11 +55,28 @@ except BaseException:
     raise
 """
 
+EXECUTE_STAGED = """
+import os, sys
+try:
+    os.chdir(sys.argv[1])
+    os.execv(sys.argv[2], sys.argv[2:])
+except FileNotFoundError:
+    sys.exit('Probe failed: missingStaging')
+"""
+
 
 def checked_host(value):
     if not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_.@-]*", value):
         raise argparse.ArgumentTypeError("use an SSH alias or local")
     return value
+
+
+class MissingStaging(RuntimeError):
+    pass
+
+
+class OriginalAccountRequired(RuntimeError):
+    pass
 
 
 def remote(host, args, *, stdin=None):
@@ -70,7 +88,12 @@ def remote(host, args, *, stdin=None):
         # The Swift helper emits only a stable error name or numeric CloudKit code.
         lines = result.stderr.decode(errors="replace").splitlines()
         diagnostic = next((line for line in lines if line.startswith("Probe failed: ")), "transport or staging failure")
-        raise RuntimeError(f"{host} exited {result.returncode} ({diagnostic})")
+        message = f"{host} exited {result.returncode} ({diagnostic})"
+        if diagnostic == "Probe failed: missingStaging":
+            raise MissingStaging(message)
+        if diagnostic in {"Probe failed: originalAccountRequired", "Probe failed: explicitOwnerUnavailable"}:
+            raise OriginalAccountRequired(message)
+        raise RuntimeError(message)
     return result.stdout.decode().strip()
 
 
@@ -103,6 +126,29 @@ def drive(state, persist, invoke):
             persist()
     if tags["studio"] == tags["air"]:
         raise ValueError("the two endpoints report the same product model")
+    if (state["next"] or "studio_receipt" in state) and "account" not in state:
+        raise ValueError("original account commitment is missing from the evidence")
+    if state["next"] and "studio_receipt" not in state:
+        raise ValueError("original Studio receipt is missing from the evidence")
+    if state["next"] == 0:
+        for role in ("studio", "air"):
+            account = invoke(role, "account", None)
+            if not re.fullmatch(r"[0-9a-f]{64}", account):
+                raise ValueError("invalid account commitment")
+            if "account" not in state:
+                state["account"] = account
+                persist()
+            if state["account"] != account:
+                message = f"{role} requires the original Apple Account"
+                state["error"] = message
+                persist()
+                raise OriginalAccountRequired(message)
+    if "studio_receipt" not in state:
+        receipt = invoke("studio", "reserve", tags["air"])
+        if not receipt or len(receipt) > 1024 or not base64.b64decode(receipt, validate=True):
+            raise ValueError("invalid Studio receipt")
+        state["studio_receipt"] = receipt
+        persist()  # Must survive loss of either staged helper, even if the first save reply never arrives.
     for index in range(state["next"], len(STEPS)):
         role, verb = STEPS[index]
         peer = tags["studio" if role == "air" else "air"]
@@ -113,6 +159,8 @@ def drive(state, persist, invoke):
         except (OSError, subprocess.SubprocessError, RuntimeError) as error:
             state["error"] = str(error)
             persist()
+            if isinstance(error, (OriginalAccountRequired, MissingStaging)):
+                raise
             # A successful abort retains the original failure. An offline or foreign record retains the recovery state.
             if verb != "cleanup":
                 try:
@@ -135,9 +183,11 @@ def drive(state, persist, invoke):
 def run(archive, pinned_sha, path, hosts, commit):
     if not re.fullmatch(r"[0-9a-f]{64}", pinned_sha) or hashlib.sha256(archive.read_bytes()).hexdigest() != pinned_sha:
         raise ValueError("archive SHA-256 differs from the verified signing output")
-    config = {"archive_sha256": pinned_sha, "commit": commit, "hosts": hosts}
+    config = {"protocol": 2, "archive_sha256": pinned_sha, "commit": commit, "hosts": hosts}
     if path.exists():
         state = json.loads(path.read_text())
+        if state["source"].get("protocol") != config["protocol"]:
+            raise ValueError("this evidence predates account-bound receipts and must be kept for recovery")
         if state["source"] != config:
             raise ValueError("resume with the same archive, source and endpoints")
     else:
@@ -147,23 +197,36 @@ def run(archive, pinned_sha, path, hosts, commit):
         print("PASS round trip and stored reset already verified")
         return
 
-    for role, host in hosts.items():
-        if role not in state["dirs"]:
+    def stage(role):
+        try:
             with archive.open("rb") as stream:
-                directory = remote(host, ["python3", "-c", STAGE, pinned_sha, commit, APP], stdin=stream)
-            if not Path(directory).is_absolute() or not Path(directory).name.startswith("wsurf-settings-"):
-                raise ValueError("unexpected staging path")
-            state["dirs"][role] = directory
-            write_state(path, state)
+                directory = remote(hosts[role], ["python3", "-c", STAGE, pinned_sha, commit, APP], stdin=stream)
+        except (OSError, subprocess.SubprocessError, RuntimeError) as error:
+            raise MissingStaging(f"{role} needs its verified helper staged again ({error})") from error
+        if not Path(directory).is_absolute() or not Path(directory).name.startswith("wsurf-settings-"):
+            raise ValueError("unexpected staging path")
+        state["dirs"][role] = directory
+        write_state(path, state)
 
     def invoke(role, verb, peer):
-        directory = state["dirs"][role]
         arguments = ["settings-" + verb, state["nonce"]] + ([peer] if peer else [])
-        code = "import os,sys; os.chdir(sys.argv[1]); os.execv(sys.argv[2],sys.argv[2:])"
-        args = ["python3", "-c", code, directory, "./" + BINARY, *arguments]
+        if peer:
+            arguments.append(state["account"])
+            if verb != "reserve":
+                arguments.append(state["studio_receipt"])
         for attempt in range(4):
+            if role not in state["dirs"]:
+                stage(role)
+            args = ["python3", "-c", EXECUTE_STAGED, state["dirs"][role], "./" + BINARY, *arguments]
             try:
                 return remote(hosts[role], args)
+            except MissingStaging:
+                del state["dirs"][role]
+                write_state(path, state)
+                if attempt == 3:
+                    raise
+            except OriginalAccountRequired:
+                raise
             except (OSError, subprocess.SubprocessError, RuntimeError) as error:
                 if attempt == 3 or any(reason in str(error) for reason in (
                     "unexpectedRecord", "developmentSignatureRequired", "receiptRequired", "alreadyCleaned", "useSecondMac")):

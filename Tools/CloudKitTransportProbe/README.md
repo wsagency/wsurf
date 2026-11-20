@@ -55,24 +55,32 @@ before the first CloudKit operation.
 During confirmation Studio also fetches metadata for that same record, using
 the verified user's explicit zone owner and an empty desired-key list. It
 requires the result dictionary entry for that exact ID and matches its
-change tag to the full record. The two-host receipt records this separately;
-an owner alias substitution or a changed tag fails confirmation. The helper
-keeps the account ID in memory.
+change tag to the full record. The evidence records this separately. An owner
+alias substitution or a changed tag fails confirmation.
 
 The trial addresses one `MacSetting` in a new `mac-prefs-websites-<UUID>`
 zone. The UUID uses version 8 to distinguish the test from regular version-4
-profile IDs. The helper fetches precisely that record and uses its returned
-system fields and change tag for conditional saves. A Studio receipt pins
-the nonce and both expected participants before the first live operation.
+profile IDs. The driver compares a nonce-scoped SHA-256 of the CloudKit owner
+on both Macs before the first zone or record write. Studio issues a receipt
+binding that account, the nonce and both participants. The driver writes and
+syncs this receipt to `settings-trial.json` before sending the first write.
+Each command that reads or changes the trial record checks the current account
+against that receipt.
+Zone and record requests use the concrete owner. Conditional saves retain the
+record's returned system fields and change tag. The raw CloudKit owner stays
+in memory on each Mac.
 Cleanup leaves one production-format reset in that zone, with a synthetic key
 and a per-run enrollment independent of either Mac. The first Development
 write may initialize this record type in the container schema.
 
-Keep `settings-trial.json` and both scratch directories until the reset is
-verified. Rerun the command with the same arguments to resume an interrupted
-step. A terminal transfer error triggers a guarded cleanup attempt. The
-evidence preserves the original error and any cleanup error. A successfully
-aborted trial can be repeated with a fresh evidence directory.
+Keep the evidence directory and the signed archive until the reset is verified.
+Rerun the command with the same arguments to resume an interrupted step. If
+macOS purges a temporary directory, the driver stages the pinned archive again
+and restores the original Studio receipt from the evidence. An account change
+pauses the trial until the original account returns. Other terminal transfer
+errors trigger a guarded cleanup attempt. The evidence preserves the original
+error and any cleanup error. A successfully aborted trial can be repeated with
+a fresh evidence directory.
 
 This checks the feature record codec, conditional CloudKit delivery and reset
 in the owner's Development database. The probe does not launch WSurf, list

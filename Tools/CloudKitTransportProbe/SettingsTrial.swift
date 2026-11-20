@@ -2,10 +2,17 @@
 // SPDX-License-Identifier: BUSL-1.1
 
 import CloudKit
+import CryptoKit
 import Foundation
 
-/// The enrollment identifies a physical model only for this nonce. Neither model name goes to CloudKit.
 extension Trial {
+    func settingsAccount(owner: String) throws -> String {
+        guard !owner.isEmpty, owner != CKCurrentUserDefaultName else { throw ProbeError.explicitOwnerUnavailable }
+        let input = Data(("WSurf MacSetting account v1\n" + token + "\n" + owner).utf8)
+        return SHA256.hash(data: input).map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// The enrollment identifies a physical model only for this nonce.
     var settingsEnrollment: UUID {
         let b = [UInt8](deviceTag.prefix(16))
         return UUID(uuid: (b[0], b[1], b[2], b[3], b[4], b[5], (b[6] & 0x0f) | 0x40, b[7],
@@ -21,11 +28,16 @@ struct SettingsTrial {
     let trial: Trial
     let creator: UUID
     let responder: UUID
+    let owner: String
+    let account: String
 
-    init(trial: Trial, peer: UUID, answering: Bool) throws {
+    init(trial: Trial, peer: UUID, answering: Bool, owner: String, account: String) throws {
         let local = trial.settingsEnrollment
         guard local != peer else { throw ProbeError.useSecondMac }
+        guard try trial.settingsAccount(owner: owner) == account else { throw ProbeError.originalAccountRequired }
         self.trial = trial
+        self.owner = owner
+        self.account = account
         creator = answering ? peer : local
         responder = answering ? local : peer
     }
@@ -41,7 +53,7 @@ struct SettingsTrial {
     }
 
     var id: CKRecord.ID {
-        CloudKitMapping.recordID(recordID)
+        CloudKitMapping.recordID(recordID, ownerName: owner)
     }
 
     private var receipt: URL {
@@ -49,20 +61,53 @@ struct SettingsTrial {
     }
 
     private var ownership: Data {
-        Data(["WSurf MacSetting trial v1", trial.token, creator.uuidString, responder.uuidString].joined(separator: "\n").utf8)
+        Data(["WSurf MacSetting trial v2", trial.token, creator.uuidString, responder.uuidString, account].joined(separator: "\n").utf8)
     }
 
-    func reserve() throws {
+    func issueReceipt() throws -> String {
         guard creator == trial.settingsEnrollment else { throw ProbeError.differentCreator }
         if FileManager.default.fileExists(atPath: receipt.path) {
             try requireReceipt()
-            return
+        } else {
+            try trial.reserve(ownership, at: receipt)
         }
-        try trial.reserve(ownership, at: receipt)
+        return ownership.base64EncodedString()
+    }
+
+    func restoreReceipt(_ encoded: String) throws {
+        guard encoded == ownership.base64EncodedString() else { throw ProbeError.receiptRequired }
+        if creator == trial.settingsEnrollment {
+            _ = try issueReceipt()
+        }
     }
 
     private func requireReceipt() throws {
         guard creator == trial.settingsEnrollment, (try? Data(contentsOf: receipt)) == ownership else { throw ProbeError.receiptRequired }
+    }
+
+    private func checkAccount(in db: any ProbeDatabase) async throws {
+        guard try await db.currentOwner() == owner else { throw ProbeError.originalAccountRequired }
+    }
+
+    private func withAccount<Value>(in db: any ProbeDatabase, _ operation: () async throws -> Value) async throws -> Value {
+        try await checkAccount(in: db)
+        let result: Value
+        do {
+            result = try await operation()
+        } catch {
+            // A rejected explicit-owner write after a switch must wait for the original account on retry.
+            try await checkAccount(in: db)
+            if let cloud = error as? CKError, cloud.code == .notAuthenticated || cloud.code == .accountTemporarilyUnavailable {
+                throw ProbeError.explicitOwnerUnavailable
+            }
+            throw error
+        }
+        try await checkAccount(in: db)
+        return result
+    }
+
+    private func fetch(in db: any ProbeDatabase) async throws -> CKRecord? {
+        try await withAccount(in: db) { try await db.fetch(id) }
     }
 
     private func envelope(_ phase: Phase) throws -> MacSettingRecord {
@@ -103,13 +148,15 @@ struct SettingsTrial {
     private func save(_ phase: Phase, replacing previous: CKRecord?, fields: Data?, in db: any ProbeDatabase) async throws {
         let data = try envelope(phase).encoded()
         let record = SyncRecord(id: recordID, type: .macSetting, schema: 1, payload: data, systemFields: fields)
-        try await db.saveVersion(CloudKitMapping.ckRecord(record), observed: previous)
+        try await withAccount(in: db) {
+            try await db.saveVersion(CloudKitMapping.ckRecord(record, ownerName: owner), observed: previous)
+        }
     }
 
     func start(in db: any ProbeDatabase) async throws {
         try requireReceipt()
-        try await db.ensureZone(id.zoneID)
-        if let existing = try await db.fetch(id) {
+        try await withAccount(in: db) { try await db.ensureZone(id.zoneID) }
+        if let existing = try await fetch(in: db) {
             guard try read(existing).0 != .reset else { throw ProbeError.alreadyCleaned }
         } else {
             try await save(.initial, replacing: nil, fields: nil, in: db)
@@ -118,7 +165,7 @@ struct SettingsTrial {
 
     func answer(in db: any ProbeDatabase) async throws {
         guard responder == trial.settingsEnrollment else { throw ProbeError.useSecondMac }
-        guard let existing = try await db.fetch(id) else { throw ProbeError.awaitingOtherMac }
+        guard let existing = try await fetch(in: db) else { throw ProbeError.awaitingOtherMac }
         let (phase, mapped) = try read(existing)
         switch phase {
         case .initial:
@@ -132,19 +179,19 @@ struct SettingsTrial {
 
     func confirm(in db: any ProbeDatabase) async throws {
         try requireReceipt()
-        guard let existing = try await db.fetch(id), try read(existing).0 == .answer else { throw ProbeError.awaitingOtherMac }
-        try await db.verifyMetadata(of: existing)
+        guard let existing = try await fetch(in: db), try read(existing).0 == .answer else { throw ProbeError.awaitingOtherMac }
+        try await withAccount(in: db) { try await db.verifyMetadata(of: existing) }
     }
 
     /// CloudKit keeps the encrypted production reset in this otherwise disposable zone. A whole-zone delete could remove a neighbor.
     func clean(in db: any ProbeDatabase) async throws {
         try requireReceipt()
-        guard let existing = try await db.fetch(id) else { throw ProbeError.awaitingOtherMac }
+        guard let existing = try await fetch(in: db) else { throw ProbeError.awaitingOtherMac }
         let (phase, mapped) = try read(existing)
         if phase != .reset {
             try await save(.reset, replacing: existing, fields: mapped.systemFields, in: db)
         }
-        guard let saved = try await db.fetch(id), try read(saved).0 == .reset else { throw ProbeError.unexpectedRecord }
+        guard let saved = try await fetch(in: db), try read(saved).0 == .reset else { throw ProbeError.unexpectedRecord }
     }
 }
 
@@ -155,6 +202,7 @@ func verifyExplicitMetadata(
 ) async throws {
     let owner = try await user()
     guard !owner.isEmpty, owner != CKCurrentUserDefaultName, let expectedTag else { throw ProbeError.explicitOwnerUnavailable }
+    guard id.zoneID.ownerName == owner else { throw ProbeError.originalAccountRequired }
     let zone = CKRecordZone.ID(zoneName: id.zoneID.zoneName, ownerName: owner)
     let requested = CKRecord.ID(recordName: id.recordName, zoneID: zone)
     let results = try await fetch(requested, [])
@@ -178,27 +226,41 @@ func settingsCommand(
         print(base.settingsEnrollment.uuidString.lowercased())
         return
     }
-    guard args.count == 3, let peer = UUID(uuidString: args[2]), peer.uuidString.lowercased() == args[2].lowercased() else {
+    if args[0] == "settings-account", args.count == 2 {
+        let owner = try await database().currentOwner()
+        print(try base.settingsAccount(owner: owner))
+        return
+    }
+    let reserving = args[0] == "settings-reserve"
+    let commands = ["settings-begin", "settings-resume", "settings-answer", "settings-confirm", "settings-cleanup"]
+    guard reserving || commands.contains(args[0]), args.count == (reserving ? 4 : 5),
+          let peer = UUID(uuidString: args[2]), peer.uuidString.lowercased() == args[2].lowercased() else {
         throw ProbeError.usage
     }
-    let trial = try SettingsTrial(trial: base, peer: peer, answering: args[0] == "settings-answer")
+    let db = try database()
+    let owner = try await db.currentOwner()
+    let trial = try SettingsTrial(trial: base, peer: peer, answering: args[0] == "settings-answer", owner: owner, account: args[3])
+    if reserving {
+        print(try trial.issueReceipt())
+        return
+    }
+    try trial.restoreReceipt(args[4])
     switch args[0] {
     case "settings-begin":
-        try trial.reserve()
-        try await trial.start(in: database())
+        try await trial.start(in: db)
         print("PASS Studio wrote 125%.")
     case "settings-resume":
-        try await trial.start(in: database())
+        try await trial.start(in: db)
         print("PASS Studio recovered the owned record.")
     case "settings-answer":
-        try await trial.answer(in: database())
+        try await trial.answer(in: db)
         print("PASS Air acknowledged the trial at 150%.")
     case "settings-confirm":
-        try await trial.confirm(in: database())
+        try await trial.confirm(in: db)
         print("PASS Studio read the 150% reply.")
         print("PASS explicit-owner metadata matched its full-record tag.")
     case "settings-cleanup":
-        try await trial.clean(in: database())
+        try await trial.clean(in: db)
         print("PASS Studio verified the stored reset.")
     default:
         throw ProbeError.usage

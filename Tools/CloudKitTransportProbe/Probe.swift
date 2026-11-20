@@ -14,6 +14,7 @@ enum ProbeError: String, Error {
     case usage, developmentSignatureRequired, invalidNonce, modelUnavailable, receiptRequired
     case differentCreator, useSecondMac, unexpectedRecord, awaitingOtherMac, alreadyCleaned, missingSaveResult
     case explicitOwnerUnavailable, metadataResultMissing, metadataKeyNormalized, metadataTagMismatch
+    case originalAccountRequired
 }
 
 // Both Studio and Air report a product model shared by many Macs. No serial number or hardware UUID is needed.
@@ -162,6 +163,7 @@ struct Trial {
 }
 
 protocol ProbeDatabase {
+    func currentOwner() async throws -> String
     func ensureZone(_ id: CKRecordZone.ID) async throws
     func fetch(_ id: CKRecord.ID) async throws -> CKRecord?
     func saveVersion(_ record: CKRecord, observed: CKRecord?) async throws
@@ -169,10 +171,18 @@ protocol ProbeDatabase {
 }
 
 extension CKDatabase: ProbeDatabase {
-    func verifyMetadata(of record: CKRecord) async throws {
+    func currentOwner() async throws -> String {
         let container = try checkedContainer()
+        do {
+            return try await container.userRecordID().recordName
+        } catch {
+            throw ProbeError.explicitOwnerUnavailable
+        }
+    }
+
+    func verifyMetadata(of record: CKRecord) async throws {
         try await verifyExplicitMetadata(id: record.recordID, type: record.recordType, expectedTag: record.recordChangeTag, user: {
-            try await container.userRecordID().recordName
+            try await self.currentOwner()
         }, fetch: { id, desiredKeys in
             let results = try await self.records(for: [id], desiredKeys: desiredKeys)
             return results.mapValues { $0.map { ($0.recordType, $0.recordChangeTag) } }
@@ -183,6 +193,9 @@ extension CKDatabase: ProbeDatabase {
         do {
             _ = try await recordZone(for: id)
         } catch let error as CKError where error.code == .zoneNotFound || error.code == .unknownItem {
+            if id.ownerName != CKCurrentUserDefaultName {
+                guard try await currentOwner() == id.ownerName else { throw ProbeError.originalAccountRequired }
+            }
             _ = try await save(CKRecordZone(zoneID: id))
         }
     }

@@ -10,12 +10,12 @@ nonisolated enum CloudKitMapping {
     static let payloadKey = "payload"
     static let schemaKey = "schemaVersion"
 
-    static func zoneID(_ zone: String) -> CKRecordZone.ID {
-        CKRecordZone.ID(zoneName: zone, ownerName: CKCurrentUserDefaultName)
+    static func zoneID(_ zone: String, ownerName: String = CKCurrentUserDefaultName) -> CKRecordZone.ID {
+        CKRecordZone.ID(zoneName: zone, ownerName: ownerName)
     }
 
-    static func recordID(_ id: SyncRecordID) -> CKRecord.ID {
-        CKRecord.ID(recordName: id.name, zoneID: zoneID(id.zone))
+    static func recordID(_ id: SyncRecordID, ownerName: String = CKCurrentUserDefaultName) -> CKRecord.ID {
+        CKRecord.ID(recordName: id.name, zoneID: zoneID(id.zone, ownerName: ownerName))
     }
 
     static func syncID(_ id: CKRecord.ID) -> SyncRecordID {
@@ -39,8 +39,8 @@ nonisolated enum CloudKitMapping {
         )
     }
 
-    static func ckRecord(_ record: SyncRecord) -> CKRecord {
-        let id = recordID(record.id)
+    static func ckRecord(_ record: SyncRecord, ownerName: String = CKCurrentUserDefaultName) -> CKRecord {
+        let id = recordID(record.id, ownerName: ownerName)
         let result = restoredRecord(from: record.systemFields, matching: id, type: record.type)
             ?? CKRecord(recordType: record.type.rawValue, recordID: id)
         result[schemaKey] = record.schema as NSNumber
