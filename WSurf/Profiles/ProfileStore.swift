@@ -81,6 +81,10 @@ final class ProfileStore {
         profiles.first { $0.id == lastPersistentID } ?? profiles[0]
     }
 
+    var passwordsProfile: Profile {
+        isPrivate ? profileToReturnTo : current
+    }
+
     var hasMultiple: Bool {
         profiles.count > 1
     }

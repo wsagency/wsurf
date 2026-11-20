@@ -6,6 +6,13 @@ import WSurfVault
 
 /// What the dropdown offers from the credentials vault, and after a fill, decided before anything is read.
 extension AutofillSuggestions {
+    /// The action offers the profile's locked vaults without reading them. Already unlocked logins stay available.
+    static func unlockRow(for request: Request, origin: String) -> [AutofillSuggestion] {
+        let rowID = UUID()
+        request.actions[rowID] = .unlock
+        return [AutofillSuggestion(id: rowID, title: String(localized: "Unlock Credentials…"), detail: "", origin: origin)]
+    }
+
     /// Whether the profile has vaults and every one of them is locked. The dropdown then offers to unlock and reads nothing.
     static func allVaultsLocked(of profile: Profile) async -> Bool {
         guard !profile.isPrivate, let store = try? CredentialManager.store(for: profile), await store.openState().isProvisional,

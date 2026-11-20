@@ -98,6 +98,18 @@ nonisolated enum CredentialAccountSelection {
         return origin
     }
 
+    /// Google displays the domain of an email independently of the spelling stored in the vault.
+    static func sameUsername(_ left: String, _ right: String, origin: String) -> Bool {
+        if left == right {
+            return true
+        }
+        guard origin == "https://accounts.google.com" else { return false }
+        let lhs = left.split(separator: "@", omittingEmptySubsequences: false)
+        let rhs = right.split(separator: "@", omittingEmptySubsequences: false)
+        return lhs.count == 2 && rhs.count == 2 && !lhs[0].isEmpty && !lhs[1].isEmpty &&
+            lhs[0] == rhs[0] && lhs[1].lowercased() == rhs[1].lowercased()
+    }
+
     /// Accounts the user may pick for `field` on `origin`, best first. Only an explicit origin association
     /// qualifies an account; a login URL or TOTP issuer never widens that. Usernames are compared exactly, so
     /// case-distinct and duplicate accounts stay separate choices; the case-insensitive prefix below only filters
@@ -261,22 +273,30 @@ nonisolated enum CredentialAccountSelection {
         let detail: String
     }
 
-    /// The dropdown's default list over the unlocked vaults, in vault order (`label` names the vault when several are open): what
-    /// `suggestions` offers in each, then `lastUsedFirst` over all of them, with `entered` as what the person typed.
+    /// A password step or a reopened username shows all same-origin logins. Typing a new username filters by prefix.
+    /// A verification code still belongs to the vault and account chosen on the earlier step.
     static func listed<Account: AutofillListable>(
         in vaults: [(id: UUID, label: String?, accounts: [Account])], origin: String, pageURL: URL?, entered: String?,
-        field: CredentialAutofillField, pinned: UUID? = nil, usedAt: (_ vault: UUID, _ account: UUID) -> Date?
+        field: CredentialAutofillField, isUsernameField: Bool = true, pinned: (vault: UUID, account: UUID)? = nil,
+        usedAt: (_ vault: UUID, _ account: UUID) -> Date?
     ) -> [Listed] {
         let typed = entered.flatMap { $0.isEmpty ? nil : $0 }
+        let offerAlternatives = field == .password && (!isUsernameField || pinned != nil)
+        let restricted = field == .totp ? pinned : nil
         var rows: [(listed: Listed, typed: Bool)] = []
-        for vault in vaults {
-            let exact = typed.map { name in Set(vault.accounts.lazy.filter { $0.username == name }.map(\.id)) } ?? []
-            for row in suggestions(vault.accounts, origin: origin, pageURL: pageURL, entered: entered, field: field, pinned: pinned) {
+        for vault in vaults where restricted == nil || restricted?.vault == vault.id {
+            let exact = typed.map { name in Set(vault.accounts.lazy.filter { sameUsername($0.username, name, origin: origin) }.map(\.id)) } ?? []
+            for row in suggestions(vault.accounts, origin: origin, pageURL: pageURL,
+                                   entered: offerAlternatives ? nil : entered, field: field, pinned: restricted?.account) {
                 let detail = vault.label.map { [row.detail, $0].filter { !$0.isEmpty }.joined(separator: " · ") } ?? row.detail
                 rows.append((Listed(vault: vault.id, account: row.id, title: row.title, detail: detail), exact.contains(row.id)))
             }
         }
-        return lastUsedFirst(rows, typed: { $0.typed }) { usedAt($0.listed.vault, $0.listed.account) }.map { $0.listed }
+        var ordered = lastUsedFirst(rows, typed: { $0.typed }) { usedAt($0.listed.vault, $0.listed.account) }.map(\.listed)
+        if offerAlternatives, let pinned, let index = ordered.firstIndex(where: { $0.vault == pinned.vault && $0.account == pinned.account }), index > 0 {
+            ordered.insert(ordered.remove(at: index), at: 0)
+        }
+        return ordered
     }
 
     /// What saving `login` would do. An explicitly selected account only applies to the same username; otherwise
@@ -443,5 +463,13 @@ nonisolated extension AutofillSuggestion {
         self.origin = origin
         month = nil
         year = nil
+    }
+}
+
+extension AutofillSaveSession {
+    /// A displayed account may spell its email domain differently. Saving a submitted username still uses its exact value.
+    func usernameForDisplayHint(_ hint: String?, origin: String) -> String? {
+        guard let hint, let value = username?.value, CredentialAccountSelection.sameUsername(value, hint, origin: origin) else { return hint }
+        return value
     }
 }

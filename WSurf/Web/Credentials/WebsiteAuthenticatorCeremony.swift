@@ -456,13 +456,14 @@ extension WebsiteAuthenticator {
             try validateDeadline(request)
         }
 
-        let unlockedJustNow = manager.authorizationEpoch == nil
-        if unlockedJustNow {
+        var epoch = manager.authorizationEpoch
+        let waitedForUnlock = epoch == nil
+        if waitedForUnlock {
             // Our offer sheet and the system's unlock sheet never share the window: each is still closing for a moment after
             // its answer arrives (the next step would be refused, or the system sheet put behind ours).
             try await requireFreeWindow(anchor, rpID: resolved, context: context, "before unlock")
             do {
-                try await manager.unlock(in: anchor)
+                epoch = try await manager.unlock(in: anchor).epoch
             } catch is CancellationError {
                 throw CancellationError()
             } catch {
@@ -475,8 +476,8 @@ extension WebsiteAuthenticator {
             try await context.validate()
             try validateDeadline(request)
         }
-        guard let epoch = manager.authorizationEpoch else { throw WebsiteAuthenticatorError.notAllowed }
-        return Bound(client: client, rpID: resolved, epoch: epoch, unlockedJustNow: unlockedJustNow)
+        guard let epoch, manager.authorizationEpoch == epoch else { throw WebsiteAuthenticatorError.notAllowed }
+        return Bound(client: client, rpID: resolved, epoch: epoch, unlockedJustNow: waitedForUnlock)
     }
 
     /// Waits (bounded) for a sheet still closing on `anchor`; one that stays up is a logged refusal, never a queue behind it.

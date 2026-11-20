@@ -150,6 +150,8 @@ final class CredentialManager {
     @ObservationIgnored private var writeGeneration: UInt64 = 0
     /// Bumped by every unlock start and every lock: a scratch report is published only by the unlock that still owns it.
     @ObservationIgnored private var unlockGeneration: UInt64 = 0
+    @ObservationIgnored var nativeUnlockAttempt: CredentialUnlockAttempt?
+    @ObservationIgnored private(set) var lockCount: UInt64 = 0
 
     init(
         profile: Profile,
@@ -434,25 +436,23 @@ final class CredentialManager {
 
     // MARK: - Native unlock management
 
-    func unlock(
-        in anchor: @autoclosure () -> ASPresentationAnchor, confirmMigration: Bool = false, verifying: (@Sendable (Bool) -> Void)? = nil
-    ) async throws {
+    func authenticateUnlock(
+        in anchor: @autoclosure () -> ASPresentationAnchor, attempt: CredentialUnlockAttempt, verifying: (@Sendable (Bool) -> Void)?
+    ) async throws -> UInt64 {
+        guard nativeUnlockAttempt === attempt else { throw CredentialVaultError.unauthorized }
         let access = beginAccess()
         do {
             try requirePending(access)
-            // The consent comes before the passkey prompt: no assertion is asked for a migration that would be refused.
-            switch await store.openState() {
-            case .legacy, .resumeMigration:
-                guard confirmMigration else { throw CredentialStoreError.migrationNeedsConfirmation }
-            case .provisional, .firstRun, .failClosed:
-                break
-            }
+            let state = await store.openState()
+            try requirePending(access)
+            try attempt.checkMigrationConsent(for: state)
             let unlocks = try await store.discovery(vaultID: vaultID).unlocks
             try requirePending(access)
             let proof = try await native.assert(unlocks, anchor)
             try await completeUnlock(
-                credentialID: proof.credentialID, prf: proof.prf, access: access, confirmMigration: confirmMigration, verifying: verifying
+                credentialID: proof.credentialID, prf: proof.prf, access: access, confirmMigration: attempt.confirmsMigration, verifying: verifying
             )
+            return access.epoch
         } catch {
             discard(access)
             throw error
@@ -566,7 +566,7 @@ final class CredentialManager {
             lock(reason: .timeout)
         } else {
             access.shorten(to: end)
-            arm(timerFor: access, until: end, from: instant)
+            arm(timerFor: access, until: end)
         }
     }
 
@@ -831,6 +831,9 @@ final class CredentialManager {
     /// Synchronous revocation is the security boundary; actor cleanup is conditional on the exact
     /// revoked identities so a delayed cleanup can never clear a newer unlock.
     func lock(reason: CredentialLockReason) {
+        lockCount &+= 1
+        nativeUnlockAttempt?.finish(.failure(CredentialVaultError.unauthorized))
+        nativeUnlockAttempt = nil
         let revoked = pending + (current.map { [$0] } ?? [])
         for access in revoked {
             access.revoke()
@@ -955,16 +958,17 @@ final class CredentialManager {
         // ponytail: "When WSurf quits" is a ten-year deadline and no timer; a lock event is its only end. Upgrade: an optional deadline.
         access.beginLease(until: end ?? instant.advanced(by: .seconds(315_360_000)))
         leaseStart = instant
-        arm(timerFor: access, until: end, from: instant)
+        arm(timerFor: access, until: end)
     }
 
     /// The one timer that ends `access` at `end`; none when the vault stays open until a lock event.
-    private func arm(timerFor access: VaultAccess, until end: ContinuousClock.Instant?, from instant: ContinuousClock.Instant) {
+    private func arm(timerFor access: VaultAccess, until end: ContinuousClock.Instant?) {
         timer?.cancel()
         timer = nil
         guard let end else { return }
-        timer = Task { [weak self] in
-            try? await ContinuousClock().sleep(for: end - instant)
+        timer = Task { [weak self, now] in
+            // The main actor can start this task late. Only the time left on the lease belongs to the timer.
+            try? await ContinuousClock().sleep(for: end - now())
             guard !Task.isCancelled, let self, self.current === access else { return }
             self.lock(reason: .timeout)
         }

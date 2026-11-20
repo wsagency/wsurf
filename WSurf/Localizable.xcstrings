@@ -2242,6 +2242,9 @@
     "Choose the ZIP exported by Safari or its PaymentCards.json file." : {
 
     },
+    "Choose this account on the website, then select its saved password again." : {
+      "comment" : "Shown when the password field belongs to another account and the person must switch accounts on the website."
+    },
     "Choose voices for conversation and reading aloud." : {
 
     },
@@ -11492,6 +11495,9 @@
     },
     "This setting differs on this Mac and in iCloud." : {
 
+    },
+    "This page stays in %@ for its sign-in session. The website default is %@." : {
+      "comment" : "Website Settings caption for a sign-in session. The first placeholder names the rendering engine used by the page and the second names the saved engine for this website. Each is WebKit or Chromium."
     },
     "This sign-in page uses WebKit to keep the same session through redirects." : {
       "comment" : "Caption of the disabled Browser engine row for a sign-in website that must keep one session across redirects. Also shown in the toolbar’s site controls popover. WebKit is an engine name. Full sentence."

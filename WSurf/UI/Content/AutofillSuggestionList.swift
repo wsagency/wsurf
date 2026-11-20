@@ -13,10 +13,11 @@ enum AutofillSuggestionLayout {
     static let listPadding: CGFloat = 5
     static let chromeHeight = footerHeight + 1
     static let minimumHeight = chromeHeight + rowHeight + listPadding * 2
+    static let visibleRowLimit = 5
 
     /// The panel's height for `count` rows. It never changes while the list is filtered.
     static func height(for count: Int, searchable: Bool = false) -> CGFloat {
-        let rows = CGFloat(max(1, min(count, AutofillSuggestionSearch.threshold)))
+        let rows = CGFloat(max(1, min(count, visibleRowLimit)))
         let search = searchable ? searchRowHeight + 1 : 0
         return chromeHeight + search + listPadding * 2 + rows * rowHeight + (rows - 1) * rowSpacing
     }
@@ -101,7 +102,7 @@ struct AutofillSuggestionList: View {
     }
 }
 
-/// The top row of a long list. Before the first click it is a button that starts a search; once searching it shows the query and a
+/// The search row starts a search on click, then shows the query and a
 /// caret. The page's field keeps the keyboard focus the whole time: what is typed is read by WSurf and never sent to the page.
 private struct AutofillSuggestionSearchRow: View {
     let query: String

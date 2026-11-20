@@ -99,11 +99,22 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
                 tab.noteTransition(mapped)
             }
         }
-        if let tab, !tab.permitsEngineNavigation(
-            navigationAction.request, isMainFrame: navigationAction.targetFrame?.isMainFrame == true
-        ) {
-            decisionHandler(.cancel)
-            return
+        if let tab {
+            let mainFrame = navigationAction.targetFrame?.isMainFrame == true
+            let tracksSignIn = mainFrame && tab.signInEngine != nil
+            let isRedirect = tracksSignIn && navigationAction.responds(to: NSSelectorFromString("_isRedirect"))
+                && navigationAction.value(forKey: "_isRedirect") as? Bool == true
+            // didStartProvisionalNavigation binds every initial link to its public WKNavigation. For a redirect, use
+            // its navigation when available so an older redirect cannot act on behalf of a newer visit.
+            let navigation = isRedirect && navigationAction.responds(to: NSSelectorFromString("_mainFrameNavigation"))
+                ? BrowserPage.from(webView)?.navigation(for: navigationAction.value(forKey: "_mainFrameNavigation") as? WKNavigation) : nil
+            if !tab.permitsEngineNavigation(
+                navigationAction.request, isMainFrame: mainFrame, userLinkFrom: tracksSignIn ? Self.userLinkOrigin(navigationAction) : nil,
+                navigation: navigation, isRedirect: isRedirect
+            ) {
+                decisionHandler(.cancel)
+                return
+            }
         }
 
         guard let tab, let base = tab.extensionBaseURL,
@@ -157,6 +168,14 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
 
     /// WebKit numbers the middle button 4, not NSEvent's 2.
     private static let middleButton = 4
+
+    /// Only a person's link in the current top-level document can start a visit in a different engine.
+    private static func userLinkOrigin(_ action: WKNavigationAction) -> String? {
+        guard action.navigationType == .linkActivated, action.targetFrame?.isMainFrame == true, action.sourceFrame.isMainFrame,
+              decidesPopUps, isUserInitiated(action), action.responds(to: NSSelectorFromString("_isRedirect")),
+              action.value(forKey: "_isRedirect") as? Bool == false else { return nil }
+        return frameOrigin(action.sourceFrame.securityOrigin)
+    }
 
     private func requestingOrigin(for action: WKNavigationAction) -> String {
         let frame: WKFrameInfo? = action.sourceFrame

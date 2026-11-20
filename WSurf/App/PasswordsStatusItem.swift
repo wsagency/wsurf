@@ -94,7 +94,7 @@ final class PasswordsStatusItem: NSObject, NSPopoverDelegate {
     static let popoverSize = NSSize(width: 340, height: 460)
 
     private let statusBar: any PasswordsStatusBar
-    private let profiles: ProfileStore
+    private let profiles: () -> ProfileStore
     private let makeModel: @MainActor (Profile) -> CredentialSettingsModel
     /// The tab of the front browser window; nil with no window.
     private let frontTab: @MainActor () -> PasswordsMenuList.FrontTab?
@@ -114,7 +114,7 @@ final class PasswordsStatusItem: NSObject, NSPopoverDelegate {
     /// The parameters are seams for tests, which must not touch the menu bar, open a vault or lock the real ones.
     init(
         statusBar: any PasswordsStatusBar = SystemPasswordsStatusBar(),
-        profiles: ProfileStore = .shared,
+        profiles: @escaping () -> ProfileStore = { BrowserApplication.shared.passwordsProfileStore() },
         makeModel: @escaping @MainActor (Profile) -> CredentialSettingsModel = PasswordsStatusItem.makeSystemModel,
         frontTab: @escaping @MainActor () -> PasswordsMenuList.FrontTab? = PasswordsStatusItem.systemFrontTab,
         lockEverything: @escaping () -> Void = { CredentialManager.lockAll(reason: .manual) },
@@ -277,7 +277,7 @@ final class PasswordsStatusItem: NSObject, NSPopoverDelegate {
 
     /// The profile the popover shows: never a private one, which keeps no vault.
     var profile: Profile {
-        profiles.isPrivate ? profiles.profileToReturnTo : profiles.current
+        profiles().passwordsProfile
     }
 
     // MARK: Actions

@@ -219,6 +219,25 @@ struct CredentialAutoLockTests {
         }
     }
 
+    @Test func anIdlePageLocksWhenTheTimerFirstRunsPastItsDeadline() async throws {
+        try await withVault(stored: CredentialAutoLock.oneHour.rawValue) { vault in
+            let page = CredentialSettingsModel(profile: vault.profile, manager: vault.manager)
+            await page.load()
+            let menu = PasswordsMenuContent(model: page, origin: nil)
+            menu.refresh()
+            #expect(page.presentation == .content && menu.sections != nil)
+
+            // The timer's task cannot start until this main-actor turn yields. Reaching its deadline in the meantime
+            // must deliver the timeout to an idle window, without the person reading the vault or clicking anything.
+            try vault.manager.setAutoLock(.oneMinute)
+            vault.clock.advance(by: .seconds(60))
+
+            let locked = await waitUntil(timeout: .seconds(3)) { vault.manager.lastLockReason == .timeout }
+            #expect(locked, "the timer must use the deadline set at unlock")
+            #expect(page.presentation == .locked && menu.sections == nil)
+        }
+    }
+
     @Test func aLongerTimeWaitsForTheNextUnlock() async throws {
         try await withVault { vault in
             vault.clock.advance(by: .seconds(2 * 60))

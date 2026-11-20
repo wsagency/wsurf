@@ -626,11 +626,11 @@ final class BrowserModel {
         copy.pageTitle = tab.pageTitle
         copy.customTitle = tab.customTitle
         copy.urlString = tab.urlString
-        copy.deferRestore(state: tab.sessionState, url: URL(string: tab.urlString))
-        copy.realizeDeferredSession(byPerson: true)
         copy.pinnedURL = tab.pinnedURL
         copy.pinnedTitle = tab.pinnedTitle
         copy.spaceID = tab.spaceID
+        copy.deferRestore(state: tab.sessionState, url: URL(string: tab.urlString))
+        copy.realizeDeferredSession(byPerson: true)
 
         let at = (tabs.firstIndex { $0 === tab }).map { $0 + 1 } ?? tabs.endIndex
         tabs.insert(copy, at: at)

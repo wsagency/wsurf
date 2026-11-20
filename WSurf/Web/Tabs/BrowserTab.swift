@@ -271,7 +271,21 @@ final class BrowserTab: Identifiable {
     var engineOverride: BrowserEngine?  // A tab opened to compare engines: wins over the site's setting, never written to it.
     /// The engine chosen for this tab on one origin. Explicitly setting the website default clears it.
     var pinnedEngine: (origin: String, engine: BrowserEngine)?
-    var signInEngine: BrowserEngine?  // Holds a sign-in's redirect chain in WebKit (`noteNavigation`).
+    /// Holds a sign-in's redirects in the engine that accepted its first request.
+    var signInEngine: BrowserEngine? {
+        didSet {
+            if signInEngine != oldValue {
+                invalidateSessionState()
+            }
+        }
+    }
+    struct SignInDeparture {
+        let source: PageNavigation?
+        let address: URL
+        var navigation: PageNavigation?
+    }
+    /// Only the commit of the requested WebKit navigation can end the document's session.
+    @ObservationIgnored var leavingSignIn: SignInDeparture?
     /// The page a load left when it moved the tab to the other engine, whose history starts empty: Back from its first page
     /// returns there (`goBackAcrossEngines`), with its engine's saved history.
     var pageBeforeEngineSwitch: (url: URL, state: Data?)?
@@ -279,18 +293,24 @@ final class BrowserTab: Identifiable {
     /// tab. Back ends there once the tab's own history is spent, as in Safari (`BrowserModel.bindCallbacks`).
     var hasOpener: (() -> Bool)?
     var onBackToOpener: (() -> Void)?
-    func preferredEngine(for url: URL?) -> BrowserEngine {
+    func preferredEngine(for url: URL?, keepingSignIn: Bool = true) -> BrowserEngine {
         guard extensionBaseURL == nil else { return .webKit }
         guard engineOverride == nil, let url else { return engineOverride ?? .webKit }
         let origin = SitePermissions.origin(for: url)
         guard !origin.isEmpty else { return .webKit }
-        if let signInEngine {
+        if keepingSignIn, let signInEngine {
             return signInEngine
         }
         if let pinnedEngine, pinnedEngine.origin == origin {
             return pinnedEngine.engine
         }
         return sitePermissions.engine(for: origin)
+    }
+
+    func resumeFavoriteSignIn(for url: URL?) {
+        guard isPinnedForProfile || isFavorite, signInEngine != .chromium else { return }
+        let siteChoice = pinnedEngine?.origin == SitePermissions.origin(for: url) ? pinnedEngine?.engine : nil
+        signInEngine = (engineOverride ?? siteChoice) == .chromium ? nil : .webKit
     }
 
     func makePage(engine: BrowserEngine) -> BrowserPage {
@@ -697,7 +717,7 @@ final class BrowserTab: Identifiable {
             return cachedSessionState
         }
         if !hasFreshSessionState {
-            cachedSessionState = page.interactionState as? Data
+            cachedSessionState = page.savedInteractionState(keepingWebKitSignIn: signInEngine == .webKit)
             hasFreshSessionState = true
         }
         return cachedSessionState
@@ -729,24 +749,38 @@ final class BrowserTab: Identifiable {
             pendingNavigationTask = Task { [weak self] in
                 await retirement.value
                 guard let self, !isClosed, !Task.isCancelled else { return nil }
-                return restoreDeferredState(state, url: url, byPerson: byPerson)
+                pendingNavigationTask = nil
+                let navigation = restoreDeferredState(state, url: url, byPerson: byPerson)
+                // WebKit can reject its saved state; the fresh load may have to replace that view with Chromium.
+                return await pendingNavigationTask?.value ?? navigation
             }
         } else {
             lastRequestedNavigation = restoreDeferredState(state, url: url, byPerson: byPerson)
         }
     }
 
-    private func restoreDeferredState(_ state: Data?, url: URL?, byPerson: Bool) -> PageNavigation? {
+    func restoreDeferredState(_ state: Data?, url: URL?, byPerson: Bool) -> PageNavigation? {
         permitSystemPage(url)
         if let url {
             urlString = url.absoluteString
         }
-        if let state, BrowserPage.canRestore(state, using: preferredEngine(for: url)) {
-            wakeScroll.disarm()
-            page.interactionState = state
-            return nil
+        if let state, let native = BrowserPage.webKitHistory(in: state) {
+            if native.keepsSignIn {
+                resumeFavoriteSignIn(for: url)
+            }
+            if preferredEngine(for: url) == .webKit, page.restoreWebKitHistory(native.data) {
+                wakeScroll.disarm()
+                return nil
+            }
         }
         if let url {
+            if isPinnedForProfile || isFavorite {
+                // A GET starts a new visit once there is no signed-in page to restore.
+                noteNavigation(to: url, startedByUser: true)
+                if let loadedEngine, loadedEngine != preferredEngine(for: url) {
+                    return load(url, transition: pendingTransition, byPerson: byPerson)
+                }
+            }
             if let state {
                 // A Chromium state: its Back and Forward entries, which load only when visited, then the address alone.
                 page.seedHistory(from: state)

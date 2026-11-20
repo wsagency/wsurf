@@ -32,6 +32,14 @@ extension BrowserTab {
     }
 
     func navigationStarted(_ navigation: PageNavigation?, url: URL?) {
+        if var departure = leavingSignIn {
+            if let navigation, departure.navigation == nil, departure.source === committedNavigation, departure.address == url {
+                departure.navigation = navigation
+                leavingSignIn = departure
+            } else if departure.navigation !== navigation {
+                leavingSignIn = nil
+            }
+        }
         pendingPDFOpening = nil
         // A Back, Reload or typed address that stops the error document while it loads reports nothing for it, so the flag would
         // outlive it: only the error document's own start (the one `navigationFailed` made) keeps it.
@@ -53,6 +61,11 @@ extension BrowserTab {
     }
 
     func navigationCommitted(_ navigation: PageNavigation?) {
+        if let navigation, let departure = leavingSignIn, departure.navigation === navigation,
+           provisionalNavigation === navigation, departure.source === committedNavigation {
+            signInEngine = nil
+            leavingSignIn = nil
+        }
         pendingPDFOpening = nil
         committedNavigation = navigation
         autofillSave.resetDismissalsForNavigation()
@@ -118,6 +131,9 @@ extension BrowserTab {
 
     func navigationFailed(_ navigation: PageNavigation?, error: Error) {
         guard !isClosed else { return }
+        if let navigation, leavingSignIn?.navigation === navigation {
+            leavingSignIn = nil
+        }
         if (error as? URLError)?.code != .cancelled {
             autofillSave.submissions.clear()
         }
@@ -174,24 +190,51 @@ extension BrowserTab {
     }
 
     /// Keep sign-in in one engine from the first request to the return redirect so every hop uses the same session.
-    /// A navigation the user starts ends the hold. `startedByUser` is false for those the engine asks a decision for.
-    func noteNavigation(to url: URL, startedByUser: Bool) {
+    /// A new visit the user starts ends the hold. Links within the same website and sign-in redirects keep it.
+    func noteNavigation(to url: URL, startedByUser: Bool, submittingWith engine: BrowserEngine? = nil) {
         if SitePermissions.webKitOnlyOrigins.contains(SitePermissions.origin(for: url)) {
-            signInEngine = .webKit
+            leavingSignIn = nil
+            let ongoing = startedByUser ? nil : signInEngine
+            signInEngine = engine ?? ongoing ?? .webKit
         } else if startedByUser {
+            leavingSignIn = nil
             signInEngine = nil
         }
     }
 
     /// Only safe GET navigation is reissued in another engine; submitted requests stay in their original engine.
-    func permitsEngineNavigation(_ request: URLRequest, isMainFrame: Bool) -> Bool {
+    func permitsEngineNavigation(
+        _ request: URLRequest, isMainFrame: Bool, userLinkFrom sourceOrigin: String? = nil,
+        navigation: PageNavigation? = nil, isRedirect: Bool = false
+    ) -> Bool {
         guard isMainFrame, let url = request.url,
               SitePermissions.origin(for: url).isEmpty == false else { return true }
-        noteNavigation(to: url, startedByUser: false)
-        guard preferredEngine(for: url) != engine,
-              (request.httpMethod ?? "GET").uppercased() == "GET",
-              request.httpBody == nil, request.httpBodyStream == nil else { return true }
-        load(url, transition: pendingTransition, startedByUser: false)
+        // A late redirect cannot change the session of the navigation which superseded it.
+        if isRedirect, let navigation, let provisionalNavigation, provisionalNavigation !== navigation {
+            return true
+        }
+        let canReissue = (request.httpMethod ?? "GET").uppercased() == "GET"
+            && request.httpBody == nil && request.httpBodyStream == nil
+        let leavesSignIn = canReissue && sourceOrigin.map { origin in
+            let destination = SitePermissions.webOrigin(for: url)
+            return !origin.isEmpty && !destination.isEmpty
+                && !SitePermissions.webKitOnlyOrigins.contains(origin) && !SitePermissions.webKitOnlyOrigins.contains(destination)
+                && SitePermissions.site(for: origin) != SitePermissions.site(for: destination)
+        } == true
+        if !isRedirect {
+            leavingSignIn = nil
+        }
+        noteNavigation(to: url, startedByUser: false, submittingWith: canReissue ? nil : engine)
+        let followsDeparture = isRedirect && navigation != nil && leavingSignIn?.navigation === navigation
+        let outside = leavesSignIn || followsDeparture
+        guard canReissue else { return true }
+        if preferredEngine(for: url, keepingSignIn: !outside) == engine {
+            if leavesSignIn {
+                leavingSignIn = SignInDeparture(source: committedNavigation, address: url)
+            }
+            return true
+        }
+        load(url, transition: pendingTransition, startedByUser: outside, byPerson: leavesSignIn)
         return false
     }
 

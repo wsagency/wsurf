@@ -6,6 +6,12 @@
 import Foundation
 
 nonisolated enum PasswordAutofillScript {
+    static let openedAccountChooser = -2
+    static let differentAccount = -3
+    static var chooseAccountMessage: String {
+        String(localized: "Choose this account on the website, then select its saved password again.")
+    }
+
     static let source = AutofillFormScript.source + AutofillSuggestionScript.source + clientSource
     static let clientSource = #"""
     (() => {
@@ -36,12 +42,36 @@ nonisolated enum PasswordAutofillScript {
         if (group.fields.filter(field => field.kind === 'one-time-code').length !== 1) return null;
         return {form:group.root,element:target};
       };
+      // Google's password step identifies the account in a chip outside the form. Only that site's displayed identity counts.
+      const email = value => typeof value === 'string' && value.length <= 500 && /^[^\s@]+@[^\s@]+$/.test(value);
+      const sameEmail = (left, right) => {
+        if (left === right) return true;
+        if (!email(left) || !email(right)) return false;
+        const [local, domain] = left.split('@'), [other, otherDomain] = right.split('@');
+        return local === other && domain.toLowerCase() === otherDomain.toLowerCase();
+      };
+      const googleAccount = () => {
+        if (location.origin !== 'https://accounts.google.com' || !/\/challenge\/pwd(?:\/|$)/.test(location.pathname)) return null;
+        const chips = document.querySelectorAll('#profileIdentifier'), chip = chips[0];
+        if (!chip) return {};
+        if (chips.length !== 1 || !chip.getClientRects().length || !chip.checkVisibility({checkOpacity:true,checkVisibilityCSS:true})) {
+          return {ambiguous:true};
+        }
+        const chooser = chip.closest('button, a[href], [role="button"], [role="link"], [aria-haspopup][tabindex]');
+        const addresses = (chip.innerText || '').trim().split(/\s+/).filter(email);
+        for (const el of [chip, chooser]) {
+          const declared = el?.getAttribute('data-email')?.trim();
+          if (declared) addresses.push(declared);
+        }
+        const username = addresses[0];
+        return username && email(username) && addresses.every(address => sameEmail(address, username)) ? {chooser,username} : {ambiguous:true};
+      };
       // `kind` is what the dropdown may do with typing: only a username field lets typed characters start its search.
       // `webauthn`: the field takes passkeys, so native may add "Use a Passkey…" while the page has a pending conditional request.
       const extra = target => {
         const kind = forms.field(target)?.kind || '';
         if (otp(target)) return {field:'totp',kind};
-        const username = fields(target)?.username?.value;
+        const username = (kind === 'current-password' ? googleAccount()?.username : '') || fields(target)?.username?.value;
         return {field:'password',kind,webauthn:tokens(target).includes('webauthn'),
           username:typeof username === 'string' && username.length <= 500 ? username : ''};
       };
@@ -75,7 +105,9 @@ nonisolated enum PasswordAutofillScript {
         pick.target = fits ? target : null;
         pick.token = fits ? crypto.randomUUID() : null;
         pick.url = location.href;
-        return {action:'context',token:pick.token,url:pick.url,documentID:forms.documentID,field:fits ? pickKind(target) : ''};
+        const named = fits && current(target) ? googleAccount() : null;
+        return {action:'context',token:pick.token,url:pick.url,documentID:forms.documentID,field:fits ? pickKind(target) : '',
+          ...(named ? {googleUsername:named.username || ''} : {})};
       };
       document.addEventListener('contextmenu', event => {
         if (!event.isTrusted || !enabled) return;
@@ -104,7 +136,7 @@ nonisolated enum PasswordAutofillScript {
       // field holds it. Blink sends no focus or blur while its page is unfocused, as Chromium's is while, and for a moment after,
       // a native sheet such as the picker has the window; a focus or blur the engine did not send is then sent here, so the page
       // sees the same sequence in both engines.
-      const put = (el,value) => {
+      const put = (el,value,authorize) => {
         el.setAttribute('data-wsurf-password','');
         const seen = new Set(), note = event => { if (event.target === el) seen.add(event.type); };
         const focus = (type,bubbles) => el.dispatchEvent(new FocusEvent(type,{bubbles,composed:true}));
@@ -119,6 +151,8 @@ nonisolated enum PasswordAutofillScript {
           if (focused && !before && !seen.has('focus')) { focus('focus',false); focus('focusin',true); }
           key('keydown');
           edit('beforeinput');
+          const allowed = authorize?.() ?? 1;
+          if (allowed !== 1) return allowed;
           Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(el,value);
           edit('input');
           key('keyup');
@@ -135,23 +169,48 @@ nonisolated enum PasswordAutofillScript {
       // person chose, so Return still submits. `fill` returns how many fields took a value.
       const fillAll = (home,fill) => suggestions.quietly(() => {
         const count = fill();
-        if (count && home?.isConnected) home.focus({preventScroll:true});
+        if (count > 0 && home?.isConnected) home.focus({preventScroll:true});
         return count;
       });
       // The page's own listeners run while each field is filled, and may move, hide or swap the next one: a later field takes its
       // value only while it is still a field of the form it was chosen in, on this address, and that form still submits to this
       // site. The caches are dropped first, since the page's changes are not yet observed.
-      const still = (el,root,url) => {
+      const still = (el,root,url,target = el) => {
         forms.invalidate();
-        return location.href === url && el.isConnected && pickable(el) && forms.scope(el) === root &&
-          forms.safe(forms.group(el)?.root);
+        const inForm = field => field.isConnected && pickable(field) && forms.scope(field) === root;
+        return location.href === url && inForm(el) && (target === el || inForm(target)) && forms.safe(forms.group(el)?.root);
       };
-      // How many fields took a value; -1 when a password or a code would go to a form that sends it to another site, so nothing was
-      // filled.
+      // A fixed form account also binds the password. A different explicit choice can open Google's own switch control.
+      const checkAccount = (password, login, afterUsername = false) => {
+        const users = (forms.group(password)?.usernames || []).map(field => field.element);
+        const fixed = users.filter(el => (afterUsername || !forms.rendered(el)) && el.value).map(el => el.value);
+        const google = googleAccount();
+        if (google?.ambiguous || (google && !google.username && (!fixed.length || !fixed.every(email)))) return -3;
+        if (google?.username) fixed.push(google.username);
+        const matches = google ? sameEmail : (left, right) => left === right;
+        if (fixed.every(name => matches(name, login.username))) return 0;
+        if (!google?.username || !fixed.every(name => sameEmail(name, google.username))) return -3;
+        const chooser = google.chooser;
+        if (!chooser || chooser.closest(':disabled, [aria-disabled="true"], [aria-hidden="true"], [inert]')) return -3;
+        const link = chooser.closest('a'), button = chooser.closest('button, input');
+        if ((link && (link.protocol !== 'https:' || link.origin !== location.origin || link.hasAttribute('download'))) ||
+            (button?.form && button.type !== 'button')) return -3;
+        chooser.click();
+        return -2;
+      };
+      // Recheck at the native setter: focus, keydown and beforeinput handlers may change the form or the account.
+      const fillPassword = (target, password, root, url, login, count) => {
+        const allowed = () => still(password, root, url, target) && secret(password);
+        if (!allowed()) return count;
+        const result = put(password, login.password, () => allowed() ? checkAccount(password, login, true) || 1 : 0);
+        return result < 0 ? result : count + result;
+      };
+      // Negative results distinguish an unsafe form (-1), an open account chooser (-2), and a required account switch (-3).
       const pickFill = (token,url,login) => {
         if (!picked(token,url)) return 0;
         const target = pick.target;
         if (typeof login?.code === 'string') {
+          if (current(target) && googleAccount()) return 0;
           if (!forms.safe(forms.group(target)?.root)) return -1;
           const list = boxes(target, login.code.length);
           if (!list) return 0;
@@ -160,8 +219,11 @@ nonisolated enum PasswordAutofillScript {
           return fillAll(target, () => {
             let count = 0;
             for (const [index, el] of list.entries()) {
-              if (!still(el, root, url)) break;
-              count += put(el, login.code.slice(index * size, (index + 1) * size));
+              const allowed = () => still(el, root, url, target) && !(current(el) && googleAccount());
+              if (!allowed()) break;
+              const filled = put(el, login.code.slice(index * size, (index + 1) * size), () => allowed() ? 1 : 0);
+              if (!filled) break;
+              count += filled;
             }
             return count;
           });
@@ -181,11 +243,14 @@ nonisolated enum PasswordAutofillScript {
         const hasPassword = typeof login?.password === 'string';
         if (hasPassword && password && !forms.safe(group?.root)) return -1;
         pick.token = null;
+        if (hasPassword && password) {
+          const refused = checkAccount(password, login);
+          if (refused) return refused;
+        }
         return fillAll(target, () => {
           let count = 0;
           if (username && typeof login?.username === 'string' && login.username) count += put(username, login.username);
-          if (password && hasPassword && still(password, group?.root, url)) count += put(password, login.password);
-          return count;
+          return password && hasPassword ? fillPassword(target, password, group?.root, url, login, count) : count;
         });
       };
       // Generate Password…: the fields of the right-clicked field's form a new password goes into. Its password fields, in order,
@@ -284,9 +349,13 @@ nonisolated enum PasswordAutofillScript {
           }
           const found = fields(target);
           if (!found) return 0;
-          if (found.username && !forms.rendered(found.username) && found.username.value && found.username.value !== login.username) return 0;
           if (found.passwords.length > 1 || found.passwords.some(el => tokens(el).includes('new-password'))) return 0;
           state.token = null;
+          const password = found.passwords[0];
+          if (password && typeof login.password === 'string') {
+            const refused = checkAccount(password, login);
+            if (refused) return refused;
+          }
           const set = (el,value) => {
             if (!el || !forms.rendered(el) || location.href !== url || !target.isConnected) return 0;
             return put(el,value);
@@ -294,10 +363,7 @@ nonisolated enum PasswordAutofillScript {
           return fillAll(target, () => {
             let count = 0;
             if (found.username) count += set(found.username,login.username);
-            if (!found.passwords.length || !forms.safe(found.form) || forms.scope(found.passwords[0]) !== found.form) return count;
-            if (typeof login.password !== 'string') return count;
-            count += set(found.passwords[0],login.password);
-            return count;
+            return password && typeof login.password === 'string' ? fillPassword(target, password, found.form, url, login, count) : count;
           });
         }
       };

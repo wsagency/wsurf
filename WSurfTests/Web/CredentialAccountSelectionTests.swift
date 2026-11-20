@@ -106,6 +106,35 @@ struct CredentialAccountSelectionTests {
 
     // MARK: - Choosing
 
+    @Test func reopeningAFilledUsernameShowsAllTwentyAccountsAndTypingStillFilters() {
+        let vault = UUID(), accounts = (0..<20).map { account("fixture\($0)@example.test") }
+        let chosen = accounts[12]
+        let opened = CredentialAccountSelection.listed(
+            in: [(vault, nil, accounts)], origin: Self.origin, pageURL: nil, entered: chosen.username,
+            field: .password, isUsernameField: true, pinned: (vault, chosen.id)
+        ) { _, _ in nil }
+        #expect(opened.first?.account == chosen.id && Set(opened.map(\.account)) == Set(accounts.map(\.id)))
+        let typed = CredentialAccountSelection.listed(
+            in: [(vault, nil, accounts)], origin: Self.origin, pageURL: nil, entered: "fixture12",
+            field: .password, isUsernameField: true
+        ) { _, _ in nil }
+        #expect(typed.map(\.account) == [chosen.id])
+    }
+
+    @Test func theChosenVaultWinsWhenTwoVaultsHoldTheSameAccountID() {
+        let first = UUID(), second = UUID()
+        let selected = account("ada@example.test", totp: rfcGenerator)
+        let vaults = [(id: first, label: "Home" as String?, accounts: [selected]), (id: second, label: "Work" as String?, accounts: [selected])]
+        @MainActor func vaultOrder(for field: CredentialAutofillField) -> [UUID] {
+            CredentialAccountSelection.listed(
+                in: vaults, origin: Self.origin, pageURL: nil, entered: selected.username, field: field,
+                isUsernameField: false, pinned: (second, selected.id)
+            ) { vault, _ in vault == first ? .now : nil }.map(\.vault)
+        }
+        #expect(vaultOrder(for: .password) == [second, first])
+        #expect(vaultOrder(for: .totp) == [second])
+    }
+
     @Test func tenAccountsStayDistinctChoicesAndNothingIsPickedForTheUser() throws {
         let gmail = (1...10).map { account("user\($0)@gmail.test", password: "pw-\($0)") }
         let sorted = gmail.sorted { $0.username < $1.username }.map(\.id)
