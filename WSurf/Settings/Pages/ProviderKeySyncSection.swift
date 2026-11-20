@@ -156,8 +156,12 @@ struct MacWebsiteSyncApprovalSection: View {
     let profile: Profile
     @State private var account = ProviderKeySharing.shared.accountContext
 
+    private var isSharingWebsites: Bool {
+        !profile.isPrivate && CloudSync.shared?.settingsSync?.isEnabled(.websiteSettings, localProfileID: profile.id) == true
+    }
+
     var body: some View {
-        if !profile.isPrivate {
+        if isSharingWebsites {
             let sites = BrowserProfileContext.shared(for: profile).sitePermissions
             let pending = sites.pendingSyncGrants.filter { account != nil && $0.value.account == account && $0.value.dismissed != true }
             Group {
@@ -181,7 +185,6 @@ struct MacWebsiteSyncApprovalSection: View {
     @ViewBuilder private func review(_ key: String, grant: SitePermissions.SyncGrant) -> some View {
         let parts = key.split(separator: "|", maxSplits: 1).map(String.init)
         if parts.count == 2 {
-            let adapter = MacSettingsSyncAdapter(profiles: [profile])
             if let permission = WebPermission(rawValue: parts[0]) {
                 Text("Allow \(String(localized: permission.sentenceName)) for \(parts[1]) on this Mac?")
             } else {
@@ -190,9 +193,14 @@ struct MacWebsiteSyncApprovalSection: View {
                 Text("Allow assistant access for \(target) on this Mac? \(String(localized: policy.label))")
             }
             HStack {
-                Button("Keep local permission") { adapter.reviewWebsiteGrant(grant, key: key, profileID: profile.id, allow: false) }
-                Button("Allow on this Mac") { adapter.reviewWebsiteGrant(grant, key: key, profileID: profile.id, allow: true) }
+                Button("Keep local permission") { decide(grant, key: key, allow: false) }
+                Button("Allow on this Mac") { decide(grant, key: key, allow: true) }
             }
         }
     }
+    private func decide(_ grant: SitePermissions.SyncGrant, key: String, allow: Bool) {
+        guard isSharingWebsites else { return }
+        MacSettingsSyncAdapter(profiles: [profile]).reviewWebsiteGrant(grant, key: key, profileID: profile.id, allow: allow)
+    }
+
 }
