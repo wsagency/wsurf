@@ -5,6 +5,7 @@ import AppKit
 import Darwin
 import Foundation
 import GRDB
+import Observation
 import Synchronization
 import Testing
 
@@ -119,6 +120,152 @@ private nonisolated func tamper(_ f: VaultStoreFixture, _ account: CredentialAcc
 }
 
 struct VaultManagerTests {
+    @Test func concurrentPasswordWindowsShareOneUnlockAndOnlyItsOwnerConfirmsCopies() async throws {
+        try await VaultManagerFixture.with(vaults: [.locked]) { profile, passkeys, vaults in
+            let first = CredentialSettingsModel(profile: profile)
+            let second = CredentialSettingsModel(profile: profile)
+            let firstCopies = CopyGrace()
+            let secondCopies = CopyGrace()
+            first.copyGrace = firstCopies
+            second.copyGrace = secondCopies
+            await first.load()
+            await second.load()
+
+            // The passkey sheet has answered, but the vault's verification cannot finish while another operation holds its lock.
+            var hold: OperationLockHold?
+            passkeys.beforeAssert = {
+                passkeys.beforeAssert = nil
+                hold = try await OperationLock.acquire(in: profile.supportDirectory, mode: .exclusive)
+            }
+            defer { hold?.release() }
+            let owner = Task { await first.unlock(in: VaultManagerFixture.anchor()) }
+            try #require(await waitUntil { passkeys.assertions.count == 1 && hold != nil })
+            let joining = Task { await second.unlock(in: VaultManagerFixture.anchor()) }
+            try #require(await waitUntil { second.isBusy })
+            hold?.release()
+            await owner.value
+            await joining.value
+
+            let manager = vaults[0].manager
+            #expect(passkeys.assertions.count == 1)
+            #expect(first.presentation == .content && second.presentation == .content)
+            #expect(firstCopies.openEpoch(for: manager) == manager.authorizationEpoch)
+            #expect(!secondCopies.holds(manager.vaultID))
+        }
+    }
+
+    @Test func cancellingAWindowWaitingForAnotherUnlockLeavesTheOriginalPromptAlone() async throws {
+        try await VaultManagerFixture.with(vaults: [.locked]) { profile, passkeys, vaults in
+            let manager = vaults[0].manager
+            let second = CredentialSettingsModel(profile: profile)
+            await second.load()
+            let prompt = ResponseGate()
+            passkeys.beforeAssert = {
+                await withCheckedContinuation { answer in prompt.submit { answer.resume() } }
+            }
+            defer { prompt.open() }
+            let owner = Task { try await manager.unlock(in: VaultManagerFixture.anchor()) }
+            try #require(await prompt.waitForRequest())
+            let waiting = Task { await second.unlock(in: VaultManagerFixture.anchor()) }
+            try #require(await waitUntil { second.isBusy })
+            waiting.cancel()
+
+            #expect(await waitUntil(timeout: .seconds(2)) { !second.isBusy })
+            #expect(!manager.isUnlocked)
+            prompt.open()
+            _ = try await owner.value
+            await waiting.value
+            #expect(manager.isUnlocked)
+            #expect(prompt.requestCount == 1)
+        }
+    }
+
+    @Test func cancellingTheOwnerAfterPublicationLeavesItsEpochAvailableToAWaitingWindow() async throws {
+        try await VaultManagerFixture.with(vaults: [.locked]) { profile, passkeys, vaults in
+            let manager = vaults[0].manager
+            let second = CredentialSettingsModel(profile: profile)
+            let copies = CopyGrace()
+            second.copyGrace = copies
+            await second.load()
+            let prompt = ResponseGate()
+            passkeys.beforeAssert = { await withCheckedContinuation { answer in prompt.submit { answer.resume() } } }
+            defer { prompt.open() }
+            let first = Task { try await manager.unlock(in: VaultManagerFixture.anchor()) }
+            try #require(await prompt.waitForRequest())
+            let waiting = Task { await second.unlock(in: VaultManagerFixture.anchor()) }
+            try #require(await waitUntil { second.isBusy })
+
+            // The key check is published synchronously after the verified access and its lease have become current.
+            withObservationTracking {
+                _ = manager.lastKeyCheck
+            } onChange: {
+                first.cancel()
+            }
+            prompt.open()
+            let ownerResult = await first.result
+            await waiting.value
+
+            let epoch = try #require(manager.authorizationEpoch)
+            #expect(first.isCancelled)
+            #expect(second.isLoaded && second.authorizationEpoch == epoch)
+            #expect(!copies.holds(manager.vaultID))
+            #expect(passkeys.assertions.count == 1)
+            #expect(try ownerResult.get().epoch == epoch)
+        }
+    }
+
+    enum UnlockInterruption: CaseIterable { case cancelledOwner, refusedPasskey, lock }
+
+    @Test(arguments: UnlockInterruption.allCases)
+    func anInterruptedSharedUnlockGrantsNothingAndCannotDisplaceALaterUnlock(_ interruption: UnlockInterruption) async throws {
+        try await VaultManagerFixture.with(vaults: [.locked]) { profile, passkeys, vaults in
+            let manager = vaults[0].manager
+            let second = CredentialSettingsModel(profile: profile)
+            let copies = CopyGrace()
+            second.copyGrace = copies
+            await second.load()
+            let prompt = ResponseGate()
+            passkeys.beforeAssert = {
+                await withCheckedContinuation { answer in prompt.submit { answer.resume() } }
+                if interruption == .refusedPasskey {
+                    throw PasskeyUnlockError.appCancelled
+                }
+            }
+            defer { prompt.open() }
+            let first = Task { try await manager.unlock(in: VaultManagerFixture.anchor()) }
+            try #require(await prompt.waitForRequest())
+            let joining = Task { await second.unlock(in: VaultManagerFixture.anchor()) }
+            try #require(await waitUntil { second.isBusy })
+            var replacement: UInt64?
+            switch interruption {
+            case .cancelledOwner:
+                first.cancel()
+            case .refusedPasskey:
+                break
+            case .lock:
+                manager.lock(reason: .screenLock)
+                #expect(await waitUntil(timeout: .seconds(2)) { !second.isBusy })
+                passkeys.beforeAssert = nil
+                _ = try await manager.unlock(in: VaultManagerFixture.anchor())
+                replacement = try #require(manager.authorizationEpoch)
+            }
+            prompt.open()
+            if case .success = await first.result {
+                Issue.record("The interrupted unlock succeeded")
+            }
+            await joining.value
+            #expect(manager.authorizationEpoch == replacement)
+            #expect(!second.isLoaded && !copies.holds(manager.vaultID))
+            #expect(prompt.requestCount == 1)
+
+            if replacement == nil {
+                passkeys.beforeAssert = nil
+                _ = try await manager.unlock(in: VaultManagerFixture.anchor())
+                #expect(manager.isUnlocked)
+            }
+        }
+    }
+
     /// Two accounts, one deleted to the Trash through the manager: the id of the one still live and the Trash entry of the other.
     private func seedTrash(_ vault: FixtureVault) async throws -> (live: UUID, entry: UUID) {
         let keep = VaultFixtures.account(username: "keep")
@@ -559,6 +706,63 @@ struct VaultManagerTests {
     }
 
     // MARK: - Migration
+
+    private func installLegacyVault(in profile: Profile, passkeys: VaultPasskeys) throws -> LegacyV1 {
+        try FileManager.default.createDirectory(at: profile.supportDirectory, withIntermediateDirectories: true)
+        let legacy = try LegacyV1.make(profileID: profile.id)
+        try legacy.write(to: profile.supportDirectory)
+        passkeys.adopt(legacy.proof)
+        _ = try CredentialManager.forVault(profile, vaultID: legacy.vaultID, native: passkeys.native)
+        return legacy
+    }
+
+    @Test func reloadingAfterAnotherWindowMigratesOffersVaultCreationWithoutAnotherUnlock() async throws {
+        try await VaultManagerFixture.with(vaults: []) { profile, passkeys, _ in
+            let legacy = try installLegacyVault(in: profile, passkeys: passkeys)
+            let first = CredentialSettingsModel(profile: profile)
+            let second = CredentialSettingsModel(profile: profile)
+            await first.load()
+            await second.load()
+            try #require(second.needsMigrationConfirmation && !second.canCreateVault)
+
+            await first.unlock(in: VaultManagerFixture.anchor(), confirmMigration: true)
+            let epoch = try #require(first.authorizationEpoch)
+            await second.load()
+
+            #expect(second.canCreateVault && !second.needsMigrationConfirmation)
+            #expect(second.presentation == .content && second.authorizationEpoch == epoch)
+            #expect(passkeys.assertions == [legacy.proof.credentialID])
+        }
+    }
+
+    @Test func aSecondWindowOpeningTheMigratedVaultRefreshesItsLegacyStateAndReusesTheUnlock() async throws {
+        try await VaultManagerFixture.with(vaults: []) { profile, passkeys, _ in
+            let legacy = try installLegacyVault(in: profile, passkeys: passkeys)
+            let first = CredentialSettingsModel(profile: profile)
+            let second = CredentialSettingsModel(profile: profile)
+            await first.load()
+            await second.load()
+            try #require(second.needsMigrationConfirmation)
+
+            let prompt = ResponseGate()
+            passkeys.beforeAssert = { await withCheckedContinuation { answer in prompt.submit { answer.resume() } } }
+            defer { prompt.open() }
+            let migration = Task { await first.unlock(in: VaultManagerFixture.anchor(), confirmMigration: true) }
+            try #require(await prompt.waitForRequest())
+            let unconfirmed = Task { await second.unlock(in: VaultManagerFixture.anchor()) }
+            #expect(await waitUntil(timeout: .seconds(2)) { second.error != nil && second.needsMigrationConfirmation })
+            #expect(!second.isUnlocked)
+            prompt.open()
+            await migration.value
+            await unconfirmed.value
+            let epoch = try #require(first.authorizationEpoch)
+            await second.unlock(in: VaultManagerFixture.anchor())
+
+            #expect(second.openState?.isProvisional == true && !second.needsMigrationConfirmation)
+            #expect(second.presentation == .content && second.authorizationEpoch == epoch)
+            #expect(passkeys.assertions == [legacy.proof.credentialID])
+        }
+    }
 
     @Test func migrationConsentComesBeforeAnyPasskeyPrompt() async throws {
         try await VaultStoreFixture.withEnvironment { env, tracker in
