@@ -279,6 +279,13 @@ final class BrowserTab: Identifiable {
             }
         }
     }
+    struct SignInDeparture {
+        let source: PageNavigation?
+        let address: URL
+        var navigation: PageNavigation?
+    }
+    /// Only the commit of the requested WebKit navigation can end the document's session.
+    @ObservationIgnored var leavingSignIn: SignInDeparture?
     /// The page a load left when it moved the tab to the other engine, whose history starts empty: Back from its first page
     /// returns there (`goBackAcrossEngines`), with its engine's saved history.
     var pageBeforeEngineSwitch: (url: URL, state: Data?)?
@@ -286,18 +293,24 @@ final class BrowserTab: Identifiable {
     /// tab. Back ends there once the tab's own history is spent, as in Safari (`BrowserModel.bindCallbacks`).
     var hasOpener: (() -> Bool)?
     var onBackToOpener: (() -> Void)?
-    func preferredEngine(for url: URL?) -> BrowserEngine {
+    func preferredEngine(for url: URL?, keepingSignIn: Bool = true) -> BrowserEngine {
         guard extensionBaseURL == nil else { return .webKit }
         guard engineOverride == nil, let url else { return engineOverride ?? .webKit }
         let origin = SitePermissions.origin(for: url)
         guard !origin.isEmpty else { return .webKit }
-        if let signInEngine {
+        if keepingSignIn, let signInEngine {
             return signInEngine
         }
         if let pinnedEngine, pinnedEngine.origin == origin {
             return pinnedEngine.engine
         }
         return sitePermissions.engine(for: origin)
+    }
+
+    func resumeFavoriteSignIn(for url: URL?) {
+        guard isPinnedForProfile || isFavorite, signInEngine != .chromium else { return }
+        let siteChoice = pinnedEngine?.origin == SitePermissions.origin(for: url) ? pinnedEngine?.engine : nil
+        signInEngine = (engineOverride ?? siteChoice) == .chromium ? nil : .webKit
     }
 
     func makePage(engine: BrowserEngine) -> BrowserPage {
@@ -746,16 +759,14 @@ final class BrowserTab: Identifiable {
         }
     }
 
-    private func restoreDeferredState(_ state: Data?, url: URL?, byPerson: Bool) -> PageNavigation? {
+    func restoreDeferredState(_ state: Data?, url: URL?, byPerson: Bool) -> PageNavigation? {
         permitSystemPage(url)
         if let url {
             urlString = url.absoluteString
         }
         if let state, let native = BrowserPage.webKitHistory(in: state) {
-            if native.keepsSignIn, isPinnedForProfile || isFavorite, signInEngine != .chromium {
-                // The saved session keeps its engine unless this tab was explicitly set to Chromium on the restored site.
-                let siteChoice = pinnedEngine?.origin == SitePermissions.origin(for: url) ? pinnedEngine?.engine : nil
-                signInEngine = (engineOverride ?? siteChoice) == .chromium ? nil : .webKit
+            if native.keepsSignIn {
+                resumeFavoriteSignIn(for: url)
             }
             if preferredEngine(for: url) == .webKit, page.restoreWebKitHistory(native.data) {
                 wakeScroll.disarm()

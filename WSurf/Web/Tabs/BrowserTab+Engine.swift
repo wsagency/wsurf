@@ -10,6 +10,7 @@ import WebKit
 extension BrowserTab {
     @discardableResult
     func retire(_ outgoing: BrowserPage) -> Task<Void, Never> {
+        leavingSignIn = nil
         coverHold?.cancel()
         coverHold = nil
         releaseCurrentDevelopment(reason: .engineReplaced)

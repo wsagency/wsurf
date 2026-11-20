@@ -425,10 +425,6 @@ final class BrowserPage: NSView {
         return (native, saved.keepsWebKitSignIn == true)
     }
 
-    static func canRestore(_ data: Data, using engine: BrowserEngine) -> Bool {
-        engine == .webKit && webKitHistory(in: data) != nil
-    }
-
     func savedInteractionState(keepingWebKitSignIn: Bool) -> Data? {
         if let chromium {
             return chromium.savedHistory().flatMap { try? JSONEncoder().encode(SavedState(engine: .chromium, webKit: nil, chromium: $0)) }
@@ -446,15 +442,6 @@ final class BrowserPage: NSView {
         webKit.interactionState = data
         let restored = webKit.backForwardList.currentItem
         return (restored != nil && restored !== previous) || (!wasLoading && webKit.isLoading)
-    }
-
-    /// Chromium seeds its Back and Forward entries before the tab loads its address. Other entries load by GET only when visited.
-    var interactionState: Any? {
-        get { savedInteractionState(keepingWebKitSignIn: false) }
-        set {
-            guard let data = newValue as? Data, let native = Self.webKitHistory(in: data) else { return }
-            restoreWebKitHistory(native.data)
-        }
     }
 
     /// Gives a Chromium page the Back and Forward entries of a saved Chromium state, before the caller loads the tab's address. Any

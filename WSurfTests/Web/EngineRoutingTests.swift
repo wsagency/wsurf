@@ -87,6 +87,30 @@ struct EngineRoutingTests {
         #expect(tab.signInEngine == .webKit)
     }
 
+    @Test(arguments: ["regular commit", "superseded", "provider redirect"])
+    func publicNavigationCallbacksBindTheDepartureWhenTheActionHasNoNavigation(_ next: String) throws {
+        let browser = BrowserModel(database: .temporary(), sitePermissions: temporaryPermissions())
+        defer { browser.closeAllTabs(saving: false) }
+        let tab = browser.newTab()
+        let home = try #require(URL(string: "https://mail.google.com/inbox"))
+        let outside = try #require(URL(string: "https://outside.example/article"))
+        let provider = try #require(URL(string: "https://accounts.google.com/ServiceLogin"))
+        try #require(tab.permitsEngineNavigation(URLRequest(url: provider), isMainFrame: true))
+        let first = PageNavigation()
+        try #require(tab.permitsEngineNavigation(URLRequest(url: outside), isMainFrame: true, userLinkFrom: SitePermissions.origin(for: home)))
+        tab.navigationStarted(first, url: outside)
+        if next == "provider redirect" {
+            try #require(tab.permitsEngineNavigation(URLRequest(url: provider), isMainFrame: true, isRedirect: true))
+        } else if next == "superseded" {
+            let newer = PageNavigation()
+            try #require(tab.permitsEngineNavigation(URLRequest(url: provider), isMainFrame: true, navigation: newer))
+            tab.navigationStarted(newer, url: provider)
+            tab.navigationFailed(first, error: URLError(.cancelled))
+        }
+        tab.navigationCommitted(first)
+        #expect(tab.signInEngine == (next == "regular commit" ? nil : .webKit))
+    }
+
     @Test(.boundedWebViews) func reopeningAnUnloadedFavoriteAtItsPinUsesThePinnedWebsitesEngine() async throws {
         let origin = "http://127.0.0.1:1"
         let pinned = try #require(URL(string: origin + "/calendar/u/0/r/week"))

@@ -62,7 +62,7 @@ struct ChromiumHistoryRestoreTests {
         "/form": .html(#"<!doctype html><title>Form</title><form method="post" action="/result"><input name="q" value="1"></form>"#, headers: noStore),
     ]
 
-    private func withRig(engine: BrowserEngine = .chromium, _ body: (LiveWindowRig, RequestLog) async throws -> Void) async throws {
+    func withRig(engine: BrowserEngine = .chromium, _ body: (LiveWindowRig, RequestLog) async throws -> Void) async throws {
         let log = RequestLog()
         try await LiveWindowRig.with(engine: engine, routes: Self.routes, respond: { request in
             log.record(request)
@@ -84,7 +84,7 @@ struct ChromiumHistoryRestoreTests {
     }
 
     /// Waits until `tab` has finished loading `path` with these lists.
-    private func settles(_ tab: BrowserTab, at path: String, back: [String], forward: [String]) async -> Bool {
+    func settles(_ tab: BrowserTab, at path: String, back: [String], forward: [String]) async -> Bool {
         let expected = "\(path) back \(back) forward \(forward)"
         return await waitUntil(timeout: .seconds(30)) {
             !tab.page.isLoading && tab.page.backForwardList.currentItem?.url == tab.page.url && lists(tab) == expected
@@ -99,7 +99,7 @@ struct ChromiumHistoryRestoreTests {
     }
 
     /// a → b → c, then `back` native Back presses.
-    private func history(in rig: LiveWindowRig, back presses: Int = 0) async throws -> BrowserTab {
+    func history(in rig: LiveWindowRig, back presses: Int = 0) async throws -> BrowserTab {
         let tab = try await rig.open("/a")
         try await visit("/b", in: tab, rig)
         try await visit("/c", in: tab, rig)
@@ -757,88 +757,6 @@ struct ChromiumHistoryRestoreTests {
             try #require(favorite.loadedEngine == .webKit)
             #expect(await settles(favorite, at: "/b", back: ["/a"], forward: ["/c"]), "\(lists(favorite))")
             #expect(favorite.permitsEngineNavigation(URLRequest(url: pinned), isMainFrame: true))
-        }
-    }
-
-    @Test func aClickedLinkLeavesARestoredFavoritesSignInSessionOnAnotherWebsite() async throws {
-        try await withRig(engine: .webKit) { rig, _ in
-            let home = try rig.server.url("/b")
-            let other = try await HTTPFixtureServer.start(routes: ["/outside": Self.page("Outside"), "/return": .redirect(to: home)])
-            defer { withExtendedLifetime(other) {} }
-            let outside = try other.url("/outside")
-            let source = try await rig.open("/b")
-            source.engineOverride = nil
-            rig.browser.addFavorite(source)
-            let signIn = try #require(URL(string: "https://accounts.google.com/ServiceLogin"))
-            try #require(source.permitsEngineNavigation(URLRequest(url: signIn), isMainFrame: true))
-            rig.browser.sitePermissions.setEngine(.chromium, for: SitePermissions.origin(for: try rig.server.url("/b")))
-            rig.browser.sitePermissions.setEngine(.chromium, for: SitePermissions.origin(for: outside))
-            _ = try await source.page.evaluateJavaScript("document.cookie = 'favorite_session=fixture; path=/'; true")
-            rig.browser.closeAllTabs()
-            let browser = BrowserModel(context: rig.browser.context, windowID: rig.browser.windowID)
-            defer { browser.closeAllTabs(saving: false) }
-            browser.restoreSession()
-            let tab = try #require(browser.activeTab)
-            let window = NSWindow(contentRect: NSRect(x: 50, y: 50, width: 800, height: 500), styleMask: [.borderless], backing: .buffered, defer: false)
-            window.isReleasedWhenClosed = false
-            let container = WebViewContainer(page: tab.page)
-            window.contentView = container
-            window.orderBack(nil)
-            defer {
-                window.contentView = nil
-                window.close()
-            }
-            try #require(await settles(tab, at: "/b", back: [], forward: []))
-            try #require(tab.loadedEngine == .webKit && tab.signInEngine == .webKit)
-
-            @MainActor func clickLink(to url: URL) async throws {
-                let hit = try await tab.page.callAsyncJavaScript("""
-                    const link = document.createElement('a');
-                    link.href = destination; link.textContent = "Follow";
-                    link.style.cssText = "position:fixed;inset:0;z-index:999;background:white";
-                    document.body.appendChild(link);
-                    return document.elementFromPoint(50, 50) === link;
-                    """, arguments: ["destination": url.absoluteString], in: nil, contentWorld: .page)
-                try #require(hit as? Bool == true)
-                let view = tab.page
-                let point = CGPoint(x: view.bounds.midX, y: view.bounds.midY)
-                try #require(await waitUntil { PageDriver.pageReceivesPointer(at: view.convert(point, to: nil), in: view, window: window) })
-                for phase in ["down", "up"] {
-                    try PageDriver.computerMouse(point: point, button: "left", phase: phase, in: view, window: window)
-                }
-            }
-
-            // A link on the same website, its HTTP redirect, and the cookie set before the wake stay together.
-            try await clickLink(to: rig.server.url("/r"))
-            let returned = try rig.server.url("/b2")
-            try #require(await waitUntil { tab.page.url == returned && !tab.page.isLoading }, "\(lists(tab))")
-            try #require(tab.loadedEngine == .webKit && tab.signInEngine == .webKit)
-            #expect(try await tab.page.evaluateJavaScript("document.cookie.includes('favorite_session=fixture')") as? Bool == true)
-
-            // A synthetic cross-site link and its 302 back are both part of the existing session.
-            _ = try await tab.page.callAsyncJavaScript("""
-                const next = document.createElement('a');
-                next.href = address; next.click();
-                """, arguments: ["address": try other.url("/return").absoluteString], in: nil, contentWorld: .page)
-            try #require(await waitUntil { tab.page.url == home && !tab.page.isLoading })
-            try #require(tab.loadedEngine == .webKit && tab.signInEngine == .webKit)
-            #expect(other.lastRequestHead(for: "/return")?.contains("favorite_session=fixture") == true)
-
-            try await clickLink(to: outside)
-            try #require(await waitUntil(timeout: .seconds(20)) {
-                guard let page = tab.liveView else { return false }
-                container.install(page)
-                return page.url == outside && !page.isLoading
-            })
-            #expect(tab.loadedEngine == .chromium)
-            #expect(tab.signInEngine == nil)
-
-            browser.closeAllTabs()
-            let reopened = BrowserModel(context: rig.browser.context, windowID: rig.browser.windowID)
-            defer { reopened.closeAllTabs(saving: false) }
-            reopened.restoreSession()
-            let saved = try #require(reopened.activeTab)
-            #expect(saved.id == tab.id && saved.loadedEngine == .chromium)
         }
     }
 
