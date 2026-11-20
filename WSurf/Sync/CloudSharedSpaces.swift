@@ -28,6 +28,13 @@ nonisolated struct SharedProfileLinks: Codable, Equatable {
 final class CloudSharedSpaces {
     let catalog: SharedCatalogSync
     var onNeedsEngine: (() -> Void)?
+    enum AccountVerification {
+        case checking
+        case resolved(String?)
+    }
+
+    private var settingsAccount: AccountVerification?
+    @ObservationIgnored private var lastSettingsAccount: String?
     let windows: @MainActor () -> [BrowserModel]
     let spaces: @MainActor (Profile) -> SpaceStore?
     let pins: @MainActor (Profile) -> ProfilePinStore
@@ -37,40 +44,7 @@ final class CloudSharedSpaces {
         didSet { storage.data.links = links }
     }
 
-    private final class Storage {
-        struct State: Codable, Equatable {
-            var catalog = SharedCatalogState()
-            var links: [UUID: SharedProfileLinks] = [:]
-            var pausedLinks: [String: [UUID: SharedProfileLinks]]?
-        }
-
-        let url: URL
-        var data: State
-        let readable: Bool
-        private var written: State?
-
-        init(_ file: URL) {
-            url = file
-            do {
-                data = try JSONDecoder().decode(State.self, from: Data(contentsOf: file))
-                written = data
-                readable = true
-            } catch {
-                data = State()
-                readable = !FileManager.default.fileExists(atPath: file.path)
-            }
-        }
-
-        func write() throws {
-            guard readable else { throw SharedCatalogError.storage }
-            guard written != data else { return }
-            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try JSONEncoder().encode(data).write(to: url, options: .atomic)
-            written = data
-        }
-    }
-
-    @ObservationIgnored private let storage: Storage
+    @ObservationIgnored private let storage: SharedCatalogStorage
     @ObservationIgnored private var engine: (any SyncEngine)?
     @ObservationIgnored private var work: Task<Void, Never>?
 
@@ -79,7 +53,7 @@ final class CloudSharedSpaces {
         spaces: @escaping @MainActor (Profile) -> SpaceStore? = SpaceStore.shared(for:),
         pins: @escaping @MainActor (Profile) -> ProfilePinStore = { .store(for: BrowserProfileContext.shared(for: $0).database) }
     ) {
-        let storage = Storage(stateFile)
+        let storage = SharedCatalogStorage(stateFile)
         self.storage = storage
         self.windows = windows
         self.spaces = spaces
@@ -92,6 +66,9 @@ final class CloudSharedSpaces {
         }
         catalog.onAccountChange = { [weak self] oldUser in
             guard let self else { return }
+            if !storage.applyingOptOuts {
+                storage.pendingAccountReset = UUID()
+            }
             if let oldUser, !links.isEmpty {
                 var paused = storage.data.pausedLinks ?? [:]
                 paused[oldUser] = links
@@ -104,6 +81,9 @@ final class CloudSharedSpaces {
             links.merge(parked) { active, _ in active }
         }
         catalog.onReceive = { [weak self] in self?.applyCatalog() }
+        if storage.hasOptOuts || !storage.readable {
+            restoreOptOuts()
+        }
     }
 
     var needsEngine: Bool {
@@ -116,7 +96,7 @@ final class CloudSharedSpaces {
     }
 
     func beat() {
-        guard needsEngine, work == nil else { return }
+        guard retryOptOuts(), needsEngine, work == nil else { return }
         work = Task { [weak self] in
             guard let self else { return }
             await refresh()
@@ -125,7 +105,7 @@ final class CloudSharedSpaces {
     }
 
     func refresh() async {
-        guard needsEngine, await catalog.verifyAccount() else { return }
+        guard retryOptOuts(), needsEngine, await catalog.verifyAccount() else { return }
         for category in SharedCatalogCategory.allCases where catalog.state.enabled[category]?.isEmpty == false {
             try? await catalog.prepare(category)
         }
@@ -140,7 +120,8 @@ final class CloudSharedSpaces {
     }
 
     func enable(_ category: SharedCatalogCategory, for profile: Profile) async throws {
-        guard !profile.isPrivate, storage.readable else { throw SharedCatalogError.unavailable }
+        guard !profile.isPrivate else { throw SharedCatalogError.unavailable }
+        guard retryOptOuts(), storage.readable else { throw SharedCatalogError.storage }
         profiles[profile.id] = profile
         spaces(profile)?.sharedSpacesHost = self
         let resumed = !isEnabled(category, for: profile)
@@ -157,14 +138,87 @@ final class CloudSharedSpaces {
         }
         onNeedsEngine?()
         try await catalog.prepare(category)
+        guard isEnabled(category, for: profile) else { throw SharedCatalogError.paused }
     }
 
     func pause(_ category: SharedCatalogCategory, for profile: Profile) {
-        catalog.setEnabled(false, category, for: profile.id)
+        if isEnabled(category, for: profile) {
+            storage.pending.insert(.init(category: category, profile: profile.id))
+            catalog.setEnabled(false, category, for: profile.id)
+        } else {
+            retryOptOuts()
+        }
+    }
+
+    func hasPendingOptOut(_ category: SharedCatalogCategory, for profile: Profile) -> Bool {
+        storage.unreadableJournal || storage.pendingAccountReset != nil || storage.pending.contains { $0.category == category && $0.profile == profile.id }
+    }
+
+    /// The last category can be turned off while offline, before an engine exists.
+    @discardableResult
+    func retryOptOuts() -> Bool {
+        guard storage.hasOptOuts || !storage.readable || !catalog.storageAvailable else { return true }
+        if !storage.readable {
+            guard storage.reload() else { return false }
+            links = storage.data.links
+            catalog.recoverLocalCheckpoint(storage.data.catalog)
+            restoreOptOuts()
+            if needsEngine {
+                onNeedsEngine?()
+            }
+        } else {
+            catalog.persistLocalState()
+        }
+        return catalog.storageAvailable
+    }
+
+    private func restoreOptOuts() {
+        // Apply every choice before the first write can retire the journal or offer an upload.
+        if storage.readable {
+            storage.applyingOptOuts = true
+            for choice in storage.pending {
+                if let id = choice.item {
+                    if choice.category == .spaces {
+                        stopSharingSpace(id, in: choice.profile)
+                    } else if choice.category == .pins {
+                        stopSharingPin(id, profileID: choice.profile)
+                    }
+                } else {
+                    catalog.setEnabled(false, choice.category, for: choice.profile)
+                }
+            }
+            if storage.pendingAccountReset != nil {
+                catalog.resetAccount(to: nil)
+            }
+            storage.applyingOptOuts = false
+        }
+        catalog.persistLocalState()
+    }
+
+    /// The signed Settings monitor also observes sign-out while every catalog category is off.
+    func accountVerificationChanged(_ result: AccountVerification) {
+        settingsAccount = result
+        guard case .resolved(let user) = result else { return }
+        let prior = storage.readable ? catalog.state.user : lastSettingsAccount
+        lastSettingsAccount = user
+        if (prior != nil && prior != user) || (!storage.readable && user == nil) {
+            catalog.resetAccount(to: user)
+        }
     }
 
     func cloudProfileID(for localID: UUID) -> UUID? {
-        guard catalog.trustedUser != nil, catalog.trustedUser == catalog.state.user else { return nil }
+        let account: String?
+        if !needsEngine, let settingsAccount {
+            switch settingsAccount {
+            case .checking:
+                account = nil
+            case .resolved(let user):
+                account = user
+            }
+        } else {
+            account = catalog.trustedUser
+        }
+        guard let account, account == catalog.state.user else { return nil }
         return links[localID]?.profile
     }
 
@@ -178,11 +232,17 @@ final class CloudSharedSpaces {
         return persistLinks()
     }
 
+    /// Spaces and pins need a shared profile ID. Publishing the profile's name is a separate choice.
+    private func linkedProfileID(for profile: Profile) throws -> UUID {
+        let id = cloudProfileID(for: profile.id) ?? UUID()
+        guard linkProfile(profile.id, to: id) else { throw SharedCatalogError.storage }
+        return id
+    }
+
     @discardableResult
     func publishProfile(_ profile: Profile) async throws -> UUID {
         try await enable(.profiles, for: profile)
-        let id = cloudProfileID(for: profile.id) ?? UUID()
-        guard linkProfile(profile.id, to: id) else { throw SharedCatalogError.storage }
+        let id = try linkedProfileID(for: profile)
         if catalog.item(id, in: .profiles) == nil {
             catalog.stage(.init(id: id, kind: .profile, profileID: id, title: profile.name), for: profile.id)
         }
@@ -207,7 +267,7 @@ final class CloudSharedSpaces {
 
     func share(_ space: Space, in profile: Profile) async throws {
         try await enable(.spaces, for: profile)
-        let group = try await publishProfile(profile)
+        let group = try linkedProfileID(for: profile)
         guard spaces(profile)?.space(id: space.id) != nil else { throw SharedCatalogError.unavailable }
         let sharedID = links[profile.id]?.spaces[space.id] ?? UUID()
         links[profile.id, default: .init()].spaces[space.id] = sharedID
@@ -232,18 +292,22 @@ final class CloudSharedSpaces {
 
     /// Leaves the local and cloud copies intact. Rejoining is an explicit choice.
     func stopSharing(_ space: Space, in profile: Profile) {
-        guard let sharedID = links[profile.id]?.spaces.removeValue(forKey: space.id) else { return }
-        let slots = links[profile.id]?.slots.filter { $0.value.last?.spaceID == sharedID } ?? [:]
+        stopSharingSpace(space.id, in: profile.id)
+    }
+
+    private func stopSharingSpace(_ localID: UUID, in profileID: UUID) {
+        guard let sharedID = links[profileID]?.spaces.removeValue(forKey: localID) else { return }
+        storage.pending.insert(.init(category: .spaces, profile: profileID, item: localID))
+        let slots = links[profileID]?.slots.filter { $0.value.last?.spaceID == sharedID } ?? [:]
         for id in slots.keys {
-            links[profile.id]?.slots[id] = nil
+            links[profileID]?.slots[id] = nil
         }
-        catalog.discardPending(for: profile.id, ids: Set(slots.values.map(\.cloudID) + [sharedID]), category: .spaces)
-        persistLinks()
+        catalog.discardPending(for: profileID, ids: Set(slots.values.map(\.cloudID) + [sharedID]), category: .spaces)
     }
 
     func selectPin(_ id: UUID, in profile: Profile) async throws {
         try await enable(.pins, for: profile)
-        let group = try await publishProfile(profile)
+        let group = try linkedProfileID(for: profile)
         guard let pin = pins(profile).pins.first(where: { $0.id == id && $0.kind == .tab }) else { throw SharedCatalogError.unavailable }
         let cloudID = links[profile.id]?.pins[id] ?? (catalog.item(id, in: .pins) == nil ? id : UUID())
         guard var value = Self.pinItem(pin, id: cloudID, profile: group) else { throw SharedCatalogError.unavailable }
@@ -270,12 +334,25 @@ final class CloudSharedSpaces {
     }
 
     func stopSharingPin(_ id: UUID, in profile: Profile) {
-        guard let cloudID = links[profile.id]?.pins.removeValue(forKey: id) else { return }
-        var skipped = links[profile.id]?.skippedPins ?? []
+        stopSharingPin(id, profileID: profile.id)
+    }
+
+    private func stopSharingPin(_ id: UUID, profileID: UUID) {
+        guard var link = links[profileID], let cloudID = link.pins.removeValue(forKey: id) else { return }
+        storage.pending.insert(.init(category: .pins, profile: profileID, item: id))
+        var skipped = link.skippedPins ?? []
         skipped.insert(cloudID)
-        links[profile.id]?.skippedPins = skipped
-        catalog.discardPending(for: profile.id, ids: [cloudID], category: .pins)
-        persistLinks()
+        link.skippedPins = skipped
+        links[profileID] = link
+        var unused = Set((link.pinFolders ?? [:]).values)
+        for id in link.pins.values {
+            var parent = catalog.item(id, in: .pins)?.parentID
+            while let folder = parent, unused.remove(folder) != nil {
+                parent = catalog.item(folder, in: .pins)?.parentID
+            }
+        }
+        unused.insert(cloudID)
+        catalog.discardPending(for: profileID, ids: unused, category: .pins)
     }
 
     func regularWindows(_ profile: Profile) -> [BrowserModel] {
@@ -284,6 +361,6 @@ final class CloudSharedSpaces {
 
     @discardableResult
     func persistLinks() -> Bool {
-        do { try storage.write(); return true } catch { return false }
+        catalog.persistLocalState()
     }
 }

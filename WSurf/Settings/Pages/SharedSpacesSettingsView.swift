@@ -13,15 +13,20 @@ struct SharedProfileLinkSection: View {
     var body: some View {
         if let host = cloud?.sharedSpaces, !profile.isPrivate {
             SettingsSection(title: "Linked profile", symbol: "person.2") {
+                SharedCatalogControl(host: host, category: .profiles, profile: profile, message: $message)
                 if let id = host.cloudProfileID(for: profile.id) {
-                    let name = host.catalog.item(id, in: .profiles)?.title ?? profile.name
+                    let published = host.catalog.item(id, in: .profiles)
+                    let name = published?.title ?? profile.name
                     DetailRow(verbatimTitle: profile.name, verbatimCaption: String(localized: "Linked to \(name) in iCloud.")) {
-                        Image(systemName: "link")
+                        if published == nil {
+                            publishButton(host)
+                        } else {
+                            Image(systemName: "link")
+                        }
                     }
                 } else {
                     DetailRow(title: "Use this profile across Macs", caption: "Publish this profile’s name, or choose an existing iCloud profile.") {
-                        Button("Find Profiles") { run { try await host.enable(.profiles, for: profile) } }
-                        Button("Publish Profile") { run { _ = try await host.publishProfile(profile) } }
+                        publishButton(host)
                     }
                     ForEach(host.available(.profiles, for: profile)) { item in
                         DetailRow(verbatimTitle: item.title, verbatimCaption: item.id.uuidString) {
@@ -40,9 +45,18 @@ struct SharedProfileLinkSection: View {
         }
     }
 
+    private func publishButton(_ host: CloudSharedSpaces) -> some View {
+        Button("Publish Profile") { run { _ = try await host.publishProfile(profile) } }
+            .disabled(host.hasPendingOptOut(.profiles, for: profile))
+    }
+
     private func run(_ action: @escaping @MainActor () async throws -> Void) {
         Task {
-            do { try await action(); message = nil } catch { message = String(localized: "Couldn’t load the iCloud profiles. Try again when this Mac is online.") }
+            do { try await action(); message = nil } catch is CancellationError {
+                return
+            } catch SharedCatalogError.paused {
+                return
+            } catch { message = String(localized: "Couldn’t load the iCloud profiles. Try again when this Mac is online.") }
         }
     }
 }
@@ -110,35 +124,7 @@ struct SharedSpacesSettingsView: View {
     }
 
     private func control(_ host: CloudSharedSpaces, category: SharedCatalogCategory) -> some View {
-        DetailRow(title: "Sync on this Mac", caption: status(host, category: category)) {
-            SettingsToggle(Binding(
-                get: { host.isEnabled(category, for: profile) },
-                set: { enabled in
-                    if enabled {
-                        run { try await host.enable(category, for: profile) }
-                    } else {
-                        host.pause(category, for: profile)
-                    }
-                }
-            ))
-            if host.catalog.failed.contains(category) {
-                Button("Try Again") { run { try await host.enable(category, for: profile) } }
-            }
-        }
-    }
-
-    private func status(_ host: CloudSharedSpaces, category: SharedCatalogCategory) -> LocalizedStringResource {
-        if !host.catalog.storageAvailable { return "This Mac couldn’t save its sync changes. Check available storage and try again." }
-        if !host.isEnabled(category, for: profile) { return "Off. Existing copies stay on each Mac." }
-        if host.catalog.failed.contains(category) { return "Waiting for iCloud. Local changes are saved." }
-        if !host.catalog.ready.contains(category) { return "Reading the iCloud catalog…" }
-        if host.catalog.state.pending.values.contains(where: { $0.profile == profile.id && $0.item.category == category }) {
-            return "Changes are waiting to upload."
-        }
-        if let date = host.catalog.state.lastSynced?[category] {
-            return "Last synced \(date.formatted(date: .abbreviated, time: .shortened))."
-        }
-        return "Ready to sync."
+        SharedCatalogControl(host: host, category: category, profile: profile, message: $message)
     }
 
     private func conflicts(_ host: CloudSharedSpaces, category: SharedCatalogCategory) -> some View {
@@ -161,7 +147,65 @@ struct SharedSpacesSettingsView: View {
 
     private func run(_ action: @escaping @MainActor () async throws -> Void) {
         Task {
-            do { try await action(); message = nil } catch { message = String(localized: "Couldn’t complete the iCloud change. Check the linked profile and try again.") }
+            do { try await action(); message = nil } catch is CancellationError {
+                return
+            } catch SharedCatalogError.paused {
+                return
+            } catch { message = String(localized: "Couldn’t complete the iCloud change. Check the linked profile and try again.") }
         }
+    }
+}
+
+private struct SharedCatalogControl: View {
+    let host: CloudSharedSpaces
+    let category: SharedCatalogCategory
+    let profile: Profile
+    @Binding var message: String?
+
+    var body: some View {
+        let enabled = host.isEnabled(category, for: profile)
+        let pending = host.hasPendingOptOut(category, for: profile)
+        DetailRow(title: category == .profiles ? "Find Profiles" : "Sync on this Mac", caption: status) {
+            SettingsToggle(Binding(get: { enabled }, set: { on in
+                if on {
+                    enable()
+                } else {
+                    message = nil
+                    host.pause(category, for: profile)
+                }
+            }))
+            .disabled(pending && !enabled)
+            if pending {
+                Button("Try Again") {
+                    message = nil
+                    host.retryOptOuts()
+                }
+            } else if enabled && host.catalog.failed.contains(category) {
+                Button("Try Again", action: enable)
+            }
+        }
+    }
+
+    private func enable() {
+        message = nil
+        // The catalog exposes its enrollment and storage errors directly in this row.
+        Task { try? await host.enable(category, for: profile) }
+    }
+
+    private var status: LocalizedStringResource {
+        if host.hasPendingOptOut(category, for: profile) {
+            return "Sync is paused for the settings you turned off. Try again to save this choice."
+        }
+        if !host.catalog.storageAvailable { return "This Mac couldn’t save its sync changes. Check available storage and try again." }
+        if !host.isEnabled(category, for: profile) { return "Off. Existing copies stay on each Mac." }
+        if host.catalog.failed.contains(category) { return "Waiting for iCloud. Local changes are saved." }
+        if !host.catalog.ready.contains(category) { return "Reading the iCloud catalog…" }
+        if host.catalog.state.pending.values.contains(where: { $0.profile == profile.id && $0.item.category == category }) {
+            return "Changes are waiting to upload."
+        }
+        if let date = host.catalog.state.lastSynced?[category] {
+            return "Last synced \(date.formatted(date: .abbreviated, time: .shortened))."
+        }
+        return "Ready to sync."
     }
 }

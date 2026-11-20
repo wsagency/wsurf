@@ -124,6 +124,7 @@ final class CloudSync {
                 }
             }
         }
+        settings?.onAccountVerification = { [weak spaces] in spaces?.accountVerificationChanged($0) }
         spaces?.onNeedsEngine = { [weak cloudSync] in cloudSync?.ensureEngine() }
         settings?.onNeedsEngine = { [weak cloudSync] in cloudSync?.ensureEngine() }
         tabs?.needsEngine = { [weak cloudSync] in cloudSync?.ensureEngine() }

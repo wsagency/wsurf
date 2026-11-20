@@ -66,6 +66,24 @@ public final class SharedCatalogSync: SyncZoneHandler {
         self.persist = persist
     }
 
+    /// Persist local links and consent, including a retry when all categories are paused.
+    @discardableResult
+    public func persistLocalState() -> Bool {
+        save()
+    }
+
+    /// Restore a previously unreadable local checkpoint before enrollment or a baseline can start.
+    public func recoverLocalCheckpoint(_ restored: SharedCatalogState) {
+        guard !needsEngine, ready.isEmpty else { return }
+        state = restored
+        trustedUser = nil
+    }
+
+    /// Apply an account change observed by Settings while catalog discovery was paused.
+    public func resetAccount(to user: String?) {
+        reset(user: user)
+    }
+
     public func owns(zone: String) -> Bool {
         SharedCatalogCategory.allCases.contains { $0.zone == zone }
     }

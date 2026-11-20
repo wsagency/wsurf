@@ -49,6 +49,7 @@ final class CloudSettingsSync: SyncZoneHandler {
     @ObservationIgnored private var reloadBeforeOptOut = false
     @ObservationIgnored private var profilesForRecovery: Set<UUID>?
     var notice: String?
+    @ObservationIgnored var onAccountVerification: ((CloudSharedSpaces.AccountVerification) -> Void)?
     var onNeedsEngine: (() -> Void)?
     @ObservationIgnored var registerProfile: ((Profile) -> Void)?
     @ObservationIgnored let read: Read
@@ -565,6 +566,7 @@ final class CloudSettingsSync: SyncZoneHandler {
             forget(zone: zone)
         }
         state.account = user
+        onAccountVerification?(.checking)
         try save()
         notice = String(localized: "The Apple Account changed. Choose what to sync with this account.")
     }

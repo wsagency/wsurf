@@ -61,6 +61,7 @@ extension CloudSettingsSync {
     }
 
     func accountDidResolve(_ identity: String?) throws {
+        defer { onAccountVerification?(.resolved(identity)) }
         // A first offline choice has no verified owner yet. An explicit retry binds its saved edits.
         if let prior = state.account, prior != identity {
             try resetAccount(to: identity)
@@ -73,6 +74,7 @@ extension CloudSettingsSync {
     }
 
     func suspendAccount() {
+        onAccountVerification?(.checking)
         generation = UUID()
         trustedUser = nil
         ready.removeAll()
