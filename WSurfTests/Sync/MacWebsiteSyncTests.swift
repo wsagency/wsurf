@@ -67,6 +67,14 @@ struct MacWebsiteSyncTests {
         checkDisk(zoomLevel: nil, proposed: false)
     }
 
+    private func openProviderSync(_ mac: MacSettingsFixture, profile: Profile, cloud: FakeSyncCloud) async throws -> (CloudSettingsSync, FakeSyncEngine) {
+        let sync = CloudSettingsSync(stateFile: mac.folder.appending(path: "settings"), profiles: [profile], adapter: mac.adapter)
+        let engine = FakeSyncEngine(cloud: cloud, delegate: sync)
+        sync.attach(engine)
+        try await sync.enable(.providers, localProfileID: nil, cloudProfileID: nil)
+        return (sync, engine)
+    }
+
     @Test func aLocalOnlyProviderEditPreservesTheSharedDefinitionUntilExplicitRemoval() async throws {
         let profile = Profile.original(), root = URL.temporaryDirectory.appending(path: UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -74,20 +82,13 @@ struct MacWebsiteSyncTests {
         let air = try MacSettingsFixture(profile: profile, folder: root.appending(path: "air"))
         defer { studio.cleanup(); air.cleanup() }
         let cloud = FakeSyncCloud()
-        func open(_ mac: MacSettingsFixture) async throws -> (CloudSettingsSync, FakeSyncEngine) {
-            let sync = CloudSettingsSync(stateFile: mac.folder.appending(path: "settings"), profiles: [profile], adapter: mac.adapter)
-            let engine = FakeSyncEngine(cloud: cloud, delegate: sync)
-            sync.attach(engine)
-            try await sync.enable(.providers, localProfileID: nil, cloudProfileID: nil)
-            return (sync, engine)
-        }
         var shared = ProviderCatalog.newCustom()
         shared.name = "Shared"
         shared.baseURL = URL(string: "https://ai.example.test/v1")
         studio.catalog.save(shared)
-        let (sender, studioEngine) = try await open(studio)
+        let (sender, studioEngine) = try await openProviderSync(studio, profile: profile, cloud: cloud)
         try await studioEngine.sendNow()
-        let (receiver, airEngine) = try await open(air)
+        let (receiver, airEngine) = try await openProviderSync(air, profile: profile, cloud: cloud)
         #expect(air.catalog.provider(id: shared.id)?.baseURL == shared.baseURL)
 
         var local = shared
@@ -106,7 +107,7 @@ struct MacWebsiteSyncTests {
         let definition = try #require(MacSettingRecord.decode(row.payload, recordName: id.name)?.value)
         #expect(try JSONSerialization.jsonObject(with: definition) as? [String: String] == ["name": "Shared", "endpoint": "https://ai.example.test/v1"])
 
-        let (reopened, restartedEngine) = try await open(studio)
+        let (reopened, restartedEngine) = try await openProviderSync(studio, profile: profile, cloud: cloud)
         shared.name = "Edited on Air"
         air.catalog.save(shared)
         try receiver.collectChanges()
@@ -122,6 +123,60 @@ struct MacWebsiteSyncTests {
 
     enum ProviderBaseline: CaseIterable {
         case known, firstRead, removedByPeer, resetByStudio
+    }
+
+    @Test(arguments: [false, true], [false, true])
+    func leavingAPrivateEndpointPreservesTheFinalChoiceAcrossAnOutstandingPublicSave(
+        initiallyShared: Bool, replyBeforeChoice: Bool
+    ) async throws {
+        let profile = Profile.original(), root = URL.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let studio = try MacSettingsFixture(profile: profile, folder: root.appending(path: "studio"))
+        let air = try MacSettingsFixture(profile: profile, folder: root.appending(path: "air"))
+        defer { studio.cleanup(); air.cleanup() }
+        let cloud = FakeSyncCloud()
+        let original = URL(string: "https://one.example.test/v1")
+        var definition = ProviderCatalog.newCustom()
+        definition.baseURL = original
+        if initiallyShared {
+            studio.catalog.save(definition)
+        }
+        let (sender, engine) = try await openProviderSync(studio, profile: profile, cloud: cloud)
+        try await engine.sendNow()
+        let (peer, peerEngine) = try await openProviderSync(air, profile: profile, cloud: cloud)
+        let key = "custom|" + definition.id
+        let id = SyncRecordID(zone: "mac-prefs-providers", name: MacSettingPayload(key: key, value: nil).recordName)
+        definition.baseURL = URL(string: "https://two.example.test/v1")
+        studio.catalog.save(definition)
+        try sender.collectChanges()
+        let submitted = try #require(engine.handOut(id))
+        definition.baseURL = URL(string: "https://two.example.test/v1?tenant=private-fixture")
+        studio.catalog.save(definition)
+        try sender.collectChanges()
+        guard case .saved(let accepted) = cloud.save(submitted) else {
+            Issue.record("Expected the outstanding public save to reach iCloud")
+            return
+        }
+        let reply = SyncEvent.sent(saved: [accepted], deleted: [], failed: [])
+        if replyBeforeChoice {
+            await sender.handle(reply)
+        }
+        if initiallyShared {
+            definition.baseURL = original
+            studio.catalog.save(definition)
+        } else {
+            studio.catalog.remove(definition)
+        }
+        try sender.collectChanges()
+        if !replyBeforeChoice {
+            await sender.handle(reply)
+        }
+        try await engine.sendNow()
+        try await peerEngine.fetchNow()
+        let expected = initiallyShared ? original : nil
+        #expect(studio.catalog.provider(id: definition.id)?.baseURL == expected)
+        #expect(air.catalog.provider(id: definition.id)?.baseURL == expected)
+        #expect(peer.channel(.providers, localProfileID: nil)?.records[key]?.server?.value == sender.channel(.providers, localProfileID: nil)?.observed[key])
     }
 
     @Test(arguments: ProviderBaseline.allCases, [true, false])

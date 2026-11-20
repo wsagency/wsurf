@@ -55,6 +55,8 @@ nonisolated struct MacSettingChannel: Codable {
         var inFlight: MacSettingPayload?
         /// Last shared definition before this enrollment handed an obsolete provider reset to the engine.
         var valueBeforePrivateReset: Data?
+        /// The sampled value follows the cloud while the endpoint is private on this Mac.
+        var followsSharedProvider: Bool?
         var conflict = false
     }
 
@@ -79,12 +81,17 @@ nonisolated struct MacSettingChannel: Codable {
 
     /// A provider with a private endpoint follows its shared definition until the owner shares an edit or removes it.
     mutating func preserveLocalOnlyProviders(_ keys: Set<String>, in values: inout [String: Data]) {
-        for (key, record) in records where record.valueBeforePrivateReset != nil && !keys.contains(key) {
-            records[key]?.valueBeforePrivateReset = nil
+        for (key, var record) in records where !keys.contains(key)
+            && (record.followsSharedProvider == true || record.valueBeforePrivateReset != nil) {
+            record.followsSharedProvider = nil
+            record.valueBeforePrivateReset = nil
+            observed[key] = record.server?.value
             let choice = MacSettingPayload(key: key, value: values[key])
+            record.pending = nil
             if let inFlight = record.inFlight, inFlight != choice {
-                records[key]?.pending = choice
+                record.pending = choice
             }
+            records[key] = record
         }
         for key in keys {
             guard var record = records[key] else {
@@ -97,6 +104,7 @@ nonisolated struct MacSettingChannel: Codable {
                 }
                 record.pending = nil
             }
+            record.followsSharedProvider = true
             record.conflict = false
             records[key] = record
             let shared = record.pending?.value ?? record.server?.value
