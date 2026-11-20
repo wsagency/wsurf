@@ -84,12 +84,13 @@ struct TabSyncTests {
         let cloud = FakeSyncCloud()
         let a = device(cloud, "install-a", name: "Ana’s MacBook Air")
         let b = device(cloud, "install-b", name: "Ana’s MacBook Pro")
-        a.start(sharing: [personal])
-        b.start(sharing: [personal, other])
+        a.start(sharing: [personal, other])
+        b.start(sharing: [personal, other, unshared])
         try await publish(a, SyncSamples.session(tabs: ["https://a.test/"]))
         let payload = SyncSamples.session(tabs: ["https://b.test/"])
         try await publish(b, payload)
         try await publish(b, payload, profile: other)
+        try await publish(b, payload, profile: unshared)
         try await a.engine.fetchNow()
 
         let inPersonal = a.sync.remoteSessions(profileID: personal, fallbackLabel: "Device")
@@ -387,5 +388,263 @@ struct TabSyncTests {
 
         #expect(a.sync.remoteSessions(profileID: personal, fallbackLabel: "Device").isEmpty)
         #expect(a.sync.state.sessions.isEmpty)
+    }
+
+    @Test(arguments: [false, true])
+    func enablingAfterAnotherCategoryConsumedTheCursorReadsStationaryTabs(staleMirror: Bool) async throws {
+        let cloud = FakeSyncCloud()
+        let studio = device(cloud, "studio", name: "Mac Studio")
+        studio.start(sharing: [personal, other])
+        try await publish(studio, SyncSamples.session(tabs: ["https://stationary.test/"]))
+        try await publish(studio, SyncSamples.session(tabs: ["https://unselected.test/"]), profile: other)
+        let ownSession = SyncSamples.session(tabs: ["https://air.test/"])
+        var old = TabSyncState()
+        if staleMirror {
+            old.accountUser = cloud.user
+            old.devices["retired"] = MirroredDevice(info: studio.sync.device, modifiedAt: .distantPast)
+            old.sessions[personalZone] = ["retired": MirroredSession(payload: ownSession, modifiedAt: .distantPast)]
+        }
+        let air = SyncDevice(cloud: cloud, installID: "air", state: old)
+        let router = SyncRouter(state: .init(), persist: { _ in }, tabs: nil, vaults: nil)
+        air.engine.delegate = router
+        try await air.engine.fetchNow()
+        #expect(router.state.engineState != nil)
+        let writes = cloud.writeCount
+
+        router.routeTabs(to: air.sync)
+        air.sync.reconcile(sharing: [personal])
+        air.sync.attach(air.engine)
+        air.sync.share(ownSession, profileID: personal, force: false)
+        air.sync.share(ownSession, profileID: other, force: true)
+        #expect(await waitUntil(timeout: .seconds(3)) { air.sync.state.sessions[personalZone]?["studio"] != nil })
+        #expect(air.sync.state.accountUser == cloud.user)
+        #expect(air.sync.remoteSessions(profileID: personal, fallbackLabel: "Device").map(\.label) == ["Studio"])
+        #expect(air.sync.state.sessions[personalZone]?["studio"]?.payload.windows.first?.nodes.first?.url == "https://stationary.test/")
+        #expect(air.sync.state.devices["retired"] == nil && air.sync.state.sessions[personalZone]?["retired"] == nil)
+        #expect(air.sync.state.sessions[SyncZone.profile(other)] == nil)
+        #expect(cloud.writeCount == writes)
+        await air.sync.refresh()
+        await air.sync.refresh()
+        #expect(air.engine.fetchAllCount == 2)
+        try await air.engine.sendNow()
+        let sent = try #require(cloud.record(air.id(in: personalZone)))
+        #expect(try SessionCodec.decodeSession(sent.payload).windows == ownSession.windows)
+        #expect(cloud.record(air.id(in: SyncZone.profile(other))) == nil)
+    }
+
+    @Test func rejoiningOfflineRetriesTheMissedSnapshotAndThenUsesIncrementalFetches() async throws {
+        let cloud = FakeSyncCloud(), air = device(cloud, "air"), studio = device(cloud, "studio")
+        studio.start(sharing: [personal])
+        try await publish(studio, SyncSamples.session(tabs: ["https://before.test/"]))
+        air.start(sharing: [personal])
+        await air.sync.refresh()
+        #expect(air.sync.state.sessions[personalZone]?["studio"] != nil)
+        air.sync.reconcile(sharing: [])
+        try await publish(studio, SyncSamples.session(tabs: ["https://while-paused.test/"]))
+        try await air.engine.fetchNow() // The other categories continue advancing their shared cursor.
+        let pausedReads = (air.engine.fetchCount, air.engine.fetchAllCount)
+        await air.sync.refresh()
+        #expect((air.engine.fetchCount, air.engine.fetchAllCount) == pausedReads)
+        #expect(air.sync.state.sessions[personalZone] == nil)
+
+        air.engine.offline = true
+        air.sync.reconcile(sharing: [personal])
+        await air.sync.refresh()
+        #expect(air.sync.state.sessions[personalZone] == nil)
+        air.engine.offline = false
+        air.engine.unreadable = ["studio"]
+        await air.sync.refresh()
+        air.engine.unreadable = []
+        await air.sync.refresh()
+        #expect(air.sync.state.sessions[personalZone]?["studio"]?.payload.windows.first?.nodes.first?.url == "https://while-paused.test/")
+        let reads = air.engine.fetchAllCount
+        await air.sync.refresh()
+        #expect(air.engine.fetchAllCount == reads)
+    }
+
+    @Test(arguments: [false, true])
+    func changesDeliveredDuringTheBaselineWinEvenAtTheSameServerDate(delete: Bool) async throws {
+        let cloud = FakeSyncCloud(), air = device(cloud, "air"), studio = device(cloud, "studio", name: "Studio")
+        studio.start(sharing: [personal])
+        try await publish(studio, SyncSamples.session(tabs: ["https://old.test/"]))
+        try await air.engine.fetchNow()
+        let held = HeldTabRead(air.engine)
+        var delivered = false
+        held.beforeReturn = { zone in
+            guard zone == personalZone else { return }
+            delivered = true
+            if delete {
+                cloud.deleteRecord(studio.id(in: personalZone))
+                cloud.deleteRecord(studio.id(in: SyncZone.devices))
+            } else {
+                let updated = try #require(SessionCodec.encodeFitted(SyncSamples.session(tabs: ["https://new.test/"])))
+                cloud.overwrite(studio.id(in: personalZone), payload: updated)
+                cloud.overwrite(studio.id(in: SyncZone.devices), payload: try SessionCodec.encode(DeviceInfo(name: "Renamed", kind: .mac, appVersion: "1")))
+            }
+            try await air.engine.fetchNow()
+        }
+        air.sync.reconcile(sharing: [personal])
+        air.sync.attach(held)
+        await air.sync.refresh()
+        #expect(delivered)
+        #expect(air.sync.state.sessions[personalZone]?["studio"]?.payload.windows.first?.nodes.first?.url == (delete ? nil : "https://new.test/"))
+        #expect(air.sync.state.devices["studio"]?.info.name == (delete ? nil : "Renamed"))
+    }
+
+    @Test(arguments: [false, true])
+    func anIncrementalFetchCannotDeliverIntoALaterOptIn(switchAccount: Bool) async throws {
+        let cloud = FakeSyncCloud(), air = device(cloud, "air"), studio = device(cloud, "studio")
+        studio.start(sharing: [personal])
+        try await publish(studio, SyncSamples.session(tabs: ["https://previous.test/"]))
+        let held = HeldTabRead(air.engine)
+        air.sync.reconcile(sharing: [personal])
+        air.sync.attach(held)
+        await air.sync.refresh()
+        let old = try #require(cloud.record(studio.id(in: personalZone)))
+        held.duringIncremental = {
+            air.sync.reconcile(sharing: [])
+            if switchAccount {
+                cloud.switchUser("next-account")
+                await air.engine.simulateAccount(.switchAccounts(user: cloud.user))
+            } else {
+                cloud.deleteRecord(old.id)
+            }
+            air.sync.reconcile(sharing: [personal])
+            // The engine has already fetched these old responses when the person re-enrolls.
+            await air.sync.handle(.fetched(modified: [old], deleted: []))
+            #expect(air.sync.state.sessions[personalZone]?["studio"] == nil)
+            await air.sync.handle(.zonesDeleted([personalZone: .deleted]))
+        }
+        await air.sync.refresh()
+        #expect(air.box.ended == (switchAccount ? [nil] : []))
+        #expect(air.sync.needsEngine)
+        await air.sync.refresh()
+        #expect(air.sync.state.sessions[personalZone]?["studio"] == nil)
+    }
+
+    enum DuringTabRead: CaseIterable { case optOut, rejoin, signOut, switchUser, unavailable }
+
+    @Test(arguments: DuringTabRead.allCases)
+    func aSuspendedBaselineRequiresTheSameAccountAndUninterruptedOptIn(change: DuringTabRead) async throws {
+        let cloud = FakeSyncCloud(), air = device(cloud, "air"), studio = device(cloud, "studio")
+        studio.start(sharing: [personal])
+        try await publish(studio, SyncSamples.session(tabs: ["https://previous.test/"]))
+        try await air.engine.fetchNow()
+        let held = HeldTabRead(air.engine)
+        var interrupted = false
+        held.beforeReturn = { zone in
+            guard !interrupted, zone == personalZone else { return }
+            interrupted = true
+            switch change {
+            case .optOut, .rejoin:
+                air.sync.reconcile(sharing: [])
+                if change == .rejoin {
+                    air.engine.unreadable = ["studio"]
+                    air.sync.reconcile(sharing: [personal])
+                }
+            case .signOut:
+                await air.engine.simulateAccount(.signOut)
+            case .switchUser:
+                cloud.switchUser("different-account")
+            case .unavailable:
+                air.engine.available = false
+            }
+        }
+        air.sync.reconcile(sharing: [personal])
+        air.sync.attach(held)
+        await air.sync.refresh()
+        #expect(interrupted)
+        #expect(air.sync.state.sessions[personalZone] == nil)
+        #expect(air.sync.state.devices.isEmpty)
+        if change == .switchUser {
+            #expect(air.box.ended == [nil] && !air.sync.needsEngine)
+        }
+    }
+
+    @Test(arguments: [false, true])
+    func anUnverifiedZoneRemovalEndsSharingOnlyIfTheVerifiedZoneIsGone(removed: Bool) async throws {
+        let cloud = FakeSyncCloud(), air = device(cloud, "air"), studio = device(cloud, "studio")
+        studio.start(sharing: [personal])
+        try await publish(studio, SyncSamples.session(tabs: ["https://retired.test/"]))
+        air.start(sharing: [personal])
+        await air.sync.refresh()
+        air.engine.available = false
+        if removed {
+            cloud.deleteZone(personalZone, reason: .deleted)
+            try await air.engine.fetchNow()
+        } else {
+            await air.sync.handle(.zonesDeleted([personalZone: .deleted]))
+        }
+        #expect(air.box.ended.isEmpty)
+        air.engine.available = true
+        await air.sync.refresh()
+        #expect(air.box.ended == (removed ? [personal] : []))
+        air.sync.share(SyncSamples.session(tabs: ["https://local.test/"]), profileID: personal, force: true)
+        #expect((air.sync.record(for: air.id(in: personalZone)) == nil) == removed)
+    }
+
+    @Test func optedOutIncrementalAndAnUnverifiedCheckpointCannotBecomeTheNewMirror() async throws {
+        let cloud = FakeSyncCloud(), air = device(cloud, "air"), studio = device(cloud, "studio")
+        studio.start(sharing: [personal])
+        try await publish(studio, SyncSamples.session(tabs: ["https://start.test/"]))
+        air.start(sharing: [personal])
+        await air.sync.refresh()
+        let old = try #require(cloud.record(studio.id(in: personalZone)))
+        var stale = old
+        stale.id.name = "previous-enrollment"
+        air.engine.duringAccountLookup = {
+            air.engine.duringAccountLookup = nil
+            air.sync.reconcile(sharing: [])
+            air.sync.reconcile(sharing: [personal])
+        }
+        await air.sync.handle(.fetched(modified: [stale], deleted: []))
+        #expect(air.sync.state.sessions[personalZone]?["previous-enrollment"] == nil)
+        await air.sync.refresh()
+
+        try await publish(studio, SyncSamples.session(tabs: ["https://missed.test/"]))
+        air.engine.available = false
+        try await air.engine.fetchNow()
+        #expect(air.sync.state.sessions[personalZone]?["studio"]?.payload.windows.first?.nodes.first?.url == "https://start.test/")
+        air.engine.available = true
+        await air.sync.refresh()
+        #expect(air.sync.state.sessions[personalZone]?["studio"]?.payload.windows.first?.nodes.first?.url == "https://missed.test/")
+    }
+}
+
+/// Returns the snapshot taken before the injected event, even if that event cancels the read.
+@MainActor
+private final class HeldTabRead: SyncEngine, SyncAccountIdentity {
+    let base: FakeSyncEngine
+    var beforeReturn: ((String) async throws -> Void)?
+    var duringIncremental: (() async throws -> Void)?
+
+    init(_ base: FakeSyncEngine) {
+        self.base = base
+    }
+    func add(_ changes: [SyncChange]) {
+        base.add(changes)
+    }
+    func sendNow() async throws {
+        try await base.sendNow()
+    }
+    func fetchNow() async throws {
+        if let duringIncremental {
+            self.duringIncremental = nil
+            try await duringIncremental()
+        } else {
+            try await base.fetchNow()
+        }
+    }
+    func accountIsAvailable() async -> Bool {
+        await base.accountIsAvailable()
+    }
+    func currentAccountUser() async throws -> String {
+        try await base.currentAccountUser()
+    }
+
+    func fetchAll(zone: String) async throws -> SyncZoneRead {
+        let snapshot = try await base.fetchAll(zone: zone)
+        try await beforeReturn?(zone)
+        return snapshot
     }
 }

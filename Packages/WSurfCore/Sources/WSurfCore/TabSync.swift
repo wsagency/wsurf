@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 WSurf Agency
 // SPDX-License-Identifier: BUSL-1.1
 
+import CloudKit
 import Foundation
 import Observation
 import os
@@ -92,6 +93,18 @@ public final class TabSync: SyncEngineDelegate {
     /// Zone name to the last shared payload with `seq` zeroed, to drop a send that would change nothing.
     @ObservationIgnored private var lastShared: [String: DeviceSessionPayload] = [:]
 
+    /// One uninterrupted opt-in on one engine. A previous read may still return after the person opts in again.
+    private final class Enrollment {
+        var task: Task<Void, Never>?
+        var complete = false
+        var changedDuringRead: Set<SyncRecordID> = []
+        var unverifiedZoneRemovals: Set<String> = []
+    }
+
+    @ObservationIgnored private var enrollment: Enrollment?
+    @ObservationIgnored private var fetching: Enrollment?
+    @ObservationIgnored private var signedOut = false
+
     /// Whether this device owns anything on the server or wants to: the owner creates the engine only then.
     public var needsEngine: Bool {
         !desired.isEmpty || !state.ownSystemFields.isEmpty
@@ -113,17 +126,38 @@ public final class TabSync: SyncEngineDelegate {
 
     /// Hands the engine everything this device wants on the server: zones, deletions and the latest session records.
     public func attach(_ engine: any SyncEngine) {
+        let changed = self.engine !== engine
         self.engine = engine
+        if changed {
+            renewEnrollment()
+        }
         replay()
+        guard let enrollment else { return }
         Task { [weak self] in
+            guard let self, self.enrollment === enrollment else { return }
             let available = await engine.accountIsAvailable()
-            self?.accountAvailable = available
+            guard self.enrollment === enrollment, accountAvailable == nil else { return }
+            accountAvailable = available
         }
     }
 
     /// The only place that decides what this device keeps on the server. Without an engine it only records `profiles`.
     public func reconcile(sharing profiles: Set<UUID>) {
+        let changed = desired != profiles
         desired = profiles
+        let inactive = state.sessions.keys.filter { !wants(zone: $0) }
+        if !inactive.isEmpty || (profiles.isEmpty && !state.devices.isEmpty) {
+            for zone in inactive {
+                state.sessions[zone] = nil
+            }
+            if profiles.isEmpty {
+                state.devices.removeAll()
+            }
+            persist(state)
+        }
+        if changed {
+            renewEnrollment()
+        }
         var changes: [SyncChange] = []
         for zone in Set(state.ownSystemFields.keys).union(outgoing.keys).sorted() {
             guard let id = SyncZone.profileID(zone), !profiles.contains(id) else { continue }
@@ -184,7 +218,102 @@ public final class TabSync: SyncEngineDelegate {
     }
 
     public func refresh() async {
-        try? await engine?.fetchNow()
+        guard let engine, let enrollment, let identity = engine as? any SyncAccountIdentity else { return }
+        startBaseline()
+        await enrollment.task?.value
+        guard fetching == nil, await verifiedUser(for: enrollment, using: identity) != nil, fetching == nil else { return }
+        fetching = enrollment
+        try? await engine.fetchNow()
+        fetching = nil
+        if self.enrollment !== enrollment {
+            startBaseline()
+        }
+    }
+
+    private func renewEnrollment() {
+        enrollment?.task?.cancel()
+        enrollment = !desired.isEmpty && !signedOut ? Enrollment() : nil
+        startBaseline()
+    }
+
+    private func startBaseline() {
+        guard let enrollment, !enrollment.complete, enrollment.task == nil,
+              let engine, let identity = engine as? any SyncAccountIdentity else { return }
+        let zones = [SyncZone.devices] + desired.map(SyncZone.profile).sorted()
+        enrollment.task = Task { [weak self] in
+            defer {
+                enrollment.task = nil
+                enrollment.changedDuringRead.removeAll()
+            }
+            await self?.readBaseline(zones, for: enrollment, engine: engine, identity: identity)
+        }
+    }
+
+    private func verifiedUser(for expected: Enrollment, using identity: any SyncAccountIdentity) async -> String? {
+        guard enrollment === expected, let user = try? await identity.currentAccountUser(), !user.isEmpty,
+              enrollment === expected, acceptsUploadAccount(user) else { return nil }
+        accountAvailable = true
+        return user
+    }
+
+    private func acceptsIncoming(_ expected: Enrollment, removedZones: [String] = []) async -> Bool {
+        let currentFetch = fetching == nil || fetching === expected
+        if currentFetch, let identity = engine as? any SyncAccountIdentity,
+           await verifiedUser(for: expected, using: identity) != nil {
+            return true
+        }
+        if enrollment === expected {
+            // The shared cursor can advance past a rejected event. Recover it from the current account on refresh.
+            expected.task?.cancel()
+            let retry = Enrollment()
+            retry.unverifiedZoneRemovals = expected.unverifiedZoneRemovals
+            if currentFetch, state.accountUser != nil {
+                retry.unverifiedZoneRemovals.formUnion(removedZones)
+            }
+            enrollment = retry
+        }
+        return false
+    }
+
+    /// The engine's cursor covers other categories too. Start each enrollment from the remote mirrors still on the server.
+    private func readBaseline(_ zones: [String], for expected: Enrollment, engine: any SyncEngine, identity: any SyncAccountIdentity) async {
+        guard let user = await verifiedUser(for: expected, using: identity) else { return }
+        var snapshots: [String: SyncZoneRead] = [:]
+        var confirmedRemovals: [String] = []
+        for zone in zones {
+            do {
+                snapshots[zone] = try await engine.fetchAll(zone: zone)
+            } catch where (error as? CKError)?.code == .zoneNotFound || (error as? URLError)?.code == .fileDoesNotExist {
+                snapshots[zone] = SyncZoneRead(records: [])
+                if expected.unverifiedZoneRemovals.contains(zone) {
+                    confirmedRemovals.append(zone)
+                }
+            } catch {
+                return
+            }
+            guard await verifiedUser(for: expected, using: identity) == user else { return }
+        }
+
+        if !confirmedRemovals.isEmpty {
+            applyZonesDeleted(confirmedRemovals)
+            persist(state)
+            return
+        }
+        expected.unverifiedZoneRemovals.removeAll()
+        for (zone, snapshot) in snapshots {
+            let peers = snapshot.records.filter { $0.id.zone == zone && $0.id.name != installID }
+            var absent: Set<SyncRecordID> = []
+            if snapshot.skipped == 0 {
+                let known = zone == SyncZone.devices ? Set(state.devices.keys) : Set((state.sessions[zone] ?? [:]).keys)
+                let missing = known.subtracting(peers.map(\.id.name))
+                absent = Set(missing.map { SyncRecordID(zone: zone, name: $0) })
+            }
+            // An incremental write or deletion that arrived during the read takes precedence, including a same-date edit.
+            applyFetched(modified: peers.filter { !expected.changedDuringRead.contains($0.id) },
+                         deleted: Array(absent.subtracting(expected.changedDuringRead)))
+        }
+        expected.complete = snapshots.values.allSatisfy { $0.skipped == 0 }
+        persist(state)
     }
 
     public func sendNow() async {
@@ -234,9 +363,9 @@ public final class TabSync: SyncEngineDelegate {
     }
 
     public func record(for id: SyncRecordID) -> SyncRecord? {
-        guard id.name == installID else { return nil }
+        guard id.name == installID, wants(zone: id.zone) else { return nil }
         if id.zone == SyncZone.devices {
-            guard !desired.isEmpty, let data = try? SessionCodec.encode(device) else { return nil }
+            guard let data = try? SessionCodec.encode(device) else { return nil }
             return SyncRecord(id: id, type: .device, schema: 1, payload: data, systemFields: state.ownSystemFields[id.zone])
         }
         guard SyncZone.profileID(id.zone) != nil, let data = outgoing[id.zone] else { return nil }
@@ -249,16 +378,31 @@ public final class TabSync: SyncEngineDelegate {
             // The router owns the engine's state; a bare device in a test sees the event and has nothing to keep.
             return
         case .fetched(let modified, let deleted):
-            guard let engine, needsEngine, let identity = engine as? any SyncAccountIdentity,
-                  let user = try? await identity.currentAccountUser(), !user.isEmpty,
-                  engine === self.engine, needsEngine, acceptsUploadAccount(user) else { return }
-            applyFetched(modified: modified, deleted: deleted)
+            guard let enrollment else { return }
+            let records = modified.filter { wants(zone: $0.id.zone) }
+            let removals = deleted.filter { wants(zone: $0.zone) }
+            guard !records.isEmpty || !removals.isEmpty, await acceptsIncoming(enrollment) else { return }
+            if enrollment.task != nil {
+                enrollment.changedDuringRead.formUnion(records.map(\.id))
+                enrollment.changedDuringRead.formUnion(removals)
+            }
+            applyFetched(modified: records, deleted: removals)
         case .sent(let saved, let deleted, let failed):
             applySent(saved: saved, deleted: deleted, failed: failed)
         case .zoneDeletesFailed, .zoneSavesOverQuota:
             return
         case .zonesDeleted(let zones):
-            applyZonesDeleted(zones.keys.sorted())
+            let relevant = zones.keys.filter { wants(zone: $0) || state.ownSystemFields[$0] != nil }.sorted()
+            guard !relevant.isEmpty else { return }
+            if let enrollment {
+                guard await acceptsIncoming(enrollment, removedZones: relevant) else { return }
+            } else {
+                // A former opt-in may still own records to remove. Verify the account before retiring those tags.
+                guard !signedOut, fetching == nil, let engine, let user = state.accountUser,
+                      let identity = engine as? any SyncAccountIdentity, (try? await identity.currentAccountUser()) == user,
+                      self.engine === engine, self.enrollment == nil, !signedOut, state.accountUser == user else { return }
+            }
+            applyZonesDeleted(relevant)
         case .account(let change):
             applyAccount(change)
         }
@@ -357,6 +501,7 @@ public final class TabSync: SyncEngineDelegate {
     /// A zone removed on the server ends sharing of its profile, whatever the reason. Nothing re-creates it here: it comes back
     /// only after the person turns sharing on again.
     private func applyZonesDeleted(_ zones: [String]) {
+        let before = desired
         var ended: [UUID?] = []
         for zone in zones {
             state.sessions[zone] = nil
@@ -366,13 +511,19 @@ public final class TabSync: SyncEngineDelegate {
             ensuredZones.remove(zone)
             if zone == SyncZone.devices {
                 state.devices = [:]
+                state.sessions = [:]
                 state.publishedDevice = nil
+                outgoing = [:]
+                lastShared = [:]
                 desired = []
                 ended.append(nil)
             } else if let id = SyncZone.profileID(zone) {
                 desired.remove(id)
                 ended.append(id)
             }
+        }
+        if desired != before {
+            renewEnrollment()
         }
         for profile in ended {
             onSharingEnded?(profile)
@@ -382,17 +533,23 @@ public final class TabSync: SyncEngineDelegate {
     private func applyAccount(_ change: SyncAccountChange) {
         switch change {
         case .signOut:
+            signedOut = true
             clearAccountData()
             accountAvailable = false
             if state.accountUser == nil, !desired.isEmpty {
                 endSharing()
             }
         case .signIn(let user) where matchesAccount(user):
+            signedOut = false
+            if enrollment == nil {
+                renewEnrollment()
+            }
             state.accountUser = user
             accountAvailable = true
             replay()
         case .signIn(let user), .switchAccounts(let user):
             // Another Apple Account: nothing of the old one is shown, and nothing is uploaded until the person opts in again.
+            signedOut = false
             clearAccountData()
             state.accountUser = user
             accountAvailable = true
@@ -412,6 +569,8 @@ public final class TabSync: SyncEngineDelegate {
 
     /// Everything the account's database gave this device, and the marks that say it was written there.
     private func clearAccountData() {
+        enrollment?.task?.cancel()
+        enrollment = nil
         restoredUnidentifiedRecords = false
         state.devices = [:]
         state.sessions = [:]
