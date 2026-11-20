@@ -432,6 +432,7 @@ extension VaultSync {
     func applyAccount(_ change: SyncAccountChange) {
         switch change {
         case .signOut:
+            catalogUser = nil
             accountAvailable = false
             state.remote = [:]
             for key in summaries.keys {
@@ -462,13 +463,20 @@ extension VaultSync {
             resumeEnrolledVaults()
         case .signIn(let user), .switchAccounts(let user):
             // Another Apple Account: nothing of the old one is kept, and nothing goes up until the person turns sync on again.
+            catalogUser = nil
             state.accountUser = user
             accountAvailable = true
             state.remote = [:]
             for profileID in Set(host.profileIDs()).union(databases.keys) {
                 guard let database = database(profileID), let rows = try? database.read({ try $0.vaults() }) else { continue }
                 for row in rows {
-                    leave(VaultKey(profileID: profileID, vaultID: row.vaultID), database: database, row: row, status: .accountChanged)
+                    let key = VaultKey(profileID: profileID, vaultID: row.vaultID)
+                    if row.pendingAdoptionUser != nil {
+                        // Keep the disabled receipt for its owner, but invalidate a prompt from the old account session.
+                        forget(key)
+                    } else {
+                        leave(key, database: database, row: row, status: .accountChanged)
+                    }
                 }
             }
         }

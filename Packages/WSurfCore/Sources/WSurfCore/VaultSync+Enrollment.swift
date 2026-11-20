@@ -17,11 +17,14 @@ extension VaultSync {
         return actual
     }
 
-    func enableNow(_ key: VaultKey) async throws {
+    func enableNow(_ key: VaultKey, joiningFor expectedUser: String? = nil) async throws {
         guard let engine else { throw VaultSyncFailure.unavailable }
         guard accountAvailable != false else { throw VaultSyncFailure.signedOut }
         let mine = token(key)
         let user = try await enrollmentAccount(engine, key: key, session: mine, expecting: state.accountUser)
+        if let expectedUser, user != expectedUser {
+            throw VaultSyncFailure.unavailable
+        }
         guard let lease = host.currentLease(profileID: key.profileID, vaultID: key.vaultID) else { throw VaultSyncFailure.locked }
         guard let database = database(key.profileID, create: true) else { throw VaultSyncFailure.unavailable }
         if runningRow(key) != nil {
@@ -36,13 +39,17 @@ extension VaultSync {
             read = try await readZone(key, engine: engine, session: mine, user: user)
         } catch {
             // An account switch can interrupt the first opt-in before it has a database row.
-            if self.engine === engine, token(key) == mine, state.accountUser != user {
+            if expectedUser == nil, self.engine === engine, token(key) == mine, state.accountUser != user {
                 try database.write { try $0.save(VaultRow(vaultID: key.vaultID, enabled: false, status: .accountChanged)) }
                 refresh(key)
             }
             throw error
         }
         guard snapshot.lease == lease, host.currentLease(profileID: key.profileID, vaultID: key.vaultID) == lease else { throw VaultSyncFailure.locked }
+        // A retry joins the vault the owner saw. A disappearing zone must never become an invitation to upload.
+        if let expectedUser, read == nil || catalogUser != expectedUser {
+            throw VaultSyncFailure.unavailable
+        }
         let payload = try vaultPayload(key, snapshot: snapshot, syncKey: syncKey)
         var row = VaultRow(vaultID: key.vaultID, needsFetch: read != nil, approvedUser: user)
         row.lastHeadRevision = snapshot.revision

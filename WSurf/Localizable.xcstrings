@@ -5370,6 +5370,9 @@
     "Retry" : {
       "comment" : "Button shown in place of the Install button after an extension failed to install, offering another attempt. Imperative verb. Tight space next to a warning icon."
     },
+    "Retry Sync…" : {
+      "comment" : "Button for an existing local vault offered by the current Apple Account. Retrying may prompt to unlock the vault."
+    },
     "Return" : {
       "comment" : "Legend printed on a key cap in the shortcut recorder in Settings, where the user records the key that activates the assistant. Use the word your language's Apple keyboards print on that key; the cap is only a few characters wide. This one is the main Return key, distinct from the numeric keypad's Enter, which has its own entry."
     },
@@ -11519,6 +11522,9 @@
     },
     "This vault" : {
       "comment" : "Text on the Default vault row, shown instead of a button when the selected vault is already the default vault. Sentence case, a plain statement."
+    },
+    "This vault is on this Mac. Retry to sync it with your other devices." : {
+      "comment" : "Caption for a local vault still waiting for the owner to retry iCloud sync."
     },
     "This vault isn’t empty. Nothing was deleted." : {
       "comment" : "Error on the Credentials page in Settings when the user tries to delete a vault that still holds credentials. Full sentences."

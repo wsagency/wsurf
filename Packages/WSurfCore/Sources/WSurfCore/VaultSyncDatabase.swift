@@ -26,6 +26,11 @@ nonisolated struct VaultRow: Equatable {
     /// nothing back.
     var rereadOwed = false
 
+    /// Add to This Mac recorded the source account before creating the local vault. This row authorizes no sync.
+    var pendingAdoptionUser: String? {
+        !enabled && status == .active ? approvedUser : nil
+    }
+
     init(vaultID: UUID, enabled: Bool = true, status: VaultSyncStatus.Stored = .active, needsFetch: Bool = false, approvedUser: String? = nil) {
         self.vaultID = vaultID
         self.enabled = enabled

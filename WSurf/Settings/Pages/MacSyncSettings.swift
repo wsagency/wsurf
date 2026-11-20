@@ -147,6 +147,16 @@ private struct VaultSharingSettings: View {
                 }
                 CloudVaultRow(model: model, run: run)
             }
+            ForEach(model.retryableSyncedVaults) { retry in
+                RowSeparator()
+                VaultAdoptionRetryRow(retry: retry, isBusy: model.isBusy) {
+                    guard let window = coordinator.nativeWindow, window.isVisible else {
+                        model.error = String(localized: "Couldn’t find this window to show the passkey prompt. Bring it to the front and try again.")
+                        return
+                    }
+                    run { await model.retrySyncedVault(retry, in: window) }
+                }
+            }
             if let error = model.error {
                 Text(verbatim: error).foregroundStyle(.secondary)
             }

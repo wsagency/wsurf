@@ -47,6 +47,7 @@ nonisolated struct VaultSyncSummary: Equatable {
     var isUnlocked: Bool
     var notSyncable = 0
     var unreadable = 0
+    var pendingAdoptionUser: String?
     var parked = 0
     var holding = 0
 }
@@ -73,6 +74,9 @@ public final class VaultSync: SyncEngineDelegate {
     public internal(set) var state: VaultSyncAppState
     /// Nil until the engine has answered.
     public internal(set) var accountAvailable: Bool?
+    /// Set only after discovery has checked the Apple account around its catalog read. Never restored from disk.
+    var catalogUser: String?
+    @ObservationIgnored var addingVaults: Set<VaultKey> = []
     var summaries: [VaultKey: VaultSyncSummary] = [:]
 
     @ObservationIgnored let host: any VaultSyncHost
@@ -215,6 +219,7 @@ public final class VaultSync: SyncEngineDelegate {
         guard let database = database(profileID), let listed = await host.vaultIDs(profileID: profileID), !listed.isEmpty else { return }
         for row in (try? database.read { try $0.vaults() }) ?? [] where !listed.contains(row.vaultID) {
             let key = VaultKey(profileID: profileID, vaultID: row.vaultID)
+            guard !addingVaults.contains(key) else { continue }
             try? database.write { try $0.remove(row.vaultID) }
             clearAssets(key)
             forget(key)
@@ -398,9 +403,22 @@ public final class VaultSync: SyncEngineDelegate {
     /// The app added the vault from a `Vault` record: it syncs here now. It stays locked, so nothing is applied until the first unlock.
     public func adopted(profileID: UUID, vaultID: UUID) async {
         guard let key = try? checkedKey(profileID, vaultID) else { return }
+        await enrollAdopted(key, from: nil)
+    }
+
+    func enrollAdopted(_ key: VaultKey, from card: RemoteVault?) async {
         let mine = token(key), user = state.accountUser
         try? await serial(key) { [self] in
             guard let engine, accountAvailable != false, mine == token(key), state.accountUser == user else { return }
+            if let card {
+                guard let identity = engine as? any SyncAccountIdentity else { return }
+                let actual = try? await identity.currentAccountUser()
+                guard self.engine === engine, mine == token(key), state.accountUser == user, accountAvailable != false, state.remote[key.zone] == card else { return }
+                if let actual, actual != user {
+                    catalogUser = nil
+                    return
+                }
+            }
             // A previously verified discovery card can be adopted offline. The deferred zone read verifies that account again.
             let approved: String?
             if let user {
@@ -408,13 +426,13 @@ public final class VaultSync: SyncEngineDelegate {
             } else {
                 approved = try await enrollmentAccount(engine, key: key, session: mine, expecting: nil)
             }
-            guard let database = database(profileID, create: true) else { return }
+            guard let database = database(key.profileID, create: true) else { return }
+            try database.write { tx in
+                try tx.clear(key.vaultID)
+                try tx.save(VaultRow(vaultID: key.vaultID, needsFetch: true, approvedUser: approved))
+            }
             clearAssets(key)
             begin(key)
-            try? database.write { tx in
-                try tx.clear(vaultID)
-                try tx.save(VaultRow(vaultID: vaultID, needsFetch: true, approvedUser: approved))
-            }
             refresh(key)
             try? await fetchAllNow(key)
         }
@@ -697,7 +715,7 @@ public final class VaultSync: SyncEngineDelegate {
         let next = VaultSyncSummary(
             enabled: row.enabled && !otherAccount, stored: otherAccount ? .accountChanged : row.status, outbox: counts.outbox, inbox: counts.inbox, review: counts.review,
             hasPendingVault: row.pendingVault != nil, isHeldBack: row.dirty, isReading: row.needsFetch,
-            isUnlocked: unlocked.contains(key), notSyncable: tally.notSyncable, unreadable: tally.unreadable, parked: counts.parked,
+            isUnlocked: unlocked.contains(key), notSyncable: tally.notSyncable, unreadable: tally.unreadable, pendingAdoptionUser: row.pendingAdoptionUser, parked: counts.parked,
             holding: holding[key] ?? 0
         )
         if summaries[key] != next {

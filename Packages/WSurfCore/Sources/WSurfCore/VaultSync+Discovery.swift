@@ -33,7 +33,9 @@ extension VaultSync {
         }
     }
 
-    public func refreshAvailableVaults(_ records: [SyncRecord]) {
+    public func refreshAvailableVaults(_ records: [SyncRecord], for user: String) {
+        guard !user.isEmpty, user == state.accountUser else { return }
+        catalogUser = user
         var cards: [String: RemoteVault] = [:]
         for record in records {
             guard record.type == .vault, record.id.name == Self.vaultRecordName, let ids = SyncZone.vaultIDs(record.id.zone),
@@ -53,6 +55,7 @@ extension VaultSync {
             next.needsFetch = true
             try? database.write { try $0.save(next) }
         }
+        catalogUser = nil
         engine = nil
         let keys = Set(chains.keys).union(enabledKeys)
         for key in keys {

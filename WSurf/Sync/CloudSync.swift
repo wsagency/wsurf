@@ -211,7 +211,7 @@ final class CloudSync {
                     return
                 }
                 if let cards {
-                    sync.refreshAvailableVaults(cards)
+                    sync.refreshAvailableVaults(cards, for: current)
                 }
                 if attachedVaults {
                     sync.beat()

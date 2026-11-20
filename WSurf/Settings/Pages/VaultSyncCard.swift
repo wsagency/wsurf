@@ -4,6 +4,7 @@
 import AppKit
 import SwiftUI
 import WSurfCore
+import WSurfVault
 
 /// At the top of the Vault tab, whatever the vault's state: a vault another Mac synced that this Mac does not hold, entries that
 /// changed here and on another device, and a vault that was removed from iCloud. Present only while vault sync exists, and never
@@ -17,6 +18,13 @@ struct VaultSyncCard: View {
         if model.vaultSync != nil {
             ForEach(model.addableSyncedVaults) { remote in
                 remoteCard(remote)
+            }
+            ForEach(model.retryableSyncedVaults) { retry in
+                SettingsCard {
+                    VaultAdoptionRetryRow(retry: retry, isBusy: model.isBusy) {
+                        withWindow { window in await model.retrySyncedVault(retry, in: window) }
+                    }
+                }
             }
             if let selected = model.selectedVaultID, let status = model.syncStatus {
                 switch status {
@@ -86,6 +94,23 @@ struct VaultSyncCard: View {
                     Button("Dismiss") { model.dismissedSyncNotices.insert(vaultID) }.buttonStyle(.bordered)
                 }
             }
+        }
+    }
+}
+
+struct VaultAdoptionRetryRow: View {
+    let retry: VaultAdoptionRetry
+    let isBusy: Bool
+    let action: () -> Void
+
+    var body: some View {
+        DetailRow(
+            verbatimTitle: retry.vault.label,
+            verbatimCaption: String(localized: "This vault is on this Mac. Retry to sync it with your other devices.")
+        ) {
+            Button("Retry Sync…", action: action)
+                .buttonStyle(.bordered)
+                .disabled(isBusy)
         }
     }
 }
