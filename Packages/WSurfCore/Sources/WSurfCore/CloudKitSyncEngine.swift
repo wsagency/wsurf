@@ -61,21 +61,18 @@ public final class CloudKitSyncEngine: SyncEngine, SyncAccountIdentity {
 
     public func fetchAll(zone: String) async throws -> SyncZoneRead {
         let database = container.privateCloudDatabase
-        var read = SyncZoneRead(records: [])
+        var snapshot = CloudKitZoneSnapshot()
         var token: CKServerChangeToken?
         while true {
             let page = try await database.recordZoneChanges(
                 inZoneWith: CloudKitMapping.zoneID(zone), since: token, desiredKeys: [CloudKitMapping.payloadKey, CloudKitMapping.schemaKey]
             )
-            for (_, result) in page.modificationResultsByID {
-                // A record that failed to arrive is skipped and counted: the read finishes, and one bad record never holds the rest.
-                guard let modification = try? result.get() else {
-                    read.skipped += 1
-                    continue
-                }
-                CloudKitMapping.include(modification.record, in: &read)
-            }
+            snapshot.applyPage(
+                modified: page.modificationResultsByID.lazy.map { id, result in (id, (try? result.get())?.record) },
+                deleted: page.deletions.lazy.map(\.recordID)
+            )
             guard page.moreComing else {
+                let read = snapshot.read
                 if read.skipped > 0 {
                     SyncLog.logger.error("sync: \(read.skipped) records of a zone could not be read")
                 }
@@ -91,6 +88,31 @@ public final class CloudKitSyncEngine: SyncEngine, SyncAccountIdentity {
 
     public func currentAccountUser() async throws -> String {
         try await container.userRecordID().recordName
+    }
+}
+
+/// A record can change or disappear between pages of a full zone read.
+nonisolated struct CloudKitZoneSnapshot {
+    private var records: [CKRecord.ID: SyncRecord] = [:]
+    private var unreadable: Set<CKRecord.ID> = []
+
+    var read: SyncZoneRead {
+        SyncZoneRead(records: Array(records.values), skipped: unreadable.count)
+    }
+
+    mutating func applyPage(modified: some Sequence<(CKRecord.ID, CKRecord?)>, deleted: some Sequence<CKRecord.ID>) {
+        for (id, record) in modified {
+            records[id] = record.flatMap(CloudKitMapping.syncRecord)
+            if records[id] == nil && (record.map(CloudKitMapping.requiresCompleteRead) ?? true) {
+                unreadable.insert(id)
+            } else {
+                unreadable.remove(id)
+            }
+        }
+        for id in deleted {
+            records[id] = nil
+            unreadable.remove(id)
+        }
     }
 }
 
@@ -232,17 +254,11 @@ nonisolated extension CloudKitMapping {
     }
 
     /// Readers that infer deletions from absence need to know if a row they mirror was unreadable.
-    static func include(_ record: CKRecord, in read: inout SyncZoneRead) {
-        if let value = syncRecord(record) {
-            read.records.append(value)
-        } else {
-            let zone = record.recordID.zoneID.zoneName
-            let mirroredTabRow = (zone == SyncZone.devices && record.recordType == SyncRecordType.device.rawValue)
-                || (SyncZone.profileID(zone) != nil && record.recordType == SyncRecordType.deviceSession.rawValue)
-            if mirroredTabRow || zone.hasPrefix("mac-prefs-") || SharedCatalogCategory.allCases.contains(where: { $0.zone == zone }) {
-                read.skipped += 1
-            }
-        }
+    static func requiresCompleteRead(_ record: CKRecord) -> Bool {
+        let zone = record.recordID.zoneID.zoneName
+        let mirroredTabRow = (zone == SyncZone.devices && record.recordType == SyncRecordType.device.rawValue)
+            || (SyncZone.profileID(zone) != nil && record.recordType == SyncRecordType.deviceSession.rawValue)
+        return mirroredTabRow || zone.hasPrefix("mac-prefs-") || SharedCatalogCategory.allCases.contains { $0.zone == zone }
     }
 
     static func accountChange(_ change: CKSyncEngine.Event.AccountChange.ChangeType) -> SyncAccountChange {

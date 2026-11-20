@@ -228,6 +228,27 @@ struct SharedCatalogTests {
         #expect(switched == nil && !client.sync.needsEngine && client.sync.state.pending.isEmpty)
     }
 
+    @Test func aFullZoneReadReflectsTheLatestPageForEachRecord() {
+        let zone = SyncZone.profile(UUID())
+        func session(_ name: String, _ value: UInt8) -> CKRecord {
+            CloudKitMapping.ckRecord(SyncRecord(id: .init(zone: zone, name: name), type: .deviceSession, schema: 1, payload: Data([value])))
+        }
+        let air = session("Air", 1), studio = session("Studio", 2), lost = session("Offline", 3)
+        let newer = session("Air", 4), recreated = session("Studio", 5)
+        var snapshot = CloudKitZoneSnapshot()
+        snapshot.applyPage(modified: [(air.recordID, air), (studio.recordID, studio), (lost.recordID, nil)], deleted: [])
+        #expect(snapshot.read.skipped == 1)
+        snapshot.applyPage(modified: [(newer.recordID, newer)], deleted: [studio.recordID])
+        #expect(snapshot.read.records.map(\.payload) == [Data([4])])
+        #expect(snapshot.read.skipped == 1)
+        snapshot.applyPage(modified: [(recreated.recordID, recreated), (air.recordID, nil)], deleted: [lost.recordID])
+        #expect(snapshot.read.records.map(\.payload) == [Data([5])])
+        #expect(snapshot.read.skipped == 1)
+        snapshot.applyPage(modified: [(air.recordID, newer)], deleted: [])
+        #expect(Set(snapshot.read.records.map(\.payload)) == Set([Data([4]), Data([5])]))
+        #expect(snapshot.read.skipped == 0)
+    }
+
     @Test func anUnmappableCatalogRowKeepsAFullReadIncompleteWhileVaultAssetsStayFiltered() {
         let incompleteRows = [
             ("mac-prefs-providers", "MacSetting"),
@@ -239,14 +260,14 @@ struct SharedCatalogTests {
         for (zone, type) in incompleteRows {
             let id = CloudKitMapping.recordID(.init(zone: zone, name: "existing-row"))
             let record = CKRecord(recordType: type, recordID: id)
-            var read = SyncZoneRead(records: [])
-            CloudKitMapping.include(record, in: &read)
-            #expect(read.records.isEmpty && read.skipped == 1, "Unreadable \(type) row")
+            var snapshot = CloudKitZoneSnapshot()
+            snapshot.applyPage(modified: [(id, record)], deleted: [])
+            #expect(snapshot.read.records.isEmpty && snapshot.read.skipped == 1, "Unreadable \(type) row")
         }
         let vault = CloudKitMapping.recordID(.init(zone: SyncZone.vault(profileID: UUID(), vaultID: UUID()), name: "asset"))
-        var read = SyncZoneRead(records: [])
-        CloudKitMapping.include(CKRecord(recordType: "VaultAsset", recordID: vault), in: &read)
-        #expect(read.records.isEmpty && read.skipped == 0)
+        var snapshot = CloudKitZoneSnapshot()
+        snapshot.applyPage(modified: [(vault, CKRecord(recordType: "VaultAsset", recordID: vault))], deleted: [])
+        #expect(snapshot.read.records.isEmpty && snapshot.read.skipped == 0)
     }
 
     @Test func aQueuedTabDeleteWaitsForIdentityAndCannotDeleteInADifferentAccount() async throws {
