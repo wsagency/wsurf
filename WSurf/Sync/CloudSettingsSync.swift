@@ -144,7 +144,7 @@ final class CloudSettingsSync: SyncZoneHandler {
             notice = String(localized: "Your saved sync settings are temporarily unavailable. Try again to load them.")
         }
         if !checkpointUnavailable {
-            applyRememberedAccountReset()
+            applyRememberedResets()
         }
         restorePendingOptOuts()
         if checkpointUnavailable {
@@ -206,6 +206,8 @@ final class CloudSettingsSync: SyncZoneHandler {
         try finishOptOuts { zone, removal in
             zone == proposed.zone || (removal.category == category && removal.localProfileID == localProfileID)
         }
+        // The old opt-out is durable before a fresh enrollment can release its purge hold.
+        try setHeldZoneResets(heldZoneResets.subtracting([proposed.zone]))
         if let existing = state.channels[proposed.zone] {
             guard existing.localProfileID == localProfileID else { throw Issue.duplicateLink }
             proposed = existing
@@ -253,7 +255,7 @@ final class CloudSettingsSync: SyncZoneHandler {
                 throw error
             }
         }
-        try await prepare(zone: channel.zone)
+        try await prepare(zone: channel.zone, freshConsent: current.needsConfirmation)
     }
 
     var hasPendingOptOuts: Bool {
@@ -416,7 +418,7 @@ final class CloudSettingsSync: SyncZoneHandler {
         }
     }
 
-    func prepare(zone: String) async throws {
+    func prepare(zone: String, freshConsent: Bool = false) async throws {
         guard state.channels[zone]?.needsConfirmation == false else { throw Issue.unavailable }
         guard !ready.contains(zone) else { return }
         if let existing = preparations[zone] {
@@ -425,7 +427,7 @@ final class CloudSettingsSync: SyncZoneHandler {
         }
         let token = UUID()
         loading[zone] = token
-        let read = Task { try await readBaseline(zone: zone, token: token) }
+        let read = Task { try await readBaseline(zone: zone, token: token, freshConsent: freshConsent) }
         preparations[zone] = read
         defer {
             if loading[zone] == token {
@@ -437,7 +439,7 @@ final class CloudSettingsSync: SyncZoneHandler {
         try await read.value
     }
 
-    private func readBaseline(zone: String, token: UUID) async throws {
+    private func readBaseline(zone: String, token: UUID, freshConsent: Bool) async throws {
         guard let channel = state.channels[zone], let engine, loading[zone] == token else { throw Issue.unavailable }
         let started = generation
         let baseline: SyncZoneRead
@@ -446,9 +448,10 @@ final class CloudSettingsSync: SyncZoneHandler {
         } catch where Self.missingZone(error) {
             try await verifyAccount(started)
             guard loading[zone] == token, state.channels[zone]?.enrollment == channel.enrollment else { throw CancellationError() }
-            guard !channel.fetched && channel.checkingDeletion != true else {
+            let userDeleted = (error as? CKError)?.code == .userDeletedZone
+            guard !channel.fetched, channel.checkingDeletion != true, !userDeleted || freshConsent else {
                 forget(zone: zone)
-                try save()
+                try saveAfterZoneRemoval([zone])
                 throw Issue.incomplete
             }
             engine.add([.saveZone(zone)])
@@ -480,7 +483,10 @@ final class CloudSettingsSync: SyncZoneHandler {
     }
 
     private static func missingZone(_ error: Error) -> Bool {
-        (error as? CKError)?.code == .zoneNotFound || (error as? URLError)?.code == .fileDoesNotExist
+        if let cloud = error as? CKError {
+            return cloud.code == .zoneNotFound || cloud.code == .userDeletedZone
+        }
+        return (error as? URLError)?.code == .fileDoesNotExist
     }
 
     private func finishOptOuts(where matches: (String, OptOut) -> Bool) throws {
@@ -596,7 +602,7 @@ final class CloudSettingsSync: SyncZoneHandler {
         checkpointRetry?.cancel()
         checkpointRetry = nil
         notice = nil
-        applyRememberedAccountReset()
+        applyRememberedResets()
         restore(revoked)
         if FileManager.default.fileExists(atPath: optOutFile.path) {
             readOptOutJournal()
@@ -671,10 +677,43 @@ final class CloudSettingsSync: SyncZoneHandler {
         guard resetDefaults.synchronize() else { throw CocoaError(.fileWriteUnknown) }
     }
 
-    private func applyRememberedAccountReset() {
-        guard let reset = resetDefaults.string(forKey: accountResetKey), reset != state.appliedAccountReset else { return }
-        clearEnrollments(for: nil)
-        state.appliedAccountReset = reset
+    private func applyRememberedResets() {
+        if let reset = resetDefaults.string(forKey: accountResetKey), reset != state.appliedAccountReset {
+            clearEnrollments(for: nil)
+            state.appliedAccountReset = reset
+        }
+        for zone in heldZoneResets where state.channels[zone] != nil {
+            forget(zone: zone)
+        }
+    }
+
+    // Keep only zone names when the checkpoint and its adjacent opt-out journal are inaccessible.
+    private var heldZoneResets: Set<String> {
+        Set(resetDefaults.stringArray(forKey: accountResetKey + ".zone-resets") ?? [])
+    }
+
+    private func setHeldZoneResets(_ zones: Set<String>) throws {
+        let previous = heldZoneResets
+        guard zones != previous else { return }
+        let key = accountResetKey + ".zone-resets"
+        resetDefaults.set(zones.isEmpty ? nil : zones.sorted(), forKey: key)
+        guard resetDefaults.synchronize() else {
+            resetDefaults.set(previous.union(zones).sorted(), forKey: key)
+            throw CocoaError(.fileWriteUnknown)
+        }
+    }
+
+    func holdZoneResets(_ zones: Set<String>) throws {
+        try setHeldZoneResets(heldZoneResets.union(zones))
+    }
+
+    func saveAfterZoneRemoval(_ revoked: Set<String>) throws {
+        do {
+            try save()
+        } catch {
+            try holdZoneResets(revoked)
+            throw error
+        }
     }
 
     func reportError() {

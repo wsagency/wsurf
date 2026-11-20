@@ -14,6 +14,12 @@ extension CloudSettingsSync {
         return payload
     }
 
+    func allowsZoneCreation(_ zone: String) -> Bool {
+        guard loading[zone] != nil, sendingAllowed, let user = trustedUser, user == state.account,
+              let channel = state.channels[zone] else { return false }
+        return !channel.needsConfirmation && !channel.fetched && channel.checkingDeletion != true
+    }
+
     func queuePending(_ zone: String) {
         guard ready.contains(zone), sendingAllowed, trustedUser != nil, trustedUser == state.account,
             let channel = state.channels[zone]
@@ -84,7 +90,26 @@ extension CloudSettingsSync {
         updateChannel(channel)
     }
 
+    private struct FetchConsent: Equatable {
+        let enrollment: UUID
+        let awaitingConfirmation: Bool
+
+        init(_ channel: MacSettingChannel) {
+            enrollment = channel.enrollment
+            awaitingConfirmation = channel.needsConfirmation
+        }
+    }
+
+    func beginFetch() -> SyncFetchDelivery {
+        let consent = checkpointUnavailable ? nil : state.channels.mapValues(FetchConsent.init)
+        return { [weak self] event in await self?.handle(event, fetchConsent: consent) }
+    }
+
     func handle(_ event: SyncEvent) async {
+        await handle(event, fetchConsent: nil)
+    }
+
+    private func handle(_ event: SyncEvent, fetchConsent: [String: FetchConsent]?) async {
         do {
             switch event {
             case .state, .zoneDeletesFailed:
@@ -105,7 +130,7 @@ extension CloudSettingsSync {
                     beat()
                 }
             case .zonesDeleted(let zones):
-                try zonesDeleted(zones)
+                try zonesDeleted(zones, fetchConsent: fetchConsent)
             case .zoneSavesOverQuota(let zones):
                 if zones.contains(where: { state.channels[$0] != nil }) {
                     notice = String(localized: "Your iCloud storage is full. Settings changes are waiting on this Mac.")
@@ -133,18 +158,37 @@ extension CloudSettingsSync {
         }
     }
 
-    private func zonesDeleted(_ zones: [String: SyncZoneDeletionReason]) throws {
-        var enrolled: [String: UUID] = [:]
-        for zone in zones.keys {
-            guard var channel = state.channels[zone], !channel.needsConfirmation else { continue }
-            enrolled[zone] = channel.enrollment
-            invalidateBaseline(in: zone)
-            channel.checkingDeletion = true
-            updateChannel(channel)
+    private func zonesDeleted(_ zones: [String: SyncZoneDeletionReason], fetchConsent: [String: FetchConsent]?) throws {
+        if checkpointUnavailable {
+            // Another feature can advance the shared cursor before Settings can read its checkpoint.
+            let resetZones = zones.filter { owns(zone: $0.key) && $0.value != .deleted }.keys
+            try holdZoneResets(Set(resetZones))
+            try reloadStateIfNeeded()
         }
-        guard !enrolled.isEmpty else { return }
-        try save()
-        // The shared cursor may report a deletion after a zone was re-created. Read it outside this delegate callback.
+        var recheck: [String: UUID] = [:]
+        var revoked: Set<String> = []
+        for (zone, reason) in zones {
+            guard var channel = state.channels[zone] else { continue }
+            switch reason {
+            case .purged, .encryptedDataReset:
+                // CloudKit requires discarding the old cache even if another Mac has already re-created this zone.
+                if let fetchConsent, fetchConsent[zone] != FetchConsent(channel) {
+                    continue
+                }
+                forget(zone: zone)
+                revoked.insert(zone)
+            case .deleted:
+                guard !channel.needsConfirmation else { continue }
+                recheck[zone] = channel.enrollment
+                invalidateBaseline(in: zone)
+                channel.checkingDeletion = true
+                updateChannel(channel)
+            }
+        }
+        guard !revoked.isEmpty || !recheck.isEmpty else { return }
+        try saveAfterZoneRemoval(revoked)
+        guard !recheck.isEmpty else { return }
+        // The shared cursor may report an app deletion after a zone was re-created. Read it outside this delegate callback.
         let started = generation
         Task { [weak self] in
             guard let self, started == generation else { return }
@@ -155,7 +199,7 @@ extension CloudSettingsSync {
                 return
             }
             guard generation == started else { return }
-            for (zone, epoch) in enrolled where state.channels[zone]?.enrollment == epoch && state.channels[zone]?.checkingDeletion == true {
+            for (zone, epoch) in recheck where state.channels[zone]?.enrollment == epoch && state.channels[zone]?.checkingDeletion == true {
                 do {
                     try await prepare(zone: zone)
                 } catch {

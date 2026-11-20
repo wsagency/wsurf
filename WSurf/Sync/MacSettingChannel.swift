@@ -68,7 +68,7 @@ nonisolated struct MacSettingChannel: Codable {
         awaitingAccountConfirmation != false
     }
     var fetched = false
-    /// A deletion notice can precede or outlive this enrollment. Only a current full read decides.
+    /// An app-deletion notice can outlive this enrollment. A full read checks whether the zone still exists.
     var checkingDeletion: Bool?
     var lastSync: Date?
     var observed: [String: Data] = [:]

@@ -19,7 +19,7 @@ extension MacSettingsSyncTests {
         let old = try #require(sync.channel(.providers, localProfileID: nil))
         try await engine.sendNow()
         try await engine.fetchNow()
-        cloud.deleteZone(old.zone, reason: .purged)
+        cloud.deleteZone(old.zone, reason: .deleted)
         try sync.disable(.providers, localProfileID: nil)
         try await sync.enable(.providers, localProfileID: nil, cloudProfileID: nil)
         let fresh = try #require(sync.channel(.providers, localProfileID: nil))
@@ -41,8 +41,8 @@ extension MacSettingsSyncTests {
         #expect(sync.record(for: id) == nil && cloud.records(in: fresh.zone) == nil)
     }
 
-    @Test(arguments: [false, true])
-    func deletionDuringAnIncompleteFirstBaselineIsRecheckedAfterRestart(recreated: Bool) async throws {
+    @Test(arguments: SyncZoneDeletionReason.allCases, [false, true])
+    func deletionDuringAnIncompleteFirstBaselineIsRecheckedAfterRestart(reason: SyncZoneDeletionReason, recreated: Bool) async throws {
         let root = try lifecycleDirectory(), file = root.appending(path: "settings")
         defer { try? FileManager.default.removeItem(at: root) }
         let cloud = FakeSyncCloud(), key = MacSettingPayload(key: "server", value: Data([1]))
@@ -59,7 +59,7 @@ extension MacSettingsSyncTests {
         await #expect(throws: (any Error).self) { try await first.enable(.providers, localProfileID: nil, cloudProfileID: nil) }
         let original = try #require(first.channel(.providers, localProfileID: nil))
         #expect(!original.fetched)
-        cloud.deleteZone(zone, reason: .encryptedDataReset)
+        cloud.deleteZone(zone, reason: reason)
         engine.available = false
         try await engine.fetchNow()
         let local = SyncRecordID(zone: zone, name: MacSettingPayload(key: "local", value: nil).recordName)
@@ -72,7 +72,7 @@ extension MacSettingsSyncTests {
         after.delegate = restored
         restored.attach(after)
         restored.beat()
-        if recreated {
+        if recreated && reason == .deleted {
             // The new engine replays the old cursor and queues the edit after its verified reread.
             try #require(await waitUntil(timeout: .seconds(3)) { after.fetchAllCount >= 2 && restored.ready.contains(zone) })
             try await after.sendNow()
@@ -80,7 +80,8 @@ extension MacSettingsSyncTests {
             #expect(restored.channel(.providers, localProfileID: nil)?.enrollment == original.enrollment)
         } else {
             try #require(await waitUntil(timeout: .seconds(3)) { !restored.isEnabled(.providers, localProfileID: nil) })
-            #expect(cloud.records(in: zone) == nil)
+            #expect(cloud.record(local) == nil)
+            #expect((cloud.records(in: zone) != nil) == recreated)
         }
     }
 

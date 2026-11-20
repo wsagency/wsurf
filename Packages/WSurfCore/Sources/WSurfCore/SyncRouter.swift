@@ -69,14 +69,20 @@ public final class SyncRouter: SyncEngineDelegate {
     }
 
     public func allowsZoneCreation(_ zone: String) -> Bool {
-        guard zone == SyncZone.devices || SyncZone.profileID(zone) != nil else { return true }
+        guard zone == SyncZone.devices || SyncZone.profileID(zone) != nil else {
+            return handlers.first { $0.owns(zone: zone) }?.allowsZoneCreation(zone) ?? true
+        }
         return tabs?.allowsZoneCreation(zone) == true
     }
 
     public func beginFetch() -> SyncFetchDelivery {
         let start = tabs?.markFetchStart()
-        return { [weak self] event in
-            await self?.route(event) { tabs, owned in await tabs.receive(owned, from: start) }
+        var receivers: [ObjectIdentifier: SyncFetchDelivery] = [:]
+        for handler in handlers where !(handler is TabSync) {
+            receivers[ObjectIdentifier(handler)] = handler.beginFetch()
+        }
+        return { [weak self, receivers] event in
+            await self?.route(event, fetchReceivers: receivers) { tabs, owned in await tabs.receive(owned, from: start) }
         }
     }
 
@@ -89,7 +95,10 @@ public final class SyncRouter: SyncEngineDelegate {
         await route(event)
     }
 
-    private func route(_ event: SyncEvent, tabDelivery: ((TabSync, SyncEvent) async -> Void)? = nil) async {
+    private func route(
+        _ event: SyncEvent, fetchReceivers: [ObjectIdentifier: SyncFetchDelivery] = [:],
+        tabDelivery: ((TabSync, SyncEvent) async -> Void)? = nil
+    ) async {
         let active = vaultHandler.map { handlers + [$0] } ?? handlers
         if case .account(let change) = event {
             accountChanged?(change)
@@ -98,6 +107,8 @@ public final class SyncRouter: SyncEngineDelegate {
             guard let owned = event.filtered(to: handler.owns) else { continue }
             if let tabs = handler as? TabSync, let tabDelivery {
                 await tabDelivery(tabs, owned)
+            } else if let deliver = fetchReceivers[ObjectIdentifier(handler)] {
+                await deliver(owned)
             } else {
                 await handler.handle(owned)
             }
