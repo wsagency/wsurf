@@ -220,6 +220,7 @@ step "Check format" lint
 step "Check watchdog" python3 Tools/check-watchdog.py
 step "Check coverage script" python3 Tools/check-coverage-script.py
 step "Check validation selector" python3 -B Tools/check-validation-selection.py
+step "Check development iCloud signing" python3 -B Tools/check-icloud-development-signing-tests.py
 step "Check test partition" python3 Tools/check-test-partition.py
 skip "Cache Swift packages/CEF" "runner cache; build/DD and Packages/CefSwift/.cef persist here"
 gate

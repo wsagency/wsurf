@@ -515,6 +515,55 @@ that ships. A Debug app is 477 MB on disk (a 145 MB debug dylib, coverage counte
   Instruments or `sample` on the installed candidate. The candidate verifier reports that as a named entitlement difference that needs
   the owner's approval.
 
+### Test iCloud with an Apple Development signature
+
+The host can request CloudKit in `iCloud.io.wsagency.wsurf` for an explicit development
+build. Use an installed macOS development profile that grants that container, the
+CloudKit service, the Development environment and development push. Use the existing
+credential exchange profile for the extension. Set `WSURF_PROFILE` to the host
+profile UUID. Generate the host plist in this checkout.
+
+```sh
+mkdir -p build/icloud-development
+profile_dir="$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles"
+python3 Tools/check-icloud-development-signing.py prepare \
+  "$profile_dir/$WSURF_PROFILE.provisionprofile" > build/icloud-development/WSurf.entitlements
+```
+
+After this succeeds, add the following build settings to the development build or
+the approved local Release archive command above.
+
+```sh
+CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY="Apple Development" \
+WSURF_PROFILE="$WSURF_PROFILE" WSURF_EXCHANGE_PROFILE="$WSURF_EXCHANGE_PROFILE" \
+WSURF_HOST_ENTITLEMENTS=build/icloud-development/WSurf.entitlements
+```
+
+`WSURF_HOST_ENTITLEMENTS` selects the host plist in Debug and Release. The extension
+has its own signing settings. Ordinary builds use `WSurf/WSurf.entitlements`.
+Developer ID release and tip use their regular profiles. Enabling CloudKit for those
+exports requires Production grants, production push and a deployed Production schema.
+
+Check the final bundle before the device trial.
+
+```sh
+python3 Tools/check-icloud-development-signing.py verify "$APP" "$WSURF_PROFILE"
+```
+
+For the tab-sharing trial, use two fresh macOS test users with the same dedicated
+Apple Account. In each test user run
+`defaults write io.wsagency.wsurf experiments.iCloudTabs -bool YES`, relaunch
+WSurf and switch on **Settings → Profiles → Personal → Share tabs through iCloud**.
+Open a test link on one Mac and open its remote sidebar entry on the other.
+Only the Personal profile is eligible. Debug Stage and unsigned tests skip CloudKit.
+
+For the vault trial use `experiments.iCloudVault` in place of `experiments.iCloudTabs`.
+Relaunch, create and unlock a disposable vault with a synthetic entry, then select
+**Settings → Autofill → Settings → Sync with iCloud** for that vault. On the other
+Mac use **Add to This Mac** and the same synced unlock passkey. Compare key checks
+and round-trip an edit to the test entry. These flags are read at launch. Each
+profile or vault still needs its own opt-in.
+
 ## Preview builds
 
 WSurf has two update channels. A release is the default. A preview build comes
