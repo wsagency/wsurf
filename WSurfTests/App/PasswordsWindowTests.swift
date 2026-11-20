@@ -31,7 +31,7 @@ final class PasswordsWindowRig {
         self.built = built
         self.catalog = catalog
         self.selection = selection
-        controller = PasswordsWindow(profiles: selection, autosaveName: nil) { profile in
+        controller = PasswordsWindow(profiles: { selection }, autosaveName: nil) { profile in
             built.profileIDs.append(profile.id)
             let controller = NSViewController()
             controller.view = NSView(frame: NSRect(x: 0, y: 0, width: 100, height: 100))

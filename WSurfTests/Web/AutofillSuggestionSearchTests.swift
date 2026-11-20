@@ -3,12 +3,13 @@
 
 import AppKit
 import Foundation
+import SwiftUI
 import Testing
 import WebKit
 
 @testable import WSurf
 
-/// The quick search of a long fill dropdown: what a key does, which rows match, and that a typed password is never a query.
+/// The fill dropdown's quick search covers matching rows, key handling and manual password typing.
 /// Synthetic rows only.
 struct AutofillSuggestionSearchTests {
     private typealias Search = AutofillSuggestionSearch
@@ -47,8 +48,9 @@ struct AutofillSuggestionSearchTests {
         text.map { .character(String($0)) }
     }
 
-    @Test func theSearchRowAppearsOnlyAboveFiveRows() {
-        #expect(!Search.Index(rows(5), searchable: true).isSearchable)
+    @Test func everyMultiLoginListOffersExplicitSearch() {
+        #expect(!Search.Index(rows(1), searchable: true).isSearchable)
+        #expect(Search.Index(rows(2), searchable: true).isSearchable)
         #expect(Search.Index(rows(6), searchable: true).isSearchable)
         #expect(!Search.Index(rows(40), searchable: false).isSearchable, "card and contact lists never search")
         let five = AutofillSuggestionLayout.height(for: 5)
@@ -142,6 +144,47 @@ struct AutofillSuggestionSearchTests {
         }
     }
 
+    @Test func twoLoginsCanBeSearchedWithoutTakingPasswordTyping() {
+        let list = [row("ada@example.test"), row("grace@example.test")]
+        let typed = press(typing("g"), on: list, typeToSearch: false)
+        #expect(typed.effects == [.dismissAndPass])
+        #expect(typed.state.query.isEmpty)
+        let selected = press(typing("grace") + [.enter], on: list, typeToSearch: false, searching: true)
+        #expect(selected.effects.last == .choose(list[1].id))
+    }
+
+    @Test @MainActor func clickingTheSecondLoginAndTheSearchRowInATwoLoginPanel() throws {
+        let list = [row("ada@example.test"), row("grace@example.test")]
+        let selection = AutofillSuggestionSelection()
+        selection.state = .init(rowCount: list.count)
+        var chosen: UUID?
+        let searchable = Search.Index(list, searchable: true).isSearchable
+        let height = AutofillSuggestionLayout.height(for: list.count, searchable: searchable)
+        let host = NSHostingView(rootView: AutofillSuggestionList(
+            kind: .password, origin: "https://login.example.test", suggestions: list, searchable: searchable, selection: selection,
+            choose: { chosen = $0 }, beginSearch: { selection.state.beginSearching() }, manage: {}
+        ).frame(width: 320, height: height))
+        let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 320, height: height), styleMask: [.borderless, .nonactivatingPanel],
+                            backing: .buffered, defer: false)
+        panel.isReleasedWhenClosed = false
+        defer { panel.close() }
+        panel.contentView = host
+        panel.orderBack(nil)
+        host.layoutSubtreeIfNeeded()
+        @MainActor func click(atHeight y: CGFloat) throws {
+            for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+                let event = try #require(NSEvent.mouseEvent(with: type, location: .init(x: 80, y: y), modifierFlags: [],
+                                                          timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: panel.windowNumber,
+                                                          context: nil, eventNumber: 1, clickCount: 1, pressure: type == .leftMouseDown ? 1 : 0))
+                panel.sendEvent(event)
+            }
+        }
+        try click(atHeight: AutofillSuggestionLayout.footerHeight + AutofillSuggestionLayout.listPadding + AutofillSuggestionLayout.rowHeight / 2)
+        #expect(chosen == list[1].id)
+        try click(atHeight: height - AutofillSuggestionLayout.searchRowHeight / 2)
+        #expect(selection.state.isSearching)
+    }
+
     @Test func escapeClearsTheQueryThenCloses() {
         let (cleared, first) = press(typing("work") + [.escape], on: eight(), typeToSearch: true)
         #expect(first.last == .consume)
@@ -202,9 +245,9 @@ struct AutofillSuggestionSearchTests {
         #expect(clicked == [.dismissAndPass], "an empty query is not a search")
     }
 
-    @Test func fiveOrFewerRowsBehaveAsBefore() {
+    @Test func aListWithoutSearchStillAcceptsArrowKeys() {
         let list = rows(5)
-        let index = Search.Index(list, searchable: true)
+        let index = Search.Index(list, searchable: false)
         let start = Search.State(rowCount: 5)
         for key in typing("a") + [.backspace, .other] {
             let (state, effect) = Search.reduce(start, key, index: index, typeToSearch: true)

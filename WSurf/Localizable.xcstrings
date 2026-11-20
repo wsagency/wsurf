@@ -2209,6 +2209,9 @@
     "Choose the ZIP exported by Safari or its PaymentCards.json file." : {
 
     },
+    "Choose this account on the website, then select its saved password again." : {
+      "comment" : "Shown when the password field belongs to another account and the person must switch accounts on the website."
+    },
     "Choose voices for conversation and reading aloud." : {
 
     },

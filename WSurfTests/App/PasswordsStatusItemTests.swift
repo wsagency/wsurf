@@ -88,7 +88,7 @@ struct PasswordsStatusItemTests {
             catalog = ProfileStore(file: file)
             selection = ProfileStore.selection(profile: .original(), catalog: catalog)
             controller = PasswordsStatusItem(
-                statusBar: bar, profiles: selection,
+                statusBar: bar, profiles: { [selection] in selection },
                 makeModel: { [unowned self] profile in
                     requested.append(profile.id)
                     let made = model ?? CredentialSettingsModel(profile: .privateBrowsing(), verifyUser: { _ in })
@@ -529,6 +529,70 @@ struct PasswordsStatusItemTests {
 
     // MARK: Lock Now, profiles, websites
 
+    @Test func returningToAnOpenBrowserProfileUsesItsLiveVaultInBothPasswordsSurfaces() async throws {
+        try await VaultManagerFixture.with(vaults: [.unlocked]) { profile, passkeys, vaults in
+            let rig = Rig()
+            defer { rig.tearDown() }
+            let catalog = rig.catalog
+            _ = try #require(catalog.adopt(id: profile.id, name: "Personal fixture", symbol: "key", color: .blue))
+            let work = catalog.add(name: "Work fixture")
+            let app = BrowserApplication(notifications: NotificationCenter())
+            @MainActor func browser(_ profile: Profile) -> AppCoordinator {
+                let coordinator = AppCoordinator(
+                    browser: BrowserModel(context: BrowserProfileContext.shared(for: profile), windowID: UUID(), database: .temporary()),
+                    profiles: ProfileStore.selection(profile: profile, catalog: catalog)
+                )
+                app.register(coordinator)
+                return coordinator
+            }
+            let first = browser(profile)
+            let second = browser(work)
+            defer {
+                first.closeWindow()
+                second.closeWindow()
+            }
+            first.showBrowser(activate: false)
+            second.showBrowser(activate: false)
+            try #require(first.nativeWindow?.isVisible == true && second.nativeWindow?.isVisible == true)
+            let menu = PasswordsStatusItem(statusBar: rig.bar, profiles: { app.passwordsProfileStore(fallback: catalog) }, frontTab: { nil })
+            defer { menu.closePopover() }
+            var windowPage: CredentialSettingsModel?
+            let passwords = PasswordsWindow(profiles: { app.passwordsProfileStore(fallback: catalog) }, autosaveName: nil) { profile in
+                windowPage = CredentialSettingsModel(profile: profile)
+                let controller = NSViewController()
+                controller.view = NSView()
+                return controller
+            }
+            defer { passwords.window?.close() }
+            let epoch = try #require(vaults[0].manager.authorizationEpoch)
+            let assertions = passkeys.assertions
+            second.showBrowser()
+            // A background test host can show its window without AppKit sending the key-window callback.
+            if !second.isKeyWindow {
+                second.windowDidBecomeKey()
+            }
+            menu.open()
+            passwords.show()
+            #expect(menu.model?.profile.id == work.id && passwords.boundProfileID == work.id)
+            menu.closePopover()
+            first.showBrowser()
+            if !first.isKeyWindow {
+                first.windowDidBecomeKey()
+            }
+            menu.open()
+            passwords.show()
+            try #require(menu.model?.profile.id == profile.id && passwords.boundProfileID == profile.id)
+            passwords.window?.close()
+            let pages = try [#require(menu.model), #require(windowPage)]
+            for page in pages {
+                await page.load()
+                #expect(page.isLoaded && page.authorizationEpoch == epoch)
+                page.close()
+            }
+            #expect(passkeys.assertions == assertions)
+        }
+    }
+
     @Test func lockNowLocksEveryVaultOfEveryProfile() async throws {
         try await VaultManagerFixture.exclusive {
             try await VaultManagerFixture.with(vaults: [.unlocked]) { _, _, first in
@@ -542,6 +606,20 @@ struct PasswordsStatusItemTests {
                     #expect(!first[0].manager.isUnlocked && !second[0].manager.isUnlocked)
                 }
             }
+        }
+    }
+
+    @Test func aLockedExplicitDefaultStaysSelectedWhenAnotherVaultIsAlreadyOpen() async throws {
+        try await VaultManagerFixture.with(vaults: [.unlocked, .locked]) { profile, passkeys, vaults in
+            let store = try CredentialManager.store(for: profile)
+            await store.setDefaultVault(vaults[1].vaultID)
+            let assertions = passkeys.assertions
+            let epoch = try #require(vaults[0].manager.authorizationEpoch)
+            let page = PasswordsStatusItem.makeSystemModel(for: profile)
+            defer { page.close() }
+            await page.load()
+            #expect(page.selectedVaultID == vaults[1].vaultID && !page.isUnlocked && !page.isLoaded)
+            #expect(vaults[0].manager.authorizationEpoch == epoch && passkeys.assertions == assertions)
         }
     }
 

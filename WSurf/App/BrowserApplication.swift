@@ -95,6 +95,14 @@ final class BrowserApplication {
         }.first ?? windows.last { !$0.isClosed && !$0.isMicro }
     }
 
+    /// A private window belongs to its own return profile. For a regular micro window, Passwords follows the last browsing window.
+    func passwordsProfileStore(fallback: ProfileStore = .shared) -> ProfileStore {
+        if let active = activeCoordinator, active.profiles.isPrivate {
+            return active.profiles
+        }
+        return activeBrowsingCoordinator?.profiles ?? fallback
+    }
+
     /// The window a micro window's page moves to, and where pages it opens go: the regular window of the same profile used
     /// most recently, which is normally the one the page came from.
     func browsingWindow(for micro: AppCoordinator) -> AppCoordinator? {

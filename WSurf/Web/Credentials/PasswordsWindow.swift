@@ -20,7 +20,7 @@ final class PasswordsWindow: NSObject, NSWindowDelegate {
     static let defaultContentSize = NSSize(width: 760, height: 640)
     static let minimumContentSize = NSSize(width: 560, height: 480)
 
-    private let profiles: ProfileStore
+    private let profiles: () -> ProfileStore
     private let makeContent: (Profile) -> NSViewController
     private let autosaveName: String?
     private(set) var window: NSWindow?
@@ -29,7 +29,7 @@ final class PasswordsWindow: NSObject, NSWindowDelegate {
 
     /// The parameters are seams for tests, which must not open a real vault or write the window's frame to the preferences.
     init(
-        profiles: ProfileStore = .shared,
+        profiles: @escaping () -> ProfileStore = { BrowserApplication.shared.passwordsProfileStore() },
         autosaveName: String? = PasswordsWindow.frameAutosaveName,
         makeContent: @escaping (Profile) -> NSViewController = { profile in
             let controller = NSHostingController(rootView: PasswordsWindowContent(profile: profile))
@@ -58,7 +58,7 @@ final class PasswordsWindow: NSObject, NSWindowDelegate {
 
     /// The profile whose vault the window shows: never a private one, which keeps no vault.
     var profile: Profile {
-        profiles.isPrivate ? profiles.profileToReturnTo : profiles.current
+        profiles().passwordsProfile
     }
 
     /// Opens the window, or brings it to the front. Opens no browser window and never goes through `MainMenu.coordinator`.

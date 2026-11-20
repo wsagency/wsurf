@@ -78,11 +78,12 @@ final class CredentialPicker {
         case code(String)
     }
 
-    enum Failure: Equatable {
+    enum Failure: Error, Equatable {
         /// The field, the page or the vault changed, or the page took nothing.
         case noField
         /// The password or code would have gone to a form that sends it to another website: nothing was filled.
         case unsafeForm
+        case differentAccount
     }
 
     enum Outcome: Equatable {
@@ -483,9 +484,28 @@ final class CredentialPicker {
         } catch {
             return isCurrent() ? .failed(.noField) : .nothing
         }
+        do {
+            return try Self.deliveredCount(answer).map(Outcome.filled) ?? .nothing
+        } catch {
+            return .failed(error)
+        }
+    }
+
+    /// Both native pickers receive the field count. Opening the site's chooser ends this pick without a fill.
+    static func deliveredCount(_ answer: Any?) throws(Failure) -> Int? {
         let count = (answer as? NSNumber)?.intValue ?? 0
-        guard count > 0 else { return count < 0 ? .failed(.unsafeForm) : .failed(.noField) }
-        return .filled(count)
+        switch count {
+        case 1...:
+            return count
+        case PasswordAutofillScript.openedAccountChooser:
+            return nil
+        case PasswordAutofillScript.differentAccount:
+            throw .differentAccount
+        case ..<0:
+            throw .unsafeForm
+        default:
+            throw .noField
+        }
     }
 
     /// The unlocked manager of `vaultID`, only under the unlock `epoch` a list or a sheet was made under.
@@ -498,6 +518,8 @@ final class CredentialPicker {
         let alert = NSAlert()
         alert.messageText = String(localized: "Couldn’t Fill Saved Details")
         alert.informativeText = switch failure {
+        case .differentAccount:
+            PasswordAutofillScript.chooseAccountMessage
         case .unsafeForm:
             String(localized: "This form sends what you type to another website, so nothing was filled.")
         case .noField:

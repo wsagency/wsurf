@@ -106,6 +106,20 @@ struct CredentialAccountSelectionTests {
 
     // MARK: - Choosing
 
+    @Test func theChosenVaultWinsWhenTwoVaultsHoldTheSameAccountID() {
+        let first = UUID(), second = UUID()
+        let selected = account("ada@example.test", totp: rfcGenerator)
+        let vaults = [(id: first, label: "Home" as String?, accounts: [selected]), (id: second, label: "Work" as String?, accounts: [selected])]
+        @MainActor func vaultOrder(for field: CredentialAutofillField) -> [UUID] {
+            CredentialAccountSelection.listed(
+                in: vaults, origin: Self.origin, pageURL: nil, entered: selected.username, field: field,
+                isUsernameField: false, pinned: (second, selected.id)
+            ) { vault, _ in vault == first ? .now : nil }.map(\.vault)
+        }
+        #expect(vaultOrder(for: .password) == [second, first])
+        #expect(vaultOrder(for: .totp) == [second])
+    }
+
     @Test func tenAccountsStayDistinctChoicesAndNothingIsPickedForTheUser() throws {
         let gmail = (1...10).map { account("user\($0)@gmail.test", password: "pw-\($0)") }
         let sorted = gmail.sorted { $0.username < $1.username }.map(\.id)

@@ -308,7 +308,10 @@ struct CredentialPickerScriptTests {
 
             let password = try await harness.rightClick("rp")
             #expect(password.body["field"] as? String == "password" && UUID(uuidString: password.body["token"] as? String ?? "") != nil)
-            #expect(try await harness.fill(password, ["username": "ada", "password": "dummy-secret"]) == 1, "the password field only")
+            _ = try await harness.fill(password, ["username": "someone-else", "password": "other-secret"])
+            #expect(try await harness.values(["ru", "rp", "ro"]) == ["prefilled", "", "read only"])
+            let matching = try await harness.rightClick("rp")
+            #expect(try await harness.fill(matching, ["username": "prefilled", "password": "dummy-secret"]) == 1)
             #expect(try await harness.values(["ru", "rp", "ro"]) == ["prefilled", "dummy-secret", "read only"])
         }
     }
