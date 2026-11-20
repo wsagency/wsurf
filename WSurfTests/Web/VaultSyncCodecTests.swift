@@ -85,17 +85,18 @@ struct VaultSyncCodecTests {
         let key = syncKey()
         var account = try richAccount()
         account.attachments = [attachment()]
-        let syncable = try #require(VaultSyncCodec.syncable(account))
-        #expect(syncable.account.attachments == nil)
-        #expect(syncable.parts == (try SyncParts.of(account)), "the files are no part")
+        let complete = try #require(VaultSyncCodec.syncable(account))
+        #expect(complete.account.attachments == account.attachments)
+        #expect(complete.parts == (try SyncParts.of(account, includingFiles: true)))
 
-        let envelope = try VaultSyncCodec.sealItem(SyncItem(accountID: account.id, version: 3, account: syncable.account), key: key)
+        var legacy = account
+        legacy.attachments = nil
+        let inline = try #require(VaultSyncCodec.syncable(legacy))
+        #expect(inline.parts.attachments == nil)
+        let envelope = try VaultSyncCodec.sealItem(SyncItem(accountID: account.id, version: 3, account: inline.account), key: key)
         let opened = try VaultSyncCodec.openItem(envelope, accountID: account.id, key: key)
         #expect(opened.version == 3)
-        var expected = account
-        expected.attachments = nil
-        #expect(try CredentialContent.canonicalJSON(try #require(opened.account)) == (try CredentialContent.canonicalJSON(expected)))
-        #expect(opened.account == syncable.account)
+        #expect(try CredentialContent.canonicalJSON(try #require(opened.account)) == (try CredentialContent.canonicalJSON(legacy)))
 
         // The caller strips the files; an account that still has them is not sealed.
         #expect(throws: VaultSyncError.malformed) {
@@ -212,11 +213,11 @@ struct VaultSyncCodecTests {
         #expect(throws: VaultSyncError.unsupportedFormat) { _ = try VaultSyncCodec.version(of: flipped(live, at: 0)) }
     }
 
-    @Test func tooLargeOrFilesOnlyEntriesAreNotSyncable() throws {
+    @Test func largeAndFileOnlyEntriesUseACompleteBase() throws {
         let key = syncKey()
         var big = VaultFixtures.account()
         big.notes = [CredentialNote(text: String(repeating: "a", count: 800_000))]
-        #expect(VaultSyncCodec.syncable(big) == nil)
+        #expect(VaultSyncCodec.syncable(big)?.parts.attachments != nil)
         #expect(throws: VaultSyncError.tooLarge) {
             _ = try VaultSyncCodec.sealItem(SyncItem(accountID: big.id, version: 1, account: big), key: key)
         }
@@ -228,7 +229,7 @@ struct VaultSyncCodecTests {
 
         let filesOnly = CredentialAccount(id: UUID(), username: "", origins: [], loginURLs: [], passkeys: [], attachments: [attachment()])
         try filesOnly.validate()  // a valid entry in the vault
-        #expect(VaultSyncCodec.syncable(filesOnly) == nil, "nothing is left of it without its files")
+        #expect(VaultSyncCodec.syncable(filesOnly)?.account == filesOnly)
 
         var undecodable = VaultFixtures.account()
         undecodable.exchangeMetadata = Data([0xFF, 0x00])
@@ -275,6 +276,29 @@ struct VaultSyncCodecTests {
         // The control: the same bytes, honestly made, open.
         let honest = try forged(encoded, state: 1, accountID: account.id, key: key)
         #expect(try VaultSyncCodec.openItem(honest, accountID: account.id, key: key).account == account)
+    }
+
+    @Test func assetBodyAndPointerAreBoundToTheEntryVersionAndVault() throws {
+        let account = try richAccount()
+        let key = syncKey()
+        let portable = try VaultAssetAccount(account: account, chunks: [:])
+        let saved = try VaultSyncCodec.sealAssetAccount(portable, version: 6, key: key)
+        let (version, ref) = try VaultSyncCodec.assetReference(saved.envelope, accountID: account.id, key: key)
+        #expect(version == 6 && ref.matches(saved.body) && !ref.matches(flipped(saved.body, at: 0)))
+        #expect(saved.envelope.count < 512 && saved.body.range(of: Data(Self.marker.utf8)) == nil)
+        #expect(try VaultSyncCodec.openAssetAccount(saved.body, accountID: account.id, version: 6, key: key).account == account)
+        #expect(throws: VaultSyncError.authenticationFailed) {
+            _ = try VaultSyncCodec.assetReference(saved.envelope, accountID: UUID(), key: key)
+        }
+        #expect(throws: VaultSyncError.authenticationFailed) {
+            _ = try VaultSyncCodec.openAssetAccount(saved.body, accountID: account.id, version: 7, key: key)
+        }
+        #expect(throws: VaultSyncError.authenticationFailed) {
+            _ = try VaultSyncCodec.openAssetAccount(saved.body, accountID: account.id, version: 6, key: syncKey())
+        }
+        #expect(throws: VaultSyncError.unsupportedFormat) {
+            _ = try VaultSyncCodec.openItem(saved.envelope, accountID: account.id, key: key)
+        }
     }
 
     // MARK: Vault

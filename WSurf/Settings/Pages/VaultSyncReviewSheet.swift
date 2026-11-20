@@ -133,6 +133,8 @@ struct VaultSyncReviewSheet: View {
             String(localized: "Items")
         case .metadata:
             String(localized: "Name and websites")
+        case .attachments:
+            String(localized: "Files")
         }
     }
 

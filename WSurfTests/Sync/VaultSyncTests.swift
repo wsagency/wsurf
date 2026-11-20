@@ -550,7 +550,7 @@ struct VaultSyncTests {
         let newer = SyncRecordID(zone: rig.zone, name: held[1].id.uuidString)
         let original = try #require(rig.cloud.record(newer)).payload
         var unknown = original
-        unknown[unknown.startIndex] = 2
+        unknown[unknown.startIndex] = VaultSyncCodec.assetFormat + 1
         rig.cloud.overwrite(newer, payload: unknown)
 
         let (b, vb) = try await rig.addedMac()
@@ -771,7 +771,7 @@ struct VaultSyncTests {
         let rig = Rig()
         defer { rig.finish() }
         var huge = SyncVaultFixtures.account(username: "huge")
-        huge.notes = [CredentialNote(text: String(repeating: "x", count: 800_000))]
+        huge.notes = [CredentialNote(text: String(repeating: "x", count: CredentialVaultLimits.accountBytes + 1))]
         let normal = accounts(1)[0]
         let (a, va) = try await rig.syncedMac(holding: [huge, normal])
 

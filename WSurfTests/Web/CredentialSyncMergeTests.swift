@@ -31,6 +31,10 @@ private nonisolated func changed(_ account: CredentialAccount, _ part: SyncPart,
         copy.secureItems = [SecureItemFixtures.custom(label: "Locker-\(tag)")]
     case .metadata:
         copy.displayName = "Name-\(tag)"
+    case .attachments:
+        copy.attachments = [
+            CredentialAttachment(id: UUID(), name: "synthetic-\(tag)", contentType: "public.data", size: 0, sha256: Data(count: 32), wrappedKey: Data(count: 60)),
+        ]
     }
     return copy
 }
@@ -121,7 +125,7 @@ struct CredentialSyncMergeTests {
         #expect(try decide(live(same, version: 4), local: account, base: removedBase) == .keep(accepted))
     }
 
-    @Test(arguments: SyncPart.allCases)
+    @Test(arguments: SyncPart.allCases.filter { $0 != .attachments })
     func remoteChangeApplies(part: SyncPart) throws {
         let agreed = entry()
         let incoming = changed(agreed, part)
@@ -132,7 +136,7 @@ struct CredentialSyncMergeTests {
         #expect(try parts(try #require(decision.written)) == decision.recorded?.parts)
     }
 
-    @Test(arguments: SyncPart.allCases)
+    @Test(arguments: SyncPart.allCases.filter { $0 != .attachments })
     func localChangeIsKept(part: SyncPart) throws {
         let agreed = entry()
         let mine = changed(agreed, part)
@@ -154,7 +158,7 @@ struct CredentialSyncMergeTests {
         #expect(try parts(merged) != decision.recorded?.parts, "this Mac's notes go up next")
     }
 
-    @Test(arguments: SyncPart.allCases)
+    @Test(arguments: SyncPart.allCases.filter { $0 != .attachments })
     func bothChangedWaitsForReview(part: SyncPart) throws {
         let agreed = entry()
         let incoming = changed(changed(agreed, part, "there"), .metadata == part ? .notes : .metadata, "there")
@@ -189,7 +193,7 @@ struct CredentialSyncMergeTests {
         #expect(try decide(gone(account.id), local: nil, base: nil) == .keep(removed))
     }
 
-    @Test func remoteDeleteOfAnEntryWithFilesWaitsInsteadOfMovingItToTrash() throws {
+    @Test func remoteDeleteOfAnEntryWithUnpublishedFilesRequiresReview() throws {
         let account = entry()
         var withFiles = account
         withFiles.attachments = [
@@ -198,7 +202,7 @@ struct CredentialSyncMergeTests {
                 wrappedKey: Data(count: CredentialAttachment.wrappedKeyBytes), addedAt: nil
             ),
         ]
-        // The files are not synced, so the Trash would hold their only copy and the owner was not asked.
+        // The inline sync base predates these local files.
         #expect(try decide(gone(account.id), local: withFiles, base: try base(account)) == .review(.deletedThereChangedHere, parts: []))
         // Answered, it is the owner's decision.
         let answer = try CredentialSyncMerge.resolve(
@@ -510,10 +514,26 @@ struct CredentialSyncMergeTests {
         noise.passkeys[0].lastSignedAt = Date(timeIntervalSinceReferenceDate: 4)
         #expect(try parts(noise) == parts(account))
         #expect(try parts(account).sum == parts(noise).sum)
-        for part in SyncPart.allCases {
+        for part in SyncPart.allCases where part != .attachments {
             #expect(try parts(changed(account, part)).sum != parts(account).sum, "\(part)")
         }
         #expect(try parts(account).sum != SyncParts.removedParts.sum)
+    }
+
+    @Test func completeItemsMergeFilesAndDetectConcurrentReplacements() throws {
+        let original = changed(entry(), .attachments, "original")
+        let local = changed(original, .password)
+        let incoming = changed(original, .attachments, "remote")
+        let item = SyncItem(accountID: original.id, version: 2, account: incoming, includesFiles: true)
+        let known = SyncBase(version: 1, parts: try SyncParts.of(original, includingFiles: true))
+        let merged = try #require(try decide(item, local: local, base: known).written)
+        #expect(merged.password == local.password && merged.attachments == incoming.attachments)
+        var rewrapped = incoming
+        rewrapped.attachments?[0].wrappedKey = Data(repeating: 7, count: 60)
+        #expect(try SyncParts.of(rewrapped, includingFiles: true) == item.parts())
+        let otherFiles = changed(original, .attachments, "local")
+        #expect(try decide(item, local: otherFiles, base: known) == .review(.bothChanged, parts: [.attachments]))
+        #expect(try parts(original) == parts(incoming), "older bases exclude files")
     }
 
     @Test func partsListPasskeysInAStableOrder() throws {

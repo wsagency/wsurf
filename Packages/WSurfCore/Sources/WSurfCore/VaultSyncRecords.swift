@@ -139,7 +139,7 @@ nonisolated public enum VaultSyncStatus: Equatable, Sendable {
 
 /// What the interface says about entries the vault sync leaves alone, beside the status.
 nonisolated public struct VaultSyncTally: Equatable, Sendable {
-    /// Entries that stay on this Mac: too large to sync, or only files.
+    /// Entries that could not be validated or prepared for upload on this Mac.
     public var notSyncable: Int
     /// Changes from iCloud that could not be read and were skipped this run.
     public var unreadable: Int
@@ -224,6 +224,7 @@ public protocol VaultSyncHost: AnyObject {
     /// The vaults the profile lists now, locked or not; nil when they cannot be listed. A profile always has a vault, so an empty
     /// list is read as unknown too.
     func vaultIDs(profileID: UUID) async -> [UUID]?
+    func currentLease(profileID: UUID, vaultID: UUID) -> UInt64?
     /// The vault's sync key, or nil while it is locked. Never prompts.
     func syncKey(profileID: UUID, vaultID: UUID) async -> VaultSyncKey?
     /// Throws while the vault is locked (`CredentialVaultError.unauthorized` or `expired`).
@@ -235,4 +236,9 @@ public protocol VaultSyncHost: AnyObject {
     /// Keeps, under `lease`, what entries removed on another device left (`RemovedMemory`, by account), so an import here does not
     /// bring them back. Nothing live changes. Returns the vault's new revision.
     func remember(profileID: UUID, vaultID: UUID, lease: UInt64, memories: [UUID: RemovedMemory]) async throws -> UInt64
+}
+
+public protocol VaultAttachmentHost: AnyObject {
+    func exportAttachment(_ file: CredentialAttachment, profile: UUID, vault: UUID, lease: UInt64) async throws -> VaultSyncAttachment
+    func importAttachment(_ file: CredentialAttachment, from encrypted: URL?, profile: UUID, vault: UUID, lease: UInt64) async throws -> VaultImportedAttachment
 }

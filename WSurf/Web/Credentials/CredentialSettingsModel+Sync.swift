@@ -85,6 +85,7 @@ extension CredentialSettingsModel {
     func addSyncedVault(_ remote: RemoteVault, in anchor: @autoclosure () -> ASPresentationAnchor) async {
         guard let sync = vaultSync else { return }
         syncAddFailure = nil
+        let user = sync.state.accountUser
         var added: UUID?
         let finished = await guarded {
             do {
@@ -94,6 +95,10 @@ extension CredentialSettingsModel {
             }
         }
         guard finished, let added else { return }
+        guard vaultSync === sync, sync.state.accountUser == user, sync.accountAvailable != false else {
+            await retry()
+            return
+        }
         await sync.adopted(profileID: profile.id, vaultID: added)
         await retry()
     }

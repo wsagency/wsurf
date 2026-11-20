@@ -51,31 +51,33 @@ public nonisolated enum VaultSyncError: Error, Equatable, Sendable {
     case authenticationFailed
 }
 
-/// One account of a vault as the sync carries it: live (the account without files) or removed (its id and version, and what it left
+/// One account of a vault as the sync carries it: live (the logical account) or removed (its id and version, and what it left
 /// for an import to match: the keyed digests of its logins and its exchange ids).
 public nonisolated struct SyncItem: Equatable, Sendable {
     public let accountID: UUID
     public let version: UInt64
     /// `nil`: the removed state.
     public let account: CredentialAccount?
+    public let includesFiles: Bool
     /// A removed state only: what the entry left (`RemovedMemory`), so a Mac that never held it still keeps an import from bringing it
     /// back. Keyed digests of its logins and its exchange ids, never a value; `nil` when it had nothing an import could match.
     public let memory: RemovedMemory?
 
-    public init(accountID: UUID, version: UInt64, account: CredentialAccount?, memory: RemovedMemory? = nil) {
+    public init(accountID: UUID, version: UInt64, account: CredentialAccount?, memory: RemovedMemory? = nil, includesFiles: Bool = false) {
         self.accountID = accountID
         self.version = version
         self.account = account
+        self.includesFiles = includesFiles
         self.memory = account == nil && memory?.isEmpty == false ? memory : nil
     }
 
     /// The parts an incoming or stored item stands for; a removed one has `SyncParts.removedParts`.
     public func parts() throws -> SyncParts {
-        try account.map(SyncParts.of) ?? .removedParts
+        try account.map { try SyncParts.of($0, includingFiles: includesFiles) } ?? .removedParts
     }
 }
 
-/// A local account as an `Item` can carry it: without its files, and with the parts its sync base is compared by.
+/// A local account with the logical parts its sync base is compared by.
 public nonisolated struct SyncableAccount: Equatable, Sendable {
     public let account: CredentialAccount
     public let parts: SyncParts
@@ -105,16 +107,16 @@ public nonisolated enum VaultSyncCodec {
 
     // MARK: Accounts
 
-    /// `account` as an `Item` can carry it, or `nil` when it cannot be one: it holds only files, its metadata or a passkey does not
-    /// hash, it breaks a rule of the vault without its files, or it does not fit `maxItemBytes`. Such an entry stays on the Mac and is
-    /// never reported as removed.
-    public static func syncable(_ account: CredentialAccount) -> SyncableAccount? {
-        var stripped = account
-        stripped.attachments = nil
-        guard (try? checked(stripped)) != nil, let parts = try? SyncParts.of(stripped),
-              let encoded = try? CredentialContent.canonicalJSON(stripped), encoded.count + headerBytes + sealOverhead <= maxItemBytes
-        else { return nil }
-        return SyncableAccount(account: stripped, parts: parts)
+    /// Ordinary accounts use the original inline representation. A complete base continues to cover even an empty file list.
+    public static func syncable(_ account: CredentialAccount, includingFiles: Bool = false) -> SyncableAccount? {
+        guard (try? checked(account)) != nil else { return nil }
+        var complete = includingFiles || account.attachments != nil
+        if !complete {
+            guard let bytes = try? CredentialContent.canonicalJSON(account) else { return nil }
+            complete = bytes.count + headerBytes + sealOverhead > maxItemBytes
+        }
+        guard let parts = try? SyncParts.of(account, includingFiles: complete) else { return nil }
+        return SyncableAccount(account: account, parts: parts)
     }
 
     /// The envelope `u8 format ‖ u8 state ‖ u64 version ‖ sealed`. A live item must have no files; a removed one seals its memory, or an
@@ -171,7 +173,10 @@ public nonisolated enum VaultSyncCodec {
     /// The version in `envelope`, read without a key so a locked Mac can drop a replay. It is not authenticated here; `openItem`
     /// authenticates it through the AAD, so no one can raise it.
     public static func version(of envelope: Data) throws -> UInt64 {
-        try header(of: envelope).version
+        if envelope.first == assetFormat {
+            return try assetVersion(envelope)
+        }
+        return try header(of: envelope).version
     }
 
     // MARK: Vault
@@ -274,7 +279,7 @@ public nonisolated enum VaultSyncCodec {
         let name: String
     }
 
-    private static func requireGeneration(_ key: VaultSyncKey) throws {
+    static func requireGeneration(_ key: VaultSyncKey) throws {
         guard key.generation == generation else { throw VaultSyncError.unsupportedGeneration }
     }
 
@@ -295,7 +300,7 @@ public nonisolated enum VaultSyncCodec {
     }
 
     /// The rules of the vault, applied without the files: valid, within the store's bounds for one account.
-    private static func checked(_ account: CredentialAccount) throws {
+    static func checked(_ account: CredentialAccount) throws {
         do {
             try account.validate()
             guard try CredentialVaultCrypto.liveBytes(of: account) <= CredentialVaultLimits.accountBytes,
@@ -316,12 +321,12 @@ public nonisolated enum VaultSyncCodec {
         }
     }
 
-    private static func seal(_ plaintext: Data, key: VaultSyncKey, aad: Data) throws -> Data {
+    static func seal(_ plaintext: Data, key: VaultSyncKey, aad: Data) throws -> Data {
         guard let sealed = try? AES.GCM.seal(plaintext, using: key.key, authenticating: aad).combined else { throw VaultSyncError.malformed }
         return sealed
     }
 
-    private static func open(_ sealed: Data, key: VaultSyncKey, aad: Data) throws -> Data {
+    static func open(_ sealed: Data, key: VaultSyncKey, aad: Data) throws -> Data {
         guard sealed.count >= sealOverhead else { throw VaultSyncError.malformed }
         do {
             return try AES.GCM.open(AES.GCM.SealedBox(combined: sealed), using: key.key, authenticating: aad)

@@ -48,14 +48,14 @@ struct VaultSyncEdgeTests {
         )
     }
 
-    @Test func aRemoteDeleteNeverMovesAnEntryWithFilesToTrashWithoutAsking() async throws {
+    @Test func aRemoteDeleteLeavesAnUnpublishedLocalFileForReview() async throws {
         let rig = Rig()
         defer { rig.finish() }
         let entry = syncAccounts(1)[0]
         let (a, va) = try await rig.syncedMac(holding: [entry])
         let (b, vb) = try await rig.addedMac()
         try await converge([a, b])
-        // The files of an entry are never synced, so B’s copy of the entry is the only place they are.
+        // This synthetic host has no blob for the new descriptor. A’s deletion is based on an older, inline-only entry.
         var withFile = entry
         withFile.attachments = [Self.scan()]
         vb.edit(withFile)
@@ -483,7 +483,8 @@ struct VaultSyncEdgeTests {
         // Another Mac enabled the vault at the same moment: its record is on the server, and this Mac's first save was turned down.
         let id = SyncRecordID(zone: rig.zone, name: VaultSync.vaultRecordName)
         let theirs = SyncRecord(id: id, type: .vault, schema: 1, payload: Data("theirs".utf8), systemFields: FakeSyncCloud.fields(for: 1))
-        await a.sync.handle(.sent(saved: [], deleted: [], failed: [SyncFailedSave(id: id, failure: .serverRecordChanged(theirs))]))
+        let attempted = try #require(a.sync.record(for: id))
+        await a.sync.handle(.sent(saved: [], deleted: [], failed: [SyncFailedSave(id: id, failure: .serverRecordChanged(theirs), attempted: attempted)]))
         await a.sync.settle()
         // The zone is made and the entries land, but the `Vault` record is turned down for another reason: it is still waiting.
         a.engine.refusesVaultRecord = true
@@ -540,7 +541,8 @@ struct VaultSyncEdgeTests {
         // Another Mac enabled the vault at the same moment: its record is on the server, and this Mac's first save was turned down.
         let id = SyncRecordID(zone: rig.zone, name: VaultSync.vaultRecordName)
         let theirs = SyncRecord(id: id, type: .vault, schema: 1, payload: Data("theirs".utf8), systemFields: FakeSyncCloud.fields(for: 1))
-        await a.sync.handle(.sent(saved: [], deleted: [], failed: [SyncFailedSave(id: id, failure: .serverRecordChanged(theirs))]))
+        let attempted = try #require(a.sync.record(for: id))
+        await a.sync.handle(.sent(saved: [], deleted: [], failed: [SyncFailedSave(id: id, failure: .serverRecordChanged(theirs), attempted: attempted)]))
         await a.sync.settle()
         try await a.pump()
 

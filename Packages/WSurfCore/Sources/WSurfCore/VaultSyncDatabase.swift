@@ -9,6 +9,7 @@ import WSurfVault
 nonisolated struct VaultRow: Equatable {
     var vaultID: UUID
     var enabled: Bool
+    var approvedUser: String?
     var status: VaultSyncStatus.Stored
     /// `VaultSyncCodec.vaultMark` of the name and wrapper list last uploaded. Nil right after this Mac added or rejoined the vault.
     var uploadedMark: Data?
@@ -25,9 +26,10 @@ nonisolated struct VaultRow: Equatable {
     /// nothing back.
     var rereadOwed = false
 
-    init(vaultID: UUID, enabled: Bool = true, status: VaultSyncStatus.Stored = .active, needsFetch: Bool = false) {
+    init(vaultID: UUID, enabled: Bool = true, status: VaultSyncStatus.Stored = .active, needsFetch: Bool = false, approvedUser: String? = nil) {
         self.vaultID = vaultID
         self.enabled = enabled
+        self.approvedUser = approvedUser
         self.status = status
         self.needsFetch = needsFetch
     }
@@ -55,6 +57,7 @@ nonisolated struct OutboxRow: Equatable {
     var version: UInt64
     var envelope: Data
     var parts: Data
+    var remainingAssets: [VaultAssetRef] = []
 }
 
 /// A fetched envelope not yet applied: the highest version of the account. Version 0 parks a record in a format this build cannot
@@ -121,6 +124,17 @@ nonisolated final class VaultSyncDatabase: Sendable {
         migrator.registerMigration("v2") { (db: Database) throws in
             try db.execute(sql: "ALTER TABLE vault ADD COLUMN rereadOwed INTEGER NOT NULL DEFAULT 0")
         }
+        migrator.registerMigration("v3") { (db: Database) throws in
+            try db.execute(sql: "ALTER TABLE vault ADD COLUMN approvedUser TEXT")
+            try db.execute(sql: "ALTER TABLE outbox ADD COLUMN remainingAssets BLOB")
+            // A legacy build parked complete Items at version zero. Keep the authenticated pointer and retry it on unlock.
+            for row in try Row.fetchAll(db, sql: "SELECT rowid, envelope FROM inbox WHERE version = 0 AND substr(envelope, 1, 1) = x'02'") {
+                let envelope: Data = row["envelope"]
+                if let version = try? VaultSyncCodec.version(of: envelope) {
+                    try db.execute(sql: "UPDATE inbox SET version = ? WHERE rowid = ?", arguments: [Int64(clamping: version), row["rowid"] as Int64])
+                }
+            }
+        }
         try migrator.migrate(queue)
         return VaultSyncDatabase(queue: queue)
     }
@@ -155,11 +169,11 @@ nonisolated final class VaultSyncDatabase: Sendable {
             try db.execute(
                 sql: """
                     INSERT OR REPLACE INTO vault(vaultID, enabled, status, uploadedMark, pendingVaultPayload, pendingMark, dirty,
-                        needsFetch, lastHeadRevision, rereadOwed) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        needsFetch, lastHeadRevision, rereadOwed, approvedUser) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                 arguments: [
                     row.vaultID.sqlText, row.enabled, row.status.rawValue, row.uploadedMark, row.pendingVault, row.pendingMark,
-                    row.dirty, row.needsFetch, Int64(clamping: row.lastHeadRevision), row.rereadOwed,
+                    row.dirty, row.needsFetch, Int64(clamping: row.lastHeadRevision), row.rereadOwed, row.approvedUser,
                 ]
             )
         }
@@ -179,6 +193,7 @@ nonisolated final class VaultSyncDatabase: Sendable {
         private static func vaultRow(_ row: Row) -> VaultRow? {
             guard let id = UUID(uuidString: row["vaultID"]), let status = VaultSyncStatus.Stored(rawValue: row["status"]) else { return nil }
             var result = VaultRow(vaultID: id, enabled: row["enabled"], status: status)
+            result.approvedUser = row["approvedUser"]
             result.uploadedMark = row["uploadedMark"]
             result.pendingVault = row["pendingVaultPayload"]
             result.pendingMark = row["pendingMark"]
@@ -225,8 +240,20 @@ nonisolated final class VaultSyncDatabase: Sendable {
                 .compactMap { UUID(uuidString: $0) })
         }
 
+        func inboxAccounts(_ vault: UUID) throws -> Set<UUID> {
+            try accountIDs("inbox", vault)
+        }
+
         func outboxAccounts(_ vault: UUID) throws -> Set<UUID> {
             try accountIDs("outbox", vault)
+        }
+
+        func assetOutboxAccounts(_ vault: UUID) throws -> Set<UUID> {
+            let ids = try String.fetchAll(
+                db, sql: "SELECT accountID FROM outbox WHERE vaultID = ? AND substr(envelope, 1, 1) = ?",
+                arguments: [vault.sqlText, Data([VaultSyncCodec.assetFormat])]
+            )
+            return Set(ids.compactMap(UUID.init(uuidString:)))
         }
 
         func conflictAccounts(_ vault: UUID) throws -> Set<UUID> {
@@ -259,26 +286,30 @@ nonisolated final class VaultSyncDatabase: Sendable {
 
         // MARK: Outbox
 
-        func outbox(_ vault: UUID) throws -> [OutboxRow] {
-            try Row.fetchAll(db, sql: "SELECT accountID, version, envelope, parts FROM outbox WHERE vaultID = ? ORDER BY accountID", arguments: [vault.sqlText])
-                .compactMap { row in
-                    UUID(uuidString: row["accountID"]).map {
-                        OutboxRow(accountID: $0, version: Self.version(row), envelope: row["envelope"], parts: row["parts"])
-                    }
-                }
+        func outbox(_ vault: UUID, unfinishedOnly: Bool = false) throws -> [OutboxRow] {
+            let filter = unfinishedOnly ? " AND remainingAssets IS NOT NULL" : ""
+            return try Row.fetchAll(db, sql: "SELECT * FROM outbox WHERE vaultID = ?\(filter) ORDER BY accountID", arguments: [vault.sqlText])
+                .map(Self.outboxRow)
         }
 
         func outbox(_ vault: UUID, _ account: UUID) throws -> OutboxRow? {
-            try Row.fetchOne(
-                db, sql: "SELECT version, envelope, parts FROM outbox WHERE vaultID = ? AND accountID = ?",
-                arguments: [vault.sqlText, account.sqlText]
-            ).map { OutboxRow(accountID: account, version: Self.version($0), envelope: $0["envelope"], parts: $0["parts"]) }
+            try Row.fetchOne(db, sql: "SELECT * FROM outbox WHERE vaultID = ? AND accountID = ?", arguments: [vault.sqlText, account.sqlText])
+                .map(Self.outboxRow)
+        }
+
+        private static func outboxRow(_ row: Row) throws -> OutboxRow {
+            guard let id = UUID(uuidString: row["accountID"]) else { throw VaultSyncError.malformed }
+            let encoded: Data? = row["remainingAssets"]
+            let assets = try encoded.map { try JSONDecoder().decode([VaultAssetRef].self, from: $0) } ?? []
+            guard assets.allSatisfy(\.valid) else { throw VaultSyncError.malformed }
+            return OutboxRow(accountID: id, version: version(row), envelope: row["envelope"], parts: row["parts"], remainingAssets: assets)
         }
 
         func save(_ row: OutboxRow, vault: UUID) throws {
+            let remaining = row.remainingAssets.isEmpty ? nil : try JSONEncoder().encode(row.remainingAssets)
             try db.execute(
-                sql: "INSERT OR REPLACE INTO outbox(vaultID, accountID, version, envelope, parts) VALUES (?, ?, ?, ?, ?)",
-                arguments: [vault.sqlText, row.accountID.sqlText, Int64(clamping: row.version), row.envelope, row.parts]
+                sql: "INSERT OR REPLACE INTO outbox(vaultID, accountID, version, envelope, parts, remainingAssets) VALUES (?, ?, ?, ?, ?, ?)",
+                arguments: [vault.sqlText, row.accountID.sqlText, Int64(clamping: row.version), row.envelope, row.parts, remaining]
             )
         }
 

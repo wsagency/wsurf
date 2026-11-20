@@ -54,7 +54,7 @@ nonisolated struct VaultSyncSummary: Equatable {
 /// Sync of sealed vaults through the one engine (spec amendment 2026-10-22). Per vault, opt-in: this Mac seals each entry under the
 /// vault's sync key and sends it as an `Item` record in the vault's zone, and opens, merges and applies what the other Macs sent,
 /// through the vault's own commit. It works only while the vault is unlocked, and never prompts, unlocks or touches a lease; what
-/// arrives while it is locked waits sealed in `Credentials.sync`. Nothing here reads a store row, a file or a setting.
+/// arrives while it is locked waits sealed in `Credentials.sync`. Large entries and encrypted file chunks resume from private staging.
 ///
 /// Every step of one vault runs on that vault's serial chain, so a drain, a produce and a resolve never interleave; an event only
 /// writes the database and queues work.
@@ -122,6 +122,7 @@ public final class VaultSync: SyncEngineDelegate {
     nonisolated struct StampedSum {
         var stamp: AccountStamp
         var sum: Data?
+        var complete: Bool
     }
 
     public init(
@@ -148,6 +149,9 @@ public final class VaultSync: SyncEngineDelegate {
         launchCheck = true
         loadDatabases()
         for key in enabledKeys {
+            if let database = database(key.profileID) {
+                pruneAssets(key, database: database)
+            }
             retryAfterUpdate(key)
             oweReadOfParked(key)
             if needsFetch(key) {
@@ -155,7 +159,7 @@ public final class VaultSync: SyncEngineDelegate {
                     try? await self?.fetchAllNow(key)
                 }
             }
-            rereadSkipped(key)
+            rereadIfOwed(key)
         }
         // What waits to go up is handed to the engine once rows of vaults that are gone are dropped.
         housekeeping.append(Task { [weak self] in
@@ -200,6 +204,7 @@ public final class VaultSync: SyncEngineDelegate {
         for row in (try? database.read { try $0.vaults() }) ?? [] where !listed.contains(row.vaultID) {
             let key = VaultKey(profileID: profileID, vaultID: row.vaultID)
             try? database.write { try $0.remove(row.vaultID) }
+            clearAssets(key)
             forget(key)
             summaries[key] = nil
         }
@@ -214,12 +219,15 @@ public final class VaultSync: SyncEngineDelegate {
         refresh(key)
     }
 
-    /// A full read that skipped records owes one more, at the next launch or the next heartbeat, whichever comes first, and not at every
-    /// heartbeat after it. It holds nothing back: produce does not wait for it.
-    private func rereadSkipped(_ key: VaultKey) {
+    /// Retry an incomplete read or verify an unexpected save without holding back local changes.
+    func rereadIfOwed(_ key: VaultKey) {
         guard let (_, row) = enabledRow(key), row.rereadOwed, !row.needsFetch, rereadTried.insert(key).inserted else { return }
         enqueue(key) { [weak self] in
-            try? await self?.fetchAllNow(key, force: true)
+            do {
+                try await self?.fetchAllNow(key, force: true)
+            } catch {
+                self?.rereadTried.remove(key)
+            }
         }
     }
 
@@ -297,7 +305,7 @@ public final class VaultSync: SyncEngineDelegate {
         summaries.contains { $0.key.profileID == profileID && $0.value.enabled }
     }
 
-    /// Entries that stay on this Mac (too large, or only files), changes that could not be read this run, and entries a newer
+    /// Entries this Mac could not prepare, changes that could not be read this run, and entries a newer
     /// WSurf wrote that wait for an update.
     public func tally(profileID: UUID, vaultID: UUID) -> VaultSyncTally {
         let key = VaultKey(profileID: profileID, vaultID: vaultID)
@@ -341,6 +349,7 @@ public final class VaultSync: SyncEngineDelegate {
         if let database = database(profileID) {
             try? database.write { try $0.remove(vaultID) }
         }
+        clearAssets(key)
         forget(key)
         summaries[key] = nil
     }
@@ -372,12 +381,22 @@ public final class VaultSync: SyncEngineDelegate {
     /// The app added the vault from a `Vault` record: it syncs here now. It stays locked, so nothing is applied until the first unlock.
     public func adopted(profileID: UUID, vaultID: UUID) async {
         guard let key = try? checkedKey(profileID, vaultID) else { return }
+        let mine = token(key), user = state.accountUser
         try? await serial(key) { [self] in
+            guard let engine, accountAvailable != false, mine == token(key), state.accountUser == user else { return }
+            // A previously verified discovery card can be adopted offline. The deferred zone read verifies that account again.
+            let approved: String?
+            if let user {
+                approved = user
+            } else {
+                approved = try await enrollmentAccount(engine, key: key, session: mine, expecting: nil)
+            }
             guard let database = database(profileID, create: true) else { return }
+            clearAssets(key)
             begin(key)
             try? database.write { tx in
                 try tx.clear(vaultID)
-                try tx.save(VaultRow(vaultID: vaultID, needsFetch: true))
+                try tx.save(VaultRow(vaultID: vaultID, needsFetch: true, approvedUser: approved))
             }
             refresh(key)
             try? await fetchAllNow(key)
@@ -441,6 +460,7 @@ public final class VaultSync: SyncEngineDelegate {
         if let database = database(profileID) {
             try? database.write { try $0.remove(vaultID) }
         }
+        clearAssets(key)
         forget(key)
         summaries[key] = nil
     }
@@ -453,6 +473,7 @@ public final class VaultSync: SyncEngineDelegate {
                 engine?.add([.deleteZone(key.zone)])
             }
             state.remote[key.zone] = nil
+            clearAssets(key)
             forget(key)
             summaries[key] = nil
         }
@@ -485,7 +506,7 @@ public final class VaultSync: SyncEngineDelegate {
             zoneRetries[key] = nil
             itemRetries[key] = nil
             readd(key)
-            rereadSkipped(key)
+            rereadIfOwed(key)
             enqueue(key) { [weak self] in
                 await self?.cycle(key, fetch: position == 0)
             }
@@ -500,7 +521,7 @@ public final class VaultSync: SyncEngineDelegate {
     // MARK: - SyncEngineDelegate
 
     public func record(for id: SyncRecordID) -> SyncRecord? {
-        guard !launchCheck, let ids = SyncZone.vaultIDs(id.zone), !excluded.contains(ids.profileID) else { return nil }
+        guard !launchCheck, accountAvailable != false, let ids = SyncZone.vaultIDs(id.zone), !excluded.contains(ids.profileID) else { return nil }
         let key = VaultKey(ids)
         guard let (database, row) = runningRow(key) else { return nil }
         let fields = (try? database.read { try $0.systemFields(key.vaultID, id.name) }) ?? nil
@@ -509,7 +530,7 @@ public final class VaultSync: SyncEngineDelegate {
             return SyncRecord(id: id, type: .vault, schema: 1, payload: payload, systemFields: fields)
         }
         guard let account = Self.accountID(id.name),
-              let outgoing = (try? database.read { try $0.outbox(key.vaultID, account) }) ?? nil
+              let outgoing = (try? database.read { try $0.outbox(key.vaultID, account) }) ?? nil, outgoing.remainingAssets.isEmpty
         else { return nil }
         // A record from another Mac that is fetched and not yet merged is as new as this row or newer, and one parked for a newer WSurf
         // is of a version nobody here can tell: sending over either would overwrite it. The row waits; the merge decides.
@@ -598,7 +619,7 @@ public final class VaultSync: SyncEngineDelegate {
     /// The vault's row while this Mac syncs it, whatever its status.
     func enabledRow(_ key: VaultKey) -> (VaultSyncDatabase, VaultRow)? {
         guard !halted.contains(key), let database = database(key.profileID),
-              let row = (try? database.read { try $0.vault(key.vaultID) }) ?? nil, row.enabled
+              let row = (try? database.read { try $0.vault(key.vaultID) }) ?? nil, row.enabled, row.approvedUser == nil || row.approvedUser == state.accountUser
         else { return nil }
         return (database, row)
     }
@@ -655,9 +676,10 @@ public final class VaultSync: SyncEngineDelegate {
             return
         }
         let (row, counts) = loaded
+        let otherAccount = row.enabled && row.approvedUser != nil && row.approvedUser != state.accountUser
         let tally = tallies[key] ?? (0, 0)
         let next = VaultSyncSummary(
-            enabled: row.enabled, stored: row.status, outbox: counts.outbox, inbox: counts.inbox, review: counts.review,
+            enabled: row.enabled && !otherAccount, stored: otherAccount ? .accountChanged : row.status, outbox: counts.outbox, inbox: counts.inbox, review: counts.review,
             hasPendingVault: row.pendingVault != nil, isHeldBack: row.dirty, isReading: row.needsFetch,
             isUnlocked: unlocked.contains(key), notSyncable: tally.notSyncable, unreadable: tally.unreadable, parked: counts.parked,
             holding: holding[key] ?? 0
@@ -731,7 +753,7 @@ public final class VaultSync: SyncEngineDelegate {
     /// Asks the engine to send everything the vault still has waiting.
     func readd(_ key: VaultKey) {
         guard let engine, let (database, row) = runningRow(key) else { return }
-        let waiting = (try? database.read { try $0.outbox(key.vaultID).map(\.accountID) }) ?? []
+        let waiting = (try? database.read { try $0.outbox(key.vaultID).filter(\.remainingAssets.isEmpty).map(\.accountID) }) ?? []
         // A zone is created only for a vault that never uploaded its `Vault` record: the one case where this Mac made the zone and the queue
         // that held its creation was lost. A zone another Mac removed must not come back because this Mac signed in again.
         var changes: [SyncChange] = []

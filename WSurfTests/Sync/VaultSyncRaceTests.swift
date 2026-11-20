@@ -3,8 +3,8 @@
 
 import Foundation
 import Testing
-import WSurfCore
 
+@testable import WSurfCore
 @testable import WSurfVault
 
 // Orders of events that decide whether a Mac's sealed row may go up: what it fetched before it sent, what the engine handed out
@@ -96,10 +96,10 @@ struct VaultSyncRaceTests {
         let lockout = try await lockedWithAPendingChange(rig)
 
         // The engine asked for A’s row and has it in flight. B’s version is fetched meanwhile, and the server then turns the save down.
-        _ = try #require(lockout.a.engine.handOut(lockout.id))
+        let attempted = try #require(lockout.a.engine.handOut(lockout.id))
         try await lockout.a.engine.fetchNow()
         await lockout.a.sync.settle()
-        let failure = SyncFailedSave(id: lockout.id, failure: .serverRecordChanged(lockout.theirs))
+        let failure = SyncFailedSave(id: lockout.id, failure: .serverRecordChanged(lockout.theirs), attempted: attempted)
         await lockout.a.sync.handle(.sent(saved: [], deleted: [], failed: [failure]))
         await lockout.a.sync.settle()
 
@@ -191,27 +191,113 @@ struct VaultSyncRaceTests {
         #expect(va.name == "Renamed")
     }
 
+    @Test func firstExplicitOptInRecordsTheVerifiedAppleAccount() async throws {
+        let rig = Rig()
+        defer { rig.finish() }
+        let (mac, _) = try rig.mac(holding: syncAccounts(1), knownAccount: false)
+        try await mac.sync.enable(profileID: rig.profile, vaultID: rig.vaultID)
+        let dir = try #require(mac.host.syncDirectory(profileID: rig.profile))
+        let db = try #require(try VaultSyncDatabase.open(directory: dir, create: false))
+        let row = try db.read { try $0.vault(rig.vaultID) }
+        #expect(mac.sync.state.accountUser == rig.cloud.user && row?.approvedUser == rig.cloud.user)
+    }
+
+    @Test func anAccountChangeWhileEnablingDoesNotQueueAnUploadForTheNewAccount() async throws {
+        let rig = Rig()
+        defer { rig.finish() }
+        let (mac, vault) = try rig.mac(holding: syncAccounts(1))
+        let pause = HostPause()
+        mac.host.pauseAfterSnapshot = pause
+        let enable = Task { try await mac.sync.enable(profileID: rig.profile, vaultID: rig.vaultID) }
+        let waiting = await waitUntil { pause.isWaiting }
+        rig.cloud.switchUser("another-apple-account")
+        pause.release()
+        #expect(waiting)
+        do {
+            try await enable.value
+            Issue.record("The account changed while the initial vault read was suspended")
+        } catch VaultSyncFailure.unavailable { }
+        try await mac.pump()
+        #expect(!mac.sync.isSyncing(profileID: rig.profile, vaultID: rig.vaultID))
+        #expect(rig.cloud.zones.isEmpty && vault.accounts.count == 1)
+    }
+
+    @Test func previousAccountRepliesCannotChangeANewEnrollmentOfTheSameVault() async throws {
+        let rig = Rig()
+        defer { rig.finish() }
+        let entry = syncAccounts(1)[0]
+        let (mac, vault) = try await rig.syncedMac(holding: [entry])
+        vault.edit(syncChanging(entry, password: "old account"))
+        vault.name = "Earlier vault name"
+        await mac.wrote(vault)
+        let id = SyncRecordID(zone: rig.zone, name: entry.id.uuidString)
+        let header = SyncRecordID(zone: rig.zone, name: VaultSync.vaultRecordName)
+        var old = try #require(mac.engine.handOut(id))
+        var oldHeader = try #require(mac.engine.handOut(header))
+        old.systemFields = FakeSyncCloud.fields(for: 81)
+        oldHeader.systemFields = FakeSyncCloud.fields(for: 82)
+
+        rig.cloud.switchUser("second-fixture-user")
+        await mac.engine.simulateAccount(.switchAccounts(user: rig.cloud.user))
+        vault.edit(syncChanging(entry, password: "new account"))
+        try await mac.sync.enable(profileID: rig.profile, vaultID: rig.vaultID)
+        let current = try #require(mac.sync.record(for: id))
+        let currentHeader = try #require(mac.sync.record(for: header))
+        await mac.sync.handle(.sent(saved: [old, oldHeader], deleted: [], failed: [
+            SyncFailedSave(id: header, failure: .zoneNotFound, attempted: oldHeader),
+            SyncFailedSave(id: id, failure: .quotaExceeded, attempted: old),
+        ]))
+        await mac.sync.settle()
+        #expect(mac.sync.record(for: id) == current && mac.sync.record(for: header) == currentHeader)
+        #expect(try await mac.sync.conflicts(profileID: rig.profile, vaultID: rig.vaultID).isEmpty)
+        try await mac.pump()
+        let saved = try #require(rig.item(entry))
+        #expect(try VaultSyncCodec.openItem(saved.payload, accountID: entry.id, key: rig.key).account?.password == "new account")
+        #expect(rig.status(mac) == .synced)
+    }
+
+    @Test func anAccountChangeDuringTheFirstZoneReadKeepsTheNewAccountStatus() async throws {
+        let rig = Rig()
+        defer { rig.finish() }
+        _ = try await rig.syncedMac(holding: syncAccounts(1))
+        let (mac, vault) = try rig.mac()
+        mac.engine.afterFullZoneRead = { rig.cloud.switchUser("different-fixture-user") }
+        await #expect(throws: VaultSyncFailure.unavailable) {
+            try await mac.sync.enable(profileID: rig.profile, vaultID: rig.vaultID)
+        }
+        #expect(rig.status(mac) == .accountChanged)
+        #expect(vault.accounts.isEmpty && rig.cloud.recordCount == 0)
+    }
+
     @Test func anAccountSeenForTheFirstTimeWithSyncOnIsADifferentAccount() async throws {
         let rig = Rig()
         defer { rig.finish() }
         let held = syncAccounts(2)
-        // The app’s file was lost, so this Mac does not know which Apple Account it has been syncing with.
-        let (a, va) = try rig.mac(holding: held, knownAccount: false)
-        try await a.sync.enable(profileID: rig.profile, vaultID: rig.vaultID)
-        try await a.pump()
-        #expect(a.sync.state.accountUser == nil)
+        let (a, va) = try await rig.syncedMac(holding: held)
         va.edit(syncChanging(held[0], password: "typed"))
         await a.wrote(va)
 
-        // The engine starts fresh and names the account: another one, where a zone of that name exists.
+        // The app checkpoint was lost and this old enrollment predates per-vault account binding.
+        a.sync.pauseDiscovery()
+        let dir = try #require(a.host.syncDirectory(profileID: rig.profile))
+        let db = try #require(try VaultSyncDatabase.open(directory: dir, create: false))
+        try db.write { tx in
+            var row = try #require(try tx.vault(rig.vaultID))
+            row.approvedUser = nil
+            try tx.save(row)
+        }
+        let restored = VaultSync(host: a.host, state: VaultSyncAppState(), persist: { _ in }, excludedProfiles: [])
+        let engine = FakeSyncEngine(cloud: rig.cloud, delegate: restored)
+        restored.attach(engine)
+        await restored.settle()
         rig.cloud.switchUser("user-2")
         rig.cloud.createZone(rig.zone)
-        await a.engine.simulateAccount(.signIn(user: "user-2"))
-        try await a.pump()
+        await engine.simulateAccount(.signIn(user: "user-2"))
+        try await engine.sendNow()
 
-        #expect(rig.status(a) == .accountChanged)
+        #expect(restored.status(profileID: rig.profile, vaultID: rig.vaultID) == .accountChanged)
         #expect(rig.cloud.recordCount == 0, "nothing went up to the other account")
-        #expect(va.account(held[0].id)?.password == "typed" && a.sync.state.accountUser == "user-2")
+        #expect(va.account(held[0].id)?.password == "typed" && restored.state.accountUser == "user-2")
     }
 
     @Test func aFirstSignInWithNothingSyncedJustRemembersTheAccount() async throws {

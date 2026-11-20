@@ -48,6 +48,7 @@ struct NeverSyncTests {
         for source in sources {
             for word in excluded {
                 if source.path == "MacSettingsSyncAdapter.swift", ["SitePermissions", "PageZoom"].contains(word) { continue }
+                if source.path == "VaultSyncAttachment.swift", word == "VaultBlob" { continue }
                 #expect(!source.text.contains(word), "\(source.path) names \(word)")
             }
             if !vaultHosts.contains(source.path) {

@@ -35,7 +35,7 @@ Provider configurations can sync without secrets. A separately enabled key chann
 
 Provider definitions are global, while model selection belongs to each profile. Removing a provider on one device must respect the independent key opt-in and local key retention. Receiving an endpoint change requires a new local approval before using an existing key there. A camera rule travels with its origin, assistant access with its site, and tracker exceptions with their host. Sensitive permissions require local consent.
 
-Import each shared vault by its own identifier and preserve unrelated existing vaults. Rewrap attachment keys for the destination store and retain encrypted assets while a live entry, revision or Trash entry references them. Empty Trash keeps its existing device-local effect. When the Apple Account changes, isolate queued writes and require fresh opt-in before publishing data to the new account.
+Import each shared vault by its own identifier and preserve unrelated existing vaults. Rewrap attachment keys for the destination store and retain encrypted assets while a live entry, revision or Trash entry references them. The local purge checks all three kinds of reference. iCloud keeps immutable encrypted assets until the owner removes the vault from iCloud, because an offline Mac may still need a file for its History or Trash. Empty Trash keeps its existing device-local effect. When the Apple Account changes, isolate queued writes and require fresh opt-in before publishing data to the new account.
 
 ## Acceptance
 

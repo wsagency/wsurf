@@ -427,7 +427,7 @@ struct VaultSyncDeviceTests {
         }
     }
 
-    @Test func inputHistoryAndFilesStayOnTheMac() async throws {
+    @Test func filesReachTheOtherStoreWhileInputHistoryStaysOnTheMac() async throws {
         try await withDevicePair { pair in
             let source = FileManager.default.temporaryDirectory.appending(path: "scan-\(UUID().uuidString).txt")
             try Data("body-\(UUID().uuidString)".utf8).write(to: source)
@@ -446,13 +446,20 @@ struct VaultSyncDeviceTests {
 
             let zone = SyncZone.vault(profileID: pair.profile.id, vaultID: pair.vaultID)
             let record = try #require(pair.cloud.record(SyncRecordID(zone: zone, name: entry.id.uuidString)))
-            let opened = try VaultSyncCodec.openItem(record.payload, accountID: entry.id, key: try await pair.managerA.syncKey())
-            #expect(opened.account?.attachments == nil && opened.account?.username == entry.username)
+            let key = try await pair.managerA.syncKey()
+            let (version, reference) = try VaultSyncCodec.assetReference(record.payload, accountID: entry.id, key: key)
+            let body = try #require(pair.cloud.encryptedVaultAssets[SyncRecordID(zone: zone, name: reference.name)])
+            let opened = try VaultSyncCodec.openAssetAccount(body, accountID: entry.id, version: version, key: key)
+            #expect(opened.account.attachments?.first?.id == file.id && opened.account.username == entry.username)
             try await pair.addToB()
             try await pair.unlockB()
             try await pair.pump()
             let managerB = try #require(pair.managerB)
-            #expect(try await pair.accounts(managerB)[entry.id]?.attachments == nil, "the added vault has no files")
+            let received = try #require(try await pair.accounts(managerB)[entry.id]?.attachments?.first)
+            #expect(received.id == file.id && received.wrappedKey != file.wrappedKey)
+            let destination = pair.envA.directory.appending(path: "verified-copy")
+            try await managerB.readAttachment(received, to: destination)
+            #expect(try Data(contentsOf: destination) == Data(contentsOf: source))
             #expect(try await pair.accounts(pair.managerA)[entry.id]?.attachments == [file], "this Mac keeps its own")
             #expect(pair.statusA == .synced && pair.statusB == .synced)
             for record in pair.cloud.records(in: zone) ?? [] {

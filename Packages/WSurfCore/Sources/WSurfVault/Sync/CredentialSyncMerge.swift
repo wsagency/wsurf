@@ -11,7 +11,7 @@ import Foundation
 
 /// The parts of an account that are merged on their own. Passkeys are merged by identity beside them (`PasskeyPart`).
 public nonisolated enum SyncPart: String, Codable, CaseIterable, Sendable {
-    case password, totp, notes, secureItems, metadata
+    case password, totp, notes, secureItems, metadata, attachments
 }
 
 /// One passkey of an account: its identity, which is fixed (website and credential id), and the hash of its key material.
@@ -35,7 +35,7 @@ public nonisolated struct PasskeyPart: Codable, Equatable, Sendable {
 
 /// What an account is, part by part, as `CredentialContent.hash` sees it. These are plain SHA-256 of secrets: they are stored and
 /// uploaded only sealed (`VaultSyncCodec.sealParts`). Dates, events, the Apple observed bases, the import trace, a passkey's
-/// `lastSignedAt` and files are not parts: they never raise an upload or a conflict, and they travel with the part they belong to. The
+/// `lastSignedAt` travel with the part they belong to. Complete records also compare the logical file list across stores. The
 /// entries merged into an account (`mergedFrom`: who they were and what they stood for, without their observed bases) are part of
 /// `metadata`, so a merge always reaches the other Macs, and with it what keeps an import from bringing a merged entry back. So are the
 /// entries the person said it is not the same as (`notSameAs`), so a Not the Same reaches them too.
@@ -46,6 +46,8 @@ public nonisolated struct SyncParts: Codable, Equatable, Sendable {
     public var notes: Data
     public var secureItems: Data
     public var metadata: Data
+    /// Absent in older bases and legacy Items. In a complete Item this also represents an explicitly empty file list.
+    public var attachments: Data?
     /// Sorted by identity.
     public var passkeys: [PasskeyPart]
 
@@ -65,12 +67,13 @@ public nonisolated struct SyncParts: Codable, Equatable, Sendable {
     )
 
     private static let zero = Data(count: 32)
+    static let emptyFiles = Data()
 
     /// SHA-256 over every field above, in this order. Two accounts with one sum have no part to merge.
     public var sum: Data {
         var writer = StoreWriter()
         writer.bool(removed)
-        for part in SyncPart.allCases {
+        for part in SyncPart.allCases where part != .attachments || attachments != nil {
             writer.bytes(hash(of: part))
         }
         writer.array(passkeys) { writer, passkey in
@@ -80,9 +83,9 @@ public nonisolated struct SyncParts: Codable, Equatable, Sendable {
         return Data(SHA256.hash(data: writer.data))
     }
 
-    /// The parts of `account`; its files are ignored. Throws what `CredentialContent.hash` throws, and `duplicateIdentifier` for two
+    /// The parts of `account`; legacy records omit the attachment hash. Throws what `CredentialContent.hash` throws, and `duplicateIdentifier` for two
     /// passkeys with one identity.
-    public static func of(_ account: CredentialAccount) throws -> SyncParts {
+    public static func of(_ account: CredentialAccount, includingFiles: Bool = false) throws -> SyncParts {
         var identities = Set<Data>()
         var passkeys: [PasskeyPart] = []
         for passkey in account.passkeys {
@@ -90,7 +93,7 @@ public nonisolated struct SyncParts: Codable, Equatable, Sendable {
             guard identities.insert(identity).inserted else { throw CredentialVaultError.duplicateIdentifier }
             passkeys.append(PasskeyPart(identity: identity, hash: try CredentialContent.hash(.passkey(passkey))))
         }
-        return SyncParts(
+        var parts = SyncParts(
             removed: false,
             password: try CredentialContent.hash(.password(account)),
             totp: try CredentialContent.hash(.totp(account)),
@@ -99,6 +102,10 @@ public nonisolated struct SyncParts: Codable, Equatable, Sendable {
             metadata: try metadata(of: account),
             passkeys: passkeys.sorted { $0.identity.lexicographicallyPrecedes($1.identity) }
         )
+        if includingFiles {
+            parts.attachments = try account.attachments == nil ? emptyFiles : CredentialContent.hash(.attachments(account))
+        }
+        return parts
     }
 
     /// `CredentialContent.hash(.metadata)`, and, for an account that entries were merged into or that is not the same as others,
@@ -137,6 +144,8 @@ public nonisolated struct SyncParts: Codable, Equatable, Sendable {
             secureItems
         case .metadata:
             metadata
+        case .attachments:
+            attachments ?? Self.zero
         }
     }
 }
@@ -343,9 +352,10 @@ public nonisolated enum CredentialSyncMerge {
                 }
                 return .keep(accepted)
             }
-            // Files are never synced, so an entry that has some holds the only copy of them: its move to Trash is the owner's choice.
+            // Legacy bases never covered files. Preserve any local-only files for the owner's review.
             let hasFiles = local.attachments?.isEmpty == false
-            if let base, !base.parts.removed, !hasFiles, try SyncParts.of(local).sum == base.parts.sum {
+            if let base, !base.parts.removed, !hasFiles || base.parts.attachments != nil,
+               try SyncParts.of(local, includingFiles: base.parts.attachments != nil).sum == base.parts.sum {
                 return .moveToTrash(accepted)
             }
             return .review(.deletedThereChangedHere, parts: [])
@@ -358,7 +368,7 @@ public nonisolated enum CredentialSyncMerge {
             }
             return adding(account, incoming: incoming, version: item.version, index: index)
         }
-        let own = try SyncParts.of(local)
+        let own = try SyncParts.of(local, includingFiles: item.includesFiles)
         if own.sum == incoming.sum {
             return .keep(accepted)
         }
@@ -398,7 +408,7 @@ public nonisolated enum CredentialSyncMerge {
             return keepLocal ? .keep(accepted) : adding(account, incoming: incoming, version: item.version, index: index)
         case (let account?, let local?):
             guard !keepLocal else { return .keep(accepted) }
-            let own = try SyncParts.of(local)
+            let own = try SyncParts.of(local, includingFiles: item.includesFiles)
             var found = plan(incoming: account, parts: incoming, own: own, base: base.flatMap { $0.parts.removed ? nil : $0.parts }, index: index)
             found.taking.parts.formUnion(found.conflicts)
             return applying(found, incoming: account, parts: incoming, local: local, own: own, version: item.version, index: index)
@@ -407,7 +417,7 @@ public nonisolated enum CredentialSyncMerge {
 
     // MARK: Merge
 
-    /// `local` with what `taking` names copied from `incoming`. Always the local one's: `id`, `attachments`, `createdAt`,
+    /// `local` with what `taking` names copied from `incoming`. Always the local one's: `id`, `createdAt`,
     /// `modifiedAt`, `migratedAt` and every passkey kept (so `lastSignedAt` stays local). Each part brings the fields that belong to it:
     /// the login its events and observed base, the code likewise, the items their observed base, the login and the notes the import
     /// trace, and the name and websites the exchange metadata, the exchanger's ids, the merged items and the entries it is not the same as.
@@ -441,6 +451,8 @@ public nonisolated enum CredentialSyncMerge {
                 result.exchangeItemID = incoming.exchangeItemID
                 result.mergedFrom = incoming.mergedFrom
                 result.notSameAs = incoming.notSameAs
+            case .attachments:
+                result.attachments = incoming.attachments
             }
         }
         if !taking.dropPasskeys.isEmpty {
@@ -465,7 +477,11 @@ public nonisolated enum CredentialSyncMerge {
     /// §4.3 for every part and every passkey identity.
     private static func plan(incoming: CredentialAccount, parts: SyncParts, own: SyncParts, base: SyncParts?, index: SyncLocalIndex) -> Plan {
         var plan = Plan()
-        for part in SyncPart.allCases {
+        for part in SyncPart.allCases where part != .attachments || parts.attachments != nil {
+            if part == .attachments, base?.attachments == nil, own.attachments == SyncParts.emptyFiles {
+                plan.taking.parts.insert(part)
+                continue
+            }
             switch classify(incoming: parts.hash(of: part), local: own.hash(of: part), base: base?.hash(of: part)) {
             case .remoteChanged:
                 plan.taking.parts.insert(part)
