@@ -589,6 +589,10 @@ final class CloudSettingsSync: SyncZoneHandler {
             profilesForRecovery = nil
         }
         optOutsToFinish.formUnion(pendingOptOuts.keys)
+        // The first successful read may come from profile erasure instead of the heartbeat.
+        if needsEngine && engine == nil {
+            onNeedsEngine?()
+        }
     }
 
     private func pruneChannels(outside live: Set<UUID>) {

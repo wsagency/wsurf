@@ -68,7 +68,8 @@ extension MacSettingsSyncTests {
         #expect(cloud.record(SyncRecordID(zone: models.zone, name: name)) != nil)
     }
 
-    @Test func unreadableCheckpointWithoutAJournalPreservesPendingEdits() async throws {
+    @Test(arguments: [false, true])
+    func unreadableCheckpointWithoutAJournalPreservesPendingEdits(anotherProfileIsErased: Bool) async throws {
         let files = FileManager.default, root = try lifecycleDirectory()
         let file = root.appending(path: "settings"), profile = UUID()
         defer {
@@ -97,7 +98,11 @@ extension MacSettingsSyncTests {
         #expect(throws: (any Error).self) { try Data(contentsOf: file) }
         let restored = open(), recovery = FakeSyncEngine(cloud: cloud)
         recovery.delegate = restored
-        restored.onNeedsEngine = { restored.attach(recovery) }
+        restored.onNeedsEngine = {
+            restored.attach(recovery)
+            // CloudSync starts its shared heartbeat whenever restored enrollments first need an engine.
+            restored.beat()
+        }
         restored.beat()
         #expect(restored.checkpointUnavailable && !restored.needsEngine)
         try #require(await waitUntil { clock.pendingCount == 1 })
@@ -106,6 +111,10 @@ extension MacSettingsSyncTests {
         #expect(restored.record(for: id) == nil && recovery.pending.isEmpty)
         try files.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
         #expect(try Data(contentsOf: file) == checkpoint)
+        if anotherProfileIsErased {
+            // Profile erasure can be the first reader after access returns, before the local retry fires.
+            try restored.forgetProfile(UUID())
+        }
         clock.advance(by: .seconds(30))
         try #require(await waitUntil(timeout: .seconds(3)) {
             guard let record = cloud.record(id) else { return false }
