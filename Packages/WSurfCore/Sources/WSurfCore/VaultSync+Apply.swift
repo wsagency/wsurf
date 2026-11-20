@@ -22,7 +22,7 @@ nonisolated struct SyncPass {
     var conflicts: [UUID: ConflictRow] = [:]
     /// Accounts decided: their outbox rows are dropped, and a review row they had is replaced or removed.
     var decided: Set<UUID> = []
-    /// Inbox rows taken in, deleted by version so a newer row that arrived meanwhile stays.
+    /// Exact inbox rows taken in by this pass.
     var processed: [InboxRow] = []
     /// Review rows answered.
     var answered: Set<UUID> = []
@@ -355,6 +355,9 @@ extension VaultSync {
                 return .stop
             }
         }
+        if error as? VaultFileError == .vaultFull {
+            return .data
+        }
         if let error = error as? CredentialStoreError {
             switch error {
             case .limit, .malformed:
@@ -369,6 +372,7 @@ extension VaultSync {
     /// Records a pass that was committed: the bases, the rows taken in, the review rows. One transaction.
     @discardableResult
     private func record(_ pass: SyncPass, key: VaultKey, database: VaultSyncDatabase, syncKey: VaultSyncKey, revision: UInt64) -> Bool {
+        var finishedImports = Set<UUID>()
         do {
             try database.write { tx in
                 guard var current = try tx.vault(key.vaultID), current.enabled else { return }
@@ -377,7 +381,10 @@ extension VaultSync {
                     try tx.save(BaseRow(accountID: id, version: base.version, parts: sealed), vault: key.vaultID)
                 }
                 for inbound in pass.processed {
-                    try tx.deleteInbox(key.vaultID, inbound.accountID, upTo: inbound.version)
+                    if try tx.consume(inbound, vault: key.vaultID), inbound.envelope.first == VaultSyncCodec.assetFormat,
+                       pass.conflicts[inbound.accountID] == nil {
+                        finishedImports.insert(inbound.accountID)
+                    }
                 }
                 for id in pass.decided {
                     try tx.deleteOutbox(key.vaultID, id)
@@ -387,6 +394,9 @@ extension VaultSync {
                 }
                 for id in pass.answered where pass.conflicts[id] == nil {
                     try tx.deleteConflict(key.vaultID, id)
+                    if pass.envelopes[id]?.envelope.first == VaultSyncCodec.assetFormat, try tx.inboxVersion(key.vaultID, id) == nil {
+                        finishedImports.insert(id)
+                    }
                 }
                 var conflicts = pass.conflicts
                 if !pass.removing.isEmpty {
@@ -422,10 +432,7 @@ extension VaultSync {
         for id in pass.decided where pass.envelopes[id]?.envelope.first == VaultSyncCodec.assetFormat || pendingBases[key]?[id]?.parts.attachments != nil {
             clearAssets(key, account: id)
         }
-        for row in pass.processed where row.envelope.first == VaultSyncCodec.assetFormat && pass.conflicts[row.accountID] == nil {
-            clearAssets(key, account: row.accountID, incoming: true)
-        }
-        for id in pass.answered where pass.envelopes[id]?.envelope.first == VaultSyncCodec.assetFormat && pass.conflicts[id] == nil {
+        for id in finishedImports {
             clearAssets(key, account: id, incoming: true)
         }
         for id in pass.decided {

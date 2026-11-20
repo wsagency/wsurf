@@ -369,6 +369,15 @@ nonisolated final class VaultSyncDatabase: Sendable {
             )
         }
 
+        /// A pass can wait for the host while a fetch replaces this row, even with a parked record at version zero.
+        func consume(_ row: InboxRow, vault: UUID) throws -> Bool {
+            try db.execute(
+                sql: "DELETE FROM inbox WHERE vaultID = ? AND accountID = ? AND version = ? AND envelope = ?",
+                arguments: [vault.sqlText, row.accountID.sqlText, Int64(clamping: row.version), row.envelope]
+            )
+            return db.changesCount == 1
+        }
+
         /// Deletes the account's row unless a newer version arrived since `version` was read.
         func deleteInbox(_ vault: UUID, _ account: UUID, upTo version: UInt64) throws {
             try db.execute(
