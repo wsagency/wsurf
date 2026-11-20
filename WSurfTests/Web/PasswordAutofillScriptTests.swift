@@ -45,8 +45,8 @@ struct PasswordAutofillScriptTests {
         return (view, sink)
     }
 
-    private func select(in view: BrowserPage, sink: Sink) async throws -> String {
-        _ = try await view.callAsyncJavaScript("document.getElementById('password').focus();", arguments: [:], in: nil, contentWorld: PasswordAutofill.world)
+    private func select(in view: BrowserPage, sink: Sink, field: String = "password") async throws -> String {
+        _ = try await view.callAsyncJavaScript("document.getElementById(field).focus();", arguments: ["field": field], in: nil, contentWorld: PasswordAutofill.world)
         #expect(await waitUntil { sink.body?["token"] is String })
         return try #require(sink.body?["token"] as? String)
     }
@@ -77,6 +77,31 @@ struct PasswordAutofillScriptTests {
         let next = try await select(in: page, sink: sink)
         #expect(try await fill(next, in: page, url: url, username: "other@example.test") == 1)
         #expect(try await page.evaluateJavaScript("password.value === 'dummy-secret'") as? Bool == true)
+    }
+
+    @Test(.boundedWebViews) func theSelectedUsernameMustRemainEditableForTheRestOfItsFill() async throws {
+        let (page, sink) = try await load(#"""
+        <form><input id="account" autocomplete="username" onchange="this.disabled = true">
+        <input id="password" type="password" autocomplete="current-password"></form>
+        """#)
+        let token = try await select(in: page, sink: sink, field: "account")
+        let count = try await page.callAsyncJavaScript(
+            "return globalThis.__wsurfPasswords.fill(token, location.href, {username:'fixture',password:''});",
+            arguments: ["token": token], in: nil, contentWorld: PasswordAutofill.world
+        )
+        #expect(count as? Int == 1)
+        #expect(try await page.evaluateJavaScript("account.disabled && account.value === 'fixture'") as? Bool == true)
+    }
+
+    @Test(.boundedWebViews) func theGoogleAccountChipAcceptsTheSameEmailDomainInAnotherCase() async throws {
+        let url = "https://accounts.google.com/v3/signin/challenge/pwd"
+        let (page, sink) = try await load(#"""
+        <span id="profileIdentifier" data-email="ada@EXAMPLE.TEST">ada@example.test</span>
+        <form><input type="password" id="password" autocomplete="current-password"></form>
+        """#, url: url)
+        let token = try await select(in: page, sink: sink)
+        #expect(sink.body?["username"] as? String == "ada@example.test")
+        #expect(try await fill(token, in: page, url: url, username: "ada@Example.Test") == 1)
     }
 
     @Test(.boundedWebViews) func anUnidentifiedGooglePasswordChallengeKeepsTheFieldAvailableForTyping() async throws {

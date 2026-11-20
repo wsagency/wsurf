@@ -63,17 +63,25 @@ final class PasswordsWindow: NSObject, NSWindowDelegate {
 
     /// Opens the window, or brings it to the front. Opens no browser window and never goes through `MainMenu.coordinator`.
     func show() {
-        let shown = profile
         let window = window ?? makeWindow()
-        if window.contentViewController == nil || boundProfileID != shown.id {
-            // Setting the content resizes a window to it; keep the frame the window has.
-            let frame = window.frame
-            window.contentViewController = makeContent(shown)
-            window.setFrame(frame, display: false)
-            boundProfileID = shown.id
-        }
+        bindProfile(in: window)
         NSApp.activate()
         window.makeKeyAndOrderFront(nil)
+    }
+
+    func windowDidBecomeKey(_ notification: Notification) {
+        if let window {
+            bindProfile(in: window)
+        }
+    }
+
+    private func bindProfile(in window: NSWindow) {
+        let shown = profile
+        guard window.contentViewController == nil || boundProfileID != shown.id else { return }
+        let frame = window.frame
+        boundProfileID = shown.id
+        window.contentViewController = makeContent(shown)
+        window.setFrame(frame, display: false)
     }
 
     func windowWillClose(_ notification: Notification) {

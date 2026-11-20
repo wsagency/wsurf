@@ -332,8 +332,8 @@ final class AutofillSuggestions {
         // The earlier pick belongs to a process-unique lease. Ask with its owner's epoch while that lease is live.
         let session = AutofillSaveCoordinator.shared.session(for: request.page)
         let owner = reads.first { $0.epoch == session?.username?.epoch } ?? reads[0]
-        let pinned = session?.selectedAccount(
-            in: request.page, origin: origin, enteredUsername: request.enteredUsername, epoch: owner.epoch)
+        let entered = session?.usernameForDisplayHint(request.enteredUsername, origin: origin)
+        let pinned = session?.selectedAccount(in: request.page, origin: origin, enteredUsername: entered, epoch: owner.epoch)
         let lastUsed = context.autofillLastUsed
         let result = CredentialAccountSelection.listed(
             in: reads.map {
@@ -348,8 +348,12 @@ final class AutofillSuggestions {
             request.rows[rowID] = (row.vault, row.account)
             return AutofillSuggestion(id: rowID, title: row.title, detail: row.detail, origin: origin)
         }
-        guard result.isEmpty else { return result }
-        let anotherIsLocked = reads.count < listing.count
+        let anotherIsLocked = listing.contains { vault in
+            !unlocked.contains { $0.vaultID == vault.vaultID && $0.isUnlocked }
+        }
+        if !result.isEmpty {
+            return anotherIsLocked ? result + Self.unlockRow(for: request, origin: origin) : result
+        }
         var siblings: [AutofillSuggestion] = []
         for read in reads {
             for (account, website) in CredentialAccountSelection.siblings(
@@ -373,15 +377,8 @@ final class AutofillSuggestions {
         request.siblings = siblings
         let rowID = UUID()
         request.actions[rowID] = .siblings
-        return [AutofillSuggestion(id: rowID, title: String(localized: "Check other logins for *.\(site)"), detail: "", origin: origin)]
-    }
-
-    /// The one row that unlocks: every vault is locked, or the open ones hold nothing for this field while another is locked and may
-    /// (the request then keeps the grants it read, and `unlock(_:in:)` offers the locked vaults only). Nothing is read before.
-    private static func unlockRow(for request: Request, origin: String) -> [AutofillSuggestion] {
-        let rowID = UUID()
-        request.actions[rowID] = .unlock
-        return [AutofillSuggestion(id: rowID, title: String(localized: "Unlock Credentials…"), detail: "", origin: origin)]
+        let row = AutofillSuggestion(id: rowID, title: String(localized: "Check other logins for *.\(site)"), detail: "", origin: origin)
+        return anotherIsLocked ? [row] + Self.unlockRow(for: request, origin: origin) : [row]
     }
 
     /// Cards or addresses of the profile's unlocked vaults, after the ones still in the old Keychain lists: the rows the vault builds

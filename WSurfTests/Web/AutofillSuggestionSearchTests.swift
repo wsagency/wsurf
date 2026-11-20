@@ -153,8 +153,8 @@ struct AutofillSuggestionSearchTests {
         #expect(selected.effects.last == .choose(list[1].id))
     }
 
-    @Test @MainActor func clickingTheSecondLoginAndTheSearchRowInATwoLoginPanel() throws {
-        let list = [row("ada@example.test"), row("grace@example.test")]
+    @Test(arguments: [2, 20]) @MainActor func clickingAnotherLoginAndSearchingInThePanel(count: Int) throws {
+        let list = rows(count)
         let selection = AutofillSuggestionSelection()
         selection.state = .init(rowCount: list.count)
         var chosen: UUID?
@@ -179,10 +179,16 @@ struct AutofillSuggestionSearchTests {
                 panel.sendEvent(event)
             }
         }
-        try click(atHeight: AutofillSuggestionLayout.footerHeight + AutofillSuggestionLayout.listPadding + AutofillSuggestionLayout.rowHeight / 2)
+        let firstTop = height - AutofillSuggestionLayout.searchRowHeight - 1 - AutofillSuggestionLayout.listPadding
+        try click(atHeight: firstTop - 1.5 * AutofillSuggestionLayout.rowHeight - AutofillSuggestionLayout.rowSpacing)
         #expect(chosen == list[1].id)
         try click(atHeight: height - AutofillSuggestionLayout.searchRowHeight / 2)
-        #expect(selection.state.isSearching)
+        try #require(selection.state.isSearching)
+        let index = Search.Index(list, searchable: searchable)
+        let query = Search.reduce(selection.state, .character("user\(count - 1)@"), index: index, typeToSearch: false)
+        selection.state = query.0
+        #expect(selection.state.matches == [count - 1])
+        #expect(Search.reduce(selection.state, .enter, index: index, typeToSearch: false).1 == .choose(list[count - 1].id))
     }
 
     @Test func escapeClearsTheQueryThenCloses() {

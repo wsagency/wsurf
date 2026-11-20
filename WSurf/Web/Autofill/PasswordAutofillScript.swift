@@ -44,6 +44,12 @@ nonisolated enum PasswordAutofillScript {
       };
       // Google's password step identifies the account in a chip outside the form. Only that site's displayed identity counts.
       const email = value => typeof value === 'string' && value.length <= 500 && /^[^\s@]+@[^\s@]+$/.test(value);
+      const sameEmail = (left, right) => {
+        if (left === right) return true;
+        if (!email(left) || !email(right)) return false;
+        const [local, domain] = left.split('@'), [other, otherDomain] = right.split('@');
+        return local === other && domain.toLowerCase() === otherDomain.toLowerCase();
+      };
       const googleAccount = () => {
         if (location.origin !== 'https://accounts.google.com' || !/\/challenge\/pwd(?:\/|$)/.test(location.pathname)) return null;
         const chips = document.querySelectorAll('#profileIdentifier'), chip = chips[0];
@@ -58,7 +64,7 @@ nonisolated enum PasswordAutofillScript {
           if (declared) addresses.push(declared);
         }
         const username = addresses[0];
-        return username && email(username) && addresses.every(address => address === username) ? {chooser,username} : {ambiguous:true};
+        return username && email(username) && addresses.every(address => sameEmail(address, username)) ? {chooser,username} : {ambiguous:true};
       };
       // `kind` is what the dropdown may do with typing: only a username field lets typed characters start its search.
       // `webauthn`: the field takes passkeys, so native may add "Use a Passkey…" while the page has a pending conditional request.
@@ -99,7 +105,9 @@ nonisolated enum PasswordAutofillScript {
         pick.target = fits ? target : null;
         pick.token = fits ? crypto.randomUUID() : null;
         pick.url = location.href;
-        return {action:'context',token:pick.token,url:pick.url,documentID:forms.documentID,field:fits ? pickKind(target) : ''};
+        const named = fits && current(target) ? googleAccount() : null;
+        return {action:'context',token:pick.token,url:pick.url,documentID:forms.documentID,field:fits ? pickKind(target) : '',
+          ...(named ? {googleUsername:named.username || ''} : {})};
       };
       document.addEventListener('contextmenu', event => {
         if (!event.isTrusted || !enabled) return;
@@ -167,10 +175,10 @@ nonisolated enum PasswordAutofillScript {
       // The page's own listeners run while each field is filled, and may move, hide or swap the next one: a later field takes its
       // value only while it is still a field of the form it was chosen in, on this address, and that form still submits to this
       // site. The caches are dropped first, since the page's changes are not yet observed.
-      const still = (el,root,url) => {
+      const still = (el,root,url,target = el) => {
         forms.invalidate();
-        return location.href === url && el.isConnected && pickable(el) && forms.scope(el) === root &&
-          forms.safe(forms.group(el)?.root);
+        const inForm = field => field.isConnected && pickable(field) && forms.scope(field) === root;
+        return location.href === url && inForm(el) && (target === el || inForm(target)) && forms.safe(forms.group(el)?.root);
       };
       // A fixed form account also binds the password. A different explicit choice can open Google's own switch control.
       const checkAccount = (password, login, afterUsername = false) => {
@@ -179,8 +187,9 @@ nonisolated enum PasswordAutofillScript {
         const google = googleAccount();
         if (google?.ambiguous || (google && !google.username && (!fixed.length || !fixed.every(email)))) return -3;
         if (google?.username) fixed.push(google.username);
-        if (fixed.every(name => name === login.username)) return 0;
-        if (!google?.username || !fixed.every(name => name === google.username)) return -3;
+        const matches = google ? sameEmail : (left, right) => left === right;
+        if (fixed.every(name => matches(name, login.username))) return 0;
+        if (!google?.username || !fixed.every(name => sameEmail(name, google.username))) return -3;
         const chooser = google.chooser;
         if (!chooser || chooser.closest(':disabled, [aria-disabled="true"], [aria-hidden="true"], [inert]')) return -3;
         const link = chooser.closest('a'), button = chooser.closest('button, input');
@@ -190,10 +199,10 @@ nonisolated enum PasswordAutofillScript {
         return -2;
       };
       // Recheck at the native setter: focus, keydown and beforeinput handlers may change the form or the account.
-      const fillPassword = (password, root, url, login, count) => {
-        if (!still(password, root, url)) return count;
-        const result = put(password, login.password, () =>
-          still(password, root, url) && secret(password) ? checkAccount(password, login, true) || 1 : 0);
+      const fillPassword = (target, password, root, url, login, count) => {
+        const allowed = () => still(password, root, url, target) && secret(password);
+        if (!allowed()) return count;
+        const result = put(password, login.password, () => allowed() ? checkAccount(password, login, true) || 1 : 0);
         return result < 0 ? result : count + result;
       };
       // Negative results distinguish an unsafe form (-1), an open account chooser (-2), and a required account switch (-3).
@@ -201,6 +210,7 @@ nonisolated enum PasswordAutofillScript {
         if (!picked(token,url)) return 0;
         const target = pick.target;
         if (typeof login?.code === 'string') {
+          if (current(target) && googleAccount()) return 0;
           if (!forms.safe(forms.group(target)?.root)) return -1;
           const list = boxes(target, login.code.length);
           if (!list) return 0;
@@ -209,8 +219,11 @@ nonisolated enum PasswordAutofillScript {
           return fillAll(target, () => {
             let count = 0;
             for (const [index, el] of list.entries()) {
-              if (!still(el, root, url)) break;
-              count += put(el, login.code.slice(index * size, (index + 1) * size));
+              const allowed = () => still(el, root, url, target) && !(current(el) && googleAccount());
+              if (!allowed()) break;
+              const filled = put(el, login.code.slice(index * size, (index + 1) * size), () => allowed() ? 1 : 0);
+              if (!filled) break;
+              count += filled;
             }
             return count;
           });
@@ -237,7 +250,7 @@ nonisolated enum PasswordAutofillScript {
         return fillAll(target, () => {
           let count = 0;
           if (username && typeof login?.username === 'string' && login.username) count += put(username, login.username);
-          return password && hasPassword ? fillPassword(password, group?.root, url, login, count) : count;
+          return password && hasPassword ? fillPassword(target, password, group?.root, url, login, count) : count;
         });
       };
       // Generate Password…: the fields of the right-clicked field's form a new password goes into. Its password fields, in order,
@@ -350,7 +363,7 @@ nonisolated enum PasswordAutofillScript {
           return fillAll(target, () => {
             let count = 0;
             if (found.username) count += set(found.username,login.username);
-            return password && typeof login.password === 'string' ? fillPassword(password, found.form, url, login, count) : count;
+            return password && typeof login.password === 'string' ? fillPassword(target, password, found.form, url, login, count) : count;
           });
         }
       };

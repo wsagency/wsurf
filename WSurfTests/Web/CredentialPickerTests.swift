@@ -19,11 +19,11 @@ struct CredentialPickerTests {
     /// Another registrable domain: `.test` names are siblings within `example.test`.
     private static let other = "https://elsewhere.test"
     /// An hour's period, so a code read before and after a fill is almost always the same one.
-    private static let generator = TOTPGenerator(
+    static let generator = TOTPGenerator(
         secret: Data("12345678901234567890".utf8), algorithm: .sha1, period: 3600, digits: 6, issuer: nil, userName: nil
     )
 
-    private func account(
+    func account(
         _ username: String, password: String? = "pw", origins: [String] = [Self.site], totp: TOTPGenerator? = nil,
         displayName: String? = nil
     ) -> CredentialAccount {
@@ -284,7 +284,7 @@ struct CredentialPickerTests {
 
     // MARK: - Picking against real vaults (WebKit)
 
-    private final class Flow {
+    final class Flow {
         let page: BrowserPage
         let window: NSWindow
         let session = AutofillSaveSession()
@@ -316,10 +316,11 @@ struct CredentialPickerTests {
 
         /// `html` as the page at the test site. A string under an https base URL has that origin but no TLS behind it, so the page's
         /// secure flag is set as a real https load would set it.
-        func load(_ html: String) async throws {
+        func load(_ html: String, at address: String = CredentialPickerTests.site + "/") async throws {
             let cancel = "<script>document.addEventListener('contextmenu', event => event.preventDefault());</script>"
-            page.loadHTMLString("<!doctype html>" + cancel + html, baseURL: URL(string: CredentialPickerTests.site + "/"))
-            try #require(await waitUntil { !self.page.isLoading && self.page.url?.host() == "login.example.test" })
+            let url = try #require(URL(string: address))
+            page.loadHTMLString("<!doctype html>" + cancel + html, baseURL: url)
+            try #require(await waitUntil { !self.page.isLoading && self.page.url == url })
             try #require(await waitUntil { PasswordAutofill.shared.frames[ObjectIdentifier(self.page)]?.isEmpty == false })
             try #require(await waitUntil { AutofillSaveCoordinator.shared.frames[ObjectIdentifier(self.page)] != nil })
             // The value the policy sends this profile, sent here so the first right-click never races it.
@@ -378,7 +379,7 @@ struct CredentialPickerTests {
         }
     }
 
-    private func withFlow(
+    func withFlow(
         passkeys: VaultPasskeys = VaultPasskeys(), vaults: [VaultState] = [.unlocked],
         _ body: (Flow, [FixtureVault]) async throws -> Void
     ) async throws {

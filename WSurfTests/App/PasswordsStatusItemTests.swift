@@ -529,6 +529,34 @@ struct PasswordsStatusItemTests {
 
     // MARK: Lock Now, profiles, websites
 
+    @Test func aMicroWindowOpensPasswordsForItsOwnProfile() {
+        let rig = Rig()
+        defer { rig.tearDown() }
+        let catalog = rig.catalog, work = catalog.add(name: "Work")
+        let app = BrowserApplication(notifications: NotificationCenter())
+        func browser(_ profile: Profile) -> AppCoordinator {
+            let model = BrowserModel(context: BrowserProfileContext.shared(for: profile), windowID: UUID(), database: .temporary())
+            let coordinator = AppCoordinator(browser: model, profiles: ProfileStore.selection(profile: profile, catalog: catalog))
+            app.register(coordinator)
+            return coordinator
+        }
+        let regular = browser(work), micro = browser(.original())
+        micro.browser.windowKind = .micro
+        defer { micro.closeWindow(); regular.closeWindow() }
+        app.focus(regular)
+        app.focus(micro)
+        #expect(regular.profiles.current.id == work.id && micro.profiles.current.id != work.id)
+        #expect(app.activeCoordinator === micro && app.activeBrowsingCoordinator === regular)
+        let window = PasswordsWindow(profiles: { app.passwordsProfileStore(fallback: catalog) }, autosaveName: nil) { _ in
+            let controller = NSViewController()
+            controller.view = NSView()
+            return controller
+        }
+        defer { window.window?.close() }
+        window.show()
+        #expect(window.boundProfileID == micro.profiles.current.id)
+    }
+
     @Test func returningToAnOpenBrowserProfileUsesItsLiveVaultInBothPasswordsSurfaces() async throws {
         try await VaultManagerFixture.with(vaults: [.unlocked]) { profile, passkeys, vaults in
             let rig = Rig()

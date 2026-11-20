@@ -174,6 +174,18 @@ struct PasswordsWindowTests {
         #expect(app.externalLinkTarget(for: .original()) === personal)
     }
 
+    @Test func refocusingTheOpenWindowRebindsItsContentToTheLastBrowserProfile() throws {
+        let rig = PasswordsWindowRig()
+        defer { rig.tearDown() }
+        let work = rig.catalog.add(name: "Work")
+        rig.selection.markCurrent(work)
+        rig.controller.show()
+        let window = try #require(rig.controller.window)
+        rig.selection.markCurrent(.original())
+        NotificationCenter.default.post(name: NSWindow.didBecomeKeyNotification, object: window)
+        #expect(rig.builtProfileIDs == [work.id, Profile.original().id])
+    }
+
     @Test func aProfileSwitchRebindsTheContentOfTheOpenWindow() throws {
         let rig = PasswordsWindowRig()
         defer { rig.tearDown() }

@@ -106,6 +106,21 @@ struct CredentialAccountSelectionTests {
 
     // MARK: - Choosing
 
+    @Test func reopeningAFilledUsernameShowsAllTwentyAccountsAndTypingStillFilters() {
+        let vault = UUID(), accounts = (0..<20).map { account("fixture\($0)@example.test") }
+        let chosen = accounts[12]
+        let opened = CredentialAccountSelection.listed(
+            in: [(vault, nil, accounts)], origin: Self.origin, pageURL: nil, entered: chosen.username,
+            field: .password, isUsernameField: true, pinned: (vault, chosen.id)
+        ) { _, _ in nil }
+        #expect(opened.first?.account == chosen.id && Set(opened.map(\.account)) == Set(accounts.map(\.id)))
+        let typed = CredentialAccountSelection.listed(
+            in: [(vault, nil, accounts)], origin: Self.origin, pageURL: nil, entered: "fixture12",
+            field: .password, isUsernameField: true
+        ) { _, _ in nil }
+        #expect(typed.map(\.account) == [chosen.id])
+    }
+
     @Test func theChosenVaultWinsWhenTwoVaultsHoldTheSameAccountID() {
         let first = UUID(), second = UUID()
         let selected = account("ada@example.test", totp: rfcGenerator)
