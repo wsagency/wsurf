@@ -3,6 +3,7 @@
 
 import Foundation
 import GRDB
+import Observation
 import os
 
 /// One pinned item of a profile: a tab (a pin or a Favorite) or a folder, with its place in the profile's tree.
@@ -99,6 +100,7 @@ nonisolated struct ProfilePin: Codable, Equatable, FetchableRecord, PersistableR
 
 /// The pins of one profile database, shared by every window that uses it.
 @MainActor
+@Observable
 final class ProfilePinStore {
     private struct Entry {
         weak var store: ProfilePinStore?
@@ -109,7 +111,7 @@ final class ProfilePinStore {
 
     private let database: AppDatabase
     private let subscribers = NSHashTable<BrowserModel>.weakObjects()
-    private var isPublishing = false
+    @ObservationIgnored private var isPublishing = false
     private(set) var pins: [ProfilePin]
     /// False when the stored pins could not be read. Nothing may replace them then.
     let isAvailable: Bool
@@ -160,8 +162,12 @@ final class ProfilePinStore {
             }
         } catch {
             Pipeline.log.error("pins: write failed")
+            return
         }
         pins = next
+        if let source {
+            source.sharedSpaceService?.pinsChanged(in: source.context.profile, store: self)
+        }
         isPublishing = true
         defer { isPublishing = false }
         for model in subscribers.allObjects where model !== source && model.attachedPinStore === self {

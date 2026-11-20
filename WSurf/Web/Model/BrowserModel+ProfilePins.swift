@@ -182,7 +182,11 @@ extension BrowserModel {
         for tab in tabs {
             guard let pinID = tab.pinID, !wanted.contains(pinID) else { continue }
             tab.pinID = nil
-            if tab.isMaterialised, !tab.isDeferred {
+            let sharedSpace = sharedSpaceService?.originalSpace(of: tab.id, in: context.profile)
+            if let sharedSpace {
+                tab.spaceID = sharedSpace
+            }
+            if sharedSpace != nil || (tab.isMaterialised && !tab.isDeferred) {
                 tab.pinnedURL = nil
                 tab.pinnedTitle = ""
                 tab.isFavorite = false

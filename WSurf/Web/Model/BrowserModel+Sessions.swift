@@ -199,6 +199,7 @@ extension BrowserModel {
     func scheduleSave(now: ContinuousClock.Instant = ContinuousClock.now) {
         noteCloudTabsChange()
         publishProfilePins()
+        sharedSpaceService?.capture(self)
         let since = saveWaitingSince ?? now
         saveWaitingSince = since
         let delay = Self.saveDelay(
@@ -234,6 +235,7 @@ extension BrowserModel {
 
     /// Persist both owners together before a close or a delayed save can race the move.
     func saveTransferredSession(from source: BrowserModel) {
+        sharedSpaceService?.capture(self)
         source.cancelPendingSave()
         cancelPendingSave()
         // Queued snapshots may have recorded generations without writing their state yet.
@@ -498,6 +500,13 @@ extension BrowserModel {
 
     func restoreSession() {
         guard tabs.isEmpty, folders.isEmpty else { return }
+        isReadingSharedSession = true
+        readSession()
+        isReadingSharedSession = false
+        sharedSpaceService?.applyCatalog(to: self)
+    }
+
+    private func readSession() {
         sessionClosedAt = nil
         let belongsToWindow = Column("windowID") == windowID
         try? database.writer.write { db in

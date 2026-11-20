@@ -357,6 +357,7 @@ extension BrowserModel {
         }
         openerElsewhere[tab.id] = nil
         tabs.removeAll { $0 === tab }
+        sharedSpaceService?.removed(tab.id, in: self)
         storedTree = reconciledTree().removing([.tab(tab.id)])
         sidebarDidChange()
         // The title this tab gave its last visit is written now: nothing renames that visit once the tab is gone.
@@ -632,6 +633,7 @@ extension BrowserModel {
     func deleteFolder(_ folder: TabFolder) {
         let tree = reconciledTree()
         guard foldersByID[folder.id] === folder else { return }
+        sharedSpaceService?.removed(folder.id, in: self)
         let parentID = tree.parent(of: .folder(folder.id))
         let before = tree.successor(of: .folder(folder.id))
         let children = tree.rows(in: folder.id)

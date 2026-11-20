@@ -22,6 +22,7 @@ enum CloudSyncGate {
         var isStaged: Bool
         var ownsSession: Bool
         var entitlement: (String) -> Any?
+        var offersMacSync = false
 
         static var live: Inputs {
             let tabs = UserDefaults.standard.bool(forKey: tabsFlagKey)
@@ -32,10 +33,16 @@ enum CloudSyncGate {
                 isRunningTests: AppDatabase.isRunningTests,
                 isStaged: stageIsActive,
                 // A second copy of the app keeps nothing and so syncs nothing.
-                ownsSession: (tabs || vaults) && AppDatabase.ownsSession,
-                entitlement: signedEntitlement
+                ownsSession: AppDatabase.ownsSession,
+                entitlement: signedEntitlement,
+                offersMacSync: true
             )
         }
+    }
+
+    /// The Mac can show the sharing controls before someone chooses what to send.
+    static func canOfferMacSync(_ inputs: Inputs) -> Bool {
+        inputs.offersMacSync && environmentAllows(inputs)
     }
 
     static func allowsTabs(_ inputs: Inputs) -> Bool {

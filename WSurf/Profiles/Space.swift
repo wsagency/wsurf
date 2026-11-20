@@ -42,6 +42,7 @@ final class SpaceStore {
     let profileID: UUID
     private(set) var spaces: [Space]
     @ObservationIgnored private let file: URL?
+    @ObservationIgnored weak var sharedSpacesHost: CloudSharedSpaces?
 
     /// `file` nil keeps the spaces in memory only (tests, or a second copy of the app that owns no session).
     init(profile: Profile, file: URL?) {
@@ -91,6 +92,7 @@ final class SpaceStore {
         guard updated != spaces[index] else { return }
         spaces[index] = updated
         save()
+        (sharedSpacesHost ?? CloudSync.shared?.sharedSpaces)?.spaceChanged(updated, in: profileID)
     }
 
     /// A profile always keeps one space; removing the profile itself is Settings › Profiles' job.
@@ -102,6 +104,7 @@ final class SpaceStore {
         guard canRemove(space) else { return }
         spaces.removeAll { $0.id == space.id }
         save()
+        (sharedSpacesHost ?? CloudSync.shared?.sharedSpaces)?.spaceChanged(space, in: profileID, removed: true)
     }
 
     private func save() {

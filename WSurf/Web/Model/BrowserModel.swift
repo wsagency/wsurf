@@ -393,6 +393,9 @@ final class BrowserModel {
         tab.onTitleChanged = { [weak self, weak tab] in
             guard let tab else { return }
             self?.noteTitleChange(of: tab)
+            if let self {
+                sharedSpaceService?.capture(self)
+            }
         }
     }
 
@@ -679,6 +682,8 @@ final class BrowserModel {
     @ObservationIgnored var saveChain: Task<Void, Never>?
     @ObservationIgnored var sessionRevision: Int64 = 0
     @ObservationIgnored var sessionClosedAt: Date?
+    @ObservationIgnored weak var sharedSpacesHost: CloudSharedSpaces?
+    @ObservationIgnored var isReadingSharedSession = false
     @ObservationIgnored let archiveSweeper = TabArchiveSweeper()
 
     @ObservationIgnored var saveWaitingSince: ContinuousClock.Instant?
