@@ -44,8 +44,6 @@ extension BrowserModel {
         if host?.lowercased() != URL(string: tab.urlString)?.host()?.lowercased() {
             tab.favicon = nil
         }
-        // The fresh load of the pinned address is outside the discarded page's sign-in chain.
-        tab.signInEngine = nil
         tab.deferRestore(state: nil, url: base)
         tab.invalidateSessionState()
         tab.urlString = base.absoluteString

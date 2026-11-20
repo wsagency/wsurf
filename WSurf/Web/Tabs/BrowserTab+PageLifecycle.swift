@@ -175,9 +175,10 @@ extension BrowserTab {
 
     /// Keep sign-in in one engine from the first request to the return redirect so every hop uses the same session.
     /// A navigation the user starts ends the hold. `startedByUser` is false for those the engine asks a decision for.
-    func noteNavigation(to url: URL, startedByUser: Bool) {
+    func noteNavigation(to url: URL, startedByUser: Bool, submittingWith engine: BrowserEngine? = nil) {
         if SitePermissions.webKitOnlyOrigins.contains(SitePermissions.origin(for: url)) {
-            signInEngine = .webKit
+            let ongoing = startedByUser ? nil : signInEngine
+            signInEngine = engine ?? ongoing ?? .webKit
         } else if startedByUser {
             signInEngine = nil
         }
@@ -187,10 +188,10 @@ extension BrowserTab {
     func permitsEngineNavigation(_ request: URLRequest, isMainFrame: Bool) -> Bool {
         guard isMainFrame, let url = request.url,
               SitePermissions.origin(for: url).isEmpty == false else { return true }
-        noteNavigation(to: url, startedByUser: false)
-        guard preferredEngine(for: url) != engine,
-              (request.httpMethod ?? "GET").uppercased() == "GET",
-              request.httpBody == nil, request.httpBodyStream == nil else { return true }
+        let canReissue = (request.httpMethod ?? "GET").uppercased() == "GET"
+            && request.httpBody == nil && request.httpBodyStream == nil
+        noteNavigation(to: url, startedByUser: false, submittingWith: canReissue ? nil : engine)
+        guard canReissue, preferredEngine(for: url) != engine else { return true }
         load(url, transition: pendingTransition, startedByUser: false)
         return false
     }

@@ -718,6 +718,24 @@ struct ChromiumHistoryRestoreTests {
         }
     }
 
+    @Test func aFavoriteWithNativeWebKitHistoryKeepsItsSignInSessionOnWake() async throws {
+        try await withRig(engine: .webKit) { rig, log in
+            let tab = try await history(in: rig, back: 1)
+            let pinned = try rig.server.url("/b")
+            let google = try #require(URL(string: "https://accounts.google.com/ServiceLogin"))
+            tab.engineOverride = nil
+            rig.browser.addFavorite(tab)
+            try #require(tab.pinnedURL == pinned)
+            try #require(tab.permitsEngineNavigation(URLRequest(url: google), isMainFrame: true))
+            rig.browser.sitePermissions.setEngine(.chromium, for: SitePermissions.origin(for: pinned))
+            try #require(tab.permitsEngineNavigation(URLRequest(url: pinned), isMainFrame: true))
+
+            _ = try await sleepAndWake(tab, in: rig, log: log)
+            #expect(tab.loadedEngine == .webKit)
+            #expect(await settles(tab, at: "/b", back: ["/a"], forward: ["/c"]), "\(lists(tab))")
+        }
+    }
+
     /// WebKit restores its own state natively, as before, and a state the previous build wrote (`{"engine":"webkit","webKit":…}`,
     /// made here by hand, not by the code under test) keeps its meaning.
     @Test func aWebKitTabStillWakesWithItsListsFromAStateSavedBeforeThisChange() async throws {

@@ -257,7 +257,7 @@ struct SiteHandlingSection: View {
         guard loaded != browser.engine(for: tab) else { return nil }
         if tab.signInEngine == loaded {
             let saved = browser.sitePermissions.engine(for: siteOrigin)
-            return "This page stays in WebKit for its sign-in session. The website default is \(String(localized: saved.label))."
+            return "This page stays in \(String(localized: loaded.label)) for its sign-in session. The website default is \(String(localized: saved.label))."
         }
         return "Current page: \(String(localized: loaded.label)). Submitted requests stay in their original engine."
     }

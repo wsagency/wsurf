@@ -138,8 +138,13 @@ struct WebsiteControlsViewTests {
         submitted.httpBody = Data("prompt=select_account".utf8)
         try #require(tab.permitsEngineNavigation(submitted, isMainFrame: true))
         tab.urlString = signIn.absoluteString
-        let explanation = try #require(SiteHandlingSection(browser: browser, tab: tab).engineExplanation)
+        let section = SiteHandlingSection(browser: browser, tab: tab)
+        let explanation = try #require(section.engineExplanation)
         #expect(String(localized: explanation).contains(String(localized: BrowserEngine.chromium.label)))
+        tab.urlString = "https://callback.example/signed-in"
+        let returned = String(localized: try #require(section.engineExplanation))
+        #expect(returned.contains(String(localized: BrowserEngine.chromium.label)))
+        #expect(returned.contains(String(localized: BrowserEngine.webKit.label)))
     }
 
 }

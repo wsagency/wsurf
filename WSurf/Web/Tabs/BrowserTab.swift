@@ -271,7 +271,7 @@ final class BrowserTab: Identifiable {
     var engineOverride: BrowserEngine?  // A tab opened to compare engines: wins over the site's setting, never written to it.
     /// The engine chosen for this tab on one origin. Explicitly setting the website default clears it.
     var pinnedEngine: (origin: String, engine: BrowserEngine)?
-    var signInEngine: BrowserEngine?  // Holds a sign-in's redirect chain in WebKit (`noteNavigation`).
+    var signInEngine: BrowserEngine?  // Holds a sign-in's redirects in the engine that accepted its first request.
     /// The page a load left when it moved the tab to the other engine, whose history starts empty: Back from its first page
     /// returns there (`goBackAcrossEngines`), with its engine's saved history.
     var pageBeforeEngineSwitch: (url: URL, state: Data?)?
@@ -729,7 +729,10 @@ final class BrowserTab: Identifiable {
             pendingNavigationTask = Task { [weak self] in
                 await retirement.value
                 guard let self, !isClosed, !Task.isCancelled else { return nil }
-                return restoreDeferredState(state, url: url, byPerson: byPerson)
+                pendingNavigationTask = nil
+                let navigation = restoreDeferredState(state, url: url, byPerson: byPerson)
+                // WebKit can reject its saved state; the fresh load may have to replace that view with Chromium.
+                return await pendingNavigationTask?.value ?? navigation
             }
         } else {
             lastRequestedNavigation = restoreDeferredState(state, url: url, byPerson: byPerson)
@@ -742,11 +745,25 @@ final class BrowserTab: Identifiable {
             urlString = url.absoluteString
         }
         if let state, BrowserPage.canRestore(state, using: preferredEngine(for: url)) {
-            wakeScroll.disarm()
-            page.interactionState = state
-            return nil
+            let view = page
+            let previous = view.webKit?.backForwardList.currentItem
+            let wasLoading = view.webKit?.isLoading == true
+            view.interactionState = state
+            // WebKit silently ignores unusable bytes. A native restore sets the current item or starts a provisional load.
+            let restored = view.webKit?.backForwardList.currentItem
+            if (restored != nil && restored !== previous) || (!wasLoading && view.webKit?.isLoading == true) {
+                wakeScroll.disarm()
+                return nil
+            }
         }
         if let url {
+            if pinnedURL == url, signInEngine != nil {
+                // A GET of the pin starts a new visit once there is no signed-in page to restore.
+                noteNavigation(to: url, startedByUser: true)
+                if let loadedEngine, loadedEngine != preferredEngine(for: url) {
+                    return load(url, transition: pendingTransition, byPerson: byPerson)
+                }
+            }
             if let state {
                 // A Chromium state: its Back and Forward entries, which load only when visited, then the address alone.
                 page.seedHistory(from: state)
