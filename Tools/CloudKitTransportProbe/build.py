@@ -5,12 +5,14 @@
 """Build and check the two-Mac Development transport probe."""
 
 import argparse
+import ctypes
 import os
 from pathlib import Path
 import plistlib
 import runpy
 import shutil
 import subprocess
+import sys
 import tempfile
 
 HERE = Path(__file__).resolve().parent
@@ -21,9 +23,10 @@ CHECK = runpy.run_path(str(ROOT / "Tools/check-icloud-development-signing.py"))
 def compile_probe(executable, cache):
     subprocess.run([
         "/usr/bin/xcrun", "swiftc", "-swift-version", "6", "-warnings-as-errors", "-parse-as-library",
-        "-target", "arm64-apple-macos26.0", "-module-cache-path", str(cache), str(HERE / "Probe.swift"),
+        "-target", "arm64-apple-macos26.0", "-module-cache-path", str(cache),
+        str(HERE / "Probe.swift"), str(HERE / "OfflineChecks.swift"),
         "-o", str(executable),
-    ], env={**os.environ, "DEVELOPER_DIR": "/Applications/Xcode.app/Contents/Developer"}, check=True)
+    ], env={"DEVELOPER_DIR": "/Applications/Xcode.app/Contents/Developer", **os.environ}, check=True)
 
 
 def merged_source():
@@ -45,8 +48,22 @@ def signed_probe(profile_path, identity, output):
     output = output.resolve()
     if not output.is_relative_to(ROOT / "build") or output.exists():
         raise ValueError("choose a new output directory inside this worktree's build folder")
-    output.mkdir(parents=True, mode=0o700)
-    app = output / "WSurfCloudTransport.app"
+    output.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    with tempfile.TemporaryDirectory(prefix=".wsurf-probe-", dir=output.parent) as scratch:
+        candidate = Path(scratch) / "verified"
+        candidate.mkdir(mode=0o700)
+        verify_candidate(candidate, profile_path, profile, identity, requested, commit)
+        # Darwin's RENAME_EXCL atomically refuses an output another process has already published.
+        rename = ctypes.CDLL(None, use_errno=True).renamex_np
+        rename.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint]
+        if rename(os.fsencode(candidate), os.fsencode(output), 0x00000004) != 0:
+            number = ctypes.get_errno()
+            raise OSError(number, os.strerror(number), output)
+    print(f"Verified {output / 'WSurfCloudTransport.app'} from {commit}.")
+
+
+def verify_candidate(candidate, profile_path, profile, identity, requested, commit):
+    app = candidate / "WSurfCloudTransport.app"
     contents = app / "Contents"
     executable = contents / "MacOS" / "WSurfCloudTransport"
     executable.parent.mkdir(parents=True)
@@ -64,9 +81,9 @@ def signed_probe(profile_path, identity, output):
     }
     (contents / "Info.plist").write_bytes(plistlib.dumps(info))
     shutil.copyfile(profile_path, contents / "embedded.provisionprofile")
-    entitlements = output / "Probe.entitlements"
+    entitlements = candidate / "Probe.entitlements"
     entitlements.write_bytes(plistlib.dumps(requested))
-    compile_probe(executable, output / "modules")
+    compile_probe(executable, candidate.parent / "modules")
     subprocess.run([
         "/usr/bin/codesign", "--sign", identity, "--force", "--options", "runtime", "--timestamp=none",
         "--entitlements", entitlements, app,
@@ -78,8 +95,7 @@ def signed_probe(profile_path, identity, output):
     actual = CHECK["signed_entitlements"](app, CHECK["HOST"], embedded)
     if actual != requested:
         raise ValueError("the helper's signed entitlements differ from its restricted request")
-    subprocess.run([executable, "self-test"], cwd=output, check=True)
-    print(f"Verified {app} from {commit}.")
+    subprocess.run([executable, "self-test"], cwd=candidate, check=True)
 
 
 def main():
@@ -98,6 +114,7 @@ def main():
         else:
             scratch = ROOT / "build/icloud-transport"
             scratch.mkdir(parents=True, exist_ok=True)
+            subprocess.run([sys.executable, "-B", HERE / "test_build.py"], check=True)
             with tempfile.TemporaryDirectory(dir=scratch) as directory:
                 binary = Path(directory) / "offline-probe"
                 compile_probe(binary, scratch / "modules")

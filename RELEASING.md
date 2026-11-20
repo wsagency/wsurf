@@ -566,7 +566,8 @@ with the launch-time feature preference and per-profile or per-vault switch belo
 
 To check private CloudKit transport on Studio and Air, use the standalone probe
 from the reviewed merge commit. Studio writes a synthetic marker, Air acknowledges
-it, and Studio confirms the reply and removes the trial's zone.
+it, and Studio confirms the reply. Cleanup clears that record's encrypted payload
+using its fetched change tag. The empty record remains in a dedicated Development zone.
 [Two-Mac CloudKit transport trial](Tools/CloudKitTransportProbe/README.md)
 
 For the tab-sharing trial, use two fresh macOS test users with the same dedicated
