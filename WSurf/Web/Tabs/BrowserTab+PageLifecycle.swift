@@ -174,7 +174,7 @@ extension BrowserTab {
     }
 
     /// Keep sign-in in one engine from the first request to the return redirect so every hop uses the same session.
-    /// A navigation the user starts ends the hold. `startedByUser` is false for those the engine asks a decision for.
+    /// A new visit the user starts ends the hold. Links within the same website and sign-in redirects keep it.
     func noteNavigation(to url: URL, startedByUser: Bool, submittingWith engine: BrowserEngine? = nil) {
         if SitePermissions.webKitOnlyOrigins.contains(SitePermissions.origin(for: url)) {
             let ongoing = startedByUser ? nil : signInEngine
@@ -185,14 +185,20 @@ extension BrowserTab {
     }
 
     /// Only safe GET navigation is reissued in another engine; submitted requests stay in their original engine.
-    func permitsEngineNavigation(_ request: URLRequest, isMainFrame: Bool) -> Bool {
+    func permitsEngineNavigation(_ request: URLRequest, isMainFrame: Bool, userLinkFrom sourceOrigin: String? = nil) -> Bool {
         guard isMainFrame, let url = request.url,
               SitePermissions.origin(for: url).isEmpty == false else { return true }
         let canReissue = (request.httpMethod ?? "GET").uppercased() == "GET"
             && request.httpBody == nil && request.httpBodyStream == nil
-        noteNavigation(to: url, startedByUser: false, submittingWith: canReissue ? nil : engine)
+        let leavesSignIn = canReissue && sourceOrigin.map { origin in
+            let destination = SitePermissions.webOrigin(for: url)
+            return !origin.isEmpty && !destination.isEmpty
+                && !SitePermissions.webKitOnlyOrigins.contains(origin) && !SitePermissions.webKitOnlyOrigins.contains(destination)
+                && SitePermissions.site(for: origin) != SitePermissions.site(for: destination)
+        } == true
+        noteNavigation(to: url, startedByUser: leavesSignIn, submittingWith: canReissue ? nil : engine)
         guard canReissue, preferredEngine(for: url) != engine else { return true }
-        load(url, transition: pendingTransition, startedByUser: false)
+        load(url, transition: pendingTransition, startedByUser: false, byPerson: leavesSignIn)
         return false
     }
 

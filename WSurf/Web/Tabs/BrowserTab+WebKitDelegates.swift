@@ -100,7 +100,8 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
             }
         }
         if let tab, !tab.permitsEngineNavigation(
-            navigationAction.request, isMainFrame: navigationAction.targetFrame?.isMainFrame == true
+            navigationAction.request, isMainFrame: navigationAction.targetFrame?.isMainFrame == true,
+            userLinkFrom: tab.signInEngine == nil ? nil : Self.userLinkOrigin(navigationAction)
         ) {
             decisionHandler(.cancel)
             return
@@ -157,6 +158,14 @@ final class TabNavigationDelegate: NSObject, WKNavigationDelegate, WKUIDelegate 
 
     /// WebKit numbers the middle button 4, not NSEvent's 2.
     private static let middleButton = 4
+
+    /// Only a person's link in the current top-level document can start a visit in a different engine.
+    private static func userLinkOrigin(_ action: WKNavigationAction) -> String? {
+        guard action.navigationType == .linkActivated, action.targetFrame?.isMainFrame == true, action.sourceFrame.isMainFrame,
+              decidesPopUps, isUserInitiated(action), action.responds(to: NSSelectorFromString("_isRedirect")),
+              action.value(forKey: "_isRedirect") as? Bool == false else { return nil }
+        return frameOrigin(action.sourceFrame.securityOrigin)
+    }
 
     private func requestingOrigin(for action: WKNavigationAction) -> String {
         let frame: WKFrameInfo? = action.sourceFrame

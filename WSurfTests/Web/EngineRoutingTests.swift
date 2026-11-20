@@ -58,9 +58,33 @@ struct EngineRoutingTests {
         try #require(tab.permitsEngineNavigation(request, isMainFrame: true))
         #expect(tab.permitsEngineNavigation(URLRequest(url: callback), isMainFrame: true))
         #expect(tab.permitsEngineNavigation(URLRequest(url: service), isMainFrame: true))
+        // The person may choose a provider or its return link while completing this same sign-in.
+        #expect(tab.permitsEngineNavigation(URLRequest(url: callback), isMainFrame: true, userLinkFrom: SitePermissions.origin(for: google)))
+        #expect(tab.permitsEngineNavigation(URLRequest(url: service), isMainFrame: true, userLinkFrom: SitePermissions.origin(for: callback)))
         #expect(tab.preferredEngine(for: service) == .chromium)
         tab.noteNavigation(to: google, startedByUser: true)
         #expect(tab.preferredEngine(for: google) == .webKit)
+    }
+
+    @Test func sameWebsiteLinksSubframesAndSubmittedRequestsKeepTheSignIn() throws {
+        let permissions = temporaryPermissions()
+        let browser = BrowserModel(database: .temporary(), sitePermissions: permissions)
+        defer { browser.closeAllTabs(saving: false) }
+        let google = try #require(URL(string: "https://accounts.google.com/ServiceLogin"))
+        let calendar = try #require(URL(string: "https://calendar.google.com/day"))
+        let elsewhere = try #require(URL(string: "https://elsewhere.example/confirm"))
+        let source = "https://mail.google.com"
+        let tab = browser.makeTab(for: google)
+        try #require(tab.permitsEngineNavigation(URLRequest(url: google), isMainFrame: true))
+        permissions.setEngine(.chromium, for: SitePermissions.origin(for: calendar))
+        permissions.setEngine(.chromium, for: SitePermissions.origin(for: elsewhere))
+        #expect(tab.permitsEngineNavigation(URLRequest(url: calendar), isMainFrame: true, userLinkFrom: source))
+        #expect(tab.permitsEngineNavigation(URLRequest(url: elsewhere), isMainFrame: false, userLinkFrom: source))
+        var submission = URLRequest(url: elsewhere)
+        submission.httpMethod = "POST"
+        submission.httpBody = Data("confirm=1".utf8)
+        #expect(tab.permitsEngineNavigation(submission, isMainFrame: true, userLinkFrom: source))
+        #expect(tab.signInEngine == .webKit)
     }
 
     @Test(.boundedWebViews) func reopeningAnUnloadedFavoriteAtItsPinUsesThePinnedWebsitesEngine() async throws {
