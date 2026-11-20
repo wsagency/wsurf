@@ -104,8 +104,20 @@ extension VaultSync {
         return refs
     }
 
-    /// Checkpoint every accepted immutable asset before allowing its Item to be sent. A lost reply repeats the same upload.
-    func uploadAssets(_ transfer: VaultTransfer, database: VaultSyncDatabase) async {
+    /// The staged manifest also names chunks that an earlier attempt already removed from remainingAssets.
+    private static func stagedAssets(_ row: OutboxRow, in folder: URL, syncKey: VaultSyncKey) throws -> [VaultAssetRef] {
+        let (version, manifest) = try VaultSyncCodec.assetReference(row.envelope, accountID: row.accountID, key: syncKey)
+        guard version == row.version else { throw VaultSyncError.malformed }
+        guard let body = try cached(manifest, in: folder) else { throw VaultFileError.missing }
+        let item = try VaultSyncCodec.openAssetAccount(body, accountID: row.accountID, version: version, key: syncKey)
+        let chunks = (item.account.attachments ?? []).flatMap { item.chunks[$0.id] ?? [] }
+        let assets = chunks + [manifest]
+        guard assets.suffix(row.remainingAssets.count).elementsEqual(row.remainingAssets) else { throw VaultSyncError.malformed }
+        return assets
+    }
+
+    /// Checkpoint accepted chunks with their server version. A resumed pointer must still have every chunk in today's zone.
+    func uploadAssets(_ transfer: VaultTransfer, database: VaultSyncDatabase, syncKey: VaultSyncKey) async {
         let key = transfer.key
         guard let transport = engine as? any VaultAssetTransport, let user = transfer.user, current(transfer),
               let rows = try? database.read({ try $0.outbox(key.vaultID, unfinishedOnly: true) }) else { return }
@@ -113,28 +125,32 @@ extension VaultSync {
             guard current(transfer) else { return }
             do {
                 let folder = try directory(transfer, account: row.accountID, incoming: false)
-                while let ref = row.remainingAssets.first {
-                    let file = folder.appending(path: ref.name)
-                    guard FileManager.default.fileExists(atPath: file.path) else { throw VaultFileError.missing }
-                    try await transport.uploadVaultAsset(ref, from: file, zone: key.zone, user: user)
+                let assets = try Self.stagedAssets(row, in: folder, syncKey: syncKey)
+                let completed = assets.count - row.remainingAssets.count
+                for (index, ref) in assets.enumerated() {
+                    let chunk = index < assets.count - 1
+                    let receipt = chunk ? try database.read { try $0.assetTag(ref, key: key, user: user) } : nil
+                    let tag = try await transport.uploadVaultAsset(ref, from: folder.appending(path: ref.name), zone: key.zone, user: user, acknowledged: receipt)
                     guard current(transfer) else { return }
-                    row.remainingAssets.removeFirst()
-                    let recorded = try database.write { tx in
-                        guard let existing = try tx.outbox(key.vaultID, row.accountID), existing.envelope == row.envelope,
-                              existing.remainingAssets.first == ref else { return false }
-                        try tx.save(row, vault: key.vaultID)
-                        return true
+                    if index < completed && receipt == tag {
+                        continue
                     }
-                    guard recorded else { break }
-                    if row.remainingAssets.isEmpty {
-                        clearAssets(key, account: row.accountID)
-                        engine?.add([.saveRecord(key.itemRecord(row.accountID))])
+                    try database.write { tx in
+                        guard let existing = try tx.outbox(key.vaultID, row.accountID), existing.envelope == row.envelope,
+                              existing.remainingAssets == row.remainingAssets else { throw VaultSyncFailure.unavailable }
+                        if chunk && receipt != tag {
+                            try tx.saveAssetTag(tag, for: ref, key: key, user: user)
+                        }
+                        if index >= completed {
+                            row.remainingAssets.removeFirst()
+                            try tx.save(row, vault: key.vaultID)
+                        }
                     }
                 }
-            } catch VaultSyncError.authenticationFailed {
-                pendingBases[key] = nil
-            } catch VaultFileError.missing {
-                // Rebuild the sealed row from the store after a crash that lost a staged file.
+                clearAssets(key, account: row.accountID)
+                engine?.add([.saveRecord(key.itemRecord(row.accountID))])
+            } catch VaultSyncError.authenticationFailed, VaultSyncError.malformed, VaultFileError.missing {
+                // Recheck staging on the next pass so lost or damaged local files can be rebuilt from the store.
                 pendingBases[key] = nil
             } catch let error as CKError where error.code == .quotaExceeded {
                 if current(transfer) {
@@ -147,10 +163,11 @@ extension VaultSync {
         }
     }
 
-    func staged(_ row: OutboxRow, key: VaultKey) -> Bool {
+    func staged(_ row: OutboxRow, key: VaultKey, syncKey: VaultSyncKey) -> Bool {
         guard !row.remainingAssets.isEmpty else { return true }
-        guard let folder = assetDirectory(key)?.appending(path: "out/\(row.accountID.sqlText)") else { return false }
-        return row.remainingAssets.allSatisfy { (try? Self.cached($0, in: folder)) != nil }
+        guard let folder = assetDirectory(key)?.appending(path: "out/\(row.accountID.sqlText)"),
+              let assets = try? Self.stagedAssets(row, in: folder, syncKey: syncKey) else { return false }
+        return assets.dropLast().allSatisfy { (try? Self.cached($0, in: folder)) != nil }
     }
 
     private static func cached(_ ref: VaultAssetRef, in folder: URL) throws -> Data? {
@@ -160,14 +177,17 @@ extension VaultSync {
         return ref.matches(data) ? data : nil
     }
 
-    private func download(_ ref: VaultAssetRef, transfer: VaultTransfer, folder: URL) async throws -> Data {
+    private func download(_ ref: VaultAssetRef, transfer: VaultTransfer, folder: URL, chunk: Bool = false) async throws -> Data {
         guard current(transfer) else { throw VaultSyncFailure.locked }
         if let cached = try Self.cached(ref, in: folder) {
             return cached
         }
         guard let transport = engine as? any VaultAssetTransport, let user = transfer.user else { throw VaultSyncFailure.unavailable }
-        let data = try await transport.downloadVaultAsset(ref, zone: transfer.key.zone, user: user)
+        let (data, tag) = try await transport.downloadVaultAsset(ref, zone: transfer.key.zone, user: user)
         guard current(transfer), ref.matches(data) else { throw VaultSyncFailure.unavailable }
+        if chunk, let database = database(transfer.key.profileID) {
+            try database.write { try $0.saveAssetTag(tag, for: ref, key: transfer.key, user: user) }
+        }
         _ = try Self.stage(data, in: folder)
         return data
     }
@@ -217,7 +237,7 @@ extension VaultSync {
             let handle = try FileHandle(forWritingTo: joined)
             defer { try? handle.close() }
             for ref in refs {
-                let data = try await download(ref, transfer: transfer, folder: folder)
+                let data = try await download(ref, transfer: transfer, folder: folder, chunk: true)
                 try handle.write(contentsOf: data)
             }
             try handle.close()

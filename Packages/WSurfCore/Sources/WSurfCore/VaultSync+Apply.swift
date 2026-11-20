@@ -516,7 +516,7 @@ extension VaultSync {
             engine?.add([.saveRecord(key.vaultRecord)])
         }
         if let (_, current) = runningRow(key), current.uploadedMark != nil, !current.needsFetch {
-            await uploadAssets(transfer, database: database)
+            await uploadAssets(transfer, database: database, syncKey: syncKey)
         }
         refresh(key)
     }
@@ -629,7 +629,7 @@ extension VaultSync {
         guard let loaded = try? database.read({ tx in
             if pendingBases[key] == nil {
                 var cache: [UUID: SyncBase] = [:]
-                for row in try tx.outbox(key.vaultID) where staged(row, key: key) {
+                for row in try tx.outbox(key.vaultID) where staged(row, key: key, syncKey: syncKey) {
                     if let parts = try? VaultSyncCodec.openParts(row.parts, accountID: row.accountID, version: row.version, key: syncKey) {
                         cache[row.accountID] = SyncBase(version: row.version, parts: parts)
                     }

@@ -14,23 +14,32 @@ extension FakeSyncEngine: VaultCatalogReading, VaultAssetTransport {
         }
     }
 
-    func uploadVaultAsset(_ reference: VaultAssetRef, from source: URL, zone: String, user: String) async throws {
+    func uploadVaultAsset(_ reference: VaultAssetRef, from source: URL, zone: String, user: String, acknowledged: String?) async throws -> String {
         guard try await currentAccountUser() == user, cloud.zones[zone] != nil else { throw VaultSyncFailure.unavailable }
+        let id = SyncRecordID(zone: zone, name: reference.name)
+        if let acknowledged, let existing = cloud.encryptedVaultAssets[id] {
+            let tag = try VaultAssetRef(existing).name
+            if acknowledged != tag {
+                try await beforeVaultDownload?(reference.name)
+                guard try await currentAccountUser() == user, reference.matches(existing) else { throw VaultSyncError.authenticationFailed }
+            }
+            return tag
+        }
         try await beforeVaultUpload?(reference.name)
         guard try await currentAccountUser() == user else { throw VaultSyncFailure.unavailable }
         let data = try Data(contentsOf: source)
         guard reference.matches(data) else { throw VaultSyncError.authenticationFailed }
-        let id = SyncRecordID(zone: zone, name: reference.name)
         if let existing = cloud.encryptedVaultAssets[id], existing != data {
             throw VaultSyncError.authenticationFailed
         }
         cloud.encryptedVaultAssets[id] = data
+        return reference.name
     }
 
-    func downloadVaultAsset(_ reference: VaultAssetRef, zone: String, user: String) async throws -> Data {
+    func downloadVaultAsset(_ reference: VaultAssetRef, zone: String, user: String) async throws -> (data: Data, tag: String) {
         try await beforeVaultDownload?(reference.name)
         guard try await currentAccountUser() == user, let data = cloud.encryptedVaultAssets[SyncRecordID(zone: zone, name: reference.name)],
               reference.matches(data) else { throw VaultSyncFailure.unavailable }
-        return data
+        return (data, reference.name)
     }
 }

@@ -105,7 +105,7 @@ nonisolated final class VaultSyncDatabase: Sendable {
             vaultID TEXT NOT NULL, name TEXT NOT NULL, systemFields BLOB NOT NULL, PRIMARY KEY(vaultID, name));
         """
 
-    private static let tables = ["base", "outbox", "inbox", "conflict", "record"]
+    private static let tables = ["base", "outbox", "inbox", "conflict", "record", "assetReceipt"]
 
     private init(queue: DatabaseQueue) {
         self.queue = queue
@@ -134,6 +134,13 @@ nonisolated final class VaultSyncDatabase: Sendable {
                     try db.execute(sql: "UPDATE inbox SET version = ? WHERE rowid = ?", arguments: [Int64(clamping: version), row["rowid"] as Int64])
                 }
             }
+        }
+        migrator.registerMigration("v4") { (db: Database) throws in
+            try db.execute(sql: """
+                CREATE TABLE assetReceipt(
+                    vaultID TEXT NOT NULL, profileID TEXT NOT NULL, owner TEXT NOT NULL, digest BLOB NOT NULL, tag TEXT NOT NULL,
+                    PRIMARY KEY(vaultID, profileID, owner, digest))
+                """)
         }
         try migrator.migrate(queue)
         return VaultSyncDatabase(queue: queue)
@@ -282,6 +289,17 @@ nonisolated final class VaultSyncDatabase: Sendable {
                 sql: "INSERT OR REPLACE INTO base(vaultID, accountID, version, parts) VALUES (?, ?, ?, ?)",
                 arguments: [vault.sqlText, base.accountID.sqlText, Int64(clamping: base.version), base.parts]
             )
+        }
+
+        /// Only the same private zone and ciphertext can reuse this server change tag.
+        func assetTag(_ ref: VaultAssetRef, key: VaultKey, user: String) throws -> String? {
+            try String.fetchOne(db, sql: "SELECT tag FROM assetReceipt WHERE vaultID = ? AND profileID = ? AND owner = ? AND digest = ?",
+                                arguments: [key.vaultID.sqlText, key.profileID.sqlText, user, ref.digest])
+        }
+
+        func saveAssetTag(_ tag: String, for ref: VaultAssetRef, key: VaultKey, user: String) throws {
+            try db.execute(sql: "INSERT OR REPLACE INTO assetReceipt(vaultID, profileID, owner, digest, tag) VALUES (?, ?, ?, ?, ?)",
+                           arguments: [key.vaultID.sqlText, key.profileID.sqlText, user, ref.digest, tag])
         }
 
         // MARK: Outbox
