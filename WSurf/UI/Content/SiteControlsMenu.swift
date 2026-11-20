@@ -264,7 +264,7 @@ private struct SiteHandlingSection: View {
                     .fixedSize()
                     .disabled(SitePermissions.webKitOnlyOrigins.contains(siteOrigin))
                 }
-                .help("Changing engines reloads the website and resets Back/Forward history. Sign-ins are separate. Unloaded Chromium tabs restore only their URL.")
+                .help("Changing engines reloads this tab and resets its Back/Forward history. Each engine keeps its own sign-ins.")
                 if SitePermissions.webKitOnlyOrigins.contains(siteOrigin) {
                     Text("This sign-in page uses WebKit to keep the same session through redirects.")
                         .font(Theme.Font.caption)

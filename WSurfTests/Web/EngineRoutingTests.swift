@@ -192,6 +192,8 @@ struct EngineRoutingTests {
         #expect(a.preferredEngine(for: try #require(URL(string: site))) == .webKit)
         #expect(await browser.setEngine(.chromium, for: site))
         #expect(b.preferredEngine(for: URL(string: site)) == .chromium)
-        #expect(browser.makeTab(for: nil).preferredEngine(for: URL(string: site)) == .chromium)
+        let fresh = browser.makeTab(for: nil)
+        #expect(fresh.preferredEngine(for: URL(string: site + "/org/repo/issues?q=open")) == .chromium)
+        #expect(fresh.preferredEngine(for: URL(string: "https://other.example/org/repo/issues?q=open")) == .webKit)
     }
 }
