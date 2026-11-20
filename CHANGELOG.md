@@ -5,6 +5,12 @@ This file preserves release notes inherited from the upstream
 describe upstream Linen releases, not releases published by WSurf. New WSurf
 release notes will be added above this provenance record.
 
+## 0.1.31 (build 31) — 2026-11-20
+
+- When signing in to Google, click a filled username to see the saved logins for that site again. Search is available as soon as there are two choices. On the password step, WSurf puts the account shown by Google first and asks you to switch accounts on the website if you choose a different one.
+- The Passwords window and the key icon in the menu bar follow the profile of the last active browser window, including a Micro window. Returning to an open Passwords window shows that profile’s vaults.
+- If some vaults are locked, the autofill list offers Unlock alongside logins from the open vaults.
+
 ## 0.1.30 (build 30) — 2026-11-20
 
 - Minimal windows remember a docked sidebar when you hide and show it again. The page moves back alongside it, and pinning or unpinning a page gives visible feedback.
