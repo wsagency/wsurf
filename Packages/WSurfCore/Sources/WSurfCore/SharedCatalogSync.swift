@@ -15,8 +15,17 @@ nonisolated public struct SharedCatalogState: Codable, Equatable, Sendable {
         public var profile: UUID
         public var base: SharedSpaceItem?
         public var item: SharedSpaceItem
+        /// An earlier version was handed to the engine before this edit. Its receipt advances the base after a restart, too.
+        var submitted: SharedSpaceItem?
     }
 
+    struct Paused: Codable, Equatable, Sendable {
+        var pending: [SyncRecordID: Edit]
+        var conflicts: [SyncRecordID: Edit]
+        var bases: [SyncRecordID: Remote]
+    }
+
+    var pausedAccounts: [String: Paused]?
     public var user: String?
     public var lastSynced: [SharedCatalogCategory: Date]?
     public var enabled: [SharedCatalogCategory: Set<UUID>] = [:]
@@ -39,14 +48,17 @@ public final class SharedCatalogSync: SyncZoneHandler {
     public private(set) var ready: Set<SharedCatalogCategory> = []
     public private(set) var failed: Set<SharedCatalogCategory> = []
     public var onReceive: (() -> Void)?
-    public var onAccountChange: (() -> Void)?
+    public var onAccountChange: ((String?) -> Void)?
+    public var onVerifiedUser: ((String) -> Void)?
 
     @ObservationIgnored var engine: (any SyncEngine)?
     @ObservationIgnored private let persist: (SharedCatalogState) throws -> Void
     @ObservationIgnored private var generation = 0
-    @ObservationIgnored private var persisted = true
+    public private(set) var storageAvailable = true
+    public private(set) var trustedUser: String?
     @ObservationIgnored private var reads: [SharedCatalogCategory: (id: UUID, task: Task<Void, Error>)] = [:]
     @ObservationIgnored private var buffered: [SharedCatalogCategory: [SyncEvent]] = [:]
+    @ObservationIgnored private var sending: [SyncRecordID: SharedSpaceItem] = [:]
 
     public init(state: SharedCatalogState, persist: @escaping (SharedCatalogState) throws -> Void) {
         self.state = state
@@ -100,7 +112,10 @@ public final class SharedCatalogSync: SyncZoneHandler {
 
     public func prepare(_ category: SharedCatalogCategory) async throws {
         guard state.enabled[category]?.isEmpty == false else { throw SharedCatalogError.paused }
-        guard !ready.contains(category) else { return }
+        if ready.contains(category) {
+            guard await verifyAccount() else { throw SharedCatalogError.unavailable }
+            return
+        }
         if let read = reads[category] {
             try await read.task.value
             return
@@ -135,19 +150,20 @@ public final class SharedCatalogSync: SyncZoneHandler {
             throw SharedCatalogError.accountChanged
         }
         state.user = user
+        trust(user)
         guard save() else { throw SharedCatalogError.storage }
         buffered[category] = []
         let read: SyncZoneRead
         do {
             read = try await engine.fetchAll(zone: category.zone)
         } catch where (error as? CKError)?.code == .zoneNotFound || (error as? URLError)?.code == .fileDoesNotExist {
-            try check(epoch, category)
+            try await confirm(user, with: identity, epoch: epoch, category: category)
             engine.add([.saveZone(category.zone)])
             try await engine.sendNow()
             try check(epoch, category)
             read = try await engine.fetchAll(zone: category.zone)
         }
-        try check(epoch, category)
+        try await confirm(user, with: identity, epoch: epoch, category: category)
         guard read.skipped == 0, read.records.allSatisfy({ SharedSpaceItem(record: $0)?.category == category }) else {
             throw SharedCatalogError.unreadable
         }
@@ -176,8 +192,14 @@ public final class SharedCatalogSync: SyncZoneHandler {
                 reset(user: user)
                 return false
             }
+            trust(user)
             return true
         } catch {
+            if epoch == generation {
+                trustedUser = nil
+                failed.formUnion(ready)
+                ready.removeAll()
+            }
             return false
         }
     }
@@ -194,6 +216,15 @@ public final class SharedCatalogSync: SyncZoneHandler {
         guard generation == epoch, state.enabled[category]?.isEmpty == false else { throw SharedCatalogError.paused }
     }
 
+    private func confirm(_ user: String, with identity: any SyncAccountIdentity, epoch: Int, category: SharedCatalogCategory) async throws {
+        let current = try await identity.currentAccountUser()
+        try check(epoch, category)
+        if current != user {
+            reset(user: current)
+            throw SharedCatalogError.accountChanged
+        }
+    }
+
     public func stage(_ item: SharedSpaceItem, for profile: UUID) {
         stage([item], for: profile)
     }
@@ -208,10 +239,12 @@ public final class SharedCatalogSync: SyncZoneHandler {
             if item.removed {
                 state.conflicts[id] = nil
             }
-            if item == state.remote[id]?.item {
+            let previous = state.pending[id]
+            let submitted = sending[id] ?? previous?.submitted
+            if item == state.remote[id]?.item, submitted == nil {
                 state.pending[id] = nil
             } else {
-                state.pending[id] = .init(profile: profile, base: state.pending[id]?.base ?? state.remote[id]?.item, item: item)
+                state.pending[id] = .init(profile: profile, base: previous?.base ?? state.remote[id]?.item, item: item, submitted: submitted)
             }
             changed = true
             if ready.contains(item.category) {
@@ -245,15 +278,21 @@ public final class SharedCatalogSync: SyncZoneHandler {
         onReceive?()
     }
 
-    public func record(for id: SyncRecordID) -> SyncRecord? {
-        guard persisted, let edit = state.pending[id], ready.contains(edit.item.category),
+    private func upload(for id: SyncRecordID) -> SharedCatalogState.Edit? {
+        guard storageAvailable, trustedUser != nil, trustedUser == state.user, let edit = state.pending[id], ready.contains(edit.item.category),
               enabled(edit.item.category, for: edit.profile) else { return nil }
-        return edit.item.record(fields: state.remote[id]?.fields)
+        return edit
+    }
+
+    public func record(for id: SyncRecordID) -> SyncRecord? {
+        guard let edit = upload(for: id), let record = edit.item.record(fields: state.remote[id]?.fields) else { return nil }
+        sending[id] = edit.item
+        return record
     }
 
     public func enqueue() {
         guard save() else { return }
-        engine?.add(state.pending.keys.compactMap { record(for: $0) == nil ? nil : .saveRecord($0) })
+        engine?.add(state.pending.keys.compactMap { upload(for: $0) == nil ? nil : .saveRecord($0) })
     }
 
     public func handle(_ event: SyncEvent) async {
@@ -336,8 +375,18 @@ public final class SharedCatalogSync: SyncZoneHandler {
     private func receive(_ record: SyncRecord) {
         guard let item = SharedSpaceItem(record: record) else { return }
         let id = record.id
+        if let prior = state.remote[id] {
+            guard prior.item.kind == item.kind, prior.item.profileID == item.profileID else { return }
+            if prior.item == item, prior.fields == record.systemFields, state.pending[id] == nil {
+                return
+            }
+        }
+        stamp(item.category)
         if let edit = state.pending[id] {
-            if edit.item == item {
+            if edit.submitted == item, edit.item != item {
+                state.pending[id]?.base = item
+                state.pending[id]?.submitted = nil
+            } else if edit.item == item, edit.submitted == nil || edit.submitted == item {
                 state.pending[id] = nil
             } else if item != edit.base {
                 if edit.item.removed && !item.removed {
@@ -348,12 +397,21 @@ public final class SharedCatalogSync: SyncZoneHandler {
                 }
             }
         }
+        if sending[id] == item {
+            sending[id] = nil
+        }
         state.remote[id] = .init(item: item, fields: record.systemFields)
     }
 
     private func acknowledge(_ record: SyncRecord) {
         guard let item = SharedSpaceItem(record: record) else { return }
         stamp(item.category)
+        if sending[record.id] == item {
+            sending[record.id] = nil
+        }
+        if state.pending[record.id]?.submitted == item {
+            state.pending[record.id]?.submitted = nil
+        }
         state.remote[record.id] = .init(item: item, fields: record.systemFields)
         if state.pending[record.id]?.item == item {
             state.pending[record.id] = nil
@@ -371,16 +429,36 @@ public final class SharedCatalogSync: SyncZoneHandler {
         state.remote[id] = .init(item: prior.tombstone, fields: nil)
     }
 
+    private func trust(_ user: String) {
+        guard trustedUser != user else { return }
+        if let parked = state.pausedAccounts?.removeValue(forKey: user) {
+            state.pending.merge(parked.pending) { active, _ in active }
+            state.conflicts.merge(parked.conflicts) { active, _ in active }
+            state.remote.merge(parked.bases) { active, _ in active }
+        }
+        trustedUser = user
+        onVerifiedUser?(user)
+    }
+
     private func reset(user: String?) {
+        let previous = state.user
+        var parked = state.pausedAccounts ?? [:]
+        if let previous, !state.pending.isEmpty || !state.conflicts.isEmpty {
+            let needed = Set(state.pending.keys).union(state.conflicts.keys)
+            parked[previous] = .init(pending: state.pending, conflicts: state.conflicts, bases: state.remote.filter { needed.contains($0.key) })
+        }
         generation += 1
         reads.values.forEach { $0.task.cancel() }
         reads = [:]
         buffered = [:]
+        sending = [:]
         ready = []
         failed = []
         state = SharedCatalogState()
+        state.pausedAccounts = parked
+        trustedUser = nil
         state.user = user
-        onAccountChange?()
+        onAccountChange?(previous)
         save()
     }
 
@@ -388,10 +466,10 @@ public final class SharedCatalogSync: SyncZoneHandler {
     private func save() -> Bool {
         do {
             try persist(state)
-            persisted = true
+            storageAvailable = true
         } catch {
-            persisted = false
+            storageAvailable = false
         }
-        return persisted
+        return storageAvailable
     }
 }

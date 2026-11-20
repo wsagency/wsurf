@@ -12,7 +12,7 @@ nonisolated public enum SharedCatalogCategory: String, CaseIterable, Codable, Se
 /// One encrypted record per row. The record name is independent of its Space, parent, title, URL or window.
 nonisolated public struct SharedSpaceItem: Codable, Equatable, Identifiable, Sendable {
     public enum Kind: String, Codable, Sendable {
-        case profile, space, folder, tab, pin
+        case profile, space, folder, tab, pin, pinFolder
     }
 
     public let id: UUID
@@ -57,7 +57,7 @@ nonisolated public struct SharedSpaceItem: Codable, Equatable, Identifiable, Sen
             .profiles
         case .space, .tab, .folder:
             .spaces
-        case .pin:
+        case .pin, .pinFolder:
             .pins
         }
     }
@@ -72,13 +72,13 @@ nonisolated public struct SharedSpaceItem: Codable, Equatable, Identifiable, Sen
 
     public func record(fields: Data?) -> SyncRecord? {
         guard isValid, let payload = try? JSONEncoder().encode(self), payload.count <= SessionCodec.maxPayloadBytes else { return nil }
-        return SyncRecord(id: recordID, type: kind == .pin ? .sharedPin : .sharedSpaceItem, schema: 1, payload: payload, systemFields: fields)
+        return SyncRecord(id: recordID, type: category == .pins ? .sharedPin : .sharedSpaceItem, schema: 1, payload: payload, systemFields: fields)
     }
 
     public init?(record: SyncRecord) {
         guard record.schema == 1, record.payload.count <= SessionCodec.maxPayloadBytes,
               let item = try? JSONDecoder().decode(Self.self, from: record.payload),
-              item.recordID == record.id, record.type == (item.kind == .pin ? .sharedPin : .sharedSpaceItem), item.isValid
+              item.recordID == record.id, record.type == (item.category == .pins ? .sharedPin : .sharedSpaceItem), item.isValid
         else { return nil }
         self = item
     }
@@ -96,8 +96,10 @@ nonisolated public struct SharedSpaceItem: Codable, Equatable, Identifiable, Sen
             return spaceID != nil && url == nil
         case .tab:
             guard spaceID != nil else { return false }
+        case .pinFolder:
+            return spaceID == nil && url == nil
         case .pin:
-            guard spaceID == nil && parentID == nil else { return false }
+            guard spaceID == nil else { return false }
         }
         if removed {
             return url == nil

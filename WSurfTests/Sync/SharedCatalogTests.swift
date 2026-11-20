@@ -66,6 +66,72 @@ struct SharedCatalogTests {
         #expect(cloud.recordCount == 0)
     }
 
+    @Test func switchingAccountsDuringABaselineDiscardsTheUnconfirmedCatalog() async throws {
+        let cloud = FakeSyncCloud()
+        let item = SharedSpaceItem(id: UUID(), kind: .space, profileID: UUID(), title: "Second account")
+        let record = try #require(item.record(fields: nil))
+        let sync = SharedCatalogSync(state: .init()) { state in
+            guard state.user == "user-1", cloud.user == "user-1" else { return }
+            cloud.switchUser("user-2")
+            cloud.createZone(record.id.zone)
+            _ = cloud.save(record)
+        }
+        sync.attach(FakeSyncEngine(cloud: cloud, delegate: sync))
+        sync.setEnabled(true, .spaces, for: UUID())
+        await #expect(throws: SharedCatalogError.self) { try await sync.prepare(.spaces) }
+        #expect(sync.state.remote.isEmpty && sync.ready.isEmpty && !sync.needsEngine)
+    }
+
+    @Test func signingBackIntoTheOriginalAccountRequiresConsentBeforeReplayingItsOwnOutbox() async throws {
+        let cloud = FakeSyncCloud()
+        let client = Client(cloud)
+        try await client.enable()
+        let item = SharedSpaceItem(id: UUID(), kind: .space, profileID: UUID(), title: "Offline")
+        client.sync.stage(item, for: client.profile)
+        await client.engine.simulateAccount(.signOut)
+        cloud.switchUser("user-2")
+        await client.engine.simulateAccount(.signIn(user: "user-2"))
+        try await client.enable()
+        try await client.engine.sendNow()
+        #expect(cloud.record(item.recordID) == nil)
+        cloud.switchUser("user-1")
+        await client.engine.simulateAccount(.switchAccounts(user: "user-1"))
+        #expect(client.sync.record(for: item.recordID) == nil && !client.sync.needsEngine)
+        try await client.enable()
+        try await client.engine.sendNow()
+        #expect(cloud.record(item.recordID).flatMap(SharedSpaceItem.init(record:)) == item)
+    }
+
+    @Test(arguments: [false, true])
+    func undoingAnInFlightEditSurvivesItsAcknowledgementAndARestart(relaunch: Bool) async throws {
+        let cloud = FakeSyncCloud()
+        let client = Client(cloud)
+        try await client.enable()
+        let first = SharedSpaceItem(id: UUID(), kind: .space, profileID: UUID(), title: "First")
+        client.sync.stage(first, for: client.profile)
+        try await client.engine.sendNow()
+        var change = first
+        change.title = "Second"
+        client.sync.stage(change, for: client.profile)
+        let inFlight = try #require(client.engine.handOut(change.recordID))
+        client.sync.stage(first, for: client.profile)
+        guard case .saved(let saved) = cloud.save(inFlight) else {
+            Issue.record("The in-flight edit must reach the fake server.")
+            return
+        }
+        let receiver = relaunch ? Client(cloud, profile: client.profile, state: client.sync.state) : client
+        if relaunch {
+            try await receiver.sync.prepare(.spaces)
+        } else {
+            try await receiver.engine.fetchNow()
+            await receiver.router.handle(.sent(saved: [saved], deleted: [], failed: []))
+        }
+        #expect(receiver.sync.state.pending[first.recordID]?.item == first)
+        try await receiver.engine.sendNow()
+        #expect(cloud.record(first.recordID).flatMap(SharedSpaceItem.init(record:)) == first)
+        #expect(receiver.sync.state.pending.isEmpty && receiver.sync.state.conflicts.isEmpty)
+    }
+
     @Test func codecChecksIdentityMembershipAndWebURLBeforeSendingOrOpening() throws {
         let id = UUID()
         let row = SharedSpaceItem(id: id, kind: .pin, profileID: UUID(), title: "A", url: "https://example.test")
