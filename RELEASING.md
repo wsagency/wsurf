@@ -517,38 +517,52 @@ that ships. A Debug app is 477 MB on disk (a 145 MB debug dylib, coverage counte
 
 ### Test iCloud with an Apple Development signature
 
-The host can request CloudKit in `iCloud.io.wsagency.wsurf` for an explicit development
-build. Use an installed macOS development profile that grants that container, the
-CloudKit service, the Development environment and development push. Use the existing
-credential exchange profile for the extension. Set `WSURF_PROFILE` to the host
-profile UUID. Generate the host plist in this checkout.
+The WSurf host can request its private CloudKit Development container for a specific
+candidate. The host profile must grant `iCloud.io.wsagency.wsurf` in both container
+lists, plus CloudKit, Development and development push. Apple's development list
+identifies the containers available in that environment. Xcode places the standard
+container-identifiers key in a CloudKit-only app's signature, and WSurf checks that
+key before creating its container. The host also needs its existing associated
+domain, Keychain group and credential-provider grants. [Development container
+identifiers](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.developer.icloud-container-development-container-identifiers)
+· [Xcode iCloud configuration](https://developer.apple.com/documentation/xcode/configuring-icloud-services)
+· [Provisioning profile grants](https://developer.apple.com/documentation/technotes/tn3125-inside-code-signing-provisioning-profiles)
+
+Run the following in an owned checkout of the clean merged candidate after its CI
+passes, using the installed host and exchange development profile UUIDs and that
+candidate's label. This creates a fresh archive and checks its actual host and
+extension before the device trial.
 
 ```sh
-mkdir -p build/icloud-development
+set -eu
+: "${WSURF_PROFILE:?Set the installed WSurf host development profile UUID}"
+: "${WSURF_EXCHANGE_PROFILE:?Set the installed credential exchange development profile UUID}"
+: "${WSURF_CANDIDATE:?Set the approved candidate label}"
+mkdir -p build
+trial=$(mktemp -d "$PWD/build/icloud-development.XXXXXX")
 profile_dir="$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles"
 python3 Tools/check-icloud-development-signing.py prepare \
-  "$profile_dir/$WSURF_PROFILE.provisionprofile" > build/icloud-development/WSurf.entitlements
-```
-
-After this succeeds, add the following build settings to the development build or
-the approved local Release archive command above.
-
-```sh
-CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY="Apple Development" \
-WSURF_PROFILE="$WSURF_PROFILE" WSURF_EXCHANGE_PROFILE="$WSURF_EXCHANGE_PROFILE" \
-WSURF_HOST_ENTITLEMENTS=build/icloud-development/WSurf.entitlements
+  "$profile_dir/$WSURF_PROFILE.provisionprofile" > "$trial/WSurf.entitlements"
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcodebuild archive \
+  -project WSurf.xcodeproj -scheme WSurf -configuration Release \
+  -destination 'generic/platform=macOS' -archivePath "$trial/WSurf.xcarchive" \
+  -derivedDataPath "$trial/DerivedData" -clonedSourcePackagesDirPath "$trial/SourcePackages" \
+  -onlyUsePackageVersionsFromResolvedFile -IDEPackageEnablePrebuilts=NO \
+  ENABLE_DEBUG_DYLIB=NO ENABLE_PREVIEWS=NO \
+  CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY="Apple Development" \
+  WSURF_CANDIDATE="$WSURF_CANDIDATE" WSURF_COMMIT="$(git rev-parse --short=8 HEAD)" \
+  WSURF_PROFILE="$WSURF_PROFILE" WSURF_EXCHANGE_PROFILE="$WSURF_EXCHANGE_PROFILE" \
+  WSURF_HOST_ENTITLEMENTS="$trial/WSurf.entitlements"
+python3 Tools/check-icloud-development-signing.py verify \
+  "$trial/WSurf.xcarchive/Products/Applications/WSurf.app" "$WSURF_PROFILE"
 ```
 
 `WSURF_HOST_ENTITLEMENTS` selects the host plist in Debug and Release. The extension
-has its own signing settings. Ordinary builds use `WSurf/WSurf.entitlements`.
+uses its own plist and profile. Ordinary builds use `WSurf/WSurf.entitlements`.
 Developer ID release and tip use their regular profiles. Enabling CloudKit for those
-exports requires Production grants, production push and a deployed Production schema.
-
-Check the final bundle before the device trial.
-
-```sh
-python3 Tools/check-icloud-development-signing.py verify "$APP" "$WSURF_PROFILE"
-```
+exports requires Production grants, production push and deployment of the Production
+schema. Signing permits access to CloudKit. The test user gives consent separately
+with the launch-time feature preference and per-profile or per-vault switch below.
 
 For the tab-sharing trial, use two fresh macOS test users with the same dedicated
 Apple Account. In each test user run

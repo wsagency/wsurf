@@ -8,6 +8,7 @@ import datetime
 import json
 import plistlib
 import runpy
+from unittest.mock import patch
 import subprocess
 import unittest
 from pathlib import Path
@@ -27,6 +28,18 @@ CLOUD = {
     ENVIRONMENT: "Development",
     PUSH: "development",
 }
+
+
+APP = "io.wsagency.wsurf"
+EXCHANGE = APP + ".CredentialExchange"
+APP_ID = "com.apple.application-identifier"
+TEAM = "5X68L55TNU"
+TEAM_KEY = "com.apple.developer.team-identifier"
+DEV_CONTAINERS = "com.apple.developer.icloud-container-development-container-identifiers"
+KV_STORE = "com.apple.developer.ubiquity-kvstore-identifier"
+GROUPS = "keychain-access-groups"
+DOMAINS = "com.apple.developer.associated-domains"
+PROVIDER = "com.apple.developer.authentication-services.autofill-credential-provider"
 
 
 class DevelopmentSigningTests(unittest.TestCase):
@@ -58,14 +71,35 @@ class DevelopmentSigningTests(unittest.TestCase):
             "ExpirationDate": datetime.datetime(2099, 1, 1),
             "ProvisionedDevices": ["synthetic-device"],
             "ApplicationIdentifierPrefix": ["EXAMPLE"],
+            "TeamIdentifier": [TEAM],
+            "DeveloperCertificates": [b"same synthetic development certificate"],
             "Entitlements": {
-                "com.apple.application-identifier": "EXAMPLE.io.wsagency.wsurf",
-                CONTAINER: CLOUD[CONTAINER],
-                SERVICES: "*",
-                ENVIRONMENT: ["Production", "Development"],
-                PUSH: "development",
+                APP_ID: "EXAMPLE." + APP, TEAM_KEY: TEAM,
+                DOMAINS: "*", GROUPS: ["EXAMPLE.*"], PROVIDER: True,
+                CONTAINER: CLOUD[CONTAINER], DEV_CONTAINERS: CLOUD[CONTAINER],
+                SERVICES: "*", ENVIRONMENT: ["Production", "Development"], PUSH: "development",
             },
         }
+        self.exchange_profile = {
+            **self.profile, "UUID": "exchange-profile",
+            "Entitlements": {APP_ID: "EXAMPLE." + EXCHANGE, TEAM_KEY: TEAM, PROVIDER: True, GROUPS: ["EXAMPLE.*"]},
+        }
+        self.signed = {**self.base, **CLOUD, GROUPS: ["EXAMPLE." + APP], APP_ID: "EXAMPLE." + APP, TEAM_KEY: TEAM}
+        self.signed_extension = {**self.extension, APP_ID: "EXAMPLE." + EXCHANGE, TEAM_KEY: TEAM}
+        self.check = runpy.run_path(str(CHECKER))
+
+    def verify(self, host=None, signed=None, extension=None, exchange=None, uuid="synthetic-profile"):
+        # The CLI normally obtains these four independent documents from codesign and security cms.
+        verify = self.check["verify"]
+        with patch.dict(verify.__globals__, {
+            "read_profile": lambda path: (exchange or self.exchange_profile) if ".appex" in str(path) else (host or self.profile),
+            "signed_entitlements": lambda bundle, ident, profile: (extension or self.signed_extension) if ident == EXCHANGE else (signed or self.signed),
+        }):
+            verify(Path("fixture/WSurf.app"), uuid)
+
+    @staticmethod
+    def grants(profile, changes):
+        return {**profile, "Entitlements": {**profile["Entitlements"], **changes}}
 
     def test_generated_entitlements_add_only_the_four_approved_host_keys(self):
         check = runpy.run_path(str(CHECKER))
@@ -88,20 +122,71 @@ class DevelopmentSigningTests(unittest.TestCase):
                 check["development_entitlements"](self.base, {**self.profile, **changes})
 
     def test_wrong_signed_environment_profile_or_extension_is_rejected(self):
-        check = runpy.run_path(str(CHECKER))
-        signed = {**self.base, **CLOUD, "com.apple.application-identifier": "EXAMPLE.io.wsagency.wsurf"}
-        verify = check["check_artifact"]
-        verify(signed, self.profile, self.extension, self.profile["UUID"])
+        self.verify()
         for key, value in [(CONTAINER, ["iCloud.example"]), (SERVICES, []), (ENVIRONMENT, "Production"), (PUSH, "production")]:
             with self.subTest(key=key), self.assertRaises(ValueError):
-                verify({**signed, key: value}, self.profile, self.extension, self.profile["UUID"])
+                self.verify(signed={**self.signed, key: value})
             with self.subTest(extension=key), self.assertRaises(ValueError):
-                verify(signed, self.profile, {**self.extension, key: value}, self.profile["UUID"])
-        for key in ["aps-environment", "com.apple.developer.icloud-container-development-container-identifiers"]:
+                self.verify(extension={**self.signed_extension, key: value})
+        for key in ["aps-environment", DEV_CONTAINERS]:
             with self.subTest(extension=key), self.assertRaises(ValueError):
-                verify(signed, self.profile, {**self.extension, key: []}, self.profile["UUID"])
+                self.verify(extension={**self.signed_extension, key: []})
         with self.assertRaises(ValueError):
-            verify(signed, self.profile, self.extension, "another-profile")
+            self.verify(uuid="another-profile")
+
+    def test_host_baseline_grants_and_signed_values(self):
+        for key, bad in [(GROUPS, ["OTHER.*"]), (DOMAINS, ["webcredentials:other.example"]), (PROVIDER, False)]:
+            for value in [None, bad]:
+                profile = self.grants(self.profile, {key: value})
+                with self.subTest(key=key, value=value, mode="prepare"), self.assertRaises(ValueError):
+                    self.check["development_entitlements"](self.base, profile)
+                with self.subTest(key=key, value=value, mode="verify-grant"), self.assertRaises(ValueError):
+                    self.verify(host=profile)
+                with self.subTest(key=key, value=value, mode="verify-signed"), self.assertRaises(ValueError):
+                    self.verify(signed={**self.signed, key: value})
+        for group in ["EXAMPLE.*", "EXAMPLE.io.wsagency.*", "EXAMPLE." + APP]:
+            for domains in ["*", ["*"], ["webcredentials:wsurf.app"]]:
+                with self.subTest(group=group, domains=domains):
+                    self.verify(host=self.grants(self.profile, {GROUPS: [group], DOMAINS: domains}))
+        for wrong in ["*", "OTHER.*", "EXAMPLE.io.other.*", "EXAMPLE.io.*.wsurf"]:
+            with self.subTest(keychain_grant=wrong), self.assertRaises(ValueError):
+                self.verify(host=self.grants(self.profile, {GROUPS: [wrong]}))
+        for key, value in [(GROUPS, ["EXAMPLE.*"]), (DOMAINS, ["*"]), (PROVIDER, 1)]:
+            with self.subTest(signed=key), self.assertRaises(ValueError):
+                self.verify(signed={**self.signed, key: value})
+
+    def test_both_container_grants_must_include_the_host_container(self):
+        other = ["iCloud.example.other"]
+        for key in [CONTAINER, DEV_CONTAINERS]:
+            for value in [None, other, ["*"]]:
+                with self.subTest(key=key, value=value), self.assertRaises(ValueError):
+                    self.check["development_entitlements"](self.base, self.grants(self.profile, {key: value}))
+        # A profile can grant different additional containers in Development and Production.
+        self.verify(host=self.grants(self.profile, {
+            CONTAINER: ["iCloud.example.prod", *CLOUD[CONTAINER]], DEV_CONTAINERS: [*CLOUD[CONTAINER], "iCloud.example.dev"],
+        }))
+
+    def test_host_rejects_unexpected_cloud_signature_keys(self):
+        for key in [KV_STORE, DEV_CONTAINERS, "com.apple.developer.ubiquity-container-identifiers", "aps-environment"]:
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                self.verify(signed={**self.signed, key: "unused"})
+
+    def test_exchange_must_have_its_own_current_development_profile_and_grants(self):
+        invalid = [
+            self.profile,  # The very same certificate is authorized on both valid profiles.
+            {**self.exchange_profile, "ExpirationDate": datetime.datetime(2000, 1, 1)},
+            {**self.exchange_profile, "ProvisionedDevices": []},
+            {**self.exchange_profile, "TeamIdentifier": ["OTHERTEAM0"]},
+            {**self.exchange_profile, "DeveloperCertificates": []},
+            self.grants(self.exchange_profile, {TEAM_KEY: "OTHERTEAM0"}),
+            self.grants(self.exchange_profile, {PROVIDER: False}),
+        ]
+        for index, profile in enumerate(invalid):
+            with self.subTest(profile=index), self.assertRaises(ValueError):
+                self.verify(exchange=profile)
+        for key, value in [(TEAM_KEY, "OTHERTEAM0"), (APP_ID, "EXAMPLE." + APP), (PROVIDER, None), (PROVIDER, 1)]:
+            with self.subTest(key=key, value=value), self.assertRaises(ValueError):
+                self.verify(extension={**self.signed_extension, key: value})
 
 
 if __name__ == "__main__":
