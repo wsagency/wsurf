@@ -177,7 +177,9 @@ extension MacSettingsSyncTests {
             try await sync.enable(.websiteSettings, localProfileID: profile, cloudProfileID: profile)
             replacement = sync.channel(.websiteSettings, localProfileID: profile)?.enrollment
         }
+        cloud.deleteZone(provider.zone, reason: .purged)
         await sync.handle(.zonesDeleted([old.zone: .deleted, provider.zone: .purged]))
+        try #require(await waitUntil { replacement != nil && !sync.isEnabled(.providers, localProfileID: nil) })
         let current = try #require(replacement)
         #expect(current != old.enrollment)
         #expect(sync.channel(.websiteSettings, localProfileID: profile)?.enrollment == current)

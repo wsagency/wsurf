@@ -20,6 +20,7 @@ final class CloudSettingsSync: SyncZoneHandler {
 
     struct State: Codable {
         var account: String?
+        var appliedAccountReset: String?
         var channels: [String: MacSettingChannel] = [:]
         fileprivate var optOuts: [String: OptOut]?
 
@@ -66,6 +67,7 @@ final class CloudSettingsSync: SyncZoneHandler {
     @ObservationIgnored let snapshot: Snapshot
     @ObservationIgnored let apply: Apply
     @ObservationIgnored private let stateFile: URL
+    @ObservationIgnored private let resetDefaults: UserDefaults
     @ObservationIgnored private let discardWebsiteApprovals: (UUID) throws -> Void
     @ObservationIgnored var engine: (any SyncEngine)?
     @ObservationIgnored var ready: Set<String> = []
@@ -112,17 +114,20 @@ final class CloudSettingsSync: SyncZoneHandler {
 
     convenience init(
         stateFile: URL, read: @escaping Read, apply: @escaping Apply,
-        discardWebsiteApprovals: @escaping (UUID) throws -> Void = { _ in }, clock: any Clock<Duration> = ContinuousClock()
+        discardWebsiteApprovals: @escaping (UUID) throws -> Void = { _ in }, clock: any Clock<Duration> = ContinuousClock(),
+        resetDefaults: UserDefaults? = nil
     ) {
         self.init(stateFile: stateFile, snapshot: { try read($0.category, $0.localProfileID) }, apply: apply,
-                  discardWebsiteApprovals: discardWebsiteApprovals, clock: clock)
+                  discardWebsiteApprovals: discardWebsiteApprovals, clock: clock, resetDefaults: resetDefaults)
     }
 
     private init(
         stateFile: URL, snapshot: @escaping Snapshot, apply: @escaping Apply,
-        discardWebsiteApprovals: @escaping (UUID) throws -> Void = { _ in }, clock: any Clock<Duration> = ContinuousClock()
+        discardWebsiteApprovals: @escaping (UUID) throws -> Void = { _ in }, clock: any Clock<Duration> = ContinuousClock(),
+        resetDefaults: UserDefaults? = nil
     ) {
         self.stateFile = stateFile
+        self.resetDefaults = resetDefaults ?? UserDefaults(suiteName: AppDatabase.defaultsSuite("io.wsagency.wsurf.settings-recovery"))!
         self.snapshot = snapshot
         self.apply = apply
         self.discardWebsiteApprovals = discardWebsiteApprovals
@@ -137,6 +142,9 @@ final class CloudSettingsSync: SyncZoneHandler {
             state = State()
             checkpointUnavailable = true
             notice = String(localized: "Your saved sync settings are temporarily unavailable. Try again to load them.")
+        }
+        if !checkpointUnavailable {
+            applyRememberedAccountReset()
         }
         restorePendingOptOuts()
         if checkpointUnavailable {
@@ -408,7 +416,7 @@ final class CloudSettingsSync: SyncZoneHandler {
         }
     }
 
-    private func prepare(zone: String) async throws {
+    func prepare(zone: String) async throws {
         guard state.channels[zone]?.needsConfirmation == false else { throw Issue.unavailable }
         guard !ready.contains(zone) else { return }
         if let existing = preparations[zone] {
@@ -438,7 +446,7 @@ final class CloudSettingsSync: SyncZoneHandler {
         } catch where Self.missingZone(error) {
             try await verifyAccount(started)
             guard loading[zone] == token, state.channels[zone]?.enrollment == channel.enrollment else { throw CancellationError() }
-            guard !channel.fetched else {
+            guard !channel.fetched && channel.checkingDeletion != true else {
                 forget(zone: zone)
                 try save()
                 throw Issue.incomplete
@@ -463,6 +471,7 @@ final class CloudSettingsSync: SyncZoneHandler {
                 try removed(id)
             }
         }
+        state.channels[zone]?.checkingDeletion = nil
         state.channels[zone]?.fetched = true
         state.channels[zone]?.lastSync = .now
         try save()
@@ -578,11 +587,16 @@ final class CloudSettingsSync: SyncZoneHandler {
     func reloadStateIfNeeded() throws {
         guard checkpointUnavailable else { return }
         let revoked = pendingOptOuts
-        state = try State.read(from: stateFile)
+        do {
+            state = try State.read(from: stateFile)
+        } catch CocoaError.fileReadNoSuchFile {
+            state = State()
+        }
         checkpointUnavailable = false
         checkpointRetry?.cancel()
         checkpointRetry = nil
         notice = nil
+        applyRememberedAccountReset()
         restore(revoked)
         if FileManager.default.fileExists(atPath: optOutFile.path) {
             readOptOutJournal()
@@ -611,29 +625,56 @@ final class CloudSettingsSync: SyncZoneHandler {
             pendingOptOuts[zone] = OptOut(channel)
             optOutsToFinish.insert(zone)
         }
+        invalidateBaseline(in: zone)
+        names = names.filter { $0.key.zone != zone }
+    }
+
+    func invalidateBaseline(in zone: String) {
         ready.remove(zone)
         loading[zone] = nil
         buffered[zone] = nil
         preparations.removeValue(forKey: zone)?.cancel()
-        names = names.filter { $0.key.zone != zone }
     }
 
     func resetAccount(to user: String?) throws {
-        generation = UUID()
-        trustedUser = nil
-        // An explicit account reset revokes every enrollment, even when its checkpoint is still inaccessible.
+        suspendAccount()
         if checkpointUnavailable {
-            try? reloadStateIfNeeded()
+            try rememberAccountReset()
+            try reloadStateIfNeeded()
         }
-        checkpointUnavailable = false
-        profilesForRecovery = nil
+        clearEnrollments(for: user)
+        do {
+            try save()
+        } catch {
+            try rememberAccountReset()
+            throw error
+        }
+        notice = String(localized: "The Apple Account changed. Choose what to sync with this account.")
+    }
+
+    private func clearEnrollments(for user: String?) {
         for zone in Array(state.channels.keys) {
             forget(zone: zone)
         }
         state.account = user
-        onAccountVerification?(.checking)
-        try save()
-        notice = String(localized: "The Apple Account changed. Choose what to sync with this account.")
+    }
+
+    // Preferences remain accessible when the application support directory cannot be traversed.
+    private var accountResetKey: String {
+        stateFile.standardizedFileURL.path
+    }
+
+    private func rememberAccountReset() throws {
+        let reset = UUID().uuidString
+        resetDefaults.set(reset, forKey: accountResetKey)
+        state.appliedAccountReset = reset
+        guard resetDefaults.synchronize() else { throw CocoaError(.fileWriteUnknown) }
+    }
+
+    private func applyRememberedAccountReset() {
+        guard let reset = resetDefaults.string(forKey: accountResetKey), reset != state.appliedAccountReset else { return }
+        clearEnrollments(for: nil)
+        state.appliedAccountReset = reset
     }
 
     func reportError() {

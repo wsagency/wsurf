@@ -104,7 +104,7 @@ extension CloudSettingsSync {
                     beat()
                 }
             case .zonesDeleted(let zones):
-                try await zonesDeleted(zones)
+                try zonesDeleted(zones)
             case .zoneSavesOverQuota(let zones):
                 if zones.contains(where: { state.channels[$0] != nil }) {
                     notice = String(localized: "Your iCloud storage is full. Settings changes are waiting on this Mac.")
@@ -132,16 +132,38 @@ extension CloudSettingsSync {
         }
     }
 
-    private func zonesDeleted(_ zones: [String: SyncZoneDeletionReason]) async throws {
-        let enrolled = state.channels.filter { zones[$0.key] != nil && !$0.value.needsConfirmation }.mapValues(\.enrollment)
-        guard !enrolled.isEmpty else { return }
-        let started = generation
-        try await verifyAccount(started)
-        guard generation == started else { return }
-        for (zone, epoch) in enrolled where state.channels[zone]?.enrollment == epoch {
-            forget(zone: zone)
+    private func zonesDeleted(_ zones: [String: SyncZoneDeletionReason]) throws {
+        var enrolled: [String: UUID] = [:]
+        for zone in zones.keys {
+            guard var channel = state.channels[zone], !channel.needsConfirmation else { continue }
+            enrolled[zone] = channel.enrollment
+            invalidateBaseline(in: zone)
+            channel.checkingDeletion = true
+            updateChannel(channel)
         }
+        guard !enrolled.isEmpty else { return }
         try save()
+        // The shared cursor may report a deletion after a zone was re-created. Read it outside this delegate callback.
+        let started = generation
+        Task { [weak self] in
+            guard let self, started == generation else { return }
+            do {
+                try await verifyAccount(started)
+            } catch {
+                reportError()
+                return
+            }
+            guard generation == started else { return }
+            for (zone, epoch) in enrolled where state.channels[zone]?.enrollment == epoch && state.channels[zone]?.checkingDeletion == true {
+                do {
+                    try await prepare(zone: zone)
+                } catch {
+                    if state.channels[zone]?.enrollment == epoch {
+                        reportError()
+                    }
+                }
+            }
+        }
     }
 
     private func fetched(_ records: [SyncRecord], deleted: [SyncRecordID]) throws {

@@ -66,6 +66,8 @@ nonisolated struct MacSettingChannel: Codable {
         awaitingAccountConfirmation != false
     }
     var fetched = false
+    /// A deletion notice can precede or outlive this enrollment. Only a current full read decides.
+    var checkingDeletion: Bool?
     var lastSync: Date?
     var observed: [String: Data] = [:]
     var records: [String: Record] = [:]

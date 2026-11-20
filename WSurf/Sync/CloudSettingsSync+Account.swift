@@ -62,10 +62,13 @@ extension CloudSettingsSync {
 
     func accountDidResolve(_ identity: String?) throws {
         defer { onAccountVerification?(.resolved(identity)) }
-        try reloadStateIfNeeded()
-        // Observing an identity can revoke an old account, but only the chosen enrollment can be confirmed.
-        if let prior = state.account, prior != identity {
-            try resetAccount(to: identity)
+        if checkpointUnavailable && identity == nil {
+            try resetAccount(to: nil)
+        } else {
+            try reloadStateIfNeeded()
+            if let prior = state.account, prior != identity {
+                try resetAccount(to: identity)
+            }
         }
         if identity == nil {
             notice = String(localized: "Sign in to iCloud in System Settings to use Sync.")
