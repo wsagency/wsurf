@@ -956,8 +956,8 @@
     "%lld entries are from a newer version of WSurf. Update WSurf to sync them." : {
       "comment" : "Added to the Sync with iCloud caption. %lld is a number of at least 1. Entries another device saved in a format only a newer version of WSurf reads; they stay as they are until WSurf is updated."
     },
-    "%lld entries are too large to sync or hold only files, so they stay on this Mac." : {
-      "comment" : "Added to the Sync with iCloud caption. %lld is a number of at least 1. Files are never synced."
+    "%lld entries couldn’t be prepared for sync. This Mac keeps its copies." : {
+      "comment" : "Added to the Sync with iCloud caption. %lld is a number of at least 1. WSurf could not validate or prepare these local entries for upload."
     },
     "%lld entries don’t sync until you choose." : {
       "comment" : "Caption of the card for entries that wait for a choice about sync. %lld is a number of at least 1."
@@ -3123,7 +3123,7 @@
     "File" : {
       "comment" : "Title of the File menu in the menu bar. Use the standard macOS wording."
     },
-    "Files stay on this Mac; they aren’t synced with iCloud." : {
+    "Attached files sync with this vault through iCloud." : {
       "comment" : "Added to the Files caption of an entry in a vault that syncs through iCloud."
     },
     "Fill field" : {
@@ -3590,8 +3590,8 @@
     "Keep Website Loaded" : {
 
     },
-    "Keeps this vault the same on your Macs signed in to your Apple Account. Entries are encrypted with the vault’s key before they leave this Mac. Files attached to entries stay on this Mac." : {
-      "comment" : "Caption of the Sync with iCloud switch while it is off and the vault is unlocked. It says what sync does, that entries are encrypted before they leave, and that files stay. Apple Account is Apple’s product name."
+    "Keeps this vault the same on your Macs signed in to your Apple Account. Entries and attached files are encrypted before they leave this Mac." : {
+      "comment" : "Caption of the Sync with iCloud switch while it is off and the vault is unlocked. It says what sync does, that entries and their attached files are encrypted before they leave. Apple Account is Apple’s product name."
     },
     "kept loaded" : {
       "comment" : "Fragment in the one-line summary under a website, meaning it is never unloaded to reclaim memory. Lower case: joined with other fragments."

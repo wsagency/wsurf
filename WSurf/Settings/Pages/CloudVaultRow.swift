@@ -129,7 +129,7 @@ struct CloudVaultRow: View {
         }
         if Self.isOn(status) {
             if tally.notSyncable > 0 {
-                parts.append(String(localized: "\(tally.notSyncable) entries are too large to sync or hold only files, so they stay on this Mac."))
+                parts.append(String(localized: "\(tally.notSyncable) entries couldn’t be prepared for sync. This Mac keeps its copies."))
             }
             if tally.unreadable > 0 {
                 parts.append(String(localized: "\(tally.unreadable) changes from iCloud couldn’t be read and were skipped."))
@@ -146,8 +146,8 @@ struct CloudVaultRow: View {
         case .off:
             if isUnlocked {
                 String(localized: """
-                    Keeps this vault the same on your Macs signed in to your Apple Account. Entries are encrypted with the vault’s key \
-                    before they leave this Mac. Files attached to entries stay on this Mac.
+                    Keeps this vault the same on your Macs signed in to your Apple Account. Entries and attached files are encrypted \
+                    before they leave this Mac.
                     """)
             } else {
                 String(localized: "Unlock this vault to turn on sync.")
