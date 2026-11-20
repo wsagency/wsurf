@@ -52,13 +52,8 @@ final class ChromiumPage: NSView {
     var pendingLoad: Task<Void, Never>?
     private var closeWaiters: [CheckedContinuation<Void, Never>] = []
     private(set) var closing = false
-    private var nativeView: NSView? {
-        withHost { host in
-            host.pointee.get_window_handle?(host).map {
-                Unmanaged<NSView>.fromOpaque($0).takeUnretainedValue()
-            }
-        } ?? nil
-    }
+    /// CEF's child is owned by the AppKit hierarchy until close detaches it.
+    private weak var nativeView: NSView?
 
     private(set) var navigation: PageNavigation? {
         didSet { client?.documentResponses.reset() }
@@ -187,11 +182,6 @@ final class ChromiumPage: NSView {
         }
     }
 
-    override func layout() {
-        super.layout()
-        nativeView?.frame = bounds
-    }
-
     // D4: a page in the Chromium service tells it its size, scale, screen and visibility (`ChromiumPage+Display`). Each is a no-op for
     // a page in process.
     override func setFrameSize(_ newSize: NSSize) {
@@ -269,6 +259,13 @@ final class ChromiumPage: NSView {
     /// first document predates its scripts, so they also run once there (`runScriptsInEarlierDocuments`).
     private func adopt(_ browser: UnsafeMutablePointer<cef_browser_t>, popup: Bool) throws {
         raw = browser
+        nativeView = withHost { host in
+            host.pointee.get_window_handle?(host).map {
+                Unmanaged<NSView>.fromOpaque($0).takeUnretainedValue()
+            }
+        } ?? nil
+        nativeView?.frame = bounds
+        nativeView?.autoresizingMask = [.width, .height]
         browserID = browser.pointee.get_identifier?(browser) ?? -1
         ChromiumRuntime.shared.register(self)
         // CefKit keeps its message-pump safety net while a browser is alive, and stops it when none is.
@@ -295,8 +292,6 @@ final class ChromiumPage: NSView {
             }
             throw error
         }
-        nativeView?.frame = bounds
-        nativeView?.autoresizingMask = [.width, .height]
     }
 
     func ensureReady() async throws {
