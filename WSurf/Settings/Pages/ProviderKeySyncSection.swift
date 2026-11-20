@@ -26,7 +26,10 @@ struct ProviderKeySyncSection: View {
 
     var body: some View {
         if !profile.isPrivate {
-            SettingsSection(title: "Saved provider keys", symbol: "key.icloud") {
+            SettingsSection(
+                title: "Saved provider keys", symbol: "key.icloud",
+                footnote: account == nil ? "A verified Apple Account is required to share saved keys." : nil
+            ) {
                 DetailRow(title: "Share saved keys with iCloud Keychain") {
                     SettingsToggle(Binding(get: { enabled }, set: { next in
                         guard !next || (account != nil && account == keys.accountContext) else { return }
@@ -34,9 +37,6 @@ struct ProviderKeySyncSection: View {
                         perform { try keys.setEnabled(next) }
                     }))
                     .disabled(account == nil && !enabled)
-                }
-                if account == nil {
-                    Footnote("A verified Apple Account is required to share saved keys.")
                 }
                 if enabled || catalog.custom.contains(where: keys.needsEndpointApproval) {
                     providerControls

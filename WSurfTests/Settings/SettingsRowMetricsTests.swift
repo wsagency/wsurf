@@ -39,6 +39,17 @@ struct SettingsRowMetricsTests {
         #expect(abs(height(rows) - (2 * rowHeight + 1)) < 0.5)
     }
 
+    @Test func savedProviderKeysLeavesRoomForItsAccountNotice() {
+        let switchOnly = SettingsSection(title: "Saved provider keys", symbol: "key.icloud") {
+            DetailRow(title: "Share saved keys with iCloud Keychain") {
+                SettingsToggle(.constant(false))
+            }
+        }
+        let notice = Text("A verified Apple Account is required to share saved keys.").font(Theme.Font.label)
+        let actual = height(ProviderKeySyncSection(profile: .original()))
+        #expect(actual >= height(switchOnly) + height(notice))
+    }
+
     /// The rows of a disclosure group, such as the colors of a theme, sit as close as the rows of any other card.
     @Test func disclosureContentAddsNoSpaceBetweenItsChildren() {
         let child: CGFloat = 20
