@@ -51,20 +51,24 @@ extension CloudSettingsSync {
                 }
                 try Task.checkCancellation()
                 ProviderKeySharing.shared.setAccountIdentifier(identity)
-                if (state.account != nil || !state.channels.isEmpty) && identity != state.account {
-                    try resetAccount(to: identity)
-                }
-                if identity == nil {
-                    notice = String(localized: "Sign in to iCloud in System Settings to use Sync.")
-                }
-                if identity != nil {
-                    beat()
-                }
+                try accountDidResolve(identity)
             } catch {
                 if !Task.isCancelled {
                     reportError()
                 }
             }
+        }
+    }
+
+    func accountDidResolve(_ identity: String?) throws {
+        // A first offline choice has no verified owner yet. An explicit retry binds its saved edits.
+        if let prior = state.account, prior != identity {
+            try resetAccount(to: identity)
+        }
+        if identity == nil {
+            notice = String(localized: "Sign in to iCloud in System Settings to use Sync.")
+        } else {
+            beat()
         }
     }
 

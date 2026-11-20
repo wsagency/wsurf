@@ -192,6 +192,39 @@ struct MacSettingsSyncTests {
         #expect(!mac.sync.isEnabled(.websiteSettings, localProfileID: mac.localID))
     }
 
+    @Test func firstAccountNotificationPreservesAnUnconfirmedOfflineChoice() async throws {
+        let root = URL.temporaryDirectory.appending(path: UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let file = root.appending(path: "settings")
+        let profile = UUID(), cloud = FakeSyncCloud()
+        var local = ["engine/site": Data([1])]
+        func open() -> CloudSettingsSync {
+            CloudSettingsSync(stateFile: file, read: { _, _ in local }, apply: { value, key, _, _ in local[key] = value })
+        }
+        let first = open()
+        let offline = FakeSyncEngine(cloud: cloud, delegate: first)
+        first.attach(offline)
+        offline.offline = true
+        await #expect(throws: (any Error).self) { try await first.enable(.websiteSettings, localProfileID: profile, cloudProfileID: profile) }
+        local.removeAll()
+        try first.collectChanges()
+        let restored = open()
+        let engine = FakeSyncEngine(cloud: cloud, delegate: restored)
+        restored.attach(engine)
+        try restored.accountDidResolve(cloud.user)
+        #expect(restored.state.account == nil)
+        let waiting = try #require(restored.channel(.websiteSettings, localProfileID: profile))
+        #expect(waiting.records["engine/site"]?.pending == MacSettingPayload(key: "engine/site", value: nil))
+        #expect(engine.pending.isEmpty && cloud.zones.isEmpty)
+        try await restored.enable(.websiteSettings, localProfileID: profile, cloudProfileID: profile)
+        try await engine.sendNow()
+        #expect(restored.state.account == cloud.user)
+        #expect(cloud.recordCount == 1)
+        try restored.accountDidResolve("another-account")
+        #expect(restored.state.channels.isEmpty)
+    }
+
     @Test func automaticUploadChecksTheAccountBeforeSendingItsFirstRecord() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
