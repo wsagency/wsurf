@@ -2134,8 +2134,16 @@
     "Check for updates" : {
 
     },
-    "Check iCloud Copy" : {
-      "comment" : "Checks only the selected vault’s zone in the currently signed-in account."
+    "Check iCloud" : {
+      "comment" : "Checks whether this vault’s storage zone exists. An empty zone counts.",
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Provjeri iCloud"
+          }
+        }
+      }
     },
     "Check for Updates" : {
       "comment" : "Button in the update row on the About settings page that asks the update server whether a newer release exists. Title Case; a command."
@@ -3438,8 +3446,16 @@
     "iCloud" : {
       "comment" : "Title of the section on a profile’s settings page that holds the switch for sharing the profile’s tabs through iCloud. iCloud is Apple’s product name — leave as is."
     },
-    "iCloud copy" : {
-      "comment" : "Settings row for checking whether a previously synced vault has a copy in the current account."
+    "iCloud storage for this vault" : {
+      "comment" : "Settings row that checks for the selected vault’s storage zone in the current Apple Account.",
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Prostor za ovaj trezor u iCloudu"
+          }
+        }
+      }
     },
     "Icons only" : {
       "comment" : "Title of the switch on the Appearance settings page that narrows the sidebar to favicons alone, and the title of that same row in Settings search. Sentence case."
@@ -7630,8 +7646,16 @@
     "This vault can’t take this entry on this Mac." : {
       "comment" : "Row caption in the Review Sync Changes sheet; information only. The vault refused the entry, for example because of a limit."
     },
-    "This vault is in the Apple Account signed in on this Mac." : {
-      "comment" : "The selected vault’s zone was found during an explicit iCloud check."
+    "iCloud storage for this vault exists in the current Apple Account." : {
+      "comment" : "The selected vault’s storage zone exists. Its contents have not been checked.",
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Na ovom Apple računu postoji prostor u iCloudu za ovaj trezor."
+          }
+        }
+      }
     },
     "This vault may still be in iCloud. WSurf couldn’t confirm its removal or which Apple Account was used. This Mac keeps its copy." : {
       "comment" : "Settings caption for a credential vault removed by an earlier version without an account or a confirmed deletion."
@@ -7639,8 +7663,16 @@
     "This vault on this Mac is older than when it last synced, so syncing stopped. Turn Sync with iCloud off and on to compare it with iCloud." : {
       "comment" : "Caption of the Sync with iCloud switch when this Mac’s vault file is older than the last state it synced, for example after a restore from a backup. Sync with iCloud is the name of the switch."
     },
-    "This vault was not found in the Apple Account signed in on this Mac." : {
-      "comment" : "The selected vault’s zone was absent during an explicit iCloud check."
+    "No iCloud storage for this vault was found in the current Apple Account." : {
+      "comment" : "The selected vault’s storage zone was absent in the verified account.",
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Na ovom Apple računu nije pronađen prostor u iCloudu za ovaj trezor."
+          }
+        }
+      }
     },
     "This vault was removed from iCloud. This Mac keeps its copy. Turn on Sync with iCloud to upload this copy again." : {
       "comment" : "Caption of the Sync with iCloud switch, and of the Removed from iCloud card, after the vault’s iCloud copy was removed from another device. Sync with iCloud is the name of the switch."

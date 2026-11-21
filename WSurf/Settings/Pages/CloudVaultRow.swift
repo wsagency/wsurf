@@ -53,8 +53,8 @@ struct CloudVaultRow: View {
             .onDisappear { closeUnavailableConfirmation(account: model.vaultSync?.connectedAccount) }
             if hasHistory {
                 RowSeparator()
-                DetailRow(title: "iCloud copy", caption: copyCheckText(vaultID: vaultID, account: account)) {
-                    Button("Check iCloud Copy") {
+                DetailRow(title: "iCloud storage for this vault", caption: copyCheckText(vaultID: vaultID, account: account)) {
+                    Button("Check iCloud") {
                         guard let account else { return }
                         checkedCopy = nil
                         run {
@@ -129,7 +129,10 @@ struct CloudVaultRow: View {
 
     private func copyCheckText(vaultID: UUID, account: String?) -> LocalizedStringResource? {
         guard let checkedCopy, checkedCopy.vaultID == vaultID, checkedCopy.account == account else { return nil }
-        return checkedCopy.exists ? "This vault is in the Apple Account signed in on this Mac." : "This vault was not found in the Apple Account signed in on this Mac."
+        if checkedCopy.exists {
+            return "iCloud storage for this vault exists in the current Apple Account."
+        }
+        return "No iCloud storage for this vault was found in the current Apple Account."
     }
 
     private var vaultName: String {

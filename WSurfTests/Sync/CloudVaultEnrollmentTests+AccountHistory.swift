@@ -123,7 +123,8 @@ extension CloudVaultEnrollmentTests {
         #expect(sync.connectedAccount == user)
         rig.cloud.createZone(lostZone)
         rig.cloud.createZone(rig.zone)
-        #expect(try await sync.checkCloudCopy(profileID: rig.profile, vaultID: lost, for: user))
+        #expect(rig.cloud.recordCount == 0)
+        #expect(try await sync.checkCloudCopy(profileID: rig.profile, vaultID: lost, for: user), "An empty vault zone confirms that its storage exists.")
         #expect(try await !sync.checkCloudCopy(profileID: rig.profile, vaultID: switched, for: user))
         await #expect(throws: VaultSyncFailure.unavailable) {
             _ = try await sync.checkCloudCopy(profileID: rig.profile, vaultID: ordinary.vaultID, for: user)
