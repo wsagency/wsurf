@@ -233,6 +233,7 @@ final class FakeSyncEngine: SyncEngine, SyncAccountIdentity {
     private(set) var sendCount = 0
     private(set) var fetchCount = 0
     private(set) var fetchAllCount = 0
+    var holdSendReceipt: ((@escaping @MainActor () async -> Void) -> Void)?
     var beforeFetchDelivery: (() async throws -> Void)?
     var afterFullZoneRead: (() -> Void)?
     var duringAccountLookup: (() async throws -> Void)?
@@ -428,7 +429,12 @@ final class FakeSyncEngine: SyncEngine, SyncAccountIdentity {
         if reversesFailures {
             failed.reverse()
         }
-        await delegate?.handle(.sent(saved: saved, deleted: deleted, failed: failed))
+        let receipt = SyncEvent.sent(saved: saved, deleted: deleted, failed: failed)
+        if let holdSendReceipt {
+            holdSendReceipt { [weak delegate] in await delegate?.handle(receipt) }
+        } else {
+            await delegate?.handle(receipt)
+        }
     }
 
     private func permitsRecords(in batch: [SyncChange]) async -> Bool {

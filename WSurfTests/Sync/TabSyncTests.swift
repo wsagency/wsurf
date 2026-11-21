@@ -151,7 +151,7 @@ struct TabSyncTests {
         #expect(cloud.tag(of: id) == 3)
     }
 
-    @Test func missingZoneIsCreatedAndTheSaveRetried() async throws {
+    @Test func aMissingEstablishedZoneStopsTheNextSessionSave() async throws {
         let cloud = FakeSyncCloud()
         let a = device(cloud, "install-a")
         a.start(sharing: [personal])
@@ -160,8 +160,17 @@ struct TabSyncTests {
 
         try await publish(a, SyncSamples.session(tabs: ["https://new.test/"]))
 
-        let held = try SessionCodec.decodeSession(#require(cloud.record(a.id(in: personalZone))).payload)
-        #expect(held.windows.first?.nodes.first?.url == "https://new.test/")
+        await a.sync.refresh()
+        #expect(a.box.ended == [personal] && cloud.zones[personalZone] == nil)
+    }
+
+    @Test func aFailedFirstZoneCreationCanRetryItsSessionSave() async throws {
+        let cloud = FakeSyncCloud(), air = device(cloud, "air")
+        air.start(sharing: [personal])
+        await air.sync.refresh()
+        air.engine.losesZoneSaves = 2
+        try await publish(air, SyncSamples.session(tabs: ["https://first.test/"]))
+        #expect(cloud.record(air.id(in: personalZone)) != nil && air.box.ended.isEmpty)
     }
 
     @Test func deletedOwnRecordIsSavedAgain() async throws {
@@ -201,15 +210,14 @@ struct TabSyncTests {
         a.start(sharing: [personal])
         try await a.engine.sendNow()
         a.sync.share(SyncSamples.session(tabs: ["https://a.test/"]), profileID: personal, force: false)
-        let request = try #require(a.sync.record(for: a.id(in: personalZone)))
-        // The server applies the save, and sharing stops before the answer arrives.
-        guard case .saved(let stored) = cloud.save(request) else {
-            Issue.record("the server refused the first save")
-            return
-        }
+        var deliver: (@MainActor () async -> Void)?
+        a.engine.holdSendReceipt = { deliver = $0 }
+        try await a.engine.sendNow()
+        a.engine.holdSendReceipt = nil
         a.sync.reconcile(sharing: [])
 
-        await a.sync.handle(.sent(saved: [stored], deleted: [], failed: []))
+        let accepted = try #require(deliver)
+        await accepted()
         try await a.engine.sendNow()
 
         #expect(cloud.names(in: personalZone).isEmpty)

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 
 import CloudKit
+import CryptoKit
 import Foundation
 import Observation
 import os
@@ -106,6 +107,48 @@ nonisolated public struct RemoteDeviceSession: Identifiable, Equatable, Sendable
     }
 }
 
+/// A saved record carries its encrypted payload but no request ID. Count identical handouts until all their replies arrive.
+private struct TabSaveHandouts {
+    enum Receipt { case current, ambiguous }
+    private struct Copies {
+        var remaining = 0
+        var current = true
+        var ambiguous = false
+    }
+    private var copies: [SHA256.Digest: Copies] = [:]
+    private var latest: SHA256.Digest?
+
+    var isEmpty: Bool {
+        copies.isEmpty
+    }
+
+    mutating func issue(_ payload: Data) {
+        let key = SHA256.hash(data: payload)
+        var group = copies[key] ?? Copies()
+        group.ambiguous = group.remaining > 0
+        group.remaining += 1
+        group.current = true
+        copies[key] = group
+        latest = key
+    }
+
+    mutating func retire() {
+        latest = nil
+        for key in copies.keys {
+            copies[key]?.current = false
+        }
+    }
+
+    mutating func finish(_ payload: Data, sharing: Bool) -> Receipt? {
+        let key = SHA256.hash(data: payload)
+        guard var group = copies[key] else { return nil }
+        group.remaining -= 1
+        copies[key] = group.remaining == 0 ? nil : group
+        guard group.current, !sharing || latest == key else { return nil }
+        return group.ambiguous ? .ambiguous : .current
+    }
+}
+
 /// The platform-neutral core of tab sync: what this device publishes, what it keeps of the others, and how engine events change both.
 @Observable
 public final class TabSync: SyncEngineDelegate {
@@ -124,7 +167,6 @@ public final class TabSync: SyncEngineDelegate {
     @ObservationIgnored private var engine: (any SyncEngine)?
     @ObservationIgnored private var restoredUnidentifiedRecords: Bool
     @ObservationIgnored private var desired: Set<UUID> = []
-    @ObservationIgnored private var ensuredZones: Set<String> = []
     /// Zone name to the fitted, compressed payload of this device's next session record.
     @ObservationIgnored private var outgoing: [String: Data] = [:]
     /// Zone name to the last shared payload with `seq` zeroed, to drop a send that would change nothing.
@@ -150,6 +192,8 @@ public final class TabSync: SyncEngineDelegate {
     }
 
     @ObservationIgnored private var enrollment: Enrollment?
+    @ObservationIgnored private var handouts: [String: TabSaveHandouts] = [:]
+    @ObservationIgnored private var deferredUploads: Set<String> = []
     @ObservationIgnored private var refreshing = false
     @ObservationIgnored private var signedOut = false
 
@@ -168,6 +212,11 @@ public final class TabSync: SyncEngineDelegate {
         restoredUnidentifiedRecords = state.accountUser == nil && (
             !state.ownSystemFields.isEmpty || state.publishedDevice != nil || !state.devices.isEmpty || !state.sessions.isEmpty
         )
+        // Migrate proof from tab files written before zone observations. An explicit off/on drops that proof.
+        if state.removalCheckpoint == nil, let owner = state.accountUser, !state.ownSystemFields.isEmpty {
+            self.state.zoneObservations = .init(account: owner, zones: state.ownSystemFields.mapValues { _ in .present })
+            self.state.removalRevision = 0
+        }
     }
 
     /// Install the durable stop before attach can replay a queued zone creation, including when the tab cache is unreadable.
@@ -226,6 +275,7 @@ public final class TabSync: SyncEngineDelegate {
         let changed = self.engine !== engine
         self.engine = engine
         if changed {
+            invalidateHandouts()
             // An interrupted partial read still has to verify its zone before a restored creation can go out.
             let unfinished = state.zoneObservations?.zones.compactMap { $0.value == .incomplete ? $0.key : nil } ?? []
             holdRemovals(unfinished)
@@ -245,7 +295,14 @@ public final class TabSync: SyncEngineDelegate {
     public func reconcile(sharing profiles: Set<UUID>) {
         hasReconciled = true
         let changed = desired != profiles
+        for profile in profiles.subtracting(desired) {
+            handouts[SyncZone.profile(profile)]?.retire()
+        }
+        if desired.isEmpty, !profiles.isEmpty {
+            handouts[SyncZone.devices]?.retire()
+        }
         desired = profiles
+        deferredUploads = deferredUploads.filter(wants)
         retainCheckpoint(for: profiles)
         let inactive = state.sessions.keys.filter { !wants(zone: $0) }
         if !inactive.isEmpty || (profiles.isEmpty && !state.devices.isEmpty) {
@@ -274,18 +331,13 @@ public final class TabSync: SyncEngineDelegate {
                 changes.append(.deleteRecord(own(SyncZone.devices)))
             }
         } else {
-            if ensuredZones.insert(SyncZone.devices).inserted {
-                changes.append(.saveZone(SyncZone.devices))
-            }
+            changes.append(.saveZone(SyncZone.devices))
             if state.publishedDevice != device || state.ownSystemFields[SyncZone.devices] == nil {
                 changes.append(.saveRecord(own(SyncZone.devices)))
             }
         }
         for profile in profiles.sorted(by: { $0.uuidString < $1.uuidString }) {
-            let zone = SyncZone.profile(profile)
-            if ensuredZones.insert(zone).inserted {
-                changes.append(.saveZone(zone))
-            }
+            changes.append(.saveZone(SyncZone.profile(profile)))
         }
         add(changes)
     }
@@ -324,6 +376,9 @@ public final class TabSync: SyncEngineDelegate {
         startBaseline()
         await enrollment.task?.value
         guard !refreshing, await verifiedUser(for: enrollment, using: identity) != nil, !refreshing else { return }
+        for zone in deferredUploads {
+            add([.saveZone(zone), .saveRecord(own(zone))])
+        }
         refreshing = true
         defer { refreshing = false }
         try? await engine.fetchNow()
@@ -448,9 +503,6 @@ public final class TabSync: SyncEngineDelegate {
             }
             check.establishedZones?.formIntersection(check.zones)
             retained = check.account == state.accountUser && !check.zones.isEmpty ? check : nil
-            if state.removalCheck != retained {
-                ensuredZones.removeAll()
-            }
         }
         setCheckpoint(retained, observations: observations)
     }
@@ -489,13 +541,28 @@ public final class TabSync: SyncEngineDelegate {
             }
         }
 
-        if state.removalCheck != nil {
+        let wasHeld = state.removalCheck != nil
+        if wasHeld {
             applyZonesDeleted(confirmedRemovals)
             setRemovalCheck(nil)
-            replay()
-            guard enrollment === expected else { return }
+            guard enrollment === expected else {
+                replay()
+                return
+            }
         }
+        var alreadyPublished: Set<String> = []
         for (zone, snapshot) in snapshots {
+            let id = own(zone)
+            if !expected.changedDuringRead.contains(id) {
+                if let row = snapshot.records.first(where: { $0.id == id }) {
+                    adoptOwnRecord(row)
+                    if row.type == .deviceSession, row.payload == outgoing[zone] {
+                        alreadyPublished.insert(zone)
+                    }
+                } else if snapshot.skipped == 0 {
+                    applyFetched(modified: [], deleted: [id])
+                }
+            }
             let peers = snapshot.records.filter { $0.id.zone == zone && $0.id.name != installID }
             var absent: Set<SyncRecordID> = []
             if snapshot.skipped == 0 {
@@ -508,6 +575,9 @@ public final class TabSync: SyncEngineDelegate {
                          deleted: Array(absent.subtracting(expected.changedDuringRead)))
         }
         expected.complete = snapshots.values.allSatisfy { $0.skipped == 0 }
+        if wasHeld {
+            replay(excluding: alreadyPublished)
+        }
         persist(state)
     }
 
@@ -559,6 +629,10 @@ public final class TabSync: SyncEngineDelegate {
     }
 
     public func allowsZoneCreation(_ zone: String) -> Bool {
+        allowsRecordSave(in: zone) && !requiresExistence(zone, ifUnknown: false)
+    }
+
+    private func allowsRecordSave(in zone: String) -> Bool {
         !signedOut && wants(zone: zone) && state.removalCheck == nil
     }
 
@@ -567,7 +641,7 @@ public final class TabSync: SyncEngineDelegate {
     }
 
     public func record(for id: SyncRecordID) -> SyncRecord? {
-        guard id.name == installID, allowsZoneCreation(id.zone) else { return nil }
+        guard id.name == installID, allowsRecordSave(in: id.zone) else { return nil }
         if id.zone == SyncZone.devices {
             guard let data = try? SessionCodec.encode(device) else { return nil }
             return SyncRecord(id: id, type: .device, schema: 1, payload: data, systemFields: state.ownSystemFields[id.zone])
@@ -576,13 +650,68 @@ public final class TabSync: SyncEngineDelegate {
         return SyncRecord(id: id, type: .deviceSession, schema: 1, payload: data, systemFields: state.ownSystemFields[id.zone])
     }
 
+    public func recordForUpload(_ id: SyncRecordID) async -> SyncRecord? {
+        guard let expected = enrollment, state.accountUser != nil, allowsRecordSave(in: id.zone), id.name == installID else { return nil }
+        if !requiresExistence(id.zone, ifUnknown: false) {
+            // Prove the first creation before handing out content. Even a delayed save receipt can then outlive a real removal.
+            guard await verifyZoneForFirstUpload(id, for: expected) else { return nil }
+        }
+        guard enrollment === expected, let record = record(for: id) else { return nil }
+        deferredUploads.remove(id.zone)
+        handouts[id.zone, default: TabSaveHandouts()].issue(record.payload)
+        return record
+    }
+
+    private func verifyZoneForFirstUpload(_ id: SyncRecordID, for expected: Enrollment) async -> Bool {
+        guard let engine, let identity = engine as? any SyncAccountIdentity else { return false }
+        let firstTry = deferredUploads.insert(id.zone).inserted
+        let owner = state.accountUser
+        let read: SyncZoneRead?
+        do {
+            read = try await engine.fetchAll(zone: id.zone)
+        } catch where Self.zoneIsMissing(error) {
+            read = nil
+        } catch {
+            return false
+        }
+        guard let verified = await verifiedUser(for: expected, using: identity), verified == owner,
+              enrollment === expected, allowsRecordSave(in: id.zone) else { return false }
+        guard let read else {
+            if firstTry, allowsZoneCreation(id.zone) {
+                add([.saveZone(id.zone), .saveRecord(id)])
+            }
+            return false
+        }
+        if expected.task != nil {
+            expected.changedDuringRead.insert(id)
+        }
+        observe(read.skipped == 0 ? .present : .incomplete, in: id.zone)
+        return true
+    }
+
+    private func finishHandout(_ record: SyncRecord) -> TabSaveHandouts.Receipt? {
+        let zone = record.id.zone
+        guard record.id.name == installID else { return nil }
+        let receipt = handouts[zone]?.finish(record.payload, sharing: wants(zone: zone))
+        if handouts[zone]?.isEmpty == true {
+            handouts[zone] = nil
+        }
+        return signedOut ? nil : receipt
+    }
+
+    private func invalidateHandouts() {
+        for zone in handouts.keys {
+            handouts[zone]?.retire()
+        }
+    }
+
     public func handle(_ event: SyncEvent) async {
         switch event {
         case .fetched, .zonesDeleted:
             await receive(event, from: enrollment?.start)
             return
         case .sent(let saved, let deleted, let failed):
-            applySent(saved: saved, deleted: deleted, failed: failed)
+            await applySent(saved: saved, deleted: deleted, failed: failed)
         case .account(let change):
             applyAccount(change)
         case .state, .zoneDeletesFailed, .zoneSavesOverQuota:
@@ -629,7 +758,7 @@ public final class TabSync: SyncEngineDelegate {
         for record in modified {
             if record.id.name == installID {
                 // This device's own record: keep its change tag, never list it.
-                state.ownSystemFields[record.id.zone] = record.systemFields ?? state.ownSystemFields[record.id.zone]
+                adoptOwnRecord(record)
                 continue
             }
             let modifiedAt = record.modifiedAt ?? .distantPast
@@ -668,36 +797,48 @@ public final class TabSync: SyncEngineDelegate {
         }
     }
 
-    private func applySent(saved: [SyncRecord], deleted: [SyncRecordID], failed: [SyncFailedSave]) {
-        for record in saved where record.id.name == installID {
+    private func adoptOwnRecord(_ record: SyncRecord) {
+        let zone = record.id.zone
+        guard record.type == (zone == SyncZone.devices ? .device : .deviceSession) else { return }
+        state.ownSystemFields[zone] = record.systemFields ?? state.ownSystemFields[zone]
+        if zone == SyncZone.devices, let info = try? SessionCodec.decodeDevice(record.payload) {
+            state.publishedDevice = info
+        }
+    }
+
+    private func applySent(saved: [SyncRecord], deleted: [SyncRecordID], failed: [SyncFailedSave]) async {
+        var recheck: Set<String> = []
+        for record in saved {
+            guard let issued = finishHandout(record) else { continue }
             let zone = record.id.zone
+            if issued == .ambiguous, wants(zone: zone) {
+                recheck.insert(zone)
+                continue
+            }
             if enrollment?.task != nil {
                 enrollment?.changedDuringRead.insert(record.id)
             }
-            if !requiresExistence(zone, ifUnknown: false) {
-                observe(.present, in: zone)
-            }
-            state.ownSystemFields[zone] = record.systemFields ?? state.ownSystemFields[zone]
-            if zone == SyncZone.devices {
-                state.publishedDevice = device
-            }
+            adoptOwnRecord(record)
             // Sharing was turned off while this save was on its way: remove what it created.
             if !wants(zone: zone) {
                 add([.deleteRecord(record.id)])
             }
         }
-        for id in deleted where id.name == installID {
-            state.ownSystemFields[id.zone] = nil
-            if id.zone == SyncZone.devices {
-                state.publishedDevice = nil
+        applyFetched(modified: [], deleted: deleted.filter { $0.name == installID && !wants(zone: $0.zone) })
+        for failure in failed {
+            let zone = failure.id.zone
+            guard let attempted = failure.attempted, attempted.id == failure.id,
+                  let issued = finishHandout(attempted), wants(zone: zone) else { continue }
+            if issued == .ambiguous {
+                recheck.insert(zone)
+            } else {
+                retry(failure, recheck: &recheck)
             }
         }
-        for failure in failed where failure.id.name == installID {
-            retry(failure)
-        }
+        await recheckRemovedZones(Array(recheck), from: nil)?.value
     }
 
-    private func retry(_ failure: SyncFailedSave) {
+    private func retry(_ failure: SyncFailedSave, recheck: inout Set<String>) {
         let id = failure.id
         switch failure.failure {
         case .serverRecordChanged(let server):
@@ -705,11 +846,7 @@ public final class TabSync: SyncEngineDelegate {
             state.ownSystemFields[id.zone] = server.systemFields ?? state.ownSystemFields[id.zone]
             add([.saveRecord(id)])
         case .zoneNotFound:
-            // The record cannot exist without its zone, so any change tag we hold is stale.
-            state.ownSystemFields[id.zone] = nil
-            if wants(zone: id.zone) {
-                add([.saveZone(id.zone), .saveRecord(id)])
-            }
+            recheck.insert(id.zone)
         case .unknownItem:
             state.ownSystemFields[id.zone] = nil
             add([.saveRecord(id)])
@@ -728,8 +865,9 @@ public final class TabSync: SyncEngineDelegate {
             state.ownSystemFields[zone] = nil
             outgoing[zone] = nil
             lastShared[zone] = nil
-            ensuredZones.remove(zone)
+            handouts[zone]?.retire()
             if zone == SyncZone.devices {
+                invalidateHandouts()
                 state.devices = [:]
                 state.sessions = [:]
                 state.publishedDevice = nil
@@ -803,6 +941,8 @@ public final class TabSync: SyncEngineDelegate {
 
     /// Everything the account's database gave this device, and the marks that say it was written there.
     private func clearAccountData() {
+        invalidateHandouts()
+        deferredUploads.removeAll()
         enrollment?.task?.cancel()
         enrollment = nil
         restoredUnidentifiedRecords = false
@@ -811,7 +951,6 @@ public final class TabSync: SyncEngineDelegate {
         state.ownSystemFields = [:]
         state.publishedDevice = nil
         lastShared = [:]
-        ensuredZones = []
     }
 
     // MARK: - Helpers
@@ -833,7 +972,7 @@ public final class TabSync: SyncEngineDelegate {
             case .saveZone(let zone):
                 allowsZoneCreation(zone)
             case .saveRecord(let id):
-                allowsZoneCreation(id.zone)
+                allowsRecordSave(in: id.zone)
             case .deleteZone, .deleteRecord:
                 true
             }
@@ -843,10 +982,10 @@ public final class TabSync: SyncEngineDelegate {
         }
     }
 
-    /// Asks the engine again for every zone, the device record and the latest session records.
-    private func replay() {
-        ensuredZones = []
+    /// Requeue local content missed during a hold. Only a first enrollment can also ask for its zone.
+    private func replay(excluding published: Set<String> = []) {
         reconcile(sharing: desired)
-        add(outgoing.keys.sorted().map { .saveRecord(own($0)) })
+        let changed = Set(outgoing.keys).subtracting(published)
+        add(changed.sorted().map { .saveRecord(own($0)) })
     }
 }
