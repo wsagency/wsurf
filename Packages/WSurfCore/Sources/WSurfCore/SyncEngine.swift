@@ -115,7 +115,7 @@ nonisolated public enum SyncZoneDeletionReason: CaseIterable, Sendable {
 }
 
 /// `user` is the `recordName` of the account's user record: opaque, and different in every container.
-nonisolated public enum SyncAccountChange: Equatable, Sendable {
+nonisolated public enum SyncAccountChange: Codable, Equatable, Sendable {
     case signIn(user: String)
     case signOut
     case switchAccounts(user: String)

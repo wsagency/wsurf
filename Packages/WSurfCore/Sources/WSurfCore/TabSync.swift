@@ -103,7 +103,7 @@ public final class TabSync {
     @ObservationIgnored private var refreshing = false
     @ObservationIgnored private var signedOut = false
     @ObservationIgnored private var accountGeneration = 0
-    @ObservationIgnored var accountEvents = TabAccountEvents()
+    @ObservationIgnored var accountEventID: UUID?
 
     /// Whether this device owns anything on the server or wants to: the owner creates the engine only then.
     public var needsEngine: Bool {
@@ -609,7 +609,8 @@ extension TabSync: SyncEngineDelegate {
             return false
         }
         guard matchesAccount(user) else {
-            applyAccount(.switchAccounts(user: user), verifiedSwitchFrom: signedOut ? nil : state.accountUser)
+            let receipt = state.accountUser.flatMap { signedOut ? nil : switchReceipt(from: $0, after: accountEventID) }
+            applyAccount(.switchAccounts(user: user), receipt: receipt)
             return false
         }
         if state.accountUser == nil, needsEngine {
@@ -890,7 +891,7 @@ extension TabSync: SyncEngineDelegate {
         retainCheckpoint(for: desired)
     }
 
-    func applyAccount(_ change: SyncAccountChange, verifiedSwitchFrom previousUser: String? = nil) {
+    func applyAccount(_ change: SyncAccountChange, receipt: TabSyncState.VerifiedSwitch? = nil) {
         defer { persist(state) }
         accountGeneration += 1
         signedOut = change == .signOut
@@ -909,9 +910,8 @@ extension TabSync: SyncEngineDelegate {
             replay()
         case .signIn(let user), .switchAccounts(let user):
             // Another Apple Account: nothing of the old one is shown, and nothing is uploaded until the person opts in again.
-            let prior = state.zoneObservations ?? previousUser.map { .init(account: $0) }
-            let withdrawals = prior?.switching(to: user, verifiedFrom: previousUser, after: accountEvents.currentID,
-                                               withdrawing: ownedZones.filter { !wants(zone: $0) }, installID: installID)
+            let prior = state.zoneObservations ?? receipt.map { .init(account: $0.previousUser) }
+            let withdrawals = prior?.switching(to: user, verifiedSwitch: receipt, withdrawing: ownedZones.filter { !wants(zone: $0) }, installID: installID)
             clearAccountData()
             endSharing(account: user, observations: withdrawals)
             if !ownedZones.isEmpty {

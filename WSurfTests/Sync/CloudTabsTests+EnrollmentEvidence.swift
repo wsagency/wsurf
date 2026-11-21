@@ -116,7 +116,8 @@ extension CloudTabsTests {
         #expect(launch.cloud.record(id) == nil && launch.cloud.writeCount == writes)
     }
 
-    @Test func aVaultOnlyAccountRoundTripCannotRestoreAnOlderPersonalConsent() async throws {
+    @Test(arguments: [false, true])
+    func aVaultOnlyAccountRoundTripCannotRestoreAnOlderPersonalConsent(signOutAndIn: Bool) async throws {
         let launch = Launch(), other = FakeSyncCloud(user: "B")
         defer { launch.finish() }
         let install = MemoryInstallIDStorage(value: UUID().uuidString), profile = Profile.original()
@@ -153,6 +154,12 @@ extension CloudTabsTests {
         await vaultEngine.simulateAccount(.switchAccounts(user: other.user), from: launch.cloud.user)
         try await vaultEngine.fetchNow()
         try #require(visiting.vaults?.state.accountUser == other.user)
+        if signOutAndIn {
+            await vaultEngine.simulateAccount(.signOut)
+            vaultEngine.cloud = launch.cloud
+            await vaultEngine.simulateAccount(.signIn(user: launch.cloud.user))
+            try await vaultEngine.fetchNow()
+        }
 
         install.failsReads = false
         let (returned, engine) = try startWithVault()
@@ -161,12 +168,24 @@ extension CloudTabsTests {
         restored.sync.share(SyncSamples.session(tabs: ["https://unapproved.test/"]), profileID: profile.id, force: true)
         await restored.sync.refresh()
         try await engine.sendNow()
+        #expect(!restored.isOptedIn(profile.id) && !launch.defaults.bool(forKey: CloudTabs.optInKey))
         #expect(launch.cloud.record(saved.id) == original)
         await engine.simulateAccount(.switchAccounts(user: launch.cloud.user), from: other.user)
         await restored.sync.refresh()
         try await engine.sendNow()
         #expect(!restored.isOptedIn(profile.id) && !launch.defaults.bool(forKey: CloudTabs.optInKey))
         #expect(launch.cloud.record(saved.id) == original && launch.cloud.record(peerID) == peer && other.record(saved.id) == foreign)
+
+        if signOutAndIn {
+            try #require(returned.setOtherDeviceSharing(true, for: profile))
+            restored.sync.share(SyncSamples.session(tabs: ["https://renewed.test/"]), profileID: profile.id, force: true)
+            await restored.sync.refresh()
+            try await engine.sendNow()
+            let latest = try #require(launch.cloud.record(saved.id))
+            #expect(restored.isOptedIn(profile.id) && launch.defaults.bool(forKey: CloudTabs.optInKey))
+            #expect(try SessionCodec.decodeSession(latest.payload).windows.first?.nodes.first?.url == "https://renewed.test/")
+            #expect(launch.cloud.record(peerID) == peer && other.record(saved.id) == foreign)
+        }
     }
 
     private func prepareReturn(

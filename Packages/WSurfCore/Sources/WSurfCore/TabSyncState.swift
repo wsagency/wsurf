@@ -32,6 +32,13 @@ nonisolated public struct TabSyncState: Codable, Equatable, Sendable {
         }
     }
 
+    /// This installation already applied the transition following this account-event checkpoint.
+    struct VerifiedSwitch: Codable, Equatable, Sendable {
+        let previousUser: String
+        let installID: String
+        let accountEventID: UUID?
+    }
+
     struct ZoneObservations: Codable, Equatable, Sendable {
         enum Presence: String, Codable { case absent, present, incomplete }
         let account: String
@@ -41,13 +48,6 @@ nonisolated public struct TabSyncState: Codable, Equatable, Sendable {
         var publication: Publication?
         /// Only unfulfilled deletions survive a visit to another account. Each row also belongs to one installation.
         var withdrawals: [String: Publication]?
-        /// A lookup already applied this installation's switch from the previous account to this scope's account.
-        struct VerifiedSwitch: Codable, Equatable, Sendable {
-            let previousUser: String
-            let installID: String
-            let accountEventID: UUID?
-        }
-
         var verifiedSwitch: VerifiedSwitch?
 
         var withoutVerifiedSwitch: Self {
@@ -66,15 +66,14 @@ nonisolated public struct TabSyncState: Codable, Equatable, Sendable {
             return result
         }
 
-        func switching(to user: String, verifiedFrom previousUser: String?, after eventID: UUID?, withdrawing zones: Set<String>, installID: String) -> Self {
+        func switching(to user: String, verifiedSwitch: VerifiedSwitch?, withdrawing zones: Set<String>, installID: String) -> Self {
             var waiting = withdrawals ?? [:]
             if !zones.isEmpty {
                 waiting[account] = Publication(installID: installID, zones: zones)
             }
             // An explicit empty publication prevents stale change tags on disk from authorizing a delete in the visiting account.
             let active = waiting.removeValue(forKey: user) ?? Publication(installID: installID, zones: [])
-            let receipt = previousUser.map { VerifiedSwitch(previousUser: $0, installID: installID, accountEventID: eventID) }
-            return Self(account: user, publication: active, withdrawals: waiting.isEmpty ? nil : waiting, verifiedSwitch: receipt)
+            return Self(account: user, publication: active, withdrawals: waiting.isEmpty ? nil : waiting, verifiedSwitch: verifiedSwitch)
         }
     }
 
@@ -121,11 +120,12 @@ nonisolated public struct TabSyncState: Codable, Equatable, Sendable {
 }
 
 extension TabSync {
-    var verifiedSwitchFrom: String? {
-        guard let scope = state.zoneObservations, scope.account == state.accountUser,
-              let receipt = scope.verifiedSwitch, receipt.installID == installID,
-              receipt.accountEventID == accountEvents.currentID || accountEvents.isReplaying(receipt, to: scope.account) else { return nil }
-        return receipt.previousUser
+    func switchReceipt(from previousUser: String, after eventID: UUID?) -> TabSyncState.VerifiedSwitch {
+        .init(previousUser: previousUser, installID: installID, accountEventID: eventID)
+    }
+
+    func hasApplied(_ receipt: TabSyncState.VerifiedSwitch, to user: String) -> Bool {
+        state.accountUser == user && state.zoneObservations?.account == user && state.zoneObservations?.verifiedSwitch == receipt
     }
 }
 
