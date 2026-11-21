@@ -67,8 +67,15 @@ nonisolated struct AutofillKeychainStorage: AutofillSecureStorage {
         guard added == errSecSuccess else { throw AutofillVaultError.keychain(added) }
     }
 
+    @TaskLocal static var deleteForTesting: (@Sendable (String, String) -> OSStatus)?
+
     func erase(service: String) throws {
-        let status = SecItemDelete(Self.query(service: service, account: itemAccount) as CFDictionary)
+        let status: OSStatus
+        if let delete = Self.deleteForTesting {
+            status = delete(service, itemAccount)
+        } else {
+            status = SecItemDelete(Self.query(service: service, account: itemAccount) as CFDictionary)
+        }
         guard status == errSecSuccess || status == errSecItemNotFound else { throw AutofillVaultError.keychain(status) }
     }
 

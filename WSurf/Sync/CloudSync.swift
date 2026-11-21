@@ -2,12 +2,11 @@
 // SPDX-License-Identifier: BUSL-1.1
 
 import Foundation
+import Observation
 import WSurfCore
 
-/// The one iCloud engine of this install and what rides on it: tab sharing (`CloudTabs`) and vault sync (`VaultSync`). It exists only
-/// when `CloudSyncGate` allows at least one of them, so with both hidden flags off or in an unentitled build `shared` stays nil and
-/// every hook that asks it is a no-op. It owns the engine, its state file, the heartbeat and the quit, and hands each feature the
-/// records of its own zones through `SyncRouter`.
+/// Each eligible feature uses the same private iCloud engine. It starts when the Mac has an opted-in category or outstanding work.
+@Observable
 final class CloudSync {
     /// Set once by `startIfAvailable`, before any window exists. Tests set it and reset it in a serial suite.
     static var shared: CloudSync?
@@ -18,24 +17,44 @@ final class CloudSync {
 
     let router: SyncRouter
     /// Also `CloudTabs.shared`, which the tab hooks read.
-    let tabs: CloudTabs?
-    let vaults: VaultSync?
+    private(set) var tabs: CloudTabs?
+    private(set) var vaults: VaultSync?
+    let sharedSpaces: CloudSharedSpaces?
+    let settingsSync: CloudSettingsSync?
 
     var heartbeatInterval: Duration = .seconds(15 * 60)
     var quitLimit: Duration = .seconds(2)
 
     private let clock: any Clock<Duration>
     private let makeEngine: @MainActor (any SyncEngineDelegate, Data?) -> any SyncEngine
-    private var engine: (any SyncEngine)?
+    private(set) var engine: (any SyncEngine)?
+    @ObservationIgnored private var startOtherDevices: (() -> CloudTabs?)?
     private var attachedTabs = false
     private var attachedVaults = false
-    private var isTerminating = false
+    @ObservationIgnored private var profileCheck: Task<Void, Never>?
+    @ObservationIgnored private var vaultCatalogTask: Task<Void, Never>?
+    @ObservationIgnored private var makeVaults: (() -> VaultSync)?
+    @ObservationIgnored private var rememberVaultDiscovery: ((Bool) -> Void)?
+    @ObservationIgnored var dormantVaultInstances: [UUID: Set<CloudProfileInstance>] = [:]
+    var verifiedRetirements: Set<CloudProfileInstance> = []
+    @ObservationIgnored var unverifiedInstances: Set<UUID> = []
+    @ObservationIgnored var sendingRetirements: Set<CloudProfileInstance> = []
+    @ObservationIgnored var profileStore: ProfileStore?
+    @ObservationIgnored private var removingVaultZones: Set<VaultProfileRemoval> = []
+    @ObservationIgnored private var acknowledgedVaultZones: Set<VaultProfileRemoval> = []
+    private var attachedSpaces = false
+    private var attachedSettings = false
+    private(set) var isTerminating = false
     private var heartbeatTask: Task<Void, Never>?
 
     @discardableResult
-    static func startIfAvailable(profiles: [Profile]) -> CloudSync? {
-        shared = start(gate: .live, installIDs: KeychainInstallIDStorage(), stateFile: stateFile, profiles: profiles)
-        CloudTabs.shared = shared?.tabs
+    static func startIfAvailable(profileStore: ProfileStore) -> CloudSync? {
+        shared = start(
+            gate: .live, installIDs: KeychainInstallIDStorage(), stateFile: stateFile, profiles: profileStore.profiles, profileStore: profileStore,
+            rememberOtherDevices: { UserDefaults.standard.set(true, forKey: CloudSyncGate.tabsFlagKey) },
+            rememberVaultDiscovery: { UserDefaults.standard.set($0, forKey: CloudSyncGate.vaultFlagKey) }
+        )
+        shared?.settingsSync?.startMonitoringAccount()
         return shared
     }
 
@@ -46,45 +65,88 @@ final class CloudSync {
         installIDs: any InstallIDStorage,
         stateFile: URL,
         profiles: [Profile],
-        host: @MainActor () -> any VaultSyncHost = { CredentialVaultSyncHost() },
+        profileStore: ProfileStore? = nil,
+        host: @escaping @MainActor () -> any VaultSyncHost = { CredentialVaultSyncHost() },
+        rememberOtherDevices: @escaping @MainActor () -> Void = {},
+        rememberVaultDiscovery: @escaping @MainActor (Bool) -> Void = { _ in },
         optInDefaults: @escaping @MainActor (Profile) -> UserDefaults = ProfileSettingsStore.defaults(for:),
         windows: @escaping @MainActor () -> [BrowserModel] = CloudTabs.liveWindows,
         clock: any Clock<Duration> = ContinuousClock(),
         makeEngine: @escaping @MainActor (any SyncEngineDelegate, Data?) -> any SyncEngine = CloudSync.cloudKitEngine
     ) -> CloudSync? {
-        let tabs = CloudSyncGate.allowsTabs(gate)
-            ? InstallID.resolve(installIDs).map {
+        let makeTabs = {
+            InstallID.resolve(installIDs).map {
                 CloudTabs.make(
                     installID: $0, stateFile: CloudTabs.stateFile(besides: stateFile), profiles: profiles, optInDefaults: optInDefaults,
                     windows: windows, clock: clock
                 )
             }
-            : nil
+        }
+        let tabs = CloudSyncGate.allowsTabs(gate) ? makeTabs() : nil
         let allowsVaults = CloudSyncGate.allowsVaults(gate)
-        guard tabs != nil || allowsVaults else { return nil }
+        let offersMacSync = CloudSyncGate.canOfferMacSync(gate)
+        guard tabs != nil || allowsVaults || offersMacSync else { return nil }
+        let directory = stateFile.deletingLastPathComponent()
+        let spaces = offersMacSync ? CloudSharedSpaces(
+            stateFile: directory.appending(path: "iCloudSharedSpaces.json"), profiles: profiles, profileStore: profileStore, windows: windows
+        ) : nil
+        let settings = offersMacSync ? CloudSettingsSync(
+            stateFile: directory.appending(path: "iCloudMacSettings.json"), profiles: profiles, profileStore: profileStore, clock: clock
+        ) : nil
         // A missing or damaged file starts empty, which fetches everything once.
         let restored = (try? Data(contentsOf: stateFile)).flatMap { try? JSONDecoder().decode(SyncRouterState.self, from: $0) }
             ?? SyncRouterState()
         let keeper = RouterBox()
-        // An account the tabs already saw is the account the vaults sync with: without it, a sign-out and sign-in of the same account would
-        // read as another account the first time the vaults hear of it.
-        var vaultState = restored.vaults
-        if vaultState.accountUser == nil {
-            vaultState.accountUser = tabs?.sync.state.accountUser
+        let makeVaults = {
+            var state = keeper.router?.state.vaults ?? restored.vaults
+            if offersMacSync {
+                state.remote = [:]
+            }
+            return VaultSync(host: host(), state: state, persist: { keeper.router?.setVaults($0) }, excludedProfiles: [Profile.privateID], clock: clock)
         }
-        let vaults = allowsVaults
-            ? VaultSync(
-                host: host(), state: vaultState, persist: { keeper.router?.setVaults($0) }, excludedProfiles: [Profile.privateID],
-                clock: clock
-            )
-            : nil
+        let vaults = allowsVaults ? makeVaults() : nil
         let router = SyncRouter(
-            state: restored, persist: { JSONFileStore.encodeAndWrite($0, to: stateFile) }, tabs: tabs?.sync, vaults: vaults
+            state: restored, persist: { JSONFileStore.encodeAndWrite($0, to: stateFile) }, tabs: tabs?.sync, vaults: offersMacSync ? nil : vaults,
+            additional: [spaces?.catalog as (any SyncZoneHandler)?, settings as (any SyncZoneHandler)?].compactMap { $0 }
         )
         keeper.router = router
-        let cloudSync = CloudSync(router: router, tabs: tabs, vaults: vaults, clock: clock, makeEngine: makeEngine)
+        let cloudSync = CloudSync(router: router, tabs: tabs, vaults: vaults, sharedSpaces: spaces, settingsSync: settings, clock: clock, makeEngine: makeEngine)
+        cloudSync.profileStore = profileStore
+        if let profileStore {
+            cloudSync.configureProfileInstances(profileStore)
+            router.isLiveVaultProfile = { id in id == Profile.originalID || profileStore.verifiedProfiles?.contains { $0.id == id } == true }
+            profileStore.onVaultRemoval = { [weak cloudSync] in cloudSync?.ensureEngine() }
+        }
+        if offersMacSync {
+            cloudSync.startOtherDevices = {
+                guard let sharing = makeTabs() else { return nil }
+                rememberOtherDevices()
+                return sharing
+            }
+            cloudSync.makeVaults = makeVaults
+            cloudSync.rememberVaultDiscovery = rememberVaultDiscovery
+            router.accountChanged = { [weak cloudSync] change in
+                switch change {
+                case .signOut, .switchAccounts:
+                    cloudSync?.setVaultDiscovery(false)
+                case .signIn(let user):
+                    if let old = cloudSync?.vaults?.state.accountUser, old != user {
+                        cloudSync?.setVaultDiscovery(false)
+                    }
+                }
+            }
+        }
+        settings?.onAccountVerification = { [weak spaces] in spaces?.accountVerificationChanged($0) }
+        spaces?.onNeedsEngine = { [weak cloudSync] in cloudSync?.ensureEngine() }
+        settings?.onNeedsEngine = { [weak cloudSync] in cloudSync?.ensureEngine() }
         tabs?.needsEngine = { [weak cloudSync] in cloudSync?.ensureEngine() }
         cloudSync.ensureEngine()
+        if offersMacSync, let profileStore, profileStore.verifiedProfiles == nil {
+            // Saved enrollments can be waiting on the local profile list before any feature can start the engine.
+            cloudSync.startHeartbeat()
+        }
+        spaces?.beat()
+        settings?.beat()
         return cloudSync
     }
 
@@ -102,14 +164,91 @@ final class CloudSync {
         router: SyncRouter,
         tabs: CloudTabs?,
         vaults: VaultSync?,
+        sharedSpaces: CloudSharedSpaces?,
+        settingsSync: CloudSettingsSync?,
         clock: any Clock<Duration>,
         makeEngine: @escaping @MainActor (any SyncEngineDelegate, Data?) -> any SyncEngine
     ) {
         self.router = router
         self.tabs = tabs
         self.vaults = vaults
+        self.sharedSpaces = sharedSpaces
+        self.settingsSync = settingsSync
         self.clock = clock
         self.makeEngine = makeEngine
+    }
+
+    /// Other Devices starts on the first explicit choice and reuses the existing Personal session on later launches.
+    @discardableResult
+    func setOtherDeviceSharing(_ on: Bool, for profile: Profile) -> Bool {
+        guard CloudTabs.canShare(profile) else { return false }
+        if tabs == nil {
+            guard on else { return true }
+            guard let sharing = startOtherDevices?() else { return false }
+            sharing.needsEngine = { [weak self] in self?.ensureEngine() }
+            router.routeTabs(to: sharing.sync)
+            tabs = sharing
+        }
+        tabs?.setOptIn(on, for: profile)
+        return true
+    }
+
+    /// The category switch controls discovery. Each individual vault still requires its own opt-in.
+    func setVaultDiscovery(_ on: Bool) {
+        guard let makeVaults, on != (vaults != nil) else { return }
+        rememberVaultDiscovery?(on)
+        if on {
+            vaults = makeVaults()
+            if let profileStore {
+                configureVaultInstances(vaults, store: profileStore)
+            }
+            ensureEngine()
+        } else {
+            vaultCatalogTask?.cancel()
+            vaultCatalogTask = nil
+            router.routeVaults(to: nil)
+            vaults?.pauseDiscovery()
+            vaults = nil
+            attachedVaults = false
+        }
+    }
+
+    private func refreshVaultCatalog(_ sync: VaultSync, engine: any SyncEngine) {
+        guard vaultCatalogTask == nil, let identity = engine as? any SyncAccountIdentity,
+              let reader = engine as? any VaultCatalogReading else { return }
+        vaultCatalogTask = Task { [weak self] in
+            guard let self else { return }
+            defer { if vaults === sync { vaultCatalogTask = nil } }
+            do {
+                let user = try await identity.currentAccountUser()
+                guard vaults === sync, !Task.isCancelled else { return }
+                if !attachedVaults || user != sync.state.accountUser, !sync.acceptDiscoveryAccount(user) {
+                    setVaultDiscovery(false)
+                    return
+                }
+                await checkProfileInstances()
+                let cards = try? await reader.fetchVaultCards()
+                let current = try await identity.currentAccountUser()
+                guard vaults === sync, !Task.isCancelled else { return }
+                guard current == user else {
+                    _ = sync.acceptDiscoveryAccount(current)
+                    setVaultDiscovery(false)
+                    return
+                }
+                if let cards {
+                    sync.refreshAvailableVaults(cards, for: current)
+                }
+                if attachedVaults {
+                    sync.beat()
+                } else if cards != nil {
+                    router.routeVaults(to: sync)
+                    attachedVaults = true
+                    sync.attach(engine)
+                }
+            } catch {
+                // A later heartbeat retries discovery and checks the account again.
+            }
+        }
     }
 
     // MARK: - Hooks
@@ -124,26 +263,95 @@ final class CloudSync {
     // ponytail: no registerForRemoteNotifications yet; add it at launch if pushes do not arrive (the heartbeat fetches meanwhile).
     /// Creates the engine once, and only when this Mac shares tabs, still owns tab records on the server that it must delete, or syncs
     /// vaults (the flag is the consent to fetch). Each feature is attached the first time it needs the engine.
-    private func ensureEngine() {
+    func ensureEngine() {
         let wantsTabs = tabs?.sync.needsEngine == true
-        guard wantsTabs || vaults != nil else { return }
+        let wantsSpaces = sharedSpaces?.needsEngine == true
+        let wantsSettings = settingsSync?.needsEngine == true
+        let withdrawals = profileStore?.vaultRemovals ?? []
+        let ledger = profileStore?.cloudLedger
+        if vaults == nil, let profileStore {
+            refreshDormantInstances(profileStore)
+        }
+        let needsProfiles = ledger?.outgoing.isEmpty == false || ledger?.pending.isEmpty == false || !dormantVaultInstances.isEmpty
+        guard wantsTabs || vaults != nil || wantsSpaces || wantsSettings || !withdrawals.isEmpty || needsProfiles else { return }
         let engine = engine ?? makeEngine(router, router.state.engineState)
         self.engine = engine
+        if !dormantVaultInstances.isEmpty, profileCheck == nil {
+            profileCheck = Task { [weak self] in
+                await self?.checkProfileInstances()
+                self?.profileCheck = nil
+            }
+        }
+        if let profileStore, let transport = engine as? any CloudProfileRetirementTransport {
+            sendRetirements(profileStore, transport: transport)
+        }
+        if let profileStore, let transport = engine as? any VaultProfileZoneDeleting {
+            for removal in withdrawals where !profileStore.cloudLedger.outgoing.contains(removal.instance) && removingVaultZones.insert(removal).inserted {
+                Task {
+                    defer { removingVaultZones.remove(removal) }
+                    do {
+                        if !acknowledgedVaultZones.contains(removal), let next = try await removal.advance(using: transport) {
+                            try profileStore.updateVaultRemoval(removal, to: next)
+                            ensureEngine()
+                        } else {
+                            // Once CloudKit answered, retry only the local checkpoint, even while offline.
+                            acknowledgedVaultZones.insert(removal)
+                            try profileStore.updateVaultRemoval(removal, to: nil)
+                            acknowledgedVaultZones.remove(removal)
+                        }
+                    } catch {
+                        // The profile list keeps this exact owner's withdrawal for the next heartbeat or launch.
+                    }
+                }
+            }
+        }
         if wantsTabs, !attachedTabs, let tabs {
             attachedTabs = true
             tabs.sync.attach(engine)
         }
         if !attachedVaults, let vaults {
-            attachedVaults = true
-            vaults.attach(engine)
+            if makeVaults != nil {
+                refreshVaultCatalog(vaults, engine: engine)
+            } else {
+                attachedVaults = true
+                vaults.attach(engine)
+            }
+        }
+        if wantsSpaces, !attachedSpaces, let sharedSpaces {
+            attachedSpaces = true
+            sharedSpaces.attach(engine)
+        }
+        if wantsSettings, !attachedSettings, let settingsSync {
+            attachedSettings = true
+            settingsSync.attach(engine)
         }
         startHeartbeat()
     }
 
     /// The heartbeat: every feature sends again what is waiting and fetches.
     func beat() {
+        if profileStore?.vaultRemovals.isEmpty == false || profileStore?.cloudLedger.outgoing.isEmpty == false {
+            ensureEngine()
+        }
+        if profileStore != nil, vaults == nil, profileCheck == nil {
+            profileCheck = Task { [weak self] in
+                if let self, let profileStore {
+                    refreshDormantInstances(profileStore)
+                }
+                await self?.checkProfileInstances()
+                self?.profileCheck = nil
+            }
+        }
         tabs?.beat()
-        vaults?.beat()
+        if let vaults, let engine, makeVaults != nil {
+            refreshVaultCatalog(vaults, engine: engine)
+        } else if attachedVaults {
+            vaults?.beat()
+        } else if vaults != nil {
+            ensureEngine()
+        }
+        sharedSpaces?.beat()
+        settingsSync?.beat()
     }
 
     private func startHeartbeat() {

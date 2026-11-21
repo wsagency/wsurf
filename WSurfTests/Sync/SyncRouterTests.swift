@@ -78,7 +78,8 @@ struct SyncRouterTests {
 
         let state = try #require(setup.saved.router?.engineState)
         #expect(setup.router.state.engineState == state)
-        let relaunched = SyncRouter(state: SyncRouterState(engineState: state), persist: { _ in }, tabs: nil, vaults: nil)
+        let restored = try JSONDecoder().decode(SyncRouterState.self, from: JSONEncoder().encode(setup.router.state))
+        let relaunched = SyncRouter(state: restored, persist: { _ in }, tabs: nil, vaults: nil)
         #expect(relaunched.state.engineState == state)
         let json = try JSONEncoder().encode(TabSyncState())
         #expect(String(decoding: json, as: UTF8.self).contains("engineState") == false, "tab sync keeps none of it")
@@ -174,5 +175,52 @@ struct SyncRouterTests {
 
         #expect(setup.vaults?.status(profileID: setup.personal, vaultID: vault.vaultID) == .removalFailed)
         #expect(setup.cloud.zones[SyncZone.vault(profileID: setup.personal, vaultID: vault.vaultID)] != nil)
+    }
+
+    @Test(arguments: [false, true])
+    func anAccountSwitchDoesNotReplayAQueuedVaultZoneRemoval(relaunch: Bool) async throws {
+        let setup = Setup(tabs: false)
+        defer { setup.finish() }
+        let original = try #require(setup.vaults)
+        let vault = try setup.host.addVault(profile: setup.personal, name: "Shared")
+        let zone = SyncZone.vault(profileID: setup.personal, vaultID: vault.vaultID)
+        let id = SyncRecordID(zone: zone, name: VaultSync.vaultRecordName)
+        try await original.enable(profileID: setup.personal, vaultID: vault.vaultID)
+        try await setup.engine.sendNow()
+        var otherCopy = try #require(setup.cloud.record(id))
+        original.removeFromICloud(profileID: setup.personal, vaultID: vault.vaultID)
+        setup.engine.failsZoneDeletes = true
+        try await setup.engine.sendNow()
+        let queued = setup.engine.pending
+        #expect(original.status(profileID: setup.personal, vaultID: vault.vaultID) == .removalFailed)
+        #expect(queued.contains(.deleteZone(zone)))
+
+        let active: VaultSync
+        let engine: FakeSyncEngine
+        if relaunch {
+            original.pauseDiscovery()
+            let restored = try JSONDecoder().decode(SyncRouterState.self, from: JSONEncoder().encode(setup.router.state))
+            active = VaultSync(host: setup.host, state: restored.vaults, persist: { _ in }, excludedProfiles: [])
+            setup.router.routeVaults(to: active)
+            engine = FakeSyncEngine(cloud: setup.cloud, delegate: setup.router)
+            engine.add(queued) // The old native checkpoint contained a plain pending database deletion.
+            active.attach(engine)
+        } else {
+            active = original
+            engine = setup.engine
+        }
+        setup.cloud.switchUser("another-account")
+        setup.cloud.createZone(zone)
+        otherCopy.systemFields = nil
+        _ = setup.cloud.save(otherCopy)
+        // CKSyncEngine.AccountChange clears native pending database changes, including when restoring a checkpoint.
+        await engine.simulateAccount(.switchAccounts(user: setup.cloud.user))
+        active.removeFromICloud(profileID: setup.personal, vaultID: vault.vaultID)
+        active.beat()
+        await active.settle()
+        engine.failsZoneDeletes = false
+        try await engine.sendNow()
+        #expect(!engine.pending.contains(.deleteZone(zone)) && setup.cloud.record(id) != nil)
+        #expect(active.status(profileID: setup.personal, vaultID: vault.vaultID) == .accountChanged)
     }
 }

@@ -7,9 +7,10 @@ import WSurfVault
 
 /// What `VaultSync` asks of the app, answered by the profile's credential managers. It reaches only a manager that is unlocked now:
 /// it never creates one, never unlocks, never prompts and never touches a lease. The private profile has none of this.
-final class CredentialVaultSyncHost: VaultSyncHost {
+final class CredentialVaultSyncHost: VaultSyncHost, VaultAttachmentHost {
     private let profiles: @MainActor () -> [Profile]
     private let manager: @MainActor (Profile, UUID) -> CredentialManager?
+    private let store: @MainActor (Profile) throws -> ProfileVaultStore
     private let directory: @MainActor (Profile) -> URL
 
     /// The closures are the seam two simulated Macs use in tests: each has its own profiles, managers and folder.
@@ -18,10 +19,12 @@ final class CredentialVaultSyncHost: VaultSyncHost {
         manager: @escaping @MainActor (Profile, UUID) -> CredentialManager? = { profile, vaultID in
             CredentialManager.unlockedManagers(for: profile).first { $0.vaultID == vaultID }
         },
+        store: @escaping @MainActor (Profile) throws -> ProfileVaultStore = { try CredentialManager.store(for: $0) },
         directory: @escaping @MainActor (Profile) -> URL = { $0.supportDirectory }
     ) {
         self.profiles = profiles
         self.manager = manager
+        self.store = store
         self.directory = directory
     }
 
@@ -43,15 +46,29 @@ final class CredentialVaultSyncHost: VaultSyncHost {
 
     /// The profile's vaults from its store, which lists them without an unlock. Nil when the store cannot be read.
     func vaultIDs(profileID: UUID) async -> [UUID]? {
-        guard let profile = profile(profileID), let store = try? CredentialManager.store(for: profile),
+        guard let profile = profile(profileID), let store = try? store(profile),
               let listing = try? await store.listing()
         else { return nil }
         return listing.map(\.vaultID)
     }
 
+    func currentLease(profileID: UUID, vaultID: UUID) -> UInt64? {
+        profile(profileID).flatMap { manager($0, vaultID)?.authorizationEpoch }
+    }
+
     func syncKey(profileID: UUID, vaultID: UUID) async -> VaultSyncKey? {
         guard let manager = profile(profileID).flatMap({ manager($0, vaultID) }), manager.isUnlocked else { return nil }
         return try? await manager.syncKey()
+    }
+
+    func exportAttachment(_ file: CredentialAttachment, profile id: UUID, vault: UUID, lease: UInt64) async throws -> VaultSyncAttachment {
+        guard let manager = profile(id).flatMap({ manager($0, vault) }), manager.authorizationEpoch == lease else { throw CredentialVaultError.unauthorized }
+        return try await manager.exportSyncAttachment(file)
+    }
+
+    func importAttachment(_ file: CredentialAttachment, from encrypted: URL?, profile id: UUID, vault: UUID, lease: UInt64) async throws -> VaultImportedAttachment {
+        guard let manager = profile(id).flatMap({ manager($0, vault) }), manager.authorizationEpoch == lease else { throw CredentialVaultError.unauthorized }
+        return try await manager.importSyncAttachment(file, from: encrypted)
     }
 
     /// The vault as one moment: refused if the lease changed while it was read, so what is applied or sent is never a mix of two.

@@ -6,13 +6,25 @@
 import AppKit
 import Foundation
 import Observation
+import os
+import WSurfCore
 
 @MainActor
 @Observable
 final class ProfileStore {
     static let shared = ProfileStore()
 
-    @ObservationIgnored private var catalog: ProfileStore?
+    @ObservationIgnored private let catalog: ProfileStore?
+    @ObservationIgnored private var pendingErasures: [Profile] = []
+    @ObservationIgnored private var erasing: Set<UUID> = []
+    @ObservationIgnored private var pendingVaultRemovals: Set<VaultProfileRemoval> = []
+    private var storedCloudLedger = ProfileCloudLedger()
+    var cloudLedger: ProfileCloudLedger {
+        catalog?.cloudLedger ?? storedCloudLedger
+    }
+    @ObservationIgnored var onVaultRemoval: (() -> Void)?
+    private enum ListStatus { case loaded, missing, unreadable }
+    @ObservationIgnored private var listStatus = ListStatus.loaded
     private var storedProfiles: [Profile]
     private(set) var profiles: [Profile] {
         get { catalog?.profiles ?? storedProfiles }
@@ -26,8 +38,8 @@ final class ProfileStore {
     }
 
     static func selection(profile: Profile, catalog: ProfileStore = .shared) -> ProfileStore {
-        let selection = ProfileStore(file: catalog.file)
-        selection.catalog = catalog
+        let owner = catalog.catalog ?? catalog
+        let selection = ProfileStore(file: owner.file, catalog: owner)
         selection.markCurrent(profile)
         return selection
     }
@@ -89,14 +101,24 @@ final class ProfileStore {
         profiles.count > 1
     }
 
-    init(file: URL? = nil) {
-        self.file = file ?? Self.defaultFile
-        let stored = (try? Data(contentsOf: self.file))
-            .flatMap { try? JSONDecoder().decode(Stored.self, from: $0) }
-        var loaded = stored?.profiles ?? []
-        if !loaded.contains(where: { $0.isOriginal }) {
-            loaded.insert(.original(), at: 0)
+    convenience init(file: URL? = nil) {
+        self.init(file: file ?? Self.defaultFile, catalog: nil)
+    }
+
+    private init(file: URL, catalog: ProfileStore?) {
+        self.file = file
+        self.catalog = catalog
+        let stored: Stored?
+        do {
+            stored = try Self.read(self.file)
+        } catch CocoaError.fileReadNoSuchFile {
+            stored = nil
+            listStatus = .missing
+        } catch {
+            stored = nil
+            listStatus = .unreadable
         }
+        let loaded = Self.includingPersonal(stored?.profiles ?? [])
         storedProfiles = loaded
         let remembered = stored.map(\.currentID).flatMap { id in
             loaded.contains { $0.id == id } ? id : nil
@@ -109,6 +131,81 @@ final class ProfileStore {
         currentID = opening
         lastPersistentID = opening
         storedLastUsed = (stored?.lastUsed ?? [:]).filter { id, _ in loaded.contains { $0.id == id } }
+        restoreErasures(stored)
+    }
+
+    /// The Personal fallback after an I/O failure cannot establish that a named profile was erased.
+    var verifiedProfiles: [Profile]? {
+        if let catalog {
+            return catalog.verifiedProfiles
+        }
+        if listStatus != .loaded {
+            var saved: Stored
+            do {
+                saved = try Self.read(file)
+            } catch CocoaError.fileReadNoSuchFile {
+                return nil
+            } catch {
+                listStatus = .unreadable
+                return nil
+            }
+            let restored = Self.includingPersonal(saved.profiles)
+            let ids = Set(restored.map(\.id))
+            let retiring = Set((saved.pendingErasures ?? []).map(\.id)).union((saved.vaultRemovals ?? []).map(\.profileID))
+            let added = storedProfiles.filter { !ids.contains($0.id) && !retiring.contains($0.id) }
+            saved.profiles = restored + added
+            saved.lastUsed = (saved.lastUsed ?? [:]).merging(storedLastUsed) { _, live in live }
+            saved.launchProfileID = storedLaunchProfileID ?? saved.launchProfileID.flatMap { ids.contains($0) ? $0 : nil }
+            // Commit profiles explicitly added during the outage before sync can use their identities.
+            if !added.isEmpty {
+                guard canWriteCatalog else { return nil }
+                do {
+                    try JSONFileStore.writeAtomically(saved, to: file, sortedKeys: true)
+                } catch {
+                    return nil
+                }
+            }
+            storedProfiles = saved.profiles
+            storedLastUsed = saved.lastUsed ?? [:]
+            storedLaunchProfileID = saved.launchProfileID
+            listStatus = .loaded
+            restoreErasures(saved)
+        }
+        return storedProfiles
+    }
+
+    private static func read(_ file: URL) throws -> Stored {
+        try JSONDecoder().decode(Stored.self, from: Data(contentsOf: file))
+    }
+
+    /// A new installation can create its first list. Existing local owners require the original list before a window may replace it.
+    private static func hasNamedProfileHistory(beside file: URL) -> Bool {
+        let directory = file.deletingLastPathComponent()
+        func existing<T>(_ name: String, read: (URL) throws -> T) throws -> T? {
+            do {
+                return try read(directory.appending(path: name))
+            } catch CocoaError.fileReadNoSuchFile {
+                return nil
+            }
+        }
+        do {
+            let folders = try existing("Profiles") { try FileManager.default.contentsOfDirectory(atPath: $0.path) }
+            if folders?.contains(where: { UUID(uuidString: $0) != nil }) == true {
+                return true
+            }
+            let settings = try existing("iCloudMacSettings.json", read: CloudSettingsSync.State.read(from:))
+            if settings?.channels.values.compactMap(\.localProfileID).contains(where: { $0 != Profile.originalID }) == true {
+                return true
+            }
+            let catalog = try existing("iCloudSharedSpaces.json") { try JSONDecoder().decode(SharedCatalogStorage.State.self, from: Data(contentsOf: $0)) }
+            return catalog?.localProfileIDs.contains(where: { $0 != Profile.originalID }) == true
+        } catch {
+            return true
+        }
+    }
+
+    private static func includingPersonal(_ profiles: [Profile]) -> [Profile] {
+        profiles.contains(where: \.isOriginal) ? profiles : [.original()] + profiles
     }
 
     @discardableResult
@@ -125,12 +222,14 @@ final class ProfileStore {
         return profile
     }
 
-    /// Adds the profile another Mac synced, under the same ID, so its synced vaults open here. Nil for the built-in profiles and for an
-    /// ID that is already a profile. The name is cut to the length the sync record allows, and a symbol or color this Mac does not
-    /// know becomes the default.
+    /// Adds the profile another Mac synced under the same ID so its vaults open here. Built-in, live and pending-erasure IDs
+    /// stay reserved. The name is cut to the length the sync record allows, and an unknown symbol becomes the default.
     @discardableResult
     func adopt(id: UUID, name: String, symbol: String, color: TabFolderColor) -> Profile? {
-        guard id != Profile.originalID, id != Profile.privateID, !profiles.contains(where: { $0.id == id }) else { return nil }
+        let owner = catalog ?? self
+        guard id != Profile.originalID, id != Profile.privateID, verifiedProfiles != nil || owner.canCreateList,
+              !profiles.contains(where: { $0.id == id }), !owner.pendingErasures.contains(where: { $0.id == id }),
+              !owner.pendingVaultRemovals.contains(where: { $0.profileID == id }) else { return nil }
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         let known = NSImage(systemSymbolName: symbol, accessibilityDescription: nil) != nil
         let profile = Profile(
@@ -178,28 +277,186 @@ final class ProfileStore {
         profiles.filter { !$0.isOriginal }
     }
 
-    func remove(_ profile: Profile) async {
-        guard !profile.isOriginal, let index = index(of: profile) else { return }
-        profiles.remove(at: index)
+    @discardableResult
+    func remove(
+        _ profile: Profile, confirmedVaults: Set<VaultProfileRemoval>? = nil, beforeErasing: () async -> Void = {},
+        releaseWindows: () async -> Void = {}, scope: ProfileDeletionScope = .confirmed([]),
+        settingsSync: CloudSettingsSync? = CloudSync.shared?.settingsSync,
+        sharedSpaces: CloudSharedSpaces? = CloudSync.shared?.sharedSpaces,
+        eraseData: (Profile) async throws -> Void = Profile.eraseLocalData
+    ) async -> Result<Void, Error> {
+        guard !profile.isOriginal, !profile.isPrivate else { return .success(()) }
+        let owner = catalog ?? self
+        guard owner.canWriteCatalog else { return .failure(CocoaError(.fileLocking)) }
+        guard let live = verifiedProfiles else { return .failure(CocoaError(.fileReadUnknown)) }
+        let listed = live.first { $0.id == profile.id }
+        let result = await owner.finishErasure(profile.id, prepare: {
+            if let listed {
+                try await self.recordRemoval(of: listed, confirmedVaults: confirmedVaults, beforeErasing: beforeErasing,
+                                             settingsSync: settingsSync, sharedSpaces: sharedSpaces, scope: scope)
+            }
+        }, releaseWindows: releaseWindows, eraseData: eraseData)
+        // WebKit can keep a detached window's store in use. The removal is saved and launch will retry it.
+        if listed != nil, case .failure(let error) = result, error is Profile.PendingWebsiteData {
+            return .success(())
+        }
+        return result
+    }
+
+    private func recordRemoval(
+        of profile: Profile, confirmedVaults: Set<VaultProfileRemoval>?, beforeErasing: () async -> Void, settingsSync: CloudSettingsSync?, sharedSpaces: CloudSharedSpaces?,
+        scope: ProfileDeletionScope
+    ) async throws {
+        let localOnly = scope.retired
+        // An installation without a running iCloud service can still have consent saved by a prior launch.
+        let sharedSpaces = sharedSpaces ?? CloudSharedSpaces(
+            stateFile: file.deletingLastPathComponent().appending(path: "iCloudSharedSpaces.json"), profileStore: self, windows: { [] }
+        )
+        func detachSync() throws {
+            let catalogResult = Result { try sharedSpaces.forgetProfile(profile.id) }
+            try settingsSync?.forgetProfile(profile.id)
+            try catalogResult.get()
+        }
+        let owner = catalog ?? self
+        func validateChoice() throws {
+            guard localOnly == owner.cloudLedger.pending[profile.id], owner.cloudLedger.creating[profile.id] == nil else { throw CocoaError(.userCancelled) }
+        }
+        try validateChoice()
+        // Capture an existing shared identity before its local links are detached, including during offline deletion.
+        func confirmedSharedCopies() -> Set<CloudProfileInstance> {
+            var live = owner.cloudLedger.detached[profile.id] ?? []
+            live.formUnion(settingsSync?.memberships(of: profile.id) ?? [])
+            if let linked = sharedSpaces.membership(of: profile.id) {
+                live.insert(linked)
+            }
+            return scope.sharedCopies(live)
+        }
+        let sharedCopies = confirmedSharedCopies()
+        func detachKeepingProof(_ copies: Set<CloudProfileInstance>) throws {
+            if !copies.isEmpty {
+                // A failed catalog write can already have revoked the link. Keep the named, approved publication for a retry.
+                try owner.updateCloudLedger { $0.detached[profile.id, default: []].formUnion(copies) }
+            }
+            try detachSync()
+        }
+        let consent: Set<VaultProfileRemoval>
+        if localOnly != nil {
+            consent = []
+        } else if let confirmedVaults {
+            consent = confirmedVaults
+        } else {
+            consent = try await profile.vaultRemovals()
+        }
+        // A failed recheck must leave the profile's other enrollments and unsent edits intact.
+        if consent.isEmpty, localOnly == nil {
+            try detachKeepingProof(sharedCopies.intersection(confirmedSharedCopies()))
+        }
+        await beforeErasing()
+        let approved = try await profile.vaultRemovals(rechecking: consent)
+        if let localOnly {
+            guard let service = CloudSync.shared else { throw CocoaError(.userCancelled) }
+            try await service.verifyDecision(localOnly, profile: profile.id)
+        }
+        try validateChoice()
+        let retiring = sharedCopies.intersection(confirmedSharedCopies())
+        let detached = localOnly.flatMap { $0.kind == .shared ? Set([$0]) : nil } ?? retiring
+        try detachKeepingProof(detached)
+        guard let index = index(of: profile) else { return }
+        var remaining = profiles
+        remaining.remove(at: index)
         var dates = lastUsed
         dates[profile.id] = nil
+        let opening = isPrivate ? (catalog?.currentID ?? lastPersistentID) : currentID
+        let savedCurrent = opening == profile.id ? Profile.originalID : opening
+        let launch = launchProfileID == profile.id ? nil : launchProfileID
+        var ledger = owner.cloudLedger
+        if localOnly == nil {
+            for removal in approved {
+                let active = ledger.active[profile.id]?[removal.owner] ?? removal.instanceID
+                ledger.outgoing.insert(.vault(profile: profile.id, instance: active, owner: removal.owner))
+            }
+            ledger.outgoing.formUnion(retiring)
+        }
+        ledger.detached[profile.id] = nil
+        ledger.pending[profile.id] = nil
+        let pending = owner.pendingErasures + [profile]
+        let current = approved.filter { $0.instanceID == ledger.active[profile.id]?[$0.owner] }
+        let withdrawals = owner.pendingVaultRemovals.union(current.map { $0.scheduled() })
+        ledger.active[profile.id] = nil
+        // The same atomic write that removes the ID records which local data still needs erasing.
+        try JSONFileStore.writeAtomically(
+            Stored(profiles: remaining, currentID: savedCurrent, launchProfileID: launch, lastUsed: dates, pendingErasures: pending,
+                   vaultRemovals: withdrawals.isEmpty ? nil : withdrawals, cloud: ledger),
+            to: file, sortedKeys: true
+        )
+        owner.storedCloudLedger = ledger
+        owner.pendingErasures = pending
+        owner.pendingVaultRemovals = withdrawals
+        profiles = remaining
         lastUsed = dates
+        launchProfileID = launch
         if currentID == profile.id {
             currentID = Profile.originalID
         }
-        if launchProfileID == profile.id {
-            launchProfileID = nil
+        if lastPersistentID == profile.id {
+            lastPersistentID = Profile.originalID
         }
-        // Stops the profile's watches and waits for their last write, so nothing lands in the folder the erase removes.
-        await BrowserProfileContext.existing(for: profile.id)?.pageWatches?.close()
-        BrowserProfileContext.forget(profile.id)
-        SpaceStore.forget(profile.id)
-        save()
-        ReaderViewSpare.discard()
-        await Profile.erase(profile)
+        if let catalog {
+            catalog.currentID = savedCurrent
+            if !isPrivate || catalog.lastPersistentID == profile.id {
+                catalog.lastPersistentID = savedCurrent
+            }
+        }
+        // Stop queued vault writes as soon as the withdrawal and the list have committed.
+        CloudSync.shared?.vaults?.forgetErasedProfile(profile.id)
+        if !approved.isEmpty || !ledger.outgoing.isEmpty {
+            owner.onVaultRemoval?()
+        }
     }
 
-    func markCurrent(_ profile: Profile) {
+    private func restoreErasures(_ saved: Stored?) {
+        guard catalog == nil, let saved else { return }
+        storedCloudLedger = saved.cloud ?? ProfileCloudLedger()
+        let live = Set(storedProfiles.map(\.id)).union([Profile.originalID, Profile.privateID])
+        pendingVaultRemovals = (saved.vaultRemovals ?? []).filter { !live.contains($0.profileID) }
+        pendingErasures = (saved.pendingErasures ?? []).filter { !live.contains($0.id) }
+        let pending = pendingErasures
+        guard !pending.isEmpty, canWriteCatalog else { return }
+        Task {
+            for profile in pending {
+                if case .failure = await finishErasure(profile.id) {
+                    Pipeline.log.error("profile: local erasure remains pending")
+                }
+            }
+        }
+    }
+
+    private func finishErasure(
+        _ id: UUID, prepare: () async throws -> Void = {}, releaseWindows: () async -> Void = {},
+        eraseData: (Profile) async throws -> Void = Profile.eraseLocalData
+    ) async -> Result<Void, Error> {
+        guard erasing.insert(id).inserted else { return .failure(CocoaError(.fileLocking)) }
+        defer { erasing.remove(id) }
+        do {
+            try await prepare()
+            guard let profile = pendingErasures.first(where: { $0.id == id }), index(of: profile) == nil else { return .success(()) }
+            await releaseWindows()
+            // Drain the watches' final writes before deleting their folder.
+            await BrowserProfileContext.existing(for: profile.id)?.pageWatches?.close()
+            BrowserProfileContext.forget(profile.id)
+            SpaceStore.forget(profile.id)
+            ReaderViewSpare.discard()
+            try await eraseData(profile)
+            let remaining = pendingErasures.filter { $0.id != profile.id }
+            try writeCheckpoint(pendingErasures: remaining)
+            pendingErasures = remaining
+            return .success(())
+        } catch {
+            return .failure(error)
+        }
+    }
+
+    func markCurrent(_ profile: Profile, remember: Bool = true) {
         if profile.isPrivate {
             currentID = Profile.privateID
             return
@@ -207,8 +464,10 @@ final class ProfileStore {
         guard profiles.contains(where: { $0.id == profile.id }) else { return }
         currentID = profile.id
         lastPersistentID = profile.id
+        // Moving a background window off an erased profile preserves the front window's launch selection.
+        guard remember else { return }
         lastUsed[profile.id] = Date()
-        save()
+        save(creatingList: false)
     }
 
     private func index(of profile: Profile) -> Int? {
@@ -220,22 +479,75 @@ final class ProfileStore {
         var currentID: UUID
         var launchProfileID: UUID?
         var lastUsed: [UUID: Date]?
+        var pendingErasures: [Profile]?
+        var vaultRemovals: Set<VaultProfileRemoval>?
+        var cloud: ProfileCloudLedger?
     }
 
-    private func save() {
+    /// A second app process must not overwrite the session owner's pending erasures with its older list.
+    private var canWriteCatalog: Bool {
+        file != Self.defaultFile || AppDatabase.isRunningTests || AppDatabase.ownsSession
+    }
+
+    private var canCreateList: Bool {
+        listStatus == .missing && !Self.hasNamedProfileHistory(beside: file)
+    }
+
+    var vaultRemovals: Set<VaultProfileRemoval> {
+        if let catalog {
+            return catalog.vaultRemovals
+        }
+        guard canWriteCatalog, verifiedProfiles != nil else { return [] }
+        return pendingVaultRemovals
+    }
+
+    func updateVaultRemoval(_ removal: VaultProfileRemoval, to next: VaultProfileRemoval?) throws {
+        if let catalog {
+            return try catalog.updateVaultRemoval(removal, to: next)
+        }
+        guard vaultRemovals.contains(removal) else { return }
+        var remaining = pendingVaultRemovals.subtracting([removal])
+        if let next {
+            remaining.insert(next)
+        }
+        try writeCheckpoint(pendingErasures: pendingErasures, vaultRemovals: remaining)
+        pendingVaultRemovals = remaining
+    }
+
+    func updateCloudLedger(_ change: (inout ProfileCloudLedger) throws -> Void) throws {
+        if let catalog {
+            return try catalog.updateCloudLedger(change)
+        }
+        guard canWriteCatalog, verifiedProfiles != nil else { throw CocoaError(.fileReadUnknown) }
+        var next = storedCloudLedger
+        try change(&next)
+        guard next != storedCloudLedger else { return }
+        try writeCheckpoint(pendingErasures: pendingErasures, cloud: next)
+        storedCloudLedger = next
+    }
+
+    private func writeCheckpoint(pendingErasures: [Profile], vaultRemovals: Set<VaultProfileRemoval>? = nil, cloud: ProfileCloudLedger? = nil) throws {
+        let withdrawals = vaultRemovals ?? pendingVaultRemovals
+        let saved = Stored(
+            profiles: profiles, currentID: isPrivate ? lastPersistentID : currentID, launchProfileID: launchProfileID,
+            lastUsed: lastUsed, pendingErasures: pendingErasures.isEmpty ? nil : pendingErasures, vaultRemovals: withdrawals.isEmpty ? nil : withdrawals, cloud: cloud ?? storedCloudLedger
+        )
+        try JSONFileStore.writeAtomically(saved, to: file, sortedKeys: true)
+    }
+
+    private func save(creatingList: Bool = true) {
         if let catalog {
             if !isPrivate {
                 catalog.currentID = currentID
                 catalog.lastPersistentID = lastPersistentID
             }
-            catalog.save()
+            catalog.save(creatingList: creatingList)
             return
         }
-        JSONFileStore.encodeAndWrite(
-            Stored(profiles: profiles, currentID: currentID, launchProfileID: launchProfileID, lastUsed: lastUsed),
-            to: file,
-            sortedKeys: true
-        )
+        guard canWriteCatalog, verifiedProfiles != nil || (creatingList && canCreateList) else { return }
+        if (try? writeCheckpoint(pendingErasures: pendingErasures)) != nil {
+            listStatus = .loaded
+        }
     }
     private static var defaultFile: URL {
         AppDatabase.supportDirectory.appendingPathComponent("profiles.json")

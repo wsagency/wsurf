@@ -13,6 +13,8 @@ private let containerID = "iCloud.io.wsagency.wsurf"
 enum ProbeError: String, Error {
     case usage, developmentSignatureRequired, invalidNonce, modelUnavailable, receiptRequired
     case differentCreator, useSecondMac, unexpectedRecord, awaitingOtherMac, alreadyCleaned, missingSaveResult
+    case explicitOwnerUnavailable, metadataResultMissing, metadataKeyNormalized, metadataTagMismatch
+    case originalAccountRequired
 }
 
 // Both Studio and Air report a product model shared by many Macs. No serial number or hardware UUID is needed.
@@ -85,7 +87,11 @@ struct Trial {
     }
 
     func reserve() throws {
-        try initial.encoded().write(to: receipt, options: .withoutOverwriting)
+        try reserve(try initial.encoded(), at: receipt)
+    }
+
+    func reserve(_ data: Data, at receipt: URL) throws {
+        try data.write(to: receipt, options: .withoutOverwriting)
         let file = try FileHandle(forWritingTo: receipt)
         defer { try? file.close() }
         try file.synchronize()
@@ -120,7 +126,7 @@ struct Trial {
         }
         let record = CKRecord(recordType: "Device", recordID: recordID)
         record.encryptedValues["payload"] = try initial.encoded()
-        try await database.saveVersion(record)
+        try await database.saveVersion(record, observed: nil)
     }
 
     func answer(in database: any ProbeDatabase) async throws {
@@ -134,7 +140,7 @@ struct Trial {
         }
         marker.responder = deviceTag
         record.encryptedValues["payload"] = try marker.encoded()
-        try await database.saveVersion(record)
+        try await database.saveVersion(record, observed: record)
     }
 
     func confirm(in database: any ProbeDatabase) async throws {
@@ -150,23 +156,46 @@ struct Trial {
         if let marker = try marker(in: record) {
             guard marker.creator == deviceTag else { throw ProbeError.differentCreator }
             record.encryptedValues["payload"] = Data()
-            try await database.saveVersion(record)
+            try await database.saveVersion(record, observed: record)
         }
         return true
     }
 }
 
 protocol ProbeDatabase {
+    func currentOwner() async throws -> String
     func ensureZone(_ id: CKRecordZone.ID) async throws
     func fetch(_ id: CKRecord.ID) async throws -> CKRecord?
-    func saveVersion(_ record: CKRecord) async throws
+    func saveVersion(_ record: CKRecord, observed: CKRecord?) async throws
+    func verifyMetadata(of record: CKRecord) async throws
 }
 
 extension CKDatabase: ProbeDatabase {
+    func currentOwner() async throws -> String {
+        let container = try checkedContainer()
+        do {
+            return try await container.userRecordID().recordName
+        } catch {
+            throw ProbeError.explicitOwnerUnavailable
+        }
+    }
+
+    func verifyMetadata(of record: CKRecord) async throws {
+        try await verifyExplicitMetadata(id: record.recordID, type: record.recordType, expectedTag: record.recordChangeTag, user: {
+            try await self.currentOwner()
+        }, fetch: { id, desiredKeys in
+            let results = try await self.records(for: [id], desiredKeys: desiredKeys)
+            return results.mapValues { $0.map { ($0.recordType, $0.recordChangeTag) } }
+        })
+    }
+
     func ensureZone(_ id: CKRecordZone.ID) async throws {
         do {
             _ = try await recordZone(for: id)
         } catch let error as CKError where error.code == .zoneNotFound || error.code == .unknownItem {
+            if id.ownerName != CKCurrentUserDefaultName {
+                guard try await currentOwner() == id.ownerName else { throw ProbeError.originalAccountRequired }
+            }
             _ = try await save(CKRecordZone(zoneID: id))
         }
     }
@@ -179,14 +208,18 @@ extension CKDatabase: ProbeDatabase {
         }
     }
 
-    func saveVersion(_ record: CKRecord) async throws {
+    func saveVersion(_ record: CKRecord, observed: CKRecord?) async throws {
+        if let observed {
+            guard observed.recordID == record.recordID, observed.recordType == record.recordType,
+                  let tag = observed.recordChangeTag, tag == record.recordChangeTag else { throw ProbeError.unexpectedRecord }
+        }
         let result = try await modifyRecords(saving: [record], deleting: [], savePolicy: .ifServerRecordUnchanged, atomically: true)
         guard let saved = result.saveResults[record.recordID] else { throw ProbeError.missingSaveResult }
         _ = try saved.get()
     }
 }
 
-private func database() throws -> CKDatabase {
+private func checkedContainer() throws -> CKContainer {
     guard let task = SecTaskCreateFromSelf(nil), Bundle.main.bundleIdentifier == appID,
           Bundle.main.object(forInfoDictionaryKey: "WSurfDevelopmentTransportProbe") as? Bool == true else {
         throw ProbeError.developmentSignatureRequired
@@ -200,7 +233,11 @@ private func database() throws -> CKDatabase {
           entitlement("icloud-services") as? [String] == ["CloudKit"] else {
         throw ProbeError.developmentSignatureRequired
     }
-    return CKContainer(identifier: containerID).privateCloudDatabase
+    return CKContainer(identifier: containerID)
+}
+
+private func database() throws -> CKDatabase {
+    try checkedContainer().privateCloudDatabase
 }
 
 @main
@@ -214,6 +251,10 @@ private struct Main {
             }
             let directory = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
             let model = try macModel()
+            if args.first?.hasPrefix("settings-") == true {
+                try await settingsCommand(args, model: model, directory: directory, database: database)
+                return
+            }
             switch args.first {
             case "begin" where args.count == 1:
                 let trial = Trial(model: model, directory: directory)

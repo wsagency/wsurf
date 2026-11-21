@@ -74,13 +74,15 @@ nonisolated public struct VaultRecordPayload: Codable, Equatable, Sendable {
 nonisolated public struct RemoteVault: Codable, Equatable, Identifiable, Sendable {
     public var profileID: UUID
     public var vaultID: UUID
+    public var instanceID: UUID?
     public var payload: VaultRecordPayload
 
     public var id: UUID {
         vaultID
     }
 
-    public init(profileID: UUID, vaultID: UUID, payload: VaultRecordPayload) {
+    public init(profileID: UUID, vaultID: UUID, payload: VaultRecordPayload, instanceID: UUID? = nil) {
+        self.instanceID = instanceID
         self.profileID = profileID
         self.vaultID = vaultID
         self.payload = payload
@@ -100,6 +102,7 @@ nonisolated public struct VaultSyncAppState: Codable, Equatable, Sendable {
 
 nonisolated public enum VaultSyncStatus: Equatable, Sendable {
     case off
+    case enrollmentUnavailable
     case synced
     /// Changes (entries, or the vault's name and unlock passkeys) waiting to go up.
     case sending(Int)
@@ -116,13 +119,17 @@ nonisolated public enum VaultSyncStatus: Equatable, Sendable {
     /// This Mac's store is older than the last state it synced.
     case rolledBack
     case removed(SyncZoneDeletionReason)
+    /// The zone's existence is still unconfirmed. Local data is retained.
+    case removalPending
+    /// A pre-consent removal recorded neither the Apple account nor confirmation that its zone was deleted.
+    case removalUnconfirmed
     /// The owner removed the vault from iCloud and the engine could not delete the zone: it is still there.
     case removalFailed
     case accountChanged
 
     /// What survives a relaunch, in `Credentials.sync`. The rest is derived from counts, the lock and the account.
     nonisolated enum Stored: String, Sendable {
-        case active, iCloudFull, needsUpdate, rolledBack, removedDeleted, removedPurged, removedEncryptedDataReset, removalFailed, accountChanged
+        case active, iCloudFull, needsUpdate, rolledBack, removedDeleted, removedPurged, removedEncryptedDataReset, removalPending, removalFailed, removalUnconfirmed, accountChanged
 
         static func removed(_ reason: SyncZoneDeletionReason) -> Stored {
             switch reason {
@@ -139,7 +146,7 @@ nonisolated public enum VaultSyncStatus: Equatable, Sendable {
 
 /// What the interface says about entries the vault sync leaves alone, beside the status.
 nonisolated public struct VaultSyncTally: Equatable, Sendable {
-    /// Entries that stay on this Mac: too large to sync, or only files.
+    /// Entries that could not be validated or prepared for upload on this Mac.
     public var notSyncable: Int
     /// Changes from iCloud that could not be read and were skipped this run.
     public var unreadable: Int
@@ -224,6 +231,7 @@ public protocol VaultSyncHost: AnyObject {
     /// The vaults the profile lists now, locked or not; nil when they cannot be listed. A profile always has a vault, so an empty
     /// list is read as unknown too.
     func vaultIDs(profileID: UUID) async -> [UUID]?
+    func currentLease(profileID: UUID, vaultID: UUID) -> UInt64?
     /// The vault's sync key, or nil while it is locked. Never prompts.
     func syncKey(profileID: UUID, vaultID: UUID) async -> VaultSyncKey?
     /// Throws while the vault is locked (`CredentialVaultError.unauthorized` or `expired`).
@@ -235,4 +243,9 @@ public protocol VaultSyncHost: AnyObject {
     /// Keeps, under `lease`, what entries removed on another device left (`RemovedMemory`, by account), so an import here does not
     /// bring them back. Nothing live changes. Returns the vault's new revision.
     func remember(profileID: UUID, vaultID: UUID, lease: UInt64, memories: [UUID: RemovedMemory]) async throws -> UInt64
+}
+
+public protocol VaultAttachmentHost: AnyObject {
+    func exportAttachment(_ file: CredentialAttachment, profile: UUID, vault: UUID, lease: UInt64) async throws -> VaultSyncAttachment
+    func importAttachment(_ file: CredentialAttachment, from encrypted: URL?, profile: UUID, vault: UUID, lease: UInt64) async throws -> VaultImportedAttachment
 }

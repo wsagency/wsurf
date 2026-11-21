@@ -1,0 +1,865 @@
+// SPDX-FileCopyrightText: 2026 WSurf Agency
+// SPDX-License-Identifier: BUSL-1.1
+
+import CloudKit
+import Foundation
+import Observation
+import WSurfCore
+
+@MainActor
+@Observable
+final class CloudSettingsSync: SyncZoneHandler {
+    enum Issue: Error {
+        case unavailable, incomplete, changedAccount, invalidRecord, duplicateLink
+    }
+
+    enum BufferedChange {
+        case save(SyncRecord)
+        case remove(SyncRecordID)
+    }
+
+    struct State: Codable {
+        var account: String?
+        var appliedAccountReset: String?
+        var channels: [String: MacSettingChannel] = [:]
+        fileprivate var optOuts: [String: OptOut]?
+
+        static func read(from file: URL) throws -> Self {
+            var saved = try JSONDecoder().decode(Self.self, from: Data(contentsOf: file))
+            // A legacy baseline identifies an enrolled channel. An unfinished choice may predate the account binding.
+            for (zone, channel) in saved.channels where channel.awaitingAccountConfirmation == nil || saved.account == nil {
+                saved.channels[zone]?.awaitingAccountConfirmation = saved.account == nil || !channel.fetched
+            }
+            return saved
+        }
+    }
+
+    fileprivate struct OptOut: Codable {
+        let category: MacSettingsCategory
+        let localProfileID: UUID?
+        let enrollment: UUID
+
+        init(_ channel: MacSettingChannel) {
+            category = channel.category
+            localProfileID = channel.localProfileID
+            enrollment = channel.enrollment
+        }
+    }
+
+    typealias Read = @MainActor (MacSettingsCategory, UUID?) throws -> [String: Data]
+    typealias Snapshot = @MainActor (inout MacSettingChannel) throws -> [String: Data]
+    typealias Apply = @MainActor (Data?, String, MacSettingsCategory, UUID?) throws -> Void
+
+    private(set) var state: State
+    private var pendingOptOuts: [String: OptOut] {
+        get { state.optOuts ?? [:] }
+        set { state.optOuts = newValue.isEmpty ? nil : newValue }
+    }
+
+    @ObservationIgnored private var optOutsToFinish: Set<String> = []
+    private(set) var checkpointUnavailable = false
+    @ObservationIgnored private var awaitingFirstCheckpoint = false
+    var needsCheckpointRead: Bool {
+        checkpointUnavailable || awaitingFirstCheckpoint
+    }
+    @ObservationIgnored private(set) var unreadableFetchStart: FetchStart?
+    @ObservationIgnored private let checkpointClock: any Clock<Duration>
+    @ObservationIgnored private var checkpointRetry: Task<Void, Never>?
+    @ObservationIgnored private var profileStore: ProfileStore?
+    @ObservationIgnored private var profilesForRecovery: (() -> [Profile]?)?
+    var permitsSharing: ((UUID) -> Bool)?
+    var notice: String?
+    @ObservationIgnored var onAccountVerification: ((CloudSharedSpaces.AccountVerification) -> Void)?
+    var onNeedsEngine: (() -> Void)?
+    @ObservationIgnored var registerProfile: ((Profile) -> Void)?
+    @ObservationIgnored let snapshot: Snapshot
+    @ObservationIgnored let apply: Apply
+    @ObservationIgnored private let stateFile: URL
+    @ObservationIgnored private let resetDefaults: UserDefaults
+    @ObservationIgnored private let discardWebsiteApprovals: (UUID) throws -> Void
+    @ObservationIgnored var engine: (any SyncEngine)?
+    @ObservationIgnored var ready: Set<String> = []
+    @ObservationIgnored var loading: [String: UUID] = [:]
+    @ObservationIgnored var buffered: [String: [BufferedChange]] = [:]
+    @ObservationIgnored var preparations: [String: Task<Void, Error>] = [:]
+    @ObservationIgnored var names: [SyncRecordID: String] = [:]
+    @ObservationIgnored var trustedUser: String?
+    @ObservationIgnored var sendingAllowed = false
+    @ObservationIgnored var generation = UUID()
+    @ObservationIgnored private var work: Task<Void, Never>?
+    @ObservationIgnored var accountNotifications: Task<Void, Never>?
+    @ObservationIgnored var accountLookup: Task<Void, Never>?
+    @ObservationIgnored private var observation: Task<Void, Never>?
+
+    var needsEngine: Bool {
+        state.channels.values.contains { permitsProfile($0.localProfileID) }
+    }
+
+    convenience init(
+        stateFile: URL, profiles: [Profile], profileStore: ProfileStore? = nil, adapter: MacSettingsSyncAdapter? = nil,
+        clock: any Clock<Duration> = ContinuousClock()
+    ) {
+        let adapter = adapter ?? MacSettingsSyncAdapter(profiles: profiles, profileStore: profileStore)
+        self.init(
+            stateFile: stateFile, snapshot: adapter.snapshot,
+            apply: adapter.apply(_:key:for:profileID:),
+            discardWebsiteApprovals: adapter.discardWebsiteApprovals(profileID:), clock: clock
+        )
+        registerProfile = adapter.register
+        self.profileStore = profileStore
+        if let profileStore {
+            profilesForRecovery = { profileStore.verifiedProfiles }
+        } else {
+            profilesForRecovery = { profiles }
+        }
+        reconcileProfilesIfAvailable()
+        if hasPendingOptOuts && !needsCheckpointRead {
+            do { try save() } catch { reportError() }
+        }
+        observation = Task { [weak self] in
+            for await _ in NotificationCenter.default.notifications(named: .wsurfMacSettingsDidChange).map({ _ in () }) {
+                guard let self, !Task.isCancelled else { return }
+                guard !state.channels.isEmpty else { continue }
+                do { try collectChanges() } catch { reportError() }
+            }
+        }
+    }
+
+    convenience init(
+        stateFile: URL, read: @escaping Read, apply: @escaping Apply,
+        discardWebsiteApprovals: @escaping (UUID) throws -> Void = { _ in }, clock: any Clock<Duration> = ContinuousClock(),
+        resetDefaults: UserDefaults? = nil
+    ) {
+        self.init(stateFile: stateFile, snapshot: { try read($0.category, $0.localProfileID) }, apply: apply,
+                  discardWebsiteApprovals: discardWebsiteApprovals, clock: clock, resetDefaults: resetDefaults)
+    }
+
+    private init(
+        stateFile: URL, snapshot: @escaping Snapshot, apply: @escaping Apply,
+        discardWebsiteApprovals: @escaping (UUID) throws -> Void = { _ in }, clock: any Clock<Duration> = ContinuousClock(),
+        resetDefaults: UserDefaults? = nil
+    ) {
+        self.stateFile = stateFile
+        self.checkpointClock = clock
+        self.resetDefaults = resetDefaults ?? UserDefaults(suiteName: AppDatabase.defaultsSuite("io.wsagency.wsurf.settings-recovery"))!
+        self.snapshot = snapshot
+        self.apply = apply
+        self.discardWebsiteApprovals = discardWebsiteApprovals
+        do {
+            state = try State.read(from: stateFile)
+        } catch CocoaError.fileReadNoSuchFile {
+            state = State()
+            awaitingFirstCheckpoint = true
+            // A revocation journal means this Mac has a checkpoint to recover, even with every other feature off.
+            checkpointUnavailable = FileManager.default.fileExists(atPath: optOutFile.path)
+            unreadableFetchStart = FetchStart()
+        } catch is DecodingError {
+            state = State()
+            notice = String(localized: "The saved sync settings could not be read. Choose what to share again.")
+        } catch {
+            state = State()
+            checkpointUnavailable = true
+            unreadableFetchStart = FetchStart()
+            notice = String(localized: "Your saved sync settings are temporarily unavailable. Try again to load them.")
+        }
+        if !checkpointUnavailable {
+            applyRememberedResets()
+        }
+        restorePendingOptOuts()
+        if checkpointUnavailable {
+            waitForCheckpoint()
+        }
+    }
+
+    private func waitForCheckpoint() {
+        guard checkpointRetry == nil else { return }
+        checkpointUnavailable = true
+        // The shared engine's heartbeat may be off when the first evidence of a saved enrollment arrives.
+        checkpointRetry = Task { [weak self, checkpointClock] in
+            while self?.checkpointUnavailable == true {
+                do { try await checkpointClock.sleep(for: .seconds(30)) } catch { return }
+                guard !Task.isCancelled else { return }
+                self?.beat()
+            }
+        }
+    }
+
+    deinit {
+        checkpointRetry?.cancel()
+        observation?.cancel()
+        accountNotifications?.cancel()
+        accountLookup?.cancel()
+        work?.cancel()
+    }
+
+    func attach(_ engine: any SyncEngine) {
+        self.engine = engine
+    }
+
+    func owns(zone: String) -> Bool {
+        if zone == "mac-prefs-providers" { return true }
+        for category in MacSettingsCategory.allCases {
+            let prefix = "mac-prefs-" + category.rawValue + "-"
+            if zone.hasPrefix(prefix), let id = UUID(uuidString: String(zone.dropFirst(prefix.count))), prefix + id.uuidString == zone {
+                return true
+            }
+        }
+        return false
+    }
+
+    func updateChannel(_ channel: MacSettingChannel) {
+        state.channels[channel.zone] = channel
+    }
+
+    func memberships(of localID: UUID) -> Set<CloudProfileInstance> {
+        guard let owner = state.account else { return [] }
+        return Set(state.channels.values.compactMap { channel in
+            guard !channel.needsConfirmation, channel.localProfileID == localID, let group = channel.cloudProfileID else { return nil }
+            return .init(.shared, id: group, owner: owner)
+        })
+    }
+
+    func replaceInstance(for local: UUID, with next: CloudProfileInstance) throws {
+        try reloadStateIfNeeded()
+        guard state.account == next.owner else { return }
+        var channels = state.channels
+        let previous = channels.values.filter { $0.localProfileID == local && $0.cloudProfileID != next.id }
+        for old in previous {
+            var fresh = MacSettingChannel(category: old.category, localProfileID: local, cloudProfileID: next.id)
+            guard channels[fresh.zone] == nil else { throw Issue.duplicateLink }
+            fresh.awaitingAccountConfirmation = old.awaitingAccountConfirmation
+            let localValues = try snapshot(&fresh)
+            fresh.collect(localValues)
+            channels[old.zone] = nil
+            channels[fresh.zone] = fresh
+        }
+        previous.forEach { invalidateBaseline(in: $0.zone) }
+        state.channels = channels
+        try save()
+    }
+
+    func channel(_ category: MacSettingsCategory, localProfileID: UUID?) -> MacSettingChannel? {
+        state.channels.values.first { $0.localProfileID == localProfileID && $0.category == category }
+    }
+
+    func isEnabled(_ category: MacSettingsCategory, localProfileID: UUID?) -> Bool {
+        channel(category, localProfileID: localProfileID) != nil
+    }
+
+    func enable(_ category: MacSettingsCategory, localProfileID: UUID?, cloudProfileID: UUID?) async throws {
+        guard localProfileID != Profile.privateID, cloudProfileID != Profile.privateID,
+            (localProfileID == nil) == (cloudProfileID == nil), category == .providers || localProfileID != nil
+        else { throw Issue.unavailable }
+        try reloadStateIfNeeded()
+        guard permitsProfile(localProfileID) else { throw Issue.unavailable }
+        var proposed = MacSettingChannel(category: category, localProfileID: localProfileID, cloudProfileID: cloudProfileID)
+        if let existing = channel(category, localProfileID: localProfileID), existing.zone != proposed.zone {
+            throw Issue.duplicateLink
+        }
+        try finishOptOuts { zone, removal in
+            zone == proposed.zone || (removal.category == category && removal.localProfileID == localProfileID)
+        }
+        if let existing = state.channels[proposed.zone] {
+            guard existing.localProfileID == localProfileID else { throw Issue.duplicateLink }
+            proposed = existing
+        } else {
+            // Older versions could detach a website channel while its proposals were still on disk.
+            if category == .websiteSettings, let localProfileID {
+                do {
+                    try discardWebsiteApprovals(localProfileID)
+                } catch {
+                    pendingOptOuts[proposed.zone] = OptOut(proposed)
+                    try save()
+                    throw error
+                }
+            }
+            // Observe the starting values before any account or baseline read can suspend.
+            let values = try snapshot(&proposed)
+            proposed.collect(values)
+            updateChannel(proposed)
+            do {
+                try allowReplacementAfterReset(proposed)
+                try save()
+                try updateZoneRechecks { $0.remove(proposed.zone) }
+            } catch {
+                state.channels[proposed.zone] = nil
+                throw error
+            }
+        }
+
+        try await confirmEnrollment(proposed)
+    }
+
+    /// A confirmation from Settings belongs to the displayed enrollment, even if the account lookup suspends.
+    func confirmEnrollment(_ channel: MacSettingChannel) async throws {
+        guard state.channels[channel.zone]?.enrollment == channel.enrollment, permitsProfile(channel.localProfileID) else { throw CancellationError() }
+        onNeedsEngine?()
+        let started = generation
+        let user = try await verifyAccount(started)
+        guard generation == started, let current = state.channels[channel.zone], current.enrollment == channel.enrollment else { throw CancellationError() }
+        if current.needsConfirmation {
+            let previous = state
+            state.account = user
+            state.channels[channel.zone]?.awaitingAccountConfirmation = false
+            do {
+                try save()
+            } catch {
+                state = previous
+                throw error
+            }
+        }
+        try await prepare(zone: channel.zone, freshConsent: current.needsConfirmation)
+    }
+
+    var hasPendingOptOuts: Bool {
+        !pendingOptOuts.isEmpty
+    }
+
+    func isTurningOff(_ category: MacSettingsCategory, localProfileID: UUID?) -> Bool {
+        pendingOptOuts.values.contains { $0.category == category && $0.localProfileID == localProfileID }
+    }
+
+    func disable(_ category: MacSettingsCategory, localProfileID: UUID?) throws {
+        try reloadStateIfNeeded()
+        if let channel = channel(category, localProfileID: localProfileID) {
+            forget(zone: channel.zone)
+        }
+        try finishOptOuts { _, removal in removal.category == category && removal.localProfileID == localProfileID }
+    }
+
+    func forgetProfile(_ id: UUID) throws {
+        try reloadStateIfNeeded()
+        for channel in state.channels.values where channel.localProfileID == id {
+            forget(zone: channel.zone)
+        }
+        try finishOptOuts { _, removal in removal.localProfileID == id }
+    }
+
+    private var confirmedChannels: [MacSettingChannel] {
+        state.channels.values.filter { !$0.needsConfirmation && permitsProfile($0.localProfileID) }
+    }
+
+    var hasConfirmedChannels: Bool {
+        !confirmedChannels.isEmpty
+    }
+
+    func beat() {
+        // Retrying local cleanup works offline, even after the last opt-out.
+        do {
+            try reloadStateIfNeeded()
+        } catch {
+            reportError()
+            return
+        }
+        if hasPendingOptOuts {
+            optOutsToFinish.formUnion(pendingOptOuts.keys)
+            do {
+                try save()
+            } catch {
+                return
+            }
+        }
+        guard work == nil, hasConfirmedChannels else { return }
+        if engine == nil {
+            onNeedsEngine?()
+        }
+        work = Task { [weak self] in
+            guard let self else { return }
+            defer { work = nil }
+            let started = generation
+            do {
+                try await verifyAccount(started)
+                var preparationFailed = false
+                for zone in confirmedChannels.map(\.zone).sorted() where !ready.contains(zone) {
+                    do {
+                        try await prepare(zone: zone)
+                    } catch {
+                        guard generation == started else { throw error }
+                        preparationFailed = true
+                    }
+                }
+                let readFailure = try collectAvailableChanges()
+                try await engine?.fetchNow()
+                guard generation == started else { throw Issue.changedAccount }
+                try await engine?.sendNow()
+                guard generation == started else { throw Issue.changedAccount }
+                for zone in ready {
+                    state.channels[zone]?.lastSync = .now
+                }
+                try save()
+                if preparationFailed || readFailure != nil {
+                    reportError()
+                } else if confirmedChannels.allSatisfy({ channel in
+                    ready.contains(channel.zone) && channel.records.values.allSatisfy { $0.pending == nil }
+                }) {
+                    notice = nil
+                }
+            } catch {
+                reportError()
+            }
+        }
+    }
+
+    /// Fetched records and deletions must see edits made since the last notification.
+    func collectLocalChanges(in zone: String) throws {
+        guard var channel = state.channels[zone], permitsProfile(channel.localProfileID) else { return }
+        let values = try snapshot(&channel)
+        channel.collect(values)
+        updateChannel(channel)
+    }
+
+    func collectChanges() throws {
+        if let failure = try collectAvailableChanges() {
+            throw failure
+        }
+    }
+
+    private func collectAvailableChanges() throws -> Error? {
+        var failure: Error?
+        for zone in state.channels.keys.sorted() {
+            do {
+                try collectLocalChanges(in: zone)
+            } catch {
+                ready.remove(zone)
+                failure = error
+            }
+        }
+        try save()
+        for zone in ready {
+            queuePending(zone)
+        }
+        return failure
+    }
+
+    func resolve(_ key: String, in zone: String, useCloud: Bool) throws {
+        guard ready.contains(zone), var channel = state.channels[zone] else { throw Issue.unavailable }
+        let category = channel.category
+        let profile = channel.localProfileID
+        try channel.resolve(key, useCloud: useCloud) { try apply($0, $1, category, profile) }
+        if useCloud {
+            let values = try snapshot(&channel)
+            channel.observed[key] = values[key]
+        }
+        state.channels[zone] = channel
+        try save()
+        queuePending(zone)
+    }
+
+    @discardableResult
+    func verifyAccount(_ started: UUID) async throws -> String {
+        guard let identity = engine as? any SyncAccountIdentity else { throw Issue.unavailable }
+        do {
+            let user = try await identity.currentAccountUser()
+            guard !user.isEmpty, generation == started else { throw Issue.changedAccount }
+            if let previous = state.account, previous != user {
+                try resetAccount(to: user)
+                throw Issue.changedAccount
+            }
+            trustedUser = user
+            if accountNotifications != nil {
+                ProviderKeySharing.shared.setAccountIdentifier(user)
+            }
+            return user
+        } catch {
+            if generation == started {
+                suspendAccount()
+                if accountNotifications != nil {
+                    ProviderKeySharing.shared.suspendAccountVerification()
+                }
+            }
+            throw error
+        }
+    }
+
+    func prepare(zone: String, freshConsent: Bool = false) async throws {
+        guard let channel = state.channels[zone], !channel.needsConfirmation, permitsProfile(channel.localProfileID) else { throw Issue.unavailable }
+        guard !ready.contains(zone) else { return }
+        if let existing = preparations[zone] {
+            try await existing.value
+            return
+        }
+        let token = UUID()
+        loading[zone] = token
+        let read = Task { try await readBaseline(zone: zone, token: token, freshConsent: freshConsent) }
+        preparations[zone] = read
+        defer {
+            if loading[zone] == token {
+                loading[zone] = nil
+                buffered[zone] = nil
+                preparations[zone] = nil
+            }
+        }
+        try await read.value
+    }
+
+    private func readBaseline(zone: String, token: UUID, freshConsent: Bool) async throws {
+        guard let channel = state.channels[zone], let engine, loading[zone] == token else { throw Issue.unavailable }
+        let started = generation
+        let baseline: SyncZoneRead
+        do {
+            baseline = try await engine.fetchAll(zone: zone)
+        } catch where Self.missingZone(error) {
+            try await verifyAccount(started)
+            guard loading[zone] == token, state.channels[zone]?.enrollment == channel.enrollment else { throw CancellationError() }
+            let userDeleted = (error as? CKError)?.code == .userDeletedZone
+            guard !channel.fetched, channel.checkingDeletion != true, !userDeleted || freshConsent else {
+                forget(zone: zone)
+                try saveAfterZoneRemoval([zone])
+                throw Issue.incomplete
+            }
+            engine.add([.saveZone(zone)])
+            try await engine.sendNow()
+            baseline = try await engine.fetchAll(zone: zone)
+        }
+        try await verifyAccount(started)
+        guard loading[zone] == token, state.channels[zone]?.enrollment == channel.enrollment else { throw CancellationError() }
+        guard baseline.skipped == 0 else { throw Issue.incomplete }
+        try collectLocalChanges(in: zone)
+        for record in baseline.records {
+            try receive(record)
+        }
+        try reconcileDeletions(in: zone, seen: Set(baseline.records.map(\.id)))
+        for change in buffered[zone] ?? [] {
+            switch change {
+            case .save(let record):
+                try receive(record)
+            case .remove(let id):
+                try removed(id)
+            }
+        }
+        state.channels[zone]?.checkingDeletion = nil
+        state.channels[zone]?.fetched = true
+        state.channels[zone]?.lastSync = .now
+        try save()
+        ready.insert(zone)
+        queuePending(zone)
+    }
+
+    private static func missingZone(_ error: Error) -> Bool {
+        if let cloud = error as? CKError {
+            return cloud.code == .zoneNotFound || cloud.code == .userDeletedZone
+        }
+        return (error as? URLError)?.code == .fileDoesNotExist
+    }
+
+    private func finishOptOuts(where matches: (String, OptOut) -> Bool) throws {
+        let zones = Set(pendingOptOuts.filter { matches($0.key, $0.value) }.keys)
+        if !zones.isEmpty {
+            try save(requiring: zones)
+        }
+    }
+
+    func save() throws {
+        try save(requiring: [])
+    }
+
+    private func save(requiring zones: Set<String>) throws {
+        try reloadStateIfNeeded()
+        guard !awaitingFirstCheckpoint || !state.channels.isEmpty || hasPendingOptOuts else { return }
+        sendingAllowed = false
+        do {
+            // Persist the revocation before touching the separate permission store.
+            try writeCheckpoint()
+            awaitingFirstCheckpoint = false
+            unreadableFetchStart = nil
+        } catch {
+            if hasPendingOptOuts {
+                try JSONEncoder().encode(pendingOptOuts).write(to: optOutFile, options: .atomic)
+            }
+            throw error
+        }
+        // The checkpoint now owns each recovered check. A leftover fallback only repeats its verified read on relaunch.
+        try? updateZoneRechecks { $0.removeAll() }
+        sendingAllowed = true
+        let attempts = optOutsToFinish.union(zones)
+        guard !attempts.isEmpty else { return }
+        optOutsToFinish.removeAll()
+        var remaining = pendingOptOuts
+        var requiredFailure: Error?
+        for zone in attempts {
+            guard let removal = remaining[zone] else { continue }
+            do {
+                if removal.category == .websiteSettings, let id = removal.localProfileID {
+                    try discardWebsiteApprovals(id)
+                }
+                remaining[zone] = nil
+            } catch {
+                if zones.contains(zone) {
+                    requiredFailure = error
+                }
+            }
+        }
+        if remaining.count != pendingOptOuts.count {
+            var completed = state
+            completed.optOuts = remaining.isEmpty ? nil : remaining
+            try JSONEncoder().encode(completed).write(to: stateFile, options: .atomic)
+            state.optOuts = completed.optOuts
+            if remaining.isEmpty && state.channels.isEmpty {
+                notice = nil
+            }
+        }
+        // The primary file now includes every unfinished revocation.
+        try? FileManager.default.removeItem(at: optOutFile)
+        if let requiredFailure {
+            throw requiredFailure
+        }
+    }
+
+    private func writeCheckpoint() throws {
+        let data = try JSONEncoder().encode(state)
+        guard awaitingFirstCheckpoint else {
+            try data.write(to: stateFile, options: .atomic)
+            return
+        }
+        // Publish a complete first checkpoint only if the original file is still absent.
+        let temporary = stateFile.deletingLastPathComponent().appending(path: UUID().uuidString)
+        try data.write(to: temporary, options: .withoutOverwriting)
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        try FileManager.default.linkItem(at: temporary, to: stateFile)
+    }
+
+    private var optOutFile: URL {
+        stateFile.appendingPathExtension("opt-outs")
+    }
+
+    private func restorePendingOptOuts() {
+        let hasJournal = FileManager.default.fileExists(atPath: optOutFile.path)
+        if hasJournal {
+            readOptOutJournal()
+        }
+        guard !needsCheckpointRead else { return }
+        if hasPendingOptOuts {
+            optOutsToFinish.formUnion(pendingOptOuts.keys)
+            do { try save() } catch { reportError() }
+        } else if hasJournal {
+            try? FileManager.default.removeItem(at: optOutFile)
+        }
+    }
+
+    private func readOptOutJournal() {
+        do {
+            restore(try JSONDecoder().decode([String: OptOut].self, from: Data(contentsOf: optOutFile)))
+        } catch {
+            // A damaged revocation list cannot authorize an old enrollment.
+            for zone in state.channels.keys {
+                forget(zone: zone)
+            }
+            notice = String(localized: "The saved sync settings could not be read. Choose what to share again.")
+        }
+    }
+
+    private func restore(_ revoked: [String: OptOut]) {
+        for (zone, removal) in revoked {
+            if let current = state.channels[zone] {
+                if current.enrollment == removal.enrollment {
+                    forget(zone: zone)
+                }
+            } else if pendingOptOuts[zone] == nil && channel(removal.category, localProfileID: removal.localProfileID) == nil {
+                pendingOptOuts[zone] = removal
+            }
+        }
+    }
+
+    /// Restore the checkpoint and replay any pending revocations before allowing a write.
+    func reloadStateIfNeeded() throws {
+        guard needsCheckpointRead else {
+            reconcileProfilesIfAvailable()
+            return
+        }
+        let revoked = pendingOptOuts
+        do {
+            state = try State.read(from: stateFile)
+            awaitingFirstCheckpoint = false
+        } catch CocoaError.fileReadNoSuchFile {
+            // A separate revocation journal belongs to a checkpoint that may still return.
+            if FileManager.default.fileExists(atPath: optOutFile.path) {
+                waitForCheckpoint()
+                throw Issue.unavailable
+            }
+            guard checkpointUnavailable else { return }
+            state = State()
+            awaitingFirstCheckpoint = true
+        }
+        // All fetches begun during this outage saw the on-disk enrollments, before any new choice can be made.
+        if !awaitingFirstCheckpoint {
+            unreadableFetchStart?.capture(state.channels)
+            unreadableFetchStart = nil
+        }
+        checkpointUnavailable = false
+        checkpointRetry?.cancel()
+        checkpointRetry = nil
+        notice = nil
+        applyRememberedResets()
+        restore(revoked)
+        if FileManager.default.fileExists(atPath: optOutFile.path) {
+            readOptOutJournal()
+        }
+        reconcileProfilesIfAvailable()
+        optOutsToFinish.formUnion(pendingOptOuts.keys)
+        // The first successful read may come from profile erasure instead of the heartbeat.
+        if needsEngine && engine == nil {
+            onNeedsEngine?()
+        }
+    }
+
+    func permitsProfile(_ id: UUID?) -> Bool {
+        guard let id else { return true }
+        guard permitsSharing?(id) != false else { return false }
+        guard let profileStore else { return true }
+        return id == Profile.originalID || (id != Profile.privateID && profileStore.verifiedProfiles?.contains(where: { $0.id == id }) == true)
+    }
+
+    private func reconcileProfilesIfAvailable() {
+        guard !needsCheckpointRead, let profiles = profilesForRecovery?() else { return }
+        profilesForRecovery = nil
+        let live = Set(profiles.map(\.id)).subtracting([Profile.privateID])
+        for profile in profiles {
+            registerProfile?(profile)
+        }
+        for channel in state.channels.values {
+            if let id = channel.localProfileID, !live.contains(id) {
+                forget(zone: channel.zone)
+            }
+        }
+    }
+
+    func forget(zone: String) {
+        if let channel = state.channels.removeValue(forKey: zone) {
+            pendingOptOuts[zone] = OptOut(channel)
+            optOutsToFinish.insert(zone)
+        }
+        invalidateBaseline(in: zone)
+        names = names.filter { $0.key.zone != zone }
+    }
+
+    func invalidateBaseline(in zone: String) {
+        ready.remove(zone)
+        loading[zone] = nil
+        buffered[zone] = nil
+        preparations.removeValue(forKey: zone)?.cancel()
+    }
+
+    func resetAccount(to user: String?) throws {
+        suspendAccount()
+        if needsCheckpointRead {
+            try rememberAccountReset()
+            try reloadStateIfNeeded()
+        }
+        clearEnrollments(for: user)
+        do {
+            try save()
+        } catch {
+            try rememberAccountReset()
+            throw error
+        }
+        notice = String(localized: "The Apple Account changed. Choose what to sync with this account.")
+    }
+
+    private func clearEnrollments(for user: String?) {
+        for zone in Array(state.channels.keys) {
+            forget(zone: zone)
+        }
+        state.account = user
+    }
+
+    // Preferences remain accessible when the application support directory cannot be traversed.
+    private var accountResetKey: String {
+        stateFile.standardizedFileURL.path
+    }
+
+    private func rememberAccountReset() throws {
+        let reset = UUID().uuidString
+        resetDefaults.set(reset, forKey: accountResetKey)
+        state.appliedAccountReset = reset
+        guard resetDefaults.synchronize() else { throw CocoaError(.fileWriteUnknown) }
+    }
+
+    private func applyRememberedResets() {
+        if let reset = resetDefaults.string(forKey: accountResetKey), reset != state.appliedAccountReset {
+            clearEnrollments(for: nil)
+            state.appliedAccountReset = reset
+        }
+        let legacyResets = heldZones(.reset)
+        for channel in state.channels.values {
+            let allowed = resetAllowance(in: channel.zone)
+            let wasReset = allowed != nil || legacyResets.contains(channel.zone)
+            if wasReset && allowed != channel.enrollment.uuidString {
+                forget(zone: channel.zone)
+            }
+        }
+        for zone in heldZones(.recheck) where state.channels[zone]?.needsConfirmation == false {
+            state.channels[zone]?.checkingDeletion = true
+        }
+    }
+
+    // A pre-existing reset list has no replacement UUIDs, so every listed zone starts revoked.
+    private enum ZoneHold: String {
+        case reset = ".zone-resets"
+        case recheck = ".zone-rechecks"
+    }
+
+    private func heldZones(_ hold: ZoneHold) -> Set<String> {
+        Set(resetDefaults.stringArray(forKey: accountResetKey + hold.rawValue) ?? [])
+    }
+
+    private func replacementKey(for zone: String) -> String {
+        accountResetKey + ZoneHold.reset.rawValue + "." + zone
+    }
+
+    /// An empty value revokes every UUID. A legacy reset may have only its zone name in the list.
+    func resetAllowance(in zone: String) -> String? {
+        resetDefaults.string(forKey: replacementKey(for: zone))
+    }
+
+    private func allowReplacementAfterReset(_ channel: MacSettingChannel) throws {
+        guard resetAllowance(in: channel.zone) != nil || heldZones(.reset).contains(channel.zone) else { return }
+        // Even before account confirmation, only this new UUID may survive a checkpoint restore.
+        let key = replacementKey(for: channel.zone)
+        resetDefaults.set(channel.enrollment.uuidString, forKey: key)
+        guard resetDefaults.synchronize() else {
+            resetDefaults.set("", forKey: key)
+            throw CocoaError(.fileWriteUnknown)
+        }
+    }
+
+    private func updateZoneRechecks(_ update: (inout Set<String>) -> Void) throws {
+        let previous = heldZones(.recheck)
+        var zones = previous
+        update(&zones)
+        guard zones != previous else { return }
+        let key = accountResetKey + ZoneHold.recheck.rawValue
+        resetDefaults.set(zones.isEmpty ? nil : zones.sorted(), forKey: key)
+        guard resetDefaults.synchronize() else {
+            resetDefaults.set(previous.union(zones).sorted(), forKey: key)
+            throw CocoaError(.fileWriteUnknown)
+        }
+    }
+
+    func holdZoneDeletions(resets: Set<String>, rechecks: Set<String>, preserving newer: [String: UUID] = [:]) throws {
+        let affected = resets.union(newer.keys)
+        if !affected.isEmpty {
+            for zone in affected {
+                // One preference revokes all prior checkpoints and identifies the sole surviving choice, if any.
+                resetDefaults.set(newer[zone]?.uuidString ?? "", forKey: replacementKey(for: zone))
+            }
+            resetDefaults.set(heldZones(.reset).union(affected).sorted(), forKey: accountResetKey + ZoneHold.reset.rawValue)
+            guard resetDefaults.synchronize() else { throw CocoaError(.fileWriteUnknown) }
+        }
+        try updateZoneRechecks { $0.formUnion(rechecks) }
+    }
+
+    func saveAfterZoneRemoval(_ revoked: Set<String>, rechecking: Set<String> = [], preserving newer: [String: UUID] = [:]) throws {
+        // The cursor may advance and a previous checkpoint may return even after a successful save.
+        let journal = Result { try holdZoneDeletions(resets: revoked, rechecks: rechecking, preserving: newer) }
+        if !revoked.isEmpty || !rechecking.isEmpty {
+            try save()
+        }
+        try journal.get()
+    }
+
+    func reportError() {
+        if notice == nil && !hasPendingOptOuts {
+            notice = String(localized: "Settings could not finish syncing. Try again on this Mac.")
+        }
+    }
+}

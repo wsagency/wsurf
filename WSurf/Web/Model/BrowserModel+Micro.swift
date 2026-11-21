@@ -68,7 +68,7 @@ extension BrowserModel {
         row.pinnedURL = tab.pinnedURL
         row.pinnedTitle = tab.pinnedTitle
         row.isFavorite = tab.isFavorite
-        row.spaceID = tab.spaceID
+        copySpace(from: tab, to: row)
         row.lastActiveAt = tab.lastActiveAt
         row.deferRestore(state: tab.sessionState, url: url)
         row.microTabID = tab.id
@@ -88,7 +88,7 @@ extension BrowserModel {
         tab.pinnedURL = row.pinnedURL
         tab.pinnedTitle = row.pinnedTitle
         tab.isFavorite = row.isFavorite
-        tab.spaceID = row.spaceID
+        copySpace(from: row, to: tab)
         let pinID = row.pinID
         // Unlinked first, so closing the row is closing a row and nothing it stood for.
         row.microTabID = nil

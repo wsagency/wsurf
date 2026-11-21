@@ -410,6 +410,39 @@ struct SpaceTests {
         #expect(reopened.currentSpaceID == recipes)
     }
 
+    @Test func anUnplacedFolderPreservesItsChildrenWithKnownMembership() throws {
+        let database = AppDatabase.temporary(), window = UUID()
+        let old = makeModel(database: database, windowID: window)
+        let note = old.addPage("https://unplaced.example.test/")
+        let folder = old.createFolder(named: "Unplaced folder", containing: [note])
+        let page = old.addPage("https://known-folder.example.test/")
+        let known = old.createFolder(named: "Known folder", containing: [page])
+        old.move([.folder(known.id)], into: folder)
+        old.saveBlocking()
+        old.closeAllTabs(saving: false)
+        let folderID = folder.id, noteID = note.id, pageID = page.id
+        try database.writer.write { db in
+            try db.execute(sql: "UPDATE sessionFolder SET spaceID = NULL WHERE id = ?", arguments: [folderID])
+            try db.execute(sql: "UPDATE sessionTab SET spaceID = NULL WHERE id IN (?, ?)", arguments: [noteID, pageID])
+        }
+
+        let reopened = makeModel(database: database, windowID: window)
+        defer { reopened.closeAllTabs(saving: false) }
+        reopened.restoreSession()
+        let loose = try #require(reopened.tab(id: noteID))
+        #expect(reopened.folder(id: folderID)?.spaceID == nil && loose.spaceID == nil)
+        #expect(reopened.folder(id: known.id)?.spaceID == home && reopened.tab(id: pageID)?.spaceID == home)
+        let placeholder = reopened.insertMicroPlaceholder(for: loose)
+        #expect(placeholder.spaceID == nil)
+        reopened.settle(loose, into: placeholder)
+        #expect(loose.spaceID == nil)
+        let copy = reopened.duplicate(loose)
+        let wrapper = reopened.createFolder(named: "Filed together", containing: [loose, copy])
+        #expect(wrapper.spaceID == nil && loose.spaceID == nil && copy.spaceID == nil)
+        reopened.move([.folder(wrapper.id)], toSpace: recipes)
+        #expect(wrapper.spaceID == recipes && loose.spaceID == recipes && copy.spaceID == recipes)
+    }
+
     @Test func rowsSavedBeforeSpacesJoinTheFirstSpace() throws {
         let database = AppDatabase.temporary()
         let old = BrowserModel(windowID: UUID(), database: database)

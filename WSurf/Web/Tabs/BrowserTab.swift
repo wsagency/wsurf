@@ -796,6 +796,18 @@ final class BrowserTab: Identifiable {
         processState.finishReload()
     }
 
+    /// Replaces the deferred page's old payload when another Mac changes its URL.
+    func applySharedURL(_ url: URL) {
+        if isDeferred || !isMaterialised {
+            clearDeferredSession()
+            urlString = url.absoluteString
+            deferRestore(state: nil, url: url)
+            invalidateSessionState()
+        } else {
+            _ = load(url, startedByUser: false)
+        }
+    }
+
     private func clearDeferredSession() {
         isDeferred = false
         deferredLoadByPerson = false

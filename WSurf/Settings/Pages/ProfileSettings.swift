@@ -255,7 +255,8 @@ private struct ProfileDetailPage: View {
     @State private var draft: String
     @State private var facts = ProfileFacts.empty
     @State private var deleting = false
-    @State private var vaultNote: String?
+    @State private var deletionError: String?
+    @State private var vaultWarning: CredentialErasureNote?
     @State private var clearing = false
     @FocusState private var editing: Bool
 
@@ -280,20 +281,18 @@ private struct ProfileDetailPage: View {
     }
 
     var body: some View {
-        if let profile {
-            page(profile)
-        }
-    }
-
-    @ViewBuilder
-    private func page(_ profile: Profile) -> some View {
+        let profile = self.profile
         SubPageHeader(backTitle: "Profiles", onBack: onBack) {
-            if !profile.isOriginal {
+            if let profile, !profile.isOriginal {
                 SettingsButton(title: "Delete profile…", isDestructive: true) {
                     // Counts are read first so the confirmation states what is verified, or that it can't be known.
                     Task {
-                        vaultNote = await CredentialErasureNote.note(for: profile)
-                        deleting = true
+                        do {
+                            vaultWarning = try await CredentialErasureNote.warning(for: profile, rechecking: vaultWarning?.vaultRemovals)
+                            deleting = true
+                        } catch {
+                            deletionError = error.localizedDescription
+                        }
                     }
                 }
                     .disabled(coordinator.isSwitchingProfile)
@@ -304,26 +303,34 @@ private struct ProfileDetailPage: View {
                         Button("Delete profile", role: .destructive) {
                             Task { await delete(profile) }
                         }
-                        Button("Cancel", role: .cancel) { deleting = false }
-                    } message: {
-                        Text("Deleting this profile removes its tabs, history, and sign-ins from this Mac. Downloads stay in the Downloads folder.")
-                        if let vaultNote {
-                            Text(verbatim: vaultNote)
+                        Button("Cancel", role: .cancel) {
+                            deleting = false
+                            vaultWarning = nil
                         }
-                        if CloudSync.shared?.vaults?.hasSyncedVaults(profileID: profile.id) == true {
-                            Text("Its vaults are also removed from iCloud. Your other devices keep their copies. To keep them in iCloud, turn off Sync with iCloud for each vault first.")
+                    } message: {
+                        if let vaultWarning {
+                            Text(verbatim: vaultWarning.message)
                         }
                     }
             }
         }
 
-        heading(profile)
+        if let deletionError {
+            if profile == nil {
+                Text("The profile was removed from the list. Reopen WSurf to retry deleting its local data.")
+            }
+            Text(verbatim: deletionError).font(.callout).foregroundStyle(.red).textSelection(.enabled)
+        }
 
-        lookSection(profile)
+        if let profile {
+            heading(profile)
 
-        historySection(profile)
+            lookSection(profile)
 
-        ProfileICloudTabsSection(profile: profile)
+            historySection(profile)
+
+            ProfileICloudTabsSection(profile: profile)
+        }
     }
 
     private func heading(_ profile: Profile) -> some View {
@@ -430,11 +437,15 @@ private struct ProfileDetailPage: View {
 
     private func delete(_ profile: Profile) async {
         deleting = false
-        onBack()
-        if isCurrent, let fallback = store.profiles.first(where: { $0.id != profile.id }) {
-            await coordinator.switchProfile(to: fallback)
+        deletionError = nil
+        guard let vaultWarning else { return }
+        let result = await coordinator.deleteProfile(profile, confirmedVaults: vaultWarning.vaultRemovals, scope: .confirmed(vaultWarning.sharedCopies))
+        switch result {
+        case .success:
+            onBack()
+        case .failure(let error):
+            deletionError = error.localizedDescription
         }
-        await store.remove(profile)
     }
 }
 

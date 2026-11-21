@@ -29,6 +29,7 @@ struct CloudTabsTests {
         var models: [BrowserModel] = []
         private(set) var engines: [FakeSyncEngine] = []
         private(set) var cloudSync: CloudSync?
+        private(set) var rememberedOtherDevices = false
         private(set) var cloudTabs: CloudTabs?
 
         init() {
@@ -64,22 +65,26 @@ struct CloudTabsTests {
             flag: Bool = true,
             entitled: Bool = true,
             optedIn: Bool = false,
+            offersMacSync: Bool = false,
             profiles: [Profile] = [.original()],
             installIDs: any InstallIDStorage = MemoryInstallIDStorage()
         ) -> CloudTabs? {
             if optedIn {
                 defaults.set(true, forKey: CloudTabs.optInKey)
             }
+            var eligibility = gate(flag: flag, entitled: entitled)
+            eligibility.offersMacSync = offersMacSync
             cloudSync = CloudSync.start(
-                gate: gate(flag: flag, entitled: entitled),
+                gate: eligibility,
                 installIDs: installIDs,
                 stateFile: stateFile,
                 profiles: profiles,
+                rememberOtherDevices: { [weak self] in self?.rememberedOtherDevices = true },
                 optInDefaults: { [defaults] _ in defaults },
                 windows: { [unowned self] in models },
                 clock: clock,
-                makeEngine: { [unowned self] delegate, _ in
-                    let engine = FakeSyncEngine(cloud: cloud, delegate: delegate)
+                makeEngine: { [unowned self] delegate, checkpoint in
+                    let engine = FakeSyncEngine(cloud: cloud, delegate: delegate, state: checkpoint)
                     engines.append(engine)
                     return engine
                 }
@@ -110,8 +115,8 @@ struct CloudTabsTests {
         }
 
         func finish() {
-            if CloudTabs.shared === cloudTabs {
-                CloudTabs.shared = nil
+            if CloudSync.shared === cloudSync {
+                CloudSync.shared = nil
             }
             cloudSync?.prepareToTerminate()
             defaults.removePersistentDomain(forName: AppDatabase.defaultsSuite(suite))
@@ -168,6 +173,48 @@ struct CloudTabsTests {
         cloudTabs.setOptIn(false, for: .original())
         cloudTabs.setOptIn(true, for: .original())
         #expect(launch.engines.count == 1)
+    }
+
+    @Test func otherDevicesCanBeEnabledFromSyncOnAFreshSignedMac() async throws {
+        let launch = Launch()
+        defer { launch.finish() }
+        let window = regularWindow()
+        defer { window.closeAllTabs(saving: false) }
+        _ = window.addPage("https://device-copy.example.test/")
+        launch.models = [window]
+        let personal = Profile.original()
+        launch.start(flag: false, offersMacSync: true)
+        let app = try #require(launch.cloudSync)
+        #expect(launch.engines.isEmpty && launch.cloud.recordCount == 0)
+        #expect(app.setOtherDeviceSharing(true, for: personal))
+        #expect(launch.rememberedOtherDevices)
+        let tabs = try #require(app.tabs)
+        let engine = try #require(launch.engines.first)
+        try await engine.sendNow()
+        let id = SyncRecordID(zone: SyncZone.profile(personal.id), name: tabs.sync.installID)
+        let remote = try #require(launch.cloud.record(id))
+        let session = try SessionCodec.decodeSession(remote.payload)
+        #expect(urls(in: session.windows.flatMap(\.nodes)).contains("https://device-copy.example.test/"))
+        #expect(app.sharedSpaces?.needsEngine == false && app.vaults == nil)
+        #expect(app.setOtherDeviceSharing(false, for: personal))
+        try await engine.sendNow()
+        #expect(launch.cloud.record(id) == nil && window.page(at: "https://device-copy.example.test/") != nil)
+    }
+
+    @Test func otherDevicesKeepsAnOldDisabledExperimentOffAndCanRetryALockedKeychain() throws {
+        let launch = Launch()
+        defer { launch.finish() }
+        let storage = MemoryInstallIDStorage(value: UUID().uuidString)
+        storage.failsReads = true
+        launch.start(flag: false, optedIn: true, offersMacSync: true, installIDs: storage)
+        let app = try #require(launch.cloudSync)
+        #expect(app.tabs == nil && launch.engines.isEmpty)
+        #expect(!app.setOtherDeviceSharing(true, for: .privateBrowsing()))
+        #expect(!app.setOtherDeviceSharing(true, for: .original()) && launch.engines.isEmpty)
+        #expect(!launch.rememberedOtherDevices)
+        storage.failsReads = false
+        #expect(app.setOtherDeviceSharing(true, for: .original()))
+        #expect(app.tabs?.isOptedIn(Profile.originalID) == true && launch.engines.count == 1)
     }
 
     @Test func optInIsStoredPerProfileAndOnlyForPersonal() throws {
@@ -295,7 +342,7 @@ struct CloudTabsTests {
         let cloudTabs = try #require(launch.start(optedIn: true))
         let window = regularWindow()
         launch.models = [window]
-        CloudTabs.shared = cloudTabs
+        CloudSync.shared = launch.cloudSync
         cloudTabs.publishAll(force: true)
         try await launch.sendAll()
         let writes = launch.cloud.writeCount
@@ -320,7 +367,7 @@ struct CloudTabsTests {
         let cloudTabs = try #require(launch.start(optedIn: true))
         let window = regularWindow()
         launch.models = [window]
-        CloudTabs.shared = cloudTabs
+        CloudSync.shared = launch.cloudSync
         cloudTabs.publishAll(force: true)
         try await launch.sendAll()
 
@@ -367,10 +414,10 @@ struct CloudTabsTests {
     @Test func privateWindowChangesPublishNothing() async throws {
         let launch = Launch()
         defer { launch.finish() }
-        let cloudTabs = try #require(launch.start(optedIn: true))
+        _ = try #require(launch.start(optedIn: true))
         let secret = BrowserModel(context: .shared(for: .privateBrowsing()))
         launch.models = [secret]
-        CloudTabs.shared = cloudTabs
+        CloudSync.shared = launch.cloudSync
         try await launch.sendAll()
         let writes = launch.cloud.writeCount
         let waiting = await launch.timerCount()
@@ -394,7 +441,7 @@ struct CloudTabsTests {
         let window = regularWindow()
         window.addPage("https://open.test/")
         launch.models = [window]
-        CloudTabs.shared = cloudTabs
+        CloudSync.shared = launch.cloudSync
         cloudTabs.publishAll(force: true)
         try await launch.sendAll()
         let live = try launch.storedSession()
@@ -537,6 +584,94 @@ struct CloudTabsTests {
         #expect(!cloudTabs.isOptedIn(Profile.originalID))
         #expect(launch.cloud.writeCount == writes)
         #expect(launch.cloud.zones[SyncZone.profile(Profile.originalID)] == nil)
+    }
+
+    private struct EngineCursor: Decodable {
+        let cursor: Int
+    }
+
+    enum TabFileAtRestart: CaseIterable { case stale, unavailable, recreatedZone, differentAccount }
+
+    @Test(arguments: TabFileAtRestart.allCases)
+    func anUnwritableTabFileCannotLoseTheStopBehindTheRouterCursor(restart: TabFileAtRestart) async throws {
+        let launch = Launch()
+        defer { launch.finish() }
+        let install = MemoryInstallIDStorage(value: UUID().uuidString), profile = Profile.originalID
+        let first = try #require(launch.start(optedIn: true, installIDs: install))
+        let local = SyncSamples.session(tabs: ["https://local.test/"])
+        let zone = SyncZone.profile(profile)
+        first.sync.share(local, profileID: profile, force: true)
+        try await launch.engine.sendNow()
+        await first.sync.refresh()
+        let before = try JSONDecoder().decode(SyncRouterState.self, from: Data(contentsOf: launch.stateFile))
+        let file = CloudTabs.stateFile(besides: launch.stateFile)
+        let backup = launch.directory.appending(path: "last-written-tabs.json")
+        try FileManager.default.moveItem(at: file, to: backup)
+        try FileManager.default.createDirectory(at: file, withIntermediateDirectories: false)
+        launch.engine.available = false
+        launch.cloud.deleteZone(zone, reason: .purged)
+        try await launch.engine.fetchNow()
+        let after = try JSONDecoder().decode(SyncRouterState.self, from: Data(contentsOf: launch.stateFile))
+        let previous = try JSONDecoder().decode(EngineCursor.self, from: #require(before.engineState))
+        let consumed = try JSONDecoder().decode(EngineCursor.self, from: #require(after.engineState))
+        #expect(previous.cursor < consumed.cursor && consumed.cursor == launch.cloud.clock)
+        #expect(launch.cloud.changes(since: consumed.cursor).zones.isEmpty)
+        #expect(first.isOptedIn(profile))
+        if restart == .stale || restart == .recreatedZone {
+            try FileManager.default.removeItem(at: file)
+            try FileManager.default.moveItem(at: backup, to: file)
+        }
+        if restart == .differentAccount {
+            launch.cloud.switchUser("another-user")
+            launch.cloud.createZone(zone)
+        } else if restart == .recreatedZone {
+            launch.cloud.createZone(zone)
+        }
+
+        let reopened = try #require(launch.start(installIDs: install))
+        let engine = try #require(launch.engines.last)
+        engine.available = false
+        reopened.sync.share(local, profileID: profile, force: true)
+        #expect(!reopened.sync.allowsZoneCreation(zone))
+        try await engine.sendNow()
+        #expect((launch.cloud.zones[zone] != nil) == (restart == .recreatedZone || restart == .differentAccount))
+        engine.available = true
+        await reopened.sync.refresh()
+        try await engine.sendNow()
+        #expect(reopened.isOptedIn(profile) == (restart == .recreatedZone))
+        #expect(launch.defaults.bool(forKey: CloudTabs.optInKey) == (restart == .recreatedZone))
+        #expect((launch.cloud.record(launch.personalSessionID) != nil) == (restart == .recreatedZone))
+    }
+
+    @Test func explicitReenrollmentOutlivesAnOlderTabFileWithAPendingStop() async throws {
+        let launch = Launch()
+        defer { launch.finish() }
+        let install = MemoryInstallIDStorage(value: UUID().uuidString)
+        let profile = Profile.original(), zone = SyncZone.profile(profile.id)
+        let tabs = try #require(launch.start(optedIn: true, installIDs: install))
+        try await launch.engine.sendNow()
+        await tabs.sync.refresh()
+        launch.engine.available = false
+        launch.cloud.deleteZone(zone, reason: .purged)
+        try await launch.engine.fetchNow()
+        #expect(!tabs.sync.allowsZoneCreation(zone))
+
+        let file = CloudTabs.stateFile(besides: launch.stateFile)
+        let backup = launch.directory.appending(path: "before-new-consent.json")
+        try FileManager.default.moveItem(at: file, to: backup)
+        try FileManager.default.createDirectory(at: file, withIntermediateDirectories: false)
+        tabs.setOptIn(false, for: profile)
+        tabs.setOptIn(true, for: profile)
+        try FileManager.default.removeItem(at: file)
+        try FileManager.default.moveItem(at: backup, to: file)
+
+        let reopened = try #require(launch.start(installIDs: install))
+        await reopened.sync.refresh()
+        reopened.sync.share(SyncSamples.session(tabs: ["https://new-choice.test/"]), profileID: profile.id, force: true)
+        try await #require(launch.engines.last).sendNow()
+        #expect(reopened.isOptedIn(profile.id))
+        let remote = try #require(launch.cloud.record(launch.personalSessionID))
+        #expect(try SessionCodec.decodeSession(remote.payload).windows.first?.nodes.first?.url == "https://new-choice.test/")
     }
 
     @Test func erasingAProfileDropsItsMirror() async throws {

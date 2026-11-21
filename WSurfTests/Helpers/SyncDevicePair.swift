@@ -31,10 +31,12 @@ final class DevicePair {
     let passkeysB = VaultPasskeys()
     let clockA = TestClock()
     let clockB = TestClock()
-    let syncA: VaultSync
-    let syncB: VaultSync
-    let engineA: FakeSyncEngine
-    let engineB: FakeSyncEngine
+    private let hostA: CredentialVaultSyncHost
+    private let hostB: CredentialVaultSyncHost
+    private(set) var syncA: VaultSync
+    private(set) var syncB: VaultSync
+    private(set) var engineA: FakeSyncEngine
+    private(set) var engineB: FakeSyncEngine
     private(set) var managerB: CredentialManager?
 
     private init(
@@ -50,14 +52,17 @@ final class DevicePair {
         self.passkeysA = passkeysA
         passkeysA.adopt(proof)
         passkeysB.adopt(proof)
-        let hostA = CredentialVaultSyncHost(
+        hostA = CredentialVaultSyncHost(
             profiles: { [profile] in [profile] },
             manager: { _, id in id == vaultID ? managerA : nil },
-            directory: { _ in envA.directory }
+            store: { _ in storeA }, directory: { _ in envA.directory }
         )
-        syncA = VaultSync(host: hostA, state: VaultSyncAppState(), persist: { _ in }, excludedProfiles: [], clock: clockA)
+        hostB = CredentialVaultSyncHost(profiles: { [profile] in [profile] })
+        var state = VaultSyncAppState()
+        state.accountUser = cloud.user
+        syncA = VaultSync(host: hostA, state: state, persist: { _ in }, excludedProfiles: [], clock: clockA)
         syncB = VaultSync(
-            host: CredentialVaultSyncHost(profiles: { [profile] in [profile] }), state: VaultSyncAppState(), persist: { _ in },
+            host: hostB, state: state, persist: { _ in },
             excludedProfiles: [], clock: clockB
         )
         engineA = FakeSyncEngine(cloud: cloud, delegate: syncA)
@@ -78,6 +83,26 @@ final class DevicePair {
         let manager = VaultManagerFixture.manager(profileID: profile.id, vaultID: vaultID, store: store, passkeys: passkeys)
         try await manager.completeUnlock(credentialID: proof.credentialID, prf: proof.prf, access: manager.beginAccess())
         return DevicePair(profile: profile, proof: proof, vaultID: vaultID, envA: env, storeA: store, managerA: manager, passkeysA: passkeys)
+    }
+
+    /// Reopen the same on-disk enrollment with fresh sync and engine instances. The existing store and lease belong to the fixture.
+    func relaunch(onA: Bool, configure: (FakeSyncEngine) -> Void = { _ in }) async {
+        let old = onA ? syncA : syncB
+        await old.settle()
+        old.pauseDiscovery()
+        let sync = VaultSync(host: onA ? hostA : hostB, state: old.state, persist: { _ in }, excludedProfiles: [], clock: onA ? clockA : clockB)
+        let engine = FakeSyncEngine(cloud: cloud, delegate: sync)
+        configure(engine)
+        if onA {
+            syncA = sync
+            engineA = engine
+        } else {
+            syncB = sync
+            engineB = engine
+        }
+        sync.attach(engine)
+        sync.vaultUnlocked(profileID: profile.id, vaultID: vaultID)
+        await sync.settle()
     }
 
     func cleanup() async {

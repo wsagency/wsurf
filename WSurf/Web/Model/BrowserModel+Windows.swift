@@ -11,22 +11,30 @@ extension BrowserModel {
     /// `activate` is false: a page that was opened in the background stays there.
     @discardableResult
     func adoptTab(_ tab: BrowserTab, from source: BrowserModel, activate: Bool = true) -> Bool {
-        // Only within one context: a private page never reaches another private window's cookie store, only a window that
-        // joined its own session.
-        guard source !== self, source.windowID != windowID, source.context === context,
-              source.sessionClosedAt == nil, sessionClosedAt == nil,
-              context.isRegistered(source), context.isRegistered(self),
-              (source.database.writer as AnyObject) === (database.writer as AnyObject),
-              source.tabsByID[tab.id] === tab, tab.context === context,
-              !tabs.contains(where: { $0.id == tab.id }), !tab.isClosed else { return false }
-
+        guard canReceive(from: source), canReceive(tab, from: source) else { return false }
         source.onTabWillTransferOut?(tab)
-        guard source.context === context, tab.context === context,
-              source.sessionClosedAt == nil, sessionClosedAt == nil,
-              context.isRegistered(source), context.isRegistered(self),
-              (source.database.writer as AnyObject) === (database.writer as AnyObject),
-              let oldIndex = source.tabs.firstIndex(where: { $0 === tab }),
-              !tabs.contains(where: { $0.id == tab.id }), !tab.isClosed else { return false }
+        guard canReceive(from: source), canReceive(tab, from: source), let oldIndex = source.tabs.firstIndex(where: { $0 === tab }) else { return false }
+        transfer(tab, from: source, oldIndex: oldIndex)
+        source.onTabTransferredOut?(tab, oldIndex)
+        onTabTransferredIn?(tab, source, oldIndex)
+        if activate {
+            activeTabID = tab.id
+        }
+        saveTransferredSession(from: source)
+        return true
+    }
+
+    private func canReceive(from source: BrowserModel) -> Bool {
+        source !== self && source.windowID != windowID && source.context === context &&
+            source.sessionClosedAt == nil && sessionClosedAt == nil && context.isRegistered(source) && context.isRegistered(self) &&
+            (source.database.writer as AnyObject) === (database.writer as AnyObject)
+    }
+
+    private func canReceive(_ tab: BrowserTab, from source: BrowserModel) -> Bool {
+        source.tabsByID[tab.id] === tab && tab.context === context && !tabs.contains(where: { $0.id == tab.id }) && !tab.isClosed
+    }
+
+    private func transfer(_ tab: BrowserTab, from source: BrowserModel, oldIndex: Int) {
         // The page leaves as an ordinary tab. Its pin stays in this window and every other one, so the source
         // gets a new unloaded page for it below.
         let wasPin = tab.pinID != nil
@@ -37,6 +45,9 @@ extension BrowserModel {
             tab.pinnedURL = nil
             tab.pinnedTitle = ""
             tab.isFavorite = false
+        }
+        if source.unplacedSpaceRows.remove(.tab(tab.id)) != nil {
+            unplacedSpaceRows.insert(.tab(tab.id))
         }
         source.cancelPendingSave()
         cancelPendingSave()
@@ -95,12 +106,57 @@ extension BrowserModel {
         insert(tab, after: nil)
         lastVisitID[tab.id] = visitID
         writtenStateGeneration[tab.id] = nil
-        source.onTabTransferredOut?(tab, oldIndex)
-        onTabTransferredIn?(tab, source, oldIndex)
-        if activate {
-            activeTabID = tab.id
+    }
+
+    /// Transfer a sidebar folder and its whole local subtree in one session write, including device-only pages.
+    func adoptSharedFolder(_ folder: TabFolder, from source: BrowserModel) -> Set<UUID>? {
+        let root = SidebarItem.folder(folder.id)
+        let members = source.reconciledTree().descendants(ofFolder: folder.id).union([root])
+        let pages = source.tabs.filter { members.contains(.tab($0.id)) }
+        let movedFolders = source.folders.filter { members.contains(.folder($0.id)) }
+        func canMove() -> Bool {
+            canReceive(from: source) && source.folder(id: folder.id) === folder &&
+                members.count == pages.count + movedFolders.count &&
+                source.reconciledTree().descendants(ofFolder: folder.id).union([root]) == members &&
+                movedFolders.allSatisfy { source.folder(id: $0.id) === $0 && self.folder(id: $0.id) == nil && !$0.isPinned } &&
+                pages.allSatisfy { canReceive($0, from: source) && $0.pinID == nil }
+        }
+        guard canMove() else { return nil }
+        for page in pages {
+            source.onTabWillTransferOut?(page)
+        }
+        guard canMove() else { return nil }
+
+        let from = source.reconciledTree()
+        let into = reconciledTree()
+        let folderIDs = Set(movedFolders.map(\.id))
+        let pageIDs = Set(pages.map(\.id))
+        let groups = source.splits.splits.filter { $0.tabs.allSatisfy(pageIDs.contains) }
+        let moving = source.tabs.enumerated().filter { pageIDs.contains($0.element.id) }
+        if let active = source.activeTabID, pageIDs.contains(active) {
+            source.activeTabID = source.currentSpaceTabs.first { !pageIDs.contains($0.id) && $0.microTabID == nil }?.id
+        }
+        for (index, page) in moving.reversed() {
+            transfer(page, from: source, oldIndex: index)
+        }
+        source.sidebarUndoManager.removeAllActions()
+        sidebarUndoManager.removeAllActions()
+        source.storedTree = from.removing(members)
+        source.folders.removeAll { folderIDs.contains($0.id) }
+        folders.append(contentsOf: movedFolders)
+        storedTree = SidebarTree(root: into.root + [root], children: into.children.merging(from.children.filter { folderIDs.contains($0.key) }) { _, held in held })
+        splits = TabSplits(splits.splits + groups)
+        source.sidebarDidChange()
+        syncTabOrder()
+        for (index, page) in moving {
+            if let opener = openerElsewhere[page.id], opener.model.model === source, pageIDs.contains(opener.tab) {
+                openerByTab[page.id] = opener.tab
+                openerElsewhere[page.id] = nil
+            }
+            source.onTabTransferredOut?(page, index)
+            onTabTransferredIn?(page, source, index)
         }
         saveTransferredSession(from: source)
-        return true
+        return folderIDs.union(pageIDs)
     }
 }

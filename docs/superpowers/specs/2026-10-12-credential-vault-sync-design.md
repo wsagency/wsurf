@@ -567,6 +567,11 @@ heads, journals, registry, History, Trash, purge and the Apple exchange (§13) a
 - Sync runs only while the vault is unlocked and never extends a lease; what arrives while it is locked waits sealed.
 - Removing a vault from iCloud, deleting the vault or deleting its profile deletes its zone; the other devices keep their copies and
   say so. After any zone removal or Apple Account change nothing is uploaded until the user turns sync on again and confirms.
+- When another Mac receives confirmation that this profile was deleted from the same iCloud account, it shows
+  “This profile was deleted from iCloud” and names the affected profile. It keeps the local copy and pauses sharing through restart
+  until the user chooses. **Delete from This Mac** removes that local profile after confirmation. **Create New Instance** keeps
+  the local profile and its data and publishes a new cloud instance. A delayed deletion for the original instance can only affect
+  the original. Removing one vault or losing contact with iCloud does not establish that the profile was deleted.
 - The §11.4 limits apply to iCloud: removing the zone deletes WSurf's copy in the user's iCloud account; WSurf cannot see or delete
   copies outside it, such as backups of the user's devices. Record names, counts and sizes are visible to Apple; content is not.
 

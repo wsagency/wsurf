@@ -291,3 +291,307 @@ struct CredentialStoreTests {
         #expect(CredentialStore.service.hasPrefix(CredentialStore.productionService + "."))
     }
 }
+
+extension CredentialStore.Storage {
+    nonisolated static func fixture() -> Self {
+        let items = Mutex([String: String]())
+        return Self(
+            read: { name in items.withLock { $0[name] } },
+            write: { value, name in items.withLock { $0[name] = value }; return errSecSuccess },
+            delete: { name in items.withLock { $0[name] = nil }; return errSecSuccess }
+        )
+    }
+}
+
+extension CredentialStoreTests {
+    @Test func savedKeysRequireAccountAndEndpointConsentOnBothPopulatedMacs() throws {
+        let cloud = CredentialStore.Storage.fixture()
+        let localA = CredentialStore.Storage.fixture(), localB = CredentialStore.Storage.fixture()
+        let suiteA = AppDatabase.defaultsSuite("KeySync.\(UUID())"), suiteB = AppDatabase.defaultsSuite("KeySync.\(UUID())")
+        let defaultsA = try #require(UserDefaults(suiteName: suiteA)), defaultsB = try #require(UserDefaults(suiteName: suiteB))
+        defer { defaultsA.removePersistentDomain(forName: suiteA); defaultsB.removePersistentDomain(forName: suiteB) }
+        let a = ProviderKeySharing(defaults: defaultsA, local: localA, cloud: cloud)
+        let b = ProviderKeySharing(defaults: defaultsB, local: localB, cloud: cloud)
+        let provider = ProviderCatalog.openAI
+        #expect(a.saveLocal("studio-fixture", for: provider) == nil)
+        #expect(b.saveLocal("air-fixture", for: provider) == nil)
+        #expect(throws: (any Error).self) { try a.shareLocal(provider) }
+        a.setAccountIdentifier("first")
+        b.setAccountIdentifier("first")
+        try a.setEnabled(true)
+        try b.setEnabled(true)
+        var environmentOnly = ProviderCatalog.openAI
+        environmentOnly.environmentKey = "PATH"
+        let empty = ProviderKeySharing(defaults: defaultsA, local: .fixture(), cloud: cloud)
+        empty.setAccountIdentifier("first")
+        #expect(throws: ProviderKeySharing.Failure.noLocalKey) { try empty.shareLocal(environmentOnly) }
+        try a.shareLocal(provider)
+        #expect(b.savedKey(for: provider) == "air-fixture")
+        try b.useCloud(provider)
+        #expect(b.savedKey(for: provider) == "studio-fixture")
+        #expect(a.saveLocal("rotated-fixture", for: provider) == nil)
+        #expect(b.savedKey(for: provider) == "rotated-fixture")
+        var changed = provider
+        changed.baseURL = URL(string: "https://unapproved.test/v1")
+        #expect(b.savedKey(for: changed) == nil)
+        #expect(b.saveLocal("wrong-endpoint-fixture", for: changed) != nil)
+        #expect(b.savedKey(for: provider) == "rotated-fixture")
+        #expect(throws: (any Error).self) { try b.useCloud(changed) }
+        let originalContext = b.accountContext
+        b.suspendAccountVerification()
+        #expect(b.accountContext == nil)
+        #expect(!b.isEnabled)
+        #expect(b.wantsSharing)
+        #expect(throws: (any Error).self) { try b.useCloud(provider) }
+        b.setAccountIdentifier("first")
+        #expect(b.accountContext == originalContext)
+        #expect(b.participates(provider))
+        b.suspendAccountVerification()
+        try b.setEnabled(false)
+        b.setAccountIdentifier("first")
+        #expect(!b.wantsSharing && !b.isEnabled)
+        #expect(b.savedKey(for: provider) == "rotated-fixture")
+        b.setAccountIdentifier("second")
+        #expect(!b.isEnabled)
+        #expect(throws: (any Error).self) { try b.shareLocal(provider) }
+        try b.setEnabled(true)
+        #expect(throws: (any Error).self) { try b.useCloud(provider) }
+        let secondContext = b.accountContext
+        b.suspendAccountVerification()
+        b.setAccountIdentifier(nil)
+        b.setAccountIdentifier("second")
+        #expect(b.accountContext != secondContext)
+        #expect(!b.isEnabled)
+        try b.setEnabled(true)
+        #expect(!b.participates(provider))
+        #expect(b.savedKey(for: provider) == "rotated-fixture")
+    }
+
+    @Test func localEditsDuringSuspensionSurviveReverification() throws {
+        let suite = AppDatabase.defaultsSuite("PausedKey.\(UUID())")
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let sharing = ProviderKeySharing(defaults: defaults, local: .fixture(), cloud: .fixture())
+        let provider = ProviderCatalog.openAI
+        sharing.setAccountIdentifier("fixture")
+        try sharing.setEnabled(true)
+        #expect(sharing.saveLocal("original-fixture", for: provider) == nil)
+        try sharing.shareLocal(provider)
+        sharing.suspendAccountVerification()
+        #expect(sharing.saveLocal("offline-fixture", for: provider) == nil)
+        sharing.setAccountIdentifier("fixture")
+        #expect(sharing.savedKey(for: provider) == "offline-fixture")
+        #expect(!sharing.participates(provider))
+        try sharing.useCloud(provider)
+        #expect(sharing.savedKey(for: provider) == "original-fixture")
+    }
+
+    @Test func legacyKeyNeedsApprovalAfterRemoteRemovalAndEndpointChange() throws {
+        let suite = AppDatabase.defaultsSuite("LegacyKey.\(UUID())")
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let local = CredentialStore.Storage.fixture()
+        let sharing = ProviderKeySharing(defaults: defaults, local: local, cloud: .fixture())
+        let catalog = ProviderCatalog(defaults: defaults, keySharing: sharing)
+        var original = ProviderCatalog.newCustom()
+        original.baseURL = URL(string: "https://first.test/v1")
+        catalog.save(original)
+        #expect(local.write("legacy-fixture", "provider:" + original.id) == errSecSuccess)
+        #expect(sharing.savedKey(for: original) == "legacy-fixture")
+        sharing.setAccountIdentifier("fixture")
+        try sharing.setEnabled(true)
+        try sharing.shareLocal(original)
+        catalog.remove(original, received: true)
+        var replacement = original
+        replacement.baseURL = URL(string: "https://second.test/v1")
+        catalog.save(replacement, received: true)
+        #expect(sharing.needsEndpointApproval(replacement))
+        #expect(sharing.savedKey(for: replacement) == nil)
+        #expect(throws: (any Error).self) { try sharing.shareLocal(replacement) }
+        #expect(throws: (any Error).self) { try sharing.useCloud(replacement) }
+        #expect(throws: (any Error).self) { try sharing.approveLocalEndpoint(original) }
+        try sharing.setEnabled(false)
+        try sharing.approveLocalEndpoint(replacement)
+        #expect(sharing.savedKey(for: replacement) == "legacy-fixture")
+        #expect(sharing.savedKey(for: original) == "legacy-fixture")
+        #expect(!sharing.participates(replacement))
+        try sharing.setEnabled(true)
+        #expect(throws: (any Error).self) { try sharing.useCloud(replacement) }
+        try sharing.shareLocal(replacement)
+        #expect(sharing.participates(replacement))
+    }
+
+    @Test func savingAKeyForAnOlderEndpointKeepsCurrentApprovalPending() throws {
+        let suite = AppDatabase.defaultsSuite("ChangedEndpoint.\(UUID())")
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let sharing = ProviderKeySharing(defaults: defaults, local: .fixture(), cloud: .fixture())
+        let catalog = ProviderCatalog(defaults: defaults, keySharing: sharing)
+        var first = ProviderCatalog.newCustom()
+        first.baseURL = URL(string: "https://first.test/v1")
+        var second = first
+        second.baseURL = URL(string: "https://second.test/v1")
+        catalog.save(second)
+        #expect(sharing.saveLocal("previous-second", for: second) == nil)
+        catalog.save(first)
+        #expect(sharing.saveLocal("first-fixture", for: first) == nil)
+        catalog.save(second, received: true)
+        #expect(sharing.needsEndpointApproval(second))
+        #expect(sharing.saveLocal("revised-first", for: first) == nil)
+        #expect(sharing.needsEndpointApproval(second))
+        #expect(sharing.savedKey(for: second) == nil)
+        try sharing.approveLocalEndpoint(second)
+        #expect(sharing.savedKey(for: second) == "previous-second")
+    }
+
+    @Test func removedProviderEndpointStillHasIndependentKeyControlsAfterRestart() throws {
+        let suite = AppDatabase.defaultsSuite("RetiredKey.\(UUID())")
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let sharing = ProviderKeySharing(defaults: defaults, local: .fixture(), cloud: .fixture())
+        sharing.setAccountIdentifier("fixture")
+        try sharing.setEnabled(true)
+        let catalog = ProviderCatalog(defaults: defaults, keySharing: sharing)
+        var first = ProviderCatalog.newCustom()
+        first.name = "Fixture"
+        first.baseURL = URL(string: "https://first.test/v1")
+        catalog.save(first)
+        #expect(sharing.saveLocal("first-fixture", for: first) == nil)
+        try sharing.shareLocal(first)
+        var next = first
+        next.baseURL = URL(string: "https://next.test/v1")
+        catalog.save(next, received: true)
+        #expect(sharing.saveLocal("next-fixture", for: next) == nil)
+        try sharing.shareLocal(next)
+        catalog.remove(next, received: true)
+        let reopened = ProviderCatalog(defaults: defaults, keySharing: sharing)
+        #expect(reopened.provider(id: first.id) == nil)
+        let choices = reopened.keyEndpoints.filter { $0.provider.id == first.id }
+        #expect(Set(choices.compactMap { $0.provider.baseURL }) == Set([first.baseURL, next.baseURL].compactMap { $0 }))
+        #expect(choices.allSatisfy { $0.isRetired })
+        try sharing.useCloud(first)
+        #expect(sharing.participates(next))
+        try sharing.removeCloudCopy(first)
+        #expect(sharing.participates(next))
+        #expect(throws: ProviderKeySharing.Failure.noSharedKey) { try sharing.useCloud(first) }
+        #expect(sharing.savedKey(for: first) == "first-fixture")
+        #expect(sharing.savedKey(for: next) == "next-fixture")
+    }
+
+    @Test func unreadableRotatedKeyNeverFallsBackToEarlierIDOnlyKey() throws {
+        let suite = AppDatabase.defaultsSuite("RotatedKey.\(UUID())")
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let storage = CredentialStore.Storage.fixture(), readable = Mutex(true)
+        var provider = ProviderCatalog.newCustom()
+        provider.baseURL = URL(string: "https://old.test/v1")
+        let address = ProviderKeySharing.localAddress(provider)
+        let local = CredentialStore.Storage(read: { name in
+            if name == address && !readable.withLock({ $0 }) {
+                return nil
+            }
+            return storage.read(name)
+        }, write: storage.write, delete: storage.delete)
+        let sharing = ProviderKeySharing(defaults: defaults, local: local, cloud: .fixture())
+        #expect(storage.write("superseded", "provider:" + provider.id) == errSecSuccess)
+        #expect(sharing.savedKey(for: provider) == "superseded")
+        #expect(sharing.saveLocal("rotated", for: provider) == nil)
+        readable.withLock { $0 = false }
+        #expect(sharing.savedKey(for: provider) == nil)
+        sharing.setAccountIdentifier("fixture")
+        try sharing.setEnabled(true)
+        #expect(throws: ProviderKeySharing.Failure.noLocalKey) { try sharing.shareLocal(provider) }
+    }
+
+    @Test func endpointApprovalCanRetryAfterUnlockingThePriorKey() throws {
+        let suite = AppDatabase.defaultsSuite("KeyTransfer.\(UUID())")
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let store = CredentialStore.Storage.fixture(), locked = Mutex(false)
+        var first = ProviderCatalog.newCustom()
+        first.baseURL = URL(string: "https://primary.test/v1")
+        var next = first
+        next.baseURL = URL(string: "https://replacement.test/v1")
+        let address = ProviderKeySharing.localAddress(first)
+        let local = CredentialStore.Storage(
+            read: { name in name == address && locked.withLock { $0 } ? nil : store.read(name) },
+            write: store.write, delete: store.delete, readForTransfer: { name in
+                if name == address && locked.withLock({ $0 }) {
+                    throw ProviderKeySharing.Failure.refused
+                }
+                return store.read(name)
+            }
+        )
+        let sharing = ProviderKeySharing(defaults: defaults, local: local, cloud: .fixture())
+        let catalog = ProviderCatalog(defaults: defaults, keySharing: sharing)
+        catalog.save(first)
+        #expect(sharing.saveLocal("synthetic", for: first) == nil)
+        catalog.save(next, received: true)
+        locked.withLock { $0 = true }
+        #expect(throws: (any Error).self) { try sharing.approveLocalEndpoint(next) }
+        #expect(sharing.needsEndpointApproval(next))
+        #expect(sharing.savedKey(for: next) == nil)
+        locked.withLock { $0 = false }
+        try sharing.approveLocalEndpoint(next)
+        #expect(sharing.savedKey(for: next) == "synthetic")
+    }
+
+    @Test func providerMetadataKeepsSelectionsAndEndpointBoundLocalKeys() throws {
+        let profile = Profile.original(), folder = URL.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let a = try MacSettingsFixture(profile: profile, folder: folder.appending(path: "studio"))
+        let b = try MacSettingsFixture(profile: profile, folder: folder.appending(path: "air"))
+        defer { a.cleanup(); b.cleanup() }
+        var one = ProviderCatalog.newCustom()
+        one.baseURL = URL(string: "https://first.test/v1")
+        one.name = "Fixture"
+        a.catalog.save(one)
+        b.catalog.save(one)
+        #expect(b.catalog.keySharing.saveLocal("only-on-air", for: one) == nil)
+        a.stores.models.providerID = one.id
+        a.stores.models.setModel("fixture-model", for: one)
+        a.stores.models.setReasoningEffort(.high, for: one)
+        a.stores.models.reasoningEffort = .medium
+        let selections = try a.adapter.values(for: .providers, profileID: profile.id)
+        for (key, value) in selections {
+            try b.adapter.apply(value, key: key, for: .providers, profileID: profile.id)
+        }
+        let extra = Profile(id: UUID(), name: "Later", symbol: "person", color: .gray)
+        let later = try MacSettingsFixture(profile: extra, folder: folder.appending(path: "later-profile"))
+        defer { later.cleanup() }
+        // Pre-sync versions wrote this preference without an index. This profile opens after the definition was removed.
+        later.stores.models.defaults.set("legacy-model", forKey: "llm.model." + one.id)
+        var two = one
+        two.baseURL = URL(string: "https://second.test/v1")
+        a.catalog.save(two)
+        let record = try #require(a.adapter.values(for: .providers, profileID: nil).first)
+        try b.adapter.apply(record.value, key: record.key, for: .providers, profileID: nil)
+        #expect(try JSONSerialization.jsonObject(with: record.value) as? [String: String] == [
+            "name": "Fixture", "endpoint": "https://second.test/v1",
+        ])
+        #expect(throws: (any Error).self) { try b.adapter.apply(record.value, key: record.key, for: .providers, profileID: profile.id) }
+        #expect(throws: (any Error).self) { try b.adapter.apply(nil, key: "model|openai", for: .providers, profileID: nil) }
+        #expect(b.catalog.provider(id: one.id)?.baseURL == two.baseURL)
+        #expect(b.catalog.keySharing.savedKey(for: two) == nil)
+        try b.adapter.apply(nil, key: record.key, for: .providers, profileID: nil)
+        #expect(b.catalog.provider(id: one.id) == nil)
+        #expect(b.stores.models.providerID == one.id)
+        let unavailable = b.catalog.selection(for: b.stores.models)
+        #expect(unavailable.id == one.id)
+        #expect(unavailable.baseURL == nil)
+        #expect(b.stores.models.model(for: one) == "fixture-model")
+        #expect(b.stores.models.reasoningEffort(for: one) == .high)
+        #expect(b.stores.models.reasoningEffort == .medium)
+        #expect(b.catalog.keySharing.savedKey(for: one) == "only-on-air")
+        #expect(try b.adapter.values(for: .providers, profileID: profile.id) == selections)
+        let reopened = MacSettingsSyncAdapter(profiles: [], catalog: b.catalog, stores: { _ in later.stores }, refreshWindows: { _, _, _ in })
+        reopened.register(extra)
+        #expect(try reopened.values(for: .providers, profileID: extra.id)["model|" + one.id] == JSONEncoder().encode("legacy-model"))
+        let unsupported = Data(#"{"name":"Fixture","endpoint":"https://extra.test/v1","environmentKey":"FIXTURE_ONLY"}"#.utf8)
+        #expect(throws: (any Error).self) { try b.adapter.apply(unsupported, key: record.key, for: .providers, profileID: nil) }
+        #expect(b.catalog.provider(id: one.id) == nil)
+        a.catalog.remove(two)
+        let locallyRemoved = MacSettingsSyncAdapter(profiles: [extra], catalog: a.catalog, stores: { _ in later.stores }, refreshWindows: { _, _, _ in })
+        #expect(try locallyRemoved.values(for: .providers, profileID: extra.id)["model|" + one.id] == JSONEncoder().encode("legacy-model"))
+    }
+}

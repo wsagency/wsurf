@@ -40,6 +40,7 @@ extension AppCoordinator {
             browser.restoreSession()
         } else {
             browser.attachProfilePins()
+            browser.sharedSpaceService?.applyCatalog(to: browser)
         }
         for url in urls.reversed() {
             browser.newTab(url: url, transition: .link)
@@ -185,7 +186,7 @@ extension AppCoordinator {
 
     /// The provider, model and reasoning effort the person chose, which the assistant's chip shows: settings only.
     private func configureEngineChoice() {
-        selectedProvider = ProviderCatalog.shared.provider(id: modelSettings.providerID) ?? ProviderCatalog.openAI
+        selectedProvider = ProviderCatalog.shared.selection(for: modelSettings)
         selectedModel = modelSettings.model(for: selectedProvider)
         selectedEffort = ReasoningCatalog.resolve(
             modelSettings.reasoningEffort(for: selectedProvider),

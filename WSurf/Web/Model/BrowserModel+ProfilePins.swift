@@ -53,6 +53,16 @@ extension BrowserModel {
         var usedIDs: Set<UUID> = []
         var linked: Set<UUID> = []
 
+        func placement(of item: SidebarItem, previous pin: ProfilePin?) -> Bool? {
+            if unplacedSpaceRows.contains(item) {
+                return true
+            }
+            if let pin {
+                return pin.requiresSpacePlacement
+            }
+            return false
+        }
+
         func add(_ item: SidebarItem, under parent: UUID?) {
             switch item {
             case .tab(let id):
@@ -81,7 +91,8 @@ extension BrowserModel {
                     customTitle: tab.customTitle.isEmpty ? nil : tab.customTitle,
                     pinnedURL: tab.pinnedURL,
                     pinnedTitle: tab.pinnedTitle.isEmpty ? nil : tab.pinnedTitle,
-                    isFavorite: tab.isFavorite
+                    isFavorite: tab.isFavorite,
+                    requiresSpacePlacement: placement(of: item, previous: earlier)
                 ))
             case .folder(let id):
                 guard let folder = liveFolders[id], usedIDs.insert(id).inserted else { return }
@@ -97,7 +108,8 @@ extension BrowserModel {
                     sizeFactor: folder.size.storedFactor,
                     tintsIcons: folder.tintsIcons ? true : nil,
                     customColor: folder.customColor?.hex,
-                    symbol: folder.symbol
+                    symbol: folder.symbol,
+                    requiresSpacePlacement: placement(of: item, previous: known[id])
                 ))
                 for child in tree.rows(in: id) {
                     add(child, under: id)
@@ -176,17 +188,22 @@ extension BrowserModel {
     }
 
     /// Unlinks every page whose pin is not in `wanted`, and removes the profile folders that are gone.
-    /// Returns the loaded pages that stay open as ordinary tabs.
+    /// Returns the pages that stay open as ordinary tabs.
     private func releaseGonePins(keeping wanted: Set<UUID>) -> Set<SidebarItem> {
         var demoted: Set<SidebarItem> = []
         for tab in tabs {
             guard let pinID = tab.pinID, !wanted.contains(pinID) else { continue }
+            let item = SidebarItem.tab(tab.id)
+            let sharedSpace = sharedSpaceService?.savedSpace(of: item, in: self, pinID: pinID)
             tab.pinID = nil
-            if tab.isMaterialised, !tab.isDeferred {
+            if let sharedSpace {
+                tab.spaceID = sharedSpace
+            }
+            if sharedSpace != nil || unplacedSpaceRows.contains(item) || (tab.isMaterialised && !tab.isDeferred) {
                 tab.pinnedURL = nil
                 tab.pinnedTitle = ""
                 tab.isFavorite = false
-                demoted.insert(.tab(tab.id))
+                demoted.insert(item)
             } else {
                 close(tab, recordForReopening: false)
             }
@@ -245,8 +262,17 @@ extension BrowserModel {
                 }
                 items[pin.id] = .tab(tab.id)
             }
+            // Keep legacy pins local even when sharing is first enabled after this window opens.
+            if pin.requiresSpacePlacement != false, let item = items[pin.id] {
+                unplacedSpaceRows.insert(item)
+            }
         }
         return items
+    }
+
+    /// An older pin in a profile that used sharing may have come from a legacy unplaced row.
+    func requiresSpacePlacementAfterUnpin(_ saved: Bool?) -> Bool {
+        saved ?? (sharedSpaceService?.mayHaveSharedSpaces(in: context.profile) == true)
     }
 
     /// Writes only a change, so a set that is already shown does not redraw the sidebar.

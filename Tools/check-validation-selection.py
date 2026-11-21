@@ -6,6 +6,7 @@
 
 import importlib.util
 import json
+import shutil
 from pathlib import Path
 import subprocess
 import sys
@@ -83,6 +84,29 @@ class SelectionTests(unittest.TestCase):
             self.assertTrue(self.select.result_problems(expected, bad))
 
 
+class CandidateVersionTests(unittest.TestCase):
+    def test_minor_and_patch_versions_keep_increasing_the_build(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'Tools').mkdir()
+            (root / 'WSurf.xcodeproj').mkdir()
+            checker = root / 'Tools/check-changelog.sh'
+            shutil.copy(Path(__file__).with_name(checker.name), checker)
+            for version, build, previous, valid in [
+                ('0.2.0', 32, '0.1.31 (build 31)', True),
+                ('0.2.1', 33, '0.2.0 (build 32)', True),
+                ('0.2.0', 31, '0.1.31 (build 31)', False),
+                ('0.2.1', 30, '0.2.0 (build 32)', False),
+                ('0.1.31', 32, '0.1.30 (build 30)', False),
+            ]:
+                with self.subTest(version=version, build=build):
+                    (root / 'WSurf.xcodeproj/project.pbxproj').write_text(
+                        f'MARKETING_VERSION = {version};\nCURRENT_PROJECT_VERSION = {build};\n')
+                    (root / 'CHANGELOG.md').write_text(f'## {version} (build {build})\n\n## {previous}\n')
+                    run = subprocess.run([checker], capture_output=True, text=True)
+                    self.assertEqual(run.returncode == 0, valid, run.stderr)
+
+
 class ReleaseSelectionTests(unittest.TestCase):
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
@@ -116,7 +140,7 @@ class ReleaseSelectionTests(unittest.TestCase):
                           'base': self.git('rev-parse', 'v0.1.28^{commit}')})
 
     def test_first_release_and_minor_change_require_the_full_tier(self):
-        for tag, published in [('v0.1.29', []), ('v0.2.29', ['v0.1.28']), ('v1.0', ['v0.1.28'])]:
+        for tag, published in [('v0.1.29', []), ('v0.2.0', ['v0.1.28']), ('v1.0', ['v0.1.28'])]:
             with self.subTest(tag=tag):
                 run = self.classify(tag, published)
                 self.assertEqual(run.returncode, 0, run.stderr)
@@ -131,7 +155,7 @@ class ReleaseSelectionTests(unittest.TestCase):
 
     def test_new_patch_or_minor_cannot_reuse_previous_build_commit(self):
         self.git('checkout', '-q', '--detach', 'v0.1.28')
-        for tag in ['v0.1.29', 'v0.2.29']:
+        for tag in ['v0.1.29', 'v0.2.0']:
             with self.subTest(tag=tag):
                 run = self.classify(tag, ['v0.1.28'])
                 self.assertNotEqual(run.returncode, 0)

@@ -13,6 +13,16 @@ enum SyncAddFailure: Equatable {
     case keyDiffers(vaultID: UUID, keyCheck: String)
 }
 
+/// The vault and Apple account shown by one retry button, captured together across an unlock prompt.
+struct VaultAdoptionRetry: Identifiable {
+    let vault: VaultListing
+    let account: String
+
+    var id: UUID {
+        vault.vaultID
+    }
+}
+
 // The page's side of iCloud vault sync. All of it is gone, and every control with it, unless `CloudSync.shared?.vaults` exists: the
 // hidden flag and the signed entitlements both have to allow it. The private profile has none of it.
 extension CredentialSettingsModel {
@@ -30,6 +40,30 @@ extension CredentialSettingsModel {
         guard let sync = vaultSync else { return [] }
         let held = Set(vaults.map(\.vaultID))
         return sync.remoteVaults(profileID: profile.id).filter { !held.contains($0.vaultID) }
+    }
+
+    var retryableSyncedVaults: [VaultAdoptionRetry] {
+        guard let sync = vaultSync else { return [] }
+        return vaults.compactMap { held in
+            guard let user = sync.adoptionRetryAccount(profileID: profile.id, vaultID: held.vaultID) else { return nil }
+            return VaultAdoptionRetry(vault: held, account: user)
+        }
+    }
+
+    func retrySyncedVault(_ retry: VaultAdoptionRetry, in anchor: @autoclosure () -> ASPresentationAnchor) async {
+        guard !isBusy, let sync = vaultSync, retryableSyncedVaults.contains(where: { $0.id == retry.id && $0.account == retry.account }) else { return }
+        let finished = await guarded {
+            try await sync.retryAdoption(profileID: profile.id, vaultID: retry.id, account: retry.account) {
+                let held = try CredentialManager.forVault(profile, vaultID: retry.id, native: native)
+                if !held.isUnlocked {
+                    try await held.unlock(in: anchor())
+                }
+                guard vaultSync === sync else { throw VaultSyncFailure.unavailable }
+            }
+        }
+        if finished {
+            await self.retry()
+        }
     }
 
     /// Whether adding `remote` can start: a first run needs nothing; later an unlocked vault of the profile, or a vault that enrolls the
@@ -55,15 +89,25 @@ extension CredentialSettingsModel {
     // MARK: Turning sync on and off
 
     /// Turns sync on for the selected, unlocked vault: creates its zone or joins the one another Mac made.
-    func enableSync() async {
-        guard let sync = vaultSync, let id = selectedVaultID else { return }
-        _ = await guarded { try await sync.enable(profileID: profile.id, vaultID: id) }
+    func enableSync(vaultID id: UUID, confirmingAccount user: String? = nil) async {
+        _ = await guarded {
+            guard let sync = vaultSync, selectedVaultID == id else { throw VaultSyncFailure.unavailable }
+            try await sync.enable(profileID: profile.id, vaultID: id, confirmingAccount: user)
+        }
     }
 
     /// This Mac stops syncing the vault. iCloud and the other Macs are untouched.
-    func disableSync() {
-        guard let id = selectedVaultID else { return }
-        vaultSync?.disable(profileID: profile.id, vaultID: id)
+    @discardableResult
+    func disableSync(vaultID: UUID) -> Result<Void, Error> {
+        do {
+            guard vaultID == selectedVaultID, let vaultSync else { throw VaultSyncFailure.unavailable }
+            try vaultSync.disable(profileID: profile.id, vaultID: vaultID)
+            error = nil
+            return .success(())
+        } catch {
+            self.error = String(localized: "WSurf couldn’t save this change. Try again.")
+            return .failure(error)
+        }
     }
 
     /// The owner agreed to send the deletions that were held back; the next pass sends them.
@@ -73,9 +117,11 @@ extension CredentialSettingsModel {
     }
 
     /// Deletes the vault's zone in iCloud. Every Mac keeps its copy.
-    func removeSelectedVaultFromICloud() {
-        guard let id = selectedVaultID else { return }
-        vaultSync?.removeFromICloud(profileID: profile.id, vaultID: id)
+    func removeVaultFromICloud(vaultID id: UUID, confirmingAccount user: String?) async {
+        _ = await guarded {
+            guard let sync = vaultSync, selectedVaultID == id, let user else { throw VaultSyncFailure.unavailable }
+            try await sync.removeFromICloud(profileID: profile.id, vaultID: id, confirmingAccount: user)
+        }
     }
 
     // MARK: Adding a vault from another Mac
@@ -83,18 +129,20 @@ extension CredentialSettingsModel {
     /// Opens the synced passkey (one user-verified prompt), adds the vault to this profile's store, locked, and starts syncing it. Its
     /// entries arrive at its first unlock. A key that differs is told on the card and changes nothing; no authority is told there too, before any prompt.
     func addSyncedVault(_ remote: RemoteVault, in anchor: @autoclosure () -> ASPresentationAnchor) async {
-        guard let sync = vaultSync else { return }
+        guard !isBusy, let sync = vaultSync, addableSyncedVaults.contains(remote) else { return }
         syncAddFailure = nil
-        var added: UUID?
+        var added = false
         let finished = await guarded {
             do {
-                added = try await CredentialManager.adoptSyncedVault(profile: profile, remote: remote, in: anchor(), native: native)
+                try await sync.addDiscoveredVault(remote) {
+                    try await CredentialManager.adoptSyncedVault(profile: profile, remote: remote, in: anchor(), native: native)
+                }
+                added = true
             } catch CredentialManagerError.syncKeyDiffers(let keyCheck) {
                 syncAddFailure = .keyDiffers(vaultID: remote.vaultID, keyCheck: keyCheck)
             }
         }
-        guard finished, let added else { return }
-        await sync.adopted(profileID: profile.id, vaultID: added)
+        guard finished, added else { return }
         await retry()
     }
 
