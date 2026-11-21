@@ -174,14 +174,22 @@ extension CloudSettingsSync {
         }
     }
 
+    private func rememberZoneDeletions(_ zones: [String: SyncZoneDeletionReason]) throws {
+        let owned = zones.filter { owns(zone: $0.key) }
+        try holdZoneDeletions(resets: Set(owned.filter { $0.value != .deleted }.keys), rechecks: Set(owned.filter { $0.value == .deleted }.keys))
+    }
+
     private func zonesDeleted(_ zones: [String: SyncZoneDeletionReason], fetchStart: FetchStart?) throws {
         do {
             try reloadStateIfNeeded()
         } catch {
             // The shared cursor advances when this delegate returns, even while the Settings directory is inaccessible.
-            let owned = zones.filter { owns(zone: $0.key) }
-            try holdZoneDeletions(resets: Set(owned.filter { $0.value != .deleted }.keys), rechecks: Set(owned.filter { $0.value == .deleted }.keys))
+            try rememberZoneDeletions(zones)
             throw error
+        }
+        if needsCheckpointRead {
+            try rememberZoneDeletions(zones)
+            return
         }
         var recheck: [String: UUID] = [:]
         var revoked: Set<String> = []

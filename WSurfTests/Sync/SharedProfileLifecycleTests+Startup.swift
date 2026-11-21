@@ -221,4 +221,56 @@ extension SharedProfileLifecycleTests {
         #expect(launch.cloud.names(in: SharedCatalogCategory.profiles.zone) == [keptID.uuidString])
         #expect(engine.saveAttempts[lostID.uuidString] == nil)
     }
+
+    @Test(arguments: [false, true])
+    func returningSettingsKeepTheNamedEnrollmentAtTheFirstGlobalOptIn(profileListReturnsFirst: Bool) async throws {
+        let launch = Launch(), files = FileManager.default
+        defer { try? files.removeItem(at: launch.root) }
+        let profiles = ProfileStore(file: launch.list)
+        let work = profiles.add(name: "Work")
+        defer {
+            BrowserProfileContext.forget(work.id)
+            ProfileSettingsStore.forget(work.id)
+            try? files.removeItem(at: work.supportDirectory)
+        }
+        let savedModel = "custom.returned"
+        let choice = MacSettingPayload(key: "selection", value: try JSONEncoder().encode(savedModel))
+        var edits: [String: Data] = [:]
+        let prior = CloudSettingsSync(stateFile: launch.settingsFile, read: { _, _ in edits }, apply: { _, _, _, _ in })
+        let writer = FakeSyncEngine(cloud: launch.cloud, delegate: prior)
+        prior.attach(writer)
+        try await prior.enable(.providers, localProfileID: work.id, cloudProfileID: work.id)
+        writer.offline = true
+        edits[choice.key] = choice.value
+        try prior.collectChanges()
+        let channel = try #require(prior.channel(.providers, localProfileID: work.id))
+        try #require(channel.records[choice.key]?.pending == choice)
+        LLMSettings(defaults: ProfileSettingsStore.defaults(for: work)).providerID = savedModel
+
+        let list = launch.root.appending(path: "list.saved"), settings = launch.root.appending(path: "settings.saved")
+        try files.moveItem(at: launch.list, to: list)
+        try files.moveItem(at: launch.settingsFile, to: settings)
+        let app = try launch.start(ProfileStore(file: launch.list))
+        defer { app.prepareToTerminate() }
+        let restored = try #require(app.settingsSync)
+        if profileListReturnsFirst {
+            try files.moveItem(at: list, to: launch.list)
+            app.beat()
+            try files.moveItem(at: settings, to: launch.settingsFile)
+        } else {
+            try files.moveItem(at: settings, to: launch.settingsFile)
+            app.beat()
+            try files.moveItem(at: list, to: launch.list)
+        }
+        try await restored.enable(.providers, localProfileID: nil, cloudProfileID: nil)
+        let saved = try CloudSettingsSync.State.read(from: launch.settingsFile)
+        #expect(saved.channels[channel.zone]?.enrollment == channel.enrollment)
+        #expect(restored.isEnabled(.providers, localProfileID: nil))
+        app.beat()
+        let id = SyncRecordID(zone: channel.zone, name: choice.recordName)
+        #expect(await waitUntil(timeout: .seconds(3)) {
+            guard let record = launch.cloud.record(id), let sent = MacSettingRecord.decode(record.payload, recordName: id.name) else { return false }
+            return sent.setting == choice && sent.enrollment == channel.enrollment
+        })
+    }
 }

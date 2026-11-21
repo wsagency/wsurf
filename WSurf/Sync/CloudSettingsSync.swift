@@ -58,6 +58,10 @@ final class CloudSettingsSync: SyncZoneHandler {
 
     @ObservationIgnored private var optOutsToFinish: Set<String> = []
     private(set) var checkpointUnavailable = false
+    @ObservationIgnored private var awaitingFirstCheckpoint = false
+    var needsCheckpointRead: Bool {
+        checkpointUnavailable || awaitingFirstCheckpoint
+    }
     @ObservationIgnored private(set) var unreadableFetchStart: FetchStart?
     @ObservationIgnored private var checkpointRetry: Task<Void, Never>?
     @ObservationIgnored private var profileStore: ProfileStore?
@@ -104,7 +108,7 @@ final class CloudSettingsSync: SyncZoneHandler {
             profilesForRecovery = { profiles }
         }
         reconcileProfilesIfAvailable()
-        if hasPendingOptOuts && !checkpointUnavailable {
+        if hasPendingOptOuts && !needsCheckpointRead {
             do { try save() } catch { reportError() }
         }
         observation = Task { [weak self] in
@@ -139,6 +143,8 @@ final class CloudSettingsSync: SyncZoneHandler {
             state = try State.read(from: stateFile)
         } catch CocoaError.fileReadNoSuchFile {
             state = State()
+            awaitingFirstCheckpoint = true
+            unreadableFetchStart = FetchStart()
         } catch is DecodingError {
             state = State()
             notice = String(localized: "The saved sync settings could not be read. Choose what to share again.")
@@ -216,9 +222,6 @@ final class CloudSettingsSync: SyncZoneHandler {
             guard existing.localProfileID == localProfileID else { throw Issue.duplicateLink }
             proposed = existing
         } else {
-            // The old opt-out is durable before a fresh enrollment can release its holds.
-            try updateHeldZones(.reset) { $0.remove(proposed.zone) }
-            try updateHeldZones(.recheck) { $0.remove(proposed.zone) }
             // Older versions could detach a website channel while its proposals were still on disk.
             if category == .websiteSettings, let localProfileID {
                 do {
@@ -235,6 +238,9 @@ final class CloudSettingsSync: SyncZoneHandler {
             updateChannel(proposed)
             do {
                 try save()
+                // Keep the prior revocation until this replacement enrollment is on disk.
+                try updateHeldZones(.reset) { $0.remove(proposed.zone) }
+                try updateHeldZones(.recheck) { $0.remove(proposed.zone) }
             } catch {
                 state.channels[proposed.zone] = nil
                 throw error
@@ -509,10 +515,13 @@ final class CloudSettingsSync: SyncZoneHandler {
 
     private func save(requiring zones: Set<String>) throws {
         try reloadStateIfNeeded()
+        guard !awaitingFirstCheckpoint || !state.channels.isEmpty || hasPendingOptOuts else { return }
         sendingAllowed = false
         do {
             // Persist the revocation before touching the separate permission store.
-            try JSONEncoder().encode(state).write(to: stateFile, options: .atomic)
+            try writeCheckpoint()
+            awaitingFirstCheckpoint = false
+            unreadableFetchStart = nil
         } catch {
             if hasPendingOptOuts {
                 try JSONEncoder().encode(pendingOptOuts).write(to: optOutFile, options: .atomic)
@@ -556,6 +565,19 @@ final class CloudSettingsSync: SyncZoneHandler {
         }
     }
 
+    private func writeCheckpoint() throws {
+        let data = try JSONEncoder().encode(state)
+        guard awaitingFirstCheckpoint else {
+            try data.write(to: stateFile, options: .atomic)
+            return
+        }
+        // Publish a complete first checkpoint only if the original file is still absent.
+        let temporary = stateFile.deletingLastPathComponent().appending(path: UUID().uuidString)
+        try data.write(to: temporary, options: .withoutOverwriting)
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        try FileManager.default.linkItem(at: temporary, to: stateFile)
+    }
+
     private var optOutFile: URL {
         stateFile.appendingPathExtension("opt-outs")
     }
@@ -565,7 +587,7 @@ final class CloudSettingsSync: SyncZoneHandler {
         if hasJournal {
             readOptOutJournal()
         }
-        guard !checkpointUnavailable else { return }
+        guard !needsCheckpointRead else { return }
         if hasPendingOptOuts {
             optOutsToFinish.formUnion(pendingOptOuts.keys)
             do { try save() } catch { reportError() }
@@ -600,19 +622,26 @@ final class CloudSettingsSync: SyncZoneHandler {
 
     /// Restore the checkpoint and replay any pending revocations before allowing a write.
     func reloadStateIfNeeded() throws {
-        guard checkpointUnavailable else {
+        guard needsCheckpointRead else {
             reconcileProfilesIfAvailable()
             return
         }
         let revoked = pendingOptOuts
         do {
             state = try State.read(from: stateFile)
+            awaitingFirstCheckpoint = false
         } catch CocoaError.fileReadNoSuchFile {
+            // A separate revocation journal belongs to a checkpoint that may still return.
+            guard !FileManager.default.fileExists(atPath: optOutFile.path) else { throw Issue.unavailable }
+            guard checkpointUnavailable else { return }
             state = State()
+            awaitingFirstCheckpoint = true
         }
         // All fetches begun during this outage saw the on-disk enrollments, before any new choice can be made.
-        unreadableFetchStart?.capture(state.channels)
-        unreadableFetchStart = nil
+        if !awaitingFirstCheckpoint {
+            unreadableFetchStart?.capture(state.channels)
+            unreadableFetchStart = nil
+        }
         checkpointUnavailable = false
         checkpointRetry?.cancel()
         checkpointRetry = nil
@@ -636,7 +665,7 @@ final class CloudSettingsSync: SyncZoneHandler {
     }
 
     private func reconcileProfilesIfAvailable() {
-        guard !checkpointUnavailable, let profiles = profilesForRecovery?() else { return }
+        guard !needsCheckpointRead, let profiles = profilesForRecovery?() else { return }
         profilesForRecovery = nil
         let live = Set(profiles.map(\.id)).subtracting([Profile.privateID])
         for profile in profiles {
@@ -667,7 +696,7 @@ final class CloudSettingsSync: SyncZoneHandler {
 
     func resetAccount(to user: String?) throws {
         suspendAccount()
-        if checkpointUnavailable {
+        if needsCheckpointRead {
             try rememberAccountReset()
             try reloadStateIfNeeded()
         }

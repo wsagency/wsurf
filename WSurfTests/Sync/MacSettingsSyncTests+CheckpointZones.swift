@@ -139,6 +139,148 @@ extension MacSettingsSyncTests {
         }
         #expect(!(try disk.launch()).settings.isEnabled(.providers, localProfileID: nil))
     }
+
+    enum MissingFileEvent: CaseIterable {
+        case signedOut, purged, deleted
+    }
+
+    @Test(arguments: MissingFileEvent.allCases)
+    func returningSettingsStillHonorAStopReceivedBeforeTheFileReturns(_ event: MissingFileEvent) async throws {
+        let disk = try CheckpointZones(root: lifecycleDirectory())
+        defer { disk.remove() }
+        let first = try disk.launch()
+        try await first.settings.enable(.providers, localProfileID: nil, cloudProfileID: nil)
+        try await first.engine.fetchNow()
+        let file = disk.root.appending(path: "settings-store/settings")
+        let original = try Data(contentsOf: file)
+        try FileManager.default.removeItem(at: file)
+        let receiver = try disk.launch()
+        switch event {
+        case .signedOut:
+            try receiver.settings.accountDidResolve(nil)
+        case .purged, .deleted:
+            disk.cloud.deleteZone(disk.zone, reason: event == .purged ? .purged : .deleted)
+            if event == .purged {
+                disk.cloud.createZone(disk.zone)
+            }
+            try await receiver.engine.fetchNow()
+            try disk.expectCursorAtDeletion()
+        }
+        try original.write(to: file, options: .atomic)
+        let restarted = try disk.launch()
+        restarted.settings.beat()
+        #expect(await waitUntil(timeout: .seconds(2)) { !restarted.settings.isEnabled(.providers, localProfileID: nil) })
+        #expect(!(try disk.launch()).settings.isEnabled(.providers, localProfileID: nil))
+    }
+
+    @Test(arguments: [false, true])
+    func aPendingOptOutWaitsForTheOriginalSettingsFile(damagedJournal: Bool) async throws {
+        let root = try lifecycleDirectory(), files = FileManager.default
+        defer { try? files.removeItem(at: root) }
+        let file = root.appending(path: "settings"), held = root.appending(path: "held")
+        let journal = file.appendingPathExtension("opt-outs")
+        let work = UUID(), other = UUID(), cloud = FakeSyncCloud()
+        let choice = MacSettingPayload(key: "selection", value: Data([7]))
+        var values: [String: Data] = [:]
+        func open() -> CloudSettingsSync {
+            CloudSettingsSync(stateFile: file, read: { _, _ in values }, apply: { _, _, _, _ in })
+        }
+        let previous = open(), engine = FakeSyncEngine(cloud: cloud, delegate: previous)
+        previous.attach(engine)
+        for profile in [work, other] {
+            try await previous.enable(.providers, localProfileID: profile, cloudProfileID: profile)
+        }
+        engine.offline = true
+        values[choice.key] = choice.value
+        try previous.collectChanges()
+        let revoked = try #require(previous.channel(.providers, localProfileID: work))
+        let retained = try #require(previous.channel(.providers, localProfileID: other))
+        try #require(revoked.records[choice.key]?.pending == choice && retained.records[choice.key]?.pending == choice)
+
+        try files.moveItem(at: file, to: held)
+        try files.createDirectory(at: file, withIntermediateDirectories: false)
+        #expect(throws: (any Error).self) { try previous.disable(.providers, localProfileID: work) }
+        try files.removeItem(at: file)
+        try #require(files.fileExists(atPath: journal.path))
+        if damagedJournal {
+            try Data([0]).write(to: journal, options: .atomic)
+        }
+        let waiting = open()
+        waiting.beat()
+        #expect(!files.fileExists(atPath: file.path))
+        #expect(files.fileExists(atPath: journal.path))
+        try Data(contentsOf: held).write(to: file, options: .atomic)
+
+        let reopened = open(), after = FakeSyncEngine(cloud: cloud, delegate: reopened)
+        reopened.attach(after)
+        let oldID = SyncRecordID(zone: revoked.zone, name: choice.recordName)
+        let keptID = SyncRecordID(zone: retained.zone, name: choice.recordName)
+        after.add([.saveRecord(oldID), .saveRecord(keptID)])
+        reopened.beat()
+        try await after.sendNow()
+        #expect(!reopened.isEnabled(.providers, localProfileID: work))
+        if damagedJournal {
+            #expect(!reopened.isEnabled(.providers, localProfileID: other))
+            #expect(cloud.record(keptID) == nil)
+        } else {
+            #expect(await waitUntil(timeout: .seconds(3)) {
+                guard let record = cloud.record(keptID), let sent = MacSettingRecord.decode(record.payload, recordName: keptID.name) else { return false }
+                return sent.setting == choice && sent.enrollment == retained.enrollment
+            })
+        }
+        #expect(cloud.record(oldID) == nil)
+    }
+
+    @Test func aFailedCheckpointWriteKeepsTheEarlierZonePurge() async throws {
+        let root = try lifecycleDirectory(), files = FileManager.default
+        defer {
+            try? files.setAttributes([.posixPermissions: 0o700], ofItemAtPath: root.path)
+            try? files.removeItem(at: root)
+        }
+        let file = root.appending(path: "settings"), held = root.appending(path: "held")
+        let cloud = FakeSyncCloud(), choice = MacSettingPayload(key: "model", value: Data([3]))
+        var values: [String: Data] = [:]
+        func open() -> CloudSettingsSync {
+            CloudSettingsSync(stateFile: file, read: { _, _ in values }, apply: { _, _, _, _ in })
+        }
+        let original = open(), first = FakeSyncEngine(cloud: cloud, delegate: original)
+        original.attach(first)
+        try await original.enable(.providers, localProfileID: nil, cloudProfileID: nil)
+        first.offline = true
+        values[choice.key] = choice.value
+        try original.collectChanges()
+        let old = try #require(original.channel(.providers, localProfileID: nil))
+        try #require(old.records[choice.key]?.pending == choice)
+        try files.moveItem(at: file, to: held)
+        let waiting = open(), second = FakeSyncEngine(cloud: cloud, delegate: waiting)
+        waiting.attach(second)
+        cloud.deleteZone(old.zone, reason: .purged)
+        cloud.createZone(old.zone)
+        try await second.fetchNow()
+        try files.setAttributes([.posixPermissions: 0o500], ofItemAtPath: root.path)
+        let denied = await #expect(throws: CocoaError.self) {
+            try await waiting.enable(.providers, localProfileID: nil, cloudProfileID: nil)
+        }
+        #expect(denied?.code == .fileWriteNoPermission)
+        try files.setAttributes([.posixPermissions: 0o700], ofItemAtPath: root.path)
+        #expect(!files.fileExists(atPath: file.path))
+        try files.moveItem(at: held, to: file)
+
+        let restarted = open(), after = FakeSyncEngine(cloud: cloud, delegate: restarted)
+        restarted.attach(after)
+        let id = SyncRecordID(zone: old.zone, name: choice.recordName)
+        after.add([.saveRecord(id)])
+        restarted.beat()
+        try await after.sendNow()
+        #expect(!restarted.isEnabled(.providers, localProfileID: nil))
+        #expect(cloud.record(id) == nil)
+        try await restarted.enable(.providers, localProfileID: nil, cloudProfileID: nil)
+        try await after.sendNow()
+        let fresh = try #require(restarted.channel(.providers, localProfileID: nil))
+        let record = try #require(cloud.record(id))
+        #expect(fresh.enrollment != old.enrollment)
+        #expect(MacSettingRecord.decode(record.payload, recordName: id.name)?.enrollment == fresh.enrollment)
+    }
 }
 
 @MainActor

@@ -62,7 +62,7 @@ extension CloudSettingsSync {
 
     func accountDidResolve(_ identity: String?) throws {
         defer { onAccountVerification?(.resolved(identity)) }
-        if checkpointUnavailable && identity == nil {
+        if needsCheckpointRead && identity == nil {
             try resetAccount(to: nil)
         } else {
             try reloadStateIfNeeded()
