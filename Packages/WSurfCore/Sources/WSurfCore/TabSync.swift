@@ -54,12 +54,19 @@ nonisolated public struct TabSyncState: Codable, Equatable, Sendable {
         }
     }
 
+    struct ZoneObservations: Codable, Equatable, Sendable {
+        enum Presence: String, Codable { case absent, present, incomplete }
+        let account: String
+        var zones: [String: Presence] = [:]
+    }
+
+    fileprivate var zoneObservations: ZoneObservations?
     fileprivate var removalCheck: RemovalCheck?
     fileprivate var removalRevision: Int?
 
     fileprivate var removalCheckpoint: TabRemovalCheckpoint? {
         guard removalRevision != nil || removalCheck != nil else { return nil }
-        return TabRemovalCheckpoint(revision: removalRevision ?? 0, pending: removalCheck)
+        return TabRemovalCheckpoint(revision: removalRevision ?? 0, pending: removalCheck, observations: zoneObservations)
     }
 
     public init() {}
@@ -69,6 +76,7 @@ nonisolated public struct TabSyncState: Codable, Equatable, Sendable {
 nonisolated struct TabRemovalCheckpoint: Codable, Equatable, Sendable {
     let revision: Int
     let pending: TabSyncState.RemovalCheck?
+    var observations: TabSyncState.ZoneObservations?
 }
 
 nonisolated public struct RemoteDeviceSession: Identifiable, Equatable, Sendable {
@@ -133,7 +141,6 @@ public final class TabSync: SyncEngineDelegate {
         var task: Task<Void, Never>?
         var complete = false
         var readAgain = false
-        var observedZones: Set<String> = []
         var changedDuringRead: Set<SyncRecordID> = []
     }
 
@@ -168,15 +175,17 @@ public final class TabSync: SyncEngineDelegate {
         self.persistRemoval = persistRemoval
         let local = state.removalCheckpoint
         if let saved, saved != local, saved.revision >= (local?.revision ?? 0) {
-            if let pending = saved.pending, pending.account != state.accountUser {
+            let owner = saved.pending?.account ?? saved.observations?.account
+            if owner != state.accountUser, saved.pending != nil || saved.observations != nil {
                 clearAccountData()
-                state.accountUser = pending.account
+                state.accountUser = owner
             }
+            state.zoneObservations = saved.observations
             state.removalRevision = saved.revision
             state.removalCheck = saved.pending
             persist(state)
             if hasReconciled {
-                retainRemovalCheck(for: desired)
+                retainCheckpoint(for: desired)
             }
         }
         if let latest = state.removalCheckpoint {
@@ -185,12 +194,29 @@ public final class TabSync: SyncEngineDelegate {
     }
 
     private func setRemovalCheck(_ check: TabSyncState.RemovalCheck?) {
-        guard state.removalCheck != check else { return }
-        let next = TabRemovalCheckpoint(revision: (state.removalRevision ?? 0) + 1, pending: check)
+        setCheckpoint(check, observations: state.zoneObservations)
+    }
+
+    private func setCheckpoint(_ check: TabSyncState.RemovalCheck?, observations: TabSyncState.ZoneObservations?) {
+        guard state.removalCheck != check || state.zoneObservations != observations else { return }
+        let next = TabRemovalCheckpoint(revision: (state.removalRevision ?? 0) + 1, pending: check, observations: observations)
+        state.zoneObservations = observations
         state.removalRevision = next.revision
         state.removalCheck = check
         persistRemoval?(next)
         persist(state)
+    }
+
+    private func observe(_ presence: TabSyncState.ZoneObservations.Presence, in zone: String) {
+        guard let account = state.accountUser, wants(zone: zone) else { return }
+        var observations = state.zoneObservations ?? .init(account: account)
+        guard observations.account == account, observations.zones[zone] != presence else { return }
+        observations.zones[zone] = presence
+        setCheckpoint(state.removalCheck, observations: observations)
+    }
+
+    private func requiresExistence(_ zone: String, ifUnknown: Bool) -> Bool {
+        state.zoneObservations?.zones[zone].map { $0 != .absent } ?? ifUnknown
     }
 
     // MARK: - Engine and sharing
@@ -200,6 +226,9 @@ public final class TabSync: SyncEngineDelegate {
         let changed = self.engine !== engine
         self.engine = engine
         if changed {
+            // An interrupted partial read still has to verify its zone before a restored creation can go out.
+            let unfinished = state.zoneObservations?.zones.compactMap { $0.value == .incomplete ? $0.key : nil } ?? []
+            holdRemovals(unfinished)
             renewEnrollment()
         }
         replay()
@@ -217,7 +246,7 @@ public final class TabSync: SyncEngineDelegate {
         hasReconciled = true
         let changed = desired != profiles
         desired = profiles
-        retainRemovalCheck(for: profiles)
+        retainCheckpoint(for: profiles)
         let inactive = state.sessions.keys.filter { !wants(zone: $0) }
         if !inactive.isEmpty || (profiles.isEmpty && !state.devices.isEmpty) {
             for zone in inactive {
@@ -359,10 +388,8 @@ public final class TabSync: SyncEngineDelegate {
         case .fetched(let records, let deleted):
             guard records.contains(where: { wants(zone: $0.id.zone) }) || deleted.contains(where: { wants(zone: $0.zone) }) else { return }
         case .zonesDeleted(let zones):
-            let relevant = zones.keys.filter { wants(zone: $0) }
-            guard !relevant.isEmpty else { return }
-            let established = start?.enrollment == enrollment.start.enrollment ? Set(relevant) : enrollment.observedZones.intersection(relevant)
-            holdRemovals(relevant, established: established)
+            _ = recheckRemovedZones(Array(zones.keys), from: start)
+            return
         default:
             return
         }
@@ -374,37 +401,63 @@ public final class TabSync: SyncEngineDelegate {
         }
     }
 
+    /// A database deletion can predate a zone this enrollment has since created. Verify its current existence.
+    private func recheckRemovedZones(_ zones: [String], from start: FetchStart?) -> Task<Void, Never>? {
+        let selected = zones.filter { wants(zone: $0) }
+        guard let prior = enrollment, !selected.isEmpty else { return nil }
+        let sameEnrollment = start?.enrollment == prior.start.enrollment
+        let established = selected.filter { requiresExistence($0, ifUnknown: sameEnrollment) }
+        holdRemovals(selected, established: Set(established))
+        // A callback can run inside the interrupted read. Give the new read its own task before awaiting it.
+        let next = Enrollment()
+        next.start = prior.start
+        enrollment = next
+        startBaseline()
+        return next.task
+    }
+
     private func holdRemovals(_ zones: [String], established: Set<String>? = nil) {
         let selected = zones.filter { wants(zone: $0) }
         guard !selected.isEmpty else { return }
+        recordRemovalCheck(selected, established: established)
+        enrollment?.complete = false
+        enrollment?.task?.cancel()
+    }
+
+    private func recordRemovalCheck(_ selected: [String], established: Set<String>? = nil) {
         var check = state.removalCheck ?? .init(account: state.accountUser, profiles: [], zones: [])
         let required = check.zonesRequiringExistence.union(established ?? Set(selected))
         check.profiles.formUnion(desired)
         check.zones.formUnion(selected)
         check.establishedZones = required == check.zones ? nil : required
         setRemovalCheck(check)
-        enrollment?.complete = false
-        enrollment?.task?.cancel()
     }
 
-    private func retainRemovalCheck(for profiles: Set<UUID>) {
-        guard var check = state.removalCheck else { return }
-        check.profiles.formIntersection(profiles)
-        check.zones = check.zones.filter { zone in
-            zone == SyncZone.devices ? !check.profiles.isEmpty : SyncZone.profileID(zone).map(check.profiles.contains) == true
+    private func retainCheckpoint(for profiles: Set<UUID>) {
+        var observations = state.zoneObservations
+        let activeZones = observations?.zones.filter { wants(zone: $0.key) } ?? [:]
+        observations?.zones = activeZones
+        if observations?.account != state.accountUser || observations?.zones.isEmpty == true {
+            observations = nil
         }
-        check.establishedZones?.formIntersection(check.zones)
-        let retained = check.account == state.accountUser && !check.zones.isEmpty ? check : nil
-        if state.removalCheck != retained {
-            ensuredZones.removeAll()
-            setRemovalCheck(retained)
+        var retained = state.removalCheck
+        if var check = retained {
+            check.profiles.formIntersection(profiles)
+            check.zones = check.zones.filter { zone in
+                zone == SyncZone.devices ? !check.profiles.isEmpty : SyncZone.profileID(zone).map(check.profiles.contains) == true
+            }
+            check.establishedZones?.formIntersection(check.zones)
+            retained = check.account == state.accountUser && !check.zones.isEmpty ? check : nil
+            if state.removalCheck != retained {
+                ensuredZones.removeAll()
+            }
         }
+        setCheckpoint(retained, observations: observations)
     }
 
     /// The engine's cursor covers other categories too. Start each enrollment from the remote mirrors still on the server.
     private func readBaseline(_ zones: [String], for expected: Enrollment, engine: any SyncEngine, identity: any SyncAccountIdentity) async {
         guard let user = await verifiedUser(for: expected, using: identity), !Task.isCancelled else { return }
-        let pending = state.removalCheck?.zones ?? []
         let established = state.removalCheck?.zonesRequiringExistence ?? []
         var snapshots: [String: SyncZoneRead] = [:]
         var confirmedRemovals: [String] = []
@@ -412,21 +465,31 @@ public final class TabSync: SyncEngineDelegate {
             do {
                 snapshots[zone] = try await engine.fetchAll(zone: zone)
             } catch where Self.zoneIsMissing(error) {
-                if established.contains(zone) {
+                guard enrollment === expected, !Task.isCancelled else { return }
+                if established.contains(zone) || requiresExistence(zone, ifUnknown: false) {
+                    // Hold pending sends before the account recheck can suspend or fail.
+                    recordRemovalCheck([zone])
                     confirmedRemovals.append(zone)
                 }
             } catch {
                 return
             }
             guard await verifiedUser(for: expected, using: identity) == user, !Task.isCancelled else { return }
-            if snapshots[zone] != nil {
-                expected.observedZones.insert(zone)
+            if let snapshot = snapshots[zone] {
+                observe(snapshot.skipped == 0 ? .present : .incomplete, in: zone)
             } else {
+                if expected.changedDuringRead.contains(where: { $0.zone == zone }) {
+                    expected.readAgain = true
+                    return
+                }
+                if !confirmedRemovals.contains(zone) {
+                    observe(.absent, in: zone)
+                }
                 snapshots[zone] = SyncZoneRead(records: [])
             }
         }
 
-        if !pending.isEmpty {
+        if state.removalCheck != nil {
             applyZonesDeleted(confirmedRemovals)
             setRemovalCheck(nil)
             replay()
@@ -539,25 +602,21 @@ public final class TabSync: SyncEngineDelegate {
             let records = modified.filter { wants(zone: $0.id.zone) }
             let removals = deleted.filter { wants(zone: $0.zone) }
             guard !records.isEmpty || !removals.isEmpty, await acceptsIncoming(event, from: start, for: enrollment) else { return }
-            enrollment.observedZones.formUnion(records.map(\.id.zone))
+            for zone in Set(records.map(\.id.zone)) where !requiresExistence(zone, ifUnknown: false) {
+                observe(.present, in: zone)
+            }
             if enrollment.task != nil {
                 enrollment.changedDuringRead.formUnion(records.map(\.id))
                 enrollment.changedDuringRead.formUnion(removals)
             }
             applyFetched(modified: records, deleted: removals)
         case .zonesDeleted(let zones):
-            let relevant = zones.keys.filter { wants(zone: $0) || state.ownSystemFields[$0] != nil }.sorted()
-            guard !relevant.isEmpty else { return }
-            if let enrollment {
-                holdRemovals(relevant)
-                guard await acceptsIncoming(event, from: start, for: enrollment) else { return }
-            } else {
-                // A former opt-in may still own records to remove. Verify the account before retiring those tags.
-                guard !signedOut, let engine, let user = state.accountUser,
-                      let identity = engine as? any SyncAccountIdentity, (try? await identity.currentAccountUser()) == user,
-                      self.engine === engine, self.enrollment == nil, !signedOut, state.accountUser == user else { return }
-            }
-            applyZonesDeleted(relevant)
+            let retired = zones.keys.filter { !wants(zone: $0) && state.ownSystemFields[$0] != nil }
+            let source = engine, owner = state.accountUser
+            await recheckRemovedZones(Array(zones.keys), from: start)?.value
+            guard !retired.isEmpty, !signedOut, let source, let owner, let identity = source as? any SyncAccountIdentity,
+                  (try? await identity.currentAccountUser()) == owner, engine === source, !signedOut, state.accountUser == owner else { return }
+            applyZonesDeleted(retired.filter { !wants(zone: $0) && state.ownSystemFields[$0] != nil }.sorted())
         default:
             return
         }
@@ -612,8 +671,11 @@ public final class TabSync: SyncEngineDelegate {
     private func applySent(saved: [SyncRecord], deleted: [SyncRecordID], failed: [SyncFailedSave]) {
         for record in saved where record.id.name == installID {
             let zone = record.id.zone
-            if wants(zone: zone) {
-                enrollment?.observedZones.insert(zone)
+            if enrollment?.task != nil {
+                enrollment?.changedDuringRead.insert(record.id)
+            }
+            if !requiresExistence(zone, ifUnknown: false) {
+                observe(.present, in: zone)
             }
             state.ownSystemFields[zone] = record.systemFields ?? state.ownSystemFields[zone]
             if zone == SyncZone.devices {
@@ -686,7 +748,7 @@ public final class TabSync: SyncEngineDelegate {
         for profile in ended {
             onSharingEnded?(profile)
         }
-        retainRemovalCheck(for: desired)
+        retainCheckpoint(for: desired)
     }
 
     private func applyAccount(_ change: SyncAccountChange) {
@@ -736,7 +798,7 @@ public final class TabSync: SyncEngineDelegate {
         outgoing = [:]
         desired = []
         onSharingEnded?(nil)
-        setRemovalCheck(nil)
+        setCheckpoint(nil, observations: nil)
     }
 
     /// Everything the account's database gave this device, and the marks that say it was written there.

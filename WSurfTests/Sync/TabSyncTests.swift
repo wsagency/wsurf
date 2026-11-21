@@ -924,7 +924,7 @@ extension TabSyncTests {
 
 /// Returns the snapshot taken before the injected event, even if that event cancels the read.
 @MainActor
-private final class HeldTabRead: SyncEngine, SyncAccountIdentity {
+final class HeldTabRead: SyncEngine, SyncAccountIdentity {
     let base: FakeSyncEngine
     var beforeReturn: ((String) async throws -> Void)?
     var duringIncremental: ((SyncFetchDelivery) async throws -> Void)?
