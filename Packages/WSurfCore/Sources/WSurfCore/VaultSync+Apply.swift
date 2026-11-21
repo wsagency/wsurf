@@ -103,8 +103,10 @@ extension VaultSync {
         var deferred = Set<UUID>()
         var blocked = Set<UUID>()
         var settling = false
+        var checkedServer = false
         while true {
             let mine = token(key)
+            let generationBeforeBatch = generation
             guard let (database, _) = runningRow(key), stillOpen(key, mine) else { return }
             var batch = (try? database.read { try $0.inbox(key.vaultID, limit: Self.drainBatch, excluding: deferred.union(blocked)) }) ?? []
             if batch.isEmpty, !deferred.isEmpty {
@@ -113,7 +115,11 @@ extension VaultSync {
                 deferred = []
                 batch = (try? database.read { try $0.inbox(key.vaultID, limit: Self.drainBatch, excluding: blocked) }) ?? []
             }
-            guard !batch.isEmpty else { return }
+            if batch.isEmpty {
+                guard !checkedServer, await verifyInbox(key, database: database) else { return }
+                checkedServer = true
+                continue
+            }
             if open == nil || batch.contains(where: { open?.view.changed.contains($0.accountID) == true }) {
                 guard let syncKey = await host.syncKey(profileID: key.profileID, vaultID: key.vaultID) else {
                     locked(key)
@@ -128,6 +134,15 @@ extension VaultSync {
             let transfer = transfer(key, lease: view.lease)
             await decide(batch, transfer: transfer, view: view, syncKey: syncKey, database: database, settling: settling, into: &pass)
             guard current(transfer) else { return }
+            // Receiving a replacement queues another drain. A later download may also have displaced an earlier decision in this batch.
+            if generation != generationBeforeBatch {
+                guard let displaced = try? database.read({ tx in try batch.filter { try tx.inbox(key.vaultID, $0.accountID) != $0 } }) else { return }
+                if !displaced.isEmpty {
+                    // The next drain takes the replacement. Finish independent items even if this one keeps changing.
+                    blocked.formUnion(displaced.map(\.accountID))
+                    continue
+                }
+            }
             blocked.formUnion(pass.blocked)
             pass.processed = batch.filter { !pass.deferred.contains($0.accountID) && !blocked.contains($0.accountID) }
             deferred.formUnion(pass.deferred)
@@ -177,7 +192,11 @@ extension VaultSync {
             }
             guard current(transfer) else { return }
             let (baseRow, outgoing) = rows[position]
-            let base = openBase(baseRow, account: id, key: syncKey)
+            var base = openBase(baseRow, account: id, key: syncKey)
+            if inbound.serverCheck == InboxRow.verified, base?.version == inbound.version {
+                // A verified replacement may reuse the applied version. Its predecessor's parts are still the common merge base.
+                base?.version = inbound.version - 1
+            }
             if let outgoing, outgoing.remainingAssets.isEmpty, outgoing.version == item.version,
                let own = try? VaultSyncCodec.openParts(outgoing.parts, accountID: id, version: outgoing.version, key: syncKey),
                (try? item.parts()) == own {

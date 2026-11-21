@@ -85,12 +85,17 @@ nonisolated struct OutboxRow: Equatable {
     var publication: VaultAssetPublication?
 }
 
-/// A fetched envelope not yet applied: the highest version of the account. Version 0 parks a record in a format this build cannot
+/// A fetched envelope not yet applied. Version 0 parks a record in a format this build cannot
 /// read: it is kept as it came, no pass takes it in, and nothing is sent over it, until a build that reads it reads the zone again.
 nonisolated struct InboxRow: Equatable {
     var accountID: UUID
     var version: UInt64
     var envelope: Data
+    static let verified = -1
+    /// CloudKit's modification date, in seconds since the reference date.
+    var serverTime: TimeInterval?
+    /// Zero for an ordinary delivery, positive while waiting for a zone read, or `verified` for a confirmed replacement.
+    var serverCheck: Int = 0
 }
 
 /// An envelope that waits for the person (or is only information), with the reason.
@@ -185,6 +190,12 @@ nonisolated final class VaultSyncDatabase: Sendable {
         }
         migrator.registerMigration("vaultAssetPublication") { (db: Database) throws in
             try db.execute(sql: "ALTER TABLE outbox ADD COLUMN assetPublication BLOB")
+        }
+        migrator.registerMigration("inboxServerCheck") { db in
+            try db.execute(sql: "ALTER TABLE inbox ADD COLUMN serverCheck INTEGER NOT NULL DEFAULT 0")
+            try db.execute(sql: "ALTER TABLE inbox ADD COLUMN serverTime REAL")
+            // The old receiver could already have paired a waiting envelope with another delivery's tag.
+            try db.execute(sql: "UPDATE inbox SET serverCheck = 1")
         }
         try migrator.migrate(queue)
         return VaultSyncDatabase(queue: queue)
@@ -398,11 +409,9 @@ nonisolated final class VaultSyncDatabase: Sendable {
         func inbox(_ vault: UUID, limit: Int, excluding: Set<UUID> = []) throws -> [InboxRow] {
             // ponytail: the excluded rows are read and dropped here; a drain with thousands of them waiting pays for that each batch.
             let rows = try Row.fetchAll(
-                db, sql: "SELECT accountID, version, envelope FROM inbox WHERE vaultID = ? AND version > 0 ORDER BY accountID LIMIT ?",
+                db, sql: "SELECT * FROM inbox WHERE vaultID = ? AND version > 0 AND serverCheck <= 0 ORDER BY accountID LIMIT ?",
                 arguments: [vault.sqlText, limit + excluding.count]
-            ).compactMap { row in
-                UUID(uuidString: row["accountID"]).map { InboxRow(accountID: $0, version: Self.version(row), envelope: row["envelope"]) }
-            }
+            ).compactMap(Self.inboxRow)
             return Array(rows.filter { !excluding.contains($0.accountID) }.prefix(limit))
         }
 
@@ -413,33 +422,48 @@ nonisolated final class VaultSyncDatabase: Sendable {
             ).compactMap { UUID(uuidString: $0) })
         }
 
-        /// The version waiting in the inbox for one account (0: parked), or nil when none waits.
+        func inbox(_ vault: UUID, _ account: UUID) throws -> InboxRow? {
+            try Row.fetchOne(db, sql: "SELECT * FROM inbox WHERE vaultID = ? AND accountID = ?",
+                             arguments: [vault.sqlText, account.sqlText]).flatMap(Self.inboxRow)
+        }
+
+        private static func inboxRow(_ row: Row) -> InboxRow? {
+            UUID(uuidString: row["accountID"]).map {
+                InboxRow(accountID: $0, version: version(row), envelope: row["envelope"], serverTime: row["serverTime"], serverCheck: row["serverCheck"])
+            }
+        }
+
+        func inboxChecks(_ vault: UUID) throws -> [UUID: Int] {
+            var checks: [UUID: Int] = [:]
+            for row in try Row.fetchAll(db, sql: "SELECT accountID, serverCheck FROM inbox WHERE vaultID = ? AND serverCheck > 0", arguments: [vault.sqlText]) {
+                if let id = UUID(uuidString: row["accountID"]) {
+                    checks[id] = row["serverCheck"]
+                }
+            }
+            return checks
+        }
+
+        /// A parked item or one that needed verification holds every outgoing version until its envelope is merged.
         func inboxVersion(_ vault: UUID, _ account: UUID) throws -> UInt64? {
-            try version("inbox", vault, account)
+            try Int64.fetchOne(db, sql: """
+                SELECT CASE WHEN serverCheck != 0 THEN 0 ELSE version END FROM inbox WHERE vaultID = ? AND accountID = ?
+                """, arguments: [vault.sqlText, account.sqlText]).map { UInt64(clamping: $0) }
         }
 
         func save(_ row: InboxRow, vault: UUID) throws {
             try db.execute(
-                sql: "INSERT OR REPLACE INTO inbox(vaultID, accountID, version, envelope) VALUES (?, ?, ?, ?)",
-                arguments: [vault.sqlText, row.accountID.sqlText, Int64(clamping: row.version), row.envelope]
+                sql: "INSERT OR REPLACE INTO inbox(vaultID, accountID, version, envelope, serverTime, serverCheck) VALUES (?, ?, ?, ?, ?, ?)",
+                arguments: [vault.sqlText, row.accountID.sqlText, Int64(clamping: row.version), row.envelope, row.serverTime, row.serverCheck]
             )
         }
 
         /// A pass can wait for the host while a fetch replaces this row, even with a parked record at version zero.
         func consume(_ row: InboxRow, vault: UUID) throws -> Bool {
             try db.execute(
-                sql: "DELETE FROM inbox WHERE vaultID = ? AND accountID = ? AND version = ? AND envelope = ?",
-                arguments: [vault.sqlText, row.accountID.sqlText, Int64(clamping: row.version), row.envelope]
+                sql: "DELETE FROM inbox WHERE vaultID = ? AND accountID = ? AND version = ? AND envelope = ? AND serverCheck = ?",
+                arguments: [vault.sqlText, row.accountID.sqlText, Int64(clamping: row.version), row.envelope, row.serverCheck]
             )
             return db.changesCount == 1
-        }
-
-        /// Deletes the account's row unless a newer version arrived since `version` was read.
-        func deleteInbox(_ vault: UUID, _ account: UUID, upTo version: UInt64) throws {
-            try db.execute(
-                sql: "DELETE FROM inbox WHERE vaultID = ? AND accountID = ? AND version <= ?",
-                arguments: [vault.sqlText, account.sqlText, Int64(clamping: version)]
-            )
         }
 
         // MARK: Conflicts

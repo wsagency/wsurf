@@ -90,37 +90,16 @@ extension VaultSync {
 
     /// Stores each record's change tag and queues its envelope when it is newer than what this Mac agreed on. A record in a format
     /// only a newer WSurf reads is parked, as it came. Returns whether anything was queued or parked.
-    private func takeItems(_ records: [SyncRecord], key: VaultKey) -> Bool {
+    private func takeItems(_ records: [SyncRecord], key: VaultKey, failedSave: Bool = false) -> Bool {
         guard !records.isEmpty, let (database, row) = enabledRow(key), row.uploadedMark != nil || row.pendingVault == nil else { return false }
         var queuedAny = false
         do {
             try database.write { tx in
-                // One lookup per record, so a read of a whole zone is O(records), not O(records x events).
                 for record in records {
-                    guard let account = Self.accountID(record.id.name) else { continue }
-                    try tx.setSystemFields(record.systemFields, vault: key.vaultID, name: record.id.name)
-                    let version: UInt64
-                    do {
-                        version = try VaultSyncCodec.version(of: record.payload)
-                    } catch VaultSyncError.unsupportedFormat {
-                        // This one entry waits for an update; the vault goes on.
-                        try tx.save(InboxRow(accountID: account, version: 0, envelope: record.payload), vault: key.vaultID)
+                    guard let item = Self.inboxRow(record) else { continue }
+                    if try receive(item, record: record, vault: key.vaultID, tx: tx, failedSave: failedSave) {
                         queuedAny = true
-                        continue
-                    } catch {
-                        continue
                     }
-                    var waiting = try tx.inboxVersion(key.vaultID, account)
-                    if waiting == 0 {
-                        // A record this build reads replaces the one it could not.
-                        try tx.deleteInbox(key.vaultID, account, upTo: 0)
-                        waiting = nil
-                    }
-                    guard version > (try tx.baseVersion(key.vaultID, account) ?? 0), version > (waiting ?? 0),
-                          version > (try tx.conflictVersion(key.vaultID, account) ?? 0)
-                    else { continue }
-                    try tx.save(InboxRow(accountID: account, version: version, envelope: record.payload), vault: key.vaultID)
-                    queuedAny = true
                 }
             }
         } catch {
@@ -134,7 +113,103 @@ extension VaultSync {
                 }
             }
         }
+        if queuedAny, !unlocked.contains(key) {
+            enqueue(key) { [weak self] in
+                await self?.verifyInbox(key, database: database)
+            }
+        }
         return queuedAny
+    }
+
+    private static func inboxRow(_ record: SyncRecord) -> InboxRow? {
+        guard record.type == .item, let id = accountID(record.id.name) else { return nil }
+        let version: UInt64
+        do {
+            version = try VaultSyncCodec.version(of: record.payload)
+        } catch VaultSyncError.unsupportedFormat {
+            version = 0
+        } catch {
+            return nil
+        }
+        return InboxRow(accountID: id, version: version, envelope: record.payload, serverTime: record.modifiedAt?.timeIntervalSinceReferenceDate)
+    }
+
+    private func receive(_ item: InboxRow, record: SyncRecord, vault: UUID, tx: VaultSyncDatabase.Transaction, failedSave: Bool) throws -> Bool {
+        let id = item.accountID
+        let waiting = try tx.inbox(vault, id)
+        let agreed = try max(tx.baseVersion(vault, id) ?? 0, tx.conflictVersion(vault, id) ?? 0)
+        let highest = max(agreed, waiting?.version ?? 0)
+        if (waiting?.serverCheck ?? 0) <= 0 {
+            if let waiting, let previous = waiting.serverTime, let incoming = item.serverTime, incoming != previous {
+                guard incoming > previous else { return false }
+                if waiting.version == item.version || waiting.version == 0 || item.version == 0 {
+                    var current = item
+                    current.serverCheck = InboxRow.verified
+                    try keep(current, record: record, vault: vault, tx: tx)
+                    return true
+                }
+            }
+            let comparable = item.version > 0 && waiting?.version != 0
+            if (waiting == nil && agreed == 0) || (comparable && item.version > highest) {
+                try keep(item, record: record, vault: vault, tx: tx)
+                return true
+            }
+            if comparable, item.version < highest, !failedSave || waiting != nil {
+                return false
+            }
+            let sameQueuedItem = waiting?.version == item.version && waiting?.envelope == item.envelope
+            if try tx.systemFields(vault, record.id.name) == record.systemFields,
+               sameQueuedItem || (waiting == nil && item.version > 0 && item.version == agreed && record.systemFields != nil) {
+                return false
+            }
+        }
+        // A zone can reuse an item version. Neither the order of callbacks nor opaque change tags orders the envelopes.
+        // Keep the last accepted bytes and tag together, and block only this entry until the server identifies its contents.
+        var held = waiting ?? item
+        held.serverCheck = max(0, held.serverCheck) + 1
+        try tx.save(held, vault: vault)
+        return true
+    }
+
+    private func keep(_ item: InboxRow, record: SyncRecord, vault: UUID, tx: VaultSyncDatabase.Transaction) throws {
+        try tx.save(item, vault: vault)
+        if let fields = record.systemFields {
+            try tx.setSystemFields(fields, vault: vault, name: record.id.name)
+        } else {
+            try tx.deleteSystemFields(vault, record.id.name)
+        }
+    }
+
+    /// Called on the vault's chain outside the engine callback. A skipped record or failed read keeps its hold for the next pass.
+    @discardableResult
+    func verifyInbox(_ key: VaultKey, database: VaultSyncDatabase) async -> Bool {
+        guard let engine, let user = state.accountUser, let checks = try? database.read({ try $0.inboxChecks(key.vaultID) }), !checks.isEmpty, runningRow(key) != nil else { return false }
+        let session = token(key)
+        do {
+            guard try await enrollmentAccount(engine, key: key, session: session, expecting: user) == user else { return false }
+            let read = try await engine.fetchAll(zone: key.zone)
+            guard try await enrollmentAccount(engine, key: key, session: session, expecting: user) == user, runningRow(key) != nil else { return false }
+            try database.write { tx in
+                var missing = checks
+                for record in read.records where record.id.zone == key.zone {
+                    guard let id = Self.accountID(record.id.name), let check = missing.removeValue(forKey: id),
+                          let held = try tx.inbox(key.vaultID, id), held.serverCheck == check, var item = Self.inboxRow(record) else { continue }
+                    item.serverCheck = InboxRow.verified
+                    try keep(item, record: record, vault: key.vaultID, tx: tx)
+                }
+                if read.skipped == 0 {
+                    for (id, check) in missing {
+                        guard let held = try tx.inbox(key.vaultID, id), held.serverCheck == check else { continue }
+                        _ = try tx.consume(held, vault: key.vaultID)
+                        try tx.deleteSystemFields(key.vaultID, id.uuidString)
+                    }
+                }
+            }
+            refresh(key)
+            return true
+        } catch {
+            return false
+        }
     }
 
     // MARK: - Sent
@@ -230,6 +305,11 @@ extension VaultSync {
                     guard let account = Self.accountID(record.id.name) else { continue }
                     if let outgoing = try tx.outbox(key.vaultID, account), outgoing.remainingAssets.isEmpty, outgoing.envelope == record.payload,
                        outgoing.envelope.first != VaultSyncCodec.assetFormat || handedOut[key]?.contains(account) == true {
+                        // A save can succeed before another writer replaces it, and its callback can arrive after the fetch.
+                        if let waiting = try tx.inbox(key.vaultID, account) {
+                            guard waiting.serverCheck <= 0, waiting.version > 0, waiting.envelope == record.payload,
+                                  try tx.systemFields(key.vaultID, record.id.name) == record.systemFields else { continue }
+                        }
                         try tx.setSystemFields(record.systemFields, vault: key.vaultID, name: record.id.name)
                         try tx.save(BaseRow(accountID: account, version: outgoing.version, parts: outgoing.parts), vault: key.vaultID)
                         try tx.deleteOutbox(key.vaultID, account)
@@ -304,6 +384,11 @@ extension VaultSync {
                 zoneRemoved(key.zone, reason: .deleted)
                 return false
             }
+            if let account, (try? database.read({ tx in
+                try tx.inboxVersion(key.vaultID, account) == nil && tx.systemFields(key.vaultID, failure.id.name) == attempted.systemFields
+            })) != true {
+                return false
+            }
             try? database.write { try $0.deleteSystemFields(key.vaultID, failure.id.name) }
             engine?.add([.saveRecord(failure.id)])
             return false
@@ -321,38 +406,14 @@ extension VaultSync {
         if id == key.vaultRecord {
             return takeVaultRecord(server, key: key, conflict: true)
         }
-        // Whether the server holds a version this Mac has not agreed on: it is merged, and this Mac's row never goes up over it.
-        // A record this build cannot read is parked and waits the same way.
-        var ahead = false
-        var parked = false
-        try? database.write { tx in
-            try tx.setSystemFields(server.systemFields, vault: key.vaultID, name: id.name)
-            guard let account else { return }
-            let version: UInt64
-            do {
-                version = try VaultSyncCodec.version(of: server.payload)
-            } catch VaultSyncError.unsupportedFormat {
-                try tx.save(InboxRow(accountID: account, version: 0, envelope: server.payload), vault: key.vaultID)
-                parked = true
-                return
-            } catch {
-                return
-            }
-            guard version > (try tx.base(key.vaultID, account)?.version ?? 0) else { return }
-            ahead = true
-            if version > (try tx.inboxVersion(key.vaultID, account) ?? 0) {
-                try tx.save(InboxRow(accountID: account, version: version, envelope: server.payload), vault: key.vaultID)
-            }
-        }
-        if parked {
-            refresh(key)
-            return false
-        }
-        if ahead {
+        guard let account else { return false }
+        if takeItems([server], key: key, failedSave: true) {
             return true
         }
         // The server holds nothing newer than the base: the engine dropped the save, so send this Mac's row again on its tag.
-        if let account, (try? database.read { try $0.outbox(key.vaultID, account) }) != nil {
+        if (try? database.read { tx in
+            try tx.inboxVersion(key.vaultID, account) == nil && tx.outbox(key.vaultID, account) != nil && tx.systemFields(key.vaultID, id.name) == server.systemFields
+        }) == true {
             engine?.add([.saveRecord(id)])
         }
         return false
