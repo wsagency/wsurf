@@ -63,6 +63,7 @@ final class CloudSettingsSync: SyncZoneHandler {
         checkpointUnavailable || awaitingFirstCheckpoint
     }
     @ObservationIgnored private(set) var unreadableFetchStart: FetchStart?
+    @ObservationIgnored private let checkpointClock: any Clock<Duration>
     @ObservationIgnored private var checkpointRetry: Task<Void, Never>?
     @ObservationIgnored private var profileStore: ProfileStore?
     @ObservationIgnored private var profilesForRecovery: (() -> [Profile]?)?
@@ -138,6 +139,7 @@ final class CloudSettingsSync: SyncZoneHandler {
         resetDefaults: UserDefaults? = nil
     ) {
         self.stateFile = stateFile
+        self.checkpointClock = clock
         self.resetDefaults = resetDefaults ?? UserDefaults(suiteName: AppDatabase.defaultsSuite("io.wsagency.wsurf.settings-recovery"))!
         self.snapshot = snapshot
         self.apply = apply
@@ -164,13 +166,19 @@ final class CloudSettingsSync: SyncZoneHandler {
         }
         restorePendingOptOuts()
         if checkpointUnavailable {
-            // The shared engine's heartbeat may be off until we can read this Mac's enrollments.
-            checkpointRetry = Task { [weak self] in
-                while self?.checkpointUnavailable == true {
-                    do { try await clock.sleep(for: .seconds(30)) } catch { return }
-                    guard !Task.isCancelled else { return }
-                    self?.beat()
-                }
+            waitForCheckpoint()
+        }
+    }
+
+    private func waitForCheckpoint() {
+        guard checkpointRetry == nil else { return }
+        checkpointUnavailable = true
+        // The shared engine's heartbeat may be off when the first evidence of a saved enrollment arrives.
+        checkpointRetry = Task { [weak self, checkpointClock] in
+            while self?.checkpointUnavailable == true {
+                do { try await checkpointClock.sleep(for: .seconds(30)) } catch { return }
+                guard !Task.isCancelled else { return }
+                self?.beat()
             }
         }
     }
@@ -636,7 +644,10 @@ final class CloudSettingsSync: SyncZoneHandler {
             awaitingFirstCheckpoint = false
         } catch CocoaError.fileReadNoSuchFile {
             // A separate revocation journal belongs to a checkpoint that may still return.
-            guard !FileManager.default.fileExists(atPath: optOutFile.path) else { throw Issue.unavailable }
+            if FileManager.default.fileExists(atPath: optOutFile.path) {
+                waitForCheckpoint()
+                throw Issue.unavailable
+            }
             guard checkpointUnavailable else { return }
             state = State()
             awaitingFirstCheckpoint = true

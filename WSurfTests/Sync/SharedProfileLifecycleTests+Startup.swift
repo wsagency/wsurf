@@ -275,8 +275,8 @@ extension SharedProfileLifecycleTests {
         })
     }
 
-    @Test(arguments: [false, true])
-    func anIdleMacRecoversItsReturningSettingsAfterAccountVerification(damagedJournal: Bool) async throws {
+    @Test(arguments: [false, true], [false, true])
+    func anIdleMacRecoversItsReturningSettingsAfterAccountVerification(damagedJournal: Bool, journalReturnsAfterLaunch: Bool) async throws {
         let launch = Launch(), files = FileManager.default
         defer { try? files.removeItem(at: launch.root) }
         let profiles = ProfileStore(file: launch.list)
@@ -314,14 +314,28 @@ extension SharedProfileLifecycleTests {
         if damagedJournal {
             try Data([0]).write(to: journal, options: .atomic)
         }
+        let parked = launch.root.appending(path: "saved-journal")
+        if journalReturnsAfterLaunch {
+            try files.moveItem(at: journal, to: parked)
+        }
         let live = ProfileStore(file: launch.list)
         try #require(live.verifiedProfiles?.contains(kept) == true)
         let app = try launch.start(live)
         defer { app.prepareToTerminate() }
         let settings = try #require(app.settingsSync)
+        if journalReturnsAfterLaunch {
+            await Task.yield()
+            #expect(!settings.checkpointUnavailable && launch.engine == nil && launch.clock.pendingCount == 0)
+            try files.moveItem(at: parked, to: journal)
+        }
         #expect(throws: CloudSettingsSync.Issue.unavailable) { try settings.accountDidResolve(launch.cloud.user) }
         try #require(launch.engine == nil && !files.fileExists(atPath: file.path))
         try #require(await waitUntil(timeout: .seconds(3)) { launch.clock.pendingCount == 1 })
+        if journalReturnsAfterLaunch {
+            launch.clock.advance(by: .seconds(30))
+            try #require(await waitUntil(timeout: .seconds(3)) { launch.clock.pendingCount == 1 })
+            #expect(!files.fileExists(atPath: file.path))
+        }
         try Data(contentsOf: held).write(to: file, options: .atomic)
         launch.clock.advance(by: .seconds(30))
 
