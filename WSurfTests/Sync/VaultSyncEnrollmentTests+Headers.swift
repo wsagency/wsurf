@@ -126,30 +126,59 @@ extension VaultSyncEnrollmentTests {
         #expect(second.name == "Personal" && second.wrappers.count == 1)
     }
 
-    @Test(arguments: [false, true])
-    func restoringAPendingRenameUsesCurrentCloudPasskeys(olderSchema: Bool) async throws {
+    enum RestoredConsent: CaseIterable {
+        case current, renew, renewWithoutCheckpoint, renamedAgain, onlyLocalPasskeysChanged
+    }
+
+    @Test(arguments: [false, true], RestoredConsent.allCases)
+    func restoringAPendingHeaderUsesCurrentCloudPasskeys(olderSchema: Bool, consent: RestoredConsent) async throws {
         let rig = VaultSyncRig()
         defer { rig.finish() }
         let (mac, local) = try await rig.syncedMac(holding: [])
         let (peer, remote) = try await rig.addedMac()
-        local.name = "Pending on relaunch"
+        if consent == .onlyLocalPasskeysChanged {
+            local.wrappers += try SyncVaultFixtures.wrappers(rig.dek, profile: rig.profile, vault: rig.vaultID, passkeys: [3])
+        } else {
+            local.name = "Pending on relaunch"
+        }
+        let localWrappers = try VaultWrapperList.encode(local.wrappers)
         await mac.wrote(local)
         let database = try #require(mac.sync.database(rig.profile))
+        mac.lock(local)
+        mac.sync.pauseDiscovery()
+        if consent != .current {
+            try database.write { tx in
+                try tx.db.execute(sql: """
+                    UPDATE vault SET approvedUser = consentUser;
+                    ALTER TABLE vault DROP COLUMN consentUser;
+                    DELETE FROM grdb_migrations WHERE identifier = 'vaultExplicitConsent';
+                    """)
+            }
+        }
         if olderSchema {
             try database.write { tx in
                 // The v4 outbox held only the local HMAC, the wrapped header and its old change tag.
-                try tx.db.execute(sql: "UPDATE vault SET localWrappers = NULL, pendingLocalWrappers = NULL, serverVault = NULL")
+                try tx.db.execute(sql: """
+                    ALTER TABLE vault DROP COLUMN localWrappers;
+                    ALTER TABLE vault DROP COLUMN pendingLocalWrappers;
+                    ALTER TABLE vault DROP COLUMN serverVault;
+                    DELETE FROM grdb_migrations WHERE identifier = 'v5';
+                    """)
             }
         }
-        mac.lock(local)
+        if consent == .onlyLocalPasskeysChanged {
+            remote.name = "Renamed elsewhere"
+        }
         remote.wrappers = try SyncVaultFixtures.wrappers(rig.dek, profile: rig.profile, vault: rig.vaultID, passkeys: [4])
         await peer.wrote(remote)
         try await peer.pump()
         let rotated = try #require(rig.record(VaultSync.vaultRecordName))
         let engine = FakeSyncEngine(cloud: rig.cloud)
         try await engine.fetchNow()
-        let restored = VaultSync(host: mac.host, state: mac.sync.state, persist: { _ in }, excludedProfiles: [])
+        let state = consent == .renewWithoutCheckpoint ? VaultSyncAppState() : mac.sync.state
+        let restored = VaultSync(host: mac.host, state: state, persist: { _ in }, excludedProfiles: [])
         engine.delegate = restored
+        _ = restored.acceptDiscoveryAccount(rig.cloud.user)
         restored.attach(engine)
         await restored.settle()
         try await engine.sendNow()
@@ -157,13 +186,21 @@ extension VaultSyncEnrollmentTests {
         local.unlock()
         restored.vaultUnlocked(profileID: rig.profile, vaultID: rig.vaultID)
         await restored.settle()
+        if consent != .current {
+            #expect(!restored.isSyncing(profileID: rig.profile, vaultID: rig.vaultID))
+            if consent == .renamedAgain {
+                local.name = "Latest local name"
+            }
+            try await restored.enable(profileID: rig.profile, vaultID: rig.vaultID)
+        }
         try await engine.sendNow()
         await restored.settle()
         let saved = try #require(rig.record(VaultSync.vaultRecordName))
         let payload = try #require(VaultRecordPayload.decode(saved.payload))
-        #expect(try VaultSyncCodec.openVault(payload.sealed, wrappers: payload.wrappers, key: rig.key) == local.name)
+        let expectedName = consent == .onlyLocalPasskeysChanged ? remote.name : local.name
+        #expect(try VaultSyncCodec.openVault(payload.sealed, wrappers: payload.wrappers, key: rig.key) == expectedName)
         #expect(payload.wrappers == VaultRecordPayload.decode(rotated.payload)?.wrappers)
-        #expect(local.wrappers.count == 1 && local.wrappers[0].credentialID == Data(repeating: 1, count: 32))
+        #expect(try VaultWrapperList.encode(local.wrappers) == localWrappers)
     }
 
     @Test(arguments: [false, true], [false, true])

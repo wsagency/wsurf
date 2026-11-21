@@ -23,6 +23,18 @@ nonisolated struct VaultSyncHeader {
         return try VaultRecordPayload(keyGeneration: VaultSyncCodec.generation, profile: profile, wrappers: wrappers, sealed: sealed).encoded()
     }
 
+    /// A renewed enrollment may carry a queued local rename, but only the freshly authenticated header supplies cloud unlock methods.
+    func joinedMark(previous: VaultRow?, name localName: String, wrappers local: Data, mark: Data, key: VaultSyncKey) -> Data {
+        guard let previous, let acknowledged = previous.queuedLegacyHeaderBaseline else { return mark }
+        let serverNameMark = VaultSyncCodec.vaultMark(name: name, wrappers: local, key: key)
+        if let baseline = previous.localWrappers {
+            let sameName = VaultSyncCodec.vaultMark(name: localName, wrappers: baseline, key: key) == acknowledged
+            return sameName ? mark : serverNameMark
+        }
+        // Older rows kept only the HMAC. Matching the server name with the local wrappers establishes which field changed.
+        return acknowledged == serverNameMark ? serverNameMark : mark
+    }
+
     /// Only changes since this Mac's last acknowledged local state apply to the server. A revoked credential stays absent.
     func merging(_ snapshot: VaultSyncSnapshot, local: Data, row: VaultRow, key: VaultSyncKey) throws -> Data? {
         // Older enrolled rows kept only the HMAC. Their existing local unlock methods cannot establish a change to cloud access.
@@ -104,6 +116,11 @@ extension VaultSync {
 }
 
 extension VaultRow {
+    /// The last acknowledged local header for queued work that predates explicit consent. It cannot authorize an upload.
+    nonisolated var queuedLegacyHeaderBaseline: Data? {
+        enabled && approvedUser == nil && pendingMark != nil ? uploadedMark : nil
+    }
+
     mutating func acknowledgeHeader(mark: Data?, local: Data?) {
         uploadedMark = mark
         localWrappers = local

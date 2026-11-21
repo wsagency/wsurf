@@ -141,7 +141,8 @@ struct CloudVaultEnrollmentTests {
     }
 
     enum InterruptedRemoval: CaseIterable {
-        case exists, missing, completedAfterRefusal, removedAfterCheck, offline, otherAccount, switchesBeforeRetry
+        case exists, missing, completedAfterRefusal, removedAfterCheck, offline, offlineDiscovery, offlineDiscoveryWithoutAccount, offlineDiscoveryWithStaleAccount
+        case otherAccount, switchesBeforeRetry
     }
 
     @Test(arguments: InterruptedRemoval.allCases, [false, true])
@@ -151,6 +152,7 @@ struct CloudVaultEnrollmentTests {
         let (old, vault) = try await rig.syncedMac(holding: syncAccounts(1))
         let user = rig.cloud.user
         let gone = zone == .missing || zone == .completedAfterRefusal
+        let discovery = zone == .offlineDiscovery || zone == .offlineDiscoveryWithoutAccount || zone == .offlineDiscoveryWithStaleAccount
         old.sync.removeFromICloud(profileID: rig.profile, vaultID: rig.vaultID)
         if zone == .completedAfterRefusal {
             old.engine.failsZoneDeletes = true
@@ -176,7 +178,11 @@ struct CloudVaultEnrollmentTests {
             }
         }
         let shared = rig.root.appending(path: "interrupted.json")
-        let legacy: [String: Any] = ["engineState": Data([9]).base64EncodedString(), "vaults": ["accountUser": user, "remote": [:]]]
+        var vaultState: [String: Any] = ["remote": [:]]
+        if zone != .offlineDiscoveryWithoutAccount {
+            vaultState["accountUser"] = zone == .offlineDiscoveryWithStaleAccount ? "old-checkpoint-account" : user
+        }
+        let legacy: [String: Any] = ["engineState": Data([9]).base64EncodedString(), "vaults": vaultState]
         try JSONSerialization.data(withJSONObject: legacy).write(to: shared)
         if zone == .otherAccount {
             rig.cloud.switchUser("another-apple-account")
@@ -185,14 +191,18 @@ struct CloudVaultEnrollmentTests {
             rig.cloud.removeZoneSilently(rig.zone)
         }
         let held = CloudTabsTests.Launch.entitlements
-        let gate = CloudSyncGate.Inputs(tabsFlag: false, vaultFlag: true, isRunningTests: false, isStaged: false, ownsSession: true, entitlement: { held[$0] })
+        let gate = CloudSyncGate.Inputs(
+            tabsFlag: false, vaultFlag: true, isRunningTests: false, isStaged: false, ownsSession: true, entitlement: { held[$0] }, offersMacSync: discovery
+        )
         var transport: FakeSyncEngine?
+        var accountLookupStarted = false
         let started = CloudSync.start(
             gate: gate, installIDs: MemoryInstallIDStorage(), stateFile: shared, profiles: [], host: { old.host }, windows: { [] }, clock: TestClock(),
             makeEngine: { delegate, queue in
                 #expect(queue == nil)
                 let engine = FakeSyncEngine(cloud: rig.cloud, delegate: delegate)
-                engine.offline = zone == .offline
+                engine.offline = zone == .offline || discovery
+                engine.duringAccountLookup = { accountLookupStarted = true }
                 transport = engine
                 return engine
             }
@@ -205,10 +215,19 @@ struct CloudVaultEnrollmentTests {
         func status() -> VaultSyncStatus {
             sync.status(profileID: rig.profile, vaultID: rig.vaultID)
         }
-        if zone == .offline {
+        if zone == .offline || discovery {
+            if discovery {
+                #expect(await waitUntil { accountLookupStarted })
+                #expect(sync.engine == nil)
+            }
             #expect(status() == .removalPending)
+            sync.removeFromICloud(profileID: rig.profile, vaultID: rig.vaultID)
+            #expect(engine.pending.isEmpty && rig.cloud.zones[rig.zone] != nil)
             engine.offline = false
-            sync.beat()
+            app.beat()
+            if discovery {
+                #expect(await waitUntil { sync.engine != nil })
+            }
             await sync.settle()
         }
         if gone {

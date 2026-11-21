@@ -478,7 +478,7 @@ extension VaultSync {
                 guard let database = database(profileID), let rows = try? database.read({ try $0.vaults() }) else { continue }
                 for row in rows {
                     let key = VaultKey(profileID: profileID, vaultID: row.vaultID)
-                    if row.pendingAdoptionUser != nil || row.approvedUser == user || row.removalOwner != nil {
+                    if row.pendingAdoptionUser != nil || row.approvedUser == user || row.removalOwner != nil || row.queuedLegacyHeaderBaseline != nil {
                         // Invalidate work from the old session. Per-vault consent still belongs to its recorded owner.
                         forget(key)
                         checkedAtAttach.remove(key)

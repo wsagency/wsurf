@@ -146,6 +146,8 @@ public final class VaultSync: SyncEngineDelegate {
         excluded = excludedProfiles
         self.debounce = debounce
         self.clock = clock
+        // Settings can show an interrupted removal before discovery reaches the Apple account.
+        loadDatabases(onlyPendingRemovals: true)
     }
 
     // MARK: - Engine
@@ -679,10 +681,10 @@ public final class VaultSync: SyncEngineDelegate {
         }
     }
 
-    func loadDatabases() {
+    func loadDatabases(onlyPendingRemovals: Bool = false) {
         for profileID in host.profileIDs() {
             guard let database = database(profileID), let rows = try? database.read({ try $0.vaults() }) else { continue }
-            for row in rows {
+            for row in rows where !onlyPendingRemovals || row.status == .removalPending || row.status == .removalFailed {
                 refresh(VaultKey(profileID: profileID, vaultID: row.vaultID))
             }
         }
@@ -760,8 +762,9 @@ public final class VaultSync: SyncEngineDelegate {
         let (row, counts) = loaded
         let isRemoval = row.status == .removalPending || row.status == .removalFailed || row.status == .removedDeleted
         let owner = isRemoval ? row.removalOwner : row.approvedUser
-        let otherAccount = (row.enabled || isRemoval) && (owner == nil || owner != state.accountUser)
         let needsCheck = row.status == .removalPending || (row.status == .removalFailed && verifiedRemovals[key] != owner)
+        let awaitingOwner = needsCheck && owner != nil && (engine == nil || state.accountUser == nil)
+        let otherAccount = !awaitingOwner && (row.enabled || isRemoval) && (owner == nil || owner != state.accountUser)
         let stored = needsCheck ? VaultSyncStatus.Stored.removalPending : row.status
         let tally = tallies[key] ?? (0, 0)
         let next = VaultSyncSummary(

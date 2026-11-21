@@ -57,8 +57,9 @@ extension VaultSync {
         var row = VaultRow(vaultID: key.vaultID, needsFetch: read != nil, approvedUser: user)
         row.lastHeadRevision = snapshot.revision
         if let read {
-            try Self.verifyHeader(in: read, key: key, syncKey: syncKey)
-            row.uploadedMark = mark
+            let server = try Self.header(in: read, key: key, syncKey: syncKey)
+            let previous = try database.read { try $0.vault(key.vaultID) }
+            row.uploadedMark = server.joinedMark(previous: previous, name: snapshot.name, wrappers: wrappers, mark: mark, key: syncKey)
             row.localWrappers = wrappers
         } else {
             guard let card = host.profileCard(profileID: key.profileID) else { throw VaultSyncFailure.unavailable }
@@ -114,9 +115,9 @@ extension VaultSync {
         return read
     }
 
-    private static func verifyHeader(in read: SyncZoneRead, key: VaultKey, syncKey: VaultSyncKey) throws {
+    private static func header(in read: SyncZoneRead, key: VaultKey, syncKey: VaultSyncKey) throws -> VaultSyncHeader {
         guard let header = read.records.first(where: { $0.id == key.vaultRecord && $0.type == .vault && $0.schema == 1 }) else { throw VaultSyncFailure.unavailable }
-        _ = try VaultSyncHeader(header.payload, key: syncKey)
+        return try VaultSyncHeader(header.payload, key: syncKey)
     }
 
     func fetchAllNow(_ key: VaultKey, force: Bool = false) async throws {
@@ -136,7 +137,7 @@ extension VaultSync {
             let snapshot = try await host.snapshot(profileID: key.profileID, vaultID: key.vaultID)
             _ = try await enrollmentAccount(engine, key: key, session: mine, expecting: user)
             guard snapshot.lease == lease, host.currentLease(profileID: key.profileID, vaultID: key.vaultID) == lease else { throw VaultSyncFailure.locked }
-            try Self.verifyHeader(in: read, key: key, syncKey: syncKey)
+            _ = try Self.header(in: read, key: key, syncKey: syncKey)
             // Keep the existing cloud header and the local unlock methods. A later local edit is measured against this baseline.
             let wrappers = try VaultWrapperList.encode(snapshot.wrappers)
             let mark = VaultSyncCodec.vaultMark(name: snapshot.name, wrappers: wrappers, key: syncKey)
