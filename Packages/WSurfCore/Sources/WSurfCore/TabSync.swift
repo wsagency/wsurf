@@ -103,8 +103,6 @@ public final class TabSync {
     @ObservationIgnored private var refreshing = false
     @ObservationIgnored private var signedOut = false
     @ObservationIgnored private var accountGeneration = 0
-    /// Origin of the last switch already applied by an identity lookup on this engine, until its next account event.
-    @ObservationIgnored private(set) var verifiedSwitchFrom: String?
 
     /// Whether this device owns anything on the server or wants to: the owner creates the engine only then.
     public var needsEngine: Bool {
@@ -207,10 +205,11 @@ public final class TabSync {
 
     /// Hands the engine everything this device wants on the server: zones, deletions and the latest session records.
     public func attach(_ engine: any SyncEngine) {
-        let changed = self.engine !== engine
-        self.engine = engine
-        if changed {
-            verifiedSwitchFrom = nil
+        if self.engine !== engine {
+            if self.engine != nil {
+                discardAccountSwitchEvidence()
+            }
+            self.engine = engine
             invalidateHandouts()
             // An interrupted partial read still has to verify its zone before a restored creation can go out.
             let unfinished = state.zoneObservations?.zones.compactMap { $0.value == .incomplete ? $0.key : nil } ?? []
@@ -600,6 +599,10 @@ public final class TabSync {
 }
 
 extension TabSync: SyncEngineDelegate {
+    public func discardAccountSwitchEvidence() {
+        setCheckpoint(state.removalCheck, observations: state.zoneObservations?.withoutVerifiedSwitch)
+    }
+
     public func acceptsUploadAccount(_ user: String) -> Bool {
         if state.accountUser == nil, !canBindFirstAccount, (enrollment?.firstAccountLookups ?? 0) > 0 {
             return false
@@ -886,30 +889,28 @@ extension TabSync: SyncEngineDelegate {
     }
 
     private func applyAccount(_ change: SyncAccountChange, verifiedSwitchFrom previousUser: String? = nil) {
-        verifiedSwitchFrom = previousUser
         accountGeneration += 1
+        signedOut = change == .signOut
+        accountAvailable = !signedOut
         switch change {
         case .signOut:
-            signedOut = true
+            discardAccountSwitchEvidence()
             clearAccountData()
-            accountAvailable = false
             if state.accountUser == nil, !desired.isEmpty {
                 endSharing()
             }
         case .signIn(let user) where matchesAccount(user):
-            signedOut = false
+            discardAccountSwitchEvidence()
             if enrollment == nil {
                 renewEnrollment()
             }
             rememberAccount(user)
-            accountAvailable = true
             replay()
         case .signIn(let user), .switchAccounts(let user):
             // Another Apple Account: nothing of the old one is shown, and nothing is uploaded until the person opts in again.
-            let withdrawals = state.zoneObservations?.switching(to: user, withdrawing: ownedZones.filter { !wants(zone: $0) }, installID: installID)
-            signedOut = false
+            let prior = state.zoneObservations ?? previousUser.map { .init(account: $0) }
+            let withdrawals = prior?.switching(to: user, verifiedFrom: previousUser, withdrawing: ownedZones.filter { !wants(zone: $0) }, installID: installID)
             clearAccountData()
-            accountAvailable = true
             endSharing(account: user, observations: withdrawals)
             if !ownedZones.isEmpty {
                 replay()
@@ -918,10 +919,7 @@ extension TabSync: SyncEngineDelegate {
     }
 
     private func matchesAccount(_ user: String) -> Bool {
-        if let owner = state.accountUser {
-            return owner == user
-        }
-        return canBindFirstAccount
+        state.accountUser.map { $0 == user } ?? canBindFirstAccount
     }
 
     private var canBindFirstAccount: Bool {

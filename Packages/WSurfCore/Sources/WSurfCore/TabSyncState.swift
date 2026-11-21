@@ -41,6 +41,19 @@ nonisolated public struct TabSyncState: Codable, Equatable, Sendable {
         var publication: Publication?
         /// Only unfulfilled deletions survive a visit to another account. Each row also belongs to one installation.
         var withdrawals: [String: Publication]?
+        /// A lookup already applied this installation's switch from the previous account to this scope's account.
+        struct VerifiedSwitch: Codable, Equatable, Sendable {
+            let previousUser: String
+            let installID: String
+        }
+
+        var verifiedSwitch: VerifiedSwitch?
+
+        var withoutVerifiedSwitch: Self {
+            var next = self
+            next.verifiedSwitch = nil
+            return next
+        }
 
         func restoringLegacyEvidence(for check: RemovalCheck?) -> Self? {
             guard let check else { return self }
@@ -52,14 +65,15 @@ nonisolated public struct TabSyncState: Codable, Equatable, Sendable {
             return result
         }
 
-        func switching(to user: String, withdrawing zones: Set<String>, installID: String) -> Self {
+        func switching(to user: String, verifiedFrom previousUser: String?, withdrawing zones: Set<String>, installID: String) -> Self {
             var waiting = withdrawals ?? [:]
             if !zones.isEmpty {
                 waiting[account] = Publication(installID: installID, zones: zones)
             }
             // An explicit empty publication prevents stale change tags on disk from authorizing a delete in the visiting account.
             let active = waiting.removeValue(forKey: user) ?? Publication(installID: installID, zones: [])
-            return Self(account: user, publication: active, withdrawals: waiting.isEmpty ? nil : waiting)
+            let receipt = previousUser.map { VerifiedSwitch(previousUser: $0, installID: installID) }
+            return Self(account: user, publication: active, withdrawals: waiting.isEmpty ? nil : waiting, verifiedSwitch: receipt)
         }
     }
 
@@ -105,11 +119,24 @@ nonisolated public struct TabSyncState: Codable, Equatable, Sendable {
     }
 }
 
+extension TabSync {
+    var verifiedSwitchFrom: String? {
+        guard let scope = state.zoneObservations, scope.account == state.accountUser,
+              let receipt = scope.verifiedSwitch, receipt.installID == installID else { return nil }
+        return receipt.previousUser
+    }
+}
+
 /// Stored alongside the engine cursor too. A newer clear must win over a stale tab file on restart.
 nonisolated struct TabRemovalCheckpoint: Codable, Equatable, Sendable {
     let revision: Int
     let pending: TabSyncState.RemovalCheck?
     var observations: TabSyncState.ZoneObservations?
+
+    var consumingVerifiedSwitch: Self? {
+        guard let observations, observations.verifiedSwitch != nil else { return nil }
+        return Self(revision: revision + 1, pending: pending, observations: observations.withoutVerifiedSwitch)
+    }
 }
 
 /// A saved record carries its encrypted payload but no request ID. Count identical handouts until all their replies arrive.

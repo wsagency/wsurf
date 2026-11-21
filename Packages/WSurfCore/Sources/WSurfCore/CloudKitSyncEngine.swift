@@ -18,7 +18,7 @@ public final class CloudKitSyncEngine: SyncEngine, SyncAccountIdentity {
     public init(containerIdentifier: String, state: Data?, delegate: any SyncEngineDelegate) {
         let container = CKContainer(identifier: containerIdentifier)
         let bridge = Bridge(delegate: delegate, container: container)
-        let restored = state.flatMap { try? JSONDecoder().decode(CKSyncEngine.State.Serialization.self, from: $0) }
+        let restored = CloudKitMapping.restoreEngineState(CKSyncEngine.State.Serialization.self, from: state, delegate: delegate)
         self.container = container
         self.bridge = bridge
         engine = CKSyncEngine(CKSyncEngine.Configuration(
@@ -228,6 +228,14 @@ private nonisolated final class Bridge: CKSyncEngineDelegate {
 }
 
 extension CloudKitMapping {
+    @MainActor static func restoreEngineState<State: Decodable>(_ type: State.Type, from data: Data?, delegate: (any SyncEngineDelegate)?) -> State? {
+        let restored = data.flatMap { try? JSONDecoder().decode(type, from: $0) }
+        if restored == nil {
+            delegate?.discardAccountSwitchEvidence()
+        }
+        return restored
+    }
+
     static func uploadBatch(
         _ pending: [CKSyncEngine.PendingRecordZoneChange], delegate: any SyncEngineDelegate,
         currentUser: @escaping @MainActor @Sendable () async throws -> String,

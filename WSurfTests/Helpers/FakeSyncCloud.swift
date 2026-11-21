@@ -199,7 +199,8 @@ final class FakeSyncCloud {
 /// scheduling failed changes.
 @MainActor
 final class FakeSyncEngine: SyncEngine, SyncAccountIdentity {
-    let cloud: FakeSyncCloud
+    /// The active database can change before CloudKit reports the switch or replaces its serialized state.
+    var cloud: FakeSyncCloud
     weak var delegate: (any SyncEngineDelegate)?
     var available = true
     /// A send that waits until it is cancelled, for the limit on quit.
@@ -252,7 +253,7 @@ final class FakeSyncEngine: SyncEngine, SyncAccountIdentity {
     init(cloud: FakeSyncCloud, delegate: (any SyncEngineDelegate)? = nil, state: Data? = nil) {
         self.cloud = cloud
         self.delegate = delegate
-        if let state, let checkpoint = try? JSONDecoder().decode(Checkpoint.self, from: state) {
+        if let checkpoint = CloudKitMapping.restoreEngineState(Checkpoint.self, from: state, delegate: delegate) {
             fetchedAt = checkpoint.cursor
             stateRevision = checkpoint.revision
             add(checkpoint.zoneSaves.map(SyncChange.saveZone))

@@ -99,12 +99,29 @@ public final class SyncRouter: SyncEngineDelegate {
     }
 
     public func accountSwitched(from previousUser: String, to user: String) async {
+        guard tabs != nil else {
+            await handle(.account(.switchAccounts(user: user)))
+            return
+        }
         await route(.account(.switchAccounts(user: user))) { tabs, _ in
             await tabs.accountSwitched(from: previousUser, to: user)
         }
     }
 
+    public func discardAccountSwitchEvidence() {
+        if let tabs {
+            tabs.discardAccountSwitchEvidence()
+        } else if let consumed = state.tabRemoval?.consumingVerifiedSwitch {
+            state.tabRemoval = consumed
+            persist(state)
+        }
+    }
+
     public func handle(_ event: SyncEvent) async {
+        // The shared engine consumes account events even if the installation ID is unavailable at launch.
+        if case .account = event, tabs == nil {
+            discardAccountSwitchEvidence()
+        }
         if case .state(let data) = event {
             state.engineState = data
             persist(state)

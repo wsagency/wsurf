@@ -186,6 +186,8 @@ public protocol SyncEngineDelegate: AnyObject, Sendable {
     func handle(_ event: SyncEvent) async
     /// CloudKit supplies both ends of a switch. Handlers that do not correlate a prior lookup receive the usual account event.
     func accountSwitched(from previousUser: String, to user: String) async
+    /// A fresh engine cannot deliver a deferred switch from a discarded checkpoint.
+    func discardAccountSwitchEvidence()
     func beginFetch() -> SyncFetchDelivery
     /// Database changes can outlive the opt-in that requested them, independently of record batches.
     func allowsZoneCreation(_ zone: String) -> Bool
@@ -200,6 +202,8 @@ public protocol SyncEngineDelegate: AnyObject, Sendable {
 }
 
 extension SyncEngineDelegate {
+    public func discardAccountSwitchEvidence() {}
+
     public func accountSwitched(from previousUser: String, to user: String) async {
         await handle(.account(.switchAccounts(user: user)))
     }

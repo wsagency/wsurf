@@ -87,6 +87,56 @@ extension CloudTabsTests {
         #expect(launch.engines.count == 2)
     }
 
+    @Test(arguments: [false, true])
+    func aDelayedSwitchPreservesPersonalsSavedChoiceAfterAnotherLaunch(reenroll: Bool) async throws {
+        let launch = Launch(), other = FakeSyncCloud(user: "B")
+        defer { launch.finish() }
+        let install = MemoryInstallIDStorage(value: UUID().uuidString), profile = Profile.original()
+        launch.models = [BrowserModel(database: .temporary())]
+        let original = try #require(launch.start(optedIn: true, installIDs: install))
+        let id = launch.personalSessionID
+        await original.sync.refresh()
+        original.sync.share(SyncSamples.session(tabs: ["https://first.test/"]), profileID: profile.id, force: true)
+        launch.engine.holdSendReceipt = { _ in }
+        try await launch.engine.sendNow()
+        try #require(launch.cloud.record(id) != nil && original.sync.state.ownSystemFields[id.zone] == nil)
+        original.setOptIn(false, for: profile)
+        await launch.engine.simulateAccount(.signOut)
+        launch.engine.cloud = other
+        await launch.engine.simulateAccount(.signIn(user: other.user))
+        try await launch.engine.fetchNow()
+        func storedRouter() throws -> SyncRouterState {
+            try JSONDecoder().decode(SyncRouterState.self, from: Data(contentsOf: launch.stateFile))
+        }
+        let engineStateB = try #require(try storedRouter().engineState)
+
+        let visiting = try #require(launch.start(installIDs: install))
+        let second = try #require(launch.engines.last)
+        second.cloud = other
+        await visiting.sync.refresh()
+        second.cloud = launch.cloud
+        await visiting.sync.refresh()
+        try #require(visiting.sync.wantsRecordDeletion(id))
+        if reenroll {
+            visiting.setOptIn(true, for: profile)
+        }
+        try #require(try storedRouter().engineState == engineStateB)
+
+        let reopened = try #require(launch.start(installIDs: install))
+        let third = try #require(launch.engines.last)
+        try #require(launch.engines.count == 3 && reopened.isOptedIn(profile.id) == reenroll)
+        third.available = false
+        await third.simulateAccount(.switchAccounts(user: launch.cloud.user), from: other.user)
+        #expect(reopened.isOptedIn(profile.id) == reenroll && launch.defaults.bool(forKey: CloudTabs.optInKey) == reenroll)
+        if reenroll {
+            reopened.setOptIn(false, for: profile)
+        }
+        let writes = launch.cloud.writeCount
+        third.available = true
+        try await third.sendNow()
+        #expect(launch.cloud.record(id) == nil && launch.cloud.writeCount == writes)
+    }
+
     @Test func nativeRowDeleteErrorsSettleOnlyDefinitivelyAbsentTabRecords() {
         let session = CKRecord.ID(recordName: "air", zoneID: .init(zoneName: SyncZone.profile(UUID()), ownerName: CKCurrentUserDefaultName))
         let device = CKRecord.ID(recordName: "air", zoneID: .init(zoneName: SyncZone.devices, ownerName: CKCurrentUserDefaultName))
