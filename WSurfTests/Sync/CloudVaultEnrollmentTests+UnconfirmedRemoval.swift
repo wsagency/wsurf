@@ -10,29 +10,46 @@ import Testing
 import WSurfVault
 
 extension CloudVaultEnrollmentTests {
-    static func restoreV2Schema(_ db: Database) throws {
-        // Recreate the 0.1.31 v2 file, which predates both per-vault owners and the asset outbox.
-        try db.execute(sql: """
-            CREATE TABLE legacyVault(vaultID TEXT PRIMARY KEY, enabled INTEGER NOT NULL, status TEXT NOT NULL, uploadedMark BLOB,
-                pendingVaultPayload BLOB, pendingMark BLOB, dirty INTEGER NOT NULL DEFAULT 0,
-                needsFetch INTEGER NOT NULL DEFAULT 0, lastHeadRevision INTEGER NOT NULL DEFAULT 0, rereadOwed INTEGER NOT NULL DEFAULT 0);
-            INSERT INTO legacyVault SELECT vaultID, enabled, status, uploadedMark, pendingVaultPayload, pendingMark, dirty,
-                needsFetch, lastHeadRevision, rereadOwed FROM vault;
-            DROP TABLE vault;
-            ALTER TABLE legacyVault RENAME TO vault;
-            CREATE TABLE legacyInbox(vaultID TEXT NOT NULL, accountID TEXT NOT NULL, version INTEGER NOT NULL, envelope BLOB NOT NULL,
-                PRIMARY KEY(vaultID, accountID));
-            INSERT INTO legacyInbox SELECT vaultID, accountID, version, envelope FROM inbox;
-            DROP TABLE inbox;
-            ALTER TABLE legacyInbox RENAME TO inbox;
-            CREATE TABLE legacyOutbox(vaultID TEXT NOT NULL, accountID TEXT NOT NULL, version INTEGER NOT NULL,
-                envelope BLOB NOT NULL, parts BLOB NOT NULL, PRIMARY KEY(vaultID, accountID));
-            INSERT INTO legacyOutbox SELECT vaultID, accountID, version, envelope, parts FROM outbox;
-            DROP TABLE outbox;
-            ALTER TABLE legacyOutbox RENAME TO outbox;
-            DROP TABLE assetReceipt;
-            DELETE FROM grdb_migrations WHERE identifier NOT IN ('v1', 'v2');
-            """)
+    /// The complete v1 schema and v2 ALTER from the signed 0.1.31 source at ea43123a.
+    /// Start from an empty database so later columns, indexes and tables cannot survive in the upgrade fixture.
+    static func installV2Database(in directory: URL, configure: (Database) throws -> Void) throws {
+        let file = directory.appending(path: VaultSyncDatabase.fileName)
+        let legacy = try DatabaseQueue()
+        try legacy.write { db in
+            try db.execute(sql: """
+                CREATE TABLE grdb_migrations(identifier TEXT NOT NULL PRIMARY KEY);
+                CREATE TABLE vault(
+                    vaultID TEXT PRIMARY KEY, enabled INTEGER NOT NULL, status TEXT NOT NULL, uploadedMark BLOB,
+                    pendingVaultPayload BLOB, pendingMark BLOB, dirty INTEGER NOT NULL DEFAULT 0,
+                    needsFetch INTEGER NOT NULL DEFAULT 0, lastHeadRevision INTEGER NOT NULL DEFAULT 0);
+                CREATE TABLE base(
+                    vaultID TEXT NOT NULL, accountID TEXT NOT NULL, version INTEGER NOT NULL, parts BLOB NOT NULL,
+                    PRIMARY KEY(vaultID, accountID));
+                CREATE TABLE outbox(
+                    vaultID TEXT NOT NULL, accountID TEXT NOT NULL, version INTEGER NOT NULL, envelope BLOB NOT NULL, parts BLOB NOT NULL,
+                    PRIMARY KEY(vaultID, accountID));
+                CREATE TABLE inbox(
+                    vaultID TEXT NOT NULL, accountID TEXT NOT NULL, version INTEGER NOT NULL, envelope BLOB NOT NULL,
+                    PRIMARY KEY(vaultID, accountID));
+                CREATE TABLE conflict(
+                    vaultID TEXT NOT NULL, accountID TEXT NOT NULL, version INTEGER NOT NULL, kind TEXT NOT NULL, envelope BLOB NOT NULL,
+                    PRIMARY KEY(vaultID, accountID));
+                CREATE TABLE record(
+                    vaultID TEXT NOT NULL, name TEXT NOT NULL, systemFields BLOB NOT NULL, PRIMARY KEY(vaultID, name));
+                ALTER TABLE vault ADD COLUMN rereadOwed INTEGER NOT NULL DEFAULT 0;
+                INSERT INTO grdb_migrations VALUES ('v1'),('v2');
+                """)
+            try db.execute(sql: "ATTACH DATABASE ? AS sample", arguments: [file.path])
+            let tables = try String.fetchAll(db, sql: "SELECT name FROM main.sqlite_schema WHERE type = 'table' AND name != 'grdb_migrations'")
+            for table in tables {
+                let columns = try db.columns(in: table, in: "main").map { $0.name.quotedDatabaseIdentifier }.joined(separator: ", ")
+                let name = table.quotedDatabaseIdentifier
+                try db.execute(sql: "INSERT INTO main.\(name) (\(columns)) SELECT \(columns) FROM sample.\(name)")
+            }
+            try configure(db)
+        }
+        try legacy.writeWithoutTransaction { try $0.execute(sql: "DETACH DATABASE sample") }
+        try legacy.backup(to: DatabaseQueue(path: file.path))
     }
 
     enum OldRemoval: CaseIterable {
@@ -50,12 +67,11 @@ extension CloudVaultEnrollmentTests {
         let (old, vault) = try await rig.syncedMac(holding: syncAccounts(1))
         let user = rig.cloud.user
         let directory = try #require(old.host.syncDirectory(profileID: rig.profile))
-        let database = try #require(old.sync.database(rig.profile))
         old.sync.removeFromICloud(profileID: rig.profile, vaultID: rig.vaultID)
         old.sync.pauseDiscovery()
-        try database.write { tx in
-            try Self.restoreV2Schema(tx.db)
-            try tx.db.execute(sql: "UPDATE vault SET enabled = 0, status = ?", arguments: [legacy.stored])
+        await old.sync.settle()
+        try Self.installV2Database(in: directory) { db in
+            try db.execute(sql: "UPDATE vault SET enabled = 0, status = ?", arguments: [legacy.stored])
         }
         if legacy == .upgradedQueued || legacy == .upgradedFailed {
             // An earlier 0.2 build had already upgraded this v2 file and left the receipt without an owner.

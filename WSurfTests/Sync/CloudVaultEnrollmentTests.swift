@@ -32,13 +32,12 @@ struct CloudVaultEnrollmentTests {
         let (old, vault) = try rig.mac(holding: syncAccounts(1))
         try await old.sync.enable(profileID: rig.profile, vaultID: rig.vaultID)
         old.sync.pauseDiscovery()
+        await old.sync.settle()
         let directory = try #require(old.host.syncDirectory(profileID: rig.profile))
-        let db = try #require(try VaultSyncDatabase.open(directory: directory, create: false))
-        try db.write { tx in
-            try Self.restoreV2Schema(tx.db)
+        try Self.installV2Database(in: directory) { db in
             if checkpoint.intermediate {
                 // The intermediate v4 release populated approvedUser from the tab-derived account on sign-in.
-                try tx.db.execute(sql: """
+                try db.execute(sql: """
                     ALTER TABLE vault ADD COLUMN approvedUser TEXT;
                     UPDATE vault SET approvedUser = 'tabs-only-account';
                     ALTER TABLE outbox ADD COLUMN remainingAssets BLOB;
