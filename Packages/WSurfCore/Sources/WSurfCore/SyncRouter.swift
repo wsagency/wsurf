@@ -9,14 +9,16 @@ import Observation
 nonisolated public struct SyncRouterState: Codable, Equatable, Sendable {
     public var engineState: Data?
     public var vaults = VaultSyncAppState()
+    var tabRemoval: TabRemovalCheckpoint?
     /// Earlier native checkpoints can contain zone changes without a per-vault owner. The first new engine starts with a clean queue.
     private let explicitVaultChanges = true
 
-    private enum CodingKeys: String, CodingKey { case engineState, vaults, explicitVaultChanges }
+    private enum CodingKeys: String, CodingKey { case engineState, vaults, explicitVaultChanges, tabRemoval }
 
     public init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         vaults = try values.decode(VaultSyncAppState.self, forKey: .vaults)
+        tabRemoval = try values.decodeIfPresent(TabRemovalCheckpoint.self, forKey: .tabRemoval)
         if try values.decodeIfPresent(Bool.self, forKey: .explicitVaultChanges) == true {
             engineState = try values.decodeIfPresent(Data.self, forKey: .engineState)
         }
@@ -56,12 +58,11 @@ public final class SyncRouter: SyncEngineDelegate {
     ) {
         self.state = state
         self.persist = persist
-        var handlers = additional
-        if let tabs {
-            handlers.append(tabs)
-        }
+        handlers = additional
         vaultHandler = vaults
-        self.handlers = handlers
+        if let tabs {
+            routeTabs(to: tabs)
+        }
     }
 
     private var tabs: TabSync? {
@@ -118,6 +119,11 @@ public final class SyncRouter: SyncEngineDelegate {
     public func routeTabs(to tabs: TabSync) {
         handlers.removeAll { $0 is TabSync }
         handlers.append(tabs)
+        tabs.bindRemovalCheckpoint(state.tabRemoval) { [weak self, weak tabs] checkpoint in
+            guard let self, self.tabs === tabs, state.tabRemoval != checkpoint else { return }
+            state.tabRemoval = checkpoint
+            persist(state)
+        }
     }
 
     public func routeVaults(to vaults: VaultSync?) {

@@ -83,8 +83,8 @@ struct CloudTabsTests {
                 optInDefaults: { [defaults] _ in defaults },
                 windows: { [unowned self] in models },
                 clock: clock,
-                makeEngine: { [unowned self] delegate, _ in
-                    let engine = FakeSyncEngine(cloud: cloud, delegate: delegate)
+                makeEngine: { [unowned self] delegate, checkpoint in
+                    let engine = FakeSyncEngine(cloud: cloud, delegate: delegate, state: checkpoint)
                     engines.append(engine)
                     return engine
                 }
@@ -584,6 +584,94 @@ struct CloudTabsTests {
         #expect(!cloudTabs.isOptedIn(Profile.originalID))
         #expect(launch.cloud.writeCount == writes)
         #expect(launch.cloud.zones[SyncZone.profile(Profile.originalID)] == nil)
+    }
+
+    private struct EngineCursor: Decodable {
+        let cursor: Int
+    }
+
+    enum TabFileAtRestart: CaseIterable { case stale, unavailable, recreatedZone, differentAccount }
+
+    @Test(arguments: TabFileAtRestart.allCases)
+    func anUnwritableTabFileCannotLoseTheStopBehindTheRouterCursor(restart: TabFileAtRestart) async throws {
+        let launch = Launch()
+        defer { launch.finish() }
+        let install = MemoryInstallIDStorage(value: UUID().uuidString), profile = Profile.originalID
+        let first = try #require(launch.start(optedIn: true, installIDs: install))
+        let local = SyncSamples.session(tabs: ["https://local.test/"])
+        let zone = SyncZone.profile(profile)
+        first.sync.share(local, profileID: profile, force: true)
+        try await launch.engine.sendNow()
+        await first.sync.refresh()
+        let before = try JSONDecoder().decode(SyncRouterState.self, from: Data(contentsOf: launch.stateFile))
+        let file = CloudTabs.stateFile(besides: launch.stateFile)
+        let backup = launch.directory.appending(path: "last-written-tabs.json")
+        try FileManager.default.moveItem(at: file, to: backup)
+        try FileManager.default.createDirectory(at: file, withIntermediateDirectories: false)
+        launch.engine.available = false
+        launch.cloud.deleteZone(zone, reason: .purged)
+        try await launch.engine.fetchNow()
+        let after = try JSONDecoder().decode(SyncRouterState.self, from: Data(contentsOf: launch.stateFile))
+        let previous = try JSONDecoder().decode(EngineCursor.self, from: #require(before.engineState))
+        let consumed = try JSONDecoder().decode(EngineCursor.self, from: #require(after.engineState))
+        #expect(previous.cursor < consumed.cursor && consumed.cursor == launch.cloud.clock)
+        #expect(launch.cloud.changes(since: consumed.cursor).zones.isEmpty)
+        #expect(first.isOptedIn(profile))
+        if restart == .stale || restart == .recreatedZone {
+            try FileManager.default.removeItem(at: file)
+            try FileManager.default.moveItem(at: backup, to: file)
+        }
+        if restart == .differentAccount {
+            launch.cloud.switchUser("another-user")
+            launch.cloud.createZone(zone)
+        } else if restart == .recreatedZone {
+            launch.cloud.createZone(zone)
+        }
+
+        let reopened = try #require(launch.start(installIDs: install))
+        let engine = try #require(launch.engines.last)
+        engine.available = false
+        reopened.sync.share(local, profileID: profile, force: true)
+        #expect(!reopened.sync.allowsZoneCreation(zone))
+        try await engine.sendNow()
+        #expect((launch.cloud.zones[zone] != nil) == (restart == .recreatedZone || restart == .differentAccount))
+        engine.available = true
+        await reopened.sync.refresh()
+        try await engine.sendNow()
+        #expect(reopened.isOptedIn(profile) == (restart == .recreatedZone))
+        #expect(launch.defaults.bool(forKey: CloudTabs.optInKey) == (restart == .recreatedZone))
+        #expect((launch.cloud.record(launch.personalSessionID) != nil) == (restart == .recreatedZone))
+    }
+
+    @Test func explicitReenrollmentOutlivesAnOlderTabFileWithAPendingStop() async throws {
+        let launch = Launch()
+        defer { launch.finish() }
+        let install = MemoryInstallIDStorage(value: UUID().uuidString)
+        let profile = Profile.original(), zone = SyncZone.profile(profile.id)
+        let tabs = try #require(launch.start(optedIn: true, installIDs: install))
+        try await launch.engine.sendNow()
+        await tabs.sync.refresh()
+        launch.engine.available = false
+        launch.cloud.deleteZone(zone, reason: .purged)
+        try await launch.engine.fetchNow()
+        #expect(!tabs.sync.allowsZoneCreation(zone))
+
+        let file = CloudTabs.stateFile(besides: launch.stateFile)
+        let backup = launch.directory.appending(path: "before-new-consent.json")
+        try FileManager.default.moveItem(at: file, to: backup)
+        try FileManager.default.createDirectory(at: file, withIntermediateDirectories: false)
+        tabs.setOptIn(false, for: profile)
+        tabs.setOptIn(true, for: profile)
+        try FileManager.default.removeItem(at: file)
+        try FileManager.default.moveItem(at: backup, to: file)
+
+        let reopened = try #require(launch.start(installIDs: install))
+        await reopened.sync.refresh()
+        reopened.sync.share(SyncSamples.session(tabs: ["https://new-choice.test/"]), profileID: profile.id, force: true)
+        try await #require(launch.engines.last).sendNow()
+        #expect(reopened.isOptedIn(profile.id))
+        let remote = try #require(launch.cloud.record(launch.personalSessionID))
+        #expect(try SessionCodec.decodeSession(remote.payload).windows.first?.nodes.first?.url == "https://new-choice.test/")
     }
 
     @Test func erasingAProfileDropsItsMirror() async throws {

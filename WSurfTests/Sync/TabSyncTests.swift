@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 WSurf Agency
 // SPDX-License-Identifier: BUSL-1.1
 
+import CloudKit
 import Foundation
 import Testing
 import WSurfCore
@@ -856,12 +857,78 @@ struct TabSyncTests {
     }
 }
 
+extension TabSyncTests {
+    enum ZoneAfterRejoin: CaseIterable { case removed, userDeleted, recreated }
+
+    @Test(arguments: ZoneAfterRejoin.allCases)
+    func lateZonePageVerifiesTheRejoinedZoneBeforePublishing(outcome: ZoneAfterRejoin) async throws {
+        let cloud = FakeSyncCloud(), air = device(cloud, "air"), studio = device(cloud, "studio")
+        studio.start(sharing: [personal])
+        try await publish(studio, SyncSamples.session(tabs: ["https://studio.test/"]))
+        let router = SyncRouter(state: .init(), persist: { _ in }, tabs: air.sync, vaults: nil)
+        air.engine.delegate = router
+        let held = HeldTabRead(air.engine)
+        held.userDeletedZone = outcome == .userDeleted
+        air.sync.reconcile(sharing: [personal])
+        air.sync.attach(held)
+        await air.sync.refresh()
+        // A second database page in the same fetch cycle arrives after the new enrollment saw Studio.
+        air.engine.beforeFetchDelivery = {
+            air.engine.beforeFetchDelivery = nil
+            air.sync.reconcile(sharing: [])
+            air.sync.reconcile(sharing: [personal])
+            await air.sync.refresh()
+            #expect(air.sync.remoteSessions(profileID: personal, fallbackLabel: "Device").map(\.id) == ["studio"])
+            cloud.deleteZone(personalZone, reason: .deleted)
+            if outcome == .recreated {
+                cloud.createZone(personalZone)
+            }
+            air.engine.available = false
+            try await air.engine.fetchNow()
+        }
+        try await air.engine.fetchNow()
+        #expect(!router.allowsZoneCreation(personalZone))
+        air.sync.share(SyncSamples.session(tabs: ["https://air.test/"]), profileID: personal, force: true)
+        try await air.engine.sendNow()
+        air.engine.available = true
+        await air.sync.refresh()
+        try await air.engine.sendNow()
+        #expect(air.box.ended == (outcome == .recreated ? [] : [personal]))
+        #expect((cloud.zones[personalZone] != nil) == (outcome == .recreated))
+        #expect((cloud.record(air.id(in: personalZone)) != nil) == (outcome == .recreated))
+    }
+
+    @Test func aPageFromBeforeFirstOptInChecksTheZoneBeforeItsFirstCreation() async throws {
+        let cloud = FakeSyncCloud(), air = device(cloud, "air")
+        let router = SyncRouter(state: .init(), persist: { _ in }, tabs: nil, vaults: nil)
+        air.engine.delegate = router
+        cloud.createZone(personalZone)
+        cloud.deleteZone(personalZone, reason: .deleted)
+        air.engine.beforeFetchDelivery = {
+            air.engine.beforeFetchDelivery = nil
+            air.engine.available = false
+            router.routeTabs(to: air.sync)
+            air.start(sharing: [personal])
+        }
+        try await air.engine.fetchNow()
+        #expect(!router.allowsZoneCreation(personalZone))
+        try await air.engine.sendNow()
+        #expect(cloud.zones[personalZone] == nil)
+        air.engine.available = true
+        await air.sync.refresh()
+        try await publish(air, SyncSamples.session(tabs: ["https://first.test/"]))
+        #expect(air.box.ended.isEmpty)
+        #expect(cloud.record(air.id(in: personalZone)) != nil)
+    }
+}
+
 /// Returns the snapshot taken before the injected event, even if that event cancels the read.
 @MainActor
 private final class HeldTabRead: SyncEngine, SyncAccountIdentity {
     let base: FakeSyncEngine
     var beforeReturn: ((String) async throws -> Void)?
     var duringIncremental: ((SyncFetchDelivery) async throws -> Void)?
+    var userDeletedZone = false
 
     init(_ base: FakeSyncEngine) {
         self.base = base
@@ -889,7 +956,12 @@ private final class HeldTabRead: SyncEngine, SyncAccountIdentity {
     }
 
     func fetchAll(zone: String) async throws -> SyncZoneRead {
-        let snapshot = try await base.fetchAll(zone: zone)
+        let snapshot: SyncZoneRead
+        do {
+            snapshot = try await base.fetchAll(zone: zone)
+        } catch let error as URLError where userDeletedZone && error.code == .fileDoesNotExist {
+            throw CKError(.userDeletedZone)
+        }
         try await beforeReturn?(zone)
         return snapshot
     }
