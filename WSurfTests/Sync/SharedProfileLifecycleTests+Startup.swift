@@ -273,4 +273,86 @@ extension SharedProfileLifecycleTests {
             return sent.setting == choice && sent.enrollment == channel.enrollment
         })
     }
+
+    @Test(arguments: [false, true])
+    func anIdleMacRecoversItsReturningSettingsAfterAccountVerification(damagedJournal: Bool) async throws {
+        let launch = Launch(), files = FileManager.default
+        defer { try? files.removeItem(at: launch.root) }
+        let profiles = ProfileStore(file: launch.list)
+        let stopped = profiles.add(name: "Stopped"), kept = profiles.add(name: "Kept")
+        defer {
+            for profile in [stopped, kept] {
+                BrowserProfileContext.forget(profile.id)
+                ProfileSettingsStore.forget(profile.id)
+                try? files.removeItem(at: profile.supportDirectory)
+            }
+        }
+        let model = "custom.journal-fixture"
+        let edit = MacSettingPayload(key: "selection", value: try JSONEncoder().encode(model))
+        var values: [String: Data] = [:]
+        let seed = CloudSettingsSync(stateFile: launch.settingsFile, read: { _, _ in values }, apply: { _, _, _, _ in })
+        let writer = FakeSyncEngine(cloud: launch.cloud, delegate: seed)
+        seed.attach(writer)
+        for profile in [stopped, kept] {
+            try await seed.enable(.providers, localProfileID: profile.id, cloudProfileID: profile.id)
+            LLMSettings(defaults: ProfileSettingsStore.defaults(for: profile)).providerID = model
+        }
+        writer.offline = true
+        values[edit.key] = edit.value
+        try seed.collectChanges()
+        let revoked = try #require(seed.channel(.providers, localProfileID: stopped.id))
+        let retained = try #require(seed.channel(.providers, localProfileID: kept.id))
+        try #require(revoked.records[edit.key]?.pending == edit && retained.records[edit.key]?.pending == edit)
+
+        let file = launch.settingsFile, held = launch.root.appending(path: "saved-settings"), journal = file.appendingPathExtension("opt-outs")
+        try files.moveItem(at: file, to: held)
+        try files.createDirectory(at: file, withIntermediateDirectories: false)
+        #expect(throws: (any Error).self) { try seed.disable(.providers, localProfileID: stopped.id) }
+        try files.removeItem(at: file)
+        try #require(files.fileExists(atPath: journal.path))
+        if damagedJournal {
+            try Data([0]).write(to: journal, options: .atomic)
+        }
+        let live = ProfileStore(file: launch.list)
+        try #require(live.verifiedProfiles?.contains(kept) == true)
+        let app = try launch.start(live)
+        defer { app.prepareToTerminate() }
+        let settings = try #require(app.settingsSync)
+        #expect(throws: CloudSettingsSync.Issue.unavailable) { try settings.accountDidResolve(launch.cloud.user) }
+        try #require(launch.engine == nil && !files.fileExists(atPath: file.path))
+        try #require(await waitUntil(timeout: .seconds(3)) { launch.clock.pendingCount == 1 })
+        try Data(contentsOf: held).write(to: file, options: .atomic)
+        launch.clock.advance(by: .seconds(30))
+
+        let sentID = SyncRecordID(zone: retained.zone, name: edit.recordName)
+        try #require(await waitUntil(timeout: .seconds(3)) {
+            !files.fileExists(atPath: journal.path) && (damagedJournal || launch.cloud.record(sentID) != nil)
+        })
+        let durable = try CloudSettingsSync.State.read(from: file)
+        #expect(durable.channels[revoked.zone] == nil && launch.cloud.names(in: revoked.zone).isEmpty)
+        if damagedJournal {
+            #expect(durable.channels.isEmpty && launch.engine == nil && launch.cloud.recordCount == 0)
+        } else {
+            let record = try #require(launch.cloud.record(sentID))
+            let sent = try #require(MacSettingRecord.decode(record.payload, recordName: sentID.name))
+            #expect(sent.setting == edit && sent.enrollment == retained.enrollment)
+        }
+    }
+
+    @Test func aNeverEnrolledMacWithAHealthyProfileListStaysIdle() async throws {
+        let launch = Launch(), files = FileManager.default
+        defer { try? files.removeItem(at: launch.root) }
+        let profiles = ProfileStore(file: launch.list)
+        let work = profiles.add(name: "Local only")
+        defer { try? files.removeItem(at: work.supportDirectory) }
+        let live = ProfileStore(file: launch.list)
+        try #require(live.verifiedProfiles?.contains(work) == true)
+        let app = try launch.start(live)
+        defer { app.prepareToTerminate() }
+        let settings = try #require(app.settingsSync)
+        try settings.accountDidResolve(launch.cloud.user)
+        await Task.yield()
+        #expect(!settings.checkpointUnavailable && launch.clock.pendingCount == 0)
+        #expect(launch.engine == nil && !files.fileExists(atPath: launch.settingsFile.path))
+    }
 }

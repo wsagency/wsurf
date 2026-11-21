@@ -83,7 +83,7 @@ final class CloudSync {
             stateFile: directory.appending(path: "iCloudSharedSpaces.json"), profiles: profiles, profileStore: profileStore, windows: windows
         ) : nil
         let settings = offersMacSync ? CloudSettingsSync(
-            stateFile: directory.appending(path: "iCloudMacSettings.json"), profiles: profiles, profileStore: profileStore
+            stateFile: directory.appending(path: "iCloudMacSettings.json"), profiles: profiles, profileStore: profileStore, clock: clock
         ) : nil
         // A missing or damaged file starts empty, which fetches everything once.
         let restored = (try? Data(contentsOf: stateFile)).flatMap { try? JSONDecoder().decode(SyncRouterState.self, from: $0) }

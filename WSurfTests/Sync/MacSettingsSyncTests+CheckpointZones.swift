@@ -281,6 +281,93 @@ extension MacSettingsSyncTests {
         #expect(fresh.enrollment != old.enrollment)
         #expect(MacSettingRecord.decode(record.payload, recordName: id.name)?.enrollment == fresh.enrollment)
     }
+
+    @Test(arguments: [false, true])
+    func restoringAnOldCheckpointCannotBorrowAReplacementEnrollment(denyConfirmation: Bool) async throws {
+        let disk = try CheckpointZones(root: lifecycleDirectory())
+        defer { disk.remove() }
+        let first = try disk.launch()
+        try await first.settings.enable(.providers, localProfileID: nil, cloudProfileID: nil)
+        try await first.engine.fetchNow()
+        let old = try #require(first.settings.channel(.providers, localProfileID: nil))
+        try #require(old.records["local"]?.pending?.value == disk.value)
+        let original = try Data(contentsOf: disk.file)
+        try FileManager.default.removeItem(at: disk.file)
+        let joining = try disk.launch()
+        disk.cloud.deleteZone(disk.zone, reason: .purged)
+        disk.cloud.createZone(disk.zone)
+        try await joining.engine.fetchNow()
+        try disk.expectCursorAtDeletion()
+
+        disk.value = Data([2])
+        if denyConfirmation {
+            joining.engine.duringAccountLookup = {
+                joining.engine.duringAccountLookup = nil
+                let pending = try #require(try CloudSettingsSync.State.read(from: disk.file).channels[disk.zone])
+                try #require(pending.enrollment != old.enrollment && pending.needsConfirmation)
+                try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: disk.file.deletingLastPathComponent().path)
+            }
+            let denied = await #expect(throws: CocoaError.self) {
+                try await joining.settings.enable(.providers, localProfileID: nil, cloudProfileID: nil)
+            }
+            try #require(denied?.code == .fileWriteNoPermission)
+            try disk.setAccessible(true)
+        } else {
+            try await joining.settings.enable(.providers, localProfileID: nil, cloudProfileID: nil)
+        }
+        let fresh = try #require(try CloudSettingsSync.State.read(from: disk.file).channels[disk.zone])
+        try #require(fresh.enrollment != old.enrollment && fresh.needsConfirmation == denyConfirmation)
+        let replacement = try Data(contentsOf: disk.file)
+
+        disk.value = Data([1])
+        try await disk.expectRevoked(afterRestoring: original)
+        disk.value = Data([2])
+        try replacement.write(to: disk.file, options: .atomic)
+        let current = try disk.launch()
+        let retained = try #require(current.settings.channel(.providers, localProfileID: nil))
+        #expect(retained.enrollment == fresh.enrollment && retained.needsConfirmation == denyConfirmation)
+        if denyConfirmation {
+            try current.settings.accountDidResolve(disk.cloud.user)
+            current.engine.add([.saveRecord(disk.localID)])
+            try await current.engine.sendNow()
+            #expect(disk.cloud.record(disk.localID) == nil)
+            try await current.settings.confirmEnrollment(retained)
+        }
+        try current.settings.accountDidResolve(disk.cloud.user)
+        try #require(await waitUntil(timeout: .seconds(3)) { disk.cloud.record(disk.localID) != nil })
+        let saved = try #require(disk.cloud.record(disk.localID))
+        let sent = try #require(MacSettingRecord.decode(saved.payload, recordName: saved.id.name))
+        #expect(sent.enrollment == fresh.enrollment && sent.value == disk.value)
+    }
+
+    @Test(arguments: [false, true])
+    func aLegacyZoneResetAllowsOnlyTheNewEnrollmentUntilTheNextPurge(restoreOldBeforePurge: Bool) async throws {
+        let disk = try CheckpointZones(root: lifecycleDirectory())
+        defer { disk.remove() }
+        let original = try disk.launch()
+        try await original.settings.enable(.providers, localProfileID: nil, cloudProfileID: nil)
+        let old = try Data(contentsOf: disk.file)
+        let defaults = try #require(UserDefaults(suiteName: disk.root.appending(path: "recovery").path))
+        defaults.set([disk.zone], forKey: disk.file.standardizedFileURL.path + ".zone-resets")
+        try #require(defaults.synchronize())
+
+        try await disk.expectRevoked(afterRestoring: old)
+        let next = try disk.launch()
+        try await next.settings.enable(.providers, localProfileID: nil, cloudProfileID: nil)
+        let fresh = try #require(next.settings.channel(.providers, localProfileID: nil))
+        let permitted = try Data(contentsOf: disk.file)
+        let reopened = try disk.launch()
+        try #require(reopened.settings.channel(.providers, localProfileID: nil)?.enrollment == fresh.enrollment)
+        if restoreOldBeforePurge {
+            try await disk.expectRevoked(afterRestoring: old)
+        }
+        let receiver = try disk.launch()
+        disk.cloud.deleteZone(disk.zone, reason: .encryptedDataReset)
+        disk.cloud.createZone(disk.zone)
+        try await receiver.engine.fetchNow()
+        try disk.expectCursorAtDeletion()
+        try await disk.expectRevoked(afterRestoring: permitted)
+    }
 }
 
 @MainActor
@@ -299,6 +386,24 @@ private final class CheckpointZones {
         SyncRecordID(zone: zone, name: MacSettingPayload(key: "local", value: nil).recordName)
     }
 
+    var file: URL {
+        directory.appending(path: "settings")
+    }
+
+    func expectRevoked(afterRestoring checkpoint: Data) async throws {
+        let previousWrites = cloud.writeCount
+        try checkpoint.write(to: file, options: .atomic)
+        let restored = try launch()
+        restored.engine.add([.saveRecord(localID)])
+        try restored.settings.accountDidResolve(cloud.user)
+        try await restored.engine.sendNow()
+        try #require(await waitUntil(timeout: .seconds(3)) {
+            !restored.settings.isEnabled(.providers, localProfileID: nil) || cloud.record(localID) != nil
+        })
+        #expect(!restored.settings.isEnabled(.providers, localProfileID: nil))
+        #expect(cloud.record(localID) == nil && cloud.writeCount == previousWrites)
+    }
+
     private var directory: URL {
         root.appending(path: "settings-store")
     }
@@ -309,7 +414,7 @@ private final class CheckpointZones {
 
     func launch() throws -> (settings: CloudSettingsSync, router: SyncRouter, engine: FakeSyncEngine) {
         let settings = CloudSettingsSync(
-            stateFile: directory.appending(path: "settings"), read: { [self] _, _ in ["local": value] }, apply: { _, _, _, _ in },
+            stateFile: file, read: { [self] _, _ in ["local": value] }, apply: { _, _, _, _ in },
             resetDefaults: UserDefaults(suiteName: root.appending(path: "recovery").path)!)
         let state: SyncRouterState
         do {

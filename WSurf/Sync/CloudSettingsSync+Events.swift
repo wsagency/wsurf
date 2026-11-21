@@ -194,7 +194,13 @@ extension CloudSettingsSync {
         var recheck: [String: UUID] = [:]
         var revoked: Set<String> = []
         for (zone, reason) in zones {
-            guard var channel = state.channels[zone] else { continue }
+            guard var channel = state.channels[zone] else {
+                // The permitted replacement may be on a different copy of the checkpoint.
+                if reason != .deleted, replacementEnrollment(in: zone) != nil {
+                    revoked.insert(zone)
+                }
+                continue
+            }
             switch reason {
             case .purged, .encryptedDataReset:
                 // CloudKit requires discarding the old cache even if another Mac has already re-created this zone.

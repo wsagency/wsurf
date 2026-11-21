@@ -93,12 +93,15 @@ final class CloudSettingsSync: SyncZoneHandler {
         state.channels.values.contains { permitsProfile($0.localProfileID) }
     }
 
-    convenience init(stateFile: URL, profiles: [Profile], profileStore: ProfileStore? = nil, adapter: MacSettingsSyncAdapter? = nil) {
+    convenience init(
+        stateFile: URL, profiles: [Profile], profileStore: ProfileStore? = nil, adapter: MacSettingsSyncAdapter? = nil,
+        clock: any Clock<Duration> = ContinuousClock()
+    ) {
         let adapter = adapter ?? MacSettingsSyncAdapter(profiles: profiles, profileStore: profileStore)
         self.init(
             stateFile: stateFile, snapshot: adapter.snapshot,
             apply: adapter.apply(_:key:for:profileID:),
-            discardWebsiteApprovals: adapter.discardWebsiteApprovals(profileID:)
+            discardWebsiteApprovals: adapter.discardWebsiteApprovals(profileID:), clock: clock
         )
         registerProfile = adapter.register
         self.profileStore = profileStore
@@ -144,6 +147,8 @@ final class CloudSettingsSync: SyncZoneHandler {
         } catch CocoaError.fileReadNoSuchFile {
             state = State()
             awaitingFirstCheckpoint = true
+            // A revocation journal means this Mac has a checkpoint to recover, even with every other feature off.
+            checkpointUnavailable = FileManager.default.fileExists(atPath: optOutFile.path)
             unreadableFetchStart = FetchStart()
         } catch is DecodingError {
             state = State()
@@ -237,10 +242,9 @@ final class CloudSettingsSync: SyncZoneHandler {
             proposed.collect(values)
             updateChannel(proposed)
             do {
+                try allowReplacementAfterReset(proposed)
                 try save()
-                // Keep the prior revocation until this replacement enrollment is on disk.
-                try updateHeldZones(.reset) { $0.remove(proposed.zone) }
-                try updateHeldZones(.recheck) { $0.remove(proposed.zone) }
+                try updateZoneRechecks { $0.remove(proposed.zone) }
             } catch {
                 state.channels[proposed.zone] = nil
                 throw error
@@ -529,7 +533,7 @@ final class CloudSettingsSync: SyncZoneHandler {
             throw error
         }
         // The checkpoint now owns each recovered check. A leftover fallback only repeats its verified read on relaunch.
-        try? updateHeldZones(.recheck) { $0.removeAll() }
+        try? updateZoneRechecks { $0.removeAll() }
         sendingAllowed = true
         let attempts = optOutsToFinish.union(zones)
         guard !attempts.isEmpty else { return }
@@ -734,15 +738,17 @@ final class CloudSettingsSync: SyncZoneHandler {
             clearEnrollments(for: nil)
             state.appliedAccountReset = reset
         }
-        for zone in heldZones(.reset) where state.channels[zone] != nil {
-            forget(zone: zone)
+        for zone in heldZones(.reset) {
+            if let channel = state.channels[zone], replacementEnrollment(in: zone) != channel.enrollment.uuidString {
+                forget(zone: zone)
+            }
         }
         for zone in heldZones(.recheck) where state.channels[zone]?.needsConfirmation == false {
             state.channels[zone]?.checkingDeletion = true
         }
     }
 
-    // Keep only zone names when the checkpoint and its adjacent opt-out journal are inaccessible.
+    // A pre-existing reset list has no replacement UUIDs, so every listed zone starts revoked.
     private enum ZoneHold: String {
         case reset = ".zone-resets"
         case recheck = ".zone-rechecks"
@@ -752,12 +758,31 @@ final class CloudSettingsSync: SyncZoneHandler {
         Set(resetDefaults.stringArray(forKey: accountResetKey + hold.rawValue) ?? [])
     }
 
-    private func updateHeldZones(_ hold: ZoneHold, _ update: (inout Set<String>) -> Void) throws {
-        let previous = heldZones(hold)
+    private func replacementKey(for zone: String) -> String {
+        accountResetKey + ZoneHold.reset.rawValue + "." + zone
+    }
+
+    func replacementEnrollment(in zone: String) -> String? {
+        resetDefaults.string(forKey: replacementKey(for: zone))
+    }
+
+    private func allowReplacementAfterReset(_ channel: MacSettingChannel) throws {
+        guard heldZones(.reset).contains(channel.zone) else { return }
+        // Even before account confirmation, only this new UUID may survive a checkpoint restore.
+        let key = replacementKey(for: channel.zone)
+        resetDefaults.set(channel.enrollment.uuidString, forKey: key)
+        guard resetDefaults.synchronize() else {
+            resetDefaults.removeObject(forKey: key)
+            throw CocoaError(.fileWriteUnknown)
+        }
+    }
+
+    private func updateZoneRechecks(_ update: (inout Set<String>) -> Void) throws {
+        let previous = heldZones(.recheck)
         var zones = previous
         update(&zones)
         guard zones != previous else { return }
-        let key = accountResetKey + hold.rawValue
+        let key = accountResetKey + ZoneHold.recheck.rawValue
         resetDefaults.set(zones.isEmpty ? nil : zones.sorted(), forKey: key)
         guard resetDefaults.synchronize() else {
             resetDefaults.set(previous.union(zones).sorted(), forKey: key)
@@ -766,17 +791,21 @@ final class CloudSettingsSync: SyncZoneHandler {
     }
 
     func holdZoneDeletions(resets: Set<String>, rechecks: Set<String>) throws {
-        try updateHeldZones(.reset) { $0.formUnion(resets) }
-        try updateHeldZones(.recheck) { $0.formUnion(rechecks) }
+        if !resets.isEmpty {
+            for zone in resets {
+                resetDefaults.removeObject(forKey: replacementKey(for: zone))
+            }
+            resetDefaults.set(heldZones(.reset).union(resets).sorted(), forKey: accountResetKey + ZoneHold.reset.rawValue)
+            guard resetDefaults.synchronize() else { throw CocoaError(.fileWriteUnknown) }
+        }
+        try updateZoneRechecks { $0.formUnion(rechecks) }
     }
 
     func saveAfterZoneRemoval(_ revoked: Set<String>, rechecking: Set<String> = []) throws {
-        do {
-            try save()
-        } catch {
-            try holdZoneDeletions(resets: revoked, rechecks: rechecking)
-            throw error
-        }
+        // The cursor may advance and a previous checkpoint may return even after a successful save.
+        let journal = Result { try holdZoneDeletions(resets: revoked, rechecks: rechecking) }
+        try save()
+        try journal.get()
     }
 
     func reportError() {
