@@ -12,10 +12,19 @@ import Testing
 struct SettingsNavigatorTests {
     @Test func categoryRawValuesAreStable() {
         let expected = [
-            "general", "appearance", "search", "provider", "profiles",
+            "general", "appearance", "search", "provider", "profiles", "sync",
             "privacy", "autofill", "websites", "downloads", "extensions", "advanced", "experiments", "about",
         ]
         #expect(SettingsCategory.allCases.map(\.rawValue) == expected)
+    }
+
+    @Test func syncCanBeOpenedDirectlyAndFoundByCategory() throws {
+        let sync = try #require(SettingsCategory(rawValue: "sync"))
+        #expect(sync.matches("icloud"))
+        #expect(SettingsIndex.all.contains { $0.category == sync && $0.id == "sync.spaces" })
+        #expect(SettingsIndex.all.contains { $0.category == sync && $0.id == "sync.otherDevices" })
+        #expect(SettingsIndex.all.contains { $0.category == sync && $0.id == "sync.vaults" })
+        #expect(SettingsIndex.all.contains { $0.category == sync && $0.id == "sync.keys" })
     }
 
     @Test func theProviderPageIsTitledAssistant() {

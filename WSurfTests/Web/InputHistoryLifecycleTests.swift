@@ -505,7 +505,7 @@ struct InputHistoryLifecycleTests {
         #expect(try harness.hasKeys(profile))
         let service = try #require(harness.history.store(for: profile)).service
 
-        await harness.history.erase(profile)
+        try await harness.history.erase(profile)
 
         #expect(!harness.exists(profile))
         #expect(try !harness.privateKeys.exists(service: service) && !harness.publicKeys.exists(service: service))
@@ -519,10 +519,10 @@ struct InputHistoryLifecycleTests {
         #expect(harness.publicKeys.itemCount == 0)
     }
 
-    @Test func erasingThePrivateProfileTouchesNothing() async {
+    @Test func erasingThePrivateProfileTouchesNothing() async throws {
         let harness = InputHistoryHarness()
         defer { harness.cleanUp() }
-        await harness.history.erase(.privateBrowsing())
+        try await harness.history.erase(.privateBrowsing())
         #expect(harness.calls.profiles.isEmpty)
         #expect(harness.publicKeys.eraseCount == 0)
     }

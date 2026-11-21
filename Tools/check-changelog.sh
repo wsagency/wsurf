@@ -3,8 +3,7 @@
 # SPDX-License-Identifier: BUSL-1.1
 #
 # Fails unless CHANGELOG.md has a "## <version> (build <n>)" section for the MARKETING_VERSION and CURRENT_PROJECT_VERSION
-# the project sets, and, for a 0.x version, fails unless the patch number equals the build number (0.1.4 is build 4). Every
-# candidate build bumps the version and adds its section (RELEASING.md).
+# the project sets. Candidate build numbers keep increasing across minor releases (RELEASING.md).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -16,15 +15,31 @@ if [[ -z $version || -z $build || $version == *$'\n'* || $build == *$'\n'* ]]; t
   exit 1
 fi
 
-# While the version is 0.x, build N is 0.<minor>.N: the patch number equals the build number.
-if [[ $version =~ ^0\.[0-9]+\.([0-9]+)$ && ${BASH_REMATCH[1]} != "$build" ]]; then
-  echo "error: version $version needs build ${BASH_REMATCH[1]} (for 0.x the patch number equals CURRENT_PROJECT_VERSION), found build $build" >&2
+# The 0.1.x candidates used their patch as the build number.
+if [[ $version =~ ^0\.1\.([0-9]+)$ && ${BASH_REMATCH[1]} != "$build" ]]; then
+  echo "error: version $version needs build ${BASH_REMATCH[1]} (for 0.1.x the patch number equals CURRENT_PROJECT_VERSION), found build $build" >&2
   exit 1
 fi
 
 heading="## $version (build $build)"
-if ! awk -v heading="$heading" 'index($0, heading) == 1 { found = 1 } END { exit !found }' CHANGELOG.md; then
-  echo "error: CHANGELOG.md has no '$heading' section" >&2
+if ! [[ $build =~ ^[1-9][0-9]*$ ]]; then
+  echo "error: CURRENT_PROJECT_VERSION must be a positive integer, found '$build'" >&2
+  exit 1
+fi
+
+# The app displays the newest WSurf section first. Upstream Linen headings have no build.
+if ! awk -v heading="$heading" -v build="$build" '
+  /^## .* \(build [0-9]+\)/ {
+    if (++sections == 1) current = (index($0, heading) == 1)
+    else {
+      sub(/^.* \(build /, "")
+      previous = $0 + 0
+      exit
+    }
+  }
+  END { exit !(current && build + 0 > previous + 0) }
+' CHANGELOG.md; then
+  echo "error: CHANGELOG.md must start its releases with '$heading' and a build newer than the previous release" >&2
   exit 1
 fi
 echo "changelog: $heading"

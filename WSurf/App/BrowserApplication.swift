@@ -23,6 +23,7 @@ final class BrowserApplication {
     @ObservationIgnored var mutedBefore: [UUID: Bool] = [:]
     private var privateSessionCleanups: [UUID: Task<Void, Never>] = [:]
     let updates = UpdateController()
+    @ObservationIgnored var showingCloudProfileDecision = false
     private var isReady = false
     /// The wait for an idle moment after launch, to start Chromium in a session that uses it (`ChromiumPrewarm`).
     @ObservationIgnored var chromiumPrewarm: ChromiumPrewarm?
@@ -162,7 +163,7 @@ final class BrowserApplication {
         let lastWindowID = defaults.string(forKey: Self.lastWindowKey).flatMap(UUID.init(uuidString:))
         let catalog = ProfileStore.shared
         InputHistory.shared.purgeAllProfilesAtLaunch(catalog.profiles)
-        CloudSync.startIfAvailable(profiles: catalog.profiles)
+        CloudSync.startIfAvailable(profileStore: catalog)
         let restore = beginLaunchRestore(of: catalog.profiles, lastWindowID: lastWindowID, launchProfileID: catalog.launchProfileID)
         if restore.lead != nil {
             // The window in front draws before the others are built.

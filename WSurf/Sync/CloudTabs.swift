@@ -8,13 +8,12 @@ import WSurfCore
 
 /// Shares each opted-in profile's open tabs with this person's other devices, and lists theirs.
 ///
-/// It exists only when `CloudSyncGate` allows it, so with the hidden flag off or in an unentitled build `shared` stays nil and
-/// every hook that asks it is a no-op. It reads the in-memory windows and the profile's pins. It never writes a session table. The
-/// one engine belongs to `CloudSync`, which attaches `sync` to it when this Mac shares something.
+/// Reads the in-memory windows and profile pins. CloudSync attaches its engine when the person shares a session.
 @Observable
 final class CloudTabs {
-    /// Set once by `startIfAvailable`, before any window exists. Tests set it and reset it in a serial suite.
-    static var shared: CloudTabs?
+    static var shared: CloudTabs? {
+        CloudSync.shared?.tabs
+    }
 
     /// The profile's own defaults domain holds the choice, so it goes when the profile is erased.
     static let optInKey = "sync.iCloudTabs"

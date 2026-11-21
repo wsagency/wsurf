@@ -22,6 +22,14 @@ extension CredentialManager {
         try await reading { access in try await store.syncVaultState(vaultID: vaultID, using: access) }
     }
 
+    func exportSyncAttachment(_ file: CredentialAttachment) async throws -> VaultSyncAttachment {
+        try await reading { access in try await store.exportSyncAttachment(file, vaultID: vaultID, using: access) }
+    }
+
+    func importSyncAttachment(_ file: CredentialAttachment, from encrypted: URL?) async throws -> VaultImportedAttachment {
+        try await reading { access in try await store.importSyncAttachment(file, from: encrypted, vaultID: vaultID, using: access) }
+    }
+
     /// Sync wrote to this vault: pages that show it read it again.
     func noteSyncedWrite() {
         syncWrites &+= 1

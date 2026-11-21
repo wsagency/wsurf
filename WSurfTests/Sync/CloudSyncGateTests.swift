@@ -69,6 +69,17 @@ struct CloudSyncGateTests {
         #expect(!CloudSyncGate.allowsTabs(inputs(tabs: false, vaults: false)) && !CloudSyncGate.allowsVaults(inputs(tabs: false, vaults: false)))
     }
 
+    @Test func entitledMacCanOfferSyncBeforeThePersonChoosesACategory() {
+        var eligible = inputs(tabs: false, vaults: false)
+        eligible.offersMacSync = true
+        #expect(CloudSyncGate.canOfferMacSync(eligible))
+        #expect(!CloudSyncGate.allowsTabs(eligible) && !CloudSyncGate.allowsVaults(eligible))
+        for var excluded in [inputs(missing: .cloudKitService), inputs(staged: true), inputs(tests: true), inputs(owns: false)] {
+            excluded.offersMacSync = true
+            #expect(!CloudSyncGate.canOfferMacSync(excluded))
+        }
+    }
+
     @Test func nothingIsAllowedWithoutAnyEntitlement() {
         let bare = CloudSyncGate.Inputs(
             tabsFlag: true, vaultFlag: true, isRunningTests: false, isStaged: false, ownsSession: true, entitlement: { _ in nil }

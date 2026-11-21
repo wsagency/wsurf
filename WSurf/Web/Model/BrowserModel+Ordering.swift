@@ -45,7 +45,7 @@ extension BrowserModel {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed != tab.customTitle else { return }
         tab.customTitle = trimmed == tab.pageTitle ? "" : trimmed
-        scheduleSave()
+        scheduleSave(renamed: .tab(tab.id))
     }
 
     func isKept(_ item: SidebarItem) -> Bool {
@@ -60,12 +60,16 @@ extension BrowserModel {
     /// The pin line: a root row is above it when it is kept, and everything inside a kept root folder is above it at any
     /// depth. Everything above the line is pinned.
     func isPinned(_ item: SidebarItem) -> Bool {
+        isKept(rootItem(containing: item))
+    }
+
+    func rootItem(containing item: SidebarItem) -> SidebarItem {
         let tree = reconciledTree()
         var top = item
         while let parent = tree.parent(of: top) {
             top = .folder(parent)
         }
-        return isKept(top)
+        return top
     }
 
     /// Settles the pinned pages after a change lands: a tab inside a pinned folder that has no pinned page takes the page
@@ -357,6 +361,7 @@ extension BrowserModel {
         }
         openerElsewhere[tab.id] = nil
         tabs.removeAll { $0 === tab }
+        sharedSpaceService?.removed(tab.id, in: self)
         storedTree = reconciledTree().removing([.tab(tab.id)])
         sidebarDidChange()
         // The title this tab gave its last visit is written now: nothing renames that visit once the tab is gone.
@@ -502,6 +507,13 @@ extension BrowserModel {
             (order.firstIndex(of: $0) ?? .max) < (order.firstIndex(of: $1) ?? .max)
         }
         let folder = TabFolder(name: name)
+        if let topmost {
+            if unplacedSpaceRows.contains(topmost) {
+                unplacedSpaceRows.insert(.folder(folder.id))
+            } else if pendingSpaceStore != nil {
+                folder.spaceID = spaceID(ofItem: topmost)
+            }
+        }
         folders.append(folder)
         if requestingRename {
             folderRenameID = folder.id
@@ -554,7 +566,7 @@ extension BrowserModel {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         folder.name = trimmed
-        scheduleSave()
+        scheduleSave(renamed: .folder(folder.id))
     }
 
     /// A preset color. It also puts a color the person chose out of use. One undo step.
@@ -632,6 +644,7 @@ extension BrowserModel {
     func deleteFolder(_ folder: TabFolder) {
         let tree = reconciledTree()
         guard foldersByID[folder.id] === folder else { return }
+        sharedSpaceService?.removed(folder.id, in: self)
         let parentID = tree.parent(of: .folder(folder.id))
         let before = tree.successor(of: .folder(folder.id))
         let children = tree.rows(in: folder.id)
@@ -827,10 +840,18 @@ extension BrowserModel {
     }
 
     func sidebarDidChange() {
+        let previousTabs = tabsByID, previousFolders = foldersByID
         tabsByID = Dictionary(tabs.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         foldersByID = Dictionary(folders.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         let tree = reconciledTree()
-        settleSpaces(in: tree)
+        settleSpaces(in: tree) { row in
+            switch row {
+            case .tab(let id):
+                previousTabs[id] == nil
+            case .folder(let id):
+                previousFolders[id] == nil
+            }
+        }
         sidebarTree = currentSpaceID == nil ? tree : tree.keepingRoot(where: isShown)
         splits = splits.reconciled(against: Set(tabsByID.keys))
         reconcileAnchors()

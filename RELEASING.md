@@ -279,7 +279,7 @@ git tag v1.1 origin/main && git push origin v1.1
 The release uses the latest published stable WSurf version as its baseline.
 A patch such as `0.1.28` → `0.1.29` runs quick validation for every change since
 the previous release. A first release or a new major or minor version such as
-`0.1.28` → `0.2.29` runs minor validation. From there the workflow:
+`0.1.31` → `0.2.0` runs minor validation. From there the workflow:
 
 1. Confirms the tag is on `main`.
 2. Runs the selected CI tier on that commit and stops if it fails.
@@ -327,13 +327,12 @@ Release requirements:
 - **Every candidate build has its own build number and changelog section.** A
   candidate is a local signed build, so it carries the Xcode project's values;
   this is the one place they change by hand. Each candidate build increments
-  `CURRENT_PROJECT_VERSION` and sets `MARKETING_VERSION`: while the version is
-  0.x, build N is `0.<minor>.N` (the 123rd build is `0.1.123`), and the
-  orchestrator proposes a minor bump (0.1 to 0.2) at checkpoints. Each candidate
+  `CURRENT_PROJECT_VERSION` and sets `MARKETING_VERSION`. From 0.2.0 onward a
+  minor release starts at patch zero and the build number continues across
+  versions. For example, 0.1.31 (31) is followed by 0.2.0 (32). Each candidate
   adds its own `## <version> (build <n>) — <date>` section at the top of
-  `CHANGELOG.md`. `Tools/check-changelog.sh` runs in the candidate gate and
-  fails without that section, and for a 0.x version also when the patch number
-  differs from the build number. The release workflow still finds the section
+  `CHANGELOG.md`. `Tools/check-changelog.sh` checks the first WSurf section
+  against the project and the preceding build number. The release workflow finds the section
   by its `## <version>` prefix.
 - **Every candidate build says which candidate it is.** The gate and the sign
   driver add two build settings to every `xcodebuild` call (build, test,
@@ -561,28 +560,47 @@ python3 Tools/check-icloud-development-signing.py verify \
 uses its own plist and profile. Ordinary builds use `WSurf/WSurf.entitlements`.
 Developer ID release and tip use their regular profiles. Enabling CloudKit for those
 exports requires Production grants, production push and deployment of the Production
-schema. Signing permits access to CloudKit. The test user gives consent separately
-with the launch-time feature preference and per-profile or per-vault switch below.
+schema. Each category requires the test user’s consent in **Settings → Sync**.
 
-To check private CloudKit transport on Studio and Air, use the standalone probe
-from the reviewed merge commit. Studio writes a synthetic marker, Air acknowledges
-it, and Studio confirms the reply. Cleanup clears that record's encrypted payload
-using its fetched change tag. The empty record remains in a dedicated Development zone.
-[Two-Mac CloudKit transport trial](Tools/CloudKitTransportProbe/README.md)
+Use the standalone probe from the validated merge to check private CloudKit
+on Studio and Air. The automated website settings trial sends a disposable
+zoom value from Studio to Air, returns Air’s edit to Studio, and verifies a
+reset. It uses the same settings encoding and encrypted CloudKit field as the
+app. The simpler transport trial exchanges a synthetic marker.
+[Two-Mac CloudKit trials](Tools/CloudKitTransportProbe/README.md)
 
-For the tab-sharing trial, use two fresh macOS test users with the same dedicated
-Apple Account. In each test user run
-`defaults write io.wsagency.wsurf experiments.iCloudTabs -bool YES`, relaunch
-WSurf and switch on **Settings → Profiles → Personal → Share tabs through iCloud**.
-Open a test link on one Mac and open its remote sidebar entry on the other.
-Only the Personal profile is eligible. Debug Stage and unsigned tests skip CloudKit.
+For the in-app trial, sign in to the same Apple Account in a fresh macOS test
+user on each Mac. Enable iCloud Keychain for the test passkey. Start with a
+local Space and a disposable tab on each Mac. The Personal tab list and the
+custom provider catalog can include existing data from that macOS user.
 
-For the vault trial use `experiments.iCloudVault` in place of `experiments.iCloudTabs`.
-Relaunch, create and unlock a disposable vault with a synthetic entry, then select
-**Settings → Autofill → Settings → Sync with iCloud** for that vault. On the other
-Mac use **Add to This Mac** and the same synced unlock passkey. Compare key checks
-and round-trip an edit to the test entry. These flags are read at launch. Each
-profile or vault still needs its own opt-in.
+1. In **Settings → Sync**, publish a profile on Studio and link Air to it.
+   Share a Space on Studio and join it on Air. Open two tabs with the same
+   URL, move one between shared Spaces, and close the other. Check the
+   sidebar on both Macs and their device-local Spaces. Enable pin sharing and
+   repeat with a selected Favorite.
+2. In the Personal profile, turn on **Share tabs through iCloud** on both Macs.
+   Open a tab from Studio’s device list on Air. Closing that copy leaves the
+   source tab on Studio.
+3. Enable **Share website settings** on both Macs. Change a test site’s engine
+   and zoom on Studio, reset them on Air, and reopen both profiles. Check that
+   a camera grant requests local approval on the receiving Mac.
+4. Create a disposable custom provider in the clean catalog, then enable
+   **Share custom providers**. Check
+   the profile’s model choice separately. For a synthetic provider key, enable
+   **Share saved keys with iCloud Keychain**, select the provider and approve
+   its endpoint on each Mac. A changed endpoint should request approval again.
+5. Enable **Find my vaults in iCloud** on both Macs. On Studio create and
+   unlock a disposable vault, add a test entry and an attachment, and turn on
+   **Sync with iCloud** for that vault. If Studio used a named profile, add
+   it on Air in **Settings → Profiles → On your other devices → Add to This Mac**
+   and open that profile. In **Settings → Sync → Open Vaults…**, use **Add to
+   This Mac…** and confirm with the synced unlock passkey. Compare key checks,
+   open the attachment and round-trip an edit. Check the unrelated local vault
+   on each Mac after relaunching.
+
+Each Mac can pause an individual category in **Settings → Sync**. Debug Stage
+and unsigned tests use isolated fixtures for these checks.
 
 ## Preview builds
 

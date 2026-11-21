@@ -48,14 +48,14 @@ struct VaultSyncEdgeTests {
         )
     }
 
-    @Test func aRemoteDeleteNeverMovesAnEntryWithFilesToTrashWithoutAsking() async throws {
+    @Test func aRemoteDeleteLeavesAnUnpublishedLocalFileForReview() async throws {
         let rig = Rig()
         defer { rig.finish() }
         let entry = syncAccounts(1)[0]
         let (a, va) = try await rig.syncedMac(holding: [entry])
         let (b, vb) = try await rig.addedMac()
         try await converge([a, b])
-        // The files of an entry are never synced, so B’s copy of the entry is the only place they are.
+        // This synthetic host has no blob for the new descriptor. A’s deletion is based on an older, inline-only entry.
         var withFile = entry
         withFile.attachments = [Self.scan()]
         vb.edit(withFile)
@@ -432,26 +432,26 @@ struct VaultSyncEdgeTests {
         #expect(rig.record(VaultSync.vaultRecordName) != nil && held.allSatisfy { rig.item($0) != nil })
     }
 
-    @Test func entriesThatKeepFindingTheirZoneMissingAskForItAtMostThreeTimesEach() async throws {
+    @Test func entriesWaitForTheirFirstHeaderWhenTheZoneSaveAndHeaderFail() async throws {
         let rig = Rig()
         defer { rig.finish() }
         let held = syncAccounts(2)
         let (a, va) = try rig.mac(holding: held)
         a.engine.losesZoneSaves = 100
-        // The `Vault` record is turned down for another reason, so only the entries find the zone missing.
+        // The header is refused independently of the missing zone. Entries must wait behind it.
         a.engine.refusesVaultRecord = true
 
         try await a.sync.enable(profileID: rig.profile, vaultID: rig.vaultID)
         try await a.pump()
 
-        #expect(held.allSatisfy { a.engine.saveAttempts[$0.id.uuidString] == 4 }, "the first save and three more, for each entry")
-        #expect(a.engine.losesZoneSaves == 96)
+        #expect(held.allSatisfy { a.engine.saveAttempts[$0.id.uuidString] == nil })
+        #expect(a.engine.losesZoneSaves == 99 && a.engine.saveAttempts[VaultSync.vaultRecordName] == 1)
         #expect(a.engine.pending.isEmpty)
         #expect(isSending(rig.status(a)) && rig.cloud.recordCount == 0)
         #expect(Set(va.accounts.keys) == Set(held.map(\.id)))
     }
 
-    @Test func anEditAfterTheLimitAsksForTheZoneAtMostThreeTimesMore() async throws {
+    @Test func anEditAfterTheZoneRetryLimitWaitsForTheHeader() async throws {
         let rig = Rig()
         defer { rig.finish() }
         let all = syncAccounts(3)
@@ -461,16 +461,20 @@ struct VaultSyncEdgeTests {
         try await a.pump()
         #expect(a.engine.losesZoneSaves == 96)
 
-        // The `Vault` record is at its limit. A new entry asks for the zone itself, three times, and then waits like the others.
+        // A new entry cannot bypass the first header or reset its bounded retries.
         va.add(all[2])
         await a.wrote(va)
         try await a.pump()
 
-        #expect(a.engine.losesZoneSaves == 93)
-        #expect(a.engine.saveAttempts[all[2].id.uuidString] == 4)
+        #expect(a.engine.losesZoneSaves == 96)
+        #expect(a.engine.saveAttempts[all[2].id.uuidString] == nil)
         #expect(a.engine.saveAttempts[VaultSync.vaultRecordName] == 4, "the Vault record asked no more than its four times")
         #expect(a.engine.pending.isEmpty && isSending(rig.status(a)))
         #expect(Set(va.accounts.keys) == Set(all.map(\.id)))
+        a.engine.losesZoneSaves = 0
+        a.sync.beat()
+        try await a.pump()
+        #expect(all.allSatisfy { rig.item($0) != nil })
     }
 
     @Test func theHeartbeatMakesNoZoneForAVaultWhoseServerFieldsAreStored() async throws {
@@ -480,29 +484,29 @@ struct VaultSyncEdgeTests {
         let (a, va) = try rig.mac(holding: held)
         try await a.sync.enable(profileID: rig.profile, vaultID: rig.vaultID)
 
-        // Another Mac enabled the vault at the same moment: its record is on the server, and this Mac's first save was turned down.
-        let id = SyncRecordID(zone: rig.zone, name: VaultSync.vaultRecordName)
-        let theirs = SyncRecord(id: id, type: .vault, schema: 1, payload: Data("theirs".utf8), systemFields: FakeSyncCloud.fields(for: 1))
-        await a.sync.handle(.sent(saved: [], deleted: [], failed: [SyncFailedSave(id: id, failure: .serverRecordChanged(theirs))]))
-        await a.sync.settle()
-        // The zone is made and the entries land, but the `Vault` record is turned down for another reason: it is still waiting.
-        a.engine.refusesVaultRecord = true
+        _ = try await rig.syncedMac(holding: [])
+        let header = try #require(rig.record(VaultSync.vaultRecordName))
+        // This send reaches the other Mac's header. The subsequent account/zone read cannot finish until connectivity returns.
+        var lookups = 0
+        a.engine.duringAccountLookup = {
+            lookups += 1
+            if lookups > 1 {
+                throw URLError(.notConnectedToInternet)
+            }
+        }
         try await a.pump()
-        #expect(rig.cloud.zones[rig.zone] != nil && rig.item(held[0]) != nil)
+        #expect(rig.record(VaultSync.vaultRecordName) == header && rig.item(held[0]) == nil)
         #expect(a.engine.pending.isEmpty && isSending(rig.status(a)))
 
-        // Another Mac removes the vault from iCloud, and this Mac has not been told when its heartbeat comes.
         rig.cloud.removeZoneSilently(rig.zone)
+        a.engine.duringAccountLookup = nil
         a.sync.beat()
         await a.sync.settle()
-
-        #expect(!a.engine.pending.contains(.saveZone(rig.zone)), "the heartbeat does not make a zone another Mac may have removed")
-        #expect(a.engine.pending.contains(.saveRecord(id)))
-        a.engine.refusesVaultRecord = false
+        #expect(!a.engine.pending.contains(.saveZone(rig.zone)))
         try await a.pump()
 
         #expect(rig.status(a) == .removed(.deleted))
-        #expect(rig.cloud.zones[rig.zone] == nil, "and nothing made it")
+        #expect(rig.cloud.zones[rig.zone] == nil)
         #expect(Set(va.accounts.keys) == Set(held.map(\.id)))
     }
 
@@ -540,7 +544,8 @@ struct VaultSyncEdgeTests {
         // Another Mac enabled the vault at the same moment: its record is on the server, and this Mac's first save was turned down.
         let id = SyncRecordID(zone: rig.zone, name: VaultSync.vaultRecordName)
         let theirs = SyncRecord(id: id, type: .vault, schema: 1, payload: Data("theirs".utf8), systemFields: FakeSyncCloud.fields(for: 1))
-        await a.sync.handle(.sent(saved: [], deleted: [], failed: [SyncFailedSave(id: id, failure: .serverRecordChanged(theirs))]))
+        let attempted = try #require(a.sync.record(for: id))
+        await a.sync.handle(.sent(saved: [], deleted: [], failed: [SyncFailedSave(id: id, failure: .serverRecordChanged(theirs), attempted: attempted)]))
         await a.sync.settle()
         try await a.pump()
 

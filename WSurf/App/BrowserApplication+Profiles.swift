@@ -6,14 +6,21 @@
 import Foundation
 
 extension BrowserApplication {
-    /// Release every window before removing a profile's website and disk data.
+    /// Regular windows keep their place and adopt the first surviving profile. A micro window belongs to the page it is showing.
     func prepareToRemove(profile: Profile) async {
-        guard !profile.isOriginal else { return }
-        let affected = windows.filter { $0.profiles.current.id == profile.id }
-        for coordinator in affected {
+        guard !profile.isOriginal, !profile.isPrivate else { return }
+        for coordinator in windows where !coordinator.isClosed && coordinator.context.profile.id == profile.id {
+            if !coordinator.isMicro {
+                await coordinator.leaveErasedProfile(profile)
+                continue
+            }
+            let tabs = coordinator.browser.tabs
             coordinator.closeWindow()
-            if windows.contains(where: { $0 === coordinator }) {
+            if !coordinator.isClosed {
                 coordinator.windowDidClose()
+            }
+            for tab in tabs {
+                await tab.waitForRetirement()
             }
         }
         forgetProfile(profile.id)

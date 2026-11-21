@@ -115,7 +115,10 @@ struct LiveWindowRig {
         context.sitePermissions.setEngine(engine, for: origin)
         context.sitePermissions.setAutoplay(.allow, for: origin)
         let app = BrowserApplication(defaults: InMemoryUserDefaults(inheriting: .standard), notifications: NotificationCenter())
-        let coordinator = app.newWindow(profile: profile, show: false)
+        // The rig exercises a browsing window with its page visible after first-run setup.
+        let coordinator = PerfProbe.withOnboardingDone {
+            app.newWindow(profile: profile, show: false)
+        }
         coordinator.showBrowser(activate: false)
         var failure: (any Error)?
         do {

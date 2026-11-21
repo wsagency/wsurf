@@ -12,6 +12,7 @@ import Testing
 /// profile every installation already has keeps the files the browser has
 /// always used, so there is no migration to get wrong.
 @MainActor
+@Suite(EmptyProfileKeychain())
 struct ProfileTests {
     private func makeStore() -> (ProfileStore, URL) {
         let file = URL(filePath: NSTemporaryDirectory())

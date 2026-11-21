@@ -158,7 +158,7 @@ struct SidebarIconAlignmentTests {
     private struct Fixture {
         let coordinator: AppCoordinator
         let context: SidebarRowContext
-        let restore: () -> Void
+        let tearDown: () -> Void
 
         var browser: BrowserModel {
             coordinator.browser
@@ -180,7 +180,8 @@ struct SidebarIconAlignmentTests {
             space: "SidebarIconAlignmentTests",
             frames: SidebarFrames()
         )
-        return Fixture(coordinator: coordinator, context: context, restore: {
+        return Fixture(coordinator: coordinator, context: context, tearDown: {
+            coordinator.browser.closeAllTabs(saving: false)
             settings.sidebarFontSize = saved.2
             settings.sidebarFontFamily = saved.3
             settings.themeAdjustments = saved.1
@@ -220,7 +221,10 @@ struct SidebarIconAlignmentTests {
         window.isReleasedWhenClosed = false
         window.appearance = NSAppearance(named: .darkAqua)
         window.contentView = host
-        defer { window.close() }
+        defer {
+            window.contentView = nil
+            window.close()
+        }
         host.layoutSubtreeIfNeeded()
         host.displayIfNeeded()
         let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
@@ -347,7 +351,7 @@ struct SidebarIconAlignmentTests {
     private func measure(_ cell: AlignmentCell, drawn: ((NSBitmapImageRep) -> Void)? = nil) throws -> AlignmentOffsets {
         let settings = BrowserSettings.application
         let fixture = makeFixture()
-        defer { fixture.restore() }
+        defer { fixture.tearDown() }
         settings.themeAdjustments["standard"] = ThemeAdjustment(tabIconSize: cell.iconSize)
         settings.sidebarFontSize = cell.fontSize
         settings.sidebarFontFamily = cell.family
@@ -367,22 +371,22 @@ struct SidebarIconAlignmentTests {
         let row: AnyView
 
         if cell.source.isFolder {
-            let inFolder = fixture.browser.newTab()
+            let inFolder = fixture.browser.addSidebarRowTab()
             let folder = fixture.browser.createFolder(named: AlignmentMatrix.title, containing: [inFolder])
             folder.isExpanded = cell.source == .folderOpen
             folder.size = cell.folderSize
             folder.color = .red
             folder.symbol = cell.source.chosenSymbol
             // The tab opened last is the current one and is filled; the rows measured are not it.
-            _ = fixture.browser.newTab()
+            _ = fixture.browser.addSidebarRowTab()
             total = cell.source == .folderOpen
                 ? rowHeight + SidebarMetrics.rowVerticalSpacing(settings: settings) + SidebarMetrics.rowHeight(settings: settings) + 2 * outline
                 : rowHeight
             row = AnyView(FolderSection(folder: folder, depth: 0, context: fixture.context))
         } else {
-            let tab = fixture.browser.newTab()
+            let tab = fixture.browser.addSidebarRowTab()
             // The tab opened last is the current one and is filled; the row measured is not it.
-            _ = fixture.browser.newTab()
+            _ = fixture.browser.addSidebarRowTab()
             tab.title = AlignmentMatrix.title
             tab.urlString = address(of: cell.source)
             tab.favicon = favicon(for: cell.source)

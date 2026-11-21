@@ -349,6 +349,11 @@ final class FakeVaultHost: VaultSyncHost {
         cards[profileID]
     }
 
+    func currentLease(profileID: UUID, vaultID: UUID) -> UInt64? {
+        guard let vault = vault(profile: profileID, vault: vaultID), !vault.isLocked else { return nil }
+        return vault.lease
+    }
+
     func syncKey(profileID: UUID, vaultID: UUID) async -> VaultSyncKey? {
         guard let vault = vault(profile: profileID, vault: vaultID), !vault.isLocked else { return nil }
         return vault.syncKey

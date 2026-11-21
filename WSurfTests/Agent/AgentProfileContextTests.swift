@@ -13,6 +13,52 @@ import Testing
 @MainActor
 @Suite(.serialized, .boundedWebViews, .exclusiveExternalApp)
 struct AgentProfileContextTests {
+    @Test func missingCustomDefinitionKeepsWindowAndUtilityOnTheSelectedProvider() {
+        let profile = Profile(id: UUID(), name: "Runtime fixture", symbol: "person", color: .gray)
+        let context = BrowserProfileContext(profile: profile)
+        let settings = context.modelSettings
+        let missing = ProviderCatalog.newCustom()
+        // A tombstone removes the global definition while this profile keeps its saved selection and model.
+        settings.providerID = missing.id
+        settings.setModel("saved-fixture-model", for: missing)
+        defer {
+            ProfileSettingsStore.forget(profile.id)
+            try? FileManager.default.removeItem(at: profile.supportDirectory)
+            try? FileManager.default.removeItem(at: FaviconLoader.cacheDirectory(for: profile))
+        }
+        var resolved: [Provider] = [], utilityModels: [String] = []
+        let registry = ModelProviderRegistry()
+        for candidate in [missing, ProviderCatalog.openAI, ProviderCatalog.appleOnDevice] {
+            registry.register(providerID: candidate.id) { provider in
+                resolved.append(provider)
+                return ContextProvider(configuration: provider, turns: [:],
+                                       availability: provider.id == ProviderCatalog.openAI.id ? .available : .unavailable("Fixture"),
+                                       utility: { model in
+                                           utilityModels.append(model)
+                                           return HarnessScript([.text("Fixture")])
+                                       })
+            }
+        }
+        let window = AppCoordinator(browser: BrowserModel(context: context, windowID: UUID()), modelProviders: registry)
+        window.voiceConfigurationID = "apple:" + missing.id
+        window.configureEngines()
+        #expect(window.selectedProvider.id == missing.id)
+        #expect(window.selectedProvider.baseURL == nil)
+        #expect(window.selectedModel == "saved-fixture-model")
+        #expect(window.activeProvider == nil)
+        window.closeWindow()
+
+        resolved = []
+        let model = LLMSettings.$scoped.withValue(settings) {
+            UtilityModelSource.$resolve.withValue(registry.resolve) { UtilityModelSource.make() }
+        }
+        #expect(model is HarnessScript)
+        #expect(utilityModels == ["saved-fixture-model"])
+        #expect(resolved.map(\.id) == [missing.id])
+        #expect(resolved.first?.baseURL == nil)
+        #expect(settings.providerID == missing.id)
+    }
+
     @Test func concurrentTurnsKeepProfileSettings() async throws {
         let firstProvider = try #require(ProviderCatalog.builtIn.first { $0.id == "anthropic" })
         let secondProvider = try #require(ProviderCatalog.builtIn.first { $0.id == "google" })
@@ -280,7 +326,12 @@ private struct ContextProvider: ModelProvider {
     let configuration: Provider
     let turns: [String: ContextTurn]
     let capabilities: ModelProviderCapabilities = [.toolCalling]
-    let availability: ModelProviderAvailability = .available
+    var availability: ModelProviderAvailability = .available
+    var utility: ((String) -> (any LanguageModel)?)?
+
+    func makeUtilityModel(model: String) -> (any LanguageModel)? {
+        utility?(model)
+    }
 
     func availableModels() async throws -> [String] {
         []

@@ -108,7 +108,7 @@ struct VaultRoutingTests {
             CredentialManager.readAuditsForTesting[profile.id] = audit
             defer { CredentialManager.readAuditsForTesting[profile.id] = nil }
 
-            let note = await CredentialErasureNote.note(for: profile)
+            let note = try await CredentialErasureNote.warning(for: profile).text
 
             let expected = CredentialErasureNote.text(listing.map { listed in
                 listed.vaultID == vaults[0].vaultID

@@ -245,9 +245,20 @@ nonisolated enum VaultBlob {
         }
     }
 
-    private static func decrypt(_ attachment: CredentialAttachment, key: SymmetricKey, from input: FileHandle, to temp: URL) throws {
-        let output = try FileHandle(forWritingTo: temp)
-        defer { try? output.close() }
+    /// Authenticate the complete encrypted file before a synced account can refer to it.
+    static func verify(_ attachment: CredentialAttachment, at file: URL, key: SymmetricKey) throws {
+        guard (try file.resourceValues(forKeys: [.fileSizeKey])).fileSize == Int(storedBytes(size: attachment.size)) else {
+            throw VaultFileError.damaged
+        }
+        let input = try FileHandle(forReadingFrom: file)
+        defer { try? input.close() }
+        guard try readFully(input, count: magic.count) == magic else { throw VaultFileError.damaged }
+        try decrypt(attachment, key: key, from: input, to: nil)
+    }
+
+    private static func decrypt(_ attachment: CredentialAttachment, key: SymmetricKey, from input: FileHandle, to temp: URL?) throws {
+        let output = try temp.map { try FileHandle(forWritingTo: $0) }
+        defer { try? output?.close() }
         var hash = SHA256()
         var left = attachment.size
         let lengths = chunkLengths(size: attachment.size)
@@ -267,9 +278,9 @@ nonisolated enum VaultBlob {
             let kept = plain.prefix(Int(min(Int64(length), left)))
             hash.update(data: kept)
             left -= Int64(kept.count)
-            try output.write(contentsOf: kept)
+            try output?.write(contentsOf: kept)
         }
-        try output.close()
+        try output?.close()
         guard left == 0, Data(hash.finalize()) == attachment.sha256 else { throw VaultFileError.damaged }
     }
 

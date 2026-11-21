@@ -54,6 +54,7 @@ extension ProfileVaultStore {
         if let candidates {
             pendingBlobs.subtract(candidates)
         }
+        let importPins = syncImportPins
         let pending = pendingBlobs
         let folder = blobFolder(vaultID)
         return try await readHistory(vaultID, access) { db, grant, opened in
@@ -61,7 +62,7 @@ extension ProfileVaultStore {
             for id in contents.partial.subtracting(pending) {
                 VaultBlob.removePartial(id, in: folder)
             }
-            var unneeded = contents.stored.subtracting(pending)
+            var unneeded = contents.stored.subtracting(pending).subtracting(importPins.ids)
             if let candidates {
                 unneeded.formIntersection(candidates)
             }

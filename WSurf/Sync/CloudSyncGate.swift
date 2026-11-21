@@ -4,14 +4,12 @@
 import Foundation
 import Security
 
-/// Whether this process may reach CloudKit at all, for tab sharing and for vault sync. Creating a container in a process whose signed
-/// entitlements lack the iCloud keys raises an Objective-C exception that Swift cannot catch, so every condition is read before the
-/// first container exists. An unsigned test build, a build with a bundle ID suffix and a stage app read no entitlement and never pass.
-/// Each feature has its own hidden flag; the environment checks are shared.
+/// Verify the process and its signed grants before creating a CloudKit container. On a development-signed Mac,
+/// Settings can offer each category before any content sharing is enabled.
 enum CloudSyncGate {
-    /// Hidden. Turn it on with `defaults write <bundle id> experiments.iCloudTabs -bool YES`.
+    /// Restores the tab service after the person enables Other Devices. Per-profile consent controls its snapshots.
     static let tabsFlagKey = "experiments.iCloudTabs"
-    /// Hidden, and off until the owner's two-Mac passkey check passes. `defaults write <bundle id> experiments.iCloudVault -bool YES`.
+    /// Restores vault discovery. Each vault has its own consent to share entries and files.
     static let vaultFlagKey = "experiments.iCloudVault"
     static let container = "iCloud.io.wsagency.wsurf"
 
@@ -22,6 +20,7 @@ enum CloudSyncGate {
         var isStaged: Bool
         var ownsSession: Bool
         var entitlement: (String) -> Any?
+        var offersMacSync = false
 
         static var live: Inputs {
             let tabs = UserDefaults.standard.bool(forKey: tabsFlagKey)
@@ -32,10 +31,16 @@ enum CloudSyncGate {
                 isRunningTests: AppDatabase.isRunningTests,
                 isStaged: stageIsActive,
                 // A second copy of the app keeps nothing and so syncs nothing.
-                ownsSession: (tabs || vaults) && AppDatabase.ownsSession,
-                entitlement: signedEntitlement
+                ownsSession: AppDatabase.ownsSession,
+                entitlement: signedEntitlement,
+                offersMacSync: true
             )
         }
+    }
+
+    /// The Mac can show the sharing controls before someone chooses what to send.
+    static func canOfferMacSync(_ inputs: Inputs) -> Bool {
+        inputs.offersMacSync && environmentAllows(inputs)
     }
 
     static func allowsTabs(_ inputs: Inputs) -> Bool {

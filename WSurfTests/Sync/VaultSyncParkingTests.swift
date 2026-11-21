@@ -19,7 +19,7 @@ struct VaultSyncParkingTests {
     /// `payload` with its format byte set to one this build does not know.
     private static func inANewerFormat(_ payload: Data) -> Data {
         var unknown = payload
-        unknown[unknown.startIndex] = 2
+        unknown[unknown.startIndex] = VaultSyncCodec.assetFormat + 1
         return unknown
     }
 

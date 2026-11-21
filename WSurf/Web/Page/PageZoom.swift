@@ -7,16 +7,25 @@ import Foundation
 
 @MainActor
 final class PageZoomStore {
-    private var levels: [String: Double]
-    private let file: URL
+    private(set) var levels: [String: Double] = [:]
+    private let writes: QueuedJSONFile
     private let persists: Bool
 
     init(file: URL, persists: Bool = true) {
-        self.file = file
+        writes = QueuedJSONFile(file)
         self.persists = persists
-        levels = persists
-            ? ((try? Data(contentsOf: file)).flatMap { try? JSONDecoder().decode([String: Double].self, from: $0) } ?? [:])
-            : [:]
+        try? loadIfNeeded()
+    }
+
+    private func loadIfNeeded() throws {
+        if persists {
+            try writes.readIfNeeded([String: Double].self) { levels = $0 }
+        }
+    }
+
+    func prepareForSync() throws {
+        try loadIfNeeded()
+        try writes.flushPending(levels)
     }
 
     func level(for host: String) -> CGFloat? {
@@ -24,17 +33,32 @@ final class PageZoomStore {
     }
 
     func set(_ zoom: CGFloat, for host: String, defaultZoom: CGFloat) {
-        guard !host.isEmpty else { return }
-        if abs(zoom - defaultZoom) < 0.005 {
-            guard levels.removeValue(forKey: host) != nil else { return }
-        } else {
-            let value = Double(zoom)
-            guard levels[host] != value else { return }
-            levels[host] = value
-        }
-        guard persists else { return }
-        let snapshot = levels
-        Task { await JSONFileStore.shared.write(snapshot, to: file) }
+        guard (try? loadIfNeeded()) != nil else { return }
+        let value = abs(zoom - defaultZoom) < 0.005 ? nil : Double(zoom)
+        guard levels[host] != value else { return }
+        setOverride(value, for: host, saving: writes.schedule)
     }
 
+    func receiveOverride(_ value: Double?, for host: String) throws {
+        guard persists else { throw CocoaError(.fileWriteNoPermission) }
+        try loadIfNeeded()
+        try setOverride(value, for: host, saving: writes.saveNow)
+    }
+
+    private func setOverride(_ value: Double?, for host: String, saving: ([String: Double]) throws -> Void) rethrows {
+        guard !host.isEmpty else { return }
+        var next = levels
+        next[host] = value
+        if persists {
+            try saving(next)
+        }
+        levels = next
+        if persists {
+            MacSettingsChange.post(self)
+        }
+    }
+
+    func waitForPendingSave() async {
+        await writes.waitForPendingSave()
+    }
 }

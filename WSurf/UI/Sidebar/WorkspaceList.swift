@@ -469,7 +469,7 @@ struct WorkspaceList<TopBar: View, BottomBar: View>: View {
         } else if pinDrop.isArmed {
             browser.pinAtTop(drag.items)
             settled = true
-        } else if let space = model.armedSpaceID.flatMap({ id in coordinator.spaceMoveTargets.first { $0.id == id } }) {
+        } else if let space = model.armedSpaceID.flatMap({ id in browser.spaceMoveTargets(for: drag.items).first { $0.id == id } }) {
             coordinator.moveToSpace(drag.items, space: space)
             settled = true
         }

@@ -8,16 +8,18 @@ import Foundation
 import MCP
 import Network
 import Testing
+import WebKit
 
 @testable import WSurf
 
 @MainActor
 @Suite(.serialized, .boundedWebViews, .noAnnouncePause)
 struct MCPWindowScopeTests {
-    private func window(in app: BrowserApplication, privately: Bool = false) -> AppCoordinator {
+    private func window(in app: BrowserApplication, privately: Bool = false, catalog: ProfileStore = .shared) -> AppCoordinator {
         let profile = privately ? Profile.privateBrowsing() : .original()
         let context = BrowserProfileContext.shared(for: profile)
-        let coordinator = AppCoordinator(browser: BrowserModel(context: context, windowID: UUID()))
+        let selection = ProfileStore.selection(profile: profile, catalog: catalog)
+        let coordinator = AppCoordinator(browser: BrowserModel(context: context, windowID: UUID()), profiles: selection)
         app.register(coordinator)
         coordinator.showBrowser(activate: false)
         return coordinator
@@ -56,18 +58,27 @@ struct MCPWindowScopeTests {
     func retiringAWindowRevokesOnlyItsAcceptedConnection(switchProfile: Bool) async throws {
         let directory = "/tmp/wsurf-mcp-window-\(UUID().uuidString)"
         let endpoint = directory + "/browser.sock"
+        let catalogFile = URL(fileURLWithPath: directory).appendingPathExtension("json")
+        let catalog = ProfileStore(file: catalogFile)
+        let other = catalog.add(name: "Other")
+        Profile.dataStoreForTesting[other.id] = .nonPersistent()
         let app = BrowserApplication()
         app.mcpServer = BrowserMCPServer(
             endpoint: endpoint,
             target: { [weak app] in app?.activeCoordinator?.browser },
             available: { _ in true }
         )
-        let first = window(in: app)
-        let second = window(in: app)
+        let first = window(in: app, catalog: catalog)
+        let second = window(in: app, catalog: catalog)
         defer {
             app.mcpServer.stop()
             first.closeWindow()
             second.closeWindow()
+            BrowserProfileContext.forget(other.id)
+            SpaceStore.forget(other.id)
+            Profile.dataStoreForTesting[other.id] = nil
+            try? FileManager.default.removeItem(at: other.supportDirectory)
+            try? FileManager.default.removeItem(at: catalogFile)
             try? FileManager.default.removeItem(atPath: directory)
         }
         app.mcpServer.setEnabled(true)
@@ -97,8 +108,8 @@ struct MCPWindowScopeTests {
         #expect(app.mcpServer.sessions.count == 2)
 
         if switchProfile {
-            let profile = Profile(id: UUID(), name: "Other", symbol: "person", color: .gray)
-            await first.switchProfile(to: profile)
+            await first.switchProfile(to: other)
+            try #require(first.browser.context.profile.id == other.id)
         } else {
             first.closeWindow()
         }

@@ -3,6 +3,7 @@
 
 import Foundation
 import GRDB
+import Observation
 import os
 
 /// One pinned item of a profile: a tab (a pin or a Favorite) or a folder, with its place in the profile's tree.
@@ -41,6 +42,8 @@ nonisolated struct ProfilePin: Codable, Equatable, FetchableRecord, PersistableR
     var customColor: String?
     /// A folder's own SF Symbol; nil is the plain folder icon.
     var symbol: String?
+    /// Shared between this Mac's windows. Older pins have no evidence of their pre-pin Space.
+    var requiresSpacePlacement: Bool? = false
 
     /// Parents before children, siblings by key. This is the order to insert rows in, because a child
     /// references its parent.
@@ -99,6 +102,7 @@ nonisolated struct ProfilePin: Codable, Equatable, FetchableRecord, PersistableR
 
 /// The pins of one profile database, shared by every window that uses it.
 @MainActor
+@Observable
 final class ProfilePinStore {
     private struct Entry {
         weak var store: ProfilePinStore?
@@ -109,7 +113,7 @@ final class ProfilePinStore {
 
     private let database: AppDatabase
     private let subscribers = NSHashTable<BrowserModel>.weakObjects()
-    private var isPublishing = false
+    @ObservationIgnored private var isPublishing = false
     private(set) var pins: [ProfilePin]
     /// False when the stored pins could not be read. Nothing may replace them then.
     let isAvailable: Bool
@@ -137,6 +141,13 @@ final class ProfilePinStore {
         return store
     }
 
+    /// A replacement publication needs committed rows, including edits made while the previous instance was paused.
+    func readForPublication() throws -> [ProfilePin] {
+        // The session owner falls back to a temporary database if its on-disk profile cannot open.
+        guard !database.isEphemeral || !AppDatabase.ownsSession else { throw CocoaError(.fileReadUnknown) }
+        return try database.writer.read { try ProfilePin.fetchAll($0) }
+    }
+
     func subscribe(_ model: BrowserModel) {
         subscribers.add(model)
     }
@@ -160,8 +171,12 @@ final class ProfilePinStore {
             }
         } catch {
             Pipeline.log.error("pins: write failed")
+            return
         }
         pins = next
+        if let source {
+            source.sharedSpaceService?.pinsChanged(in: source.context.profile, store: self)
+        }
         isPublishing = true
         defer { isPublishing = false }
         for model in subscribers.allObjects where model !== source && model.attachedPinStore === self {

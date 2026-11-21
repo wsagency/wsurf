@@ -22,14 +22,14 @@ nonisolated struct SyncPass {
     var conflicts: [UUID: ConflictRow] = [:]
     /// Accounts decided: their outbox rows are dropped, and a review row they had is replaced or removed.
     var decided: Set<UUID> = []
-    /// Inbox rows taken in, deleted by version so a newer row that arrived meanwhile stays.
+    /// Exact inbox rows taken in by this pass.
     var processed: [InboxRow] = []
     /// Review rows answered.
     var answered: Set<UUID> = []
     var envelopes: [UUID: (version: UInt64, envelope: Data)] = [:]
     var unreadable = 0
-    /// Accounts whose record came back as the very row this Mac sealed: the send is done, whether or not its `.sent` arrived.
-    var own: Set<UUID> = []
+    var blocked: Set<UUID> = []
+    var pins: [VaultImportedAttachment] = []
     /// The account each write puts in the vault, for the view that follows the commit.
     var replacements: [UUID: CredentialAccount] = [:]
     /// Accounts whose entry another entry still holds the item of: left in the inbox until the rest of the drain is in, because the
@@ -101,18 +101,25 @@ extension VaultSync {
         var staleRetries = 0
         var open: (view: VaultView, syncKey: VaultSyncKey)?
         var deferred = Set<UUID>()
+        var blocked = Set<UUID>()
         var settling = false
+        var checkedServer = false
         while true {
             let mine = token(key)
+            let generationBeforeBatch = generation
             guard let (database, _) = runningRow(key), stillOpen(key, mine) else { return }
-            var batch = (try? database.read { try $0.inbox(key.vaultID, limit: Self.drainBatch, excluding: deferred) }) ?? []
+            var batch = (try? database.read { try $0.inbox(key.vaultID, limit: Self.drainBatch, excluding: deferred.union(blocked)) }) ?? []
             if batch.isEmpty, !deferred.isEmpty {
                 // Everything else is in: what waited for it is decided now, and a clash that is still there is real.
                 settling = true
                 deferred = []
-                batch = (try? database.read { try $0.inbox(key.vaultID, limit: Self.drainBatch) }) ?? []
+                batch = (try? database.read { try $0.inbox(key.vaultID, limit: Self.drainBatch, excluding: blocked) }) ?? []
             }
-            guard !batch.isEmpty else { return }
+            if batch.isEmpty {
+                guard !checkedServer, await verifyInbox(key, database: database) else { return }
+                checkedServer = true
+                continue
+            }
             if open == nil || batch.contains(where: { open?.view.changed.contains($0.accountID) == true }) {
                 guard let syncKey = await host.syncKey(profileID: key.profileID, vaultID: key.vaultID) else {
                     locked(key)
@@ -124,12 +131,24 @@ extension VaultSync {
             }
             guard var view = open?.view, let syncKey = open?.syncKey else { return }
             var pass = SyncPass()
-            decide(batch, key: key, view: view, syncKey: syncKey, database: database, settling: settling, into: &pass)
-            pass.processed = batch.filter { !pass.deferred.contains($0.accountID) }
+            let transfer = transfer(key, lease: view.lease)
+            await decide(batch, transfer: transfer, view: view, syncKey: syncKey, database: database, settling: settling, into: &pass)
+            guard current(transfer) else { return }
+            // Receiving a replacement queues another drain. A later download may also have displaced an earlier decision in this batch.
+            if generation != generationBeforeBatch {
+                guard let displaced = try? database.read({ tx in try batch.filter { try tx.inbox(key.vaultID, $0.accountID) != $0 } }) else { return }
+                if !displaced.isEmpty {
+                    // The next drain takes the replacement. Finish independent items even if this one keeps changing.
+                    blocked.formUnion(displaced.map(\.accountID))
+                    continue
+                }
+            }
+            blocked.formUnion(pass.blocked)
+            pass.processed = batch.filter { !pass.deferred.contains($0.accountID) && !blocked.contains($0.accountID) }
             deferred.formUnion(pass.deferred)
-            switch await commit(&pass, key: key, lease: view.lease) {
+            switch await commit(&pass, transfer: transfer) {
             case .done(let revision):
-                guard mine == token(key), record(pass, key: key, database: database, syncKey: syncKey, revision: max(revision ?? 0, view.revision)) else {
+                guard current(transfer), record(pass, key: key, database: database, syncKey: syncKey, revision: max(revision ?? 0, view.revision)) else {
                     return
                 }
                 view.committed(pass, revision: revision)
@@ -148,31 +167,42 @@ extension VaultSync {
 
     /// One decision per inbox row (§4.4), from the vault as `view` shows it.
     private func decide(
-        _ batch: [InboxRow], key: VaultKey, view: VaultView, syncKey: VaultSyncKey, database: VaultSyncDatabase, settling: Bool,
+        _ batch: [InboxRow], transfer: VaultTransfer, view: VaultView, syncKey: VaultSyncKey, database: VaultSyncDatabase, settling: Bool,
         into pass: inout SyncPass
-    ) {
-        let rows = (try? database.read { tx in
+    ) async {
+        let key = transfer.key
+        guard let rows = try? database.read({ tx in
             try batch.map { (try tx.base(key.vaultID, $0.accountID), try tx.outbox(key.vaultID, $0.accountID)) }
-        }) ?? []
+        }) else {
+            pass.blocked = Set(batch.map(\.accountID))
+            return
+        }
         for (position, inbound) in batch.enumerated() {
             let id = inbound.accountID
             pass.envelopes[id] = (inbound.version, inbound.envelope)
             let item: SyncItem
             do {
-                item = try VaultSyncCodec.openItem(inbound.envelope, accountID: id, key: syncKey)
+                item = try await materialize(inbound.envelope, accountID: id, syncKey: syncKey, transfer: transfer, pins: &pass.pins)
+            } catch is VaultSyncFailure {
+                pass.blocked.insert(id)
+                continue
             } catch {
                 pass.unreadable += 1
                 continue
             }
-            let (baseRow, outgoing) = position < rows.count ? rows[position] : (nil, nil)
-            let base = openBase(baseRow, account: id, key: syncKey)
-            if let outgoing, outgoing.version == item.version,
+            guard current(transfer) else { return }
+            let (baseRow, outgoing) = rows[position]
+            var base = openBase(baseRow, account: id, key: syncKey)
+            if inbound.serverCheck == InboxRow.verified, base?.version == inbound.version {
+                // A verified replacement may reuse the applied version. Its predecessor's parts are still the common merge base.
+                base?.version = inbound.version - 1
+            }
+            if let outgoing, outgoing.remainingAssets.isEmpty, outgoing.version == item.version,
                let own = try? VaultSyncCodec.openParts(outgoing.parts, accountID: id, version: outgoing.version, key: syncKey),
                (try? item.parts()) == own {
                 // This Mac's own record, fetched back before its `.sent`: the base is what it sealed, and nothing else changes.
                 pass.bases[id] = SyncBase(version: item.version, parts: own)
                 pass.decided.insert(id)
-                pass.own.insert(id)
                 continue
             }
             let decision: SyncDecision
@@ -190,6 +220,15 @@ extension VaultSync {
                 continue
             }
             apply(decision, id: id, version: inbound.version, envelope: inbound.envelope, view: view, into: &pass)
+            preserveCompleteBase(item, base: base, into: &pass)
+        }
+    }
+
+    /// An older writer could only acknowledge inline fields. Republish the complete entry after merging its changes, even if
+    /// the last attachment was already removed. A one-byte marker differs from both an empty file list and every file hash.
+    private func preserveCompleteBase(_ item: SyncItem, base: SyncBase?, into pass: inout SyncPass) {
+        if item.account != nil, !item.includesFiles, base?.parts.attachments != nil, pass.bases[item.accountID]?.parts.removed == false {
+            pass.bases[item.accountID]?.parts.attachments = Data([0])
         }
     }
 
@@ -237,7 +276,12 @@ extension VaultSync {
 
     /// One commit for the pass. A write the vault refuses for its own rules is tried alone and, if it still fails, becomes an
     /// information row; a lease that ended or any other failure stops the pass with nothing recorded as applied.
-    private func commit(_ pass: inout SyncPass, key: VaultKey, lease: UInt64) async -> SyncCommitOutcome {
+    private func commit(_ pass: inout SyncPass, transfer: VaultTransfer) async -> SyncCommitOutcome {
+        // A concurrent sweep can run while the store waits to commit the newly imported file descriptors.
+        defer { withExtendedLifetime(pass.pins) {} }
+        let key = transfer.key
+        let lease = transfer.lease
+        guard current(transfer) else { return .stop }
         var remembered: UInt64?
         if !pass.remembering.isEmpty {
             // Its own write, first: a later stale retry finds the tombstones and keeps only the base.
@@ -256,6 +300,7 @@ extension VaultSync {
                 }
             }
         }
+        guard current(transfer) else { return .stop }
         guard !pass.writes.isEmpty || !pass.removing.isEmpty else { return .done(remembered) }
         do {
             return .done(try await host.commit(
@@ -271,8 +316,14 @@ extension VaultSync {
                 break
             }
         }
+        return await commitIndividually(&pass, transfer: transfer)
+    }
+
+    private func commitIndividually(_ pass: inout SyncPass, transfer: VaultTransfer) async -> SyncCommitOutcome {
+        let key = transfer.key, lease = transfer.lease
         var revision: UInt64?
         for (write, id) in zip(pass.writes, pass.writeIDs) {
+            guard current(transfer) else { return .stop }
             do {
                 revision = try await host.commit(
                     profileID: key.profileID, vaultID: key.vaultID, lease: lease, writes: [write], removing: [:]
@@ -289,6 +340,7 @@ extension VaultSync {
             }
         }
         for (id, stamp) in pass.removing.sorted(by: { $0.key.uuidString < $1.key.uuidString }) {
+            guard current(transfer) else { return .stop }
             do {
                 revision = try await host.commit(
                     profileID: key.profileID, vaultID: key.vaultID, lease: lease, writes: [], removing: [id: stamp]
@@ -322,6 +374,9 @@ extension VaultSync {
                 return .stop
             }
         }
+        if error as? VaultFileError == .vaultFull {
+            return .data
+        }
         if let error = error as? CredentialStoreError {
             switch error {
             case .limit, .malformed:
@@ -336,15 +391,19 @@ extension VaultSync {
     /// Records a pass that was committed: the bases, the rows taken in, the review rows. One transaction.
     @discardableResult
     private func record(_ pass: SyncPass, key: VaultKey, database: VaultSyncDatabase, syncKey: VaultSyncKey, revision: UInt64) -> Bool {
+        var finishedImports = Set<UUID>()
         do {
             try database.write { tx in
                 guard var current = try tx.vault(key.vaultID), current.enabled else { return }
                 for (id, base) in pass.bases.sorted(by: { $0.key.uuidString < $1.key.uuidString }) {
                     let sealed = try VaultSyncCodec.sealParts(base.parts, accountID: id, version: base.version, key: syncKey)
-                    try tx.save(BaseRow(accountID: id, version: base.version, parts: sealed), vault: key.vaultID)
+                    try tx.save(BaseRow(accountID: id, version: base.version, parts: sealed), vault: key.vaultID, acknowledging: pass.envelopes[id]?.envelope)
                 }
                 for inbound in pass.processed {
-                    try tx.deleteInbox(key.vaultID, inbound.accountID, upTo: inbound.version)
+                    if try tx.consume(inbound, vault: key.vaultID), inbound.envelope.first == VaultSyncCodec.assetFormat,
+                       pass.conflicts[inbound.accountID] == nil {
+                        finishedImports.insert(inbound.accountID)
+                    }
                 }
                 for id in pass.decided {
                     try tx.deleteOutbox(key.vaultID, id)
@@ -354,6 +413,9 @@ extension VaultSync {
                 }
                 for id in pass.answered where pass.conflicts[id] == nil {
                     try tx.deleteConflict(key.vaultID, id)
+                    if pass.envelopes[id]?.envelope.first == VaultSyncCodec.assetFormat, try tx.inboxVersion(key.vaultID, id) == nil {
+                        finishedImports.insert(id)
+                    }
                 }
                 var conflicts = pass.conflicts
                 if !pass.removing.isEmpty {
@@ -386,11 +448,18 @@ extension VaultSync {
                 baseCache[key]?[id] = base
             }
         }
+        for id in pass.decided where pass.envelopes[id]?.envelope.first == VaultSyncCodec.assetFormat || pendingBases[key]?[id]?.parts.attachments != nil {
+            clearAssets(key, account: id)
+        }
+        for id in finishedImports {
+            clearAssets(key, account: id, incoming: true)
+        }
         for id in pass.decided {
             pendingBases[key]?[id] = nil
             queued[key]?.remove(id)
         }
-        handedOut[key]?.subtract(pass.own)
+        // Each decided account's old outbox row was removed in this transaction.
+        handedOut[key]?.subtract(pass.decided)
         if pass.unreadable > 0 {
             tallies[key, default: (0, 0)].unreadable += pass.unreadable
         }
@@ -406,60 +475,34 @@ extension VaultSync {
         guard let syncKey = await host.syncKey(profileID: key.profileID, vaultID: key.vaultID), stillOpen(key, mine) else { return }
         guard let snapshot = await snapshot(key) else { return }
         guard stillOpen(key, mine), let (_, row) = runningRow(key), notRolledBack(key, snapshot, row, database) else { return }
-        let inputs = produceState(key, database: database, syncKey: syncKey)
+        let transfer = transfer(key, lease: snapshot.lease)
+        guard current(transfer) else { return }
+        guard let inputs = produceState(key, database: database, syncKey: syncKey) else { return }
         var work = ProduceWork()
         var sums = sumCache[key] ?? [:]
         var notSyncable = 0
         let live = Set(snapshot.accounts.map(\.id))
+        // A never-published entry deleted during an interrupted upload must not appear on the other Macs.
+        let vanished = inputs.outgoing.subtracting(live).subtracting(inputs.bases.keys).subtracting(inputs.parked).subtracting(handedOut[key] ?? [])
+        if !vanished.isEmpty, let assets = try? database.read({ try $0.assetOutboxAccounts(key.vaultID) }) {
+            // Staging may have been lost in a crash. The saved envelope still identifies the unpublished asset entry.
+            work.dropped = Array(vanished.intersection(assets))
+        }
 
         var start = 0
         while start < snapshot.accounts.count {
             let chunk = snapshot.accounts[start..<min(start + Self.produceBatch, snapshot.accounts.count)]
             start += Self.produceBatch
             for account in chunk where !inputs.reviewed.contains(account.id) && !inputs.parked.contains(account.id) {
-                let stamp = snapshot.stamps[account.id]
-                var syncable: SyncableAccount?
-                let sum: Data?
-                if let stamp, let cached = sums[account.id], cached.stamp == stamp {
-                    sum = cached.sum
-                } else {
-                    syncable = VaultSyncCodec.syncable(account)
-                    sum = syncable?.parts.sum
-                    if let stamp {
-                        sums[account.id] = StampedSum(stamp: stamp, sum: sum)
-                    }
-                }
-                guard let sum else {
-                    notSyncable += 1
-                    continue
-                }
-                if let base = inputs.bases[account.id], !base.parts.removed, base.parts.sum == sum {
-                    if inputs.outgoing.contains(account.id) {
-                        work.dropped.append(account.id)
-                    }
-                    continue
-                }
-                guard !(handedOut[key]?.contains(account.id) ?? false) else {
-                    work.held = true
-                    continue
-                }
-                let version = (inputs.versions[account.id] ?? 0) + 1
-                if let pending = pendingBases[key]?[account.id], pending.version == version, pending.parts.sum == sum,
-                   inputs.outgoing.contains(account.id) {
-                    continue
-                }
-                guard let entry = syncable ?? VaultSyncCodec.syncable(account),
-                      let sealed = Self.seal(entry, version: version, key: syncKey)
-                else {
-                    notSyncable += 1
-                    continue
-                }
-                work.rows.append(sealed.row)
-                work.bases[account.id] = SyncBase(version: version, parts: entry.parts)
+                await prepare(
+                    account, stamp: snapshot.stamps[account.id], inputs: inputs, transfer: transfer, syncKey: syncKey,
+                    sums: &sums, work: &work, notSyncable: &notSyncable
+                )
+                guard current(transfer) else { return }
             }
             flush(&work, key: key, database: database)
             await Task.yield()
-            guard stillOpen(key, mine), runningRow(key) != nil else { return }
+            guard current(transfer) else { return }
         }
 
         // Entries that were synced and are gone from the vault: a removed state at the next version. A pass that would send a large
@@ -493,12 +536,70 @@ extension VaultSync {
         sendRemovedBefore(memories, inputs: inputs, live: live, key: key, syncKey: syncKey, into: &work)
         sumCache[key] = sums
         tallies[key, default: (0, 0)].notSyncable = notSyncable
-        let addVaultRecord = settleVaultRecord(key, snapshot: snapshot, syncKey: syncKey, database: database)
         flush(&work, key: key, database: database)
-        if addVaultRecord {
-            engine?.add([.saveRecord(key.vaultRecord)])
+        settleVaultRecord(key, snapshot: snapshot, syncKey: syncKey, database: database)
+        if let (_, current) = runningRow(key), current.uploadedMark != nil, !current.needsFetch {
+            await uploadAssets(transfer, database: database, syncKey: syncKey)
         }
         refresh(key)
+    }
+
+    private func prepare(
+        _ account: CredentialAccount, stamp: AccountStamp?, inputs: ProduceState, transfer: VaultTransfer, syncKey: VaultSyncKey,
+        sums: inout [UUID: StampedSum], work: inout ProduceWork, notSyncable: inout Int
+    ) async {
+        let key = transfer.key
+        let previous = inputs.bases[account.id]
+        let pending = pendingBases[key]?[account.id]
+        let complete = previous?.parts.attachments != nil || pending?.parts.attachments != nil
+        var syncable: SyncableAccount?
+        let sum: Data?
+        if let stamp, let cached = sums[account.id], cached.stamp == stamp, cached.complete == complete {
+            sum = cached.sum
+        } else {
+            syncable = VaultSyncCodec.syncable(account, includingFiles: complete)
+            sum = syncable?.parts.sum
+            if let stamp {
+                sums[account.id] = StampedSum(stamp: stamp, sum: sum, complete: complete)
+            }
+        }
+        guard let sum else {
+            notSyncable += 1
+            return
+        }
+        if let base = inputs.bases[account.id], !base.parts.removed, base.parts.sum == sum {
+            if inputs.outgoing.contains(account.id) {
+                work.dropped.append(account.id)
+            }
+            return
+        }
+        guard !(handedOut[key]?.contains(account.id) ?? false) else {
+            work.held = true
+            return
+        }
+        let version = (inputs.versions[account.id] ?? 0) + 1
+        if let pending, pending.version == version, pending.parts.sum == sum,
+           inputs.outgoing.contains(account.id) {
+            return
+        }
+        guard let entry = syncable ?? VaultSyncCodec.syncable(account, includingFiles: complete) else { return }
+        if entry.parts.attachments != nil {
+            do {
+                let row = try await sealAssetRow(entry, version: version, syncKey: syncKey, transfer: transfer)
+                guard current(transfer) else { return }
+                work.rows.append(row)
+            } catch {
+                guard current(transfer) else { return }
+                notSyncable += 1
+                return
+            }
+        } else if let sealed = Self.seal(entry, version: version, key: syncKey) {
+            work.rows.append(sealed.row)
+        } else {
+            notSyncable += 1
+            return
+        }
+        work.bases[account.id] = SyncBase(version: version, parts: entry.parts)
     }
 
     /// Entries removed before this vault synced (a Trash entry or a tombstone that was never sent): their removed state, with what they
@@ -547,18 +648,27 @@ extension VaultSync {
         var recorded: Set<UUID>
     }
 
-    private func produceState(_ key: VaultKey, database: VaultSyncDatabase, syncKey: VaultSyncKey) -> ProduceState {
-        let loaded = try? database.read { tx in
-            ProduceRows(
+    private func produceState(_ key: VaultKey, database: VaultSyncDatabase, syncKey: VaultSyncKey) -> ProduceState? {
+        guard let loaded = try? database.read({ tx in
+            if pendingBases[key] == nil {
+                var cache: [UUID: SyncBase] = [:]
+                for row in try tx.outbox(key.vaultID) where staged(row, key: key, syncKey: syncKey) {
+                    if let parts = try? VaultSyncCodec.openParts(row.parts, accountID: row.accountID, version: row.version, key: syncKey) {
+                        cache[row.accountID] = SyncBase(version: row.version, parts: parts)
+                    }
+                }
+                pendingBases[key] = cache
+            }
+            return ProduceRows(
                 versions: try tx.baseVersions(key.vaultID), outgoing: try tx.outboxAccounts(key.vaultID),
-                reviewed: try tx.conflictAccounts(key.vaultID), parked: try tx.parkedAccounts(key.vaultID),
+                reviewed: try tx.conflictAccounts(key.vaultID), parked: try tx.inboxAccounts(key.vaultID),
                 recorded: try tx.recordedAccounts(key.vaultID)
             )
-        }
+        }) else { return nil }
         return ProduceState(
-            bases: openedBases(key, database: database, syncKey: syncKey), versions: loaded?.versions ?? [:],
-            outgoing: loaded?.outgoing ?? [], reviewed: loaded?.reviewed ?? [], parked: loaded?.parked ?? [],
-            recorded: loaded?.recorded ?? []
+            bases: openedBases(key, database: database, syncKey: syncKey), versions: loaded.versions,
+            outgoing: loaded.outgoing, reviewed: loaded.reviewed, parked: loaded.parked,
+            recorded: loaded.recorded
         )
     }
 
@@ -608,45 +718,15 @@ extension VaultSync {
             queued[key, default: []].insert(row.accountID)
         }
         for id in dropped {
+            clearAssets(key, account: id)
             pendingBases[key]?[id] = nil
             queued[key]?.remove(id)
         }
-        if !written.isEmpty {
-            engine?.add(written.map { .saveRecord(key.itemRecord($0.accountID)) })
+        let ready = written.filter { $0.remainingAssets.isEmpty }
+        if !ready.isEmpty, let (_, row) = runningRow(key), row.uploadedMark != nil, !row.needsFetch {
+            engine?.add(ready.map { .saveRecord(key.itemRecord($0.accountID)) })
         }
         work = ProduceWork(held: held)
-    }
-
-    /// Compares the vault's name and wrapper list with what was last uploaded (§5.6 step 4). True when a new `Vault` record waits.
-    private func settleVaultRecord(_ key: VaultKey, snapshot: VaultSyncSnapshot, syncKey: VaultSyncKey, database: VaultSyncDatabase) -> Bool {
-        guard let encoded = try? VaultWrapperList.encode(snapshot.wrappers) else { return false }
-        let mark = VaultSyncCodec.vaultMark(name: snapshot.name, wrappers: encoded, key: syncKey)
-        var addRecord = false
-        let payload = try? vaultPayload(key, snapshot: snapshot, syncKey: syncKey)
-        do {
-            try database.write { tx in
-                guard var current = try tx.vault(key.vaultID), current.enabled else { return }
-                let before = current
-                if current.uploadedMark == nil, current.pendingMark == nil {
-                    // Just added or rejoined: the record already says what this Mac holds, so nothing goes up.
-                    current.uploadedMark = mark
-                } else if current.uploadedMark == mark {
-                    current.pendingVault = nil
-                    current.pendingMark = nil
-                } else if current.pendingMark != mark, let payload {
-                    current.pendingVault = payload.data
-                    current.pendingMark = payload.mark
-                    addRecord = true
-                }
-                current.lastHeadRevision = max(current.lastHeadRevision, snapshot.revision)
-                if current != before {
-                    try tx.save(current)
-                }
-            }
-        } catch {
-            return false
-        }
-        return addRecord
     }
 
     // MARK: - Resolve and conflicts
@@ -675,14 +755,21 @@ extension VaultSync {
             var pass = SyncPass()
             var refusedForAHolder: Set<UUID> = []
             let view = VaultView(snapshot)
+            let transfer = transfer(key, lease: view.lease)
             for conflict in rows {
                 let id = conflict.accountID
                 pass.answered.insert(id)
                 pass.envelopes[id] = (conflict.version, conflict.envelope)
-                guard let item = try? VaultSyncCodec.openItem(conflict.envelope, accountID: id, key: syncKey) else {
+                let item: SyncItem
+                do {
+                    item = try await materialize(conflict.envelope, accountID: id, syncKey: syncKey, transfer: transfer, pins: &pass.pins)
+                } catch let error as VaultSyncFailure {
+                    throw error
+                } catch {
                     pass.unreadable += 1
                     continue
                 }
+                guard current(transfer) else { throw VaultSyncFailure.locked }
                 let base = openBase((try? database.read { try $0.base(key.vaultID, id) }) ?? nil, account: id, key: syncKey)
                 let decision = try CredentialSyncMerge.resolve(
                     item, kind: conflict.kind, local: view.local[id], base: base, keepLocal: keepLocal, index: view.index
@@ -697,6 +784,7 @@ extension VaultSync {
                     continue
                 }
                 apply(decision, id: id, version: conflict.version, envelope: conflict.envelope, view: view, into: &pass)
+                preserveCompleteBase(item, base: base, into: &pass)
             }
             if !pass.removing.isEmpty, !again {
                 // An answer set aside for the entry that holds the item is given again, as it was, once this pass has moved that entry
@@ -708,9 +796,11 @@ extension VaultSync {
             } else {
                 refusedForAHolder = []
             }
-            switch await commit(&pass, key: key, lease: view.lease) {
+            switch await commit(&pass, transfer: transfer) {
             case .done(let revision):
-                record(pass, key: key, database: database, syncKey: syncKey, revision: max(revision ?? 0, snapshot.revision))
+                guard current(transfer), record(pass, key: key, database: database, syncKey: syncKey, revision: max(revision ?? 0, snapshot.revision)) else {
+                    throw VaultSyncFailure.unavailable
+                }
                 if !refusedForAHolder.isEmpty {
                     accountIDs = refusedForAHolder
                     again = true
@@ -732,14 +822,30 @@ extension VaultSync {
     /// The review rows with both versions opened, for the sheet. The vault must be unlocked.
     public func conflicts(profileID: UUID, vaultID: UUID) async throws -> [VaultSyncConflict] {
         let key = try checkedKey(profileID, vaultID)
+        return try await serial(key) { [self] in try await conflictList(key) }
+    }
+
+    private func conflictList(_ key: VaultKey) async throws -> [VaultSyncConflict] {
+        let profileID = key.profileID, vaultID = key.vaultID
+        let mine = token(key)
         guard let (database, _) = runningRow(key) else { return [] }
         guard let syncKey = await host.syncKey(profileID: profileID, vaultID: vaultID) else { throw VaultSyncFailure.locked }
         guard let snapshot = await snapshot(key) else { throw VaultSyncFailure.locked }
         let rows = (try? database.read { try $0.conflicts(vaultID) }) ?? []
         let view = VaultView(snapshot)
+        let transfer = VaultTransfer(key: key, session: mine, lease: view.lease, user: state.accountUser)
         var result: [VaultSyncConflict] = []
         for conflict in rows {
-            guard let item = try? VaultSyncCodec.openItem(conflict.envelope, accountID: conflict.accountID, key: syncKey) else { continue }
+            var pins: [VaultImportedAttachment] = []
+            let item: SyncItem
+            do {
+                item = try await materialize(conflict.envelope, accountID: conflict.accountID, syncKey: syncKey, transfer: transfer, pins: &pins)
+            } catch let error as VaultSyncFailure {
+                throw error
+            } catch {
+                continue
+            }
+            guard current(transfer) else { throw VaultSyncFailure.locked }
             let local = view.local[conflict.accountID]
             let base = openBase((try? database.read { try $0.base(vaultID, conflict.accountID) }) ?? nil, account: conflict.accountID, key: syncKey)
             var parts: [SyncPart] = []

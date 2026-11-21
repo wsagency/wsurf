@@ -44,6 +44,18 @@ extension BrowserModel {
         }
     }
 
+    /// SQLite's session rows share a profile-wide namespace, including windows that have closed.
+    static func occupiedSidebarIDs(in models: [BrowserModel]) -> Set<UUID>? {
+        guard let database = models.first?.database, var occupied = try? database.writer.read({ db in
+            Set(try UUID.fetchAll(db, sql: "SELECT id FROM sessionTab UNION ALL SELECT id FROM sessionFolder"))
+        }) else { return nil }
+        for model in models {
+            occupied.formUnion(model.tabs.map(\.id))
+            occupied.formUnion(model.folders.map(\.id))
+        }
+        return occupied
+    }
+
     @discardableResult
     static func remapSavedWindow(in database: AppDatabase, from oldID: UUID, to newID: UUID) -> Bool {
         do {
@@ -107,6 +119,7 @@ extension BrowserModel {
         var pinID: UUID?
         var lastActiveAt: Date?
         var spaceID: UUID?
+        var requiresSpacePlacement: Bool?
         /// The last visit the tab recorded and its trail, so a restored tab goes on with them. See `HistoryStore.record`.
         var lastVisit: Int64?
         var visitTrail: Int64?
@@ -196,9 +209,10 @@ extension BrowserModel {
         max(.zero, min(debounce, deadline - waiting))
     }
 
-    func scheduleSave(now: ContinuousClock.Instant = ContinuousClock.now) {
+    func scheduleSave(now: ContinuousClock.Instant = ContinuousClock.now, renamed: SidebarItem? = nil) {
         noteCloudTabsChange()
         publishProfilePins()
+        sharedSpaceService?.capture(self, renamed: renamed)
         let since = saveWaitingSince ?? now
         saveWaitingSince = since
         let delay = Self.saveDelay(
@@ -225,6 +239,9 @@ extension BrowserModel {
                 try await database.writer.write { db in
                     try Self.persist(snapshot, in: db)
                 }
+                if let self {
+                    self.sharedSpaceService?.didSaveWindow(self, revision: snapshot.revision)
+                }
             } catch {
                 Pipeline.log.error("session: write failed")
                 self?.forgetWrittenState(of: snapshot)
@@ -234,6 +251,7 @@ extension BrowserModel {
 
     /// Persist both owners together before a close or a delayed save can race the move.
     func saveTransferredSession(from source: BrowserModel) {
+        sharedSpaceService?.capture(self)
         source.cancelPendingSave()
         cancelPendingSave()
         // Queued snapshots may have recorded generations without writing their state yet.
@@ -268,6 +286,7 @@ extension BrowserModel {
             try database.writer.write { db in
                 try Self.persist(snapshot, in: db)
             }
+            sharedSpaceService?.didSaveWindow(self, revision: snapshot.revision)
             Pipeline.log.notice("session: wrote \(snapshot.tabs.count) tabs, \(snapshot.folders.count) folders")
         } catch {
             Pipeline.log.error("session: final write failed")
@@ -308,6 +327,7 @@ extension BrowserModel {
                 pinID: tab.pinID,
                 lastActiveAt: tab.lastActiveAt,
                 spaceID: tab.spaceID,
+                requiresSpacePlacement: unplacedSpaceRows.contains(.tab(tab.id)),
                 lastVisit: lastVisitID[tab.id]?.visit,
                 visitTrail: lastVisitID[tab.id]?.trail,
                 microTabID: tab.microTabID
@@ -409,8 +429,8 @@ extension BrowserModel {
                 sql: """
                     INSERT INTO sessionTab
                         (id, windowID, title, customTitle, url, state, pinnedURL, pinnedTitle,
-                         internalPage, isActive, isFavorite, pinID, lastActiveAt, spaceID, lastVisit, visitTrail, microTabID)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         internalPage, isActive, isFavorite, pinID, lastActiveAt, spaceID, requiresSpacePlacement, lastVisit, visitTrail, microTabID)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(id) DO UPDATE SET
                         windowID = excluded.windowID,
                         title = excluded.title,
@@ -425,6 +445,7 @@ extension BrowserModel {
                         pinID = excluded.pinID,
                         lastActiveAt = excluded.lastActiveAt,
                         spaceID = excluded.spaceID,
+                        requiresSpacePlacement = excluded.requiresSpacePlacement,
                         lastVisit = excluded.lastVisit,
                         visitTrail = excluded.visitTrail,
                         microTabID = excluded.microTabID
@@ -433,7 +454,7 @@ extension BrowserModel {
                     tab.id, tab.windowID, tab.title, tab.customTitle, tab.url, tab.state,
                     tab.pinnedURL, tab.pinnedTitle,
                     tab.internalPage?.rawValue, tab.isActive, tab.isFavorite, tab.pinID, tab.lastActiveAt, tab.spaceID,
-                    tab.lastVisit, tab.visitTrail, tab.microTabID,
+                    tab.requiresSpacePlacement, tab.lastVisit, tab.visitTrail, tab.microTabID,
                 ]
             )
         }
@@ -498,6 +519,14 @@ extension BrowserModel {
 
     func restoreSession() {
         guard tabs.isEmpty, folders.isEmpty else { return }
+        isReadingSharedSession = true
+        readSession()
+        sharedSpaceService?.restoreWindowEdits(in: self)
+        isReadingSharedSession = false
+        sharedSpaceService?.applyCatalog(to: self)
+    }
+
+    private func readSession() {
         sessionClosedAt = nil
         let belongsToWindow = Column("windowID") == windowID
         try? database.writer.write { db in
@@ -544,7 +573,8 @@ extension BrowserModel {
         }
         // A page of a pin the profile no longer holds is gone, and so is a second page of one pin.
         let store = pinStore
-        let ordered = Self.pagesOfCurrentPins(inOrder, in: store)
+        let ordered = pagesOfCurrentPins(inOrder, in: store)
+        unplacedSpaceRows.formUnion(ordered.lazy.filter { $0.requiresSpacePlacement == true }.map { .tab($0.id) })
         let byID = Dictionary(ordered.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         let profileHoldsPins = store.isAvailable
 
@@ -616,11 +646,11 @@ extension BrowserModel {
         }
         storedTree = SidebarTree(root: root, children: children)
         splits = TabSplits(grids)
+        restoreMissingMemberships()
+        restoreSpace(for: activeID)
         sidebarDidChange()
         attachProfilePins()
 
-        // The active tab's space, or, when the active tab is a pin, the space of the tab used last.
-        landInLastUsedSpace()
         activeTabID = activeID
         for pane in activeTab.map({ splitOthers(of: $0) }) ?? [] {
             pane.realizeDeferredSession()
@@ -664,20 +694,36 @@ extension BrowserModel {
     }
 
     /// The records that are not pins plus the first record of each pin the profile still holds.
-    private static func pagesOfCurrentPins(_ records: [TabRecord], in store: ProfilePinStore) -> [TabRecord] {
+    private func pagesOfCurrentPins(_ records: [TabRecord], in store: ProfilePinStore) -> [TabRecord] {
         guard store.isAvailable else {
             // The stored pins cannot be read, so every page stays as an ordinary tab.
             return records.map { record in
                 var plain = record
+                if record.pinID != nil, requiresSpacePlacementAfterUnpin(record.requiresSpacePlacement) {
+                    plain.requiresSpacePlacement = true
+                }
                 plain.pinID = nil
                 return plain
             }
         }
         let current = Set(store.pins.map(\.id))
         var claimed: Set<UUID> = []
-        return records.filter { record in
-            guard let pinID = record.pinID else { return true }
-            return current.contains(pinID) && claimed.insert(pinID).inserted
+        return records.compactMap { record in
+            guard let pinID = record.pinID else { return record }
+            if current.contains(pinID) {
+                return claimed.insert(pinID).inserted ? record : nil
+            }
+            // The profile can commit an unpin before this window saves the demoted page.
+            let space = sharedSpaceService?.savedSpace(of: .tab(record.id), in: self, pinID: pinID)
+            guard space != nil || requiresSpacePlacementAfterUnpin(record.requiresSpacePlacement) else { return nil }
+            var plain = record
+            plain.pinID = nil
+            plain.pinnedURL = nil
+            plain.pinnedTitle = nil
+            plain.isFavorite = false
+            plain.spaceID = space
+            plain.requiresSpacePlacement = space == nil
+            return plain
         }
     }
 
@@ -748,6 +794,7 @@ extension BrowserModel {
         splits = TabSplits()
         activeTabID = nil
         closedTabs = []
+        unplacedSpaceRows = []
         sidebarUndoManager.removeAllActions()
         folderRenameID = nil
         lastVisitID = [:]

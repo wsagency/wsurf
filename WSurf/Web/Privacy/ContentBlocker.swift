@@ -195,6 +195,7 @@ final class ContentBlocker {
         guard changed else { return }
         if persists {
             defaults.set(Array(exemptHosts).sorted(), forKey: Self.exemptDefaultsKey)
+            MacSettingsChange.post(self)
         }
         refresh()
         settings.onWebPreferencesChanged?()
@@ -205,6 +206,7 @@ final class ContentBlocker {
         exemptHosts = []
         if persists {
             defaults.removeObject(forKey: Self.exemptDefaultsKey)
+            MacSettingsChange.post(self)
         }
         refresh()
         settings.onWebPreferencesChanged?()

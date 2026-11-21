@@ -294,6 +294,32 @@ struct CredentialPickerScriptTests {
         }
     }
 
+    @Test(.boundedWebViews, arguments: BrowserEngine.allCases)
+    func aPickAcceptsTheFormattedEmailOnlyInTheEditableFieldItFilled(engine: BrowserEngine) async throws {
+        let extra = #"""
+        <form><input id="formatUser" autocomplete="username" oninput="this.value = this.value.trim().toLowerCase()">
+          <input id="formatPassword" type="password"></form>
+        <form><input id="fixedUser" autocomplete="username" value="ada@example.test" readonly>
+          <input id="fixedPassword" type="password"></form>
+        <form><input id="changedUser" name="account" autocomplete="username" oninput="this.value = this.value.trim().toLowerCase()">
+          <input id="changedPassword" type="password" onbeforeinput="this.form.elements.account.value = 'Ada@example.test'"></form>
+        """#
+        let login = ["username": " Ada@Example.TEST ", "password": "dummy-secret"]
+        try await withHarness(engine, extra: extra) { harness in
+            let formatted = try await harness.rightClick("formatPassword")
+            #expect(try await harness.fill(formatted, login) == 2)
+            #expect(try await harness.values(["formatUser", "formatPassword"]) == ["ada@example.test", "dummy-secret"])
+
+            let fixed = try await harness.rightClick("fixedPassword")
+            #expect(try await harness.fill(fixed, login) == PasswordAutofillScript.differentAccount)
+            #expect(try await harness.values(["fixedUser", "fixedPassword"]) == ["ada@example.test", ""])
+
+            let changed = try await harness.rightClick("changedPassword")
+            #expect(try await harness.fill(changed, login) == PasswordAutofillScript.differentAccount)
+            #expect(try await harness.values(["changedUser", "changedPassword"]) == ["Ada@example.test", ""])
+        }
+    }
+
     /// A login form whose username is prefilled and `readonly` still gets its password: the right-click on the editable password
     /// field is a target, and the fill goes into that field alone and leaves the username as the page wrote it. A `readonly` field
     /// is no target, so no fill reaches it (a disabled one is left out: whether a page sees a right-click on it is the engine's

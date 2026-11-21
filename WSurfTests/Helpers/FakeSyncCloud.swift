@@ -1,9 +1,10 @@
 // SPDX-FileCopyrightText: 2026 WSurf Agency
 // SPDX-License-Identifier: BUSL-1.1
 
+import CloudKit
 import Foundation
 import Synchronization
-import WSurfCore
+@testable import WSurfCore
 
 /// One account's private database, in memory. Engines of several devices share it, each with its own idea of what it has fetched.
 /// It keeps the rules of the real one that sync relies on: a save carries the change tag it read, a stale tag fails with the
@@ -40,10 +41,14 @@ final class FakeSyncCloud {
 
     /// Zone name to record name to what the server holds.
     private(set) var zones: [String: [String: Stored]] = [:]
+    var encryptedVaultAssets: [SyncRecordID: Data] = [:]
+    var vaultAssetWrites: [SyncRecordID: Int] = [:]
     private(set) var user: String
     /// How many records were written. It does not move when a save fails or is dropped.
     private(set) var writeCount = 0
     private(set) var clock = 0
+    /// Called after the server commits the deletion, before the sending Mac can persist the acknowledgement.
+    var afterZoneDeletion: ((String) -> Void)?
     /// The account's iCloud storage is full: every save fails with `quotaExceeded`.
     var quotaFull = false
     var now: () -> Date
@@ -104,12 +109,15 @@ final class FakeSyncCloud {
     func deleteZone(_ zone: String, reason: SyncZoneDeletionReason) {
         clock += 1
         zones[zone] = nil
+        encryptedVaultAssets = encryptedVaultAssets.filter { $0.key.zone != zone }
         zoneDeletions.append(ZoneDeletion(at: clock, zone: zone, reason: reason))
+        afterZoneDeletion?(zone)
     }
 
     /// The zone is gone and nobody was told.
     func removeZoneSilently(_ zone: String) {
         zones[zone] = nil
+        encryptedVaultAssets = encryptedVaultAssets.filter { $0.key.zone != zone }
     }
 
     func deleteRecord(_ id: SyncRecordID) {
@@ -120,6 +128,7 @@ final class FakeSyncCloud {
     func switchUser(_ user: String) {
         self.user = user
         zones = [:]
+        encryptedVaultAssets = [:]
         zoneDeletions = []
         recordDeletions = []
     }
@@ -135,6 +144,9 @@ final class FakeSyncCloud {
     func save(_ record: SyncRecord) -> SaveResult {
         guard zones[record.id.zone] != nil else { return .failed(.zoneNotFound) }
         guard !quotaFull else { return .failed(.quotaExceeded) }
+        if let parent = record.assetManifestName, encryptedVaultAssets[SyncRecordID(zone: record.id.zone, name: parent)] == nil {
+            return .failed(.other)
+        }
         let held = Self.tag(in: record.systemFields)
         if let existing = zones[record.id.zone]?[record.id.name] {
             guard held == existing.tag else { return .failed(.serverRecordChanged(existing.record)) }
@@ -189,14 +201,19 @@ final class FakeSyncCloud {
 /// An engine over a `FakeSyncCloud`. `sendNow` keeps sending until the model has nothing more to retry, as the real one keeps
 /// scheduling failed changes.
 @MainActor
-final class FakeSyncEngine: SyncEngine {
-    let cloud: FakeSyncCloud
+final class FakeSyncEngine: SyncEngine, SyncAccountIdentity {
+    /// The active database can change before CloudKit reports the switch or replaces its serialized state.
+    var cloud: FakeSyncCloud
     weak var delegate: (any SyncEngineDelegate)?
     var available = true
     /// A send that waits until it is cancelled, for the limit on quit.
     var hangsOnSend = false
     /// No network: a fetch or a send throws.
     var offline = false
+    var beforeProfileVaultZoneDelete: ((String) async throws -> Void)?
+    var beforeVaultUpload: ((String) async throws -> Void)?
+    var beforeVaultDownload: ((String) async throws -> Void)?
+    var beforeRecordSave: ((SyncRecord) -> Void)?
     /// The server refuses to delete a zone: the engine reports the failure and keeps the change.
     var failsZoneDeletes = false
     /// The next N zone creations are lost, as a zone save that failed or lost the race with its records.
@@ -222,12 +239,29 @@ final class FakeSyncEngine: SyncEngine {
     private(set) var sendCount = 0
     private(set) var fetchCount = 0
     private(set) var fetchAllCount = 0
+    var holdSendReceipt: ((@escaping @MainActor () async -> Void) -> Void)?
+    var beforeFetchDelivery: (() async throws -> Void)?
+    var afterFullZoneRead: (() -> Void)?
+    var duringAccountLookup: (() async throws -> Void)?
+    private var fetchCycle = SyncFetchCycle()
     private var fetchedAt = 0
     private var stateRevision = 0
 
-    init(cloud: FakeSyncCloud, delegate: (any SyncEngineDelegate)? = nil) {
+    // Restore the shared cursor and queued database creations for a simulated process restart.
+    private struct Checkpoint: Codable {
+        var cursor: Int
+        var revision: Int
+        var zoneSaves: [String]
+    }
+
+    init(cloud: FakeSyncCloud, delegate: (any SyncEngineDelegate)? = nil, state: Data? = nil) {
         self.cloud = cloud
         self.delegate = delegate
+        if let checkpoint = CloudKitMapping.restoreEngineState(Checkpoint.self, from: state, delegate: delegate) {
+            fetchedAt = checkpoint.cursor
+            stateRevision = checkpoint.revision
+            add(checkpoint.zoneSaves.map(SyncChange.saveZone))
+        }
     }
 
     func add(_ changes: [SyncChange]) {
@@ -257,7 +291,7 @@ final class FakeSyncEngine: SyncEngine {
             rounds += 1
             let batch = pending
             queue = [:]
-            await send(batch)
+            guard await send(batch) else { return }
         }
     }
 
@@ -266,15 +300,18 @@ final class FakeSyncEngine: SyncEngine {
         if offline {
             throw URLError(.notConnectedToInternet)
         }
+        fetchCycle.begin(delegate?.beginFetch())
+        defer { fetchCycle.end() }
         let changes = cloud.changes(since: fetchedAt)
         fetchedAt = cloud.clock
+        try await beforeFetchDelivery?()
         if !changes.zones.isEmpty {
-            await delegate?.handle(.zonesDeleted(changes.zones))
+            await fetchCycle.deliver?(.zonesDeleted(changes.zones))
         }
         // A record the server cannot return does not reach the model in a fetch either.
         let modified = changes.modified.filter { !unreadable.contains($0.id.name) }
         if !modified.isEmpty || !changes.deleted.isEmpty {
-            await delegate?.handle(.fetched(modified: modified, deleted: changes.deleted))
+            await fetchCycle.deliver?(.fetched(modified: modified, deleted: changes.deleted))
         }
         await publishState()
     }
@@ -283,6 +320,7 @@ final class FakeSyncEngine: SyncEngine {
     /// that is gone is an error.
     func fetchAll(zone: String) async throws -> SyncZoneRead {
         fetchAllCount += 1
+        defer { afterFullZoneRead?() }
         if offline {
             throw URLError(.notConnectedToInternet)
         }
@@ -295,27 +333,49 @@ final class FakeSyncEngine: SyncEngine {
         available
     }
 
+    func currentAccountUser() async throws -> String {
+        try await duringAccountLookup?()
+        guard available, !offline else { throw URLError(.notConnectedToInternet) }
+        return cloud.user
+    }
+
     /// The server no longer knows the engine's change token (it expired, or the state was lost): the next fetch is a read from scratch.
     func expireChangeToken() {
         fetchedAt = 0
     }
 
     /// The account changed under the engine: its queue is gone, and a different account is fetched from the start.
-    func simulateAccount(_ change: SyncAccountChange) async {
+    func simulateAccount(_ change: SyncAccountChange, from previousUser: String? = nil) async {
         queue = [:]
         if change != .signOut {
             fetchedAt = 0
         }
-        await delegate?.handle(.account(change))
+        guard let delegate else { return }
+        if case .switchAccounts(let user) = change, let previousUser {
+            await CloudKitMapping.deliverAccountChange(
+                .switchAccounts(previousUser: .init(recordName: previousUser), currentUser: .init(recordName: user)), to: delegate
+            )
+        } else {
+            await delegate.handle(.account(change))
+        }
     }
 
-    private func send(_ batch: [SyncChange]) async {
+    private func send(_ batch: [SyncChange]) async -> Bool {
+        await sendZones(in: batch)
+        guard await permitsRecords(in: batch) else { return false }
+        await sendRecords(in: batch)
+        await publishState()
+        return true
+    }
+
+    private func sendZones(in batch: [SyncChange]) async {
         var refused: [String] = []
         var removedZones: [String] = []
         var overQuotaZones: [String] = []
         for change in batch {
             switch change {
             case .saveZone(let zone):
+                guard delegate?.allowsZoneCreation(zone) != false else { continue }
                 if refusesZoneSaves {
                     overQuotaZones.append(zone)
                 } else if losesZoneSaves > 0 {
@@ -348,6 +408,9 @@ final class FakeSyncEngine: SyncEngine {
         if !removedZones.isEmpty {
             await delegate?.handle(.zonesDeleted(Dictionary(removedZones.map { ($0, .deleted) }) { first, _ in first }))
         }
+    }
+
+    private func sendRecords(in batch: [SyncChange]) async {
         var saved: [SyncRecord] = []
         var deleted: [SyncRecordID] = []
         var failed: [SyncFailedSave] = []
@@ -355,19 +418,21 @@ final class FakeSyncEngine: SyncEngine {
             switch change {
             case .saveRecord(let id):
                 // A record the model no longer wants is dropped, as the real engine drops it.
-                guard let record = delegate?.record(for: id) else { continue }
+                guard let record = await delegate?.recordForUpload(id) else { continue }
                 saveAttempts[id.name, default: 0] += 1
                 if refusesVaultRecord, id.name == VaultSync.vaultRecordName {
-                    failed.append(SyncFailedSave(id: id, failure: .other))
+                    failed.append(SyncFailedSave(id: id, failure: .other, attempted: record))
                     continue
                 }
+                beforeRecordSave?(record)
                 switch cloud.save(record) {
                 case .saved(let stored):
                     saved.append(stored)
                 case .failed(let failure):
-                    failed.append(SyncFailedSave(id: id, failure: failure))
+                    failed.append(SyncFailedSave(id: id, failure: failure, attempted: record))
                 }
             case .deleteRecord(let id):
+                guard delegate?.wantsRecordDeletion(id) == true else { continue }
                 cloud.remove(id)
                 deleted.append(id)
             case .saveZone, .deleteZone:
@@ -377,13 +442,41 @@ final class FakeSyncEngine: SyncEngine {
         if reversesFailures {
             failed.reverse()
         }
-        await delegate?.handle(.sent(saved: saved, deleted: deleted, failed: failed))
-        await publishState()
+        let receipt = SyncEvent.sent(saved: saved, deleted: deleted, failed: failed)
+        if let holdSendReceipt {
+            holdSendReceipt { [weak delegate] in await delegate?.handle(receipt) }
+        } else {
+            await delegate?.handle(receipt)
+        }
+    }
+
+    private func permitsRecords(in batch: [SyncChange]) async -> Bool {
+        let records = batch.filter {
+            switch $0 {
+            case .saveRecord, .deleteRecord:
+                true
+            case .saveZone, .deleteZone:
+                false
+            }
+        }
+        guard !records.isEmpty else { return true }
+        guard let delegate, await delegate.permitsUpload(using: currentAccountUser) else {
+            add(records.filter { queue[Self.target(of: $0)] == nil })
+            return false
+        }
+        return true
     }
 
     private func publishState() async {
         stateRevision += 1
-        await delegate?.handle(.state(Data("state-\(stateRevision)".utf8)))
+        let zones = queue.values.compactMap { queued -> String? in
+            guard case .saveZone(let zone) = queued.change else { return nil }
+            return zone
+        }
+        let checkpoint = Checkpoint(cursor: fetchedAt, revision: stateRevision, zoneSaves: zones)
+        if let data = try? JSONEncoder().encode(checkpoint) {
+            await delegate?.handle(.state(data))
+        }
     }
 
     private static func target(of change: SyncChange) -> String {
