@@ -158,6 +158,21 @@ struct VaultAssetTransferTests {
         #expect(copy != db.file && !FileManager.default.fileExists(atPath: copy.path))
     }
 
+    @Test func aFetchedAssetWithoutAReadableFileSizeDoesNotStartARepair() async throws {
+        let db = try Database()
+        let ref = try VaultAssetRef(db.bytes)
+        db.tag = "current"
+        try FileManager.default.removeItem(at: db.serverFile)
+        try FileManager.default.createDirectory(at: db.serverFile, withIntermediateDirectories: false)
+        #expect(try db.serverFile.resourceValues(forKeys: [.fileSizeKey]).fileSize == nil)
+
+        await #expect(throws: (any Error).self) {
+            _ = try await db.requests.upload(ref, from: db.file, zone: db.zone, user: db.owner, acknowledged: "earlier")
+        }
+        #expect(db.saves.isEmpty)
+        #expect(db.tag == "current")
+    }
+
     @Test(arguments: [true, false])
     func repairsAnAssetWhoseCiphertextFieldIsMissing(hadReceipt: Bool) async throws {
         let db = try Database()

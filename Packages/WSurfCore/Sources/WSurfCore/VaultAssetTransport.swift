@@ -180,7 +180,8 @@ struct VaultAssetRequests {
     }
 
     private func verifiedBytes(_ ref: VaultAssetRef, at file: URL) throws -> Data? {
-        guard try file.resourceValues(forKeys: [.fileSizeKey]).fileSize == ref.size else { return nil }
+        guard let size = try file.resourceValues(forKeys: [.fileSizeKey]).fileSize else { throw CocoaError(.fileReadUnknown) }
+        guard size == ref.size else { return nil }
         let data = try Data(contentsOf: file)
         return ref.matches(data) ? data : nil
     }
