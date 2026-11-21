@@ -10,7 +10,7 @@ import WebKit
 @testable import WSurf
 
 @MainActor
-@Suite(.serialized, .boundedWebViews)
+@Suite(.serialized, .boundedWebViews, EmptyProfileKeychain())
 struct ProfileSwitchTests {
     private struct Fixture {
         let app = BrowserApplication()

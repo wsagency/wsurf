@@ -129,28 +129,67 @@ extension Profile {
 
     @MainActor
     static func erase(_ profile: Profile) async {
+        do {
+            try await eraseLocalData(profile)
+        } catch {
+            Pipeline.log.error("profile: local data erase failed")
+        }
+    }
+
+    struct PendingWebsiteData: LocalizedError {
+        let underlying: Error
+        var errorDescription: String? {
+            underlying.localizedDescription
+        }
+    }
+
+    @MainActor
+    static func eraseLocalData(_ profile: Profile) async throws {
         guard !profile.isOriginal else { return }
+        var failure: Error?
+        var websiteFailure: PendingWebsiteData?
+        func attempt(_ erase: () async throws -> Void) async {
+            do {
+                try await erase()
+            } catch {
+                failure = failure ?? error
+            }
+        }
         if !profile.isPrivate {
             // Revokes issued access and drains vault work before anything is deleted; never wipes the vault itself (the
             // support directory removal below does). First in this branch so no caller of `erase` can bypass it.
             CloudSync.shared?.vaults?.profileErased(profile.id)
             await CredentialManager.retire(profileID: profile.id)
             CloudTabs.shared?.forget(profileID: profile.id)
-            try? await WKWebsiteDataStore.remove(forIdentifier: profile.id)
-            try? await AutofillVaults.cards(for: profile.id).erase()
-            try? await AutofillVaults.contacts(for: profile.id).erase()
-            try? await AutofillVaults.legacyPasswords(for: profile.id).erase()
-            await InputHistory.shared.erase(profile)
-            _ = await Task.detached { try? AutofillSaveIndex.erase(profileID: profile.id) }.value
+            // A launch replay can reach WebKit before the first browser window initializes its main run loop.
+            _ = WKWebsiteDataStore.nonPersistent()
             do {
-                try await ChromiumRuntime.shared.erase(profile: profile)
+                try await WKWebsiteDataStore.remove(forIdentifier: profile.id)
             } catch {
-                Pipeline.log.error("profile: Chromium data erase failed")
+                if await WKWebsiteDataStore.allDataStoreIdentifiers.contains(profile.id) {
+                    websiteFailure = PendingWebsiteData(underlying: error)
+                }
             }
+            await attempt { try await AutofillVaults.cards(for: profile.id).erase() }
+            await attempt { try await AutofillVaults.contacts(for: profile.id).erase() }
+            await attempt { try await AutofillVaults.legacyPasswords(for: profile.id).erase() }
+            await attempt { try await InputHistory.shared.erase(profile) }
+            await attempt { try await AutofillSaveIndex.erase(profileID: profile.id) }
+            await attempt { try await ChromiumRuntime.shared.erase(profile: profile) }
         }
         await ExtensionManager.eraseData(for: profile)
-        try? FileManager.default.removeItem(at: profile.supportDirectory)
-        try? FileManager.default.removeItem(at: FaviconLoader.cacheDirectory(for: profile))
+        for directory in [profile.supportDirectory, FaviconLoader.cacheDirectory(for: profile)] {
+            do {
+                try FileManager.default.removeItem(at: directory)
+            } catch CocoaError.fileNoSuchFile {
+                // A previous attempt may already have removed this directory.
+            } catch {
+                failure = failure ?? error
+            }
+        }
         ProfileSettingsStore.forget(profile.id)
+        if let failure = failure ?? websiteFailure {
+            throw failure
+        }
     }
 }

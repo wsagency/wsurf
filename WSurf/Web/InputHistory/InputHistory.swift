@@ -297,7 +297,7 @@ final class InputHistory {
     }
 
     /// Profile erasure: the entries and both keys go before the caller removes the directory, and the profile gets no store again.
-    func erase(_ profile: Profile) async {
+    func erase(_ profile: Profile) async throws {
         guard !profile.isPrivate else { return }
         let id = profile.id
         retired.insert(id)
@@ -308,7 +308,7 @@ final class InputHistory {
         await drain(profileID: id)
         tails[id] = nil
         let store = stores.removeValue(forKey: id) ?? makeStore(profile, ownsSession)
-        try? await store?.erase()
+        try await store?.erase()
     }
 
     // MARK: - Expiry

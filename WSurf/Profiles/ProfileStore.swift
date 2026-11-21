@@ -6,13 +6,16 @@
 import AppKit
 import Foundation
 import Observation
+import os
 
 @MainActor
 @Observable
 final class ProfileStore {
     static let shared = ProfileStore()
 
-    @ObservationIgnored private var catalog: ProfileStore?
+    @ObservationIgnored private let catalog: ProfileStore?
+    @ObservationIgnored private var pendingErasures: [Profile] = []
+    @ObservationIgnored private var erasing: Set<UUID> = []
     private enum ListStatus { case loaded, missing, unreadable }
     @ObservationIgnored private var listStatus = ListStatus.loaded
     private var storedProfiles: [Profile]
@@ -28,8 +31,8 @@ final class ProfileStore {
     }
 
     static func selection(profile: Profile, catalog: ProfileStore = .shared) -> ProfileStore {
-        let selection = ProfileStore(file: catalog.file)
-        selection.catalog = catalog
+        let owner = catalog.catalog ?? catalog
+        let selection = ProfileStore(file: owner.file, catalog: owner)
         selection.markCurrent(profile)
         return selection
     }
@@ -91,8 +94,13 @@ final class ProfileStore {
         profiles.count > 1
     }
 
-    init(file: URL? = nil) {
-        self.file = file ?? Self.defaultFile
+    convenience init(file: URL? = nil) {
+        self.init(file: file ?? Self.defaultFile, catalog: nil)
+    }
+
+    private init(file: URL, catalog: ProfileStore?) {
+        self.file = file
+        self.catalog = catalog
         let stored: Stored?
         do {
             stored = try Self.read(self.file)
@@ -116,6 +124,7 @@ final class ProfileStore {
         currentID = opening
         lastPersistentID = opening
         storedLastUsed = (stored?.lastUsed ?? [:]).filter { id, _ in loaded.contains { $0.id == id } }
+        resumeErasures(stored?.pendingErasures)
     }
 
     /// The Personal fallback after an I/O failure cannot establish that a named profile was erased.
@@ -135,12 +144,14 @@ final class ProfileStore {
             }
             let restored = Self.includingPersonal(saved.profiles)
             let ids = Set(restored.map(\.id))
-            let added = storedProfiles.filter { !ids.contains($0.id) }
+            let retiring = Set((saved.pendingErasures ?? []).map(\.id))
+            let added = storedProfiles.filter { !ids.contains($0.id) && !retiring.contains($0.id) }
             saved.profiles = restored + added
             saved.lastUsed = (saved.lastUsed ?? [:]).merging(storedLastUsed) { _, live in live }
             saved.launchProfileID = storedLaunchProfileID ?? saved.launchProfileID.flatMap { ids.contains($0) ? $0 : nil }
             // Commit profiles explicitly added during the outage before sync can use their identities.
             if !added.isEmpty {
+                guard canWriteCatalog else { return nil }
                 do {
                     try JSONFileStore.writeAtomically(saved, to: file, sortedKeys: true)
                 } catch {
@@ -151,6 +162,7 @@ final class ProfileStore {
             storedLastUsed = saved.lastUsed ?? [:]
             storedLaunchProfileID = saved.launchProfileID
             listStatus = .loaded
+            resumeErasures(saved.pendingErasures)
         }
         return storedProfiles
     }
@@ -203,12 +215,13 @@ final class ProfileStore {
         return profile
     }
 
-    /// Adds the profile another Mac synced, under the same ID, so its synced vaults open here. Nil for the built-in profiles and for an
-    /// ID that is already a profile. The name is cut to the length the sync record allows, and a symbol or color this Mac does not
-    /// know becomes the default.
+    /// Adds the profile another Mac synced under the same ID so its vaults open here. Built-in, live and pending-erasure IDs
+    /// stay reserved. The name is cut to the length the sync record allows, and an unknown symbol becomes the default.
     @discardableResult
     func adopt(id: UUID, name: String, symbol: String, color: TabFolderColor) -> Profile? {
-        guard id != Profile.originalID, id != Profile.privateID, !profiles.contains(where: { $0.id == id }) else { return nil }
+        let owner = catalog ?? self
+        guard id != Profile.originalID, id != Profile.privateID, verifiedProfiles != nil || owner.canCreateList,
+              !profiles.contains(where: { $0.id == id }), !owner.pendingErasures.contains(where: { $0.id == id }) else { return nil }
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         let known = NSImage(systemSymbolName: symbol, accessibilityDescription: nil) != nil
         let profile = Profile(
@@ -262,11 +275,28 @@ final class ProfileStore {
         releaseWindows: () async -> Void = {},
         settingsSync: CloudSettingsSync? = CloudSync.shared?.settingsSync,
         sharedSpaces: CloudSharedSpaces? = CloudSync.shared?.sharedSpaces,
-        eraseData: (Profile) async -> Void = Profile.erase
+        eraseData: (Profile) async throws -> Void = Profile.eraseLocalData
     ) async -> Result<Void, Error> {
         guard !profile.isOriginal, !profile.isPrivate else { return .success(()) }
+        let owner = catalog ?? self
+        guard owner.canWriteCatalog else { return .failure(CocoaError(.fileLocking)) }
         guard let live = verifiedProfiles else { return .failure(CocoaError(.fileReadUnknown)) }
-        guard live.contains(where: { $0.id == profile.id }) else { return .success(()) }
+        let listed = live.first { $0.id == profile.id }
+        let result = await owner.finishErasure(profile.id, prepare: {
+            if let listed {
+                try await self.recordRemoval(of: listed, beforeErasing: beforeErasing, settingsSync: settingsSync, sharedSpaces: sharedSpaces)
+            }
+        }, releaseWindows: releaseWindows, eraseData: eraseData)
+        // WebKit can keep a detached window's store in use. The removal is saved and launch will retry it.
+        if listed != nil, case .failure(let error) = result, error is Profile.PendingWebsiteData {
+            return .success(())
+        }
+        return result
+    }
+
+    private func recordRemoval(
+        of profile: Profile, beforeErasing: () async -> Void, settingsSync: CloudSettingsSync?, sharedSpaces: CloudSharedSpaces?
+    ) async throws {
         // An installation without a running iCloud service can still have consent saved by a prior launch.
         let sharedSpaces = sharedSpaces ?? CloudSharedSpaces(
             stateFile: file.deletingLastPathComponent().appending(path: "iCloudSharedSpaces.json"), profileStore: self, windows: { [] }
@@ -276,15 +306,11 @@ final class ProfileStore {
             try settingsSync?.forgetProfile(profile.id)
             try catalogResult.get()
         }
-        do {
-            try detachSync()
-            await beforeErasing()
-            // A different window can enroll the profile again while the active window switches away.
-            try detachSync()
-        } catch {
-            return .failure(error)
-        }
-        guard let index = index(of: profile) else { return .success(()) }
+        try detachSync()
+        await beforeErasing()
+        // A different window can enroll the profile again while the active window switches away.
+        try detachSync()
+        guard let index = index(of: profile) else { return }
         var remaining = profiles
         remaining.remove(at: index)
         var dates = lastUsed
@@ -292,14 +318,14 @@ final class ProfileStore {
         let opening = isPrivate ? (catalog?.currentID ?? lastPersistentID) : currentID
         let savedCurrent = opening == profile.id ? Profile.originalID : opening
         let launch = launchProfileID == profile.id ? nil : launchProfileID
-        do {
-            try JSONFileStore.writeAtomically(
-                Stored(profiles: remaining, currentID: savedCurrent, launchProfileID: launch, lastUsed: dates),
-                to: file, sortedKeys: true
-            )
-        } catch {
-            return .failure(error)
-        }
+        let owner = catalog ?? self
+        let pending = owner.pendingErasures + [profile]
+        // The same atomic write that removes the ID records which local data still needs erasing.
+        try JSONFileStore.writeAtomically(
+            Stored(profiles: remaining, currentID: savedCurrent, launchProfileID: launch, lastUsed: dates, pendingErasures: pending),
+            to: file, sortedKeys: true
+        )
+        owner.pendingErasures = pending
         profiles = remaining
         lastUsed = dates
         launchProfileID = launch
@@ -315,15 +341,46 @@ final class ProfileStore {
                 catalog.lastPersistentID = savedCurrent
             }
         }
-        // A window may leave this profile only after its removal is durable, and before its stores are erased.
-        await releaseWindows()
-        // Stops the profile's watches and waits for their last write, so nothing lands in the folder the erase removes.
-        await BrowserProfileContext.existing(for: profile.id)?.pageWatches?.close()
-        BrowserProfileContext.forget(profile.id)
-        SpaceStore.forget(profile.id)
-        ReaderViewSpare.discard()
-        await eraseData(profile)
-        return .success(())
+    }
+
+    private func resumeErasures(_ saved: [Profile]?) {
+        guard catalog == nil, let saved, !saved.isEmpty else { return }
+        let live = Set(storedProfiles.map(\.id))
+        pendingErasures = saved.filter { !$0.isOriginal && !$0.isPrivate && !live.contains($0.id) }
+        let pending = pendingErasures
+        guard !pending.isEmpty, canWriteCatalog else { return }
+        Task {
+            for profile in pending {
+                if case .failure = await finishErasure(profile.id) {
+                    Pipeline.log.error("profile: local erasure remains pending")
+                }
+            }
+        }
+    }
+
+    private func finishErasure(
+        _ id: UUID, prepare: () async throws -> Void = {}, releaseWindows: () async -> Void = {},
+        eraseData: (Profile) async throws -> Void = Profile.eraseLocalData
+    ) async -> Result<Void, Error> {
+        guard erasing.insert(id).inserted else { return .failure(CocoaError(.fileLocking)) }
+        defer { erasing.remove(id) }
+        do {
+            try await prepare()
+            guard let profile = pendingErasures.first(where: { $0.id == id }), index(of: profile) == nil else { return .success(()) }
+            await releaseWindows()
+            // Drain the watches' final writes before deleting their folder.
+            await BrowserProfileContext.existing(for: profile.id)?.pageWatches?.close()
+            BrowserProfileContext.forget(profile.id)
+            SpaceStore.forget(profile.id)
+            ReaderViewSpare.discard()
+            try await eraseData(profile)
+            let remaining = pendingErasures.filter { $0.id != profile.id }
+            try writeCheckpoint(pendingErasures: remaining)
+            pendingErasures = remaining
+            return .success(())
+        } catch {
+            return .failure(error)
+        }
     }
 
     func markCurrent(_ profile: Profile, remember: Bool = true) {
@@ -349,6 +406,24 @@ final class ProfileStore {
         var currentID: UUID
         var launchProfileID: UUID?
         var lastUsed: [UUID: Date]?
+        var pendingErasures: [Profile]?
+    }
+
+    /// A second app process must not overwrite the session owner's pending erasures with its older list.
+    private var canWriteCatalog: Bool {
+        file != Self.defaultFile || AppDatabase.isRunningTests || AppDatabase.ownsSession
+    }
+
+    private var canCreateList: Bool {
+        listStatus == .missing && !Self.hasNamedProfileHistory(beside: file)
+    }
+
+    private func writeCheckpoint(pendingErasures: [Profile]) throws {
+        let saved = Stored(
+            profiles: profiles, currentID: isPrivate ? lastPersistentID : currentID, launchProfileID: launchProfileID,
+            lastUsed: lastUsed, pendingErasures: pendingErasures.isEmpty ? nil : pendingErasures
+        )
+        try JSONFileStore.writeAtomically(saved, to: file, sortedKeys: true)
     }
 
     private func save(creatingList: Bool = true) {
@@ -360,9 +435,8 @@ final class ProfileStore {
             catalog.save(creatingList: creatingList)
             return
         }
-        guard verifiedProfiles != nil || (creatingList && listStatus == .missing && !Self.hasNamedProfileHistory(beside: file)) else { return }
-        let saved = Stored(profiles: profiles, currentID: currentID, launchProfileID: launchProfileID, lastUsed: lastUsed)
-        if (try? JSONFileStore.writeAtomically(saved, to: file, sortedKeys: true)) != nil {
+        guard canWriteCatalog, verifiedProfiles != nil || (creatingList && canCreateList) else { return }
+        if (try? writeCheckpoint(pendingErasures: pendingErasures)) != nil {
             listStatus = .loaded
         }
     }

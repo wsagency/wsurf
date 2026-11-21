@@ -126,7 +126,7 @@ nonisolated enum AutofillSaveIndex {
         }
     }
 
-    static func erase(profileID: UUID) throws {
+    @concurrent static func erase(profileID: UUID) async throws {
         try lock.withLock { _ in try keychain.erase(service: service(profileID)) }
     }
 }
