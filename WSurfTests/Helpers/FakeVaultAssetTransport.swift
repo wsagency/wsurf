@@ -30,6 +30,7 @@ extension FakeSyncEngine: VaultCatalogReading, VaultAssetTransport, VaultZoneChe
     func deleteProfileVaultZone(_ id: CKRecordZone.ID) async throws {
         guard id.ownerName == cloud.user, !failsZoneDeletes else { throw CKError(.serviceUnavailable) }
         guard cloud.zones[id.zoneName] != nil else { throw CKError(.zoneNotFound) }
+        try await beforeProfileVaultZoneDelete?(id.zoneName)
         cloud.deleteZone(id.zoneName, reason: .deleted)
     }
 
@@ -92,5 +93,35 @@ extension FakeSyncEngine: VaultCatalogReading, VaultAssetTransport, VaultZoneChe
         guard try await currentAccountUser() == user, let data = cloud.encryptedVaultAssets[id],
               reference.matches(data) else { throw VaultSyncFailure.unavailable }
         return (data, assetTag(reference, id: id))
+    }
+}
+
+extension FakeSyncEngine: CloudProfileRetirementTransport {
+    func publishRetirement(_ instance: CloudProfileInstance) async throws {
+        try await instance.verify(using: self)
+        cloud.createZone(CloudProfileInstance.zone)
+        if let receipt = cloud.record(instance.recordID) {
+            guard instance.matches(receipt) else { throw VaultSyncFailure.unavailable }
+        } else {
+            let record = SyncRecord(id: instance.recordID, type: .vault, schema: 1, payload: try JSONEncoder().encode(instance))
+            guard case .saved = cloud.save(record) else { throw VaultSyncFailure.unavailable }
+        }
+        try await instance.verify(using: self)
+    }
+
+    func retirements(for owner: String) async throws -> Set<CloudProfileInstance> {
+        guard try await currentAccountUser() == owner else { throw VaultSyncFailure.unavailable }
+        return try Set((cloud.records(in: CloudProfileInstance.zone) ?? []).map { record in
+            let copy = try JSONDecoder().decode(CloudProfileInstance.self, from: record.payload)
+            guard copy.owner == owner, copy.matches(record) else { throw VaultSyncFailure.unavailable }
+            return copy
+        })
+    }
+
+    func isRetired(_ instance: CloudProfileInstance) async throws -> Bool {
+        try await instance.verify(using: self)
+        guard let record = cloud.record(instance.recordID) else { return false }
+        guard instance.matches(record) else { throw VaultSyncFailure.unavailable }
+        return true
     }
 }

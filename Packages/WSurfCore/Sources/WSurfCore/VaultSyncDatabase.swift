@@ -8,6 +8,7 @@ import WSurfVault
 /// One vault's row in `Credentials.sync`: whether this Mac syncs it, how that stands, and what was last uploaded.
 nonisolated struct VaultRow: Equatable {
     var vaultID: UUID
+    var instanceID: UUID?
     var enabled: Bool
     /// Written only by a per-vault choice. An older build can only populate the separate legacy column.
     var approvedUser: String?
@@ -246,6 +247,9 @@ nonisolated final class VaultSyncDatabase: Sendable {
                 CREATE INDEX pendingItemAssets ON base(vaultID, accountID) WHERE pendingAssetCheck IS NOT NULL;
                 """)
         }
+        migrator.registerMigration("vaultCloudInstance") { db in
+            try db.execute(sql: "ALTER TABLE vault ADD COLUMN instanceID TEXT")
+        }
         return migrator
     }()
 
@@ -279,13 +283,13 @@ nonisolated final class VaultSyncDatabase: Sendable {
             try db.execute(
                 sql: """
                     INSERT OR REPLACE INTO vault(vaultID, enabled, status, uploadedMark, pendingVaultPayload, pendingMark, dirty,
-                        needsFetch, lastHeadRevision, rereadOwed, consentUser, localWrappers, serverVault, pendingLocalWrappers, approvedUser)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        needsFetch, lastHeadRevision, rereadOwed, consentUser, localWrappers, serverVault, pendingLocalWrappers, approvedUser, instanceID)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                 arguments: [
                     row.vaultID.sqlText, row.enabled, row.status.rawValue, row.uploadedMark, row.pendingVault, row.pendingMark,
                     row.dirty, row.needsFetch, Int64(clamping: row.lastHeadRevision), row.rereadOwed, row.approvedUser,
-                    row.localWrappers, row.serverVault, row.pendingLocalWrappers, row.legacyRemovalUser,
+                    row.localWrappers, row.serverVault, row.pendingLocalWrappers, row.legacyRemovalUser, row.instanceID?.uuidString,
                 ]
             )
         }
@@ -305,6 +309,7 @@ nonisolated final class VaultSyncDatabase: Sendable {
         private static func vaultRow(_ row: Row) throws -> VaultRow? {
             guard let id = UUID(uuidString: row["vaultID"]), let status = VaultSyncStatus.Stored(rawValue: row["status"]) else { return nil }
             var result = try VaultRow(vaultID: id, enabled: VaultRow.readEnabled(from: row), status: status)
+            result.instanceID = try row.decode(UUID?.self, forColumn: "instanceID")
             result.approvedUser = row["consentUser"]
             if !result.enabled, status == .removalPending || status == .removalFailed || status == .removedDeleted {
                 result.legacyRemovalUser = row["approvedUser"]

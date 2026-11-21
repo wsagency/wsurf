@@ -6,8 +6,15 @@ import Foundation
 extension VaultSync {
     /// Bind the source account before the passkey can create a local vault. An interrupted Add leaves the switch off.
     public func addDiscoveredVault(_ remote: RemoteVault, create: () async throws -> UUID) async throws {
-        let key = try checkedKey(remote.profileID, remote.vaultID)
         guard let engine else { throw VaultSyncFailure.unavailable }
+        if let instance = remote.instanceID, let user = catalogUser, profileInstance?(remote.profileID, user) != instance {
+            let id = VaultKey(profileID: remote.profileID, vaultID: remote.vaultID, instanceID: instance)
+            guard let identity = engine as? any SyncAccountIdentity, try await identity.currentAccountUser() == user,
+                  self.engine === engine, catalogUser == user, state.remote[id.zone] == remote, permitsProfile?(remote.profileID) != false else { throw VaultSyncFailure.unavailable }
+            try adoptInstance?(remote.profileID, instance, user)
+        }
+        let key = try checkedKey(remote.profileID, remote.vaultID)
+        guard key.instanceID == remote.instanceID else { throw VaultSyncFailure.unavailable }
         let session = token(key)
         let user: String
         if let verified = catalogUser, verified == state.accountUser {
@@ -22,7 +29,8 @@ extension VaultSync {
         }
         guard !Task.isCancelled, self.engine === engine, token(key) == session, state.accountUser == user, accountAvailable != false, state.remote[key.zone] == remote,
               !addingVaults.contains(key), let database = database(key.profileID, create: true) else { throw VaultSyncFailure.unavailable }
-        let pending = VaultRow(vaultID: key.vaultID, enabled: false, approvedUser: user)
+        var pending = VaultRow(vaultID: key.vaultID, enabled: false, approvedUser: user)
+        pending.instanceID = key.instanceID
         let previous = try database.write { tx in
             let previous = try tx.vault(key.vaultID)
             guard previous?.enabled != true else { throw VaultSyncFailure.unavailable }
@@ -53,7 +61,7 @@ extension VaultSync {
     /// Held by Settings' local listing, off here, and present in the current account's verified catalog.
     /// Older interrupted adds have no row. The retry authenticates their remote header with the local key too.
     public func adoptionRetryAccount(profileID: UUID, vaultID: UUID) -> String? {
-        let key = VaultKey(profileID: profileID, vaultID: vaultID)
+        let key = localKey(profileID: profileID, vaultID: vaultID)
         guard engine != nil, let user = catalogUser, user == state.accountUser, accountAvailable == true, !excluded.contains(profileID),
               state.remote[key.zone] != nil, status(profileID: profileID, vaultID: vaultID) == .off else { return nil }
         if let pending = summaries[key]?.pendingAdoptionUser, pending != user {

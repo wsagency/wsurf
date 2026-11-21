@@ -9,6 +9,7 @@ public protocol SyncAccountIdentity: AnyObject {
 extension SyncEngineDelegate {
     /// A failed account lookup leaves pending changes in the transport. A subsequent batch verifies the account again.
     public func permitsUpload(using currentUser: @MainActor @Sendable () async throws -> String) async -> Bool {
+        await prepareForUpload()
         guard let user = try? await currentUser(), !user.isEmpty else { return false }
         return acceptsUploadAccount(user)
     }

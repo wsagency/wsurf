@@ -439,7 +439,7 @@ private struct ProfileDetailPage: View {
         deleting = false
         deletionError = nil
         guard let vaultWarning else { return }
-        let result = await coordinator.deleteProfile(profile, confirmedVaults: vaultWarning.vaultRemovals)
+        let result = await coordinator.deleteProfile(profile, confirmedVaults: vaultWarning.vaultRemovals, scope: .confirmed(vaultWarning.sharedCopies))
         switch result {
         case .success:
             onBack()

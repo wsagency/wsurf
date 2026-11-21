@@ -8,7 +8,7 @@ import WSurfVault
 extension VaultSync {
     func enrollmentAccount(_ engine: any SyncEngine, key: VaultKey, session: Int, expecting user: String?, explicit: Bool = false) async throws -> String {
         let actual = try await (engine as? any SyncAccountIdentity)?.currentAccountUser() ?? user
-        guard let actual, !actual.isEmpty, self.engine === engine, token(key) == session, state.accountUser == user, accountAvailable != false else {
+        guard permits(key), let actual, !actual.isEmpty, self.engine === engine, token(key) == session, state.accountUser == user, accountAvailable != false else {
             throw VaultSyncFailure.unavailable
         }
         if actual != user {
@@ -19,9 +19,11 @@ extension VaultSync {
     }
 
     func enableNow(_ key: VaultKey, joiningFor expectedUser: String? = nil) async throws {
-        guard let engine else { throw VaultSyncFailure.unavailable }
+        guard permits(key), let engine else { throw VaultSyncFailure.unavailable }
         guard accountAvailable != false else { throw VaultSyncFailure.signedOut }
         let user = try await enrollmentAccount(engine, key: key, session: token(key), expecting: state.accountUser, explicit: expectedUser == nil)
+        try await checkInstance?(key.profileID, user)
+        guard permits(key), self.engine === engine, state.accountUser == user else { throw VaultSyncFailure.unavailable }
         // Verifying a first explicit choice may have quarantined an unowned row from the previous release.
         let mine = token(key)
         if let expectedUser, user != expectedUser {
@@ -55,6 +57,7 @@ extension VaultSync {
         let wrappers = try VaultWrapperList.encode(snapshot.wrappers)
         let mark = VaultSyncCodec.vaultMark(name: snapshot.name, wrappers: wrappers, key: syncKey)
         var row = VaultRow(vaultID: key.vaultID, needsFetch: read != nil, approvedUser: user)
+        row.instanceID = key.instanceID
         row.lastHeadRevision = snapshot.revision
         if let read {
             let server = try Self.header(in: read, key: key, syncKey: syncKey)

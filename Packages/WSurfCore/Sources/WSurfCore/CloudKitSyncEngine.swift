@@ -35,11 +35,17 @@ public final class CloudKitSyncEngine: SyncEngine, SyncAccountIdentity {
         for change in changes {
             switch change {
             case .saveZone(let zone):
-                zones.append(.saveZone(CKRecordZone(zoneID: CloudKitMapping.zoneID(zone))))
+                if let id = changeZoneID(zone, deleting: false) {
+                    zones.append(.saveZone(CKRecordZone(zoneID: id)))
+                }
             case .deleteZone(let zone):
-                zones.append(.deleteZone(CloudKitMapping.zoneID(zone)))
+                if let id = changeZoneID(zone, deleting: true) {
+                    zones.append(.deleteZone(id))
+                }
             case .saveRecord(let id):
-                records.append(.saveRecord(CloudKitMapping.recordID(id)))
+                if let zone = changeZoneID(id.zone, deleting: false) {
+                    records.append(.saveRecord(CKRecord.ID(recordName: id.name, zoneID: zone)))
+                }
             case .deleteRecord(let id):
                 records.append(.deleteRecord(CloudKitMapping.recordID(id)))
             }
@@ -52,6 +58,12 @@ public final class CloudKitSyncEngine: SyncEngine, SyncAccountIdentity {
         }
     }
 
+    private func changeZoneID(_ zone: String, deleting: Bool) -> CKRecordZone.ID? {
+        guard let ids = SyncZone.vaultIDs(zone), deleting || ids.instanceID != nil else { return CloudKitMapping.zoneID(zone) }
+        guard let owner = bridge.delegate.boundOwner(of: zone, deleting: deleting), !owner.isEmpty, owner != CKCurrentUserDefaultName else { return nil }
+        return CloudKitMapping.zoneID(zone, ownerName: owner)
+    }
+
     public func sendNow() async throws {
         try await engine.sendChanges()
     }
@@ -61,12 +73,16 @@ public final class CloudKitSyncEngine: SyncEngine, SyncAccountIdentity {
     }
 
     public func fetchAll(zone: String) async throws -> SyncZoneRead {
+        try await fetchAll(zoneID: CloudKitMapping.zoneID(zone))
+    }
+
+    func fetchAll(zoneID: CKRecordZone.ID) async throws -> SyncZoneRead {
         let database = container.privateCloudDatabase
         var snapshot = CloudKitZoneSnapshot()
         var token: CKServerChangeToken?
         while true {
             let page = try await database.recordZoneChanges(
-                inZoneWith: CloudKitMapping.zoneID(zone), since: token, desiredKeys: [CloudKitMapping.payloadKey, CloudKitMapping.schemaKey]
+                inZoneWith: zoneID, since: token, desiredKeys: [CloudKitMapping.payloadKey, CloudKitMapping.schemaKey]
             )
             snapshot.applyPage(
                 modified: page.modificationResultsByID.lazy.map { id, result in (id, (try? result.get())?.record) },
@@ -148,6 +164,7 @@ private nonisolated final class Bridge: CKSyncEngineDelegate {
         case .didFetchChanges:
             await MainActor.run { fetchCycle.end() }
         case .willSendChanges:
+            await delegate.prepareForUpload()
             await discardUnapprovedCreations(in: syncEngine)
         case .fetchedDatabaseChanges(let changes):
             guard !changes.deletions.isEmpty else { return }
@@ -201,7 +218,11 @@ private nonisolated final class Bridge: CKSyncEngineDelegate {
     @MainActor func discardUnapprovedCreations(in engine: CKSyncEngine) {
         let refused = engine.state.pendingDatabaseChanges.filter { change in
             guard case .saveZone(let zone) = change else { return false }
-            return !delegate.allowsZoneCreation(zone.zoneID.zoneName)
+            let id = zone.zoneID
+            if SyncZone.vaultIDs(id.zoneName)?.instanceID != nil, delegate.boundOwner(of: id.zoneName, deleting: false) != id.ownerName {
+                return true
+            }
+            return !delegate.allowsZoneCreation(id.zoneName)
         }
         if !refused.isEmpty {
             engine.state.remove(pendingDatabaseChanges: refused)
@@ -253,7 +274,11 @@ extension CloudKitMapping {
         }
         return await CKSyncEngine.RecordZoneChangeBatch(pendingChanges: approved) { recordID in
             if let record = await delegate.recordForUpload(syncID(recordID)) {
-                return CloudKitMapping.ckRecord(record)
+                if SyncZone.vaultIDs(record.id.zone)?.instanceID != nil {
+                    let owner = await delegate.boundOwner(of: record.id.zone, deleting: false)
+                    guard let owner, owner == recordID.zoneID.ownerName else { return nil }
+                }
+                return CloudKitMapping.ckRecord(record, ownerName: recordID.zoneID.ownerName)
             }
             // A save that is no longer wanted must not come back on the next batch.
             discard(.saveRecord(recordID))
@@ -288,7 +313,7 @@ nonisolated extension CloudKitMapping {
         let zone = record.recordID.zoneID.zoneName
         let mirroredTabRow = (zone == SyncZone.devices && record.recordType == SyncRecordType.device.rawValue)
             || (SyncZone.profileID(zone) != nil && record.recordType == SyncRecordType.deviceSession.rawValue)
-        return mirroredTabRow || zone.hasPrefix("mac-prefs-") || SharedCatalogCategory.allCases.contains { $0.zone == zone }
+        return zone == CloudProfileInstance.zone || mirroredTabRow || zone.hasPrefix("mac-prefs-") || SharedCatalogCategory.allCases.contains { $0.zone == zone }
     }
 
     static func deliverAccountChange(_ change: CKSyncEngine.Event.AccountChange.ChangeType, to delegate: any SyncEngineDelegate) async {

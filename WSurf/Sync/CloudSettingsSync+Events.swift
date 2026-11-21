@@ -56,7 +56,7 @@ extension CloudSettingsSync {
     }
 
     func receive(_ record: SyncRecord) throws {
-        guard var channel = state.channels[record.id.zone] else { return }
+        guard var channel = state.channels[record.id.zone], permitsProfile(channel.localProfileID) else { return }
         let submitted = try decoded(record)
         let payload = submitted.setting
         let profile = channel.localProfileID
@@ -75,7 +75,7 @@ extension CloudSettingsSync {
     }
 
     func removed(_ id: SyncRecordID) throws {
-        guard var channel = state.channels[id.zone], let key = names[id],
+        guard var channel = state.channels[id.zone], permitsProfile(channel.localProfileID), let key = names[id],
             let record = channel.records[key], record.server != nil
         else { return }
         let profile = channel.localProfileID

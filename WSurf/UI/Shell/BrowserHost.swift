@@ -635,6 +635,7 @@ struct BrowserRootView: View {
         }
             .browserWindowEnvironment(coordinator)
             .background { WindowTitleFollower(coordinator: coordinator) }
+            .background { DeletedCloudProfilePrompt(coordinator: coordinator) }
     }
 }
 

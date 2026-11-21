@@ -2792,6 +2792,17 @@
     "Delete on other devices" : {
       "comment" : "Title of the row, under the Sync with iCloud switch, that asks whether entries deleted on this Mac should also be deleted on the person’s other devices. Sentence case."
     },
+    "Delete from This Mac" : {
+      "comment" : "Remove the affected profile and its local data from this Mac. A second dialog asks for confirmation.",
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Izbriši s ovog Maca"
+          }
+        }
+      }
+    },
     "Delete on Other Devices…" : {
       "comment" : "Button that asks to send a large deletion of entries to the person’s other devices. Title Case for a command; the ellipsis means a confirmation follows."
     },
@@ -3959,6 +3970,17 @@
           "stringUnit" : {
             "state" : "new",
             "value" : "%@ s"
+          }
+        }
+      }
+    },
+    "Macs sharing this profile will ask whether to create a new iCloud instance or delete their local copy." : {
+      "comment" : "In the profile deletion warning. Each other Mac that shares this profile asks its user what to do with the local copy.",
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Na drugim Macovima koji dijele ovaj profil pojavit će se izbor između stvaranja nove kopije u iCloudu i brisanja lokalne kopije."
           }
         }
       }
@@ -9313,6 +9335,17 @@
     "Create Passkey" : {
       "comment" : "Default button of the sheet titled “Create a passkey for %@?”, which appears when a website asks to create a passkey. It saves the new passkey in Credential Manager. Title Case, a verb phrase."
     },
+    "Create New Instance" : {
+      "comment" : "Create a new iCloud copy of this profile using the data on this Mac.",
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Stvori novu kopiju"
+          }
+        }
+      }
+    },
     "Create Vault" : {
       "comment" : "Default button of the Create Credential Vault sheet; it creates the new vault. Verb phrase, Title Case. Disabled until the name and the passkey choice are valid."
     },
@@ -11548,6 +11581,17 @@
     "This permanently deletes the vault, its Trash and its earlier versions. It can’t be undone." : {
       "comment" : "Warning note at the top of the Delete Vault sheet. Its Trash is the vault’s own Trash of removed items; earlier versions are the saved older versions of credentials. Sentence case."
     },
+    "This profile was deleted from iCloud" : {
+      "comment" : "Title shown on a Mac that still has a local copy of a profile deleted from iCloud.",
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ovaj je profil izbrisan iz iClouda"
+          }
+        }
+      }
+    },
     "This profile already has the most vaults it can hold." : {
       "comment" : "Error on the Credentials page in Settings when the profile has reached the maximum number of credential vaults. Full sentence."
     },
@@ -12103,6 +12147,17 @@
     },
     "“%@” holds %lld credentials and %lld in Trash" : {
       "comment" : "One item of the list in the confirmation shown when deleting a profile, for an unlocked credential vault. %@ is the vault’s name, the first %lld is how many credentials it holds and the second is how many items are in its Trash. Joined with semicolons into a longer sentence."
+    },
+    "“%@” is still on this Mac. Create a new iCloud instance to share it again, or delete the local copy." : {
+      "comment" : "Body of the iCloud profile deletion alert. %@ is the local profile name.",
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Profil „%@” još je na ovom Macu. Stvorite novu kopiju u iCloudu da biste ga ponovno dijelili ili izbrišite lokalnu kopiju."
+          }
+        }
+      }
     },
     "“%@” is larger than %@. Each file in the vault can be up to %@." : {
       "comment" : "Error text at the bottom of the credential editor in Settings › Credentials, when a file chosen with Add File… is too big. First %@ is the file’s name (the curly quotes surround it; do not translate it). The second and third %@ are the same size limit with a unit, such as “50 MB”. Full sentences."

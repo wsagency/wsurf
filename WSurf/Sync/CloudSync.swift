@@ -27,19 +27,24 @@ final class CloudSync {
 
     private let clock: any Clock<Duration>
     private let makeEngine: @MainActor (any SyncEngineDelegate, Data?) -> any SyncEngine
-    private var engine: (any SyncEngine)?
+    private(set) var engine: (any SyncEngine)?
     @ObservationIgnored private var startOtherDevices: (() -> CloudTabs?)?
     private var attachedTabs = false
     private var attachedVaults = false
+    @ObservationIgnored private var profileCheck: Task<Void, Never>?
     @ObservationIgnored private var vaultCatalogTask: Task<Void, Never>?
     @ObservationIgnored private var makeVaults: (() -> VaultSync)?
     @ObservationIgnored private var rememberVaultDiscovery: ((Bool) -> Void)?
-    @ObservationIgnored private var profileStore: ProfileStore?
+    @ObservationIgnored var dormantVaultInstances: [UUID: Set<CloudProfileInstance>] = [:]
+    var verifiedRetirements: Set<CloudProfileInstance> = []
+    @ObservationIgnored var unverifiedInstances: Set<UUID> = []
+    @ObservationIgnored var sendingRetirements: Set<CloudProfileInstance> = []
+    @ObservationIgnored var profileStore: ProfileStore?
     @ObservationIgnored private var removingVaultZones: Set<VaultProfileRemoval> = []
     @ObservationIgnored private var acknowledgedVaultZones: Set<VaultProfileRemoval> = []
     private var attachedSpaces = false
     private var attachedSettings = false
-    private var isTerminating = false
+    private(set) var isTerminating = false
     private var heartbeatTask: Task<Void, Never>?
 
     @discardableResult
@@ -108,6 +113,7 @@ final class CloudSync {
         let cloudSync = CloudSync(router: router, tabs: tabs, vaults: vaults, sharedSpaces: spaces, settingsSync: settings, clock: clock, makeEngine: makeEngine)
         cloudSync.profileStore = profileStore
         if let profileStore {
+            cloudSync.configureProfileInstances(profileStore)
             router.isLiveVaultProfile = { id in id == Profile.originalID || profileStore.verifiedProfiles?.contains { $0.id == id } == true }
             profileStore.onVaultRemoval = { [weak cloudSync] in cloudSync?.ensureEngine() }
         }
@@ -193,6 +199,9 @@ final class CloudSync {
         rememberVaultDiscovery?(on)
         if on {
             vaults = makeVaults()
+            if let profileStore {
+                configureVaultInstances(vaults, store: profileStore)
+            }
             ensureEngine()
         } else {
             vaultCatalogTask?.cancel()
@@ -217,6 +226,7 @@ final class CloudSync {
                     setVaultDiscovery(false)
                     return
                 }
+                await checkProfileInstances()
                 let cards = try? await reader.fetchVaultCards()
                 let current = try await identity.currentAccountUser()
                 guard vaults === sync, !Task.isCancelled else { return }
@@ -253,16 +263,30 @@ final class CloudSync {
     // ponytail: no registerForRemoteNotifications yet; add it at launch if pushes do not arrive (the heartbeat fetches meanwhile).
     /// Creates the engine once, and only when this Mac shares tabs, still owns tab records on the server that it must delete, or syncs
     /// vaults (the flag is the consent to fetch). Each feature is attached the first time it needs the engine.
-    private func ensureEngine() {
+    func ensureEngine() {
         let wantsTabs = tabs?.sync.needsEngine == true
         let wantsSpaces = sharedSpaces?.needsEngine == true
         let wantsSettings = settingsSync?.needsEngine == true
         let withdrawals = profileStore?.vaultRemovals ?? []
-        guard wantsTabs || vaults != nil || wantsSpaces || wantsSettings || !withdrawals.isEmpty else { return }
+        let ledger = profileStore?.cloudLedger
+        if vaults == nil, let profileStore {
+            refreshDormantInstances(profileStore)
+        }
+        let needsProfiles = ledger?.outgoing.isEmpty == false || ledger?.pending.isEmpty == false || !dormantVaultInstances.isEmpty
+        guard wantsTabs || vaults != nil || wantsSpaces || wantsSettings || !withdrawals.isEmpty || needsProfiles else { return }
         let engine = engine ?? makeEngine(router, router.state.engineState)
         self.engine = engine
+        if !dormantVaultInstances.isEmpty, profileCheck == nil {
+            profileCheck = Task { [weak self] in
+                await self?.checkProfileInstances()
+                self?.profileCheck = nil
+            }
+        }
+        if let profileStore, let transport = engine as? any CloudProfileRetirementTransport {
+            sendRetirements(profileStore, transport: transport)
+        }
         if let profileStore, let transport = engine as? any VaultProfileZoneDeleting {
-            for removal in withdrawals where removingVaultZones.insert(removal).inserted {
+            for removal in withdrawals where !profileStore.cloudLedger.outgoing.contains(removal.instance) && removingVaultZones.insert(removal).inserted {
                 Task {
                     defer { removingVaultZones.remove(removal) }
                     do {
@@ -306,8 +330,17 @@ final class CloudSync {
 
     /// The heartbeat: every feature sends again what is waiting and fetches.
     func beat() {
-        if profileStore?.vaultRemovals.isEmpty == false {
+        if profileStore?.vaultRemovals.isEmpty == false || profileStore?.cloudLedger.outgoing.isEmpty == false {
             ensureEngine()
+        }
+        if profileStore != nil, vaults == nil, profileCheck == nil {
+            profileCheck = Task { [weak self] in
+                if let self, let profileStore {
+                    refreshDormantInstances(profileStore)
+                }
+                await self?.checkProfileInstances()
+                self?.profileCheck = nil
+            }
         }
         tabs?.beat()
         if let vaults, let engine, makeVaults != nil {

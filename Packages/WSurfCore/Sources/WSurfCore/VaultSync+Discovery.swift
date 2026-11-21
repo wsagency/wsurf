@@ -43,7 +43,7 @@ extension VaultSync {
         for record in records {
             guard record.type == .vault, record.id.name == Self.vaultRecordName, let ids = SyncZone.vaultIDs(record.id.zone),
                   !excluded.contains(ids.profileID), let payload = VaultRecordPayload.decode(record.payload) else { continue }
-            cards[record.id.zone] = RemoteVault(profileID: ids.profileID, vaultID: ids.vaultID, payload: payload)
+            cards[record.id.zone] = RemoteVault(profileID: ids.profileID, vaultID: ids.vaultID, payload: payload, instanceID: ids.instanceID)
         }
         guard state.remote != cards else { return }
         state.remote = cards

@@ -150,7 +150,7 @@ struct CloudVaultEnrollmentTests {
                         SELECT vaultID, 0, CASE WHEN status = 'removalPending' THEN 'removedDeleted' ELSE status END, approvedUser FROM vault;
                     DROP TABLE vault;
                     ALTER TABLE oldVault RENAME TO vault;
-                    DELETE FROM grdb_migrations WHERE identifier = 'vaultExplicitConsent';
+                    DELETE FROM grdb_migrations WHERE identifier IN ('vaultExplicitConsent', 'vaultCloudInstance');
                     """)
                 try tx.db.execute(sql: "UPDATE vault SET approvedUser = ?", arguments: [user])
             }

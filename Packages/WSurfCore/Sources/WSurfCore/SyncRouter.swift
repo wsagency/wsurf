@@ -188,6 +188,8 @@ public final class SyncRouter: SyncEngineDelegate {
     @ObservationIgnored private var handlers: [any SyncZoneHandler]
     @ObservationIgnored private var vaultHandler: VaultSync?
     @ObservationIgnored private var receivedSwitch = false
+    @ObservationIgnored public var beforeVaultDelivery: (() async -> Void)?
+    @ObservationIgnored public var beforeUpload: (() async -> Void)?
     @ObservationIgnored public var isLiveVaultProfile: ((UUID) -> Bool)?
     @ObservationIgnored public var accountChanged: ((SyncAccountChange) -> Void)?
 
@@ -210,8 +212,11 @@ public final class SyncRouter: SyncEngineDelegate {
 
     public func allowsZoneCreation(_ zone: String) -> Bool {
         // A restored first-upload queue may outlive the profile that owned the zone.
-        if let ids = SyncZone.vaultIDs(zone), isLiveVaultProfile?(ids.profileID) == false {
-            return false
+        if let ids = SyncZone.vaultIDs(zone) {
+            guard isLiveVaultProfile?(ids.profileID) != false else { return false }
+            if beforeUpload != nil {
+                return vaultHandler?.permitsZoneCreation(zone) == true
+            }
         }
         guard zone == SyncZone.devices || SyncZone.profileID(zone) != nil else {
             return handlers.first { $0.owns(zone: zone) }?.allowsZoneCreation(zone) ?? true
@@ -298,6 +303,12 @@ public final class SyncRouter: SyncEngineDelegate {
         if case .account(let change) = event {
             accountChanged?(change)
         }
+        switch event {
+        case .zonesDeleted, .fetched:
+            await beforeVaultDelivery?()
+        default:
+            break
+        }
         for handler in active {
             guard let owned = event.filtered(to: handler.owns) else { continue }
             if let tabs = handler as? TabSync, let tabDelivery {
@@ -327,6 +338,14 @@ public final class SyncRouter: SyncEngineDelegate {
 
     public func routeVaults(to vaults: VaultSync?) {
         vaultHandler = vaults
+    }
+
+    public func prepareForUpload() async {
+        await beforeUpload?()
+    }
+
+    public func boundOwner(of zone: String, deleting: Bool) -> String? {
+        vaultHandler?.boundOwner(of: zone, deleting: deleting)
     }
 
     public func acceptsUploadAccount(_ user: String) -> Bool {

@@ -44,6 +44,11 @@ final class CloudSharedSpaces {
     let windows: @MainActor () -> [BrowserModel]
     let spaces: @MainActor (Profile) -> SpaceStore?
     let pins: @MainActor (Profile) -> ProfilePinStore
+    var permitsSharedInstance: ((UUID, String) -> Bool)?
+    var permitsSharing: ((UUID) -> Bool)?
+    var storageReadable: Bool {
+        storage.readable
+    }
     private let liveProfiles: @MainActor () -> [Profile]?
     var profiles: [UUID: Profile] = [:]
     var applying = false
@@ -103,7 +108,8 @@ final class CloudSharedSpaces {
         }
         catalog.onReceive = { [weak self] in self?.applyCatalog() }
         catalog.canUpload = { [weak self] edit in
-            guard let self, let profile = self.profiles[edit.profile], isLive(edit.profile) else { return false }
+            guard let self, permitsSharing?(edit.profile) != false, let profile = self.profiles[edit.profile], isLive(edit.profile),
+                  links[edit.profile]?.profile == edit.item.profileID || links[edit.profile]?.profile == nil else { return false }
             return edit.item.category != .spaces || self.spaces(profile) != nil
         }
         restoreOptOuts()
@@ -151,7 +157,7 @@ final class CloudSharedSpaces {
     }
 
     func isEnabled(_ category: SharedCatalogCategory, for profile: Profile) -> Bool {
-        !profile.isPrivate && catalog.enabled(category, for: profile.id)
+        !profile.isPrivate && permitsSharing?(profile.id) != false && catalog.enabled(category, for: profile.id)
     }
 
     func mayHaveSharedSpaces(in profile: Profile) -> Bool {
@@ -160,7 +166,7 @@ final class CloudSharedSpaces {
     }
 
     func enable(_ category: SharedCatalogCategory, for profile: Profile) async throws {
-        guard isLive(profile.id) else { throw SharedCatalogError.unavailable }
+        guard isLive(profile.id), permitsSharing?(profile.id) != false else { throw SharedCatalogError.unavailable }
         guard retryOptOuts(), storage.readable else { throw SharedCatalogError.storage }
         profiles[profile.id] = profile
         spaces(profile)?.sharedSpacesHost = self
@@ -182,7 +188,7 @@ final class CloudSharedSpaces {
     }
 
     func pause(_ category: SharedCatalogCategory, for profile: Profile) {
-        if isEnabled(category, for: profile) {
+        if catalog.enabled(category, for: profile.id) {
             storage.pending.insert(.init(category: category, profile: profile.id))
             catalog.setEnabled(false, category, for: profile.id)
         } else {
@@ -302,10 +308,11 @@ final class CloudSharedSpaces {
 
     @discardableResult
     func linkProfile(_ localID: UUID, to cloudID: UUID) -> Bool {
-        guard isLive(localID), cloudID != Profile.privateID, profiles[localID] != nil, catalog.trustedUser != nil,
+        guard isLive(localID), permitsSharing?(localID) != false, cloudID != Profile.privateID, profiles[localID] != nil, catalog.trustedUser != nil,
               catalog.trustedUser == catalog.state.user,
               links[localID]?.profile == nil || links[localID]?.profile == cloudID,
               !links.contains(where: { $0.key != localID && $0.value.profile == cloudID }) else { return false }
+        guard let user = catalog.trustedUser, permitsSharedInstance?(cloudID, user) != false else { return false }
         links[localID, default: .init()].profile = cloudID
         return persistLinks()
     }
@@ -328,9 +335,11 @@ final class CloudSharedSpaces {
     }
 
     func available(_ category: SharedCatalogCategory, for profile: Profile) -> [SharedSpaceItem] {
-        guard isEnabled(category, for: profile), catalog.ready.contains(category) else { return [] }
+        guard isEnabled(category, for: profile), catalog.ready.contains(category), let user = catalog.trustedUser else { return [] }
         let linked = cloudProfileID(for: profile.id)
-        return catalog.items(category).filter { !$0.removed && (category == .profiles || linked == nil || $0.profileID == linked) }.sorted {
+        return catalog.items(category).filter {
+            !$0.removed && permitsSharedInstance?($0.profileID, user) != false && (category == .profiles || linked == nil || $0.profileID == linked)
+        }.sorted {
             ($0.title.localizedLowercase, $0.id.uuidString) < ($1.title.localizedLowercase, $1.id.uuidString)
         }
     }

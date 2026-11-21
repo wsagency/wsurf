@@ -52,7 +52,7 @@ extension VaultSync {
     /// The vault's `Vault` record: what the Macs that do not hold the vault list. A Mac that holds it keeps its own unlock passkeys.
     private func takeVaultRecord(_ record: SyncRecord, key: VaultKey, conflict: Bool = false) -> Bool {
         let payload = record.type == .vault && record.schema == 1 ? VaultRecordPayload.decode(record.payload) : nil
-        state.remote[key.zone] = payload.map { RemoteVault(profileID: key.profileID, vaultID: key.vaultID, payload: $0) }
+        state.remote[key.zone] = payload.map { RemoteVault(profileID: key.profileID, vaultID: key.vaultID, payload: $0, instanceID: key.instanceID) }
         guard let (database, row) = enabledRow(key) else { return false }
         if payload != nil, record.payload == row.pendingVault, row.pendingLocalWrappers != nil {
             confirmVaultRecord(record, key: key, fetched: true)
@@ -455,7 +455,7 @@ extension VaultSync {
         guard let (database, row) = enabledRow(key) else {
             // A deletion event completes a pending removal for this account, including one checked after an upgrade.
             if let database = database(ids.profileID), var left = (try? database.read { try $0.vault(ids.vaultID) }) ?? nil,
-               left.status == .removalFailed || left.status == .removalPending, accountAvailable != false, let user = state.accountUser,
+               permits(key), left.instanceID == key.instanceID, left.status == .removalFailed || left.status == .removalPending, accountAvailable != false, let user = state.accountUser,
                left.removalOwner == user, left.approvedUser == user || verifiedRemovals[key] == user {
                 left.status = .removedDeleted
                 try? database.write { try $0.save(left) }
@@ -470,7 +470,7 @@ extension VaultSync {
     func zoneDeleteFailed(_ zone: String) {
         guard let ids = SyncZone.vaultIDs(zone), !excluded.contains(ids.profileID), let database = database(ids.profileID) else { return }
         let key = VaultKey(ids)
-        guard var row = (try? database.read { try $0.vault(key.vaultID) }) ?? nil, !row.enabled, row.status == .removalPending,
+        guard var row = (try? database.read { try $0.vault(key.vaultID) }) ?? nil, permits(key), row.instanceID == key.instanceID, !row.enabled, row.status == .removalPending,
               let user = state.accountUser, row.approvedUser == user else { return }
         row.status = .removalFailed
         try? database.write { try $0.save(row) }
@@ -501,6 +501,7 @@ extension VaultSync {
         if status == .removedDeleted || status == .removalPending {
             next.approvedUser = row.approvedUser
         }
+        next.instanceID = row.instanceID
         next.lastHeadRevision = row.lastHeadRevision
         forget(key)
         do {
@@ -542,10 +543,10 @@ extension VaultSync {
             state.accountUser = user
             accountAvailable = true
             state.remote = [:]
-            for profileID in Set(host.profileIDs()).union(databases.keys) {
+            for profileID in Set(host.profileIDs()).union(databases.keys) where permitsProfile?(profileID) != false {
                 guard let database = database(profileID), let rows = try? database.read({ try $0.vaults() }) else { continue }
                 for row in rows {
-                    let key = VaultKey(profileID: profileID, vaultID: row.vaultID)
+                    let key = localKey(profileID: profileID, vaultID: row.vaultID)
                     if row.pendingAdoptionUser != nil || row.approvedUser == user || row.removalOwner != nil || row.status == .removalUnconfirmed || row.queuedLegacyHeaderBaseline != nil {
                         // Invalidate work from the old session. Per-vault consent still belongs to its recorded owner.
                         forget(key)

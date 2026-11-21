@@ -11,17 +11,20 @@ nonisolated struct VaultKey: Hashable, Sendable {
     let profileID: UUID
     let vaultID: UUID
 
-    init(profileID: UUID, vaultID: UUID) {
+    let instanceID: UUID?
+
+    init(profileID: UUID, vaultID: UUID, instanceID: UUID? = nil) {
+        self.instanceID = instanceID
         self.profileID = profileID
         self.vaultID = vaultID
     }
 
-    init(_ ids: (profileID: UUID, vaultID: UUID)) {
-        self.init(profileID: ids.profileID, vaultID: ids.vaultID)
+    init(_ ids: (profileID: UUID, vaultID: UUID, instanceID: UUID?)) {
+        self.init(profileID: ids.profileID, vaultID: ids.vaultID, instanceID: ids.instanceID)
     }
 
     var zone: String {
-        SyncZone.vault(profileID: profileID, vaultID: vaultID)
+        SyncZone.vault(profileID: profileID, vaultID: vaultID, instanceID: instanceID)
     }
 
     /// The record that holds the vault's wrapper list and name: one per zone.
@@ -87,6 +90,12 @@ public final class VaultSync: SyncEngineDelegate {
     @ObservationIgnored let debounce: Duration
     @ObservationIgnored let clock: any Clock<Duration>
     @ObservationIgnored let persist: (VaultSyncAppState) -> Void
+    @ObservationIgnored public var isRetired: ((CloudProfileInstance) -> Bool)?
+    @ObservationIgnored public var profileInstance: ((UUID, String) -> UUID?)?
+    @ObservationIgnored public var permitsProfile: ((UUID) -> Bool)?
+    @ObservationIgnored public var checkInstance: ((UUID, String) async throws -> Void)?
+    @ObservationIgnored public var adoptInstance: ((UUID, UUID, String) throws -> Void)?
+    @ObservationIgnored var publishingInstances: Set<VaultKey> = []
     var engine: (any SyncEngine)?
     @ObservationIgnored var databases: [UUID: VaultSyncDatabase] = [:]
     /// Profiles being erased: their folder is about to go, so their database is never opened again.
@@ -189,6 +198,7 @@ public final class VaultSync: SyncEngineDelegate {
     /// The host may already hold the lease when sync attaches or learns the account. Resume without asking the owner to unlock again.
     func resumeEnrolledVaults() {
         guard engine != nil, !launchCheck, accountAvailable != false else { return }
+        publishNewInstances()
         scheduleRemovalChecks()
         var fetch = true
         for key in enabledKeys {
@@ -246,7 +256,7 @@ public final class VaultSync: SyncEngineDelegate {
     func prune(_ profileID: UUID) async {
         guard let database = database(profileID), let listed = await host.vaultIDs(profileID: profileID), !listed.isEmpty else { return }
         for row in (try? database.read { try $0.vaults() }) ?? [] where !listed.contains(row.vaultID) {
-            let key = VaultKey(profileID: profileID, vaultID: row.vaultID)
+            let key = localKey(profileID: profileID, vaultID: row.vaultID)
             guard !addingVaults.contains(key) else { continue }
             try? database.write { try $0.remove(row.vaultID) }
             clearAssets(key)
@@ -289,7 +299,7 @@ public final class VaultSync: SyncEngineDelegate {
         if unreadableProfiles.contains(profileID) {
             return .enrollmentUnavailable
         }
-        guard let summary = summaries[VaultKey(profileID: profileID, vaultID: vaultID)] else { return .off }
+        guard let summary = summaries[localKey(profileID: profileID, vaultID: vaultID)] else { return .off }
         guard summary.enabled else {
             switch summary.stored {
             case .removedDeleted:
@@ -346,12 +356,12 @@ public final class VaultSync: SyncEngineDelegate {
     }
 
     public func canManageCloudCopy(profileID: UUID, vaultID: UUID) -> Bool {
-        summaries[VaultKey(profileID: profileID, vaultID: vaultID)]?.canManageCloudCopy == true
+        summaries[localKey(profileID: profileID, vaultID: vaultID)]?.canManageCloudCopy == true
     }
 
     /// Whether this Mac syncs the vault now (whatever its status), for the copy that warns before a deletion.
     public func isSyncing(profileID: UUID, vaultID: UUID) -> Bool {
-        summaries[VaultKey(profileID: profileID, vaultID: vaultID)]?.enabled == true
+        summaries[localKey(profileID: profileID, vaultID: vaultID)]?.enabled == true
     }
 
     public func hasSyncedVaults(profileID: UUID) -> Bool {
@@ -361,7 +371,7 @@ public final class VaultSync: SyncEngineDelegate {
     /// Entries this Mac could not prepare, changes that could not be read this run, and entries a newer
     /// WSurf wrote that wait for an update.
     public func tally(profileID: UUID, vaultID: UUID) -> VaultSyncTally {
-        let key = VaultKey(profileID: profileID, vaultID: vaultID)
+        let key = localKey(profileID: profileID, vaultID: vaultID)
         return VaultSyncTally(
             notSyncable: summaries[key]?.notSyncable ?? 0, unreadable: summaries[key]?.unreadable ?? 0, newer: summaries[key]?.parked ?? 0
         )
@@ -370,7 +380,11 @@ public final class VaultSync: SyncEngineDelegate {
     /// The vaults other Macs synced for this profile; the interface leaves out the ones this Mac already holds.
     public func remoteVaults(profileID: UUID) -> [RemoteVault] {
         guard !excluded.contains(profileID) else { return [] }
-        return state.remote.values.filter { $0.profileID == profileID }.sorted { $0.vaultID.uuidString < $1.vaultID.uuidString }
+        let instance = state.accountUser.flatMap { profileInstance?(profileID, $0) }
+        return state.remote.values.filter { remote in
+            guard remote.profileID == profileID, instance == nil || instance == remote.instanceID else { return false }
+            return isAvailable(remote)
+        }.sorted { $0.vaultID.uuidString < $1.vaultID.uuidString }
     }
 
     /// Profiles that have synced vaults and are not on this Mac.
@@ -378,7 +392,7 @@ public final class VaultSync: SyncEngineDelegate {
         let here = Set(host.profileIDs())
         var cards: [UUID: VaultProfileCard] = [:]
         for remote in state.remote.values.sorted(by: { $0.vaultID.uuidString < $1.vaultID.uuidString })
-        where !here.contains(remote.profileID) && !excluded.contains(remote.profileID) {
+        where !here.contains(remote.profileID) && !excluded.contains(remote.profileID) && isAvailable(remote) {
             cards[remote.profileID] = cards[remote.profileID] ?? remote.payload.profile
         }
         return cards.map { (id: $0.key, card: $0.value) }.sorted { ($0.card.name, $0.id.uuidString) < ($1.card.name, $1.id.uuidString) }
@@ -398,7 +412,8 @@ public final class VaultSync: SyncEngineDelegate {
 
     /// This Mac stops syncing the vault. Its rows go; iCloud and the other Macs are untouched.
     public func disable(profileID: UUID, vaultID: UUID) throws {
-        let key = try checkedKey(profileID, vaultID)
+        guard !excluded.contains(profileID), !erased.contains(profileID) else { throw VaultSyncFailure.unavailable }
+        let key = localKey(profileID: profileID, vaultID: vaultID)
         guard let database = database(profileID) else { throw VaultSyncFailure.unavailable }
         try database.write { try $0.remove(vaultID) }
         clearAssets(key)
@@ -408,7 +423,7 @@ public final class VaultSync: SyncEngineDelegate {
 
     /// Deletes the vault's zone in iCloud. Every Mac keeps its copy.
     public func removeFromICloud(profileID: UUID, vaultID: UUID) {
-        let key = VaultKey(profileID: profileID, vaultID: vaultID)
+        let key = localKey(profileID: profileID, vaultID: vaultID)
         guard !excluded.contains(profileID) else { return }
         if status(profileID: profileID, vaultID: vaultID) == .removalFailed {
             retryRemoval(key)
@@ -443,10 +458,12 @@ public final class VaultSync: SyncEngineDelegate {
             } else {
                 approved = try await enrollmentAccount(engine, key: key, session: mine, expecting: nil)
             }
-            guard let database = database(key.profileID, create: true) else { return }
+            guard permits(key), let database = database(key.profileID, create: true) else { return }
             try database.write { tx in
                 try tx.clear(key.vaultID)
-                try tx.save(VaultRow(vaultID: key.vaultID, needsFetch: true, approvedUser: approved))
+                var row = VaultRow(vaultID: key.vaultID, needsFetch: true, approvedUser: approved)
+                row.instanceID = key.instanceID
+                try tx.save(row)
             }
             clearAssets(key)
             begin(key)
@@ -459,7 +476,7 @@ public final class VaultSync: SyncEngineDelegate {
 
     /// A write reached the vault: produce after a quiet moment.
     public func noteWrite(profileID: UUID, vaultID: UUID) {
-        let key = VaultKey(profileID: profileID, vaultID: vaultID)
+        let key = localKey(profileID: profileID, vaultID: vaultID)
         guard summaries[key]?.enabled == true else { return }
         debounced[key]?.cancel()
         debounced[key] = Task { [weak self, clock, debounce] in
@@ -477,7 +494,8 @@ public final class VaultSync: SyncEngineDelegate {
     }
 
     public func vaultUnlocked(profileID: UUID, vaultID: UUID) {
-        let key = VaultKey(profileID: profileID, vaultID: vaultID)
+        publishNewInstances()
+        let key = localKey(profileID: profileID, vaultID: vaultID)
         guard summaries[key]?.enabled == true else { return }
         unlocked.insert(key)
         refresh(key)
@@ -491,7 +509,7 @@ public final class VaultSync: SyncEngineDelegate {
 
     /// Drops what was kept in memory for the vault: the bases and sums are cleartext hashes and live only while it is unlocked.
     public func vaultLocked(profileID: UUID, vaultID: UUID) {
-        let key = VaultKey(profileID: profileID, vaultID: vaultID)
+        let key = localKey(profileID: profileID, vaultID: vaultID)
         unlocked.remove(key)
         baseCache[key] = nil
         pendingBases[key] = nil
@@ -502,7 +520,7 @@ public final class VaultSync: SyncEngineDelegate {
 
     /// The store removed the vault: its zone goes if this Mac synced it, and its rows go either way.
     public func vaultDeleted(profileID: UUID, vaultID: UUID) {
-        let key = VaultKey(profileID: profileID, vaultID: vaultID)
+        let key = localKey(profileID: profileID, vaultID: vaultID)
         guard !excluded.contains(profileID) else { return }
         if enabledRow(key) != nil {
             engine?.add([.deleteZone(key.zone)])
@@ -522,7 +540,8 @@ public final class VaultSync: SyncEngineDelegate {
         if let transport = engine as? any VaultProfileZoneDeleting {
             for key in enabledKeys where key.profileID == profileID {
                 guard let (_, row) = enabledRow(key), let owner = row.approvedUser else { continue }
-                let removal = VaultProfileRemoval(profileID: profileID, vaultID: key.vaultID, owner: owner)
+                var removal = VaultProfileRemoval(profileID: profileID, vaultID: key.vaultID, owner: owner)
+                removal.instanceID = key.instanceID
                 housekeeping.append(Task {
                     try? await removal.withOwnedZone(currentUser: transport.currentAccountUser, operation: transport.deleteProfileVaultZone)
                 })
@@ -547,13 +566,13 @@ public final class VaultSync: SyncEngineDelegate {
 
     /// How many entries deleted here wait for the owner before their deletion is sent, whatever else the status says.
     public func heldRemovals(profileID: UUID, vaultID: UUID) -> Int {
-        summaries[VaultKey(profileID: profileID, vaultID: vaultID)]?.holding ?? 0
+        summaries[localKey(profileID: profileID, vaultID: vaultID)]?.holding ?? 0
     }
 
     /// The owner confirmed the deletions held back: the next pass sends them if there are no more than were confirmed, and only that pass.
     /// A lock ends the answer.
     public func releaseRemovals(profileID: UUID, vaultID: UUID) {
-        let key = VaultKey(profileID: profileID, vaultID: vaultID)
+        let key = localKey(profileID: profileID, vaultID: vaultID)
         guard summaries[key]?.enabled == true, let confirmed = holding[key], confirmed > 0 else { return }
         releasing[key] = confirmed
         enqueue(key) { [weak self] in
@@ -570,6 +589,8 @@ public final class VaultSync: SyncEngineDelegate {
         }
         if retrying != unreadableProfiles {
             resumeEnrolledVaults()
+        } else {
+            publishNewInstances()
         }
         scheduleRemovalChecks()
         let keys = enabledKeys
@@ -694,8 +715,8 @@ public final class VaultSync: SyncEngineDelegate {
     }
 
     func checkedKey(_ profileID: UUID, _ vaultID: UUID) throws -> VaultKey {
-        guard !excluded.contains(profileID) else { throw VaultSyncFailure.unavailable }
-        return VaultKey(profileID: profileID, vaultID: vaultID)
+        guard !excluded.contains(profileID), !erased.contains(profileID), permitsProfile?(profileID) != false else { throw VaultSyncFailure.unavailable }
+        return localKey(profileID: profileID, vaultID: vaultID)
     }
 
     func database(_ profileID: UUID, create: Bool = false) -> VaultSyncDatabase? {
@@ -732,7 +753,7 @@ public final class VaultSync: SyncEngineDelegate {
             let rows = try database.read { try $0.vaults() }
             unreadableProfiles.remove(profileID)
             for row in rows where !onlyPendingRemovals || row.status == .removalPending || row.status == .removalFailed || row.canManageCloudCopy {
-                refresh(VaultKey(profileID: profileID, vaultID: row.vaultID))
+                refresh(localKey(profileID: profileID, vaultID: row.vaultID))
             }
         } catch {
             deferEnrollmentRead(profileID)
@@ -763,8 +784,8 @@ public final class VaultSync: SyncEngineDelegate {
 
     /// The vault's row while this Mac syncs it, whatever its status.
     func enabledRow(_ key: VaultKey) -> (VaultSyncDatabase, VaultRow)? {
-        guard engine != nil, accountAvailable != false, let user = state.accountUser, !halted.contains(key), let database = database(key.profileID),
-              let row = (try? database.read { try $0.vault(key.vaultID) }) ?? nil, row.enabled, row.approvedUser == user
+        guard permits(key), engine != nil, accountAvailable != false, let user = state.accountUser, !halted.contains(key), let database = database(key.profileID),
+              let row = (try? database.read { try $0.vault(key.vaultID) }) ?? nil, row.enabled, row.approvedUser == user, row.instanceID == key.instanceID
         else { return nil }
         return (database, row)
     }

@@ -67,6 +67,7 @@ final class CloudSettingsSync: SyncZoneHandler {
     @ObservationIgnored private var checkpointRetry: Task<Void, Never>?
     @ObservationIgnored private var profileStore: ProfileStore?
     @ObservationIgnored private var profilesForRecovery: (() -> [Profile]?)?
+    var permitsSharing: ((UUID) -> Bool)?
     var notice: String?
     @ObservationIgnored var onAccountVerification: ((CloudSharedSpaces.AccountVerification) -> Void)?
     var onNeedsEngine: (() -> Void)?
@@ -208,6 +209,33 @@ final class CloudSettingsSync: SyncZoneHandler {
 
     func updateChannel(_ channel: MacSettingChannel) {
         state.channels[channel.zone] = channel
+    }
+
+    func memberships(of localID: UUID) -> Set<CloudProfileInstance> {
+        guard let owner = state.account else { return [] }
+        return Set(state.channels.values.compactMap { channel in
+            guard !channel.needsConfirmation, channel.localProfileID == localID, let group = channel.cloudProfileID else { return nil }
+            return .init(.shared, id: group, owner: owner)
+        })
+    }
+
+    func replaceInstance(for local: UUID, with next: CloudProfileInstance) throws {
+        try reloadStateIfNeeded()
+        guard state.account == next.owner else { return }
+        var channels = state.channels
+        let previous = channels.values.filter { $0.localProfileID == local && $0.cloudProfileID != next.id }
+        for old in previous {
+            var fresh = MacSettingChannel(category: old.category, localProfileID: local, cloudProfileID: next.id)
+            guard channels[fresh.zone] == nil else { throw Issue.duplicateLink }
+            fresh.awaitingAccountConfirmation = old.awaitingAccountConfirmation
+            let localValues = try snapshot(&fresh)
+            fresh.collect(localValues)
+            channels[old.zone] = nil
+            channels[fresh.zone] = fresh
+        }
+        previous.forEach { invalidateBaseline(in: $0.zone) }
+        state.channels = channels
+        try save()
     }
 
     func channel(_ category: MacSettingsCategory, localProfileID: UUID?) -> MacSettingChannel? {
@@ -675,7 +703,9 @@ final class CloudSettingsSync: SyncZoneHandler {
     }
 
     func permitsProfile(_ id: UUID?) -> Bool {
-        guard let id, let profileStore else { return true }
+        guard let id else { return true }
+        guard permitsSharing?(id) != false else { return false }
+        guard let profileStore else { return true }
         return id == Profile.originalID || (id != Profile.privateID && profileStore.verifiedProfiles?.contains(where: { $0.id == id }) == true)
     }
 

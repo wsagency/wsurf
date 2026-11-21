@@ -9,7 +9,11 @@ import GRDB
 nonisolated public struct VaultProfileRemoval: Codable, Hashable, Sendable {
     public let profileID: UUID
     public let vaultID: UUID
-    let owner: String
+    public let owner: String
+    public var instanceID: UUID?
+    public var instance: CloudProfileInstance {
+        .vault(profile: profileID, instance: instanceID, owner: owner)
+    }
     private struct Request: Codable, Hashable, Sendable {
         var id: UUID
         var marked = false
@@ -26,6 +30,31 @@ nonisolated public struct VaultProfileRemoval: Codable, Hashable, Sendable {
         var next = self
         next.request = Request(id: UUID())
         return next
+    }
+
+    /// The discovery switch can be off while a previously enrolled named profile still exists on this Mac.
+    public static func memberships(in directory: URL, profileID: UUID) throws -> Set<CloudProfileInstance> {
+        let file = directory.appending(path: VaultSyncDatabase.fileName)
+        var config = Configuration()
+        config.readonly = true
+        do {
+            _ = try FileManager.default.attributesOfItem(atPath: file.path)
+        } catch CocoaError.fileReadNoSuchFile {
+            return []
+        }
+        return try DatabaseQueue(path: file.path, configuration: config).read { db in
+            let migrations = try DatabaseMigrator().appliedIdentifiers(db)
+            guard migrations.contains("vaultExplicitConsent") else { return [] }
+            let rows = try Row.fetchAll(db, sql: "SELECT * FROM vault WHERE consentUser IS NOT NULL")
+            return try Set(rows.compactMap { row in
+                let owner = try row.decode(String.self, forColumn: "consentUser")
+                let status = try row.decode(String.self, forColumn: "status")
+                guard !owner.isEmpty, owner != CKCurrentUserDefaultName,
+                      try VaultRow.readEnabled(from: row) || status == VaultSyncStatus.Stored.removedDeleted.rawValue else { return nil }
+                let id = migrations.contains("vaultCloudInstance") ? try row.decode(UUID?.self, forColumn: "instanceID") : nil
+                return .vault(profile: profileID, instance: id, owner: owner)
+            })
+        }
     }
 
     public static func approved(in directory: URL, profileID: UUID, localVaults: Set<UUID>, requireEnrollmentFile: Bool = false) throws -> Set<Self> {
@@ -50,7 +79,7 @@ nonisolated public struct VaultProfileRemoval: Codable, Hashable, Sendable {
                 }
                 return []
             }
-            let rows = try Row.fetchAll(db, sql: "SELECT vaultID, enabled, status, consentUser FROM vault")
+            let rows = try Row.fetchAll(db, sql: "SELECT * FROM vault")
             return try Set(rows.compactMap { row in
                 let id = try row.decode(UUID.self, forColumn: "vaultID")
                 guard localVaults.contains(id) else { return nil }
@@ -64,7 +93,11 @@ nonisolated public struct VaultProfileRemoval: Codable, Hashable, Sendable {
                     }
                     return nil
                 }
-                return Self(profileID: profileID, vaultID: id, owner: owner)
+                var removal = Self(profileID: profileID, vaultID: id, owner: owner)
+                if migrations.contains("vaultCloudInstance") {
+                    removal.instanceID = try row.decode(UUID?.self, forColumn: "instanceID")
+                }
+                return removal
             })
         }
     }
@@ -99,7 +132,7 @@ nonisolated public struct VaultProfileRemoval: Codable, Hashable, Sendable {
     @MainActor
     func withOwnedZone(currentUser: () async throws -> String, operation: (CKRecordZone.ID) async throws -> Void) async throws {
         guard !owner.isEmpty, owner != CKCurrentUserDefaultName, try await currentUser() == owner else { throw VaultSyncFailure.unavailable }
-        let zone = SyncZone.vault(profileID: profileID, vaultID: vaultID)
+        let zone = SyncZone.vault(profileID: profileID, vaultID: vaultID, instanceID: instanceID)
         do {
             try await operation(CloudKitMapping.zoneID(zone, ownerName: owner))
         } catch let error as CKError where error.code == .zoneNotFound || error.code == .userDeletedZone {

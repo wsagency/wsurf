@@ -10,14 +10,14 @@ import WSurfCore
 extension AppCoordinator {
     // MARK: - Profiles
 
-    func deleteProfile(_ profile: Profile, confirmedVaults: Set<VaultProfileRemoval>? = nil) async -> Result<Void, Error> {
+    func deleteProfile(_ profile: Profile, confirmedVaults: Set<VaultProfileRemoval>? = nil, scope: ProfileDeletionScope = .confirmed([])) async -> Result<Void, Error> {
         await profiles.remove(profile, confirmedVaults: confirmedVaults, releaseWindows: {
             if let application {
                 await application.prepareToRemove(profile: profile)
             } else {
                 await leaveErasedProfile(profile)
             }
-        })
+        }, scope: scope)
     }
 
     func leaveErasedProfile(_ profile: Profile) async {

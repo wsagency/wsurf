@@ -23,6 +23,7 @@ final class BrowserApplication {
     @ObservationIgnored var mutedBefore: [UUID: Bool] = [:]
     private var privateSessionCleanups: [UUID: Task<Void, Never>] = [:]
     let updates = UpdateController()
+    @ObservationIgnored var showingCloudProfileDecision = false
     private var isReady = false
     /// The wait for an idle moment after launch, to start Chromium in a session that uses it (`ChromiumPrewarm`).
     @ObservationIgnored var chromiumPrewarm: ChromiumPrewarm?

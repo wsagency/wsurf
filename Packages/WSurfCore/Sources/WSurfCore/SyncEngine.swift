@@ -29,19 +29,20 @@ nonisolated public enum SyncZone {
         return id
     }
 
-    public static func vault(profileID: UUID, vaultID: UUID) -> String {
-        vaultPrefix + profileID.uuidString + "-" + vaultID.uuidString
+    public static func vault(profileID: UUID, vaultID: UUID, instanceID: UUID? = nil) -> String {
+        vaultPrefix + profileID.uuidString + "-" + vaultID.uuidString + (instanceID.map { "-" + $0.uuidString } ?? "")
     }
 
-    /// The profile and vault of a `v-<UUID>-<UUID>` zone, or nil for any other name, including a lower-case spelling of a UUID.
-    public static func vaultIDs(_ zone: String) -> (profileID: UUID, vaultID: UUID)? {
-        let ids = zone.dropFirst(vaultPrefix.count)
-        guard zone.hasPrefix(vaultPrefix), ids.count == 73, ids[ids.index(ids.startIndex, offsetBy: 36)] == "-",
-              let profileID = UUID(uuidString: String(ids.prefix(36))),
-              let vaultID = UUID(uuidString: String(ids.suffix(36))),
-              vault(profileID: profileID, vaultID: vaultID) == zone
-        else { return nil }
-        return (profileID, vaultID)
+    /// An explicit new instance has a third UUID. The first two still bind each encrypted wrapper and Item.
+    public static func vaultIDs(_ zone: String) -> (profileID: UUID, vaultID: UUID, instanceID: UUID?)? {
+        guard zone.hasPrefix(vaultPrefix) else { return nil }
+        let parts = zone.dropFirst(vaultPrefix.count)
+        guard parts.count == 73 || parts.count == 110,
+              let profile = UUID(uuidString: String(parts.prefix(36))),
+              let vault = UUID(uuidString: String(parts.dropFirst(37).prefix(36))) else { return nil }
+        let instance = parts.count == 110 ? UUID(uuidString: String(parts.suffix(36))) : nil
+        guard self.vault(profileID: profile, vaultID: vault, instanceID: instance) == zone else { return nil }
+        return (profile, vault, instance)
     }
 
     /// Whether the name is in the vault namespace, whatever follows the prefix.
@@ -192,6 +193,8 @@ public protocol SyncEngineDelegate: AnyObject, Sendable {
     /// Database changes can outlive the opt-in that requested them, independently of record batches.
     func allowsZoneCreation(_ zone: String) -> Bool
     /// A fresh lookup precedes each outgoing record batch. A mismatch closes this feature's previous account approvals.
+    func prepareForUpload() async
+    func boundOwner(of zone: String, deleting: Bool) -> String?
     func acceptsUploadAccount(_ user: String) -> Bool
     /// Only legacy tab sharing issues physical record deletes. A restored engine queue is never consent on its own.
     func wantsRecordDeletion(_ id: SyncRecordID) -> Bool
@@ -202,6 +205,11 @@ public protocol SyncEngineDelegate: AnyObject, Sendable {
 }
 
 extension SyncEngineDelegate {
+    public func prepareForUpload() async {}
+    public func boundOwner(of zone: String, deleting: Bool) -> String? {
+        nil
+    }
+
     public func discardAccountSwitchEvidence() {}
 
     public func accountSwitched(from previousUser: String, to user: String) async {

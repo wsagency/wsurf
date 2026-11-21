@@ -74,13 +74,15 @@ nonisolated public struct VaultRecordPayload: Codable, Equatable, Sendable {
 nonisolated public struct RemoteVault: Codable, Equatable, Identifiable, Sendable {
     public var profileID: UUID
     public var vaultID: UUID
+    public var instanceID: UUID?
     public var payload: VaultRecordPayload
 
     public var id: UUID {
         vaultID
     }
 
-    public init(profileID: UUID, vaultID: UUID, payload: VaultRecordPayload) {
+    public init(profileID: UUID, vaultID: UUID, payload: VaultRecordPayload, instanceID: UUID? = nil) {
+        self.instanceID = instanceID
         self.profileID = profileID
         self.vaultID = vaultID
         self.payload = payload

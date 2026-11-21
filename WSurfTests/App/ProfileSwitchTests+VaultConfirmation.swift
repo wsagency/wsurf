@@ -386,6 +386,7 @@ extension ProfileSwitchTests {
                 try tx.save(VaultRow(vaultID: vault, approvedUser: owner))
                 // Restore the released v5 schema with or without the subsequent explicit-consent migration.
                 try tx.db.execute(sql: """
+                    ALTER TABLE vault DROP COLUMN instanceID;
                     DROP INDEX pendingItemAssets;
                     ALTER TABLE base DROP COLUMN pendingAssetCheck;
                     ALTER TABLE base DROP COLUMN assetCheckEnvelope;

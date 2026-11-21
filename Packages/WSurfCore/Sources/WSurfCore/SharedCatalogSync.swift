@@ -330,6 +330,17 @@ public final class SharedCatalogSync: SyncZoneHandler {
         }
     }
 
+    /// The explicit replacement commits new record identities with its host's new local-to-cloud links.
+    public func replacePublication(for profile: UUID, with items: [SharedSpaceItem]) -> Bool {
+        sending = sending.filter { $0.value.profile != profile }
+        state.pending = state.pending.filter { $0.value.profile != profile }
+        state.conflicts = state.conflicts.filter { $0.value.profile != profile }
+        for item in items where enabled(item.category, for: profile) {
+            state.pending[item.recordID] = .init(profile: profile, item: item)
+        }
+        return save()
+    }
+
     public func discardPending(for profile: UUID, ids: Set<UUID>, category: SharedCatalogCategory) {
         for id in ids {
             let key = SyncRecordID(zone: category.zone, name: id.uuidString)

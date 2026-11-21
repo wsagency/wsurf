@@ -210,6 +210,7 @@ final class FakeSyncEngine: SyncEngine, SyncAccountIdentity {
     var hangsOnSend = false
     /// No network: a fetch or a send throws.
     var offline = false
+    var beforeProfileVaultZoneDelete: ((String) async throws -> Void)?
     var beforeVaultUpload: ((String) async throws -> Void)?
     var beforeVaultDownload: ((String) async throws -> Void)?
     var beforeRecordSave: ((SyncRecord) -> Void)?
