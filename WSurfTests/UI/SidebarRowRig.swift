@@ -7,6 +7,18 @@ import Testing
 
 @testable import WSurf
 
+extension BrowserModel {
+    /// A start-page row for a pixel test, with the usual selection and unseen state.
+    @discardableResult
+    func addSidebarRowTab(activate: Bool = true) -> BrowserTab {
+        let tab = PerfProbe.addBackgroundTab(to: self)
+        if activate {
+            self.activate(tab)
+        }
+        return tab
+    }
+}
+
 /// What the tests that draw real sidebar rows share: a browser and a row context on the Standard theme with its knobs
 /// at their defaults, a dark sidebar to put a row on, and a window that draws at the scale of a Retina display.
 /// `restore` puts the theme back.

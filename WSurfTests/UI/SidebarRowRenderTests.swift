@@ -18,7 +18,7 @@ struct SidebarRowRenderTests {
     private struct Fixture {
         let coordinator: AppCoordinator
         let context: SidebarRowContext
-        let restoreTheme: () -> Void
+        let tearDown: () -> Void
 
         var browser: BrowserModel {
             coordinator.browser
@@ -40,7 +40,8 @@ struct SidebarRowRenderTests {
             space: "SidebarRowRenderTests",
             frames: SidebarFrames()
         )
-        return Fixture(coordinator: coordinator, context: context, restoreTheme: {
+        return Fixture(coordinator: coordinator, context: context, tearDown: {
+            coordinator.browser.closeAllTabs(saving: false)
             settings.themeAdjustments = saved.1
             settings.themeID = saved.0
         })
@@ -84,7 +85,10 @@ struct SidebarRowRenderTests {
         window.isReleasedWhenClosed = false
         window.appearance = NSAppearance(named: .darkAqua)
         window.contentView = host
-        defer { window.close() }
+        defer {
+            window.contentView = nil
+            window.close()
+        }
         host.layoutSubtreeIfNeeded()
         host.displayIfNeeded()
         let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
@@ -127,9 +131,9 @@ struct SidebarRowRenderTests {
 
     @Test func theCurrentTabRowIsFilledAndAnotherIsNot() throws {
         let fixture = makeFixture()
-        defer { fixture.restoreTheme() }
-        let other = fixture.browser.newTab()
-        let current = fixture.browser.newTab()
+        defer { fixture.tearDown() }
+        let other = fixture.browser.addSidebarRowTab()
+        let current = fixture.browser.addSidebarRowTab()
 
         let currentRow = sidebar(SidebarTabRow(tab: current, depth: 0, context: fixture.context))
         let otherRow = sidebar(SidebarTabRow(tab: other, depth: 0, context: fixture.context))
@@ -140,8 +144,8 @@ struct SidebarRowRenderTests {
 
     @Test func nothingIsFilledWhileTheNewTabPaletteIsOpen() throws {
         let fixture = makeFixture()
-        defer { fixture.restoreTheme() }
-        let current = fixture.browser.newTab()
+        defer { fixture.tearDown() }
+        let current = fixture.browser.addSidebarRowTab()
         fixture.coordinator.requestNewTab()
         defer { fixture.coordinator.closeWindow() }
         defer { fixture.coordinator.closePalette() }
@@ -153,9 +157,9 @@ struct SidebarRowRenderTests {
 
     @Test func aNewTabHasTheDotAndAFilledOneDoesNot() throws {
         let fixture = makeFixture()
-        defer { fixture.restoreTheme() }
-        let current = fixture.browser.newTab()
-        let background = fixture.browser.newTab(activate: false)
+        defer { fixture.tearDown() }
+        let current = fixture.browser.addSidebarRowTab()
+        let background = fixture.browser.addSidebarRowTab(activate: false)
         fixture.browser.activate(current)
         #expect(background.isUnseen)
 
@@ -172,9 +176,9 @@ struct SidebarRowRenderTests {
 
     @Test func openingTheNewTabTakesTheDotAndFillsTheRow() throws {
         let fixture = makeFixture()
-        defer { fixture.restoreTheme() }
-        _ = fixture.browser.newTab()
-        let background = fixture.browser.newTab(activate: false)
+        defer { fixture.tearDown() }
+        _ = fixture.browser.addSidebarRowTab()
+        let background = fixture.browser.addSidebarRowTab(activate: false)
         let row = SidebarTabRow(tab: background, depth: 0, context: fixture.context)
         #expect(isBlue(try pixel(of: sidebar(row), x: dotCenter.x, y: dotCenter.y)))
 
@@ -204,9 +208,9 @@ struct SidebarRowRenderTests {
         settings.userThemes = []
         settings.themeAdjustments = [:]
         let fixture = makeFixture()
-        defer { fixture.restoreTheme() }
-        _ = fixture.browser.newTab()
-        let current = fixture.browser.newTab()
+        defer { fixture.tearDown() }
+        _ = fixture.browser.addSidebarRowTab()
+        let current = fixture.browser.addSidebarRowTab()
 
         for theme in ThemeCatalog.builtIn where theme.ground == .solid {
             settings.themeID = theme.id
@@ -234,9 +238,9 @@ struct SidebarRowRenderTests {
 
     @Test func theCurrentTabIsFilledInTheIconsOnlySidebar() throws {
         let fixture = makeFixture()
-        defer { fixture.restoreTheme() }
-        let other = fixture.browser.newTab()
-        let current = fixture.browser.newTab()
+        defer { fixture.tearDown() }
+        let other = fixture.browser.addSidebarRowTab()
+        let current = fixture.browser.addSidebarRowTab()
         let width = SidebarMetrics.iconsWidth
 
         let currentRow = sidebar(
@@ -252,9 +256,9 @@ struct SidebarRowRenderTests {
 
     @Test func aNewTabHasTheDotInTheIconsOnlySidebar() throws {
         let fixture = makeFixture()
-        defer { fixture.restoreTheme() }
-        let current = fixture.browser.newTab()
-        let background = fixture.browser.newTab(activate: false)
+        defer { fixture.tearDown() }
+        let current = fixture.browser.addSidebarRowTab()
+        let background = fixture.browser.addSidebarRowTab(activate: false)
         fixture.browser.activate(current)
         let width = SidebarMetrics.iconsWidth
         let dot = CGPoint(
@@ -273,9 +277,9 @@ struct SidebarRowRenderTests {
 
     @Test func onlyTheFocusedPaneOfASplitIsFilled() throws {
         let fixture = makeFixture()
-        defer { fixture.restoreTheme() }
-        let left = fixture.browser.newTab()
-        let right = fixture.browser.newTab()
+        defer { fixture.tearDown() }
+        let left = fixture.browser.addSidebarRowTab()
+        let right = fixture.browser.addSidebarRowTab()
         fixture.browser.split(left, with: right, axis: .sideBySide)
         fixture.browser.activate(right)
         let split = try #require(fixture.browser.splits.split(containing: left.id))
@@ -458,13 +462,13 @@ struct SidebarRowRenderTests {
         try withSidebarFont(size: size, family: family) {
             let font = sidebarFont(size: size, family: family)
             let fixture = makeFixture()
-            defer { fixture.restoreTheme() }
-            let resting = fixture.browser.newTab()
-            let inFolder = fixture.browser.newTab()
-            let left = fixture.browser.newTab()
-            let right = fixture.browser.newTab()
-            let current = fixture.browser.newTab()
-            let new = fixture.browser.newTab(activate: false)
+            defer { fixture.tearDown() }
+            let resting = fixture.browser.addSidebarRowTab()
+            let inFolder = fixture.browser.addSidebarRowTab()
+            let left = fixture.browser.addSidebarRowTab()
+            let right = fixture.browser.addSidebarRowTab()
+            let current = fixture.browser.addSidebarRowTab()
+            let new = fixture.browser.addSidebarRowTab(activate: false)
             [resting, inFolder, left, right, current, new].forEach(measurable)
             let folder = fixture.browser.createFolder(named: Self.measuredTitle, containing: [inFolder])
             folder.isExpanded = false
@@ -532,14 +536,14 @@ struct SidebarRowRenderTests {
     func aTabIconMeetsTheCapitalsAtEveryThemeIconSize(iconSize: Double) throws {
         let settings = BrowserSettings.application
         let fixture = makeFixture()
-        defer { fixture.restoreTheme() }
+        defer { fixture.tearDown() }
         settings.themeAdjustments["standard"] = ThemeAdjustment(tabIconSize: iconSize)
         settings.refreshTheme()
         let font = sidebarFont(size: settings.sidebarFontSize, family: settings.sidebarFontFamily)
-        let symbol = fixture.browser.newTab()
+        let symbol = fixture.browser.addSidebarRowTab()
         symbol.title = Self.measuredTitle
         symbol.urlString = "https://example.com/"
-        let favicon = fixture.browser.newTab()
+        let favicon = fixture.browser.addSidebarRowTab()
         measurable(favicon)
 
         for (name, tab) in [("a tab with a symbol", symbol), ("a tab with a favicon", favicon)] {
@@ -556,11 +560,11 @@ struct SidebarRowRenderTests {
     func aFolderIconMeetsTheCapitalsAtEveryIconAndFolderSize(iconSize: Double, size: TabFolderSize) throws {
         let settings = BrowserSettings.application
         let fixture = makeFixture()
-        defer { fixture.restoreTheme() }
+        defer { fixture.tearDown() }
         settings.themeAdjustments["standard"] = ThemeAdjustment(tabIconSize: iconSize)
         settings.refreshTheme()
         let font = sidebarFont(size: settings.sidebarFontSize * size.factor, family: settings.sidebarFontFamily)
-        let inFolder = fixture.browser.newTab()
+        let inFolder = fixture.browser.addSidebarRowTab()
         let folder = fixture.browser.createFolder(named: Self.measuredTitle, containing: [inFolder])
         folder.isExpanded = false
         folder.size = size
@@ -578,10 +582,10 @@ struct SidebarRowRenderTests {
 
     @Test func aFolderTitleStartsWhereATabTitleStarts() throws {
         let fixture = makeFixture()
-        defer { fixture.restoreTheme() }
-        let tab = fixture.browser.newTab()
-        let inFolder = fixture.browser.newTab()
-        let current = fixture.browser.newTab()
+        defer { fixture.tearDown() }
+        let tab = fixture.browser.addSidebarRowTab()
+        let inFolder = fixture.browser.addSidebarRowTab()
+        let current = fixture.browser.addSidebarRowTab()
         [tab, inFolder, current].forEach(measurable)
         let folder = fixture.browser.createFolder(named: Self.measuredTitle, containing: [inFolder])
         folder.isExpanded = false
@@ -602,10 +606,10 @@ struct SidebarRowRenderTests {
     func theIconIsCenteredInTheIconsOnlySidebar(size: Double) throws {
         try withSidebarFont(size: size, family: "") {
             let fixture = makeFixture()
-            defer { fixture.restoreTheme() }
-            let tab = fixture.browser.newTab()
-            let inFolder = fixture.browser.newTab()
-            let current = fixture.browser.newTab()
+            defer { fixture.tearDown() }
+            let tab = fixture.browser.addSidebarRowTab()
+            let inFolder = fixture.browser.addSidebarRowTab()
+            let current = fixture.browser.addSidebarRowTab()
             [tab, inFolder, current].forEach(measurable)
             let folder = fixture.browser.createFolder(named: Self.measuredTitle, containing: [inFolder])
             folder.isExpanded = false
@@ -627,9 +631,9 @@ struct SidebarRowRenderTests {
 
     @Test func aFavoriteIsCenteredInItsTile() throws {
         let fixture = makeFixture()
-        defer { fixture.restoreTheme() }
-        _ = fixture.browser.newTab()
-        let favorite = fixture.browser.newTab()
+        defer { fixture.tearDown() }
+        _ = fixture.browser.addSidebarRowTab()
+        let favorite = fixture.browser.addSidebarRowTab()
         measurable(favorite)
 
         let tile = sidebar(
@@ -646,9 +650,9 @@ struct SidebarRowRenderTests {
     @Test func theNewTabDotStaysInsideTheRow() throws {
         try withSidebarFont(size: 10, family: "") {
             let fixture = makeFixture()
-            defer { fixture.restoreTheme() }
-            let current = fixture.browser.newTab()
-            let background = fixture.browser.newTab(activate: false)
+            defer { fixture.tearDown() }
+            let current = fixture.browser.addSidebarRowTab()
+            let background = fixture.browser.addSidebarRowTab(activate: false)
             fixture.browser.activate(current)
             #expect(rowHeight == 24, "the shortest row")
 
@@ -673,8 +677,8 @@ struct SidebarRowRenderTests {
 
     @Test func thePinReturnButtonFitsTheRow() throws {
         let fixture = makeFixture()
-        defer { fixture.restoreTheme() }
-        let tab = fixture.browser.newTab()
+        defer { fixture.tearDown() }
+        let tab = fixture.browser.addSidebarRowTab()
         let margin: CGFloat = 8
         // The red shows the space the button takes. Beside the row it would spill over the margin.
         let button = PinReturnSegment(tab: tab, help: "", tint: .white, isHovering: .constant(false)) {}
@@ -697,8 +701,8 @@ struct SidebarRowRenderTests {
 
     @Test func aCollapsedFolderMarksTheCurrentTabWithAnInverseBadge() throws {
         let fixture = makeFixture()
-        defer { fixture.restoreTheme() }
-        let current = fixture.browser.newTab()
+        defer { fixture.tearDown() }
+        let current = fixture.browser.addSidebarRowTab()
         let folder = fixture.browser.createFolder(named: "Work", containing: [current])
         folder.isExpanded = false
 
@@ -712,8 +716,8 @@ struct SidebarRowRenderTests {
 
     @Test func anExpandedFolderGetsNoBadge() throws {
         let fixture = makeFixture()
-        defer { fixture.restoreTheme() }
-        let current = fixture.browser.newTab()
+        defer { fixture.tearDown() }
+        let current = fixture.browser.addSidebarRowTab()
         let folder = fixture.browser.createFolder(named: "Work", containing: [current])
         folder.isExpanded = true
 
