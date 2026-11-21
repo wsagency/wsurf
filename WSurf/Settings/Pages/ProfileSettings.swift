@@ -282,15 +282,9 @@ private struct ProfileDetailPage: View {
     }
 
     var body: some View {
-        if let profile {
-            page(profile)
-        }
-    }
-
-    @ViewBuilder
-    private func page(_ profile: Profile) -> some View {
+        let profile = self.profile
         SubPageHeader(backTitle: "Profiles", onBack: onBack) {
-            if !profile.isOriginal {
+            if let profile, !profile.isOriginal {
                 SettingsButton(title: "Delete profile…", isDestructive: true) {
                     // Counts are read first so the confirmation states what is verified, or that it can't be known.
                     Task {
@@ -325,16 +319,21 @@ private struct ProfileDetailPage: View {
         }
 
         if let deletionError {
+            if profile == nil {
+                Text("The profile was removed from the list. Reopen WSurf to retry deleting its local data.")
+            }
             Text(verbatim: deletionError).font(.callout).foregroundStyle(.red).textSelection(.enabled)
         }
 
-        heading(profile)
+        if let profile {
+            heading(profile)
 
-        lookSection(profile)
+            lookSection(profile)
 
-        historySection(profile)
+            historySection(profile)
 
-        ProfileICloudTabsSection(profile: profile)
+            ProfileICloudTabsSection(profile: profile)
+        }
     }
 
     private func heading(_ profile: Profile) -> some View {

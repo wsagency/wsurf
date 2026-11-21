@@ -11357,6 +11357,9 @@
     "The problem is on line %lld." : {
       "comment" : "Sentence inserted into the “The file could not be used as a password CSV…” message when the broken line of the CSV file is known. %lld is that line’s number in the file."
     },
+    "The profile was removed from the list. Reopen WSurf to retry deleting its local data." : {
+      "comment" : "Shown in Settings > Profiles when the profile is off the list but local deletion failed. WSurf retries the saved deletion at its next launch. The system error appears below."
+    },
     "The room between a tab’s edge and its icon." : {
       "comment" : "Caption of the Tab padding row in the Layout card in Settings › Appearance. Room means space."
     },
