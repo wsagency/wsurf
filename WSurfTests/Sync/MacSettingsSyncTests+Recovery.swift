@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 
 import Foundation
+import Synchronization
 import Testing
 import WSurfCore
 
@@ -11,8 +12,8 @@ extension MacSettingsSyncTests {
     @Test func lateZoneDeletionRechecksTheReplacementAndHonorsARealRemoval() async throws {
         let root = try lifecycleDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
-        var values = ["choice": Data([1])]
-        let sync = CloudSettingsSync(stateFile: root.appending(path: "settings"), read: { _, _ in values }, apply: { _, _, _, _ in })
+        let values = Mutex(["choice": Data([1])])
+        let sync = CloudSettingsSync(stateFile: root.appending(path: "settings"), read: { _, _ in values.withLock { $0 } }, apply: { _, _, _, _ in })
         let cloud = FakeSyncCloud(), engine = FakeSyncEngine(cloud: cloud, delegate: sync)
         sync.attach(engine)
         try await sync.enable(.providers, localProfileID: nil, cloudProfileID: nil)
@@ -29,7 +30,7 @@ extension MacSettingsSyncTests {
         try await engine.fetchNow()
         try #require(await waitUntil(timeout: .seconds(3)) { sync.ready.contains(fresh.zone) })
         #expect(sync.channel(.providers, localProfileID: nil)?.enrollment == fresh.enrollment)
-        values["choice"] = Data([2])
+        values.withLock { $0["choice"] = Data([2]) }
         try sync.collectChanges()
         try await engine.sendNow()
         let stored = try #require(cloud.record(id))

@@ -829,7 +829,7 @@ struct MacSettingsFixture {
     }
 }
 
-private nonisolated final class FlushControlledDefaults: UserDefaults, @unchecked Sendable {
+private nonisolated final class FlushControlledDefaults: UserDefaults {
     private let refused = Mutex(false)
     var refuseFlush: Bool {
         get { refused.withLock { $0 } }
