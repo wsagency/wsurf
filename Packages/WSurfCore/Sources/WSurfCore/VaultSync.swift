@@ -295,6 +295,8 @@ public final class VaultSync: SyncEngineDelegate {
                 return .removed(.encryptedDataReset)
             case .removalFailed:
                 return .removalFailed
+            case .removalUnconfirmed:
+                return .removalUnconfirmed
             case .removalPending:
                 return .removalPending
             case .accountChanged:
@@ -371,9 +373,10 @@ public final class VaultSync: SyncEngineDelegate {
 
     /// Turns sync on for an unlocked vault: creates its zone, or joins the zone another Mac made. The caller asks first when the vault
     /// was removed from iCloud or the account changed.
-    public func enable(profileID: UUID, vaultID: UUID) async throws {
+    public func enable(profileID: UUID, vaultID: UUID, confirmingAccount user: String? = nil) async throws {
         let key = try checkedKey(profileID, vaultID)
         try await serial(key) { [self] in
+            guard user == nil || user == state.accountUser else { throw VaultSyncFailure.unavailable }
             try await enableNow(key)
         }
     }
@@ -391,12 +394,13 @@ public final class VaultSync: SyncEngineDelegate {
     }
 
     /// Deletes the vault's zone in iCloud. Every Mac keeps its copy.
-    public func removeFromICloud(profileID: UUID, vaultID: UUID) {
+    public func removeFromICloud(profileID: UUID, vaultID: UUID, confirmingAccount user: String? = nil) {
         let key = VaultKey(profileID: profileID, vaultID: vaultID)
-        guard !excluded.contains(profileID) else { return }
-        if status(profileID: profileID, vaultID: vaultID) == .removalFailed {
-            retryRemoval(key)
-        } else {
+        guard !excluded.contains(profileID), user == nil || user == state.accountUser else { return }
+        switch status(profileID: profileID, vaultID: vaultID) {
+        case .removalFailed, .removalUnconfirmed:
+            requestRemoval(key, confirmingAccount: user)
+        default:
             deleteZone(key)
         }
     }
@@ -684,7 +688,7 @@ public final class VaultSync: SyncEngineDelegate {
     func loadDatabases(onlyPendingRemovals: Bool = false) {
         for profileID in host.profileIDs() {
             guard let database = database(profileID), let rows = try? database.read({ try $0.vaults() }) else { continue }
-            for row in rows where !onlyPendingRemovals || row.status == .removalPending || row.status == .removalFailed {
+            for row in rows where !onlyPendingRemovals || row.status == .removalPending || row.status == .removalFailed || row.status == .removalUnconfirmed {
                 refresh(VaultKey(profileID: profileID, vaultID: row.vaultID))
             }
         }

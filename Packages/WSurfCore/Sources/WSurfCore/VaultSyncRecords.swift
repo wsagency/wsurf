@@ -118,13 +118,15 @@ nonisolated public enum VaultSyncStatus: Equatable, Sendable {
     case removed(SyncZoneDeletionReason)
     /// The zone's existence is still unconfirmed. Local data is retained.
     case removalPending
+    /// A pre-consent removal recorded neither the Apple account nor confirmation that its zone was deleted.
+    case removalUnconfirmed
     /// The owner removed the vault from iCloud and the engine could not delete the zone: it is still there.
     case removalFailed
     case accountChanged
 
     /// What survives a relaunch, in `Credentials.sync`. The rest is derived from counts, the lock and the account.
     nonisolated enum Stored: String, Sendable {
-        case active, iCloudFull, needsUpdate, rolledBack, removedDeleted, removedPurged, removedEncryptedDataReset, removalPending, removalFailed, accountChanged
+        case active, iCloudFull, needsUpdate, rolledBack, removedDeleted, removedPurged, removedEncryptedDataReset, removalPending, removalFailed, removalUnconfirmed, accountChanged
 
         static func removed(_ reason: SyncZoneDeletionReason) -> Stored {
             switch reason {

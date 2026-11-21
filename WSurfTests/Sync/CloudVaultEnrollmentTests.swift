@@ -35,28 +35,7 @@ struct CloudVaultEnrollmentTests {
         let directory = try #require(old.host.syncDirectory(profileID: rig.profile))
         let db = try #require(try VaultSyncDatabase.open(directory: directory, create: false))
         try db.write { tx in
-            // Recreate the 0.1.31 v2 file, which predates both per-vault owners and the asset outbox.
-            try tx.db.execute(sql: """
-                CREATE TABLE legacyVault(vaultID TEXT PRIMARY KEY, enabled INTEGER NOT NULL, status TEXT NOT NULL, uploadedMark BLOB,
-                    pendingVaultPayload BLOB, pendingMark BLOB, dirty INTEGER NOT NULL DEFAULT 0,
-                    needsFetch INTEGER NOT NULL DEFAULT 0, lastHeadRevision INTEGER NOT NULL DEFAULT 0, rereadOwed INTEGER NOT NULL DEFAULT 0);
-                INSERT INTO legacyVault SELECT vaultID, enabled, status, uploadedMark, pendingVaultPayload, pendingMark, dirty,
-                    needsFetch, lastHeadRevision, rereadOwed FROM vault;
-                DROP TABLE vault;
-                ALTER TABLE legacyVault RENAME TO vault;
-                CREATE TABLE legacyInbox(vaultID TEXT NOT NULL, accountID TEXT NOT NULL, version INTEGER NOT NULL, envelope BLOB NOT NULL,
-                    PRIMARY KEY(vaultID, accountID));
-                INSERT INTO legacyInbox SELECT vaultID, accountID, version, envelope FROM inbox;
-                DROP TABLE inbox;
-                ALTER TABLE legacyInbox RENAME TO inbox;
-                CREATE TABLE legacyOutbox(vaultID TEXT NOT NULL, accountID TEXT NOT NULL, version INTEGER NOT NULL,
-                    envelope BLOB NOT NULL, parts BLOB NOT NULL, PRIMARY KEY(vaultID, accountID));
-                INSERT INTO legacyOutbox SELECT vaultID, accountID, version, envelope, parts FROM outbox;
-                DROP TABLE outbox;
-                ALTER TABLE legacyOutbox RENAME TO outbox;
-                DROP TABLE assetReceipt;
-                DELETE FROM grdb_migrations WHERE identifier NOT IN ('v1', 'v2');
-                """)
+            try Self.restoreV2Schema(tx.db)
             if checkpoint.intermediate {
                 // The intermediate v4 release populated approvedUser from the tab-derived account on sign-in.
                 try tx.db.execute(sql: """

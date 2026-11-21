@@ -26,7 +26,7 @@ extension VaultSync {
         for profile in host.profileIDs() {
             guard let database = database(profile) else { continue }
             guard let rows = try? database.read({ try $0.vaults() }) else { return false }
-            for row in rows where row.enabled || row.removalOwner != nil || row.status == .removalFailed || row.status == .removedDeleted {
+            for row in rows where row.enabled || row.removalOwner != nil || row.status == .removalFailed || row.status == .removedDeleted || row.status == .removalUnconfirmed {
                 priorEnrollment = true
                 if row.approvedUser == user || row.removalOwner == user {
                     return true

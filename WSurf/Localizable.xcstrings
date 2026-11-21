@@ -7621,6 +7621,9 @@
     "This vault can’t take this entry on this Mac." : {
       "comment" : "Row caption in the Review Sync Changes sheet; information only. The vault refused the entry, for example because of a limit."
     },
+    "This vault may still be in iCloud. WSurf couldn’t confirm its removal or which Apple Account was used. This Mac keeps its copy." : {
+      "comment" : "Settings caption for a credential vault removed by an earlier version without an account or a confirmed deletion."
+    },
     "This vault on this Mac is older than when it last synced, so syncing stopped. Turn Sync with iCloud off and on to compare it with iCloud." : {
       "comment" : "Caption of the Sync with iCloud switch when this Mac’s vault file is older than the last state it synced, for example after a restore from a backup. Sync with iCloud is the name of the switch."
     },

@@ -197,6 +197,13 @@ nonisolated final class VaultSyncDatabase: Sendable {
             // The old receiver could already have paired a waiting envelope with another delivery's tag.
             try db.execute(sql: "UPDATE inbox SET serverCheck = 1")
         }
+        migrator.registerMigration("vaultUnconfirmedRemovals") { db in
+            // 0.1.31 recorded deletion on enqueue without storing the Apple account or confirming that the zone was gone.
+            try db.execute(sql: """
+                UPDATE vault SET status = 'removalUnconfirmed' WHERE enabled = 0 AND consentUser IS NULL AND approvedUser IS NULL
+                    AND status IN ('removedDeleted', 'removalFailed')
+                """)
+        }
         try migrator.migrate(queue)
         return VaultSyncDatabase(queue: queue)
     }

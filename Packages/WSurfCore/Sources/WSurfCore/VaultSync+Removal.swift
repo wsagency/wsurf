@@ -59,9 +59,10 @@ extension VaultSync {
         guard actual == owner, state.accountUser == owner, token(key) == session else { throw VaultSyncFailure.unavailable }
     }
 
-    /// The Apple account can change between displaying the retry and the person confirming it.
-    func retryRemoval(_ key: VaultKey) {
-        guard let owner = state.accountUser, verifiedRemovals[key] == owner, accountAvailable != false, let database = database(key.profileID),
+    /// A fresh removal choice applies only to the signed-in account, including when the old receipt named no owner.
+    func requestRemoval(_ key: VaultKey, confirmingAccount: String?) {
+        guard let owner = state.accountUser, !owner.isEmpty, verifiedRemovals[key] == owner || confirmingAccount == owner,
+              accountAvailable != false, let database = database(key.profileID),
               let engine, let checker = engine as? any VaultZoneChecking else { return }
         let session = token(key)
         enqueue(key) { [weak self] in
@@ -69,7 +70,10 @@ extension VaultSync {
             do {
                 try await verifyRemovalOwner(owner, key: key, session: session, engine: engine, checker: checker)
                 let requested = try database.write { tx in
-                    guard var row = try tx.vault(key.vaultID), row.status == .removalFailed, row.removalOwner == owner else { return false }
+                    guard var row = try tx.vault(key.vaultID), !row.enabled else { return false }
+                    let retry = row.status == .removalFailed && row.removalOwner == owner && verifiedRemovals[key] == owner
+                    let freshChoice = row.status == .removalUnconfirmed && confirmingAccount == owner
+                    guard retry || freshChoice else { return false }
                     row.approvedUser = owner
                     row.legacyRemovalUser = nil
                     row.status = .removalPending

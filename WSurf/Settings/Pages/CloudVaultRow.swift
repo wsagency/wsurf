@@ -11,6 +11,7 @@ struct CloudVaultRow: View {
     let model: CredentialSettingsModel
     let run: (@escaping () async throws -> Void) -> Void
 
+    @State private var confirmation: (vaultID: UUID, account: String?)?
     @State private var confirmsRemoval = false
     @State private var confirmsUpload = false
     @State private var confirmsDeletion = false
@@ -21,22 +22,30 @@ struct CloudVaultRow: View {
             let tally = sync.tally(profileID: model.profile.id, vaultID: vaultID)
             let held = sync.heldRemovals(profileID: model.profile.id, vaultID: vaultID)
             let isOn = Self.isOn(status)
+            let needsAccount = status == .removalUnconfirmed && (sync.accountAvailable != true || sync.state.accountUser == nil)
             RowSeparator()
             DetailRow(
                 verbatimTitle: String(localized: "Sync with iCloud"),
                 verbatimCaption: Self.caption(status: status, held: held, isUnlocked: model.isUnlocked, tally: tally)
             ) {
-                SettingsToggle(Binding(get: { isOn }, set: { turn($0, from: status) }))
-                    .disabled(model.isBusy || status == .removalPending || (!isOn && !model.isUnlocked))
+                SettingsToggle(Binding(get: { isOn }, set: { turn($0, from: status, vaultID: vaultID) }))
+                    .disabled(model.isBusy || needsAccount || status == .removalPending || (!isOn && !model.isUnlocked))
                     .accessibilityLabel("Sync with iCloud")
             }
             .confirmationDialog(
                 Text("Upload “\(vaultName)” to iCloud?"), isPresented: $confirmsUpload
             ) {
-                Button("Upload") { run { await model.enableSync() } }
+                Button("Upload") {
+                    guard let confirmation else { return }
+                    run { await model.enableSync(vaultID: confirmation.vaultID, confirmingAccount: confirmation.account) }
+                }
                 Button("Cancel", role: .cancel) {}
             } message: {
                 Text("This Mac’s copy is encrypted and uploaded. Entries that differ from iCloud wait for your review.")
+            }
+            .onChange(of: sync.state.accountUser) {
+                confirmsRemoval = false
+                confirmsUpload = false
             }
             if held > 0 {
                 RowSeparator()
@@ -54,18 +63,24 @@ struct CloudVaultRow: View {
                     Text("WSurf moves them to Trash on your other devices that sync this vault. You can restore them there.")
                 }
             }
-            if isOn || status == .removalFailed {
+            if isOn || status == .removalFailed || status == .removalUnconfirmed {
                 RowSeparator()
                 DetailRow(title: "Remove from iCloud") {
-                    let label: LocalizedStringKey = isOn ? "Remove from iCloud…" : "Try Again"
-                    Button(label, role: .destructive) { confirmsRemoval = true }
-                        .buttonStyle(.bordered)
-                        .disabled(model.isBusy)
+                    let label: LocalizedStringKey = status == .removalFailed ? "Try Again" : "Remove from iCloud…"
+                    Button(label, role: .destructive) {
+                        confirmation = (vaultID, sync.state.accountUser)
+                        confirmsRemoval = true
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(model.isBusy || needsAccount)
                 }
                 .confirmationDialog(
                     Text("Remove “\(vaultName)” from iCloud?"), isPresented: $confirmsRemoval
                 ) {
-                    Button("Remove from iCloud", role: .destructive) { model.removeSelectedVaultFromICloud() }
+                    Button("Remove from iCloud", role: .destructive) {
+                        guard let confirmation else { return }
+                        model.removeVaultFromICloud(vaultID: confirmation.vaultID, confirmingAccount: confirmation.account)
+                    }
                     Button("Cancel", role: .cancel) {}
                 } message: {
                     Text("""
@@ -93,7 +108,7 @@ struct CloudVaultRow: View {
     /// On means this Mac syncs the vault, whatever it is doing right now.
     static func isOn(_ status: VaultSyncStatus) -> Bool {
         switch status {
-        case .off, .removed, .removalPending, .removalFailed, .accountChanged:
+        case .off, .removed, .removalPending, .removalFailed, .removalUnconfirmed, .accountChanged:
             false
         case .synced, .sending, .waitingForUnlock, .needsReview, .holdingRemovals, .iCloudFull, .signedOut, .needsUpdate, .rolledBack:
             true
@@ -101,16 +116,17 @@ struct CloudVaultRow: View {
     }
 
     /// Turning on after a removal or an account change asks first; the dialog is the person's confirmation to upload again.
-    private func turn(_ on: Bool, from status: VaultSyncStatus) {
+    private func turn(_ on: Bool, from status: VaultSyncStatus, vaultID: UUID) {
         guard on else {
             model.disableSync()
             return
         }
         switch status {
-        case .removed, .accountChanged:
+        case .removed, .removalUnconfirmed, .accountChanged:
+            confirmation = (vaultID, model.vaultSync?.state.accountUser)
             confirmsUpload = true
         default:
-            run { await model.enableSync() }
+            run { await model.enableSync(vaultID: vaultID) }
         }
     }
 
@@ -172,6 +188,8 @@ struct CloudVaultRow: View {
             String(localized: "WSurf’s iCloud data was deleted in iCloud settings. This Mac keeps its copy. Turn on Sync with iCloud to upload it again.")
         case .removed(.encryptedDataReset):
             String(localized: "Your iCloud encrypted data was reset. This Mac keeps its copy. Turn on Sync with iCloud to upload it again.")
+        case .removalUnconfirmed:
+            String(localized: "This vault may still be in iCloud. WSurf couldn’t confirm its removal or which Apple Account was used. This Mac keeps its copy.")
         case .removalFailed:
             String(localized: "Couldn’t remove this vault from iCloud. It’s still there, and this Mac no longer syncs it.")
         case .removalPending:
