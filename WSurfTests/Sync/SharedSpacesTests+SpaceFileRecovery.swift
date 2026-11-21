@@ -499,6 +499,89 @@ extension SharedSpacesTests {
         #expect(peer.browser.tabs.filter { $0.urlString == privateURL }.count == 1)
     }
 
+    @Test func unpinningANavigatedCopyKeepsTheUnloadedUnplacedPageInItsOriginalWindow() async throws {
+        let root = URL.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let cloud = FakeSyncCloud(), firstID = UUID(), secondID = UUID()
+        let originalURL = "https://device-only.example.invalid/unloaded"
+        let anchorURL = "https://anchor.example.invalid/"
+        let seed = StoredWindow(root, window: firstID, cloud: cloud)
+        let shared = try #require(seed.spaces.spaces.first), local = seed.spaces.add(name: "Device only")
+        seed.browser.adoptSpaces(from: seed.spaces)
+        let anchor = seed.browser.addPage(anchorURL)
+        let originalID = seed.browser.addPage(originalURL).id
+        seed.browser.move([.tab(originalID)], toSpace: local.id)
+        seed.browser.activate(anchor)
+        try await seed.host.share(shared, in: seed.profile)
+        seed.browser.saveBlocking()
+        // Older sessions can have an ordinary page with no recorded Space.
+        try await seed.browser.database.writer.write { db in
+            try db.execute(sql: "UPDATE sessionTab SET spaceID = NULL WHERE id = ?", arguments: [originalID])
+        }
+        seed.close()
+
+        var first = StoredWindow(root, window: firstID, cloud: cloud)
+        let loose = try #require(first.browser.tab(id: originalID))
+        try #require(loose.spaceID == nil && !first.host.isEnabled(.pins, for: first.profile))
+        first.browser.pin(loose)
+        let pinID = try #require(loose.pinID)
+        first.browser.activate(try #require(first.browser.tab(id: anchor.id)))
+        first.browser.saveBlocking()
+        first.close()
+
+        first = StoredWindow(root, window: firstID, cloud: cloud)
+        var second = first.addWindow(secondID, in: local.id)
+        defer { second.closeAllTabs(saving: false); first.close() }
+        let original = try #require(first.browser.tab(id: originalID))
+        let copy = try #require(second.page(for: pinID))
+        let ordinary = second.pinned("https://ordinary.example.invalid/")
+        let ordinaryCopy = try #require(first.browser.page(for: ordinary.pinID))
+        try #require(copy.id != originalID && original.pinID == pinID)
+        try #require(first.browser.activeTabID == anchor.id && ordinaryCopy.isDeferred && !ordinaryCopy.isMaterialised)
+
+        let server = try await HTTPFixtureServer.start(routes: ["/elsewhere": .html("<title>Elsewhere</title>")])
+        let destination = try server.url("/elsewhere")
+        second.activate(copy)
+        copy.realizeDeferredSession(byPerson: true)
+        copy.load(destination, byPerson: true)
+        try #require(await waitUntil { copy.committedURL == destination })
+        try #require(original.isDeferred && !original.isMaterialised)
+        second.unpin(copy)
+        second.unpin(ordinary)
+        #expect(first.browser.tab(id: originalID) === original)
+        #expect(first.browser.tab(id: ordinaryCopy.id) == nil)
+        #expect(second.tab(id: copy.id) === copy && copy.urlString == destination.absoluteString && copy.pinID == nil)
+        first.browser.saveBlocking()
+        second.saveBlocking()
+        let savedURL = try await first.browser.database.writer.read { db in
+            try String.fetchOne(db, sql: """
+                SELECT url FROM sessionTab WHERE windowID = ? AND id = ?
+                AND spaceID IS NULL AND pinID IS NULL AND pinnedURL IS NULL
+                """, arguments: [firstID, originalID])
+        }
+        #expect(savedURL == originalURL)
+        second.closeAllTabs(saving: false)
+        first.close()
+
+        first = StoredWindow(root, window: firstID, cloud: cloud)
+        second = first.addWindow(secondID, in: local.id)
+        #expect(second.tab(id: copy.id)?.urlString == destination.absoluteString)
+        await first.host.refresh()
+        let peer = Mac(cloud)
+        defer { peer.finish() }
+        try await peer.host.enable(.spaces, for: peer.profile)
+        try await peer.host.join(try #require(peer.host.availableSpaces(for: peer.profile).first), in: peer.profile)
+        try await peer.sync()
+        try #require(peer.browser.page(at: anchorURL) != nil)
+        #expect(peer.browser.page(at: originalURL) == nil)
+        let retained = try #require(first.browser.tab(id: originalID))
+        #expect(retained.urlString == originalURL && retained.spaceID == nil && retained.pinID == nil)
+        first.browser.move([.tab(originalID)], toSpace: shared.id)
+        await first.host.refresh()
+        try await peer.sync()
+        #expect(peer.browser.tabs.filter { $0.urlString == originalURL }.count == 1)
+    }
+
     @Test func aRenameSavedDuringASpaceFileOutageSupersedesTheOlderQueuedRename() async throws {
         let root = URL.temporaryDirectory.appending(path: UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }

@@ -188,21 +188,22 @@ extension BrowserModel {
     }
 
     /// Unlinks every page whose pin is not in `wanted`, and removes the profile folders that are gone.
-    /// Returns the loaded pages that stay open as ordinary tabs.
+    /// Returns the pages that stay open as ordinary tabs.
     private func releaseGonePins(keeping wanted: Set<UUID>) -> Set<SidebarItem> {
         var demoted: Set<SidebarItem> = []
         for tab in tabs {
             guard let pinID = tab.pinID, !wanted.contains(pinID) else { continue }
-            let sharedSpace = sharedSpaceService?.savedSpace(of: .tab(tab.id), in: self, pinID: pinID)
+            let item = SidebarItem.tab(tab.id)
+            let sharedSpace = sharedSpaceService?.savedSpace(of: item, in: self, pinID: pinID)
             tab.pinID = nil
             if let sharedSpace {
                 tab.spaceID = sharedSpace
             }
-            if sharedSpace != nil || (tab.isMaterialised && !tab.isDeferred) {
+            if sharedSpace != nil || unplacedSpaceRows.contains(item) || (tab.isMaterialised && !tab.isDeferred) {
                 tab.pinnedURL = nil
                 tab.pinnedTitle = ""
                 tab.isFavorite = false
-                demoted.insert(.tab(tab.id))
+                demoted.insert(item)
             } else {
                 close(tab, recordForReopening: false)
             }
