@@ -141,6 +141,13 @@ final class ProfilePinStore {
         return store
     }
 
+    /// A replacement publication needs committed rows, including edits made while the previous instance was paused.
+    func readForPublication() throws -> [ProfilePin] {
+        // The session owner falls back to a temporary database if its on-disk profile cannot open.
+        guard !database.isEphemeral || !AppDatabase.ownsSession else { throw CocoaError(.fileReadUnknown) }
+        return try database.writer.read { try ProfilePin.fetchAll($0) }
+    }
+
     func subscribe(_ model: BrowserModel) {
         subscribers.add(model)
     }

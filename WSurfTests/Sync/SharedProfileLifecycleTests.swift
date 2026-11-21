@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 
 import Foundation
+import GRDB
 import Testing
 import WSurfCore
 
@@ -29,8 +30,8 @@ struct SharedProfileLifecycleTests {
             root.appending(path: "iCloudSharedSpaces.json")
         }
 
-        func open(spaces: SpaceStore? = nil, profileStore: ProfileStore? = nil) -> CloudSharedSpaces {
-            let pins = ProfilePinStore.store(for: .temporary())
+        func open(spaces: SpaceStore? = nil, profileStore: ProfileStore? = nil, pinStore: ProfilePinStore? = nil) -> CloudSharedSpaces {
+            let pins = pinStore ?? .store(for: .temporary())
             return CloudSharedSpaces(stateFile: catalogFile, profileStore: profileStore ?? profiles, windows: { [] }, spaces: { _ in spaces }, pins: { _ in pins })
         }
 
@@ -53,6 +54,102 @@ struct SharedProfileLifecycleTests {
         func cleanUp() {
             try? FileManager.default.removeItem(at: root)
         }
+    }
+
+    @Test(arguments: [SharedCatalogCategory.spaces, .pins])
+    func firstSharedSpaceOrPinUsesTheRenewedProfileInstance(category: SharedCatalogCategory) async throws {
+        let f = Fixture()
+        defer { f.cleanUp() }
+        let work = f.kept, renewed = UUID()
+        try f.profiles.updateCloudLedger { $0.active[work.id] = [f.cloud.user: renewed] }
+        let restored = ProfileStore(file: f.root.appending(path: "profiles.json"))
+        let spaces = SpaceStore(profile: work, file: f.root.appending(path: "Spaces.json"))
+        let host = f.open(spaces: spaces, profileStore: restored)
+        let engine = f.attach(host)
+        try await host.enable(category, for: work)
+        #expect(host.cloudProfileID(for: work.id) == nil)
+        if category == .spaces {
+            try await host.share(spaces.add(name: "Shared work"), in: work)
+        } else {
+            let pin = ProfilePin(id: UUID(), orderKey: "V", kind: .tab, url: "https://example.invalid/work")
+            host.pins(work).publish([pin])
+            try await host.selectPin(pin.id, in: work)
+        }
+        try await engine.sendNow()
+        let rows = try #require(f.cloud.records(in: category.zone)).compactMap(SharedSpaceItem.init(record:))
+        #expect(rows.map(\.profileID) == [renewed])
+        #expect(f.open().links[work.id]?.profile == renewed)
+        for other in SharedCatalogCategory.allCases where other != category {
+            #expect(!host.isEnabled(other, for: work))
+            #expect(f.cloud.names(in: other.zone).isEmpty)
+        }
+        let published = try await host.publishProfile(work)
+        try await engine.sendNow()
+        #expect(f.cloud.names(in: SharedCatalogCategory.profiles.zone) == [renewed.uuidString])
+        #expect(published == renewed)
+    }
+
+    @Test func publishingKeepsTheChosenCatalogLinkAndIsolatesAppleAccounts() async throws {
+        let f = Fixture()
+        defer { f.cleanUp() }
+        let work = f.kept, renewed = UUID(), joined = UUID()
+        try f.profiles.updateCloudLedger { $0.active[work.id] = [f.cloud.user: renewed] }
+        let host = f.open()
+        let engine = f.attach(host)
+        try await host.enable(.profiles, for: work)
+        try #require(host.linkProfile(work.id, to: joined))
+        #expect(try await host.publishProfile(work) == joined)
+
+        f.cloud.switchUser("other-synthetic-owner")
+        await engine.simulateAccount(.switchAccounts(user: f.cloud.user))
+        let other = try await host.publishProfile(work)
+        try await engine.sendNow()
+        #expect(other != joined && other != renewed)
+        #expect(f.cloud.names(in: SharedCatalogCategory.profiles.zone) == [other.uuidString])
+    }
+
+    @Test func newInstancePublishesTheLocalPinAndItsCurrentFolder() async throws {
+        let f = Fixture()
+        defer { f.cleanUp() }
+        let work = f.kept, file = f.root.appending(path: "pins.sqlite")
+        let pins = ProfilePinStore.store(for: AppDatabase(at: file))
+        let first = f.open(pinStore: pins)
+        let engine = f.attach(first)
+        var folder = ProfilePin(id: UUID(), orderKey: "V", kind: .folder, title: "Old folder")
+        var chosen = ProfilePin(id: UUID(), parentID: folder.id, orderKey: "V", kind: .tab, url: "https://example.invalid/shared")
+        let sibling = ProfilePin(id: UUID(), parentID: folder.id, orderKey: "W", kind: .tab, url: "https://example.invalid/private")
+        pins.publish([folder, chosen, sibling])
+        try await first.selectPin(chosen.id, in: work)
+        try await engine.sendNow()
+        let old = try #require(first.links[work.id]?.profile)
+        first.permitsSharing = { _ in false }
+        chosen.customTitle = "Local rename"
+        folder.title = "Local folder"
+        pins.publish([folder, chosen, sibling])
+        first.pinsChanged(in: work, store: pins)
+
+        let disk = AppDatabase(at: file)
+        let restored = ProfilePinStore.store(for: disk)
+        let host = f.open(pinStore: restored)
+        _ = f.attach(host)
+        let next = CloudProfileInstance(.shared, id: UUID(), owner: f.cloud.user)
+        try await disk.writer.write { try $0.execute(sql: "ALTER TABLE profilePin RENAME TO heldPins") }
+        #expect(throws: (any Error).self) { try host.replaceInstance(for: work, with: next) }
+        #expect(f.open().links[work.id]?.profile == old)
+        try await disk.writer.write { try $0.execute(sql: "ALTER TABLE heldPins RENAME TO profilePin") }
+        try host.replaceInstance(for: work, with: next)
+        await host.refresh()
+
+        let rows = try #require(f.cloud.records(in: SharedCatalogCategory.pins.zone)).compactMap(SharedSpaceItem.init(record:)).filter { $0.profileID == next.id }
+        let link = try #require(f.open().links[work.id])
+        let pinID = try #require(link.pins[chosen.id]), folderID = try #require(link.pinFolders?[folder.id])
+        #expect(Set(rows.map(\.id)) == [pinID, folderID])
+        let row = try #require(rows.first { $0.id == pinID })
+        #expect(row.customTitle == chosen.customTitle && row.parentID == folderID)
+        #expect(rows.first { $0.id == folderID }?.title == folder.title)
+        #expect(restored.pins.first { $0.id == chosen.id }?.customTitle == chosen.customTitle)
+        #expect(restored.pins.first { $0.id == folder.id }?.title == folder.title)
+        #expect(restored.pins.contains(sibling))
     }
 
     @Test(arguments: [false, true])

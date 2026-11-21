@@ -49,6 +49,7 @@ final class CloudSharedSpaces {
     var storageReadable: Bool {
         storage.readable
     }
+    private let profileStore: ProfileStore?
     private let liveProfiles: @MainActor () -> [Profile]?
     var profiles: [UUID: Profile] = [:]
     var applying = false
@@ -65,14 +66,13 @@ final class CloudSharedSpaces {
         spaces: @escaping @MainActor (Profile) -> SpaceStore? = SpaceStore.shared(for:),
         pins: @escaping @MainActor (Profile) -> ProfilePinStore = { .store(for: BrowserProfileContext.shared(for: $0).database) }
     ) {
+        let store = profileStore ?? (profiles == nil ? .shared : nil)
+        self.profileStore = store
         let liveProfiles: @MainActor () -> [Profile]? = {
-            if let profileStore {
-                return profileStore.verifiedProfiles
+            if let store {
+                return store.verifiedProfiles
             }
-            if let profiles {
-                return profiles
-            }
-            return ProfileStore.shared.verifiedProfiles
+            return profiles
         }
         self.liveProfiles = liveProfiles
         let initial = liveProfiles()
@@ -319,7 +319,8 @@ final class CloudSharedSpaces {
 
     /// Spaces and pins need a shared profile ID. Publishing the profile's name is a separate choice.
     private func linkedProfileID(for profile: Profile) throws -> UUID {
-        let id = cloudProfileID(for: profile.id) ?? UUID()
+        guard let owner = catalog.trustedUser else { throw SharedCatalogError.unavailable }
+        let id = cloudProfileID(for: profile.id) ?? profileStore?.cloudLedger.active[profile.id]?[owner] ?? UUID()
         guard linkProfile(profile.id, to: id) else { throw SharedCatalogError.storage }
         return id
     }

@@ -37,7 +37,16 @@ extension CloudSharedSpaces {
     func pinsChanged(in profile: Profile, store: ProfilePinStore) {
         guard !applying, isEnabled(.pins, for: profile), store.isAvailable,
               var link = links[profile.id], !link.pins.isEmpty, let group = link.profile else { return }
-        let local = Dictionary(uniqueKeysWithValues: store.pins.map { ($0.id, $0) })
+        let edits = selectedPinItems(store.pins, for: group, link: &link)
+        if links[profile.id]?.pinFolders != link.pinFolders {
+            links[profile.id] = link
+        }
+        catalog.stage(edits, for: profile.id)
+        persistLinks()
+    }
+
+    func selectedPinItems(_ pins: [ProfilePin], for group: UUID, link: inout SharedProfileLinks) -> [SharedSpaceItem] {
+        let local = Dictionary(uniqueKeysWithValues: pins.map { ($0.id, $0) })
         var required: Set<UUID> = []
         for selected in link.pins.keys {
             var parent = local[selected]?.parentID
@@ -66,12 +75,8 @@ extension CloudSharedSpaces {
                 edits.append(prior.tombstone)
             }
         }
-        if link.pinFolders != folders {
-            link.pinFolders = folders
-            links[profile.id] = link
-        }
-        catalog.stage(edits, for: profile.id)
-        persistLinks()
+        link.pinFolders = folders
+        return edits
     }
 
     /// A row gone from an open window is ambiguous during teardown or transfer. Only an individual close supplies a deletion.

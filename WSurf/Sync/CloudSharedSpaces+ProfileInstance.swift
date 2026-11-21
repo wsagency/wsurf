@@ -32,9 +32,14 @@ extension CloudSharedSpaces {
             ids[old] = id
             return id
         }
-        let selected = Set(link.spaces.values).union(link.pins.values).union((link.pinFolders ?? [:]).values).union(link.slots.values.map(\.cloudID))
-        var items = SharedCatalogCategory.allCases.flatMap { catalog.items($0) }.filter {
-            $0.profileID == old && selected.contains($0.id) && !$0.removed && catalog.enabled($0.category, for: profile.id)
+        var items: [SharedSpaceItem] = []
+        if catalog.enabled(.spaces, for: profile.id) {
+            let selected = Set(link.spaces.values).union(link.slots.values.map(\.cloudID))
+            items = catalog.items(.spaces).filter { $0.profileID == old && selected.contains($0.id) && !$0.removed }
+        }
+        if catalog.enabled(.pins, for: profile.id), !link.pins.isEmpty {
+            let local = try pins(profile).readForPublication()
+            items += selectedPinItems(local, for: old, link: &link).filter { !$0.removed }
         }
         if catalog.enabled(.profiles, for: profile.id) {
             items.append(.init(id: old, kind: .profile, profileID: old, title: profile.name))
