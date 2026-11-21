@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: BUSL-1.1
 
 import CloudKit
-import CryptoKit
 import Foundation
 import Observation
 import os
@@ -25,59 +24,6 @@ nonisolated public struct MirroredSession: Codable, Equatable, Sendable {
         self.payload = payload
         self.modifiedAt = modifiedAt
     }
-}
-
-/// Everything `TabSync` keeps between runs. It caches what the account's private database holds, so a launch lists the other
-/// devices at once. It holds no profile identity beyond zone names, and nothing from a private window. The engine's own state
-/// belongs to `SyncRouter`.
-nonisolated public struct TabSyncState: Codable, Equatable, Sendable {
-    /// The `recordName` of the last signed-in user record.
-    public var accountUser: String?
-    public var seq: Int64 = 0
-    /// Zone name to the system fields of this device's record there. A key means the record exists on the server.
-    public var ownSystemFields: [String: Data] = [:]
-    public var publishedDevice: DeviceInfo?
-    /// Install ID to another device.
-    public var devices: [String: MirroredDevice] = [:]
-    /// Zone name to install ID to another device's session.
-    public var sessions: [String: [String: MirroredSession]] = [:]
-
-    /// The original account and uninterrupted profile choices that still need a zone-existence check.
-    struct RemovalCheck: Codable, Equatable, Sendable {
-        var account: String?
-        var profiles: Set<UUID>
-        var zones: Set<String>
-        /// A missing zone ends an established enrollment. A brand-new opt-in may still create its first zone.
-        var establishedZones: Set<String>?
-
-        var zonesRequiringExistence: Set<String> {
-            establishedZones ?? zones
-        }
-    }
-
-    struct ZoneObservations: Codable, Equatable, Sendable {
-        enum Presence: String, Codable { case absent, present, incomplete }
-        let account: String
-        var zones: [String: Presence] = [:]
-    }
-
-    fileprivate var zoneObservations: ZoneObservations?
-    fileprivate var removalCheck: RemovalCheck?
-    fileprivate var removalRevision: Int?
-
-    fileprivate var removalCheckpoint: TabRemovalCheckpoint? {
-        guard removalRevision != nil || removalCheck != nil else { return nil }
-        return TabRemovalCheckpoint(revision: removalRevision ?? 0, pending: removalCheck, observations: zoneObservations)
-    }
-
-    public init() {}
-}
-
-/// Stored alongside the engine cursor too. A newer clear must win over a stale tab file on restart.
-nonisolated struct TabRemovalCheckpoint: Codable, Equatable, Sendable {
-    let revision: Int
-    let pending: TabSyncState.RemovalCheck?
-    var observations: TabSyncState.ZoneObservations?
 }
 
 nonisolated public struct RemoteDeviceSession: Identifiable, Equatable, Sendable {
@@ -107,48 +53,6 @@ nonisolated public struct RemoteDeviceSession: Identifiable, Equatable, Sendable
     }
 }
 
-/// A saved record carries its encrypted payload but no request ID. Count identical handouts until all their replies arrive.
-private struct TabSaveHandouts {
-    enum Receipt { case current, ambiguous }
-    private struct Copies {
-        var remaining = 0
-        var current = true
-        var ambiguous = false
-    }
-    private var copies: [SHA256.Digest: Copies] = [:]
-    private var latest: SHA256.Digest?
-
-    var isEmpty: Bool {
-        copies.isEmpty
-    }
-
-    mutating func issue(_ payload: Data) {
-        let key = SHA256.hash(data: payload)
-        var group = copies[key] ?? Copies()
-        group.ambiguous = group.remaining > 0
-        group.remaining += 1
-        group.current = true
-        copies[key] = group
-        latest = key
-    }
-
-    mutating func retire() {
-        latest = nil
-        for key in copies.keys {
-            copies[key]?.current = false
-        }
-    }
-
-    mutating func finish(_ payload: Data, sharing: Bool) -> Receipt? {
-        let key = SHA256.hash(data: payload)
-        guard var group = copies[key] else { return nil }
-        group.remaining -= 1
-        copies[key] = group.remaining == 0 ? nil : group
-        guard group.current, !sharing || latest == key else { return nil }
-        return group.ambiguous ? .ambiguous : .current
-    }
-}
-
 /// The platform-neutral core of tab sync: what this device publishes, what it keeps of the others, and how engine events change both.
 @Observable
 public final class TabSync: SyncEngineDelegate {
@@ -163,6 +67,7 @@ public final class TabSync: SyncEngineDelegate {
 
     @ObservationIgnored private let persist: (TabSyncState) -> Void
     @ObservationIgnored private var persistRemoval: ((TabRemovalCheckpoint) -> Void)?
+    @ObservationIgnored private var migratedLegacyEvidence = false
     @ObservationIgnored private var hasReconciled = false
     @ObservationIgnored private var engine: (any SyncEngine)?
     @ObservationIgnored private var restoredUnidentifiedRecords: Bool
@@ -181,6 +86,7 @@ public final class TabSync: SyncEngineDelegate {
     private final class Enrollment {
         var start = FetchStart()
         var task: Task<Void, Never>?
+        var verifyingRemovalOwner = false
         var complete = false
         var readAgain = false
         var changedDuringRead: Set<SyncRecordID> = []
@@ -199,7 +105,7 @@ public final class TabSync: SyncEngineDelegate {
 
     /// Whether this device owns anything on the server or wants to: the owner creates the engine only then.
     public var needsEngine: Bool {
-        !desired.isEmpty || !state.ownSystemFields.isEmpty
+        !desired.isEmpty || !ownedZones.isEmpty
     }
 
     // ponytail: `persist` rewrites the whole state per mutation and event, KBs typically; move to an actor-owned file if it shows up.
@@ -212,11 +118,8 @@ public final class TabSync: SyncEngineDelegate {
         restoredUnidentifiedRecords = state.accountUser == nil && (
             !state.ownSystemFields.isEmpty || state.publishedDevice != nil || !state.devices.isEmpty || !state.sessions.isEmpty
         )
-        // Migrate proof from tab files written before zone observations. An explicit off/on drops that proof.
-        if state.removalCheckpoint == nil, let owner = state.accountUser, !state.ownSystemFields.isEmpty {
-            self.state.zoneObservations = .init(account: owner, zones: state.ownSystemFields.mapValues { _ in .present })
-            self.state.removalRevision = 0
-        }
+        migratedLegacyEvidence = self.state.migrateObservedZones()
+        self.state.migratePublishedRecords(installID: installID)
     }
 
     /// Install the durable stop before attach can replay a queued zone creation, including when the tab cache is unreadable.
@@ -229,14 +132,18 @@ public final class TabSync: SyncEngineDelegate {
                 clearAccountData()
                 state.accountUser = owner
             }
-            state.zoneObservations = saved.observations
+            // Old router revisions only settle a removal check. A clear from that format carries no contrary zone evidence.
+            let migrated = migratedLegacyEvidence && saved.pending == nil ? state.zoneObservations : nil
+            state.zoneObservations = saved.observations ?? migrated
             state.removalRevision = saved.revision
             state.removalCheck = saved.pending
+            state.migratePublishedRecords(installID: installID)
             persist(state)
             if hasReconciled {
                 retainCheckpoint(for: desired)
             }
         }
+        migratedLegacyEvidence = false
         if let latest = state.removalCheckpoint {
             persistRemoval(latest)
         }
@@ -264,8 +171,29 @@ public final class TabSync: SyncEngineDelegate {
         setCheckpoint(state.removalCheck, observations: observations)
     }
 
-    private func requiresExistence(_ zone: String, ifUnknown: Bool) -> Bool {
-        state.zoneObservations?.zones[zone].map { $0 != .absent } ?? ifUnknown
+    private func requiresExistence(_ zone: String) -> Bool {
+        state.zoneObservations?.zones[zone].map { $0 != .absent } ?? false
+    }
+
+    private var ownedZones: Set<String> {
+        guard let scope = state.zoneObservations, scope.account == state.accountUser,
+              let publication = scope.publication, publication.installID == installID else { return [] }
+        return publication.zones
+    }
+
+    private func rememberOwnRow(in zone: String) {
+        let owned = ownedZones
+        if !owned.contains(zone) {
+            setOwnedZones(owned.union([zone]))
+        }
+    }
+
+    private func setOwnedZones(_ zones: Set<String>) {
+        guard let owner = state.accountUser else { return }
+        var scope = state.zoneObservations ?? .init(account: owner)
+        guard scope.account == owner else { return }
+        scope.publication = .init(installID: installID, zones: zones)
+        setCheckpoint(state.removalCheck, observations: scope)
     }
 
     // MARK: - Engine and sharing
@@ -318,16 +246,17 @@ public final class TabSync: SyncEngineDelegate {
             renewEnrollment()
         }
         var changes: [SyncChange] = []
-        for zone in Set(state.ownSystemFields.keys).union(outgoing.keys).sorted() {
+        let owned = ownedZones
+        for zone in owned.union(outgoing.keys).sorted() {
             guard let id = SyncZone.profileID(zone), !profiles.contains(id) else { continue }
             outgoing[zone] = nil
             lastShared[zone] = nil
-            if state.ownSystemFields[zone] != nil {
+            if owned.contains(zone) {
                 changes.append(.deleteRecord(own(zone)))
             }
         }
         if profiles.isEmpty {
-            if state.ownSystemFields[SyncZone.devices] != nil {
+            if owned.contains(SyncZone.devices) {
                 changes.append(.deleteRecord(own(SyncZone.devices)))
             }
         } else {
@@ -420,7 +349,7 @@ public final class TabSync: SyncEngineDelegate {
         guard let identity = engine as? any SyncAccountIdentity else { return false }
         let user = await verifiedUser(for: expected, using: identity)
         guard start == enrollment?.start else {
-            recoverMissedFetch(event, from: start)
+            recoverMissedFetch(event)
             return false
         }
         guard user != nil else {
@@ -436,18 +365,11 @@ public final class TabSync: SyncEngineDelegate {
         { [weak self, start = markFetchStart()] event in await self?.receive(event, from: start) }
     }
 
-    private func recoverMissedFetch(_ event: SyncEvent, from start: FetchStart?) {
+    private func recoverMissedFetch(_ event: SyncEvent) {
         guard let enrollment else { return }
         // A coalesced fetch can also contain changes made after re-enrollment. Read their current server values.
-        switch event {
-        case .fetched(let records, let deleted):
-            guard records.contains(where: { wants(zone: $0.id.zone) }) || deleted.contains(where: { wants(zone: $0.zone) }) else { return }
-        case .zonesDeleted(let zones):
-            _ = recheckRemovedZones(Array(zones.keys), from: start)
-            return
-        default:
-            return
-        }
+        guard case .fetched(let records, let deleted) = event,
+              records.contains(where: { wants(zone: $0.id.zone) }) || deleted.contains(where: { wants(zone: $0.zone) }) else { return }
         enrollment.complete = false
         if enrollment.task == nil {
             startBaseline()
@@ -456,13 +378,39 @@ public final class TabSync: SyncEngineDelegate {
         }
     }
 
+    private func receiveRemovedZones(_ zones: [String], from start: FetchStart?) async {
+        let selected = zones.filter { wants(zone: $0) }
+        guard let active = enrollment, !selected.isEmpty else { return }
+        if state.accountUser == nil, start?.enrollment == active.start.enrollment {
+            // Only this live delivery can identify an anonymous stop. A restart or a later login cannot adopt it.
+            let canIdentify = canBindFirstAccount
+            recordRemovalCheck(selected)
+            guard canIdentify, let identity = engine as? any SyncAccountIdentity else { return }
+            active.verifyingRemovalOwner = true
+            defer { active.verifyingRemovalOwner = false }
+            guard let user = try? await identity.currentAccountUser(), !user.isEmpty, enrollment === active else { return }
+            rememberAccount(user, beforeFirstRead: true)
+        }
+        let current = start == active.start
+        let check = recheckRemovedZones(selected)
+        if current {
+            await check?.value
+        }
+    }
+
     /// A database deletion can predate a zone this enrollment has since created. Verify its current existence.
-    private func recheckRemovedZones(_ zones: [String], from start: FetchStart?) -> Task<Void, Never>? {
+    private func recheckRemovedZones(_ zones: [String]) -> Task<Void, Never>? {
         let selected = zones.filter { wants(zone: $0) }
         guard let prior = enrollment, !selected.isEmpty else { return nil }
-        let sameEnrollment = start?.enrollment == prior.start.enrollment
-        let established = selected.filter { requiresExistence($0, ifUnknown: sameEnrollment) }
-        holdRemovals(selected, established: Set(established))
+        let established = Set(selected.filter(requiresExistence))
+        if prior.task != nil, selected.contains(where: { state.zoneObservations?.zones[$0] == nil }) {
+            // The first read may already have seen this zone. Hold sends, let its answer arrive, then verify current existence.
+            recordRemovalCheck(selected, established: established)
+            prior.start.generation += 1
+            prior.readAgain = true
+            return nil
+        }
+        holdRemovals(selected, established: established)
         // A callback can run inside the interrupted read. Give the new read its own task before awaiting it.
         let next = Enrollment()
         next.start = prior.start
@@ -492,7 +440,7 @@ public final class TabSync: SyncEngineDelegate {
         var observations = state.zoneObservations
         let activeZones = observations?.zones.filter { wants(zone: $0.key) } ?? [:]
         observations?.zones = activeZones
-        if observations?.account != state.accountUser || observations?.zones.isEmpty == true {
+        if observations?.account != state.accountUser {
             observations = nil
         }
         var retained = state.removalCheck
@@ -518,7 +466,7 @@ public final class TabSync: SyncEngineDelegate {
                 snapshots[zone] = try await engine.fetchAll(zone: zone)
             } catch where Self.zoneIsMissing(error) {
                 guard enrollment === expected, !Task.isCancelled else { return }
-                if established.contains(zone) || requiresExistence(zone, ifUnknown: false) {
+                if established.contains(zone) || requiresExistence(zone) {
                     // Hold pending sends before the account recheck can suspend or fail.
                     recordRemovalCheck([zone])
                     confirmedRemovals.append(zone)
@@ -541,6 +489,9 @@ public final class TabSync: SyncEngineDelegate {
             }
         }
 
+        if expected.readAgain, state.removalCheck != nil {
+            return
+        }
         let wasHeld = state.removalCheck != nil
         if wasHeld {
             applyZonesDeleted(confirmedRemovals)
@@ -616,6 +567,7 @@ public final class TabSync: SyncEngineDelegate {
     // MARK: - SyncEngineDelegate
 
     public func acceptsUploadAccount(_ user: String) -> Bool {
+        guard enrollment?.verifyingRemovalOwner != true else { return false }
         guard matchesAccount(user) else {
             applyAccount(.switchAccounts(user: user))
             persist(state)
@@ -629,15 +581,15 @@ public final class TabSync: SyncEngineDelegate {
     }
 
     public func allowsZoneCreation(_ zone: String) -> Bool {
-        allowsRecordSave(in: zone) && !requiresExistence(zone, ifUnknown: false)
+        allowsRecordSave(in: zone) && !requiresExistence(zone)
     }
 
     private func allowsRecordSave(in zone: String) -> Bool {
-        !signedOut && wants(zone: zone) && state.removalCheck == nil
+        !signedOut && !restoredUnidentifiedRecords && wants(zone: zone) && state.removalCheck == nil
     }
 
     public func wantsRecordDeletion(_ id: SyncRecordID) -> Bool {
-        id.name == installID && state.ownSystemFields[id.zone] != nil && !wants(zone: id.zone)
+        !signedOut && id.name == installID && ownedZones.contains(id.zone) && !wants(zone: id.zone)
     }
 
     public func record(for id: SyncRecordID) -> SyncRecord? {
@@ -652,12 +604,13 @@ public final class TabSync: SyncEngineDelegate {
 
     public func recordForUpload(_ id: SyncRecordID) async -> SyncRecord? {
         guard let expected = enrollment, state.accountUser != nil, allowsRecordSave(in: id.zone), id.name == installID else { return nil }
-        if !requiresExistence(id.zone, ifUnknown: false) {
+        if !requiresExistence(id.zone) {
             // Prove the first creation before handing out content. Even a delayed save receipt can then outlive a real removal.
             guard await verifyZoneForFirstUpload(id, for: expected) else { return nil }
         }
         guard enrollment === expected, let record = record(for: id) else { return nil }
         deferredUploads.remove(id.zone)
+        rememberOwnRow(in: id.zone)
         handouts[id.zone, default: TabSaveHandouts()].issue(record.payload)
         return record
     }
@@ -721,8 +674,12 @@ public final class TabSync: SyncEngineDelegate {
     }
 
     func receive(_ event: SyncEvent, from start: FetchStart?) async {
+        if case .zonesDeleted(let zones) = event {
+            await receiveRemovedZones(Array(zones.keys), from: start)
+            return
+        }
         guard start == enrollment?.start else {
-            recoverMissedFetch(event, from: start)
+            recoverMissedFetch(event)
             return
         }
         switch event {
@@ -731,7 +688,7 @@ public final class TabSync: SyncEngineDelegate {
             let records = modified.filter { wants(zone: $0.id.zone) }
             let removals = deleted.filter { wants(zone: $0.zone) }
             guard !records.isEmpty || !removals.isEmpty, await acceptsIncoming(event, from: start, for: enrollment) else { return }
-            for zone in Set(records.map(\.id.zone)) where !requiresExistence(zone, ifUnknown: false) {
+            for zone in Set(records.map(\.id.zone)) where !requiresExistence(zone) {
                 observe(.present, in: zone)
             }
             if enrollment.task != nil {
@@ -739,13 +696,6 @@ public final class TabSync: SyncEngineDelegate {
                 enrollment.changedDuringRead.formUnion(removals)
             }
             applyFetched(modified: records, deleted: removals)
-        case .zonesDeleted(let zones):
-            let retired = zones.keys.filter { !wants(zone: $0) && state.ownSystemFields[$0] != nil }
-            let source = engine, owner = state.accountUser
-            await recheckRemovedZones(Array(zones.keys), from: start)?.value
-            guard !retired.isEmpty, !signedOut, let source, let owner, let identity = source as? any SyncAccountIdentity,
-                  (try? await identity.currentAccountUser()) == owner, engine === source, !signedOut, state.accountUser == owner else { return }
-            applyZonesDeleted(retired.filter { !wants(zone: $0) && state.ownSystemFields[$0] != nil }.sorted())
         default:
             return
         }
@@ -800,6 +750,7 @@ public final class TabSync: SyncEngineDelegate {
     private func adoptOwnRecord(_ record: SyncRecord) {
         let zone = record.id.zone
         guard record.type == (zone == SyncZone.devices ? .device : .deviceSession) else { return }
+        rememberOwnRow(in: zone)
         state.ownSystemFields[zone] = record.systemFields ?? state.ownSystemFields[zone]
         if zone == SyncZone.devices, let info = try? SessionCodec.decodeDevice(record.payload) {
             state.publishedDevice = info
@@ -824,7 +775,12 @@ public final class TabSync: SyncEngineDelegate {
                 add([.deleteRecord(record.id)])
             }
         }
-        applyFetched(modified: [], deleted: deleted.filter { $0.name == installID && !wants(zone: $0.zone) })
+        let removed = deleted.filter(wantsRecordDeletion)
+        if !removed.isEmpty {
+            let remaining = ownedZones.subtracting(removed.map(\.zone))
+            applyFetched(modified: [], deleted: removed)
+            setOwnedZones(remaining)
+        }
         for failure in failed {
             let zone = failure.id.zone
             guard let attempted = failure.attempted, attempted.id == failure.id,
@@ -835,7 +791,7 @@ public final class TabSync: SyncEngineDelegate {
                 retry(failure, recheck: &recheck)
             }
         }
-        await recheckRemovedZones(Array(recheck), from: nil)?.value
+        await recheckRemovedZones(Array(recheck))?.value
     }
 
     private func retry(_ failure: SyncFailedSave, recheck: inout Set<String>) {
@@ -859,6 +815,7 @@ public final class TabSync: SyncEngineDelegate {
     /// only after the person turns sharing on again.
     private func applyZonesDeleted(_ zones: [String]) {
         let before = desired
+        let remaining = ownedZones.subtracting(zones)
         var ended: [UUID?] = []
         for zone in zones {
             state.sessions[zone] = nil
@@ -879,6 +836,9 @@ public final class TabSync: SyncEngineDelegate {
                 desired.remove(id)
                 ended.append(id)
             }
+        }
+        if !zones.isEmpty {
+            setOwnedZones(remaining)
         }
         if desired != before {
             renewEnrollment()
@@ -920,14 +880,21 @@ public final class TabSync: SyncEngineDelegate {
         if let owner = state.accountUser {
             return owner == user
         }
-        // Only a page predating this opt-in may be rechecked under its first verified account.
-        return !restoredUnidentifiedRecords && (state.removalCheck?.zonesRequiringExistence.isEmpty ?? true)
+        return canBindFirstAccount
     }
 
-    private func rememberAccount(_ user: String) {
+    private var canBindFirstAccount: Bool {
+        !restoredUnidentifiedRecords && (state.removalCheck?.zonesRequiringExistence.isEmpty ?? true)
+    }
+
+    private func rememberAccount(_ user: String, beforeFirstRead: Bool = false) {
         state.accountUser = user
         if var check = state.removalCheck, check.account == nil {
             check.account = user
+            if beforeFirstRead {
+                // No zone read or record handout was authorized before this first verified account.
+                check.establishedZones = []
+            }
             setRemovalCheck(check)
         }
     }

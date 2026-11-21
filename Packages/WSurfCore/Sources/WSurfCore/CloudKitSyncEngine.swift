@@ -162,12 +162,14 @@ private nonisolated final class Bridge: CKSyncEngineDelegate {
             guard !modified.isEmpty || !deleted.isEmpty else { return }
             await fetchCycle.deliver?(.fetched(modified: modified, deleted: deleted))
         case .sentRecordZoneChanges(let sent):
-            if !sent.failedRecordDeletes.isEmpty {
-                SyncLog.logger.error("sync: \(sent.failedRecordDeletes.count) record deletes failed")
+            let deleted = CloudKitMapping.completedRecordDeletes(sent.deletedRecordIDs, failures: sent.failedRecordDeletes)
+            let attempts = sent.deletedRecordIDs.count + sent.failedRecordDeletes.count
+            if deleted.count < attempts {
+                SyncLog.logger.error("sync: \(attempts - deleted.count) record deletes failed")
             }
             await delegate.handle(.sent(
                 saved: sent.savedRecords.compactMap { CloudKitMapping.syncRecord($0) },
-                deleted: sent.deletedRecordIDs.map { CloudKitMapping.syncID($0) },
+                deleted: deleted,
                 failed: sent.failedRecordSaves.map { CloudKitMapping.failedSave($0.record, $0.error) }
             ))
         case .sentDatabaseChanges(let sent):
@@ -306,6 +308,21 @@ nonisolated extension CloudKitMapping {
         @unknown default:
             .deleted
         }
+    }
+
+    /// A Personal withdrawal is complete if CloudKit says the exact row or its entire zone is already gone.
+    static func completedRecordDeletes(_ deleted: [CKRecord.ID], failures: [CKRecord.ID: CKError]) -> [SyncRecordID] {
+        let absent = failures.compactMap { id, error -> SyncRecordID? in
+            let zone = id.zoneID.zoneName
+            guard zone == SyncZone.devices || SyncZone.profileID(zone) != nil else { return nil }
+            switch error.code {
+            case .unknownItem, .zoneNotFound, .userDeletedZone:
+                return syncID(id)
+            default:
+                return nil
+            }
+        }
+        return deleted.map(syncID) + absent
     }
 
     static func failedSave(_ record: CKRecord, _ error: CKError) -> SyncFailedSave {
