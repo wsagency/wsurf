@@ -129,6 +129,19 @@ struct MacWebsiteSyncTests {
     func leavingAPrivateEndpointPreservesTheFinalChoiceAcrossAnOutstandingPublicSave(
         initiallyShared: Bool, replyBeforeChoice: Bool
     ) async throws {
+        try await checkOutstandingSave(initiallyShared: initiallyShared, replyBeforeChoice: replyBeforeChoice, upgrade: false)
+    }
+
+    @Test(arguments: [false, true], [false, true])
+    func anOfflineChoiceSurvivesReopeningAnOlderProviderCheckpoint(
+        initiallyShared: Bool, replyBeforeChoice: Bool
+    ) async throws {
+        try await checkOutstandingSave(initiallyShared: initiallyShared, replyBeforeChoice: replyBeforeChoice, upgrade: true)
+    }
+
+    private func checkOutstandingSave(
+        initiallyShared: Bool, replyBeforeChoice: Bool, upgrade: Bool
+    ) async throws {
         let profile = Profile.original(), root = URL.temporaryDirectory.appending(path: UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
         let studio = try MacSettingsFixture(profile: profile, folder: root.appending(path: "studio"))
@@ -137,14 +150,16 @@ struct MacWebsiteSyncTests {
         let cloud = FakeSyncCloud()
         let original = URL(string: "https://one.example.test/v1")
         var definition = ProviderCatalog.newCustom()
+        definition.name = "Fixture"
         definition.baseURL = original
         if initiallyShared {
             studio.catalog.save(definition)
         }
-        let (sender, engine) = try await openProviderSync(studio, profile: profile, cloud: cloud)
+        var (sender, engine) = try await openProviderSync(studio, profile: profile, cloud: cloud)
         try await engine.sendNow()
         let (peer, peerEngine) = try await openProviderSync(air, profile: profile, cloud: cloud)
         let key = "custom|" + definition.id
+        let initialValue = try studio.adapter.values(for: .providers, profileID: nil)[key]
         let id = SyncRecordID(zone: "mac-prefs-providers", name: MacSettingPayload(key: key, value: nil).recordName)
         definition.baseURL = URL(string: "https://two.example.test/v1")
         studio.catalog.save(definition)
@@ -161,15 +176,32 @@ struct MacWebsiteSyncTests {
         if replyBeforeChoice {
             await sender.handle(reply)
         }
+        if upgrade {
+            // Older checkpoints kept the sampled public value while the catalog held the private URL.
+            var checkpoint = sender.state
+            let previous = try #require(checkpoint.channels[id.zone]?.records[key])
+            var legacy = MacSettingChannel.Record(server: previous.server, fields: previous.fields, modified: previous.modified)
+            if !replyBeforeChoice {
+                legacy.inFlight = try #require(MacSettingRecord.decode(submitted.payload, recordName: id.name)).setting
+            }
+            checkpoint.channels[id.zone]?.observed[key] = initialValue
+            checkpoint.channels[id.zone]?.records[key] = legacy
+            let file = studio.folder.appending(path: "settings")
+            try JSONEncoder().encode(checkpoint).write(to: file, options: .atomic)
+        }
         if initiallyShared {
             definition.baseURL = original
             studio.catalog.save(definition)
         } else {
             studio.catalog.remove(definition)
         }
-        try sender.collectChanges()
-        if !replyBeforeChoice {
-            await sender.handle(reply)
+        if upgrade {
+            (sender, engine) = try await openProviderSync(studio, profile: profile, cloud: cloud)
+        } else {
+            try sender.collectChanges()
+            if !replyBeforeChoice {
+                await sender.handle(reply)
+            }
         }
         try await engine.sendNow()
         try await peerEngine.fetchNow()
