@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 WSurf Agency
 // SPDX-License-Identifier: BUSL-1.1
 
+import CloudKit
 import Foundation
 import GRDB
 import os
@@ -547,7 +548,10 @@ extension VaultSync {
                 guard let database = database(profileID), let rows = try? database.read({ try $0.vaults() }) else { continue }
                 for row in rows {
                     let key = localKey(profileID: profileID, vaultID: row.vaultID)
-                    if row.pendingAdoptionUser != nil || row.approvedUser == user || row.removalOwner != nil || row.status == .removalUnconfirmed || row.queuedLegacyHeaderBaseline != nil {
+                    // An enabled legacy row has no verified owner. Account discovery cannot turn it into an explicit opt-out.
+                    let unverifiedEnrollment = row.enabled && (row.approvedUser?.isEmpty != false || row.approvedUser == CKCurrentUserDefaultName)
+                    if unverifiedEnrollment || row.pendingAdoptionUser != nil || row.approvedUser == user || row.removalOwner != nil
+                        || row.status == .removalUnconfirmed || row.queuedLegacyHeaderBaseline != nil {
                         // Invalidate work from the old session. Per-vault consent still belongs to its recorded owner.
                         forget(key)
                         checkedAtAttach.remove(key)

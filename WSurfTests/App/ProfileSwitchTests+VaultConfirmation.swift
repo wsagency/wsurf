@@ -271,10 +271,28 @@ extension ProfileSwitchTests {
         }
     }
 
-    @Test(arguments: [false, true])
-    func migratingAnOldVaultListCannotCancelTheWarning(discoveryBeforeConfirmation: Bool) async throws {
+    @Test(arguments: [false, true], [false, true])
+    func migratingAnOldVaultListCannotCancelTheWarning(discoveryBeforeConfirmation: Bool, missingRouter: Bool) async throws {
         try await withVaultConfirmation { f in
             f.app.setVaultDiscovery(false)
+            let launch = missingRouter ? VaultRemovalLaunch() : f.launch
+            let app = missingRouter
+                ? try launch.start(f.catalog, file: f.root.appending(path: "fresh-router.json"), cloud: f.cloud,
+                                   host: CredentialVaultSyncHost(profiles: { f.catalog.profiles }), discovery: false)
+                : f.app
+            CloudSync.shared = app
+            defer {
+                if missingRouter {
+                    app.prepareToTerminate()
+                }
+                CloudSync.shared = f.app
+            }
+            @MainActor func discover() async throws {
+                let lookups = launch.lookups
+                app.setVaultDiscovery(true)
+                try #require(await waitUntil { launch.lookups > lookups && (app.vaults == nil || app.vaults?.engine != nil) })
+                await app.vaults?.settle()
+            }
             let file = f.work.supportDirectory.appending(path: VaultSyncDatabase.fileName)
             let verified = try Data(contentsOf: file)
             let shown = try await f.work.vaultRemovals()
@@ -282,34 +300,53 @@ extension ProfileSwitchTests {
             try #require(shown.count == 2)
             try await f.confirmInSettings(names: ["Vault 1", "Vault 2"], recoverAfterError: {
                 if !discoveryBeforeConfirmation {
-                    f.app.setVaultDiscovery(true)
+                    try await discover()
                 }
                 await #expect(throws: Profile.VaultListUnavailable.self) {
                     try await CredentialErasureNote.warning(for: f.work, rechecking: shown)
                 }
                 #expect(ProfileStore(file: f.file).profiles.contains(f.work) && f.catalog.vaultRemovals.isEmpty)
                 #expect(f.vaults.map { f.cloud.records(in: f.zone($0)) } == copies)
-                f.app.setVaultDiscovery(false)
+                app.setVaultDiscovery(false)
                 try verified.write(to: file, options: .atomic)
             }) {
-                let database = try #require(try VaultSyncDatabase.open(directory: f.work.supportDirectory, create: false))
-                try database.write { tx in
-                    try tx.db.execute(sql: """
-                        UPDATE vault SET approvedUser = consentUser;
-                        ALTER TABLE vault DROP COLUMN consentUser;
-                        DELETE FROM grdb_migrations WHERE identifier = 'vaultExplicitConsent';
-                        """)
-                }
+                try installLegacyEnrollment(for: f)
                 if discoveryBeforeConfirmation {
-                    f.app.setVaultDiscovery(true)
+                    try await discover()
                 }
             }
-            try #require(await waitUntil { f.app.beat(); return f.catalog.vaultRemovals.isEmpty })
+            try #require(await waitUntil { app.beat(); return f.catalog.vaultRemovals.isEmpty })
             #expect(f.vaults.allSatisfy { f.cloud.zones[f.zone($0)] == nil })
         }
     }
 
-    enum DamagedEnrollment: CaseIterable { case emptyFile, realFlag, textFlag }
+    private func installLegacyEnrollment(for fixture: VaultConfirmationFixture) throws {
+        let database = try #require(try VaultSyncDatabase.open(directory: fixture.work.supportDirectory, create: false))
+        try database.write { try restoreV5(in: $0, hasExplicitConsent: false) }
+    }
+
+    private func restoreV5(in transaction: VaultSyncDatabase.Transaction, hasExplicitConsent: Bool) throws {
+        // Restore the released v5 schema with or without the subsequent explicit-consent migration.
+        try transaction.db.execute(sql: """
+            ALTER TABLE vault DROP COLUMN instanceID;
+            DROP INDEX pendingItemAssets;
+            ALTER TABLE base DROP COLUMN pendingAssetCheck;
+            ALTER TABLE base DROP COLUMN assetCheckEnvelope;
+            ALTER TABLE inbox DROP COLUMN serverTime;
+            ALTER TABLE inbox DROP COLUMN serverCheck;
+            ALTER TABLE outbox DROP COLUMN assetPublication;
+            DELETE FROM grdb_migrations WHERE identifier NOT IN ('v1', 'v2', 'v3', 'v4', 'v5', 'vaultExplicitConsent');
+            """)
+        if !hasExplicitConsent {
+            try transaction.db.execute(sql: """
+                UPDATE vault SET approvedUser = consentUser;
+                ALTER TABLE vault DROP COLUMN consentUser;
+                DELETE FROM grdb_migrations WHERE identifier = 'vaultExplicitConsent';
+                """)
+        }
+    }
+
+    enum DamagedEnrollment: CaseIterable { case emptyFile, realFlag, textFlag, missingFile, migratedFile, replacedOpenFile }
 
     @Test(arguments: DamagedEnrollment.allCases)
     func aRecoveredVaultShowsItsSavedChoiceAndCanBeKept(damage: DamagedEnrollment) async throws {
@@ -319,9 +356,16 @@ extension ProfileSwitchTests {
             let file = f.work.supportDirectory.appending(path: VaultSyncDatabase.fileName)
             f.app.setVaultDiscovery(false)
             let verified = try Data(contentsOf: file)
-            if damage == .emptyFile {
+            switch damage {
+            case .emptyFile:
                 try Data().write(to: file, options: .atomic)
-            } else {
+            case .missingFile:
+                try FileManager.default.moveItem(at: file, to: f.root.appending(path: "saved-enrollment"))
+            case .migratedFile:
+                try installLegacyEnrollment(for: f)
+            case .replacedOpenFile:
+                break
+            case .realFlag, .textFlag:
                 let database = try #require(try VaultSyncDatabase.open(directory: f.work.supportDirectory, create: false))
                 let flag = damage == .realFlag ? Double(0.5).databaseValue : "damaged".databaseValue
                 try database.write { try $0.db.execute(sql: "UPDATE vault SET enabled = ?", arguments: [flag]) }
@@ -345,7 +389,9 @@ extension ProfileSwitchTests {
             @MainActor func toggle() -> AnyObject? {
                 f.element(view, role: .checkBox, containing: label) ?? f.element(view, role: .init(rawValue: "AXSwitch"), containing: label)
             }
-            #expect(toggle() == nil, "An unreadable enrollment has no verified on/off value.")
+            if [.emptyFile, .realFlag, .textFlag].contains(damage) {
+                #expect(toggle() == nil, "An unreadable enrollment has no verified on/off value.")
+            }
             try verified.write(to: file, options: .atomic)
             try #require(await waitUntil {
                 f.app.beat()
@@ -354,6 +400,7 @@ extension ProfileSwitchTests {
             })
             _ = toggle()?.accessibilityPerformPress?()
             try #require(await waitUntil { !CloudVaultRow.isOn(sync.status(profileID: f.work.id, vaultID: id)) })
+            #expect(try await f.work.vaultRemovals().map(\.vaultID) == [second.vaultID])
             try await f.confirmInSettings(names: ["Vault 2"]) {}
             try #require(await waitUntil { f.app.beat(); return f.cloud.zones[f.zone(second)] == nil })
             #expect(f.cloud.records(in: f.zone(first)) == firstCopy)
@@ -384,24 +431,7 @@ extension ProfileSwitchTests {
             let store = try #require(try VaultSyncDatabase.open(directory: root, create: true))
             try store.write { tx in
                 try tx.save(VaultRow(vaultID: vault, approvedUser: owner))
-                // Restore the released v5 schema with or without the subsequent explicit-consent migration.
-                try tx.db.execute(sql: """
-                    ALTER TABLE vault DROP COLUMN instanceID;
-                    DROP INDEX pendingItemAssets;
-                    ALTER TABLE base DROP COLUMN pendingAssetCheck;
-                    ALTER TABLE base DROP COLUMN assetCheckEnvelope;
-                    ALTER TABLE inbox DROP COLUMN serverTime;
-                    ALTER TABLE inbox DROP COLUMN serverCheck;
-                    ALTER TABLE outbox DROP COLUMN assetPublication;
-                    DELETE FROM grdb_migrations WHERE identifier NOT IN ('v1', 'v2', 'v3', 'v4', 'v5', 'vaultExplicitConsent');
-                    """)
-                if !hasExplicitConsent {
-                    try tx.db.execute(sql: """
-                        UPDATE vault SET approvedUser = consentUser;
-                        ALTER TABLE vault DROP COLUMN consentUser;
-                        DELETE FROM grdb_migrations WHERE identifier = 'vaultExplicitConsent';
-                        """)
-                }
+                try restoreV5(in: tx, hasExplicitConsent: hasExplicitConsent)
             }
         }
         let file = root.appending(path: VaultSyncDatabase.fileName), before = try Data(contentsOf: file)

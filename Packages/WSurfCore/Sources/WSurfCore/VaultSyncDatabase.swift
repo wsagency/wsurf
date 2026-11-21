@@ -3,6 +3,7 @@
 
 import Foundation
 import GRDB
+import SQLite3
 import WSurfVault
 
 /// One vault's row in `Credentials.sync`: whether this Mac syncs it, how that stands, and what was last uploaded.
@@ -152,6 +153,14 @@ nonisolated final class VaultSyncDatabase: Sendable {
 
     private init(queue: DatabaseQueue) {
         self.queue = queue
+    }
+
+    /// A restored checkpoint can replace the file while this connection still refers to its old inode.
+    var isCurrentFile: Bool {
+        queue.unsafeReentrantRead { db in
+            var moved: Int32 = 0
+            return sqlite3_file_control(db.sqliteConnection, "main", SQLITE_FCNTL_HAS_MOVED, &moved) == SQLITE_OK && moved == 0
+        }
     }
 
     /// The database in `directory`, created when `create` is set. Nil when there is none and none is wanted.

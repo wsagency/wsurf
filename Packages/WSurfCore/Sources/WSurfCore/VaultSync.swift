@@ -583,11 +583,13 @@ public final class VaultSync: SyncEngineDelegate {
     /// The heartbeat: re-add what is still waiting to go up, finish a read that did not, and fetch (once, for every vault).
     public func beat() {
         guard engine != nil else { return }
-        let retrying = unreadableProfiles
-        for profileID in retrying {
-            loadEnrollments(for: profileID)
+        var restored = false
+        for profileID in host.profileIDs() where databases[profileID]?.isCurrentFile != true {
+            if loadEnrollments(for: profileID) != nil {
+                restored = true
+            }
         }
-        if retrying != unreadableProfiles {
+        if restored {
             resumeEnrolledVaults()
         } else {
             publishNewInstances()
@@ -721,24 +723,10 @@ public final class VaultSync: SyncEngineDelegate {
 
     func database(_ profileID: UUID, create: Bool = false) -> VaultSyncDatabase? {
         guard !unreadableProfiles.contains(profileID) else { return nil }
-        do {
-            return try openDatabase(profileID, create: create)
-        } catch {
-            deferEnrollmentRead(profileID)
-            SyncLog.logger.error("sync: a vault sync database could not be opened")
-            return nil
-        }
-    }
-
-    private func openDatabase(_ profileID: UUID, create: Bool = false) throws -> VaultSyncDatabase? {
-        guard !excluded.contains(profileID), !erased.contains(profileID) else { return nil }
-        if let existing = databases[profileID] {
+        if let existing = databases[profileID], existing.isCurrentFile {
             return existing
         }
-        guard let directory = host.syncDirectory(profileID: profileID) else { return nil }
-        let opened = try VaultSyncDatabase.open(directory: directory, create: create)
-        databases[profileID] = opened
-        return opened
+        return loadEnrollments(for: profileID, create: create)
     }
 
     func loadDatabases(onlyPendingRemovals: Bool = false) {
@@ -747,16 +735,24 @@ public final class VaultSync: SyncEngineDelegate {
         }
     }
 
-    private func loadEnrollments(for profileID: UUID, onlyPendingRemovals: Bool = false) {
+    @discardableResult
+    private func loadEnrollments(for profileID: UUID, onlyPendingRemovals: Bool = false, create: Bool = false) -> VaultSyncDatabase? {
+        guard !excluded.contains(profileID), !erased.contains(profileID), let directory = host.syncDirectory(profileID: profileID) else { return nil }
+        if let existing = databases[profileID], !existing.isCurrentFile {
+            deferEnrollmentRead(profileID)
+        }
         do {
-            guard let database = try openDatabase(profileID) else { return }
+            guard let database = try databases[profileID] ?? VaultSyncDatabase.open(directory: directory, create: create) else { return nil }
             let rows = try database.read { try $0.vaults() }
+            databases[profileID] = database
             unreadableProfiles.remove(profileID)
             for row in rows where !onlyPendingRemovals || row.status == .removalPending || row.status == .removalFailed || row.canManageCloudCopy {
                 refresh(localKey(profileID: profileID, vaultID: row.vaultID))
             }
+            return database
         } catch {
             deferEnrollmentRead(profileID)
+            return nil
         }
     }
 
@@ -765,7 +761,7 @@ public final class VaultSync: SyncEngineDelegate {
         databases[profileID] = nil
         guard unreadableProfiles.insert(profileID).inserted else { return }
         let previouslyHalted = halted
-        for key in summaries.keys where key.profileID == profileID {
+        for key in Set(summaries.keys).union(chains.keys).union(sessions.keys) where key.profileID == profileID {
             forget(key)
             checkedAtAttach.remove(key)
             summaries[key] = nil
