@@ -179,7 +179,7 @@ extension MacSettingsSyncTests {
         }
         let sync = open(), cloud = FakeSyncCloud(), zone = "mac-prefs-providers"
         let backing = FakeSyncEngine(cloud: cloud, delegate: sync)
-        let engine = UserDeletedZoneEngine(backing)
+        let engine = SettingsZoneReadEngine(backing, missing: .userDeletedZone)
         cloud.createZone(zone)
         sync.attach(engine)
         let server = MacSettingPayload(key: "server", value: Data([8]))
@@ -196,12 +196,12 @@ extension MacSettingsSyncTests {
         values["choice"] = Data([2])
         try sync.collectChanges()
         let current: CloudSettingsSync
-        let resumed: UserDeletedZoneEngine
+        let resumed: SettingsZoneReadEngine
         if incompleteAtRestart {
             // The full read is the first evidence of the purge after relaunch.
             cloud.removeZoneSilently(zone)
             current = open()
-            resumed = UserDeletedZoneEngine(FakeSyncEngine(cloud: cloud, delegate: current))
+            resumed = SettingsZoneReadEngine(FakeSyncEngine(cloud: cloud, delegate: current), missing: .userDeletedZone)
             current.attach(resumed)
             current.beat()
         } else {
@@ -220,20 +220,23 @@ extension MacSettingsSyncTests {
     }
 }
 
-/// The real CloudKit read reports userDeletedZone when the owner removed a zone from Settings.
+/// Map the fake database's missing zone to the CloudKit error exercised by the Settings baseline.
 @MainActor
-private final class UserDeletedZoneEngine: SyncEngine, SyncAccountIdentity {
+final class SettingsZoneReadEngine: SyncEngine, SyncAccountIdentity {
     let backing: FakeSyncEngine
 
-    init(_ backing: FakeSyncEngine) {
+    private let missing: CKError.Code
+
+    init(_ backing: FakeSyncEngine, missing: CKError.Code) {
         self.backing = backing
+        self.missing = missing
     }
 
     func fetchAll(zone: String) async throws -> SyncZoneRead {
         do {
             return try await backing.fetchAll(zone: zone)
         } catch let error as URLError where error.code == .fileDoesNotExist {
-            throw CKError(.userDeletedZone)
+            throw CKError(missing)
         }
     }
 

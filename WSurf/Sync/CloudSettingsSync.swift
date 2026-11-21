@@ -58,6 +58,7 @@ final class CloudSettingsSync: SyncZoneHandler {
 
     @ObservationIgnored private var optOutsToFinish: Set<String> = []
     private(set) var checkpointUnavailable = false
+    @ObservationIgnored private(set) var unreadableFetchStart: FetchStart?
     @ObservationIgnored private var checkpointRetry: Task<Void, Never>?
     @ObservationIgnored private var profilesForRecovery: Set<UUID>?
     var notice: String?
@@ -141,6 +142,7 @@ final class CloudSettingsSync: SyncZoneHandler {
         } catch {
             state = State()
             checkpointUnavailable = true
+            unreadableFetchStart = FetchStart()
             notice = String(localized: "Your saved sync settings are temporarily unavailable. Try again to load them.")
         }
         if !checkpointUnavailable {
@@ -206,12 +208,13 @@ final class CloudSettingsSync: SyncZoneHandler {
         try finishOptOuts { zone, removal in
             zone == proposed.zone || (removal.category == category && removal.localProfileID == localProfileID)
         }
-        // The old opt-out is durable before a fresh enrollment can release its purge hold.
-        try setHeldZoneResets(heldZoneResets.subtracting([proposed.zone]))
         if let existing = state.channels[proposed.zone] {
             guard existing.localProfileID == localProfileID else { throw Issue.duplicateLink }
             proposed = existing
         } else {
+            // The old opt-out is durable before a fresh enrollment can release its holds.
+            try updateHeldZones(.reset) { $0.remove(proposed.zone) }
+            try updateHeldZones(.recheck) { $0.remove(proposed.zone) }
             // Older versions could detach a website channel while its proposals were still on disk.
             if category == .websiteSettings, let localProfileID {
                 do {
@@ -512,6 +515,8 @@ final class CloudSettingsSync: SyncZoneHandler {
             }
             throw error
         }
+        // The checkpoint now owns each recovered check. A leftover fallback only repeats its verified read on relaunch.
+        try? updateHeldZones(.recheck) { $0.removeAll() }
         sendingAllowed = true
         let attempts = optOutsToFinish.union(zones)
         guard !attempts.isEmpty else { return }
@@ -598,6 +603,9 @@ final class CloudSettingsSync: SyncZoneHandler {
         } catch CocoaError.fileReadNoSuchFile {
             state = State()
         }
+        // All fetches begun during this outage saw the on-disk enrollments, before any new choice can be made.
+        unreadableFetchStart?.capture(state.channels)
+        unreadableFetchStart = nil
         checkpointUnavailable = false
         checkpointRetry?.cancel()
         checkpointRetry = nil
@@ -682,20 +690,30 @@ final class CloudSettingsSync: SyncZoneHandler {
             clearEnrollments(for: nil)
             state.appliedAccountReset = reset
         }
-        for zone in heldZoneResets where state.channels[zone] != nil {
+        for zone in heldZones(.reset) where state.channels[zone] != nil {
             forget(zone: zone)
+        }
+        for zone in heldZones(.recheck) where state.channels[zone]?.needsConfirmation == false {
+            state.channels[zone]?.checkingDeletion = true
         }
     }
 
     // Keep only zone names when the checkpoint and its adjacent opt-out journal are inaccessible.
-    private var heldZoneResets: Set<String> {
-        Set(resetDefaults.stringArray(forKey: accountResetKey + ".zone-resets") ?? [])
+    private enum ZoneHold: String {
+        case reset = ".zone-resets"
+        case recheck = ".zone-rechecks"
     }
 
-    private func setHeldZoneResets(_ zones: Set<String>) throws {
-        let previous = heldZoneResets
+    private func heldZones(_ hold: ZoneHold) -> Set<String> {
+        Set(resetDefaults.stringArray(forKey: accountResetKey + hold.rawValue) ?? [])
+    }
+
+    private func updateHeldZones(_ hold: ZoneHold, _ update: (inout Set<String>) -> Void) throws {
+        let previous = heldZones(hold)
+        var zones = previous
+        update(&zones)
         guard zones != previous else { return }
-        let key = accountResetKey + ".zone-resets"
+        let key = accountResetKey + hold.rawValue
         resetDefaults.set(zones.isEmpty ? nil : zones.sorted(), forKey: key)
         guard resetDefaults.synchronize() else {
             resetDefaults.set(previous.union(zones).sorted(), forKey: key)
@@ -703,15 +721,16 @@ final class CloudSettingsSync: SyncZoneHandler {
         }
     }
 
-    func holdZoneResets(_ zones: Set<String>) throws {
-        try setHeldZoneResets(heldZoneResets.union(zones))
+    func holdZoneDeletions(resets: Set<String>, rechecks: Set<String>) throws {
+        try updateHeldZones(.reset) { $0.formUnion(resets) }
+        try updateHeldZones(.recheck) { $0.formUnion(rechecks) }
     }
 
-    func saveAfterZoneRemoval(_ revoked: Set<String>) throws {
+    func saveAfterZoneRemoval(_ revoked: Set<String>, rechecking: Set<String> = []) throws {
         do {
             try save()
         } catch {
-            try holdZoneResets(revoked)
+            try holdZoneDeletions(resets: revoked, rechecks: rechecking)
             throw error
         }
     }

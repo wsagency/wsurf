@@ -100,16 +100,32 @@ extension CloudSettingsSync {
         }
     }
 
+    final class FetchStart {
+        private var consent: [String: FetchConsent] = [:]
+
+        init(_ channels: [String: MacSettingChannel] = [:]) {
+            capture(channels)
+        }
+
+        func capture(_ channels: [String: MacSettingChannel]) {
+            consent = channels.mapValues(FetchConsent.init)
+        }
+
+        fileprivate func includes(_ channel: MacSettingChannel) -> Bool {
+            consent[channel.zone] == FetchConsent(channel)
+        }
+    }
+
     func beginFetch() -> SyncFetchDelivery {
-        let consent = checkpointUnavailable ? nil : state.channels.mapValues(FetchConsent.init)
-        return { [weak self] event in await self?.handle(event, fetchConsent: consent) }
+        let start = unreadableFetchStart ?? FetchStart(state.channels)
+        return { [weak self] event in await self?.handle(event, fetchStart: start) }
     }
 
     func handle(_ event: SyncEvent) async {
-        await handle(event, fetchConsent: nil)
+        await handle(event, fetchStart: nil)
     }
 
-    private func handle(_ event: SyncEvent, fetchConsent: [String: FetchConsent]?) async {
+    private func handle(_ event: SyncEvent, fetchStart: FetchStart?) async {
         do {
             switch event {
             case .state, .zoneDeletesFailed:
@@ -130,7 +146,7 @@ extension CloudSettingsSync {
                     beat()
                 }
             case .zonesDeleted(let zones):
-                try zonesDeleted(zones, fetchConsent: fetchConsent)
+                try zonesDeleted(zones, fetchStart: fetchStart)
             case .zoneSavesOverQuota(let zones):
                 if zones.contains(where: { state.channels[$0] != nil }) {
                     notice = String(localized: "Your iCloud storage is full. Settings changes are waiting on this Mac.")
@@ -158,12 +174,14 @@ extension CloudSettingsSync {
         }
     }
 
-    private func zonesDeleted(_ zones: [String: SyncZoneDeletionReason], fetchConsent: [String: FetchConsent]?) throws {
-        if checkpointUnavailable {
-            // Another feature can advance the shared cursor before Settings can read its checkpoint.
-            let resetZones = zones.filter { owns(zone: $0.key) && $0.value != .deleted }.keys
-            try holdZoneResets(Set(resetZones))
+    private func zonesDeleted(_ zones: [String: SyncZoneDeletionReason], fetchStart: FetchStart?) throws {
+        do {
             try reloadStateIfNeeded()
+        } catch {
+            // The shared cursor advances when this delegate returns, even while the Settings directory is inaccessible.
+            let owned = zones.filter { owns(zone: $0.key) }
+            try holdZoneDeletions(resets: Set(owned.filter { $0.value != .deleted }.keys), rechecks: Set(owned.filter { $0.value == .deleted }.keys))
+            throw error
         }
         var recheck: [String: UUID] = [:]
         var revoked: Set<String> = []
@@ -172,7 +190,7 @@ extension CloudSettingsSync {
             switch reason {
             case .purged, .encryptedDataReset:
                 // CloudKit requires discarding the old cache even if another Mac has already re-created this zone.
-                if let fetchConsent, fetchConsent[zone] != FetchConsent(channel) {
+                if fetchStart?.includes(channel) == false {
                     continue
                 }
                 forget(zone: zone)
@@ -186,7 +204,7 @@ extension CloudSettingsSync {
             }
         }
         guard !revoked.isEmpty || !recheck.isEmpty else { return }
-        try saveAfterZoneRemoval(revoked)
+        try saveAfterZoneRemoval(revoked, rechecking: Set(recheck.keys))
         guard !recheck.isEmpty else { return }
         // The shared cursor may report an app deletion after a zone was re-created. Read it outside this delegate callback.
         let started = generation
