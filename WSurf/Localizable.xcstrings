@@ -11978,6 +11978,17 @@
     "WSurf could not confirm the result of this import. It may have been saved. Check Credentials before exporting again." : {
       "comment" : "Message in Settings › Credentials when saving an import from another app had started and its result is unknown (for example WSurf locked or the user cancelled). “Credentials” is the Credentials page of Settings, where a Show Credentials button accompanies this message. Exporting again is done in the other app."
     },
+    "WSurf couldn’t read this profile’s vault list. Try deleting the profile again." : {
+      "comment" : "Shown in Settings when the vault list for a profile cannot be read before deletion. The user can try deleting the profile again.",
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "WSurf nije uspio pročitati popis trezora ovog profila. Pokušajte ponovno izbrisati profil."
+          }
+        }
+      }
+    },
     "WSurf could not validate this data" : {
       "comment" : "Reason fragment dropped into the “The transfer could not be read…” message as its third %@, right after a colon and before a full stop, so it has no final period. Says the received data failed WSurf’s checks."
     },
