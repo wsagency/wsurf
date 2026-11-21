@@ -154,12 +154,7 @@ extension AppCoordinator {
 
     // MARK: - Organizing
 
-    var spaceMoveTargets: [Space] {
-        browser.spaceMoveTargets
-    }
-
     func moveToSpace(_ items: [SidebarItem], space: Space) {
-        guard spaceMoveTargets.contains(where: { $0.id == space.id }) else { return }
         browser.move(items, toSpace: space.id)
     }
 

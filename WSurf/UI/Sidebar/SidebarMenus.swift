@@ -166,14 +166,14 @@ struct SidebarFolderMenuItems: View {
     }
 }
 
-/// Move to Space: the other spaces of the window's profile, for rows that belong to a space (pins belong to all).
+/// Move ordinary rows to another Space or place an unassigned row.
 struct SidebarSpaceMenuItems: View {
     let items: [SidebarItem]
     let browser: BrowserModel
 
     var body: some View {
-        let targets = browser.spaceMoveTargets
-        if !targets.isEmpty, items.contains(where: { browser.spaceID(ofItem: $0) != nil }) {
+        let targets = browser.spaceMoveTargets(for: items)
+        if !targets.isEmpty {
             Menu {
                 ForEach(targets) { space in
                     Button {

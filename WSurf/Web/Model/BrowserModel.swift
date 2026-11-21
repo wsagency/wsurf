@@ -164,6 +164,9 @@ final class BrowserModel {
     }
     /// The spaces of the window's profile. A tab or folder naming any other space joins the current one.
     var knownSpaceIDs: Set<UUID> = []
+    @ObservationIgnored weak var adoptedSpaceStore: SpaceStore?
+    /// Restored ordinary rows that SQLite could not place. They remain visible and device-only.
+    @ObservationIgnored var unplacedSpaceRows: Set<SidebarItem> = []
     @ObservationIgnored var pendingSpaceStore: (store: SpaceStore, selection: UUID?)?
     // MARK: - Tab management
 
@@ -535,8 +538,8 @@ final class BrowserModel {
 
     func insert(_ tab: BrowserTab, after opener: BrowserTab?) {
         // A page opened from another page stays in that page's space, even when it is not the space on screen.
-        if tab.spaceID == nil, let space = opener?.spaceID {
-            tab.spaceID = space
+        if tab.spaceID == nil, let opener {
+            copySpace(from: opener, to: tab)
         }
         let keptRun = keptRunAtTop()
         // A page opened from above the pin line, a pinned folder's page included, lands just under the line.
@@ -629,7 +632,7 @@ final class BrowserModel {
         copy.urlString = tab.urlString
         copy.pinnedURL = tab.pinnedURL
         copy.pinnedTitle = tab.pinnedTitle
-        copy.spaceID = tab.spaceID
+        copySpace(from: tab, to: copy)
         copy.deferRestore(state: tab.sessionState, url: URL(string: tab.urlString))
         copy.realizeDeferredSession(byPerson: true)
 

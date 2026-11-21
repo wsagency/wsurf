@@ -154,6 +154,11 @@ final class CloudSharedSpaces {
         !profile.isPrivate && catalog.enabled(category, for: profile.id)
     }
 
+    func mayHaveSharedSpaces(in profile: Profile) -> Bool {
+        !storage.readable || isEnabled(.spaces, for: profile) || links[profile.id]?.spaces.isEmpty == false
+            || storage.data.pausedLinks?.values.contains { $0[profile.id]?.spaces.isEmpty == false } == true
+    }
+
     func enable(_ category: SharedCatalogCategory, for profile: Profile) async throws {
         guard isLive(profile.id) else { throw SharedCatalogError.unavailable }
         guard retryOptOuts(), storage.readable else { throw SharedCatalogError.storage }

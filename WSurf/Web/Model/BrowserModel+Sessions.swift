@@ -642,6 +642,7 @@ extension BrowserModel {
         }
         storedTree = SidebarTree(root: root, children: children)
         splits = TabSplits(grids)
+        restoreMissingMemberships()
         restoreSpace(for: activeID)
         sidebarDidChange()
         attachProfilePins()
@@ -773,6 +774,7 @@ extension BrowserModel {
         splits = TabSplits()
         activeTabID = nil
         closedTabs = []
+        unplacedSpaceRows = []
         sidebarUndoManager.removeAllActions()
         folderRenameID = nil
         lastVisitID = [:]

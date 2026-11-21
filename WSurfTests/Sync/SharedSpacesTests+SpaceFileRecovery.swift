@@ -200,7 +200,9 @@ extension SharedSpacesTests {
         first.browser.adoptSpaces(from: first.spaces)
         let sharedTab = first.browser.addPage("https://shared.example.test/")
         let sharedFolder = first.browser.createFolder(named: "Shared folder", containing: [sharedTab])
-        let legacyID = first.browser.addPage("file:///older-unassigned-row").id
+        let legacyURL = "https://older-unassigned.example.invalid/"
+        let legacyID = first.browser.addPage(legacyURL).id
+        first.browser.move([.tab(legacyID)], toSpace: local.id)
         let localTab = first.browser.addPage("https://device-only.example.test/")
         first.browser.move([.tab(localTab.id)], toSpace: local.id)
         let pin = first.browser.pinned("https://pinned.example.test/")
@@ -273,6 +275,7 @@ extension SharedSpacesTests {
         #expect(reopened.browser.folder(id: folderID)?.spaceID == local.id)
         #expect(reopened.browser.tab(id: pin.id)?.spaceID == nil)
         #expect(second.spaceID == shared.id)
+        #expect(reopened.browser.tab(id: legacyID)?.spaceID == nil)
         reopened.browser.saveBlocking()
         reopened.engine.offline = false
         await reopened.host.refresh()
@@ -281,8 +284,99 @@ extension SharedSpacesTests {
         let key = try #require(slots[second.id]?.last?.recordID)
         #expect(cloud.record(key).flatMap(SharedSpaceItem.init(record:))?.url == sharedURL.absoluteString)
         let published = try #require(cloud.records(in: SharedCatalogCategory.spaces.zone)).compactMap(SharedSpaceItem.init(record:))
-        #expect(!published.contains { $0.url == localURL.absoluteString || $0.url == "https://private-bookmark.example.invalid/" })
+        #expect(!published.contains { $0.url == localURL.absoluteString || $0.url == legacyURL || $0.url == "https://private-bookmark.example.invalid/" })
         await server.stop()
+    }
+
+    @Test(arguments: [false, true])
+    func aLegacyHTTPSRowWithoutProvenMembershipWaitsForAnExplicitMove(allSpacesShared: Bool) async throws {
+        let root = URL.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let window = UUID(), cloud = FakeSyncCloud()
+        let first = StoredWindow(root, window: window, cloud: cloud), peer = Mac(cloud)
+        defer { peer.finish() }
+        let shared = try #require(first.spaces.spaces.first)
+        let local = first.spaces.add(name: "Device only"), other = first.spaces.add(name: "Another shared Space")
+        first.browser.adoptSpaces(from: first.spaces)
+        let sharedTab = first.browser.addPage("https://anchor.example.test/")
+        let known = first.browser.addPage("https://known-linked.example.test/")
+        first.browser.move([.tab(known.id)], toSpace: other.id)
+        let localTab = first.browser.addPage("file:///local-note")
+        first.browser.move([.tab(localTab.id)], toSpace: local.id)
+        let pin = first.browser.pinned("https://pin.example.test/")
+        for space in allSpacesShared ? [shared, other, local] : [shared, other] {
+            try await first.host.share(space, in: first.profile)
+        }
+        await first.host.refresh()
+        try await peer.host.enable(.spaces, for: peer.profile)
+        for value in peer.host.availableSpaces(for: peer.profile) {
+            try await peer.host.join(value, in: peer.profile)
+        }
+        let knownSlot = try #require(first.host.links[first.profile.id]?.slots[known.id])
+        let peerKnown = try #require(peer.browser.page(at: known.urlString))
+        let peerSpace = try #require(peerKnown.spaceID)
+        first.browser.activate(localTab)
+        first.browser.activate(pin)
+        first.browser.saveBlocking()
+        first.close()
+
+        let file = root.appending(path: "Spaces.json"), saved = root.appending(path: "Spaces.saved")
+        try FileManager.default.moveItem(at: file, to: saved)
+        let outage = StoredWindow(root, window: window, cloud: cloud, offline: true)
+        let localURL = try #require(URL(string: "https://private-note.example.invalid/upgrade"))
+        let opener = try #require(outage.browser.tab(id: pin.id))
+        let unplaced = outage.browser.newTab(url: localURL, after: opener)
+        outage.browser.activate(try #require(outage.browser.tab(id: sharedTab.id)))
+        outage.browser.activate(opener)
+        outage.browser.noteUse(of: [unplaced.id, localTab.id, known.id], at: Date(timeIntervalSinceNow: -30))
+        outage.browser.saveBlocking()
+        let localID = unplaced.id, knownID = known.id
+        // Older builds saved NULL after this sequence. Also remove a linked row's SQLite membership
+        // so the upgrade must recover it from its durable catalog record in the other shared Space.
+        try await outage.browser.database.writer.write { db in
+            try db.execute(sql: "UPDATE sessionTab SET spaceID = NULL WHERE id IN (?, ?)", arguments: [localID, knownID])
+        }
+        try #require(outage.host.links[first.profile.id]?.slots[localID] == nil)
+        outage.close()
+        try FileManager.default.moveItem(at: saved, to: file)
+
+        var upgraded = StoredWindow(root, window: window, cloud: cloud, offline: true)
+        defer { upgraded.close() }
+        for launch in 0..<2 {
+            let page = try #require(upgraded.browser.tab(id: localID))
+            if let space = page.spaceID {
+                try #require(upgraded.spaces.space(id: space) != nil)
+                upgraded.browser.switchSpace(to: space, showing: page)
+            }
+            #expect(upgraded.browser.isShown(page))
+            #expect(upgraded.browser.sidebarTree.walk().contains(.tab(localID)))
+            #expect(page.spaceID.flatMap { upgraded.host.links[first.profile.id]?.spaces[$0] } == nil)
+            #expect(upgraded.browser.tab(id: knownID)?.spaceID == other.id)
+            #expect(upgraded.host.links[first.profile.id]?.slots[knownID]?.cloudID == knownSlot.cloudID)
+            upgraded.browser.scheduleSave()
+            upgraded.browser.saveBlocking()
+            upgraded.engine.offline = false
+            await upgraded.host.refresh()
+            try await peer.sync()
+            #expect(peer.browser.page(at: localURL.absoluteString) == nil)
+            #expect(peer.browser.page(at: known.urlString)?.spaceID == peerSpace)
+            let published = try #require(cloud.records(in: SharedCatalogCategory.spaces.zone)).compactMap(SharedSpaceItem.init(record:))
+            #expect(!published.contains { $0.url == localURL.absoluteString })
+            if launch == 0 {
+                upgraded.close()
+                upgraded = StoredWindow(root, window: window, cloud: cloud, offline: true)
+            }
+        }
+        upgraded.browser.switchSpace(to: shared.id)
+        #expect(upgraded.browser.spaceMoveTargets(for: [.tab(localID)]).map(\.id).contains(shared.id))
+        #expect(upgraded.browser.spaceMoveTargets(for: [.tab(pin.id)]).isEmpty)
+        upgraded.browser.move([.tab(localID)], toSpace: shared.id)
+        await upgraded.host.refresh()
+        try await peer.sync()
+        #expect(upgraded.browser.tab(id: localID)?.spaceID == shared.id)
+        #expect(peer.browser.page(at: localURL.absoluteString) != nil)
+        let chosen = try #require(cloud.records(in: SharedCatalogCategory.spaces.zone)).compactMap(SharedSpaceItem.init(record:))
+        #expect(chosen.contains { $0.url == localURL.absoluteString && !$0.removed })
     }
 
     @Test func aRenameSavedDuringASpaceFileOutageSupersedesTheOlderQueuedRename() async throws {

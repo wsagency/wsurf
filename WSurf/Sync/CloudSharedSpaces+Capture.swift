@@ -78,7 +78,8 @@ extension CloudSharedSpaces {
     func removed(_ id: UUID, in browser: BrowserModel) {
         let profile = browser.context.profile
         guard !applying, !browser.opensPrivately, !browser.isApplyingProfilePins, !browser.isReadingSharedSession, isEnabled(.spaces, for: profile),
-              let entry = links[profile.id]?.slots[id], let prior = entry.last else { return }
+              !browser.unplacedSpaceRows.contains(.tab(id)), !browser.unplacedSpaceRows.contains(.folder(id)),
+              let entry = links[profile.id]?.slots[id], entry.window == browser.windowID, let prior = entry.last else { return }
         links[profile.id]?.slots[id]?.closedAfterRevision = browser.sessionRevision
         links[profile.id]?.slots[id]?.editedAfterRevision = nil
         links[profile.id]?.slots[id]?.last = prior.tombstone
@@ -90,6 +91,24 @@ extension CloudSharedSpaces {
         let profile = browser.context.profile
         guard isEnabled(.spaces, for: profile), let slot = links[profile.id]?.slots[id] else { return false }
         return slot.window == browser.windowID && slot.last?.removed == false
+    }
+
+    /// A window's existing slot and catalog record can identify an ordinary SQLite row whose Space is missing.
+    func savedSpace(of item: SidebarItem, in browser: BrowserModel) -> UUID? {
+        let local: UUID, kind: SharedSpaceItem.Kind
+        switch item {
+        case .tab(let id):
+            (local, kind) = (id, .tab)
+        case .folder(let id):
+            (local, kind) = (id, .folder)
+        }
+        guard let link = links[browser.context.profile.id], let slot = link.slots[local], slot.window == browser.windowID,
+              slot.pinID == nil, slot.closedAfterRevision == nil, let last = slot.last, last.id == slot.cloudID,
+              !last.removed, last.kind == kind, last.profileID == link.profile, let space = last.spaceID,
+              let live = catalog.item(slot.cloudID, in: .spaces), live.id == slot.cloudID, !live.removed, live.kind == kind,
+              live.profileID == last.profileID, live.spaceID == space, let container = catalog.item(space, in: .spaces),
+              !container.removed, container.kind == .space, container.profileID == last.profileID else { return nil }
+        return link.spaces.first { $0.value == space && browser.knownSpaceIDs.contains($0.key) }?.key
     }
 
     func liveLocalEdit(_ key: SyncRecordID, in profile: UUID) -> SharedSpaceItem? {
@@ -226,7 +245,8 @@ extension CloudSharedSpaces {
         var leaving: [SharedSpaceItem] = []
         var transferredPins: [SharedSpaceItem] = []
         var restoredMembership = false
-        for row in tree.walk() {
+        // Missing membership supplies neither a shared destination nor evidence of departure.
+        for row in tree.walk() where !browser.unplacedSpaceRows.contains(row) {
             let local: UUID
             switch row {
             case .folder(let id), .tab(let id):
@@ -263,7 +283,9 @@ extension CloudSharedSpaces {
                 }
                 continue
             }
-            item.parentID = parents[row].flatMap { link.slots[$0]?.cloudID }
+            item.parentID = parents[row].flatMap { parent in
+                browser.unplacedSpaceRows.contains(.folder(parent)) ? previous?.last?.parentID : link.slots[parent]?.cloudID
+            }
             item.order = previous?.last?.order ?? ""
             values[local] = item
             groups[item.parentID ?? space, default: []].append(local)

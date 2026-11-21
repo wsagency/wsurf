@@ -46,6 +46,9 @@ extension BrowserModel {
             tab.pinnedTitle = ""
             tab.isFavorite = false
         }
+        if source.unplacedSpaceRows.remove(.tab(tab.id)) != nil {
+            unplacedSpaceRows.insert(.tab(tab.id))
+        }
         source.cancelPendingSave()
         cancelPendingSave()
         // Undo snapshots contain tab and tree ownership; neither old stack may replay across a move.

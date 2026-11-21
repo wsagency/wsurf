@@ -8,8 +8,7 @@ import GRDB
 import os
 
 /// A space is a view of this window: every tab stays in `tabs`, so the assistant, MCP clients, ⌘K and extensions keep
-/// seeing all of them. Pins, pinned folders and Favorites belong to the profile and show in every space; settling gives
-/// them no space, and gives every other row its own known space or the one on screen.
+/// seeing all of them. Profile pins and rows awaiting explicit placement appear in every Space.
 extension BrowserModel {
     // MARK: - What the window shows
 
@@ -49,6 +48,7 @@ extension BrowserModel {
     // MARK: - Choosing the space
 
     func adoptSpaces(from store: SpaceStore?) {
+        adoptedSpaceStore = store
         if let store, !store.recoverMembership() {
             if pendingSpaceStore?.store !== store {
                 pendingSpaceStore = (store, nil)
@@ -100,6 +100,25 @@ extension BrowserModel {
         }
     }
 
+    /// Only a genuinely pre-Spaces session migrates its ordinary NULL rows into the first Space.
+    func restoreMissingMemberships() {
+        guard adoptedSpaceStore?.hadSavedSpaceList == true || tabs.contains(where: { $0.spaceID != nil })
+            || folders.contains(where: { $0.spaceID != nil }) || sharedSpaceService?.mayHaveSharedSpaces(in: context.profile) == true else { return }
+        func membership(of item: SidebarItem) -> UUID? {
+            if let space = sharedSpaceService?.savedSpace(of: item, in: self) {
+                return space
+            }
+            unplacedSpaceRows.insert(item)
+            return nil
+        }
+        for tab in tabs where tab.spaceID == nil && !tab.isPinnedForProfile {
+            tab.spaceID = membership(of: .tab(tab.id))
+        }
+        for folder in folders where folder.spaceID == nil && !folder.isPinned {
+            folder.spaceID = membership(of: .folder(folder.id))
+        }
+    }
+
     /// Choose from the saved rows before an unassigned tab can inherit the first Space.
     /// A pin belongs to every Space, so the most recently used ordinary tab decides where the window lands.
     func restoreSpace(for activeID: UUID?) {
@@ -138,12 +157,18 @@ extension BrowserModel {
         }
         guard let currentSpaceID else { return }
         for item in tree.root {
-            let space: UUID? = isKept(item) ? nil : spaceID(ofItem: item).flatMap(knownSpace) ?? currentSpaceID
-            assignSpace(space, to: item)
-            guard case .folder(let id) = item else { continue }
-            for held in tree.descendants(ofFolder: id) {
-                assignSpace(space, to: held)
-            }
+            let space = spaceID(ofItem: item).flatMap(knownSpace) ?? (unplacedSpaceRows.contains(item) ? nil : currentSpaceID)
+            settle(item, in: tree, space: space, pinned: isKept(item))
+        }
+    }
+
+    /// Children inherit a known folder. Under an unplaced folder, each child's own evidence still counts.
+    private func settle(_ item: SidebarItem, in tree: SidebarTree, space inherited: UUID?, pinned: Bool) {
+        let space = pinned ? nil : inherited ?? spaceID(ofItem: item).flatMap(knownSpace) ?? sharedSpaceService?.savedSpace(of: item, in: self)
+        assignSpace(space, to: item, unplaced: space == nil && !pinned)
+        guard case .folder(let id) = item else { return }
+        for child in tree.rows(in: id) {
+            settle(child, in: tree, space: space, pinned: pinned)
         }
     }
 
@@ -153,9 +178,14 @@ extension BrowserModel {
         guard !isReadingSharedSession, !isApplyingProfilePins else { return }
         for root in tree.root {
             let kept = isKept(root)
-            let newRoot = isNew(root)
+            let newRoot = isNew(root) && !unplacedSpaceRows.contains(root)
             let space = kept ? nil : spaceID(ofItem: root) ?? (newRoot ? selectedSpace : nil)
-            guard kept || space != nil else { continue }
+            guard kept || space != nil else {
+                if newRoot {
+                    unplacedSpaceRows.insert(root)
+                }
+                continue
+            }
             if newRoot || kept {
                 assignSpace(space, to: root)
             }
@@ -170,7 +200,21 @@ extension BrowserModel {
         knownSpaceIDs.contains(id) ? id : nil
     }
 
-    private func assignSpace(_ space: UUID?, to item: SidebarItem) {
+    func copySpace(from source: BrowserTab, to tab: BrowserTab) {
+        tab.spaceID = source.spaceID
+        if unplacedSpaceRows.contains(.tab(source.id)) {
+            unplacedSpaceRows.insert(.tab(tab.id))
+        } else if !unplacedSpaceRows.isEmpty {
+            unplacedSpaceRows.remove(.tab(tab.id))
+        }
+    }
+
+    private func assignSpace(_ space: UUID?, to item: SidebarItem, unplaced: Bool = false) {
+        if unplaced {
+            unplacedSpaceRows.insert(item)
+        } else if !unplacedSpaceRows.isEmpty {
+            unplacedSpaceRows.remove(item)
+        }
         switch item {
         case .tab(let id):
             if let tab = tabsByID[id], tab.spaceID != space {
@@ -185,23 +229,32 @@ extension BrowserModel {
 
     // MARK: - Moving and closing
 
-    /// Where Move to Space can take rows: the other spaces of this profile. Rows never change profile.
-    var spaceMoveTargets: [Space] {
-        guard let currentSpaceID, let store = context.spaces else { return [] }
-        return store.spaces.filter { $0.id != currentSpaceID && knownSpaceIDs.contains($0.id) }
+    /// An ordinary row without saved ownership can explicitly join any Space, including the one on screen.
+    func spaceMoveTargets(for items: [SidebarItem]) -> [Space] {
+        guard currentSpaceID != nil, let store = adoptedSpaceStore ?? context.spaces else { return [] }
+        return store.spaces.filter { space in
+            knownSpaceIDs.contains(space.id) && items.contains { canMove($0, toSpace: space.id) }
+        }
+    }
+
+    private func canMove(_ item: SidebarItem, toSpace id: UUID) -> Bool {
+        if let space = spaceID(ofItem: item) {
+            return space != id
+        }
+        return unplacedSpaceRows.contains(item)
     }
 
     /// Moves rows of the space on screen to the top of space `id`, out of any folder. Both panes of a split go
     /// together; pins and what pinned folders hold stay, since every space shows them. Sidebar Undo forgets its steps:
     /// they name places in the space the rows left.
     func move(_ items: [SidebarItem], toSpace id: UUID) {
-        guard id != currentSpaceID, knownSpaceIDs.contains(id) else { return }
+        guard knownSpaceIDs.contains(id) else { return }
         let tree = reconciledTree()
         let withPanes = items.flatMap { item -> [SidebarItem] in
             guard case .tab(let tabID) = item, let split = splits.split(containing: tabID) else { return [item] }
             return split.tabs.map(SidebarItem.tab)
         }
-        let moved = tree.normalized(withPanes).filter { spaceID(ofItem: $0) != nil }
+        let moved = tree.normalized(withPanes).filter { canMove($0, toSpace: id) }
         guard !moved.isEmpty else { return }
         let carried = tree.expanded(Set(moved))
         let wasActive = activeTabID.map { carried.contains(.tab($0)) } ?? false
@@ -213,7 +266,7 @@ extension BrowserModel {
         sidebarUndoManager.removeAllActions()
         sidebarSelection.clear()
         syncTabOrder()
-        if wasActive {
+        if wasActive, id != currentSpaceID {
             if let next = currentSpaceID.flatMap(lastActiveTab(inSpace:)) ?? firstShownTab {
                 activate(next)
             } else {

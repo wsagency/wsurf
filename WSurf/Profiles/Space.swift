@@ -44,6 +44,8 @@ final class SpaceStore {
     }
 
     let profileID: UUID
+    /// A pre-Spaces profile has no saved list when its first Space is created.
+    let hadSavedSpaceList: Bool
     private(set) var spaces: [Space]
     @ObservationIgnored private let file: URL?
     @ObservationIgnored private var unreadableFallback: Space?
@@ -61,6 +63,7 @@ final class SpaceStore {
         } catch {
             stored = nil
         }
+        hadSavedSpaceList = file != nil && stored?.isEmpty != true
         spaces = stored ?? []
         if spaces.isEmpty {
             let home = Space(id: UUID(), name: profile.name, symbol: profile.symbol, color: profile.color)

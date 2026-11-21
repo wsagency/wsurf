@@ -181,7 +181,7 @@ struct SpaceSwitcherTests {
         let recipes = fixture.store.add(name: "Recipes")
         fixture.coordinator.refreshSpaces()
 
-        #expect(fixture.coordinator.spaceMoveTargets.map(\.id) == [recipes.id])
+        #expect(fixture.browser.spaceMoveTargets(for: [.tab(tab.id)]).map(\.id) == [recipes.id])
         fixture.coordinator.moveToSpace([.tab(tab.id)], space: recipes)
         #expect(tab.spaceID == recipes.id)
         #expect(fixture.browser.currentSpaceID == first.id)
@@ -199,7 +199,7 @@ struct SpaceSwitcherTests {
 
         #expect(coordinator.spaceStore == nil)
         #expect(coordinator.spaceEntries.isEmpty)
-        #expect(coordinator.spaceMoveTargets.isEmpty)
+        #expect(coordinator.browser.spaceMoveTargets(for: [.tab(UUID())]).isEmpty)
         #expect(coordinator.browser.currentSpaceID == nil)
     }
 

@@ -507,8 +507,12 @@ extension BrowserModel {
             (order.firstIndex(of: $0) ?? .max) < (order.firstIndex(of: $1) ?? .max)
         }
         let folder = TabFolder(name: name)
-        if pendingSpaceStore != nil, let topmost {
-            folder.spaceID = spaceID(ofItem: topmost)
+        if let topmost {
+            if unplacedSpaceRows.contains(topmost) {
+                unplacedSpaceRows.insert(.folder(folder.id))
+            } else if pendingSpaceStore != nil {
+                folder.spaceID = spaceID(ofItem: topmost)
+            }
         }
         folders.append(folder)
         if requestingRename {
