@@ -8278,9 +8278,6 @@
     "Its tabs and folders close. Pins, Favorites, sign-ins, history and passwords stay with the profile." : {
       "comment" : "Detail of the confirmation shown before deleting a space. Deleting closes the space's tabs and folders; it never deletes the profile or its passwords."
     },
-    "Its vaults are also removed from iCloud. Your other devices keep their copies. To keep them in iCloud, turn off Sync with iCloud for each vault first." : {
-      "comment" : "Added to the Delete profile confirmation when the profile has a vault that syncs through iCloud. Sync with iCloud is the name of the switch."
-    },
     "Its vaults sync through iCloud. Add it to use them on this Mac." : {
       "comment" : "Caption of a row in the On your other devices section."
     },
@@ -12016,6 +12013,17 @@
     },
     "WSurf then erases the cards and addresses saved on this Mac, and the list it suggested them from. Autofill fills them from the vault. This can’t be undone." : {
       "comment" : "Last part of the message in the dialog confirming that the old copies of cards and addresses are erased. The “list it suggested them from” is the older list that autofill suggestions were drawn from. The sentence “This can’t be undone” is the warning."
+    },
+    "WSurf will also remove %@ from iCloud. Your other devices keep their copies. To keep a vault in iCloud, turn off Sync with iCloud for it first." : {
+      "comment" : "Shown when deleting a profile. %@ is the formatted list of vault names that will be removed from iCloud. Sync with iCloud is the switch label in each vault’s settings.",
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "WSurf će ukloniti %@ i iz iClouda. Kopije ostaju na drugim uređajima. Ako želite zadržati trezor u iCloudu, najprije za njega isključite opciju „Sync with iCloud“."
+          }
+        }
+      }
     },
     "WSurf will remember text you type on websites in every window of this profile, including passwords. It stays encrypted on this Mac. It is never synced, and never shown to assistants or connected apps. Nothing is recorded in a tab while the assistant or a connected app works in it. Entries are deleted after the time you choose. Anyone who knows your Mac password can open it. Card numbers, security codes and one-time codes are not recorded." : {
       "comment" : "Message of the “Turn on Input History?” alert. A consent text: lists what is recorded, that it stays encrypted on this Mac, is never synced or shown to the assistant or connected apps, and the password risk. WSurf stays untranslated."
