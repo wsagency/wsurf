@@ -67,19 +67,25 @@ nonisolated struct VaultSyncHeader {
 }
 
 extension VaultSync {
-    func settleVaultRecord(_ key: VaultKey, snapshot: VaultSyncSnapshot, syncKey: VaultSyncKey, database: VaultSyncDatabase) -> Bool {
-        guard let local = try? VaultWrapperList.encode(snapshot.wrappers) else { return false }
+    func settleVaultRecord(_ key: VaultKey, snapshot: VaultSyncSnapshot, syncKey: VaultSyncKey, database: VaultSyncDatabase) {
+        guard let local = try? VaultWrapperList.encode(snapshot.wrappers) else { return }
         let mark = VaultSyncCodec.vaultMark(name: snapshot.name, wrappers: local, key: syncKey)
-        return (try? database.write { tx in
-            guard var row = try tx.vault(key.vaultID), row.enabled, !row.needsFetch else { return false }
+        guard let (sendHeader, firstAcknowledgement) = try? database.write({ tx in
+            guard var row = try tx.vault(key.vaultID), row.enabled, !row.needsFetch else { return (false, false) }
             let previous = row
             row.lastHeadRevision = max(row.lastHeadRevision, snapshot.revision)
             let queued = prepareHeader(&row, snapshot: snapshot, local: local, mark: mark, syncKey: syncKey)
             if row != previous {
                 try tx.save(row)
             }
-            return queued
-        }) ?? false
+            return (queued, previous.uploadedMark == nil && row.uploadedMark != nil)
+        }) else { return }
+        if firstAcknowledgement {
+            // An adopted header has no send receipt to release Items sealed while it awaited authentication.
+            readd(key)
+        } else if sendHeader {
+            engine?.add([.saveRecord(key.vaultRecord)])
+        }
     }
 
     private func prepareHeader(_ row: inout VaultRow, snapshot: VaultSyncSnapshot, local: Data, mark: Data, syncKey: VaultSyncKey) -> Bool {

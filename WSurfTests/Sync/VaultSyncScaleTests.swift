@@ -124,5 +124,6 @@ struct VaultSyncScaleTests {
         #expect(rig.status(a) == .synced && rig.status(b) == .synced)
         let sent = try VaultSyncCodec.openItem(#require(rig.item(edited)).payload, accountID: edited.id, key: va.syncKey)
         #expect(sent.version == 2, "the edit went up once, as the version after the one B took in")
+        #expect(b.engine.saveAttempts[edited.id.uuidString] == 1)
     }
 }

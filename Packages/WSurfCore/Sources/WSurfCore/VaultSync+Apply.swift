@@ -536,11 +536,8 @@ extension VaultSync {
         sendRemovedBefore(memories, inputs: inputs, live: live, key: key, syncKey: syncKey, into: &work)
         sumCache[key] = sums
         tallies[key, default: (0, 0)].notSyncable = notSyncable
-        let addVaultRecord = settleVaultRecord(key, snapshot: snapshot, syncKey: syncKey, database: database)
         flush(&work, key: key, database: database)
-        if addVaultRecord {
-            engine?.add([.saveRecord(key.vaultRecord)])
-        }
+        settleVaultRecord(key, snapshot: snapshot, syncKey: syncKey, database: database)
         if let (_, current) = runningRow(key), current.uploadedMark != nil, !current.needsFetch {
             await uploadAssets(transfer, database: database, syncKey: syncKey)
         }
