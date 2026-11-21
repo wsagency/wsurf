@@ -41,6 +41,7 @@ final class FakeSyncCloud {
     /// Zone name to record name to what the server holds.
     private(set) var zones: [String: [String: Stored]] = [:]
     var encryptedVaultAssets: [SyncRecordID: Data] = [:]
+    var vaultAssetWrites: [SyncRecordID: Int] = [:]
     private(set) var user: String
     /// How many records were written. It does not move when a save fails or is dropped.
     private(set) var writeCount = 0

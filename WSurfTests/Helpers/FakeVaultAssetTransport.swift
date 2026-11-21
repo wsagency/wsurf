@@ -19,11 +19,17 @@ extension FakeSyncEngine: VaultCatalogReading, VaultAssetTransport, VaultZoneChe
         }
     }
 
+    // A repair gets a new server revision even when it restores the original bytes.
+    private func assetTag(_ ref: VaultAssetRef, id: SyncRecordID) -> String {
+        "\(ref.name)-\(cloud.vaultAssetWrites[id, default: 0])"
+    }
+
     func vaultAssetVersionsMatch(_ tags: [VaultAssetRef: String], zone: String, user: String) async throws -> Bool {
         guard try await currentAccountUser() == user, cloud.zones[zone] != nil else { throw VaultSyncFailure.unavailable }
         return try tags.allSatisfy { ref, tag in
-            guard let data = cloud.encryptedVaultAssets[SyncRecordID(zone: zone, name: ref.name)] else { return false }
-            return try VaultAssetRef(data).name == tag
+            let id = SyncRecordID(zone: zone, name: ref.name)
+            guard let data = cloud.encryptedVaultAssets[id] else { return false }
+            return try assetTag(VaultAssetRef(data), id: id) == tag
         }
     }
 
@@ -31,8 +37,9 @@ extension FakeSyncEngine: VaultCatalogReading, VaultAssetTransport, VaultZoneChe
         guard try await currentAccountUser() == user, cloud.zones[zone] != nil else { throw VaultSyncFailure.unavailable }
         let id = SyncRecordID(zone: zone, name: reference.name)
         let previous = cloud.encryptedVaultAssets[id]
+        let writes = cloud.vaultAssetWrites[id, default: 0]
         if let acknowledged, let previous {
-            let tag = try VaultAssetRef(previous).name
+            let tag = try assetTag(VaultAssetRef(previous), id: id)
             if tag == acknowledged {
                 return tag
             }
@@ -46,15 +53,17 @@ extension FakeSyncEngine: VaultCatalogReading, VaultAssetTransport, VaultZoneChe
         guard try await currentAccountUser() == user else { throw VaultSyncFailure.unavailable }
         let data = try Data(contentsOf: source)
         guard reference.matches(data) else { throw VaultSyncError.authenticationFailed }
-        guard cloud.zones[zone] != nil, cloud.encryptedVaultAssets[id] == previous else { throw VaultSyncFailure.unavailable }
+        guard cloud.zones[zone] != nil, cloud.encryptedVaultAssets[id] == previous, cloud.vaultAssetWrites[id, default: 0] == writes else { throw VaultSyncFailure.unavailable }
         cloud.encryptedVaultAssets[id] = data
-        return reference.name
+        cloud.vaultAssetWrites[id, default: 0] += 1
+        return assetTag(reference, id: id)
     }
 
     func downloadVaultAsset(_ reference: VaultAssetRef, zone: String, user: String) async throws -> (data: Data, tag: String) {
         try await beforeVaultDownload?(reference.name)
-        guard try await currentAccountUser() == user, let data = cloud.encryptedVaultAssets[SyncRecordID(zone: zone, name: reference.name)],
+        let id = SyncRecordID(zone: zone, name: reference.name)
+        guard try await currentAccountUser() == user, let data = cloud.encryptedVaultAssets[id],
               reference.matches(data) else { throw VaultSyncFailure.unavailable }
-        return (data, reference.name)
+        return (data, assetTag(reference, id: id))
     }
 }

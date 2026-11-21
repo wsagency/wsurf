@@ -160,7 +160,7 @@ extension VaultSync {
                         }
                     }
                 }
-                // The Item receipt starts the final chunk check. Its manifest can still disappear with its zone.
+                // The Item receipt starts the final check of the manifest and its chunks.
                 engine?.add([.saveRecord(key.itemRecord(row.accountID))])
             } catch VaultSyncError.authenticationFailed, VaultSyncError.malformed, VaultFileError.missing {
                 // Recheck staging on the next pass so lost or damaged local files can be rebuilt from the store.
@@ -186,7 +186,7 @@ extension VaultSync {
         return assets.dropLast().allSatisfy { (try? Self.cached($0, in: folder)) != nil }
     }
 
-    /// The Item save only requires its manifest to exist. Check the chunks after the server has accepted the Item.
+    /// The Item's parent proves its manifest exists. Verify every asset's revision after the server accepts the Item.
     func checkAcknowledgedAssets(_ key: VaultKey, accounts: Set<UUID>? = nil) async {
         guard !launchCheck, let (database, row) = runningRow(key), !row.needsFetch, let user = row.approvedUser,
               let transport = engine as? any VaultAssetTransport, let root = assetDirectory(key),
@@ -201,9 +201,8 @@ extension VaultSync {
             }
             do {
                 var tags = publication.tags
-                tags.removeValue(forKey: publication.manifest)
-                guard stillPending() else { continue }
-                if !tags.isEmpty, try await !transport.vaultAssetVersionsMatch(tags, zone: key.zone, user: user) {
+                guard tags[publication.manifest] != nil, stillPending() else { continue }
+                if try await !transport.vaultAssetVersionsMatch(tags, zone: key.zone, user: user) {
                     let folder = root.appending(path: "out/\(account.sqlText)", directoryHint: .isDirectory)
                     var restaged = false
                     for (ref, tag) in tags {
@@ -212,7 +211,8 @@ extension VaultSync {
                         do {
                             tags[ref] = try await transport.uploadVaultAsset(ref, from: file, zone: key.zone, user: user, acknowledged: tag)
                         } catch {
-                            guard !restaged, stillPending(), (try? Self.cached(ref, in: folder)) == nil else { throw error }
+                            // Resealing a manifest would produce different ciphertext for the acknowledged Item.
+                            guard ref != publication.manifest, !restaged, stillPending(), (try? Self.cached(ref, in: folder)) == nil else { throw error }
                             try await restageAttachments(account, key: key, in: folder)
                             restaged = true
                             guard stillPending() else { throw VaultSyncFailure.unavailable }
@@ -224,7 +224,7 @@ extension VaultSync {
                 guard stillPending() else { continue }
                 try database.write { tx in
                     guard try tx.finishAssetCheck(key.vaultID, account: account, matching: check) else { return }
-                    for (ref, tag) in tags where tag != publication.tags[ref] {
+                    for (ref, tag) in tags where ref != publication.manifest && tag != publication.tags[ref] {
                         try tx.saveAssetTag(tag, for: ref, key: key, user: user)
                     }
                 }
