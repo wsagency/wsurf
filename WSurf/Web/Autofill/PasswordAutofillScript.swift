@@ -181,14 +181,23 @@ nonisolated enum PasswordAutofillScript {
         return location.href === url && inForm(el) && (target === el || inForm(target)) && forms.safe(forms.group(el)?.root);
       };
       // A fixed form account also binds the password. A different explicit choice can open Google's own switch control.
-      const checkAccount = (password, login, afterUsername = false) => {
+      const checkAccount = (password, login, afterUsername = false, delivered = null) => {
         const users = (forms.group(password)?.usernames || []).map(field => field.element);
         const fixed = users.filter(el => (afterUsername || !forms.rendered(el)) && el.value).map(el => el.value);
         const google = googleAccount();
+        let expected = login.username;
+        if (!google && delivered) {
+          // Only the editable username we filled may display a formatted email. Recheck its field and value at the password setter.
+          const {element, value} = delivered;
+          const trimmed = expected.trim();
+          if (users.length !== 1 || users[0] !== element || !forms.rendered(element) || element.value !== value ||
+              !email(trimmed) || (!sameEmail(value, trimmed) && value !== trimmed.toLowerCase())) return -3;
+          expected = value;
+        }
         if (google?.ambiguous || (google && !google.username && (!fixed.length || !fixed.every(email)))) return -3;
         if (google?.username) fixed.push(google.username);
         const matches = google ? sameEmail : (left, right) => left === right;
-        if (fixed.every(name => matches(name, login.username))) return 0;
+        if (fixed.every(name => matches(name, expected))) return 0;
         if (!google?.username || !fixed.every(name => sameEmail(name, google.username))) return -3;
         const chooser = google.chooser;
         if (!chooser || chooser.closest(':disabled, [aria-disabled="true"], [aria-hidden="true"], [inert]')) return -3;
@@ -199,10 +208,12 @@ nonisolated enum PasswordAutofillScript {
         return -2;
       };
       // Recheck at the native setter: focus, keydown and beforeinput handlers may change the form or the account.
-      const fillPassword = (target, password, root, url, login, count) => {
+      const fillPassword = (target, password, root, url, login, count, username) => {
+        const delivered = count && username && typeof login.username === 'string' && username.value !== login.username
+          ? {element:username,value:username.value} : null;
         const allowed = () => still(password, root, url, target) && secret(password);
         if (!allowed()) return count;
-        const result = put(password, login.password, () => allowed() ? checkAccount(password, login, true) || 1 : 0);
+        const result = put(password, login.password, () => allowed() ? checkAccount(password, login, true, delivered) || 1 : 0);
         return result < 0 ? result : count + result;
       };
       // Negative results distinguish an unsafe form (-1), an open account chooser (-2), and a required account switch (-3).
@@ -250,7 +261,7 @@ nonisolated enum PasswordAutofillScript {
         return fillAll(target, () => {
           let count = 0;
           if (username && typeof login?.username === 'string' && login.username) count += put(username, login.username);
-          return password && hasPassword ? fillPassword(target, password, group?.root, url, login, count) : count;
+          return password && hasPassword ? fillPassword(target, password, group?.root, url, login, count, username) : count;
         });
       };
       // Generate Password…: the fields of the right-clicked field's form a new password goes into. Its password fields, in order,
@@ -363,7 +374,7 @@ nonisolated enum PasswordAutofillScript {
           return fillAll(target, () => {
             let count = 0;
             if (found.username) count += set(found.username,login.username);
-            return password && typeof login.password === 'string' ? fillPassword(target, password, found.form, url, login, count) : count;
+            return password && typeof login.password === 'string' ? fillPassword(target, password, found.form, url, login, count, found.username) : count;
           });
         }
       };
