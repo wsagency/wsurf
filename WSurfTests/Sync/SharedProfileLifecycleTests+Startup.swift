@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 
 import Foundation
+import Synchronization
 import Testing
 import WSurfCore
 
@@ -289,8 +290,8 @@ extension SharedProfileLifecycleTests {
         }
         let model = "custom.journal-fixture"
         let edit = MacSettingPayload(key: "selection", value: try JSONEncoder().encode(model))
-        var values: [String: Data] = [:]
-        let seed = CloudSettingsSync(stateFile: launch.settingsFile, read: { _, _ in values }, apply: { _, _, _, _ in })
+        let values = Mutex([String: Data]())
+        let seed = CloudSettingsSync(stateFile: launch.settingsFile, read: { _, _ in values.withLock { $0 } }, apply: { _, _, _, _ in })
         let writer = FakeSyncEngine(cloud: launch.cloud, delegate: seed)
         seed.attach(writer)
         for profile in [stopped, kept] {
@@ -298,7 +299,7 @@ extension SharedProfileLifecycleTests {
             LLMSettings(defaults: ProfileSettingsStore.defaults(for: profile)).providerID = model
         }
         writer.offline = true
-        values[edit.key] = edit.value
+        values.withLock { $0[edit.key] = edit.value }
         try seed.collectChanges()
         let revoked = try #require(seed.channel(.providers, localProfileID: stopped.id))
         let retained = try #require(seed.channel(.providers, localProfileID: kept.id))
