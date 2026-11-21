@@ -235,6 +235,9 @@ extension VaultSync {
         // vault is confirmed in many hundreds of records at a time.
         for key in items.keys.sorted(by: { $0.zone < $1.zone }) {
             let confirmed = confirmItems(items[key] ?? [], key: key)
+            if !confirmed.assets.isEmpty {
+                enqueue(key) { [weak self] in await self?.checkAcknowledgedAssets(key, accounts: confirmed.assets) }
+            }
             if confirmed.held {
                 produce.insert(key)
             }
@@ -292,6 +295,7 @@ extension VaultSync {
     private struct Confirmed {
         var held = false
         var reread = false
+        var assets = Set<UUID>()
     }
 
     private func confirmItems(_ records: [SyncRecord], key: VaultKey) -> Confirmed {
@@ -311,7 +315,10 @@ extension VaultSync {
                                   try tx.systemFields(key.vaultID, record.id.name) == record.systemFields else { continue }
                         }
                         try tx.setSystemFields(record.systemFields, vault: key.vaultID, name: record.id.name)
-                        try tx.save(BaseRow(accountID: account, version: outgoing.version, parts: outgoing.parts), vault: key.vaultID)
+                        try tx.save(BaseRow(accountID: account, version: outgoing.version, parts: outgoing.parts), vault: key.vaultID, acknowledging: record.payload)
+                        if outgoing.publication != nil {
+                            result.assets.insert(account)
+                        }
                         try tx.deleteOutbox(key.vaultID, account)
                         result.held = result.held || row.dirty
                         promoted.append((outgoing, account))

@@ -33,6 +33,10 @@ extension VaultSync {
         guard var directory = assetDirectory(key) else { return }
         if let account {
             directory = directory.appending(path: "\(incoming ? "in" : "out")/\(account.sqlText)", directoryHint: .isDirectory)
+            guard FileManager.default.fileExists(atPath: directory.path) else { return }
+            if !incoming {
+                guard let database = database(key.profileID), (try? database.read { try $0.needsAssetStaging(key.vaultID, account) }) == false else { return }
+            }
         }
         try? FileManager.default.removeItem(at: directory)
     }
@@ -41,7 +45,8 @@ extension VaultSync {
     func pruneAssets(_ key: VaultKey, database: VaultSyncDatabase) {
         guard let root = assetDirectory(key), FileManager.default.fileExists(atPath: root.path),
               let owned = try? database.read({ tx in
-                  try [("out", tx.assetOutboxAccounts(key.vaultID)), ("in", tx.inboxAccounts(key.vaultID).union(tx.conflictAccounts(key.vaultID)))]
+                  let out = try tx.assetOutboxAccounts(key.vaultID).union(tx.pendingAssetAccounts(key.vaultID))
+                  return try [("out", out), ("in", tx.inboxAccounts(key.vaultID).union(tx.conflictAccounts(key.vaultID)))]
               }) else { return }
         for (name, accounts) in owned {
             let folder = root.appending(path: name)
@@ -155,7 +160,7 @@ extension VaultSync {
                         }
                     }
                 }
-                // The Item receipt releases staging. An uploaded manifest can still disappear with its zone.
+                // The Item receipt starts the final chunk check. Its manifest can still disappear with its zone.
                 engine?.add([.saveRecord(key.itemRecord(row.accountID))])
             } catch VaultSyncError.authenticationFailed, VaultSyncError.malformed, VaultFileError.missing {
                 // Recheck staging on the next pass so lost or damaged local files can be rebuilt from the store.
@@ -179,6 +184,74 @@ extension VaultSync {
         guard let folder = assetDirectory(key)?.appending(path: "out/\(row.accountID.sqlText)"),
               let assets = try? Self.stagedAssets(row, in: folder, syncKey: syncKey) else { return false }
         return assets.dropLast().allSatisfy { (try? Self.cached($0, in: folder)) != nil }
+    }
+
+    /// The Item save only requires its manifest to exist. Check the chunks after the server has accepted the Item.
+    func checkAcknowledgedAssets(_ key: VaultKey, accounts: Set<UUID>? = nil) async {
+        guard !launchCheck, let (database, row) = runningRow(key), !row.needsFetch, let user = row.approvedUser,
+              let transport = engine as? any VaultAssetTransport, let root = assetDirectory(key),
+              let pending = try? (accounts ?? database.read { try $0.pendingAssetAccounts(key.vaultID) }), !pending.isEmpty else { return }
+        let session = token(key)
+        for account in pending {
+            guard let check = try? database.read({ try $0.pendingAssetCheck(key.vaultID, account) }),
+                  let publication = try? JSONDecoder().decode(VaultAssetPublication.self, from: check), publication.owner == user else { continue }
+            func stillPending() -> Bool {
+                guard engine === transport, token(key) == session, let (_, active) = runningRow(key), !active.needsFetch, active.approvedUser == user else { return false }
+                return (try? database.read { try $0.pendingAssetCheck(key.vaultID, account) }) == check
+            }
+            do {
+                var tags = publication.tags
+                tags.removeValue(forKey: publication.manifest)
+                guard stillPending() else { continue }
+                if !tags.isEmpty, try await !transport.vaultAssetVersionsMatch(tags, zone: key.zone, user: user) {
+                    let folder = root.appending(path: "out/\(account.sqlText)", directoryHint: .isDirectory)
+                    var restaged = false
+                    for (ref, tag) in tags {
+                        guard stillPending() else { throw VaultSyncFailure.unavailable }
+                        let file = folder.appending(path: ref.name)
+                        do {
+                            tags[ref] = try await transport.uploadVaultAsset(ref, from: file, zone: key.zone, user: user, acknowledged: tag)
+                        } catch {
+                            guard !restaged, stillPending(), (try? Self.cached(ref, in: folder)) == nil else { throw error }
+                            try await restageAttachments(account, key: key, in: folder)
+                            restaged = true
+                            guard stillPending() else { throw VaultSyncFailure.unavailable }
+                            tags[ref] = try await transport.uploadVaultAsset(ref, from: file, zone: key.zone, user: user, acknowledged: tag)
+                        }
+                    }
+                    guard stillPending(), try await transport.vaultAssetVersionsMatch(tags, zone: key.zone, user: user) else { continue }
+                }
+                guard stillPending() else { continue }
+                try database.write { tx in
+                    guard try tx.finishAssetCheck(key.vaultID, account: account, matching: check) else { return }
+                    for (ref, tag) in tags where tag != publication.tags[ref] {
+                        try tx.saveAssetTag(tag, for: ref, key: key, user: user)
+                    }
+                }
+                clearAssets(key, account: account)
+            } catch {
+                // The base keeps this check and its staging through a restart or an interrupted repair.
+                continue
+            }
+        }
+        refresh(key)
+    }
+
+    private func restageAttachments(_ account: UUID, key: VaultKey, in folder: URL) async throws {
+        guard let files = host as? any VaultAttachmentHost, let lease = host.currentLease(profileID: key.profileID, vaultID: key.vaultID) else {
+            throw VaultSyncFailure.locked
+        }
+        let transfer = transfer(key, lease: lease)
+        guard let view = await snapshot(key), view.lease == lease, current(transfer), let entry = view.accounts.first(where: { $0.id == account }) else {
+            throw VaultSyncFailure.unavailable
+        }
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        for file in entry.attachments ?? [] {
+            guard current(transfer) else { throw VaultSyncFailure.locked }
+            let exported = try await files.exportAttachment(file, profile: key.profileID, vault: key.vaultID, lease: lease)
+            guard current(transfer) else { throw VaultSyncFailure.locked }
+            _ = try await Self.stageFile(exported.encryptedFile, in: folder)
+        }
     }
 
     private static func cached(_ ref: VaultAssetRef, in folder: URL) throws -> Data? {

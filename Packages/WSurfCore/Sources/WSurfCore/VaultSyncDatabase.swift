@@ -73,7 +73,7 @@ nonisolated struct BaseRow: Equatable {
     var parts: Data
 }
 
-/// The exact server versions verified for this sealed pointer, retained until its Item is acknowledged.
+/// The server versions verified for this sealed pointer, retained through its post-acknowledgement chunk check.
 nonisolated struct VaultAssetPublication: Codable, Equatable {
     let owner: String
     let manifest: VaultAssetRef
@@ -207,6 +207,13 @@ nonisolated final class VaultSyncDatabase: Sendable {
             try db.execute(sql: """
                 UPDATE vault SET status = 'removalUnconfirmed' WHERE enabled = 0 AND consentUser IS NULL AND approvedUser IS NULL
                     AND status IN ('removedDeleted', 'removalFailed')
+                """)
+        }
+        migrator.registerMigration("acknowledgedItemAssets") { db in
+            try db.execute(sql: """
+                ALTER TABLE base ADD COLUMN pendingAssetCheck BLOB;
+                ALTER TABLE base ADD COLUMN assetCheckEnvelope BLOB;
+                CREATE INDEX pendingItemAssets ON base(vaultID, accountID) WHERE pendingAssetCheck IS NOT NULL;
                 """)
         }
         try migrator.migrate(queue)
@@ -359,11 +366,45 @@ nonisolated final class VaultSyncDatabase: Sendable {
             return found
         }
 
-        func save(_ base: BaseRow, vault: UUID) throws {
+        func save(_ base: BaseRow, vault: UUID, acknowledging envelope: Data? = nil) throws {
+            var check: Data?
+            if let envelope, envelope.first == VaultSyncCodec.assetFormat {
+                check = try Data.fetchOne(db, sql: """
+                    SELECT assetPublication FROM outbox WHERE vaultID = ? AND accountID = ? AND envelope = ? AND assetPublication IS NOT NULL
+                    UNION ALL
+                    SELECT pendingAssetCheck FROM base WHERE vaultID = ? AND accountID = ? AND assetCheckEnvelope = ? LIMIT 1
+                    """, arguments: [vault.sqlText, base.accountID.sqlText, envelope, vault.sqlText, base.accountID.sqlText, envelope])
+            }
+            // A fetch can confirm our Item before or after its save callback. Keep the check across a duplicate acknowledgement.
             try db.execute(
-                sql: "INSERT OR REPLACE INTO base(vaultID, accountID, version, parts) VALUES (?, ?, ?, ?)",
-                arguments: [vault.sqlText, base.accountID.sqlText, Int64(clamping: base.version), base.parts]
+                sql: """
+                    INSERT OR REPLACE INTO base(vaultID, accountID, version, parts, pendingAssetCheck, assetCheckEnvelope)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                arguments: [vault.sqlText, base.accountID.sqlText, Int64(clamping: base.version), base.parts, check, check == nil ? nil : envelope]
             )
+        }
+
+        func pendingAssetAccounts(_ vault: UUID) throws -> Set<UUID> {
+            let ids = try String.fetchAll(db, sql: "SELECT accountID FROM base WHERE vaultID = ? AND pendingAssetCheck IS NOT NULL", arguments: [vault.sqlText])
+            return Set(ids.compactMap(UUID.init(uuidString:)))
+        }
+
+        func finishAssetCheck(_ vault: UUID, account: UUID, matching check: Data) throws -> Bool {
+            try db.execute(sql: "UPDATE base SET pendingAssetCheck = NULL, assetCheckEnvelope = NULL WHERE vaultID = ? AND accountID = ? AND pendingAssetCheck = ?",
+                           arguments: [vault.sqlText, account.sqlText, check])
+            return db.changesCount == 1
+        }
+
+        func needsAssetStaging(_ vault: UUID, _ account: UUID) throws -> Bool {
+            try Bool.fetchOne(db, sql: """
+                SELECT EXISTS(SELECT 1 FROM base WHERE vaultID = ? AND accountID = ? AND pendingAssetCheck IS NOT NULL)
+                    OR EXISTS(SELECT 1 FROM outbox WHERE vaultID = ? AND accountID = ? AND substr(envelope, 1, 1) = ?)
+                """, arguments: [vault.sqlText, account.sqlText, vault.sqlText, account.sqlText, Data([VaultSyncCodec.assetFormat])]) == true
+        }
+
+        func pendingAssetCheck(_ vault: UUID, _ account: UUID) throws -> Data? {
+            try Data.fetchOne(db, sql: "SELECT pendingAssetCheck FROM base WHERE vaultID = ? AND accountID = ?", arguments: [vault.sqlText, account.sqlText])
         }
 
         /// Only the same private zone and ciphertext can reuse this server change tag.
@@ -533,7 +574,8 @@ nonisolated final class VaultSyncDatabase: Sendable {
             guard let row = try self.vault(vault) else { return nil }
             let parked = try parkedAccounts(vault).count
             return (row, VaultCounts(
-                outbox: try count("outbox", vault), inbox: try count("inbox", vault) - parked, review: try reviewCount(vault),
+                outbox: try count("outbox", vault) + (Int.fetchOne(db, sql: "SELECT COUNT(*) FROM base WHERE vaultID = ? AND pendingAssetCheck IS NOT NULL", arguments: [vault.sqlText]) ?? 0),
+                inbox: try count("inbox", vault) - parked, review: try reviewCount(vault),
                 parked: parked
             ))
         }

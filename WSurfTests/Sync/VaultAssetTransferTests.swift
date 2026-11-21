@@ -482,6 +482,7 @@ struct VaultAssetDeviceTransferTests {
             pair.managerA.lock(reason: .manual)
             pair.syncA.vaultLocked(profileID: pair.profile.id, vaultID: pair.vaultID)
             try await pair.engineA.sendNow()
+            await pair.syncA.settle()
             #expect(pair.cloud.record(id) != nil && !pair.managerA.isUnlocked)
             #expect(!FileManager.default.fileExists(atPath: folder.path))
         }

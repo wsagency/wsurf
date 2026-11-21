@@ -397,7 +397,7 @@ extension VaultSync {
                 guard var current = try tx.vault(key.vaultID), current.enabled else { return }
                 for (id, base) in pass.bases.sorted(by: { $0.key.uuidString < $1.key.uuidString }) {
                     let sealed = try VaultSyncCodec.sealParts(base.parts, accountID: id, version: base.version, key: syncKey)
-                    try tx.save(BaseRow(accountID: id, version: base.version, parts: sealed), vault: key.vaultID)
+                    try tx.save(BaseRow(accountID: id, version: base.version, parts: sealed), vault: key.vaultID, acknowledging: pass.envelopes[id]?.envelope)
                 }
                 for inbound in pass.processed {
                     if try tx.consume(inbound, vault: key.vaultID), inbound.envelope.first == VaultSyncCodec.assetFormat,

@@ -828,6 +828,7 @@ public final class VaultSync: SyncEngineDelegate {
         }
         try? await fetchAllNow(key)
         await drain(key)
+        await checkAcknowledgedAssets(key)
         await produce(key)
     }
 
