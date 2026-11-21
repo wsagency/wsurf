@@ -14,12 +14,16 @@ nonisolated struct SharedProfileLinks: Codable, Equatable {
         var pinID: UUID?
         /// Keep a close until the window has committed a newer session without this row.
         var closedAfterRevision: Int64?
+        /// A local edit captured before the window has committed its next SQLite snapshot.
+        var editedAfterRevision: Int64?
     }
 
     var profile: UUID?
     var spaces: [UUID: UUID] = [:]
     /// Remote Space to reserved local ID until both Spaces.json and the link are committed.
     var joiningSpaces: [UUID: UUID]?
+    /// A kept Space can finish its local write even after the restored record was uploaded.
+    var keepingSpaces: Set<UUID>?
     var slots: [UUID: Slot] = [:]
     var pins: [UUID: UUID] = [:]
     var pinFolders: [UUID: UUID]?
@@ -328,14 +332,26 @@ final class CloudSharedSpaces {
         try await enable(.spaces, for: profile)
         guard let item = catalog.item(remote.id, in: .spaces), item.kind == .space, !item.removed,
               let store = spaces(profile) else { throw SharedCatalogError.unavailable }
-        guard linkProfile(profile.id, to: item.profileID), var link = links[profile.id] else { throw SharedCatalogError.unavailable }
+        guard linkProfile(profile.id, to: item.profileID) else { throw SharedCatalogError.unavailable }
+        try materializeJoinedSpace(item, in: profile, store: store)
+        applyCatalog()
+    }
+
+    /// Reserve the local identity before Spaces.json so either write can be retried after a restart.
+    func materializeJoinedSpace(_ item: SharedSpaceItem, in profile: Profile, store: SpaceStore, keepingVersion: Bool = false) throws {
+        guard var link = links[profile.id], link.profile == item.profileID else { throw SharedCatalogError.unavailable }
         let linked = link.spaces.first { $0.value == item.id }?.key
         let local = linked ?? link.joiningSpaces?[item.id] ?? UUID()
-        if linked == nil, link.joiningSpaces?[item.id] == nil {
+        if linked == nil {
             var joining = link.joiningSpaces ?? [:]
             joining[item.id] = local
             link.joiningSpaces = joining
-            links[profile.id] = link
+            if keepingVersion {
+                link.keepingSpaces = (link.keepingSpaces ?? []).union([item.id])
+            }
+            if link != links[profile.id] {
+                links[profile.id] = link
+            }
             guard persistLinks() else { throw SharedCatalogError.storage }
         }
         try store.ensureJoinedSpace(id: local, name: item.title, symbol: item.symbol ?? Space.defaultSymbol, color: item.color.flatMap(TabFolderColor.init))
@@ -343,13 +359,13 @@ final class CloudSharedSpaces {
             let pending = link
             link.spaces[local] = item.id
             link.joiningSpaces?[item.id] = nil
+            link.keepingSpaces?.remove(item.id)
             links[profile.id] = link
             guard persistLinks() else {
                 links[profile.id] = pending
                 throw SharedCatalogError.storage
             }
         }
-        applyCatalog()
     }
 
     /// Leaves the local and cloud copies intact. Rejoining is an explicit choice.

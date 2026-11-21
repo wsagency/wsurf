@@ -15,10 +15,15 @@ extension CloudSharedSpaces {
                !opening.opensPrivately, opening.sessionClosedAt == nil, !models.contains(where: { $0 === opening }) {
                 models.append(opening)
             }
+            restoreKeptVersions(in: profile, models: models)
             if isEnabled(.spaces, for: profile), catalog.ready.contains(.spaces), let store = spaces(profile), var link = links[id] {
                 for (local, shared) in link.spaces {
                     guard let item = catalog.item(shared, in: .spaces), item.profileID == link.profile, var space = store.space(id: local) else { continue }
                     if item.removed {
+                        // Keep the local Space and its device-only contents available until its owner chooses a version.
+                        if liveLocalEdit(item.recordID, in: id) != nil {
+                            continue
+                        }
                         if store.canRemove(space) {
                             store.remove(space)
                         }
@@ -42,6 +47,37 @@ extension CloudSharedSpaces {
             if isEnabled(.pins, for: profile), catalog.ready.contains(.pins) {
                 applyPins(profile, models: models)
             }
+        }
+    }
+
+    /// A saved conflict can be resolved offline. Only the chosen local versions can be applied before account verification.
+    private func restoreKeptVersions(in profile: Profile, models: [BrowserModel]) {
+        guard isEnabled(.spaces, for: profile), let link = links[profile.id] else { return }
+        let kept = catalog.state.pending.values.compactMap { edit -> SharedSpaceItem? in
+            guard edit.profile == profile.id, edit.item.profileID == link.profile, edit.item.category == .spaces,
+                  !edit.item.removed, edit.base?.removed == true else { return nil }
+            return edit.item
+        }
+        // An upload may be acknowledged before the reserved local Space can be written.
+        let reserved = (link.keepingSpaces ?? []).compactMap { id -> SharedSpaceItem? in
+            guard let item = catalog.item(id, in: .spaces), item.kind == .space, !item.removed, item.profileID == link.profile else { return nil }
+            return item
+        }
+        guard !kept.isEmpty || !reserved.isEmpty, let store = spaces(profile) else { return }
+        let wanted = Dictionary((kept + reserved).filter { $0.kind == .space }.map { ($0.id, $0) }, uniquingKeysWith: { local, _ in local })
+        for row in wanted.values where !link.spaces.values.contains(row.id) {
+            try? materializeJoinedSpace(row, in: profile, store: store, keepingVersion: true)
+        }
+        if !wanted.isEmpty {
+            let owned = store.spaces.map(\.id)
+            for model in models where model.knownSpaceIDs != Set(owned) {
+                model.adoptSpaces(owned)
+            }
+        }
+        guard !catalog.ready.contains(.spaces) else { return }
+        let ids = Set(kept.map(\.id))
+        for model in models where link.slots.values.contains(where: { $0.window == model.windowID && $0.closedAfterRevision != nil && ids.contains($0.cloudID) }) {
+            restoreWindowEdits(in: model, only: ids)
         }
     }
 
@@ -151,6 +187,7 @@ extension CloudSharedSpaces {
                   catalog.item(slot.cloudID, in: .spaces) != nil else { continue }
             if model.removeSharedRow(local) {
                 link.slots[local]?.closedAfterRevision = model.sessionRevision
+                link.slots[local]?.editedAfterRevision = nil
                 link.slots[local]?.last = slot.last?.tombstone
             } else {
                 link.slots[local] = nil
@@ -179,6 +216,12 @@ extension CloudSharedSpaces {
             localIDs[item.id] = id
             link.slots[id] = .init(cloudID: item.id, window: target.windowID)
         }
+        // Keep the owner's choice in a sleeping window even if its upload is acknowledged before it reopens.
+        for row in active {
+            guard let id = localIDs[row.id], let slot = link.slots[id], slot.closedAfterRevision != nil, windows[slot.window] == nil,
+                  liveLocalEdit(row.recordID, in: profile.id) != nil else { continue }
+            link.slots[id]?.last = row
+        }
         let placed = placeRows(active, ids: localIDs, windows: windows, link: &link)
         for model in models {
             let rows = placed.filter { item in
@@ -187,15 +230,19 @@ extension CloudSharedSpaces {
                 return slot.pinID == nil || model.tab(id: id)?.pinID == nil
             }
             let changed = rows.contains { row in
-                guard let id = localIDs[row.id] else { return false }
-                return link.slots[id]?.last != row || (model.tab(id: id) == nil && model.folder(id: id) == nil)
+                guard let id = localIDs[row.id], let membership = row.spaceID, let space = spaces[membership] else { return false }
+                let item: SidebarItem = row.kind == .folder ? .folder(id) : .tab(id)
+                return link.slots[id]?.closedAfterRevision != nil || link.slots[id]?.last != row || model.spaceID(ofItem: item) != space
             }
             guard changed || (model === opening && !rows.isEmpty) else { continue }
             model.applySharedRows(rows, spaces: spaces, ids: localIDs)
             for row in rows {
-                if let id = localIDs[row.id] {
-                    link.slots[id]?.last = row
+                guard let id = localIDs[row.id], let slot = link.slots[id] else { continue }
+                if slot.last != row || slot.closedAfterRevision != nil {
+                    link.slots[id]?.editedAfterRevision = liveLocalEdit(row.recordID, in: profile.id) != nil ? model.sessionRevision : nil
                 }
+                link.slots[id]?.closedAfterRevision = nil
+                link.slots[id]?.last = row
             }
         }
     }

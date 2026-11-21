@@ -526,10 +526,12 @@ public final class SharedCatalogSync: SyncZoneHandler {
 
     private func forget(_ id: SyncRecordID) {
         guard let prior = state.remote[id]?.item else { return }
-        if let edit = state.pending.removeValue(forKey: id), !edit.item.removed {
+        let tombstone = prior.tombstone
+        // A repeated deletion during baseline is also the base for a version the user explicitly chose to restore.
+        if state.pending[id]?.base != tombstone, let edit = state.pending.removeValue(forKey: id), !edit.item.removed {
             state.conflicts[id] = edit
         }
-        state.remote[id] = .init(item: prior.tombstone, fields: nil)
+        state.remote[id] = .init(item: tombstone, fields: nil)
     }
 
     private func trust(_ user: String) {

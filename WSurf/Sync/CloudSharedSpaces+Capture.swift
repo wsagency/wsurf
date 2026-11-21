@@ -80,6 +80,7 @@ extension CloudSharedSpaces {
         guard !applying, !browser.opensPrivately, !browser.isApplyingProfilePins, !browser.isReadingSharedSession, isEnabled(.spaces, for: profile),
               let entry = links[profile.id]?.slots[id], let prior = entry.last else { return }
         links[profile.id]?.slots[id]?.closedAfterRevision = browser.sessionRevision
+        links[profile.id]?.slots[id]?.editedAfterRevision = nil
         links[profile.id]?.slots[id]?.last = prior.tombstone
         catalog.stage(prior.tombstone, for: profile.id)
         persistLinks()
@@ -91,22 +92,91 @@ extension CloudSharedSpaces {
         return slot.window == browser.windowID && slot.last?.removed == false
     }
 
-    func applyPendingCloses(in browser: BrowserModel) {
-        guard let slots = links[browser.context.profile.id]?.slots else { return }
-        for (id, slot) in slots where slot.window == browser.windowID && slot.closedAfterRevision != nil {
-            browser.removeSharedRow(id)
+    func liveLocalEdit(_ key: SyncRecordID, in profile: UUID) -> SharedSpaceItem? {
+        let edit = catalog.state.pending[key] ?? catalog.state.conflicts[key]
+        guard let edit, edit.profile == profile, !edit.item.removed else { return nil }
+        return edit.item
+    }
+
+    func restoreWindowEdits(in browser: BrowserModel, only records: Set<UUID>? = nil) {
+        let profile = browser.context.profile
+        guard !browser.opensPrivately, browser.windowKind == .standard, var link = links[profile.id] else { return }
+        let enabled = isEnabled(.spaces, for: profile)
+        reconcileCloses(in: browser, link: &link, enabled: enabled, only: records)
+        if link != links[profile.id] {
+            links[profile.id] = link
+            persistLinks()
+        }
+        guard enabled else { return }
+        let slots = link.slots.filter { $0.value.window == browser.windowID }
+        let spaces = Dictionary(uniqueKeysWithValues: link.spaces.map { ($0.value, $0.key) })
+        let edits = slots.compactMap { _, slot -> SharedSpaceItem? in
+            guard records?.contains(slot.cloudID) != false, slot.pinID == nil, let last = slot.last, !last.removed, last.profileID == link.profile,
+                  last.spaceID.flatMap({ spaces[$0] }) != nil else { return nil }
+            if let revision = slot.editedAfterRevision {
+                return browser.sessionRevision <= revision ? last : nil
+            }
+            // Older checkpoints kept the authored row in the outbox. A conflicting remote close still wins.
+            guard liveLocalEdit(last.recordID, in: profile.id) != nil, catalog.item(last.id, in: .spaces)?.removed == false else { return nil }
+            return last
+        }
+        guard !edits.isEmpty else { return }
+        let editing = Set(edits.map(\.id))
+        let affectedSpaces = Set(edits.compactMap(\.spaceID))
+        let parents = browser.reconciledTree().parents()
+        // Keep existing SQLite rows as placement anchors without replaying their cached titles or URLs.
+        let anchors = slots.compactMap { local, slot -> (SidebarItem, SharedSpaceItem)? in
+            guard slot.pinID == nil, var row = slot.last, !row.removed, !editing.contains(row.id) else { return nil }
+            let item: SidebarItem = row.kind == .folder ? .folder(local) : .tab(local)
+            guard let space = browser.spaceID(ofItem: item).flatMap({ link.spaces[$0] }), affectedSpaces.contains(space) else { return nil }
+            row.spaceID = space
+            row.parentID = parents[item].flatMap { slots[$0]?.cloudID }
+            return (item, row)
+        }
+        let ids = Dictionary(uniqueKeysWithValues: slots.map { ($0.value.cloudID, $0.key) })
+        browser.applySharedRows(edits, spaces: spaces, ids: ids, anchors: Dictionary(uniqueKeysWithValues: anchors))
+    }
+
+    private func reconcileCloses(in browser: BrowserModel, link: inout SharedProfileLinks, enabled: Bool, only records: Set<UUID>?) {
+        let profile = browser.context.profile.id
+        for (id, slot) in link.slots where slot.window == browser.windowID && records?.contains(slot.cloudID) != false {
+            guard let last = slot.last else { continue }
+            let key = last.recordID
+            if enabled, catalog.state.conflicts[key]?.profile == profile, catalog.state.remote[key]?.item.removed == true {
+                if browser.removeSharedRow(id) {
+                    link.slots[id]?.closedAfterRevision = slot.closedAfterRevision ?? browser.sessionRevision
+                    link.slots[id]?.editedAfterRevision = nil
+                    link.slots[id]?.last = last.tombstone
+                }
+                continue
+            }
+            guard slot.closedAfterRevision != nil else { continue }
+            // The chosen version may have reached the checkpoint before the close marker was retired.
+            let kept = last.removed ? liveLocalEdit(key, in: profile) : last
+            if enabled, let kept, !kept.removed, kept.profileID == link.profile, catalog.item(kept.id, in: .spaces)?.removed == false {
+                link.slots[id]?.last = kept
+                link.slots[id]?.closedAfterRevision = nil
+                link.slots[id]?.editedAfterRevision = browser.sessionRevision
+            } else {
+                browser.removeSharedRow(id)
+            }
         }
     }
 
     func didSaveWindow(_ browser: BrowserModel, revision: Int64) {
-        let profileID = browser.context.profile.id
-        guard browser.sessionRevision == revision, let slots = links[profileID]?.slots else { return }
-        let saved = slots.filter { id, slot in
-            guard slot.window == browser.windowID, let closed = slot.closedAfterRevision, revision > closed else { return false }
-            return browser.tab(id: id) == nil && browser.folder(id: id) == nil
+        let profile = browser.context.profile.id
+        guard browser.sessionRevision == revision, var link = links[profile] else { return }
+        for (id, slot) in link.slots where slot.window == browser.windowID {
+            if let edited = slot.editedAfterRevision, revision > edited {
+                link.slots[id]?.editedAfterRevision = nil
+            }
+            if let closed = slot.closedAfterRevision, revision > closed, let last = slot.last, last.removed,
+               browser.tab(id: id) == nil, browser.folder(id: id) == nil, liveLocalEdit(last.recordID, in: profile) == nil {
+                link.slots[id] = nil
+            }
         }
-        guard !saved.isEmpty else { return }
-        links[profileID]?.slots = slots.filter { saved[$0.key] == nil }
+        guard link != links[profile] else { return }
+        links[profile] = link
         persistLinks()
     }
 
@@ -155,6 +225,7 @@ extension CloudSharedSpaces {
                 if let prior = previous?.last, !prior.removed {
                     leaving.append(prior.tombstone)
                     link.slots[local]?.last = prior.tombstone
+                    link.slots[local]?.editedAfterRevision = nil
                 }
                 continue
             }
@@ -162,7 +233,8 @@ extension CloudSharedSpaces {
             item.order = previous?.last?.order ?? ""
             values[local] = item
             groups[item.parentID ?? space, default: []].append(local)
-            link.slots[local] = .init(cloudID: cloudID, window: browser.windowID, last: previous?.last)
+            let edited = previous?.editedAfterRevision.map { previous?.window == browser.windowID ? $0 : browser.sessionRevision }
+            link.slots[local] = .init(cloudID: cloudID, window: browser.windowID, last: previous?.last, editedAfterRevision: edited)
         }
         if restoredMembership {
             browser.sidebarDidChange()
@@ -182,6 +254,7 @@ extension CloudSharedSpaces {
                 if link.slots[local]?.last != item {
                     edits.append(outgoingRow(item, after: link.slots[local]?.last, window: browser.windowID, link: link))
                     link.slots[local]?.last = item
+                    link.slots[local]?.editedAfterRevision = browser.sessionRevision
                 }
             }
         }

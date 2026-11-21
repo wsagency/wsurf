@@ -24,13 +24,11 @@ extension BrowserModel {
         return true
     }
 
-    func applySharedRows(_ rows: [SharedSpaceItem], spaces: [UUID: UUID], ids: [UUID: UUID]) {
+    func applySharedRows(_ rows: [SharedSpaceItem], spaces: [UUID: UUID], ids: [UUID: UUID], anchors: [SidebarItem: SharedSpaceItem] = [:]) {
         let tree = reconciledTree()
         let priorActive = activeTabID
         let priorSpace = currentSpaceID
-        var items: [UUID: SidebarItem] = [:]
-        var localRows: [SidebarItem: SharedSpaceItem] = [:]
-        let foldersHere = Set(rows.filter { $0.kind == .folder }.map(\.id))
+        var localRows = anchors
         for row in rows {
             guard let id = ids[row.id], let space = row.spaceID.flatMap({ spaces[$0] }) else { continue }
             let item: SidebarItem
@@ -63,10 +61,10 @@ extension BrowserModel {
             default:
                 continue
             }
-            items[row.id] = item
             localRows[item] = row
         }
-        let shared = Set(items.values)
+        let shared = Set(localRows.keys)
+        let foldersHere = Set(localRows.values.lazy.filter { $0.kind == .folder }.map(\.id))
         var root: [SidebarItem] = []
         var children: [UUID: [SidebarItem]] = [:]
         let sorted = localRows.sorted { ($0.value.order, $0.value.id.uuidString) < ($1.value.order, $1.value.id.uuidString) }

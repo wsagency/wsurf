@@ -518,7 +518,7 @@ extension BrowserModel {
         guard tabs.isEmpty, folders.isEmpty else { return }
         isReadingSharedSession = true
         readSession()
-        sharedSpaceService?.applyPendingCloses(in: self)
+        sharedSpaceService?.restoreWindowEdits(in: self)
         isReadingSharedSession = false
         sharedSpaceService?.applyCatalog(to: self)
     }
