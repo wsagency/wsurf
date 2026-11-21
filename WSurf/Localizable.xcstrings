@@ -2134,6 +2134,9 @@
     "Check for updates" : {
 
     },
+    "Check iCloud Copy" : {
+      "comment" : "Checks only the selected vault’s zone in the currently signed-in account."
+    },
     "Check for Updates" : {
       "comment" : "Button in the update row on the About settings page that asks the update server whether a newer release exists. Title Case; a command."
     },
@@ -3435,6 +3438,9 @@
     "iCloud" : {
       "comment" : "Title of the section on a profile’s settings page that holds the switch for sharing the profile’s tabs through iCloud. iCloud is Apple’s product name — leave as is."
     },
+    "iCloud copy" : {
+      "comment" : "Settings row for checking whether a previously synced vault has a copy in the current account."
+    },
     "Icons only" : {
       "comment" : "Title of the switch on the Appearance settings page that narrows the sidebar to favicons alone, and the title of that same row in Settings search. Sentence case."
     },
@@ -3814,6 +3820,9 @@
     },
     "WSurf fills this field and saves the password for %@." : {
       "comment" : "What Use Password does, at the bottom of the Generate Password sheet, for a form without a confirmation field and without a username. %@ is the website (example.com). A full sentence."
+    },
+    "WSurf has no Apple Account saved for this vault. This Mac keeps its copy." : {
+      "comment" : "Settings caption when previous sync history has no account or reliable removal information."
     },
     "WSurf is using %@ instead." : {
       "comment" : "Settings → Assistant. %@ is the provider name of the stand-in, e.g. \"Apple Intelligence\". Caption shown when the chosen provider is not ready and another one serves replies. WSurf is the application name and is never translated."
@@ -7621,11 +7630,17 @@
     "This vault can’t take this entry on this Mac." : {
       "comment" : "Row caption in the Review Sync Changes sheet; information only. The vault refused the entry, for example because of a limit."
     },
+    "This vault is in the Apple Account signed in on this Mac." : {
+      "comment" : "The selected vault’s zone was found during an explicit iCloud check."
+    },
     "This vault may still be in iCloud. WSurf couldn’t confirm its removal or which Apple Account was used. This Mac keeps its copy." : {
       "comment" : "Settings caption for a credential vault removed by an earlier version without an account or a confirmed deletion."
     },
     "This vault on this Mac is older than when it last synced, so syncing stopped. Turn Sync with iCloud off and on to compare it with iCloud." : {
       "comment" : "Caption of the Sync with iCloud switch when this Mac’s vault file is older than the last state it synced, for example after a restore from a backup. Sync with iCloud is the name of the switch."
+    },
+    "This vault was not found in the Apple Account signed in on this Mac." : {
+      "comment" : "The selected vault’s zone was absent during an explicit iCloud check."
     },
     "This vault was removed from iCloud. This Mac keeps its copy. Turn on Sync with iCloud to upload this copy again." : {
       "comment" : "Caption of the Sync with iCloud switch, and of the Removed from iCloud card, after the vault’s iCloud copy was removed from another device. Sync with iCloud is the name of the switch."
@@ -11819,6 +11834,9 @@
     },
     "Vault name" : {
       "comment" : "Placeholder of the text field where the vault’s name is typed in the Delete Vault sheet. Also the VoiceOver label of the vault name field in the Name row and in the Create Credential Vault sheet. A noun phrase."
+    },
+    "Vault sync is off" : {
+      "comment" : "Vault tab heading after an account change. The former account may be unknown."
     },
     "Vaults" : {
       "comment" : "Title of the section on the Settings tab of Settings › Autofill that lists the profile’s vaults and their options: name, lock time, default vault, delete. A vault is an encrypted store of credentials. Plural noun, Sentence case."

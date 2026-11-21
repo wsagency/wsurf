@@ -59,35 +59,55 @@ extension VaultSync {
         guard actual == owner, state.accountUser == owner, token(key) == session else { throw VaultSyncFailure.unavailable }
     }
 
-    /// A fresh removal choice applies only to the signed-in account, including when the old receipt named no owner.
-    func requestRemoval(_ key: VaultKey, confirmingAccount: String?) {
-        guard let owner = state.accountUser, !owner.isEmpty, verifiedRemovals[key] == owner || confirmingAccount == owner,
-              accountAvailable != false, let database = database(key.profileID),
-              let engine, let checker = engine as? any VaultZoneChecking else { return }
+    /// Only the selected zone is inspected. The result describes the currently verified account.
+    public func checkCloudCopy(profileID: UUID, vaultID: UUID, for user: String) async throws -> Bool {
+        let key = try checkedKey(profileID, vaultID), session = token(key)
+        return try await serial(key) { [self] in
+            guard canManageCloudCopy(profileID: profileID, vaultID: vaultID), connectedAccount == user,
+                  let engine, let checker = engine as? any VaultZoneChecking else { throw VaultSyncFailure.unavailable }
+            try await verifyRemovalOwner(user, key: key, session: session, engine: engine, checker: checker)
+            let exists = try await checker.vaultZoneExists(key.zone)
+            try await verifyRemovalOwner(user, key: key, session: session, engine: engine, checker: checker)
+            return exists
+        }
+    }
+
+    /// Settings waits for the confirmed target to be recorded or receives an error it can show.
+    public func removeFromICloud(profileID: UUID, vaultID: UUID, confirmingAccount user: String) async throws {
+        let key = try checkedKey(profileID, vaultID), session = token(key)
+        try await serial(key) { [self] in
+            try await requestRemovalNow(key, session: session, owner: user, explicitlyConfirmed: true)
+        }
+    }
+
+    func retryRemoval(_ key: VaultKey) {
+        guard let owner = state.accountUser, verifiedRemovals[key] == owner else { return }
         let session = token(key)
         enqueue(key) { [weak self] in
-            guard let self else { return }
-            do {
-                try await verifyRemovalOwner(owner, key: key, session: session, engine: engine, checker: checker)
-                let requested = try database.write { tx in
-                    guard var row = try tx.vault(key.vaultID), !row.enabled else { return false }
-                    let retry = row.status == .removalFailed && row.removalOwner == owner && verifiedRemovals[key] == owner
-                    let freshChoice = row.status == .removalUnconfirmed && confirmingAccount == owner
-                    guard retry || freshChoice else { return false }
-                    row.approvedUser = owner
-                    row.legacyRemovalUser = nil
-                    row.status = .removalPending
-                    try tx.save(row)
-                    return true
-                }
-                if requested {
-                    verifiedRemovals[key] = owner
-                    engine.add([.deleteZone(key.zone)])
-                    refresh(key)
-                }
-            } catch {
-                // No deletion is queued when the account cannot be verified or the decision cannot be stored.
-            }
+            try? await self?.requestRemovalNow(key, session: session, owner: owner, explicitlyConfirmed: false)
         }
+    }
+
+    private func requestRemovalNow(_ key: VaultKey, session: Int, owner: String, explicitlyConfirmed: Bool) async throws {
+        guard !owner.isEmpty, connectedAccount == owner, let database = database(key.profileID),
+              let engine, let checker = engine as? any VaultZoneChecking else { throw VaultSyncFailure.unavailable }
+        try await verifyRemovalOwner(owner, key: key, session: session, engine: engine, checker: checker)
+        if explicitlyConfirmed, enabledRow(key) != nil {
+            deleteZone(key)
+            guard !halted.contains(key) else { throw VaultSyncFailure.unavailable }
+            return
+        }
+        try database.write { tx in
+            guard var row = try tx.vault(key.vaultID), !row.enabled else { throw VaultSyncFailure.unavailable }
+            let retry = row.status == .removalFailed && row.removalOwner == owner && verifiedRemovals[key] == owner
+            guard retry || (explicitlyConfirmed && row.canManageCloudCopy) else { throw VaultSyncFailure.unavailable }
+            row.approvedUser = owner
+            row.legacyRemovalUser = nil
+            row.status = .removalPending
+            try tx.save(row)
+        }
+        verifiedRemovals[key] = owner
+        engine.add([.deleteZone(key.zone)])
+        refresh(key)
     }
 }

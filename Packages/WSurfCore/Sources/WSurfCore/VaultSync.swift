@@ -49,6 +49,7 @@ nonisolated struct VaultSyncSummary: Equatable {
     var unreadable = 0
     var pendingAdoptionUser: String?
     var removalToCheck: String?
+    var canManageCloudCopy = false
     var parked = 0
     var holding = 0
 }
@@ -85,7 +86,7 @@ public final class VaultSync: SyncEngineDelegate {
     @ObservationIgnored let debounce: Duration
     @ObservationIgnored let clock: any Clock<Duration>
     @ObservationIgnored let persist: (VaultSyncAppState) -> Void
-    @ObservationIgnored var engine: (any SyncEngine)?
+    var engine: (any SyncEngine)?
     @ObservationIgnored var databases: [UUID: VaultSyncDatabase] = [:]
     /// Profiles being erased: their folder is about to go, so their database is never opened again.
     @ObservationIgnored var erased: Set<UUID> = []
@@ -334,6 +335,16 @@ public final class VaultSync: SyncEngineDelegate {
         return .synced
     }
 
+    /// The vault engine is attached and the account is available. Each confirmed action checks the live identity again.
+    public var connectedAccount: String? {
+        guard engine is any VaultZoneChecking, accountAvailable == true, let user = state.accountUser, !user.isEmpty else { return nil }
+        return user
+    }
+
+    public func canManageCloudCopy(profileID: UUID, vaultID: UUID) -> Bool {
+        summaries[VaultKey(profileID: profileID, vaultID: vaultID)]?.canManageCloudCopy == true
+    }
+
     /// Whether this Mac syncs the vault now (whatever its status), for the copy that warns before a deletion.
     public func isSyncing(profileID: UUID, vaultID: UUID) -> Bool {
         summaries[VaultKey(profileID: profileID, vaultID: vaultID)]?.enabled == true
@@ -376,7 +387,7 @@ public final class VaultSync: SyncEngineDelegate {
     public func enable(profileID: UUID, vaultID: UUID, confirmingAccount user: String? = nil) async throws {
         let key = try checkedKey(profileID, vaultID)
         try await serial(key) { [self] in
-            guard user == nil || user == state.accountUser else { throw VaultSyncFailure.unavailable }
+            guard user == nil || user == connectedAccount else { throw VaultSyncFailure.unavailable }
             try await enableNow(key)
         }
     }
@@ -394,13 +405,12 @@ public final class VaultSync: SyncEngineDelegate {
     }
 
     /// Deletes the vault's zone in iCloud. Every Mac keeps its copy.
-    public func removeFromICloud(profileID: UUID, vaultID: UUID, confirmingAccount user: String? = nil) {
+    public func removeFromICloud(profileID: UUID, vaultID: UUID) {
         let key = VaultKey(profileID: profileID, vaultID: vaultID)
-        guard !excluded.contains(profileID), user == nil || user == state.accountUser else { return }
-        switch status(profileID: profileID, vaultID: vaultID) {
-        case .removalFailed, .removalUnconfirmed:
-            requestRemoval(key, confirmingAccount: user)
-        default:
+        guard !excluded.contains(profileID) else { return }
+        if status(profileID: profileID, vaultID: vaultID) == .removalFailed {
+            retryRemoval(key)
+        } else {
             deleteZone(key)
         }
     }
@@ -688,7 +698,7 @@ public final class VaultSync: SyncEngineDelegate {
     func loadDatabases(onlyPendingRemovals: Bool = false) {
         for profileID in host.profileIDs() {
             guard let database = database(profileID), let rows = try? database.read({ try $0.vaults() }) else { continue }
-            for row in rows where !onlyPendingRemovals || row.status == .removalPending || row.status == .removalFailed || row.status == .removalUnconfirmed {
+            for row in rows where !onlyPendingRemovals || row.status == .removalPending || row.status == .removalFailed || row.canManageCloudCopy {
                 refresh(VaultKey(profileID: profileID, vaultID: row.vaultID))
             }
         }
@@ -775,7 +785,7 @@ public final class VaultSync: SyncEngineDelegate {
             enabled: row.enabled && !otherAccount, stored: otherAccount ? .accountChanged : stored, outbox: counts.outbox, inbox: counts.inbox, review: counts.review,
             hasPendingVault: row.pendingMark != nil, isHeldBack: row.dirty, isReading: row.needsFetch,
             isUnlocked: unlocked.contains(key), notSyncable: tally.notSyncable, unreadable: tally.unreadable, pendingAdoptionUser: row.pendingAdoptionUser,
-            removalToCheck: needsCheck ? owner : nil, parked: counts.parked,
+            removalToCheck: needsCheck ? owner : nil, canManageCloudCopy: row.canManageCloudCopy, parked: counts.parked,
             holding: holding[key] ?? 0
         )
         if summaries[key] != next {

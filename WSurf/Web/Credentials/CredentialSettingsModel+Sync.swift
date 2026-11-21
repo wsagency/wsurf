@@ -90,8 +90,10 @@ extension CredentialSettingsModel {
 
     /// Turns sync on for the selected, unlocked vault: creates its zone or joins the one another Mac made.
     func enableSync(vaultID id: UUID, confirmingAccount user: String? = nil) async {
-        guard let sync = vaultSync, selectedVaultID == id else { return }
-        _ = await guarded { try await sync.enable(profileID: profile.id, vaultID: id, confirmingAccount: user) }
+        _ = await guarded {
+            guard let sync = vaultSync, selectedVaultID == id else { throw VaultSyncFailure.unavailable }
+            try await sync.enable(profileID: profile.id, vaultID: id, confirmingAccount: user)
+        }
     }
 
     /// This Mac stops syncing the vault. iCloud and the other Macs are untouched.
@@ -107,9 +109,11 @@ extension CredentialSettingsModel {
     }
 
     /// Deletes the vault's zone in iCloud. Every Mac keeps its copy.
-    func removeVaultFromICloud(vaultID id: UUID, confirmingAccount user: String?) {
-        guard selectedVaultID == id else { return }
-        vaultSync?.removeFromICloud(profileID: profile.id, vaultID: id, confirmingAccount: user)
+    func removeVaultFromICloud(vaultID id: UUID, confirmingAccount user: String?) async {
+        _ = await guarded {
+            guard let sync = vaultSync, selectedVaultID == id, let user else { throw VaultSyncFailure.unavailable }
+            try await sync.removeFromICloud(profileID: profile.id, vaultID: id, confirmingAccount: user)
+        }
     }
 
     // MARK: Adding a vault from another Mac

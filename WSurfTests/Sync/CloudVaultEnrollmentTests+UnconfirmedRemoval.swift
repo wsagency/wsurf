@@ -101,7 +101,9 @@ extension CloudVaultEnrollmentTests {
             handler.status(profileID: rig.profile, vaultID: rig.vaultID)
         }
         #expect(status(sync) == .removalUnconfirmed)
-        sync.removeFromICloud(profileID: rig.profile, vaultID: rig.vaultID, confirmingAccount: user)
+        await #expect(throws: VaultSyncFailure.unavailable) {
+            try await sync.removeFromICloud(profileID: rig.profile, vaultID: rig.vaultID, confirmingAccount: user)
+        }
         await sync.settle()
         #expect(engine.pending.isEmpty)
         engine.offline = false
@@ -123,7 +125,9 @@ extension CloudVaultEnrollmentTests {
             rig.cloud.createZone(rig.zone)
         }
         // Discovery still shows the first account. A removal confirmed during the switch cannot delete in the new account.
-        online.removeFromICloud(profileID: rig.profile, vaultID: rig.vaultID, confirmingAccount: user)
+        await #expect(throws: VaultSyncFailure.unavailable) {
+            try await online.removeFromICloud(profileID: rig.profile, vaultID: rig.vaultID, confirmingAccount: user)
+        }
         await online.settle()
         try await engine.sendNow()
         #expect((rig.cloud.zones[rig.zone] != nil) == remove && status(online) == .removalUnconfirmed)
@@ -137,7 +141,9 @@ extension CloudVaultEnrollmentTests {
         #expect((rig.cloud.zones[rig.zone] != nil) == remove && rig.cloud.recordCount == 0)
         // A retry without a target or a confirmation displayed for the previous account cannot authorize either choice.
         current.removeFromICloud(profileID: rig.profile, vaultID: rig.vaultID)
-        current.removeFromICloud(profileID: rig.profile, vaultID: rig.vaultID, confirmingAccount: user)
+        await #expect(throws: VaultSyncFailure.unavailable) {
+            try await current.removeFromICloud(profileID: rig.profile, vaultID: rig.vaultID, confirmingAccount: user)
+        }
         await #expect(throws: VaultSyncFailure.unavailable) {
             try await current.enable(profileID: rig.profile, vaultID: rig.vaultID, confirmingAccount: user)
         }
@@ -145,7 +151,7 @@ extension CloudVaultEnrollmentTests {
         try await engine.sendNow()
         #expect((rig.cloud.zones[rig.zone] != nil) == remove && rig.cloud.recordCount == 0 && status(current) == .removalUnconfirmed)
         if remove {
-            current.removeFromICloud(profileID: rig.profile, vaultID: rig.vaultID, confirmingAccount: other)
+            try await current.removeFromICloud(profileID: rig.profile, vaultID: rig.vaultID, confirmingAccount: other)
             await current.settle()
             try await engine.sendNow()
             #expect(rig.cloud.zones[rig.zone] == nil && status(current) == .removed(.deleted))

@@ -38,6 +38,11 @@ nonisolated struct VaultRow: Equatable {
         !enabled && status == .active ? approvedUser : nil
     }
 
+    /// These disabled histories allow a fresh choice about this account's copy. An old account change alone proves no removal.
+    var canManageCloudCopy: Bool {
+        !enabled && approvedUser == nil && legacyRemovalUser == nil && (status == .removalUnconfirmed || status == .accountChanged)
+    }
+
     var removalOwner: String? {
         guard !enabled, status == .removalPending || status == .removalFailed || status == .removedDeleted else { return nil }
         return approvedUser ?? legacyRemovalUser

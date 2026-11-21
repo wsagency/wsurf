@@ -88,7 +88,9 @@ struct VaultSyncCard: View {
 
     private func removedCard(_ vaultID: UUID, _ status: VaultSyncStatus) -> some View {
         SettingsCard {
-            DetailRow(verbatimTitle: String(localized: "Removed from iCloud"), verbatimCaption: CloudVaultRow.statusText(status, isUnlocked: true)) {
+            let unowned = model.vaultSync?.canManageCloudCopy(profileID: model.profile.id, vaultID: vaultID) == true
+            let title = status == .accountChanged ? String(localized: "Vault sync is off") : String(localized: "Removed from iCloud")
+            DetailRow(verbatimTitle: title, verbatimCaption: CloudVaultRow.statusText(status, isUnlocked: true, unownedHistory: unowned)) {
                 HStack(spacing: 8) {
                     Button("Show in Settings", action: showSettings).buttonStyle(.bordered)
                     Button("Dismiss") { model.dismissedSyncNotices.insert(vaultID) }.buttonStyle(.bordered)

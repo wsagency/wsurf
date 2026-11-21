@@ -14,6 +14,25 @@ import Testing
 @MainActor
 @Suite(.serialized)
 struct VaultAdoptionSettingsTests {
+    @Test func losingVaultDiscoveryAfterConfirmationShowsAnErrorForEitherChoice() async throws {
+        try await withDevicePair { pair in
+            let setup = try await VaultManagerFixture.make(profile: pair.profile, passkeys: pair.passkeysB, vaults: [.unlocked])
+            let vault = try #require(setup.vaults.first)
+            let model = CredentialSettingsModel(profile: pair.profile, manager: vault.manager)
+            await model.load()
+            try #require(model.selectedVaultID == vault.vaultID)
+            let unavailable = try #require(CredentialSettingsModel.message(for: VaultSyncFailure.unavailable))
+            let previous = CloudSync.shared
+            defer { CloudSync.shared = previous }
+            CloudSync.shared = nil
+            await model.removeVaultFromICloud(vaultID: vault.vaultID, confirmingAccount: pair.cloud.user)
+            #expect(model.error == unavailable)
+            model.error = nil
+            await model.enableSync(vaultID: vault.vaultID, confirmingAccount: pair.cloud.user)
+            #expect(model.error == unavailable)
+        }
+    }
+
     @Test(arguments: [false, true])
     func aPasskeyCreatedVaultOffersExplicitRetryAfterRelaunch(enrollmentWriteFails: Bool) async throws {
         try await withDevicePair { pair in

@@ -11,6 +11,7 @@ struct CloudVaultRow: View {
     let model: CredentialSettingsModel
     let run: (@escaping () async throws -> Void) -> Void
 
+    @State private var checkedCopy: (vaultID: UUID, account: String, exists: Bool)?
     @State private var confirmation: (vaultID: UUID, account: String?)?
     @State private var confirmsRemoval = false
     @State private var confirmsUpload = false
@@ -22,11 +23,13 @@ struct CloudVaultRow: View {
             let tally = sync.tally(profileID: model.profile.id, vaultID: vaultID)
             let held = sync.heldRemovals(profileID: model.profile.id, vaultID: vaultID)
             let isOn = Self.isOn(status)
-            let needsAccount = status == .removalUnconfirmed && (sync.accountAvailable != true || sync.state.accountUser == nil)
+            let hasHistory = sync.canManageCloudCopy(profileID: model.profile.id, vaultID: vaultID)
+            let account = sync.connectedAccount
+            let needsAccount = hasHistory && account == nil
             RowSeparator()
             DetailRow(
                 verbatimTitle: String(localized: "Sync with iCloud"),
-                verbatimCaption: Self.caption(status: status, held: held, isUnlocked: model.isUnlocked, tally: tally)
+                verbatimCaption: Self.caption(status: status, held: held, isUnlocked: model.isUnlocked, tally: tally, unownedHistory: hasHistory)
             ) {
                 SettingsToggle(Binding(get: { isOn }, set: { turn($0, from: status, vaultID: vaultID) }))
                     .disabled(model.isBusy || needsAccount || status == .removalPending || (!isOn && !model.isUnlocked))
@@ -43,9 +46,25 @@ struct CloudVaultRow: View {
             } message: {
                 Text("This Mac’s copy is encrypted and uploaded. Entries that differ from iCloud wait for your review.")
             }
-            .onChange(of: sync.state.accountUser) {
-                confirmsRemoval = false
-                confirmsUpload = false
+            .onChange(of: account) {
+                checkedCopy = nil
+                closeUnavailableConfirmation(account: account)
+            }
+            .onDisappear { closeUnavailableConfirmation(account: model.vaultSync?.connectedAccount) }
+            if hasHistory {
+                RowSeparator()
+                DetailRow(title: "iCloud copy", caption: copyCheckText(vaultID: vaultID, account: account)) {
+                    Button("Check iCloud Copy") {
+                        guard let account else { return }
+                        checkedCopy = nil
+                        run {
+                            let exists = try await sync.checkCloudCopy(profileID: model.profile.id, vaultID: vaultID, for: account)
+                            checkedCopy = (vaultID, account, exists)
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(model.isBusy || needsAccount)
+                }
             }
             if held > 0 {
                 RowSeparator()
@@ -63,7 +82,7 @@ struct CloudVaultRow: View {
                     Text("WSurf moves them to Trash on your other devices that sync this vault. You can restore them there.")
                 }
             }
-            if isOn || status == .removalFailed || status == .removalUnconfirmed {
+            if isOn || status == .removalFailed || hasHistory {
                 RowSeparator()
                 DetailRow(title: "Remove from iCloud") {
                     let label: LocalizedStringKey = status == .removalFailed ? "Try Again" : "Remove from iCloud…"
@@ -79,7 +98,7 @@ struct CloudVaultRow: View {
                 ) {
                     Button("Remove from iCloud", role: .destructive) {
                         guard let confirmation else { return }
-                        model.removeVaultFromICloud(vaultID: confirmation.vaultID, confirmingAccount: confirmation.account)
+                        run { await model.removeVaultFromICloud(vaultID: confirmation.vaultID, confirmingAccount: confirmation.account) }
                     }
                     Button("Cancel", role: .cancel) {}
                 } message: {
@@ -99,6 +118,18 @@ struct CloudVaultRow: View {
                 }
             }
         }
+    }
+
+    private func closeUnavailableConfirmation(account: String?) {
+        guard confirmsRemoval || confirmsUpload, let confirmation, confirmation.account != account else { return }
+        confirmsRemoval = false
+        confirmsUpload = false
+        model.error = CredentialSettingsModel.message(for: VaultSyncFailure.unavailable)
+    }
+
+    private func copyCheckText(vaultID: UUID, account: String?) -> LocalizedStringResource? {
+        guard let checkedCopy, checkedCopy.vaultID == vaultID, checkedCopy.account == account else { return nil }
+        return checkedCopy.exists ? "This vault is in the Apple Account signed in on this Mac." : "This vault was not found in the Apple Account signed in on this Mac."
     }
 
     private var vaultName: String {
@@ -131,8 +162,8 @@ struct CloudVaultRow: View {
     }
 
     /// The status in words, and what else is true of the vault: deletions that wait for the owner, whatever the status is.
-    static func caption(status: VaultSyncStatus, held: Int, isUnlocked: Bool, tally: VaultSyncTally) -> String {
-        var parts = [Self.statusText(status, isUnlocked: isUnlocked)]
+    static func caption(status: VaultSyncStatus, held: Int, isUnlocked: Bool, tally: VaultSyncTally, unownedHistory: Bool = false) -> String {
+        var parts = [Self.statusText(status, isUnlocked: isUnlocked, unownedHistory: unownedHistory)]
         if held > 0, status != .holdingRemovals(held) {
             parts.append(Self.statusText(.holdingRemovals(held), isUnlocked: isUnlocked))
         }
@@ -150,7 +181,7 @@ struct CloudVaultRow: View {
         return parts.joined(separator: " ")
     }
 
-    static func statusText(_ status: VaultSyncStatus, isUnlocked: Bool) -> String {
+    static func statusText(_ status: VaultSyncStatus, isUnlocked: Bool, unownedHistory: Bool = false) -> String {
         switch status {
         case .off:
             if isUnlocked {
@@ -194,6 +225,8 @@ struct CloudVaultRow: View {
             String(localized: "Couldn’t remove this vault from iCloud. It’s still there, and this Mac no longer syncs it.")
         case .removalPending:
             String(localized: "Waiting for iCloud to confirm removal. This Mac keeps its copy.")
+        case .accountChanged where unownedHistory:
+            String(localized: "WSurf has no Apple Account saved for this vault. This Mac keeps its copy.")
         case .accountChanged:
             String(localized: """
                 You’re signed in with a different Apple Account. This Mac keeps its copy. Turn on Sync with iCloud to upload it to this \
