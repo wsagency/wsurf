@@ -515,20 +515,28 @@ public final class VaultSync: SyncEngineDelegate {
         summaries[key] = nil
     }
 
-    /// The profile is being erased: the zone of every vault this Mac synced goes, and its database closes.
+    /// Standalone vault hosts without a profile catalog can still retire their currently synced zones.
     public func profileErased(_ profileID: UUID) {
-        guard !excluded.contains(profileID) else { return }
-        for key in summaries.keys where key.profileID == profileID {
-            if enabledRow(key) != nil {
-                engine?.add([.deleteZone(key.zone)])
+        if let transport = engine as? any VaultProfileZoneDeleting {
+            for key in enabledKeys where key.profileID == profileID {
+                guard let (_, row) = enabledRow(key), let owner = row.approvedUser else { continue }
+                let removal = VaultProfileRemoval(profileID: profileID, vaultID: key.vaultID, owner: owner)
+                housekeeping.append(Task { try? await transport.deleteVaultZone(removal) })
             }
+        }
+        forgetErasedProfile(profileID)
+    }
+
+    /// Stop the local writers and close the database. The profile list owns its confirmed zones until CloudKit acknowledges them.
+    public func forgetErasedProfile(_ profileID: UUID) {
+        guard !excluded.contains(profileID), erased.insert(profileID).inserted else { return }
+        for key in summaries.keys where key.profileID == profileID {
             state.remote[key.zone] = nil
             clearAssets(key)
             forget(key)
             summaries[key] = nil
         }
         persist(state)
-        erased.insert(profileID)
         databases[profileID] = nil
     }
 

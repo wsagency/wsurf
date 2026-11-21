@@ -257,6 +257,7 @@ private struct ProfileDetailPage: View {
     @State private var deleting = false
     @State private var deletionError: String?
     @State private var vaultNote: String?
+    @State private var vaultRemovals: Set<VaultProfileRemoval> = []
     @State private var clearing = false
     @FocusState private var editing: Bool
 
@@ -294,7 +295,12 @@ private struct ProfileDetailPage: View {
                     // Counts are read first so the confirmation states what is verified, or that it can't be known.
                     Task {
                         vaultNote = await CredentialErasureNote.note(for: profile)
-                        deleting = true
+                        do {
+                            vaultRemovals = try profile.vaultRemovals()
+                            deleting = true
+                        } catch {
+                            deletionError = error.localizedDescription
+                        }
                     }
                 }
                     .disabled(coordinator.isSwitchingProfile)
@@ -311,7 +317,7 @@ private struct ProfileDetailPage: View {
                         if let vaultNote {
                             Text(verbatim: vaultNote)
                         }
-                        if CloudSync.shared?.vaults?.hasSyncedVaults(profileID: profile.id) == true {
+                        if !vaultRemovals.isEmpty {
                             Text("Its vaults are also removed from iCloud. Your other devices keep their copies. To keep them in iCloud, turn off Sync with iCloud for each vault first.")
                         }
                     }
@@ -436,7 +442,7 @@ private struct ProfileDetailPage: View {
     private func delete(_ profile: Profile) async {
         deleting = false
         deletionError = nil
-        let result = await coordinator.deleteProfile(profile)
+        let result = await coordinator.deleteProfile(profile, confirmedVaults: vaultRemovals)
         switch result {
         case .success:
             onBack()

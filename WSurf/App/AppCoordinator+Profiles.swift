@@ -5,12 +5,13 @@
 
 import Foundation
 import os
+import WSurfCore
 
 extension AppCoordinator {
     // MARK: - Profiles
 
-    func deleteProfile(_ profile: Profile) async -> Result<Void, Error> {
-        await profiles.remove(profile, releaseWindows: {
+    func deleteProfile(_ profile: Profile, confirmedVaults: Set<VaultProfileRemoval>? = nil) async -> Result<Void, Error> {
+        await profiles.remove(profile, confirmedVaults: confirmedVaults, releaseWindows: {
             if let application {
                 await application.prepareToRemove(profile: profile)
             } else {

@@ -1,11 +1,20 @@
 // SPDX-FileCopyrightText: 2026 WSurf Agency
 // SPDX-License-Identifier: BUSL-1.1
 
+import CloudKit
 import Foundation
 @testable import WSurfCore
 import WSurfVault
 
-extension FakeSyncEngine: VaultCatalogReading, VaultAssetTransport, VaultZoneChecking {
+extension FakeSyncEngine: VaultCatalogReading, VaultAssetTransport, VaultZoneChecking, VaultProfileZoneDeleting {
+    func deleteVaultZone(_ removal: VaultProfileRemoval) async throws {
+        try await removal.delete(currentUser: currentAccountUser) { id in
+            guard id.ownerName == self.cloud.user, !self.failsZoneDeletes else { throw CKError(.serviceUnavailable) }
+            guard self.cloud.zones[id.zoneName] != nil else { throw CKError(.zoneNotFound) }
+            self.cloud.deleteZone(id.zoneName, reason: .deleted)
+        }
+    }
+
     func vaultZoneExists(_ zone: String) async throws -> Bool {
         _ = try await currentAccountUser()
         return cloud.zones[zone] != nil

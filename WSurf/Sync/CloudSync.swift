@@ -34,6 +34,8 @@ final class CloudSync {
     @ObservationIgnored private var vaultCatalogTask: Task<Void, Never>?
     @ObservationIgnored private var makeVaults: (() -> VaultSync)?
     @ObservationIgnored private var rememberVaultDiscovery: ((Bool) -> Void)?
+    @ObservationIgnored private var profileStore: ProfileStore?
+    @ObservationIgnored private var removingVaultZones: Set<VaultProfileRemoval> = []
     private var attachedSpaces = false
     private var attachedSettings = false
     private var isTerminating = false
@@ -103,6 +105,11 @@ final class CloudSync {
         )
         keeper.router = router
         let cloudSync = CloudSync(router: router, tabs: tabs, vaults: vaults, sharedSpaces: spaces, settingsSync: settings, clock: clock, makeEngine: makeEngine)
+        cloudSync.profileStore = profileStore
+        if let profileStore {
+            router.isLiveVaultProfile = { id in id == Profile.originalID || profileStore.verifiedProfiles?.contains { $0.id == id } == true }
+            profileStore.onVaultRemoval = { [weak cloudSync] in cloudSync?.ensureEngine() }
+        }
         if offersMacSync {
             cloudSync.startOtherDevices = {
                 guard let sharing = makeTabs() else { return nil }
@@ -249,9 +256,23 @@ final class CloudSync {
         let wantsTabs = tabs?.sync.needsEngine == true
         let wantsSpaces = sharedSpaces?.needsEngine == true
         let wantsSettings = settingsSync?.needsEngine == true
-        guard wantsTabs || vaults != nil || wantsSpaces || wantsSettings else { return }
+        let withdrawals = profileStore?.vaultRemovals ?? []
+        guard wantsTabs || vaults != nil || wantsSpaces || wantsSettings || !withdrawals.isEmpty else { return }
         let engine = engine ?? makeEngine(router, router.state.engineState)
         self.engine = engine
+        if let profileStore, let transport = engine as? any VaultProfileZoneDeleting {
+            for removal in withdrawals where removingVaultZones.insert(removal).inserted {
+                Task {
+                    defer { removingVaultZones.remove(removal) }
+                    do {
+                        try await transport.deleteVaultZone(removal)
+                        try profileStore.acknowledgeVaultRemoval(removal)
+                    } catch {
+                        // The profile list keeps this exact owner's withdrawal for the next heartbeat or launch.
+                    }
+                }
+            }
+        }
         if wantsTabs, !attachedTabs, let tabs {
             attachedTabs = true
             tabs.sync.attach(engine)
@@ -277,6 +298,9 @@ final class CloudSync {
 
     /// The heartbeat: every feature sends again what is waiting and fetches.
     func beat() {
+        if profileStore?.vaultRemovals.isEmpty == false {
+            ensureEngine()
+        }
         tabs?.beat()
         if let vaults, let engine, makeVaults != nil {
             refreshVaultCatalog(vaults, engine: engine)

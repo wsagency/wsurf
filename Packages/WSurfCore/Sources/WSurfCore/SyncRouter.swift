@@ -56,6 +56,7 @@ public final class SyncRouter: SyncEngineDelegate {
     @ObservationIgnored private let persist: (SyncRouterState) -> Void
     @ObservationIgnored private var handlers: [any SyncZoneHandler]
     @ObservationIgnored private var vaultHandler: VaultSync?
+    @ObservationIgnored public var isLiveVaultProfile: ((UUID) -> Bool)?
     @ObservationIgnored public var accountChanged: ((SyncAccountChange) -> Void)?
 
     public init(
@@ -76,6 +77,10 @@ public final class SyncRouter: SyncEngineDelegate {
     }
 
     public func allowsZoneCreation(_ zone: String) -> Bool {
+        // A restored first-upload queue may outlive the profile that owned the zone.
+        if let ids = SyncZone.vaultIDs(zone), isLiveVaultProfile?(ids.profileID) == false {
+            return false
+        }
         guard zone == SyncZone.devices || SyncZone.profileID(zone) != nil else {
             return handlers.first { $0.owns(zone: zone) }?.allowsZoneCreation(zone) ?? true
         }
