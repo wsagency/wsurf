@@ -50,9 +50,14 @@ extension BrowserModel {
 
     func adoptSpaces(from store: SpaceStore?) {
         if let store, !store.recoverMembership() {
-            pendingSpaceStore = store
-            adoptSpaces([])
+            if pendingSpaceStore?.store !== store {
+                pendingSpaceStore = (store, nil)
+                adoptSpaces([])
+            }
         } else {
+            if let pending = pendingSpaceStore, pending.store === store {
+                currentSpaceID = pending.selection
+            }
             pendingSpaceStore = nil
             adoptSpaces(store?.spaces.map(\.id) ?? [])
         }
@@ -87,17 +92,27 @@ extension BrowserModel {
 
     /// Activating a tab of another space, from ⌘K, a link or an agent, takes the window there.
     func followSpace(of tab: BrowserTab?) {
-        guard let space = tab?.spaceID, space != currentSpaceID, knownSpaceIDs.contains(space) else { return }
-        show(space: space)
+        guard let space = tab?.spaceID else { return }
+        if pendingSpaceStore != nil {
+            pendingSpaceStore?.selection = space
+        } else if space != currentSpaceID, knownSpaceIDs.contains(space) {
+            show(space: space)
+        }
     }
 
-    /// The space a restored window lands in when its active tab is a pin: that of the tab used last.
-    func landInLastUsedSpace() {
-        guard currentSpaceID != nil,
-              let space = tabs.filter({ $0.spaceID != nil }).max(by: { $0.lastActiveAt < $1.lastActiveAt })?.spaceID
-        else { return }
-        guard space != currentSpaceID, knownSpaceIDs.contains(space) else { return }
-        show(space: space)
+    /// Choose from the saved rows before an unassigned tab can inherit the first Space.
+    /// A pin belongs to every Space, so the most recently used ordinary tab decides where the window lands.
+    func restoreSpace(for activeID: UUID?) {
+        let saved = tabs.filter { tab in
+            guard let space = tab.spaceID, !tab.isPinnedForProfile else { return false }
+            return pendingSpaceStore != nil || knownSpaceIDs.contains(space)
+        }
+        guard let selection = (saved.first { $0.id == activeID } ?? saved.max { $0.lastActiveAt < $1.lastActiveAt })?.spaceID else { return }
+        if pendingSpaceStore != nil {
+            pendingSpaceStore?.selection = selection
+        } else {
+            currentSpaceID = selection
+        }
     }
 
     /// A row that became unpinned since the last settle, or was pinned, settles in the space it was on screen in
@@ -112,10 +127,11 @@ extension BrowserModel {
     // MARK: - Settling
 
     func settleSpaces(in tree: SidebarTree) {
-        if let store = pendingSpaceStore {
-            guard store.recoverMembership() else { return }
+        if let pending = pendingSpaceStore {
+            guard pending.store.recoverMembership() else { return }
             pendingSpaceStore = nil
-            selectOwnedSpaces(store.spaces.map(\.id))
+            currentSpaceID = pending.selection
+            selectOwnedSpaces(pending.store.spaces.map(\.id))
         }
         guard let currentSpaceID else { return }
         for item in tree.root {

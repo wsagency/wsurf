@@ -45,7 +45,7 @@ extension BrowserModel {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed != tab.customTitle else { return }
         tab.customTitle = trimmed == tab.pageTitle ? "" : trimmed
-        scheduleSave()
+        scheduleSave(renamed: .tab(tab.id))
     }
 
     func isKept(_ item: SidebarItem) -> Bool {
@@ -60,12 +60,16 @@ extension BrowserModel {
     /// The pin line: a root row is above it when it is kept, and everything inside a kept root folder is above it at any
     /// depth. Everything above the line is pinned.
     func isPinned(_ item: SidebarItem) -> Bool {
+        isKept(rootItem(containing: item))
+    }
+
+    func rootItem(containing item: SidebarItem) -> SidebarItem {
         let tree = reconciledTree()
         var top = item
         while let parent = tree.parent(of: top) {
             top = .folder(parent)
         }
-        return isKept(top)
+        return top
     }
 
     /// Settles the pinned pages after a change lands: a tab inside a pinned folder that has no pinned page takes the page
@@ -555,7 +559,7 @@ extension BrowserModel {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         folder.name = trimmed
-        scheduleSave()
+        scheduleSave(renamed: .folder(folder.id))
     }
 
     /// A preset color. It also puts a color the person chose out of use. One undo step.

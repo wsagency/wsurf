@@ -180,11 +180,45 @@ extension CloudSharedSpaces {
         persistLinks()
     }
 
-    func capture(_ browser: BrowserModel) {
+    /// An explicit rename can update an already shared record while the Space list is unavailable.
+    /// Its saved membership and placement stay intact, and upload waits for the list to recover.
+    private func captureLinkedRename(_ row: SidebarItem, in browser: BrowserModel, link: SharedProfileLinks) {
+        let local: UUID
+        switch row {
+        case .tab(let id), .folder(let id):
+            local = id
+        }
+        let root = browser.rootItem(containing: row)
+        guard !browser.isKept(root), let localSpace = browser.spaceID(ofItem: root), browser.spaceID(ofItem: row) == localSpace,
+              let slot = link.slots[local], slot.window == browser.windowID, slot.pinID == nil, slot.closedAfterRevision == nil,
+              var last = slot.last, !last.removed, last.profileID == link.profile,
+              let space = link.spaces[localSpace], last.spaceID == space,
+              let value = Self.row(row, id: slot.cloudID, space: space, profile: last.profileID, browser: browser),
+              value.kind == last.kind else { return }
+        if value.kind == .tab {
+            last.customTitle = value.customTitle
+        } else {
+            last.title = value.title
+        }
+        guard last != slot.last else { return }
+        let profile = browser.context.profile.id
+        links[profile]?.slots[local]?.last = last
+        links[profile]?.slots[local]?.editedAfterRevision = browser.sessionRevision
+        catalog.stage(outgoingRow(last, after: slot.last, window: browser.windowID, link: link), for: profile)
+        persistLinks()
+    }
+
+    func capture(_ browser: BrowserModel, renamed: SidebarItem? = nil) {
         let profile = browser.context.profile
         guard !applying, !browser.opensPrivately, !browser.isReadingSharedSession, browser.sessionClosedAt == nil,
               browser.windowKind == .standard, isEnabled(.spaces, for: profile),
-              var link = links[profile.id], !link.spaces.isEmpty, let group = link.profile, spaces(profile) != nil else { return }
+              var link = links[profile.id], !link.spaces.isEmpty, let group = link.profile else { return }
+        guard spaces(profile) != nil else {
+            if let renamed {
+                captureLinkedRename(renamed, in: browser, link: link)
+            }
+            return
+        }
         let tree = browser.reconciledTree()
         let parents = tree.parents()
         var groups: [UUID: [UUID]] = [:]

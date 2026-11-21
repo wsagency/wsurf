@@ -164,7 +164,7 @@ final class BrowserModel {
     }
     /// The spaces of the window's profile. A tab or folder naming any other space joins the current one.
     var knownSpaceIDs: Set<UUID> = []
-    @ObservationIgnored var pendingSpaceStore: SpaceStore?
+    @ObservationIgnored var pendingSpaceStore: (store: SpaceStore, selection: UUID?)?
     // MARK: - Tab management
 
     func makeTab(

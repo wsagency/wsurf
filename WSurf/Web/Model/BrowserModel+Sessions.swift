@@ -208,10 +208,10 @@ extension BrowserModel {
         max(.zero, min(debounce, deadline - waiting))
     }
 
-    func scheduleSave(now: ContinuousClock.Instant = ContinuousClock.now) {
+    func scheduleSave(now: ContinuousClock.Instant = ContinuousClock.now, renamed: SidebarItem? = nil) {
         noteCloudTabsChange()
         publishProfilePins()
-        sharedSpaceService?.capture(self)
+        sharedSpaceService?.capture(self, renamed: renamed)
         let since = saveWaitingSince ?? now
         saveWaitingSince = since
         let delay = Self.saveDelay(
@@ -642,11 +642,10 @@ extension BrowserModel {
         }
         storedTree = SidebarTree(root: root, children: children)
         splits = TabSplits(grids)
+        restoreSpace(for: activeID)
         sidebarDidChange()
         attachProfilePins()
 
-        // The active tab's space, or, when the active tab is a pin, the space of the tab used last.
-        landInLastUsedSpace()
         activeTabID = activeID
         for pane in activeTab.map({ splitOthers(of: $0) }) ?? [] {
             pane.realizeDeferredSession()

@@ -4,6 +4,7 @@
 // Linen portions: Apache-2.0; WSurf modifications: BUSL-1.1. See NOTICE.
 
 import Foundation
+import GRDB
 import Observation
 
 /// A named set of tabs and folders inside one profile. A space shares the profile's sign-ins, history, passwords and
@@ -30,7 +31,10 @@ final class SpaceStore {
         if let store = stores[profile.id] {
             return store
         }
-        let store = SpaceStore(profile: profile, file: AppDatabase.ownsSession ? profile.spacesFile : nil)
+        let store = SpaceStore(
+            profile: profile, file: AppDatabase.ownsSession ? profile.spacesFile : nil,
+            database: BrowserProfileContext.existing(for: profile.id)?.database ?? profile.makeDatabase()
+        )
         stores[profile.id] = store
         return store
     }
@@ -46,14 +50,14 @@ final class SpaceStore {
     @ObservationIgnored weak var sharedSpacesHost: CloudSharedSpaces?
 
     /// `file` nil keeps the spaces in memory only (tests, or a second copy of the app that owns no session).
-    init(profile: Profile, file: URL?) {
+    init(profile: Profile, file: URL?, database: @autoclosure () -> AppDatabase? = nil) {
         profileID = profile.id
         self.file = file
         let stored: [Space]?
         do {
             stored = try file.map { try Self.readSpaces(from: $0) }
         } catch CocoaError.fileReadNoSuchFile {
-            stored = []
+            stored = Self.canStartWithNewSpace(in: database()) ? [] : nil
         } catch {
             stored = nil
         }
@@ -67,6 +71,18 @@ final class SpaceStore {
                 save()
             }
         }
+    }
+
+    /// An absent file is a first launch only if no window already belongs to a Space.
+    private static func canStartWithNewSpace(in database: AppDatabase?) -> Bool {
+        guard let database else { return true }
+        guard !database.isEphemeral else { return false }
+        return (try? database.writer.read { db in
+            try Bool.fetchOne(db, sql: """
+                SELECT NOT EXISTS (SELECT 1 FROM sessionTab WHERE spaceID IS NOT NULL)
+                   AND NOT EXISTS (SELECT 1 FROM sessionFolder WHERE spaceID IS NOT NULL)
+                """)
+        }) == true
     }
 
     func space(id: UUID?) -> Space? {
