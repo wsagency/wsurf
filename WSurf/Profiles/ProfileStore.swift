@@ -13,6 +13,7 @@ final class ProfileStore {
     static let shared = ProfileStore()
 
     @ObservationIgnored private var catalog: ProfileStore?
+    @ObservationIgnored private var needsProfileListRecovery = false
     private var storedProfiles: [Profile]
     private(set) var profiles: [Profile] {
         get { catalog?.profiles ?? storedProfiles }
@@ -91,12 +92,16 @@ final class ProfileStore {
 
     init(file: URL? = nil) {
         self.file = file ?? Self.defaultFile
-        let stored = (try? Data(contentsOf: self.file))
-            .flatMap { try? JSONDecoder().decode(Stored.self, from: $0) }
-        var loaded = stored?.profiles ?? []
-        if !loaded.contains(where: { $0.isOriginal }) {
-            loaded.insert(.original(), at: 0)
+        let stored: Stored?
+        do {
+            stored = try Self.read(self.file)
+        } catch CocoaError.fileReadNoSuchFile {
+            stored = nil
+        } catch {
+            stored = nil
+            needsProfileListRecovery = true
         }
+        let loaded = Self.includingPersonal(stored?.profiles ?? [])
         storedProfiles = loaded
         let remembered = stored.map(\.currentID).flatMap { id in
             loaded.contains { $0.id == id } ? id : nil
@@ -109,6 +114,31 @@ final class ProfileStore {
         currentID = opening
         lastPersistentID = opening
         storedLastUsed = (stored?.lastUsed ?? [:]).filter { id, _ in loaded.contains { $0.id == id } }
+    }
+
+    /// The Personal fallback after an I/O failure cannot establish that a named profile was erased.
+    var verifiedProfiles: [Profile]? {
+        if let catalog {
+            return catalog.verifiedProfiles
+        }
+        if needsProfileListRecovery {
+            guard let saved = try? Self.read(file) else { return nil }
+            let restored = Self.includingPersonal(saved.profiles)
+            let ids = Set(restored.map(\.id))
+            storedProfiles = restored + storedProfiles.filter { !ids.contains($0.id) }
+            storedLastUsed = (saved.lastUsed ?? [:]).merging(storedLastUsed) { _, live in live }
+            storedLaunchProfileID = storedLaunchProfileID ?? saved.launchProfileID.flatMap { ids.contains($0) ? $0 : nil }
+            needsProfileListRecovery = false
+        }
+        return storedProfiles
+    }
+
+    private static func read(_ file: URL) throws -> Stored {
+        try JSONDecoder().decode(Stored.self, from: Data(contentsOf: file))
+    }
+
+    private static func includingPersonal(_ profiles: [Profile]) -> [Profile] {
+        profiles.contains(where: \.isOriginal) ? profiles : [.original()] + profiles
     }
 
     @discardableResult
@@ -185,10 +215,12 @@ final class ProfileStore {
         sharedSpaces: CloudSharedSpaces? = CloudSync.shared?.sharedSpaces,
         eraseData: (Profile) async -> Void = Profile.erase
     ) async -> Result<Void, Error> {
-        guard !profile.isOriginal, !profile.isPrivate, index(of: profile) != nil else { return .success(()) }
+        guard !profile.isOriginal, !profile.isPrivate else { return .success(()) }
+        guard let live = verifiedProfiles else { return .failure(CocoaError(.fileReadUnknown)) }
+        guard live.contains(where: { $0.id == profile.id }) else { return .success(()) }
         // An installation without a running iCloud service can still have consent saved by a prior launch.
         let sharedSpaces = sharedSpaces ?? CloudSharedSpaces(
-            stateFile: file.deletingLastPathComponent().appending(path: "iCloudSharedSpaces.json"), windows: { [] }
+            stateFile: file.deletingLastPathComponent().appending(path: "iCloudSharedSpaces.json"), profileStore: self, windows: { [] }
         )
         func detachSync() throws {
             let catalogResult = Result { try sharedSpaces.forgetProfile(profile.id) }
@@ -267,6 +299,7 @@ final class ProfileStore {
     }
 
     private func save() {
+        guard verifiedProfiles != nil else { return }
         if let catalog {
             if !isPrivate {
                 catalog.currentID = currentID

@@ -44,6 +44,7 @@ final class CloudSharedSpaces {
     let windows: @MainActor () -> [BrowserModel]
     let spaces: @MainActor (Profile) -> SpaceStore?
     let pins: @MainActor (Profile) -> ProfilePinStore
+    private let liveProfiles: @MainActor () -> [Profile]?
     var profiles: [UUID: Profile] = [:]
     var applying = false
     var links: [UUID: SharedProfileLinks] {
@@ -55,16 +56,30 @@ final class CloudSharedSpaces {
     @ObservationIgnored private var work: Task<Void, Never>?
 
     init(
-        stateFile: URL, profiles: [Profile] = [], windows: @escaping @MainActor () -> [BrowserModel],
+        stateFile: URL, profiles: [Profile]? = nil, profileStore: ProfileStore? = nil, windows: @escaping @MainActor () -> [BrowserModel],
         spaces: @escaping @MainActor (Profile) -> SpaceStore? = SpaceStore.shared(for:),
         pins: @escaping @MainActor (Profile) -> ProfilePinStore = { .store(for: BrowserProfileContext.shared(for: $0).database) }
     ) {
-        let storage = SharedCatalogStorage(stateFile)
+        let liveProfiles: @MainActor () -> [Profile]? = {
+            if let profileStore {
+                return profileStore.verifiedProfiles
+            }
+            if let profiles {
+                return profiles
+            }
+            return ProfileStore.shared.verifiedProfiles
+        }
+        self.liveProfiles = liveProfiles
+        let initial = liveProfiles()
+        let storage = SharedCatalogStorage(stateFile) { liveProfiles() != nil }
         self.storage = storage
         self.windows = windows
-        self.spaces = spaces
+        self.spaces = { profile in
+            guard let store = spaces(profile), store.recoverMembership() else { return nil }
+            return store
+        }
         self.pins = pins
-        self.profiles = Dictionary(profiles.filter { !$0.isPrivate }.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        self.profiles = Self.indexed(initial ?? [])
         links = storage.data.links
         catalog = SharedCatalogSync(state: storage.data.catalog) { state in
             storage.data.catalog = state
@@ -87,9 +102,24 @@ final class CloudSharedSpaces {
             links.merge(parked) { active, _ in active }
         }
         catalog.onReceive = { [weak self] in self?.applyCatalog() }
-        if storage.hasOptOuts || !storage.readable {
-            restoreOptOuts()
+        catalog.canUpload = { [weak self] edit in
+            guard let self, let profile = self.profiles[edit.profile], isLive(edit.profile) else { return false }
+            return edit.item.category != .spaces || self.spaces(profile) != nil
         }
+        restoreOptOuts()
+    }
+
+    private static func indexed(_ profiles: [Profile]) -> [UUID: Profile] {
+        var result = Dictionary(profiles.filter { !$0.isPrivate }.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        if result[Profile.originalID] == nil {
+            result[Profile.originalID] = .original()
+        }
+        return result
+    }
+
+    private func isLive(_ id: UUID) -> Bool {
+        guard id != Profile.privateID, let current = liveProfiles() else { return false }
+        return id == Profile.originalID || current.contains { $0.id == id }
     }
 
     var needsEngine: Bool {
@@ -126,7 +156,7 @@ final class CloudSharedSpaces {
     }
 
     func enable(_ category: SharedCatalogCategory, for profile: Profile) async throws {
-        guard !profile.isPrivate else { throw SharedCatalogError.unavailable }
+        guard isLive(profile.id) else { throw SharedCatalogError.unavailable }
         guard retryOptOuts(), storage.readable else { throw SharedCatalogError.storage }
         profiles[profile.id] = profile
         spaces(profile)?.sharedSpacesHost = self
@@ -144,7 +174,7 @@ final class CloudSharedSpaces {
         }
         onNeedsEngine?()
         try await catalog.prepare(category)
-        guard isEnabled(category, for: profile) else { throw SharedCatalogError.paused }
+        guard isLive(profile.id), isEnabled(category, for: profile) else { throw SharedCatalogError.paused }
     }
 
     func pause(_ category: SharedCatalogCategory, for profile: Profile) {
@@ -210,6 +240,11 @@ final class CloudSharedSpaces {
     }
 
     private func restoreOptOuts() {
+        if storage.readable, let current = liveProfiles() {
+            profiles = Self.indexed(current)
+            storage.reconcileProfiles(with: Set(profiles.keys))
+        }
+        guard storage.hasOptOuts || !storage.readable || !catalog.storageAvailable else { return }
         // Apply every choice before the first write can retire the journal or offer an upload.
         if storage.readable {
             storage.applyingOptOuts = true
@@ -264,7 +299,7 @@ final class CloudSharedSpaces {
 
     @discardableResult
     func linkProfile(_ localID: UUID, to cloudID: UUID) -> Bool {
-        guard localID != Profile.privateID, cloudID != Profile.privateID, profiles[localID] != nil, catalog.trustedUser != nil,
+        guard isLive(localID), cloudID != Profile.privateID, profiles[localID] != nil, catalog.trustedUser != nil,
               catalog.trustedUser == catalog.state.user,
               links[localID]?.profile == nil || links[localID]?.profile == cloudID,
               !links.contains(where: { $0.key != localID && $0.value.profile == cloudID }) else { return false }

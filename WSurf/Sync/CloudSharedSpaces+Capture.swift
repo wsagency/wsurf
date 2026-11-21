@@ -184,7 +184,7 @@ extension CloudSharedSpaces {
         let profile = browser.context.profile
         guard !applying, !browser.opensPrivately, !browser.isReadingSharedSession, browser.sessionClosedAt == nil,
               browser.windowKind == .standard, isEnabled(.spaces, for: profile),
-              var link = links[profile.id], !link.spaces.isEmpty, let group = link.profile else { return }
+              var link = links[profile.id], !link.spaces.isEmpty, let group = link.profile, spaces(profile) != nil else { return }
         let tree = browser.reconciledTree()
         let parents = tree.parents()
         var groups: [UUID: [UUID]] = [:]

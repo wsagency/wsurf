@@ -40,9 +40,9 @@ final class CloudSync {
     private var heartbeatTask: Task<Void, Never>?
 
     @discardableResult
-    static func startIfAvailable(profiles: [Profile]) -> CloudSync? {
+    static func startIfAvailable(profileStore: ProfileStore) -> CloudSync? {
         shared = start(
-            gate: .live, installIDs: KeychainInstallIDStorage(), stateFile: stateFile, profiles: profiles,
+            gate: .live, installIDs: KeychainInstallIDStorage(), stateFile: stateFile, profiles: profileStore.profiles, profileStore: profileStore,
             rememberOtherDevices: { UserDefaults.standard.set(true, forKey: CloudSyncGate.tabsFlagKey) },
             rememberVaultDiscovery: { UserDefaults.standard.set($0, forKey: CloudSyncGate.vaultFlagKey) }
         )
@@ -57,6 +57,7 @@ final class CloudSync {
         installIDs: any InstallIDStorage,
         stateFile: URL,
         profiles: [Profile],
+        profileStore: ProfileStore? = nil,
         host: @escaping @MainActor () -> any VaultSyncHost = { CredentialVaultSyncHost() },
         rememberOtherDevices: @escaping @MainActor () -> Void = {},
         rememberVaultDiscovery: @escaping @MainActor (Bool) -> Void = { _ in },
@@ -79,7 +80,7 @@ final class CloudSync {
         guard tabs != nil || allowsVaults || offersMacSync else { return nil }
         let directory = stateFile.deletingLastPathComponent()
         let spaces = offersMacSync ? CloudSharedSpaces(
-            stateFile: directory.appending(path: "iCloudSharedSpaces.json"), profiles: profiles, windows: windows
+            stateFile: directory.appending(path: "iCloudSharedSpaces.json"), profiles: profiles, profileStore: profileStore, windows: windows
         ) : nil
         let settings = offersMacSync ? CloudSettingsSync(stateFile: directory.appending(path: "iCloudMacSettings.json"), profiles: profiles) : nil
         // A missing or damaged file starts empty, which fetches everything once.

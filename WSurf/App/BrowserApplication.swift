@@ -162,7 +162,7 @@ final class BrowserApplication {
         let lastWindowID = defaults.string(forKey: Self.lastWindowKey).flatMap(UUID.init(uuidString:))
         let catalog = ProfileStore.shared
         InputHistory.shared.purgeAllProfilesAtLaunch(catalog.profiles)
-        CloudSync.startIfAvailable(profiles: catalog.profiles)
+        CloudSync.startIfAvailable(profileStore: catalog)
         let restore = beginLaunchRestore(of: catalog.profiles, lastWindowID: lastWindowID, launchProfileID: catalog.launchProfileID)
         if restore.lead != nil {
             // The window in front draws before the others are built.

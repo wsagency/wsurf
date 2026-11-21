@@ -48,14 +48,28 @@ extension BrowserModel {
 
     // MARK: - Choosing the space
 
+    func adoptSpaces(from store: SpaceStore?) {
+        if let store, !store.recoverMembership() {
+            pendingSpaceStore = store
+            adoptSpaces([])
+        } else {
+            pendingSpaceStore = nil
+            adoptSpaces(store?.spaces.map(\.id) ?? [])
+        }
+    }
+
     /// Takes the spaces of the window's profile; an empty list (private browsing) shows every tab. Keeps the space on
     /// screen when it still exists, else the active tab's, else the first.
     func adoptSpaces(_ owned: [UUID]) {
+        selectOwnedSpaces(owned)
+        sidebarDidChange()
+    }
+
+    private func selectOwnedSpaces(_ owned: [UUID]) {
         knownSpaceIDs = Set(owned)
         if currentSpaceID.map({ knownSpaceIDs.contains($0) }) != true {
             currentSpaceID = activeTab?.spaceID.flatMap { knownSpaceIDs.contains($0) ? $0 : nil } ?? owned.first
         }
-        sidebarDidChange()
     }
 
     /// Shows `id`, landing on `tab`, the space's last active tab, or a new tab when the space has none and the page on
@@ -98,6 +112,11 @@ extension BrowserModel {
     // MARK: - Settling
 
     func settleSpaces(in tree: SidebarTree) {
+        if let store = pendingSpaceStore {
+            guard store.recoverMembership() else { return }
+            pendingSpaceStore = nil
+            selectOwnedSpaces(store.spaces.map(\.id))
+        }
         guard let currentSpaceID else { return }
         for item in tree.root {
             let space: UUID? = isKept(item) ? nil : spaceID(ofItem: item).flatMap(knownSpace) ?? currentSpaceID

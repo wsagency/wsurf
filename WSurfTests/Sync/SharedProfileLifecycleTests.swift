@@ -29,9 +29,9 @@ struct SharedProfileLifecycleTests {
             root.appending(path: "iCloudSharedSpaces.json")
         }
 
-        func open(spaces: SpaceStore? = nil) -> CloudSharedSpaces {
+        func open(spaces: SpaceStore? = nil, profileStore: ProfileStore? = nil) -> CloudSharedSpaces {
             let pins = ProfilePinStore.store(for: .temporary())
-            return CloudSharedSpaces(stateFile: catalogFile, profiles: profiles.profiles, windows: { [] }, spaces: { _ in spaces }, pins: { _ in pins })
+            return CloudSharedSpaces(stateFile: catalogFile, profileStore: profileStore ?? profiles, windows: { [] }, spaces: { _ in spaces }, pins: { _ in pins })
         }
 
         func attach(_ host: CloudSharedSpaces) -> FakeSyncEngine {
@@ -214,6 +214,99 @@ struct SharedProfileLifecycleTests {
         try await reopened.enable(.profiles, for: replacement)
         #expect(reopened.linkProfile(replacement.id, to: cloudID))
         #expect(f.cloud.names(in: SharedCatalogCategory.profiles.zone).isEmpty)
+    }
+
+    @Test(arguments: [false, true])
+    func startupRevokesOnlyMissingProfilesBeforeSendingAnOlderCheckpoint(parked: Bool) async throws {
+        let f = Fixture()
+        defer { f.cleanUp() }
+        let personal = Profile.original()
+        let old = f.open()
+        let engine = f.attach(old)
+        let removedID = try await old.publishProfile(f.removed)
+        let keptID = try await old.publishProfile(f.kept)
+        let personalID = try await old.publishProfile(personal)
+        try await engine.sendNow()
+        engine.offline = true
+        let removed = SharedSpaceItem(id: removedID, kind: .profile, profileID: removedID, title: "Private draft")
+        let kept = SharedSpaceItem(id: keptID, kind: .profile, profileID: keptID, title: "Keep named")
+        let original = SharedSpaceItem(id: personalID, kind: .profile, profileID: personalID, title: "Keep Personal")
+        for (item, profile) in [(removed, f.removed), (kept, f.kept), (original, personal)] {
+            old.catalog.stage(item, for: profile.id)
+        }
+        if parked {
+            await engine.simulateAccount(.signOut)
+        }
+        let legacy = try Data(contentsOf: f.catalogFile)
+        try await f.profiles.remove(f.removed, settingsSync: nil, sharedSpaces: old, eraseData: { _ in }).get()
+        // An older build removed the local profile and left its entire catalog checkpoint behind.
+        try legacy.write(to: f.catalogFile, options: .atomic)
+        if parked {
+            try f.interruptWrites(to: f.catalogFile)
+        }
+        let upgraded = f.open()
+        let next = f.attach(upgraded)
+        next.add([.saveRecord(removed.recordID)])
+        if parked {
+            try f.restore(f.catalogFile)
+            try await upgraded.enable(.profiles, for: f.kept)
+            try await upgraded.enable(.profiles, for: personal)
+        }
+        await upgraded.refresh()
+        #expect(!upgraded.isEnabled(.profiles, for: f.removed))
+        #expect(upgraded.links[f.removed.id] == nil && upgraded.catalog.state.pending[removed.recordID] == nil)
+        #expect(upgraded.links[f.kept.id]?.profile == keptID && upgraded.links[personal.id]?.profile == personalID)
+        #expect(next.saveAttempts[removedID.uuidString] == nil)
+        #expect(f.cloud.record(removed.recordID).flatMap(SharedSpaceItem.init(record:))?.title == f.removed.name)
+        #expect(f.cloud.record(kept.recordID).flatMap(SharedSpaceItem.init(record:)) == kept)
+        #expect(f.cloud.record(original.recordID).flatMap(SharedSpaceItem.init(record:)) == original)
+        let replacement = f.profiles.add(name: "Replacement")
+        try await upgraded.enable(.profiles, for: replacement)
+        #expect(upgraded.linkProfile(replacement.id, to: removedID))
+        #expect(f.open().links[f.removed.id] == nil)
+    }
+
+    @Test func aStaleWindowCannotEnableOrLinkAnErasedProfile() async throws {
+        let f = Fixture()
+        defer { f.cleanUp() }
+        let host = f.open()
+        let engine = f.attach(host)
+        let selection = ProfileStore.selection(profile: f.removed, catalog: f.profiles)
+        let stale = selection.current
+        let cloudID = try await host.publishProfile(stale)
+        try await engine.sendNow()
+        let another = f.open()
+        _ = f.attach(another)
+        try await another.enable(.profiles, for: f.kept)
+        try await f.profiles.remove(stale, settingsSync: nil, sharedSpaces: host, eraseData: { _ in }).get()
+        #expect(!another.linkProfile(stale.id, to: cloudID))
+        await #expect(throws: SharedCatalogError.self) { try await host.enable(.pins, for: stale) }
+        await #expect(throws: SharedCatalogError.self) { try await host.publishProfile(stale) }
+        #expect(!host.linkProfile(stale.id, to: cloudID))
+        #expect(f.open().links[stale.id] == nil)
+        #expect(SharedCatalogCategory.allCases.allSatisfy { !host.isEnabled($0, for: stale) })
+        let replacement = f.profiles.add(name: "Replacement")
+        try await host.enable(.profiles, for: replacement)
+        #expect(host.linkProfile(replacement.id, to: cloudID))
+    }
+
+    @Test func anUnreadableProfileListCannotAuthorizeAnUploadOrRevokeANamedProfile() async throws {
+        let f = Fixture()
+        defer { f.cleanUp() }
+        let original = f.open()
+        _ = f.attach(original)
+        let kept = try await original.publishProfile(f.kept)
+        let file = f.root.appending(path: "profiles.json")
+        try f.interruptWrites(to: file)
+        let profiles = ProfileStore(file: file)
+        let host = f.open(profileStore: profiles)
+        let next = f.attach(host)
+        await host.refresh()
+        #expect(next.saveAttempts[kept.uuidString] == nil)
+        try f.restore(file)
+        await host.refresh()
+        #expect(host.links[f.kept.id]?.profile == kept && host.isEnabled(.profiles, for: f.kept))
+        #expect(f.cloud.names(in: SharedCatalogCategory.profiles.zone) == [kept.uuidString])
     }
 
     @Test(arguments: [false, true])

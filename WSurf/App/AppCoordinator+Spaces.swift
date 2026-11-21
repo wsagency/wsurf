@@ -139,16 +139,16 @@ extension AppCoordinator {
 
     /// Every window of the profile learns the current set of spaces.
     func refreshSpaces() {
-        let owned = spaceStore?.spaces.map(\.id) ?? []
+        let store = spaceStore
         for window in profileWindows {
-            window.browser.adoptSpaces(owned)
+            window.browser.adoptSpaces(from: store)
         }
     }
 
     private func refreshSpaces(of profile: Profile) {
-        let owned = SpaceStore.shared(for: profile)?.spaces.map(\.id) ?? []
+        let store = SpaceStore.shared(for: profile)
         for window in application?.windows ?? [self] where !window.isClosed && window.context.profile.id == profile.id {
-            window.browser.adoptSpaces(owned)
+            window.browser.adoptSpaces(from: store)
         }
     }
 

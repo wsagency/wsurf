@@ -33,6 +33,18 @@ nonisolated public struct SharedCatalogState: Codable, Equatable, Sendable {
     public var pending: [SyncRecordID: Edit] = [:]
     public var conflicts: [SyncRecordID: Edit] = [:]
 
+    /// Local owners are distinct from the cloud profile IDs carried by remote rows.
+    public var localProfileIDs: Set<UUID> {
+        var ids = Set(enabled.values.joined())
+        ids.formUnion(pending.values.map(\.profile))
+        ids.formUnion(conflicts.values.map(\.profile))
+        for account in (pausedAccounts ?? [:]).values {
+            ids.formUnion(account.pending.values.map(\.profile))
+            ids.formUnion(account.conflicts.values.map(\.profile))
+        }
+        return ids
+    }
+
     public init() {}
 }
 
@@ -50,6 +62,7 @@ public final class SharedCatalogSync: SyncZoneHandler {
     public var onReceive: (() -> Void)?
     public var onAccountChange: ((String?) -> Void)?
     public var onVerifiedUser: ((String) -> Void)?
+    public var canUpload: ((SharedCatalogState.Edit) -> Bool)?
 
     @ObservationIgnored var engine: (any SyncEngine)?
     @ObservationIgnored private let persist: (SharedCatalogState) throws -> Void
@@ -358,7 +371,7 @@ public final class SharedCatalogSync: SyncZoneHandler {
 
     private func upload(for id: SyncRecordID) -> SharedCatalogState.Edit? {
         guard storageAvailable, trustedUser != nil, trustedUser == state.user, let edit = state.pending[id], ready.contains(edit.item.category),
-              enabled(edit.item.category, for: edit.profile) else { return nil }
+              enabled(edit.item.category, for: edit.profile), canUpload?(edit) != false else { return nil }
         return edit
     }
 

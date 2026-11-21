@@ -111,7 +111,7 @@ extension AppCoordinator {
         linkPeek.forget()
         browser.adopt(database: context.database, sitePermissions: context.sitePermissions, privately: profile.isPrivate)
         agentTurns.adopt(context: context)
-        browser.adoptSpaces(context.spaces?.spaces.map(\.id) ?? [])
+        browser.adoptSpaces(from: context.spaces)
         privateSession = profile.isPrivate
             ? PrivateBrowsingSession(database: context.database, dataStore: context.dataStore)
             : nil

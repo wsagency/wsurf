@@ -31,6 +31,7 @@ final class SharedCatalogStorage {
     }
 
     private let url: URL
+    private let canLoad: () -> Bool
     private var journalURL: URL {
         url.appendingPathExtension("opt-outs")
     }
@@ -51,9 +52,18 @@ final class SharedCatalogStorage {
         unreadableJournal || pendingAccountReset != nil || !pending.isEmpty || !erasingProfiles.isEmpty
     }
 
-    init(_ file: URL) {
+    init(_ file: URL, canLoad: @escaping () -> Bool) {
         url = file
+        self.canLoad = canLoad
         _ = reload()
+    }
+
+    func reconcileProfiles(with liveIDs: Set<UUID>) {
+        var localIDs = data.catalog.localProfileIDs.union(data.links.keys)
+        for parked in (data.pausedLinks ?? [:]).values {
+            localIDs.formUnion(parked.keys)
+        }
+        erasingProfiles.formUnion(localIDs.subtracting(liveIDs))
     }
 
     func requestProfileRemoval(_ id: UUID) throws {
@@ -68,6 +78,10 @@ final class SharedCatalogStorage {
 
     /// A temporarily unreadable checkpoint may contain other enrollments and links. Wait for it before replacing it.
     func reload() -> Bool {
+        guard canLoad() else {
+            readable = false
+            return false
+        }
         let files = FileManager.default
         let journal: Journal?
         unreadableJournal = false

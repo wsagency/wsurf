@@ -49,14 +49,21 @@ final class SpaceStore {
     init(profile: Profile, file: URL?) {
         profileID = profile.id
         self.file = file
-        let stored = file.flatMap { try? Self.readSpaces(from: $0) }
+        let stored: [Space]?
+        do {
+            stored = try file.map { try Self.readSpaces(from: $0) }
+        } catch CocoaError.fileReadNoSuchFile {
+            stored = []
+        } catch {
+            stored = nil
+        }
         spaces = stored ?? []
         if spaces.isEmpty {
             let home = Space(id: UUID(), name: profile.name, symbol: profile.symbol, color: profile.color)
-            spaces = [home]
             if file != nil && stored == nil {
                 unreadableFallback = home
             } else {
+                spaces = [home]
                 save()
             }
         }
@@ -65,6 +72,24 @@ final class SpaceStore {
     func space(id: UUID?) -> Space? {
         guard let id else { return nil }
         return spaces.first { $0.id == id }
+    }
+
+    /// Defer interpreting a window's saved memberships until its real Space IDs are available.
+    func recoverMembership() -> Bool {
+        guard let home = unreadableFallback, let file else { return true }
+        do {
+            let saved = try Self.readSpaces(from: file)
+            let merged = mergingRecovered(saved, home: home)
+            if merged == saved {
+                spaces = saved
+                unreadableFallback = nil
+            } else {
+                try persist(merged, to: file)
+            }
+            return true
+        } catch {
+            return false
+        }
     }
 
     @discardableResult
@@ -136,21 +161,20 @@ final class SpaceStore {
     }
 
     private static func readSpaces(from file: URL) throws -> [Space] {
-        do {
-            let saved = try JSONDecoder().decode([Space].self, from: Data(contentsOf: file))
-            var seen: Set<UUID> = []
-            return saved.filter { seen.insert($0.id).inserted }
-        } catch CocoaError.fileReadNoSuchFile {
-            return []
-        }
+        let saved = try JSONDecoder().decode([Space].self, from: Data(contentsOf: file))
+        var seen: Set<UUID> = []
+        return saved.filter { seen.insert($0.id).inserted }
     }
 
     private func spacesForWriting(to file: URL) throws -> [Space] {
         // A failed initial read can hide other Spaces. Recover them before replacing their file.
-        guard let unreadableFallback else { return spaces }
-        let saved = try Self.readSpaces(from: file)
-        guard !saved.isEmpty else { return spaces }
+        guard let home = unreadableFallback else { return spaces }
+        return mergingRecovered(try Self.readSpaces(from: file), home: home)
+    }
+
+    private func mergingRecovered(_ saved: [Space], home: Space) -> [Space] {
+        guard !saved.isEmpty else { return spaces.isEmpty ? [home] : spaces }
         let ids = Set(saved.map(\.id))
-        return saved + spaces.filter { $0 != unreadableFallback && !ids.contains($0.id) }
+        return saved + spaces.filter { !ids.contains($0.id) }
     }
 }
