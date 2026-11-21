@@ -53,7 +53,10 @@ extension ProfileSwitchTests {
             SyncZone.vault(profileID: work.id, vaultID: vault.vaultID)
         }
 
-        func confirmInSettings(names: [String], beforePress: () async throws -> Void) async throws {
+        func confirmInSettings(
+            names: [String], retryNames: [String]? = nil, recoverAfterError: (() async throws -> Void)? = nil,
+            beforePress: () async throws -> Void
+        ) async throws {
             let coordinator = AppCoordinator(browser: BrowserModel(database: .temporary()), profiles: .selection(profile: .original(), catalog: catalog))
             defer { coordinator.closeWindow() }
             let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 700, height: 850), styleMask: [.titled], backing: .buffered, defer: false)
@@ -86,15 +89,37 @@ extension ProfileSwitchTests {
                 _ = button.accessibilityPerformPress?()
             }
 
+            func confirm(names: [String], beforePress: () async throws -> Void) async throws {
+                try await press(String(localized: "Delete profile…"), in: host)
+                try #require(await waitUntil { window.attachedSheet?.contentView != nil })
+                let sheet = try #require(window.attachedSheet?.contentView)
+                if names.isEmpty {
+                    let unreadable = String(localized: "Its credential files can’t be read right now, so they may contain recoverable items. They are erased with it and WSurf can’t undo this.")
+                    #expect(element(sheet, role: .staticText, containing: unreadable) != nil)
+                } else {
+                    let expected = names.formatted(.list(type: .and))
+                    let message = String(
+                        localized: "WSurf will also remove \(expected) from iCloud. Your other devices keep their copies. To keep a vault in iCloud, turn off Sync with iCloud for it first."
+                    )
+                    #expect(element(sheet, role: .staticText, containing: message) != nil)
+                }
+                try await beforePress()
+                try await press(String(localized: "Delete profile"), in: sheet)
+            }
+
             try await press(work.name, in: host)
-            try await press(String(localized: "Delete profile…"), in: host)
-            try #require(await waitUntil { window.attachedSheet?.contentView != nil })
-            let sheet = try #require(window.attachedSheet?.contentView)
-            let expected = names.formatted(.list(type: .and))
-            let message = String(localized: "WSurf will also remove \(expected) from iCloud. Your other devices keep their copies. To keep a vault in iCloud, turn off Sync with iCloud for it first.")
-            #expect(element(sheet, role: .staticText, containing: message) != nil)
-            try await beforePress()
-            try await press(String(localized: "Delete profile"), in: sheet)
+            try await confirm(names: names, beforePress: beforePress)
+            if let recoverAfterError {
+                let error = String(localized: "WSurf couldn’t read this profile’s vault list. Try deleting the profile again.")
+                try #require(await waitUntil {
+                    host.layoutSubtreeIfNeeded()
+                    return !catalog.profiles.contains(work) || element(host, role: .staticText, containing: error) != nil
+                })
+                try #require(catalog.profiles.contains(work), "A failed read must keep the profile named in the confirmation.")
+                #expect(element(host, role: .staticText, containing: error) != nil)
+                try await recoverAfterError()
+                try await confirm(names: retryNames ?? names) {}
+            }
             try #require(await waitUntil { !catalog.profiles.contains(work) && !FileManager.default.fileExists(atPath: work.supportDirectory.path) })
         }
 
@@ -140,20 +165,119 @@ extension ProfileSwitchTests {
         }
     }
 
-    @Test func unreadableLocalVaultsKeepTheirCloudCopiesAfterConfirmation() async throws {
+    @Test func initiallyUnreadableLocalVaultsKeepTheirCloudCopiesAfterConfirmation() async throws {
         try await withVaultConfirmation { f in
-            let warned = try await CredentialErasureNote.warning(for: f.work).vaultRemovals
-            try #require(warned.count == 2)
             f.app.setVaultDiscovery(false)
             let store = f.work.supportDirectory.appending(path: "Credentials.store")
             try FileManager.default.moveItem(at: store, to: f.root.appending(path: "saved-store"))
             try Data("unreadable synthetic store".utf8).write(to: store)
-            let warning = try await CredentialErasureNote.warning(for: f.work)
-            #expect(warning.text != nil && warning.vaultRemovals.isEmpty)
-            try await f.confirm(warned)
+            try await f.confirmInSettings(names: []) {}
             #expect(f.catalog.vaultRemovals.isEmpty)
             #expect(f.vaults.allSatisfy { f.cloud.records(in: f.zone($0))?.isEmpty == false })
         }
+    }
+
+    enum UnavailableVaultList: CaseIterable { case unreadableStore, missingEnrollment, emptyEnrollment }
+
+    @Test(arguments: UnavailableVaultList.allCases)
+    func anUnreadableVaultListAtConfirmationKeepsWorkUntilSettingsRetries(fault: UnavailableVaultList) async throws {
+        try await withVaultConfirmation { f in
+            let sharing = try #require(f.app.sharedSpaces), settings = try #require(f.app.settingsSync)
+            let linked = try await sharing.publishProfile(f.work)
+            try await settings.enable(.providers, localProfileID: f.work.id, cloudProfileID: linked)
+            let engine = try #require(f.launch.engine)
+            engine.offline = true
+            let edit = SharedSpaceItem(id: linked, kind: .profile, profileID: linked, title: "Unsent Work rename")
+            sharing.catalog.stage(edit, for: f.work.id)
+            try #require(sharing.catalog.state.pending[edit.recordID]?.item == edit)
+            let copies = try f.vaults.map { try #require(f.cloud.records(in: f.zone($0))) }
+            let files = FileManager.default
+            let store = f.work.supportDirectory.appending(path: fault == .unreadableStore ? "Credentials.store" : VaultSyncDatabase.fileName)
+            let saved = f.root.appending(path: "saved-store")
+            let optOut = fault == .unreadableStore
+            try await f.confirmInSettings(names: ["Vault 1", "Vault 2"], retryNames: optOut ? ["Vault 2"] : nil, recoverAfterError: {
+                #expect(ProfileStore(file: f.file).profiles.contains(f.work) && f.catalog.vaultRemovals.isEmpty)
+                #expect(settings.isEnabled(.providers, localProfileID: f.work.id))
+                #expect(sharing.links[f.work.id]?.profile == linked && sharing.catalog.state.pending[edit.recordID]?.item == edit)
+                #expect(f.vaults.map { f.cloud.records(in: f.zone($0)) } == copies)
+                if fault == .emptyEnrollment {
+                    #expect(try Data(contentsOf: store).isEmpty, "Reading approvals must not initialize an empty database.")
+                }
+                if fault != .missingEnrollment {
+                    try files.removeItem(at: store)
+                }
+                try files.moveItem(at: saved, to: store)
+                if optOut {
+                    let sync = try #require(f.app.vaults)
+                    try sync.disable(profileID: f.work.id, vaultID: f.vaults[0].vaultID)
+                }
+            }) {
+                try files.moveItem(at: store, to: saved)
+                switch fault {
+                case .unreadableStore:
+                    try Data("unreadable synthetic store".utf8).write(to: store)
+                case .emptyEnrollment:
+                    try Data().write(to: store)
+                case .missingEnrollment:
+                    break
+                }
+            }
+            try #require(f.catalog.vaultRemovals.count == (optOut ? 1 : 2))
+            #expect(!settings.isEnabled(.providers, localProfileID: f.work.id))
+            engine.offline = false
+            try #require(await waitUntil { f.app.beat(); return f.catalog.vaultRemovals.isEmpty })
+            #expect(f.cloud.zones[f.zone(f.vaults[1])] == nil)
+            #expect(f.cloud.records(in: f.zone(f.vaults[0])) == (optOut ? copies[0] : nil))
+        }
+    }
+
+    @Test func aReadWithNoRemainingApprovalsAllowsTheConfirmedDeletion() async throws {
+        try await withVaultConfirmation { f in
+            let sync = try #require(f.app.vaults)
+            let copies = try f.vaults.map { try #require(f.cloud.records(in: f.zone($0))) }
+            try await f.confirmInSettings(names: ["Vault 1", "Vault 2"]) {
+                for vault in f.vaults {
+                    try sync.disable(profileID: f.work.id, vaultID: vault.vaultID)
+                }
+            }
+            #expect(f.catalog.vaultRemovals.isEmpty)
+            #expect(f.vaults.map { f.cloud.records(in: f.zone($0)) } == copies)
+        }
+    }
+
+    @Test(arguments: [false, true])
+    func readingAnOlderVaultCheckpointPreservesItsSchemaAndExplicitConsent(hasExplicitConsent: Bool) throws {
+        let files = FileManager.default, root = URL.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? files.removeItem(at: root) }
+        let profile = UUID(), vault = UUID(), owner = "synthetic-owner"
+        do {
+            let store = try #require(try VaultSyncDatabase.open(directory: root, create: true))
+            try store.write { tx in
+                try tx.save(VaultRow(vaultID: vault, approvedUser: owner))
+                // Restore the released v5 schema with or without the subsequent explicit-consent migration.
+                try tx.db.execute(sql: """
+                    DROP INDEX pendingItemAssets;
+                    ALTER TABLE base DROP COLUMN pendingAssetCheck;
+                    ALTER TABLE base DROP COLUMN assetCheckEnvelope;
+                    ALTER TABLE inbox DROP COLUMN serverTime;
+                    ALTER TABLE inbox DROP COLUMN serverCheck;
+                    ALTER TABLE outbox DROP COLUMN assetPublication;
+                    DELETE FROM grdb_migrations WHERE identifier NOT IN ('v1', 'v2', 'v3', 'v4', 'v5', 'vaultExplicitConsent');
+                    """)
+                if !hasExplicitConsent {
+                    try tx.db.execute(sql: """
+                        UPDATE vault SET approvedUser = consentUser;
+                        ALTER TABLE vault DROP COLUMN consentUser;
+                        DELETE FROM grdb_migrations WHERE identifier = 'vaultExplicitConsent';
+                        """)
+                }
+            }
+        }
+        let file = root.appending(path: VaultSyncDatabase.fileName), before = try Data(contentsOf: file)
+        let approvals = try VaultProfileRemoval.approved(in: root, profileID: profile, localVaults: [vault])
+        let expected = VaultProfileRemoval(profileID: profile, vaultID: vault, owner: owner)
+        #expect(approvals == (hasExplicitConsent ? [expected] : []))
+        #expect(try Data(contentsOf: file) == before)
     }
 
     @Test func aFailedVaultOptOutShowsTheErrorAndTheCommittedToggle() async throws {

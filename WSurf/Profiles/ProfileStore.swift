@@ -316,10 +316,12 @@ final class ProfileStore {
         } else {
             consent = try await profile.vaultRemovals()
         }
-        try detachSync()
+        // A failed recheck must leave the profile's other enrollments and unsent edits intact.
+        if consent.isEmpty {
+            try detachSync()
+        }
         await beforeErasing()
-        // Recheck the shown vaults before committing. The listing read can suspend while another window changes the catalog.
-        let approved = consent.isEmpty ? [] : try await consent.intersection(profile.vaultRemovals())
+        let approved = try await profile.vaultRemovals(rechecking: consent)
         try detachSync()
         guard let index = index(of: profile) else { return }
         var remaining = profiles

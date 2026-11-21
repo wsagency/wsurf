@@ -46,19 +46,26 @@ struct CredentialErasureNote {
 
     /// `nil` when the profile has no vault to mention. An open vault's credentials are counted from its candidates
     /// (`autofillCandidates`), which hold no secret.
-    static func warning(for profile: Profile) async throws -> Self {
+    static func warning(for profile: Profile, rechecking consent: Set<VaultProfileRemoval>? = nil) async throws -> Self {
         let empty = Self(text: nil, vaultRemovals: [])
-        guard !profile.isPrivate, let store = try? CredentialManager.store(for: profile) else { return empty }
-        let unreadable = String(localized: "Its credential files can’t be read right now, so they may contain recoverable items. They are erased with it and WSurf can’t undo this.")
+        guard !profile.isPrivate else { return empty }
+        func unreadable() throws -> Self {
+            if consent?.isEmpty == false {
+                throw Profile.VaultListUnavailable()
+            }
+            let text = String(localized: "Its credential files can’t be read right now, so they may contain recoverable items. They are erased with it and WSurf can’t undo this.")
+            return Self(text: text, vaultRemovals: [])
+        }
+        guard let store = try? CredentialManager.store(for: profile) else { return try unreadable() }
         switch await store.openState() {
         case .firstRun:
             return empty
         case .failClosed:
-            return Self(text: unreadable, vaultRemovals: [])
+            return try unreadable()
         default:
             break
         }
-        guard let listing = try? await store.listing() else { return Self(text: unreadable, vaultRemovals: []) }
+        guard let listing = try? await store.listing() else { return try unreadable() }
         let open = CredentialManager.unlockedManagers(for: profile)
         var vaults: [Vault] = []
         for listed in listing.sorted(by: { $0.ordinal < $1.ordinal }) {
@@ -73,7 +80,7 @@ struct CredentialErasureNote {
         }
         // Counting may suspend. A newly added or already removed vault was never part of this warning.
         let shown = Set(listing.map(\.vaultID))
-        let removals: Set<VaultProfileRemoval> = shown.isEmpty ? [] : try await profile.vaultRemovals().filter { shown.contains($0.vaultID) }
+        let removals: Set<VaultProfileRemoval> = shown.isEmpty ? [] : try await profile.vaultRemovals(rechecking: consent).filter { shown.contains($0.vaultID) }
         let ids = Set(removals.map(\.vaultID))
         return Self(text: vaults.isEmpty ? nil : text(vaults), vaultRemovals: removals, cloudVaultNames: listing.filter { ids.contains($0.vaultID) }.map(\.displayName))
     }

@@ -3,6 +3,7 @@
 
 import CloudKit
 import Foundation
+import GRDB
 
 /// The explicit per-vault consent that a confirmed profile deletion withdraws, even after Credentials.sync is gone.
 nonisolated public struct VaultProfileRemoval: Codable, Hashable, Sendable {
@@ -27,17 +28,40 @@ nonisolated public struct VaultProfileRemoval: Codable, Hashable, Sendable {
         return next
     }
 
-    public static func approved(in directory: URL, profileID: UUID, localVaults: Set<UUID>) throws -> Set<Self> {
+    private struct Enrollment: Decodable, FetchableRecord {
+        let vaultID: UUID
+        let enabled: Int
+        let status: String
+        let consentUser: String?
+    }
+
+    public static func approved(in directory: URL, profileID: UUID, localVaults: Set<UUID>, requireEnrollmentFile: Bool = false) throws -> Set<Self> {
         let file = directory.appending(path: VaultSyncDatabase.fileName)
         do {
             _ = try FileManager.default.attributesOfItem(atPath: file.path)
-        } catch CocoaError.fileReadNoSuchFile {
+        } catch CocoaError.fileReadNoSuchFile where !requireEnrollmentFile {
             return []
         }
-        guard let database = try VaultSyncDatabase.open(directory: directory, create: false) else { throw CocoaError(.fileReadUnknown) }
-        return try database.read { tx in
-            Set(try tx.vaults().compactMap { row in
-                guard localVaults.contains(row.vaultID), row.enabled, let owner = row.approvedUser, !owner.isEmpty, owner != CKCurrentUserDefaultName else { return nil }
+        // This read authorizes erasure. A normal sync open would migrate even a zero-byte file into an empty vault table.
+        var config = Configuration()
+        config.readonly = true
+        let queue = try DatabaseQueue(path: file.path, configuration: config)
+        return try queue.read { db in
+            let migrations = try DatabaseMigrator().appliedIdentifiers(db)
+            guard migrations.contains("v1") else { throw CocoaError(.fileReadCorruptFile) }
+            guard migrations.contains("vaultExplicitConsent") else {
+                // Older enabled rows never recorded a confirmed owner. They cannot revoke a previously shown approval either.
+                let columns = Set(try db.columns(in: "vault").map(\.name))
+                guard !requireEnrollmentFile, !columns.contains("consentUser"), columns.isSuperset(of: ["vaultID", "enabled", "status"]) else {
+                    throw CocoaError(.fileReadCorruptFile)
+                }
+                return []
+            }
+            let rows = try Enrollment.fetchAll(db, sql: "SELECT vaultID, enabled, status, consentUser FROM vault")
+            return try Set(rows.compactMap { row in
+                guard localVaults.contains(row.vaultID) else { return nil }
+                guard (0...1).contains(row.enabled), VaultSyncStatus.Stored(rawValue: row.status) != nil else { throw CocoaError(.fileReadCorruptFile) }
+                guard row.enabled == 1, let owner = row.consentUser, !owner.isEmpty, owner != CKCurrentUserDefaultName else { return nil }
                 return Self(profileID: profileID, vaultID: row.vaultID, owner: owner)
             })
         }

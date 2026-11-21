@@ -288,7 +288,7 @@ private struct ProfileDetailPage: View {
                     // Counts are read first so the confirmation states what is verified, or that it can't be known.
                     Task {
                         do {
-                            vaultWarning = try await CredentialErasureNote.warning(for: profile)
+                            vaultWarning = try await CredentialErasureNote.warning(for: profile, rechecking: vaultWarning?.vaultRemovals)
                             deleting = true
                         } catch {
                             deletionError = error.localizedDescription
@@ -303,7 +303,10 @@ private struct ProfileDetailPage: View {
                         Button("Delete profile", role: .destructive) {
                             Task { await delete(profile) }
                         }
-                        Button("Cancel", role: .cancel) { deleting = false }
+                        Button("Cancel", role: .cancel) {
+                            deleting = false
+                            vaultWarning = nil
+                        }
                     } message: {
                         if let vaultWarning {
                             Text(verbatim: vaultWarning.message)

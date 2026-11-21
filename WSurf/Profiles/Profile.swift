@@ -128,12 +128,25 @@ extension Profile {
         return isOriginal ? .default() : WKWebsiteDataStore(forIdentifier: id)
     }
 
+    struct VaultListUnavailable: LocalizedError {
+        var errorDescription: String? {
+            String(localized: "WSurf couldn’t read this profile’s vault list. Try deleting the profile again.")
+        }
+    }
+
     @MainActor
-    func vaultRemovals() async throws -> Set<VaultProfileRemoval> {
-        guard !isOriginal, !isPrivate, let listing = try? await CredentialManager.store(for: self).listing() else { return [] }
-        let localVaults = Set(listing.map(\.vaultID))
-        guard !localVaults.isEmpty else { return [] }
-        return try VaultProfileRemoval.approved(in: supportDirectory, profileID: id, localVaults: localVaults)
+    func vaultRemovals(rechecking consent: Set<VaultProfileRemoval>? = nil) async throws -> Set<VaultProfileRemoval> {
+        guard !isOriginal, !isPrivate, consent?.isEmpty != true else { return [] }
+        do {
+            let listing = try await CredentialManager.store(for: self).listing()
+            let live = Set(listing.map(\.vaultID))
+            let candidates = consent.map { live.intersection($0.map(\.vaultID)) } ?? live
+            guard !candidates.isEmpty else { return [] }
+            let approved = try VaultProfileRemoval.approved(in: supportDirectory, profileID: id, localVaults: candidates, requireEnrollmentFile: consent != nil)
+            return consent?.intersection(approved) ?? approved
+        } catch {
+            throw VaultListUnavailable()
+        }
     }
 
     @MainActor
