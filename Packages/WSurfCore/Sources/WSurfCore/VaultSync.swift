@@ -393,12 +393,10 @@ public final class VaultSync: SyncEngineDelegate {
     }
 
     /// This Mac stops syncing the vault. Its rows go; iCloud and the other Macs are untouched.
-    public func disable(profileID: UUID, vaultID: UUID) {
-        let key = VaultKey(profileID: profileID, vaultID: vaultID)
-        guard !excluded.contains(profileID) else { return }
-        if let database = database(profileID) {
-            try? database.write { try $0.remove(vaultID) }
-        }
+    public func disable(profileID: UUID, vaultID: UUID) throws {
+        let key = try checkedKey(profileID, vaultID)
+        guard let database = database(profileID) else { throw VaultSyncFailure.unavailable }
+        try database.write { try $0.remove(vaultID) }
         clearAssets(key)
         forget(key)
         summaries[key] = nil
@@ -521,7 +519,9 @@ public final class VaultSync: SyncEngineDelegate {
             for key in enabledKeys where key.profileID == profileID {
                 guard let (_, row) = enabledRow(key), let owner = row.approvedUser else { continue }
                 let removal = VaultProfileRemoval(profileID: profileID, vaultID: key.vaultID, owner: owner)
-                housekeeping.append(Task { try? await transport.deleteVaultZone(removal) })
+                housekeeping.append(Task {
+                    try? await removal.withOwnedZone(currentUser: transport.currentAccountUser, operation: transport.deleteProfileVaultZone)
+                })
             }
         }
         forgetErasedProfile(profileID)

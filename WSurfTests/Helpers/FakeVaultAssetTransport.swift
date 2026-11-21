@@ -7,12 +7,30 @@ import Foundation
 import WSurfVault
 
 extension FakeSyncEngine: VaultCatalogReading, VaultAssetTransport, VaultZoneChecking, VaultProfileZoneDeleting {
-    func deleteVaultZone(_ removal: VaultProfileRemoval) async throws {
-        try await removal.delete(currentUser: currentAccountUser) { id in
-            guard id.ownerName == self.cloud.user, !self.failsZoneDeletes else { throw CKError(.serviceUnavailable) }
-            guard self.cloud.zones[id.zoneName] != nil else { throw CKError(.zoneNotFound) }
-            self.cloud.deleteZone(id.zoneName, reason: .deleted)
+    func requireVaultZoneAbsence(_ id: CKRecordZone.ID) async throws {
+        guard id.ownerName == cloud.user else { throw CKError(.notAuthenticated) }
+        guard cloud.zones[id.zoneName] != nil else { throw CKError(.zoneNotFound) }
+        throw VaultSyncFailure.unavailable
+    }
+
+    func placeVaultRemovalMarker(_ id: CKRecord.ID) async throws {
+        guard id.zoneID.ownerName == cloud.user else { throw CKError(.notAuthenticated) }
+        let key = CloudKitMapping.syncID(id)
+        guard cloud.zones[key.zone] != nil else { throw CKError(.zoneNotFound) }
+        if cloud.record(key) == nil {
+            guard case .saved = cloud.save(SyncRecord(id: key, type: .vault, schema: 1, payload: Data())) else { throw CKError(.serviceUnavailable) }
         }
+    }
+
+    func hasVaultRemovalMarker(_ id: CKRecord.ID) async throws -> Bool {
+        guard id.zoneID.ownerName == cloud.user else { throw CKError(.notAuthenticated) }
+        return cloud.record(CloudKitMapping.syncID(id)) != nil
+    }
+
+    func deleteProfileVaultZone(_ id: CKRecordZone.ID) async throws {
+        guard id.ownerName == cloud.user, !failsZoneDeletes else { throw CKError(.serviceUnavailable) }
+        guard cloud.zones[id.zoneName] != nil else { throw CKError(.zoneNotFound) }
+        cloud.deleteZone(id.zoneName, reason: .deleted)
     }
 
     func vaultZoneExists(_ zone: String) async throws -> Bool {

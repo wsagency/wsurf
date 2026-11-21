@@ -47,6 +47,8 @@ final class FakeSyncCloud {
     /// How many records were written. It does not move when a save fails or is dropped.
     private(set) var writeCount = 0
     private(set) var clock = 0
+    /// Called after the server commits the deletion, before the sending Mac can persist the acknowledgement.
+    var afterZoneDeletion: ((String) -> Void)?
     /// The account's iCloud storage is full: every save fails with `quotaExceeded`.
     var quotaFull = false
     var now: () -> Date
@@ -109,6 +111,7 @@ final class FakeSyncCloud {
         zones[zone] = nil
         encryptedVaultAssets = encryptedVaultAssets.filter { $0.key.zone != zone }
         zoneDeletions.append(ZoneDeletion(at: clock, zone: zone, reason: reason))
+        afterZoneDeletion?(zone)
     }
 
     /// The zone is gone and nobody was told.

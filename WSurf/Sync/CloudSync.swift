@@ -36,6 +36,7 @@ final class CloudSync {
     @ObservationIgnored private var rememberVaultDiscovery: ((Bool) -> Void)?
     @ObservationIgnored private var profileStore: ProfileStore?
     @ObservationIgnored private var removingVaultZones: Set<VaultProfileRemoval> = []
+    @ObservationIgnored private var acknowledgedVaultZones: Set<VaultProfileRemoval> = []
     private var attachedSpaces = false
     private var attachedSettings = false
     private var isTerminating = false
@@ -265,8 +266,15 @@ final class CloudSync {
                 Task {
                     defer { removingVaultZones.remove(removal) }
                     do {
-                        try await transport.deleteVaultZone(removal)
-                        try profileStore.acknowledgeVaultRemoval(removal)
+                        if !acknowledgedVaultZones.contains(removal), let next = try await removal.advance(using: transport) {
+                            try profileStore.updateVaultRemoval(removal, to: next)
+                            ensureEngine()
+                        } else {
+                            // Once CloudKit answered, retry only the local checkpoint, even while offline.
+                            acknowledgedVaultZones.insert(removal)
+                            try profileStore.updateVaultRemoval(removal, to: nil)
+                            acknowledgedVaultZones.remove(removal)
+                        }
                     } catch {
                         // The profile list keeps this exact owner's withdrawal for the next heartbeat or launch.
                     }

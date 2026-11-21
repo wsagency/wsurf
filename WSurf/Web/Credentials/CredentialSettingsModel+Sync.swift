@@ -97,9 +97,17 @@ extension CredentialSettingsModel {
     }
 
     /// This Mac stops syncing the vault. iCloud and the other Macs are untouched.
-    func disableSync() {
-        guard let id = selectedVaultID else { return }
-        vaultSync?.disable(profileID: profile.id, vaultID: id)
+    @discardableResult
+    func disableSync(vaultID: UUID) -> Result<Void, Error> {
+        do {
+            guard vaultID == selectedVaultID, let vaultSync else { throw VaultSyncFailure.unavailable }
+            try vaultSync.disable(profileID: profile.id, vaultID: vaultID)
+            error = nil
+            return .success(())
+        } catch {
+            self.error = String(localized: "WSurf couldn’t save this change. Try again.")
+            return .failure(error)
+        }
     }
 
     /// The owner agreed to send the deletions that were held back; the next pass sends them.

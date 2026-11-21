@@ -256,8 +256,7 @@ private struct ProfileDetailPage: View {
     @State private var facts = ProfileFacts.empty
     @State private var deleting = false
     @State private var deletionError: String?
-    @State private var vaultNote: String?
-    @State private var vaultRemovals: Set<VaultProfileRemoval> = []
+    @State private var vaultWarning: CredentialErasureNote?
     @State private var clearing = false
     @FocusState private var editing: Bool
 
@@ -288,9 +287,8 @@ private struct ProfileDetailPage: View {
                 SettingsButton(title: "Delete profile…", isDestructive: true) {
                     // Counts are read first so the confirmation states what is verified, or that it can't be known.
                     Task {
-                        vaultNote = await CredentialErasureNote.note(for: profile)
                         do {
-                            vaultRemovals = try profile.vaultRemovals()
+                            vaultWarning = try await CredentialErasureNote.warning(for: profile)
                             deleting = true
                         } catch {
                             deletionError = error.localizedDescription
@@ -307,12 +305,8 @@ private struct ProfileDetailPage: View {
                         }
                         Button("Cancel", role: .cancel) { deleting = false }
                     } message: {
-                        Text("Deleting this profile removes its tabs, history, and sign-ins from this Mac. Downloads stay in the Downloads folder.")
-                        if let vaultNote {
-                            Text(verbatim: vaultNote)
-                        }
-                        if !vaultRemovals.isEmpty {
-                            Text("Its vaults are also removed from iCloud. Your other devices keep their copies. To keep them in iCloud, turn off Sync with iCloud for each vault first.")
+                        if let vaultWarning {
+                            Text(verbatim: vaultWarning.message)
                         }
                     }
             }
@@ -441,7 +435,8 @@ private struct ProfileDetailPage: View {
     private func delete(_ profile: Profile) async {
         deleting = false
         deletionError = nil
-        let result = await coordinator.deleteProfile(profile, confirmedVaults: vaultRemovals)
+        guard let vaultWarning else { return }
+        let result = await coordinator.deleteProfile(profile, confirmedVaults: vaultWarning.vaultRemovals)
         switch result {
         case .success:
             onBack()

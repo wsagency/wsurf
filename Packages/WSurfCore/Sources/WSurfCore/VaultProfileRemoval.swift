@@ -9,8 +9,25 @@ nonisolated public struct VaultProfileRemoval: Codable, Hashable, Sendable {
     public let profileID: UUID
     public let vaultID: UUID
     let owner: String
+    private struct Request: Codable, Hashable, Sendable {
+        var id: UUID
+        var marked = false
+    }
+    private var request: Request?
 
-    public static func approved(in directory: URL, profileID: UUID) throws -> Set<Self> {
+    init(profileID: UUID, vaultID: UUID, owner: String) {
+        self.profileID = profileID
+        self.vaultID = vaultID
+        self.owner = owner
+    }
+
+    public func scheduled() -> Self {
+        var next = self
+        next.request = Request(id: UUID())
+        return next
+    }
+
+    public static func approved(in directory: URL, profileID: UUID, localVaults: Set<UUID>) throws -> Set<Self> {
         let file = directory.appending(path: VaultSyncDatabase.fileName)
         do {
             _ = try FileManager.default.attributesOfItem(atPath: file.path)
@@ -20,19 +37,45 @@ nonisolated public struct VaultProfileRemoval: Codable, Hashable, Sendable {
         guard let database = try VaultSyncDatabase.open(directory: directory, create: false) else { throw CocoaError(.fileReadUnknown) }
         return try database.read { tx in
             Set(try tx.vaults().compactMap { row in
-                guard row.enabled, let owner = row.approvedUser, !owner.isEmpty, owner != CKCurrentUserDefaultName else { return nil }
+                guard localVaults.contains(row.vaultID), row.enabled, let owner = row.approvedUser, !owner.isEmpty, owner != CKCurrentUserDefaultName else { return nil }
                 return Self(profileID: profileID, vaultID: row.vaultID, owner: owner)
             })
         }
     }
 
+    /// Each returned phase must reach disk before the next call. Deleting the zone also deletes its unique marker.
+    /// A replacement zone cannot contain that marker, even if another Mac publishes the same vault ID and contents.
+    @MainActor
+    public func advance(using transport: any VaultProfileZoneDeleting) async throws -> Self? {
+        var next: Self?
+        try await withOwnedZone(currentUser: transport.currentAccountUser) { zone in
+            guard var request else {
+                // A checkpoint from before request IDs might already have deleted a previous zone with this name.
+                try await transport.requireVaultZoneAbsence(zone)
+                return
+            }
+            let id = CKRecord.ID(recordName: "withdrawal-\(request.id.uuidString)", zoneID: zone)
+            if request.marked {
+                guard try await transport.hasVaultRemovalMarker(id) else { return }
+                guard try await transport.currentAccountUser() == owner else { throw VaultSyncFailure.unavailable }
+                try await transport.deleteProfileVaultZone(zone)
+            } else {
+                try await transport.placeVaultRemovalMarker(id)
+                request.marked = true
+                next = self
+                next?.request = request
+            }
+        }
+        return next
+    }
+
     /// The explicit zone owner keeps even an account change during dispatch from redirecting the operation.
     @MainActor
-    func delete(currentUser: () async throws -> String, remove: (CKRecordZone.ID) async throws -> Void) async throws {
+    func withOwnedZone(currentUser: () async throws -> String, operation: (CKRecordZone.ID) async throws -> Void) async throws {
         guard !owner.isEmpty, owner != CKCurrentUserDefaultName, try await currentUser() == owner else { throw VaultSyncFailure.unavailable }
         let zone = SyncZone.vault(profileID: profileID, vaultID: vaultID)
         do {
-            try await remove(CloudKitMapping.zoneID(zone, ownerName: owner))
+            try await operation(CloudKitMapping.zoneID(zone, ownerName: owner))
         } catch let error as CKError where error.code == .zoneNotFound || error.code == .userDeletedZone {
             // A previous attempt may have succeeded before its receipt was saved.
         }
@@ -41,14 +84,41 @@ nonisolated public struct VaultProfileRemoval: Codable, Hashable, Sendable {
 }
 
 @MainActor
-public protocol VaultProfileZoneDeleting: AnyObject {
-    func deleteVaultZone(_ removal: VaultProfileRemoval) async throws
+public protocol VaultProfileZoneDeleting: SyncAccountIdentity {
+    func requireVaultZoneAbsence(_ id: CKRecordZone.ID) async throws
+    func placeVaultRemovalMarker(_ id: CKRecord.ID) async throws
+    func hasVaultRemovalMarker(_ id: CKRecord.ID) async throws -> Bool
+    func deleteProfileVaultZone(_ id: CKRecordZone.ID) async throws
 }
 
 extension CloudKitSyncEngine: VaultProfileZoneDeleting {
-    public func deleteVaultZone(_ removal: VaultProfileRemoval) async throws {
-        try await removal.delete(currentUser: currentAccountUser) { id in
-            _ = try await self.container.privateCloudDatabase.deleteRecordZone(withID: id)
+    public func requireVaultZoneAbsence(_ id: CKRecordZone.ID) async throws {
+        _ = try await container.privateCloudDatabase.recordZone(for: id)
+        throw VaultSyncFailure.unavailable
+    }
+
+    public func placeVaultRemovalMarker(_ id: CKRecord.ID) async throws {
+        // Reuse the Vault record type. Only the well-known "vault" record is a header on participating Macs.
+        let record = CKRecord(recordType: SyncRecordType.vault.rawValue, recordID: id)
+        record.encryptedValues[CloudKitMapping.payloadKey] = Data()
+        do {
+            _ = try await container.privateCloudDatabase.save(record)
+        } catch let error as CKError where error.code == .serverRecordChanged {
+            guard let saved = error.serverRecord, saved.recordID == id, saved.recordType == record.recordType else { throw error }
         }
+    }
+
+    public func hasVaultRemovalMarker(_ id: CKRecord.ID) async throws -> Bool {
+        do {
+            let record = try await container.privateCloudDatabase.record(for: id)
+            guard record.recordType == SyncRecordType.vault.rawValue else { throw VaultSyncFailure.unavailable }
+            return true
+        } catch let error as CKError where error.code == .unknownItem {
+            return false
+        }
+    }
+
+    public func deleteProfileVaultZone(_ id: CKRecordZone.ID) async throws {
+        _ = try await container.privateCloudDatabase.deleteRecordZone(withID: id)
     }
 }

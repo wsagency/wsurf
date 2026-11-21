@@ -152,7 +152,7 @@ struct CloudVaultRow: View {
     /// Turning on after a removal or an account change asks first; the dialog is the person's confirmation to upload again.
     private func turn(_ on: Bool, from status: VaultSyncStatus, vaultID: UUID) {
         guard on else {
-            model.disableSync()
+            model.disableSync(vaultID: vaultID)
             return
         }
         switch status {

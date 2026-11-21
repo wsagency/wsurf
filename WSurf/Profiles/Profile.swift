@@ -7,6 +7,7 @@ import Foundation
 import os
 import WebKit
 import WSurfCore
+import WSurfVault
 
 nonisolated struct Profile: Identifiable, Codable, Hashable, Sendable {
     let id: UUID
@@ -127,9 +128,12 @@ extension Profile {
         return isOriginal ? .default() : WKWebsiteDataStore(forIdentifier: id)
     }
 
-    func vaultRemovals() throws -> Set<VaultProfileRemoval> {
-        guard !isOriginal, !isPrivate else { return [] }
-        return try VaultProfileRemoval.approved(in: supportDirectory, profileID: id)
+    @MainActor
+    func vaultRemovals() async throws -> Set<VaultProfileRemoval> {
+        guard !isOriginal, !isPrivate, let listing = try? await CredentialManager.store(for: self).listing() else { return [] }
+        let localVaults = Set(listing.map(\.vaultID))
+        guard !localVaults.isEmpty else { return [] }
+        return try VaultProfileRemoval.approved(in: supportDirectory, profileID: id, localVaults: localVaults)
     }
 
     @MainActor

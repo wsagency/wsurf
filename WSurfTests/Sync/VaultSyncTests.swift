@@ -480,7 +480,7 @@ struct VaultSyncTests {
         let (a, va) = try await rig.syncedMac(holding: held)
         let writes = rig.cloud.writeCount
 
-        a.sync.disable(profileID: rig.profile, vaultID: rig.vaultID)
+        try a.sync.disable(profileID: rig.profile, vaultID: rig.vaultID)
         va.edit(changing(held[0], password: "private again"))
         await a.wrote(va, timer: false)
         try await a.pump()

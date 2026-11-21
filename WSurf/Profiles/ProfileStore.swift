@@ -310,10 +310,16 @@ final class ProfileStore {
             try settingsSync?.forgetProfile(profile.id)
             try catalogResult.get()
         }
-        let consent = try confirmedVaults ?? profile.vaultRemovals()
+        let consent: Set<VaultProfileRemoval>
+        if let confirmedVaults {
+            consent = confirmedVaults
+        } else {
+            consent = try await profile.vaultRemovals()
+        }
         try detachSync()
         await beforeErasing()
-        // A different window can enroll the profile again while the active window switches away.
+        // Recheck the shown vaults before committing. The listing read can suspend while another window changes the catalog.
+        let approved = consent.isEmpty ? [] : try await consent.intersection(profile.vaultRemovals())
         try detachSync()
         guard let index = index(of: profile) else { return }
         var remaining = profiles
@@ -325,8 +331,7 @@ final class ProfileStore {
         let launch = launchProfileID == profile.id ? nil : launchProfileID
         let owner = catalog ?? self
         let pending = owner.pendingErasures + [profile]
-        let approved = consent.isEmpty ? [] : try consent.intersection(profile.vaultRemovals())
-        let withdrawals = owner.pendingVaultRemovals.union(approved)
+        let withdrawals = owner.pendingVaultRemovals.union(approved.map { $0.scheduled() })
         // The same atomic write that removes the ID records which local data still needs erasing.
         try JSONFileStore.writeAtomically(
             Stored(profiles: remaining, currentID: savedCurrent, launchProfileID: launch, lastUsed: dates, pendingErasures: pending,
@@ -442,12 +447,15 @@ final class ProfileStore {
         return pendingVaultRemovals
     }
 
-    func acknowledgeVaultRemoval(_ removal: VaultProfileRemoval) throws {
+    func updateVaultRemoval(_ removal: VaultProfileRemoval, to next: VaultProfileRemoval?) throws {
         if let catalog {
-            return try catalog.acknowledgeVaultRemoval(removal)
+            return try catalog.updateVaultRemoval(removal, to: next)
         }
         guard vaultRemovals.contains(removal) else { return }
-        let remaining = pendingVaultRemovals.subtracting([removal])
+        var remaining = pendingVaultRemovals.subtracting([removal])
+        if let next {
+            remaining.insert(next)
+        }
         try writeCheckpoint(pendingErasures: pendingErasures, vaultRemovals: remaining)
         pendingVaultRemovals = remaining
     }

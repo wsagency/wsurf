@@ -512,7 +512,7 @@ struct VaultAssetDeviceTransferTests {
             let router = SyncRouter(state: SyncRouterState(), persist: { _ in }, tabs: nil, vaults: pair.syncA)
             pair.engineA.duringAccountLookup = {
                 pair.engineA.duringAccountLookup = nil
-                pair.syncA.disable(profileID: pair.profile.id, vaultID: pair.vaultID)
+                try pair.syncA.disable(profileID: pair.profile.id, vaultID: pair.vaultID)
             }
             #expect(await router.recordForUpload(id) == nil)
             #expect(pair.cloud.record(id) == nil && pair.statusA == .off)
