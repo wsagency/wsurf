@@ -193,10 +193,11 @@ extension CloudSettingsSync {
         }
         var recheck: [String: UUID] = [:]
         var revoked: Set<String> = []
+        var newer: [String: UUID] = [:]
         for (zone, reason) in zones {
             guard var channel = state.channels[zone] else {
                 // The permitted replacement may be on a different copy of the checkpoint.
-                if reason != .deleted, replacementEnrollment(in: zone) != nil {
+                if reason != .deleted, resetAllowance(in: zone)?.isEmpty == false {
                     revoked.insert(zone)
                 }
                 continue
@@ -205,10 +206,11 @@ extension CloudSettingsSync {
             case .purged, .encryptedDataReset:
                 // CloudKit requires discarding the old cache even if another Mac has already re-created this zone.
                 if fetchStart?.includes(channel) == false {
-                    continue
+                    newer[zone] = channel.enrollment
+                } else {
+                    forget(zone: zone)
+                    revoked.insert(zone)
                 }
-                forget(zone: zone)
-                revoked.insert(zone)
             case .deleted:
                 guard !channel.needsConfirmation else { continue }
                 recheck[zone] = channel.enrollment
@@ -217,8 +219,8 @@ extension CloudSettingsSync {
                 updateChannel(channel)
             }
         }
-        guard !revoked.isEmpty || !recheck.isEmpty else { return }
-        try saveAfterZoneRemoval(revoked, rechecking: Set(recheck.keys))
+        guard !revoked.isEmpty || !recheck.isEmpty || !newer.isEmpty else { return }
+        try saveAfterZoneRemoval(revoked, rechecking: Set(recheck.keys), preserving: newer)
         guard !recheck.isEmpty else { return }
         // The shared cursor may report an app deletion after a zone was re-created. Read it outside this delegate callback.
         let started = generation

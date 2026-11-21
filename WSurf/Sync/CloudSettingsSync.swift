@@ -738,9 +738,12 @@ final class CloudSettingsSync: SyncZoneHandler {
             clearEnrollments(for: nil)
             state.appliedAccountReset = reset
         }
-        for zone in heldZones(.reset) {
-            if let channel = state.channels[zone], replacementEnrollment(in: zone) != channel.enrollment.uuidString {
-                forget(zone: zone)
+        let legacyResets = heldZones(.reset)
+        for channel in state.channels.values {
+            let allowed = resetAllowance(in: channel.zone)
+            let wasReset = allowed != nil || legacyResets.contains(channel.zone)
+            if wasReset && allowed != channel.enrollment.uuidString {
+                forget(zone: channel.zone)
             }
         }
         for zone in heldZones(.recheck) where state.channels[zone]?.needsConfirmation == false {
@@ -762,17 +765,18 @@ final class CloudSettingsSync: SyncZoneHandler {
         accountResetKey + ZoneHold.reset.rawValue + "." + zone
     }
 
-    func replacementEnrollment(in zone: String) -> String? {
+    /// An empty value revokes every UUID. A legacy reset may have only its zone name in the list.
+    func resetAllowance(in zone: String) -> String? {
         resetDefaults.string(forKey: replacementKey(for: zone))
     }
 
     private func allowReplacementAfterReset(_ channel: MacSettingChannel) throws {
-        guard heldZones(.reset).contains(channel.zone) else { return }
+        guard resetAllowance(in: channel.zone) != nil || heldZones(.reset).contains(channel.zone) else { return }
         // Even before account confirmation, only this new UUID may survive a checkpoint restore.
         let key = replacementKey(for: channel.zone)
         resetDefaults.set(channel.enrollment.uuidString, forKey: key)
         guard resetDefaults.synchronize() else {
-            resetDefaults.removeObject(forKey: key)
+            resetDefaults.set("", forKey: key)
             throw CocoaError(.fileWriteUnknown)
         }
     }
@@ -790,21 +794,25 @@ final class CloudSettingsSync: SyncZoneHandler {
         }
     }
 
-    func holdZoneDeletions(resets: Set<String>, rechecks: Set<String>) throws {
-        if !resets.isEmpty {
-            for zone in resets {
-                resetDefaults.removeObject(forKey: replacementKey(for: zone))
+    func holdZoneDeletions(resets: Set<String>, rechecks: Set<String>, preserving newer: [String: UUID] = [:]) throws {
+        let affected = resets.union(newer.keys)
+        if !affected.isEmpty {
+            for zone in affected {
+                // One preference revokes all prior checkpoints and identifies the sole surviving choice, if any.
+                resetDefaults.set(newer[zone]?.uuidString ?? "", forKey: replacementKey(for: zone))
             }
-            resetDefaults.set(heldZones(.reset).union(resets).sorted(), forKey: accountResetKey + ZoneHold.reset.rawValue)
+            resetDefaults.set(heldZones(.reset).union(affected).sorted(), forKey: accountResetKey + ZoneHold.reset.rawValue)
             guard resetDefaults.synchronize() else { throw CocoaError(.fileWriteUnknown) }
         }
         try updateZoneRechecks { $0.formUnion(rechecks) }
     }
 
-    func saveAfterZoneRemoval(_ revoked: Set<String>, rechecking: Set<String> = []) throws {
+    func saveAfterZoneRemoval(_ revoked: Set<String>, rechecking: Set<String> = [], preserving newer: [String: UUID] = [:]) throws {
         // The cursor may advance and a previous checkpoint may return even after a successful save.
-        let journal = Result { try holdZoneDeletions(resets: revoked, rechecks: rechecking) }
-        try save()
+        let journal = Result { try holdZoneDeletions(resets: revoked, rechecks: rechecking, preserving: newer) }
+        if !revoked.isEmpty || !rechecking.isEmpty {
+            try save()
+        }
         try journal.get()
     }
 

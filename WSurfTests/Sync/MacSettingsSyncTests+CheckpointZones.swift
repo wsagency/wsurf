@@ -368,6 +368,51 @@ extension MacSettingsSyncTests {
         try disk.expectCursorAtDeletion()
         try await disk.expectRevoked(afterRestoring: permitted)
     }
+
+    @Test(arguments: [SyncZoneDeletionReason.purged, .encryptedDataReset])
+    func aDelayedResetRevokesOnlyTheMissingCheckpoint(reason: SyncZoneDeletionReason) async throws {
+        let disk = try CheckpointZones(root: lifecycleDirectory())
+        defer { disk.remove() }
+        let seed = try disk.launch()
+        try await seed.settings.enable(.providers, localProfileID: nil, cloudProfileID: nil)
+        try await seed.engine.fetchNow()
+        let old = try #require(seed.settings.channel(.providers, localProfileID: nil))
+        try #require(old.records["local"]?.pending?.value == disk.value)
+        let original = try Data(contentsOf: disk.file)
+        try FileManager.default.removeItem(at: disk.file)
+
+        disk.cloud.deleteZone(disk.zone, reason: reason)
+        disk.cloud.createZone(disk.zone)
+        let receiving = try disk.launch()
+        disk.value = Data([2])
+        var replacement: UUID?
+        receiving.engine.beforeFetchDelivery = {
+            receiving.engine.beforeFetchDelivery = nil
+            try #require(!FileManager.default.fileExists(atPath: disk.file.path))
+            try await receiving.settings.enable(.providers, localProfileID: nil, cloudProfileID: nil)
+            let chosen = try #require(try CloudSettingsSync.State.read(from: disk.file).channels[disk.zone])
+            try #require(!chosen.needsConfirmation && chosen.enrollment != old.enrollment)
+            replacement = chosen.enrollment
+        }
+        try await receiving.engine.fetchNow()
+        try disk.expectCursorAtDeletion()
+        let fresh = try #require(replacement)
+        try #require(receiving.settings.channel(.providers, localProfileID: nil)?.enrollment == fresh)
+        let permitted = try Data(contentsOf: disk.file)
+        try #require(try disk.launch().settings.channel(.providers, localProfileID: nil)?.enrollment == fresh)
+
+        disk.value = Data([1])
+        try await disk.expectRevoked(afterRestoring: original)
+        disk.value = Data([2])
+        try permitted.write(to: disk.file, options: .atomic)
+        let restarted = try disk.launch()
+        try #require(restarted.settings.channel(.providers, localProfileID: nil)?.enrollment == fresh)
+        try restarted.settings.accountDidResolve(disk.cloud.user)
+        try #require(await waitUntil(timeout: .seconds(3)) { disk.cloud.record(disk.localID) != nil })
+        let record = try #require(disk.cloud.record(disk.localID))
+        let sent = try #require(MacSettingRecord.decode(record.payload, recordName: disk.localID.name))
+        #expect(sent.enrollment == fresh && sent.value == disk.value)
+    }
 }
 
 @MainActor
