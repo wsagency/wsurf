@@ -212,7 +212,7 @@ extension BrowserModel {
     private func assignSpace(_ space: UUID?, to item: SidebarItem, unplaced: Bool = false) {
         if unplaced {
             unplacedSpaceRows.insert(item)
-        } else if !unplacedSpaceRows.isEmpty {
+        } else if space != nil && !unplacedSpaceRows.isEmpty {
             unplacedSpaceRows.remove(item)
         }
         switch item {
@@ -241,7 +241,7 @@ extension BrowserModel {
         if let space = spaceID(ofItem: item) {
             return space != id
         }
-        return unplacedSpaceRows.contains(item)
+        return unplacedSpaceRows.contains(item) && !isPinned(item)
     }
 
     /// Moves rows of the space on screen to the top of space `id`, out of any folder. Both panes of a split go

@@ -208,6 +208,9 @@ struct AppDatabase: Sendable {
             try db.create(index: "profilePin_parentID", on: "profilePin", columns: ["parentID"], options: .ifNotExists)
             try narrowHistoryIndexTrigger(in: db)
         }
+        migrator.registerMigration("v5-pin-space-placement", foreignKeyChecks: .immediate) { db in
+            try defineSchema(in: db)
+        }
         return migrator
     }
 
@@ -439,6 +442,11 @@ struct AppDatabase: Sendable {
             guard try !db.columns(in: table).contains(where: { $0.name == "pinID" }) else { continue }
             try db.alter(table: table) { t in
                 t.add(column: "pinID", .blob)
+            }
+        }
+        for table in ["profilePin", "sessionTab"] where try !db.columns(in: table).contains(where: { $0.name == "requiresSpacePlacement" }) {
+            try db.alter(table: table) { t in
+                t.add(column: "requiresSpacePlacement", .boolean)
             }
         }
         if try !db.columns(in: "profilePin").contains(where: { $0.name == "sizeFactor" }) {

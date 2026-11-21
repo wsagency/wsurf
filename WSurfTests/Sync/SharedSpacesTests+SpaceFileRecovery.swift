@@ -15,6 +15,7 @@ extension SharedSpacesTests {
         let browser: BrowserModel
         let host: CloudSharedSpaces
         let engine: FakeSyncEngine
+        private let windows = NSHashTable<BrowserModel>.weakObjects()
 
         init(_ root: URL, window: UUID, cloud: FakeSyncCloud, offline: Bool = false) {
             let database = AppDatabase(at: root.appending(path: "session.sqlite"))
@@ -22,8 +23,10 @@ extension SharedSpacesTests {
             let model = BrowserModel(windowID: window, database: database)
             spaces = store
             browser = model
+            let windows = self.windows
+            windows.add(model)
             host = CloudSharedSpaces(
-                stateFile: root.appending(path: "catalog.json"), profiles: [profile], windows: { [weak model] in [model].compactMap { $0 } },
+                stateFile: root.appending(path: "catalog.json"), profiles: [profile], windows: { windows.allObjects },
                 spaces: { _ in store }, pins: { _ in model.pinStore }
             )
             model.sharedSpacesHost = host
@@ -34,6 +37,16 @@ extension SharedSpacesTests {
             model.saveDeadline = .seconds(120)
             model.adoptSpaces(from: store)
             model.restoreSession()
+        }
+
+        func addWindow(_ id: UUID, in space: UUID) -> BrowserModel {
+            let window = BrowserModel(context: browser.context, windowID: id, database: browser.database)
+            windows.add(window)
+            window.sharedSpacesHost = host
+            window.adoptSpaces(from: spaces)
+            window.restoreSession()
+            window.switchSpace(to: space)
+            return window
         }
 
         func close() {
@@ -377,6 +390,113 @@ extension SharedSpacesTests {
         #expect(peer.browser.page(at: localURL.absoluteString) != nil)
         let chosen = try #require(cloud.records(in: SharedCatalogCategory.spaces.zone)).compactMap(SharedSpaceItem.init(record:))
         #expect(chosen.contains { $0.url == localURL.absoluteString && !$0.removed })
+    }
+
+    @Test(arguments: [false, true], [false, true])
+    func temporarilyPinningALegacyUnplacedPageKeepsItLocalAcrossWindows(restartWhilePinned: Bool, unpinAtSource: Bool) async throws {
+        let root = URL.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let cloud = FakeSyncCloud(), firstID = UUID(), secondID = UUID()
+        let peer = Mac(cloud)
+        defer { peer.finish() }
+        let old = StoredWindow(root, window: firstID, cloud: cloud)
+        let shared = try #require(old.spaces.spaces.first), local = old.spaces.add(name: "Device only")
+        let other = old.spaces.add(name: "Second shared Space")
+        old.browser.adoptSpaces(from: old.spaces)
+        let anchor = old.browser.addPage("https://anchor.example.invalid/")
+        let privateURL = "https://private-note.example.invalid/pin-cycle"
+        let privateID = old.browser.addPage(privateURL).id
+        old.browser.move([.tab(privateID)], toSpace: local.id)
+        let knownURL = "https://proven.example.invalid/pin-cycle"
+        let knownID = old.browser.addPage(knownURL).id
+        old.browser.move([.tab(knownID)], toSpace: other.id)
+        old.browser.activate(anchor)
+        for space in [shared, other] {
+            try await old.host.share(space, in: old.profile)
+        }
+        await old.host.refresh()
+        try await peer.host.enable(.spaces, for: peer.profile)
+        for space in peer.host.availableSpaces(for: peer.profile) {
+            try await peer.host.join(space, in: peer.profile)
+        }
+        let oldCloudID = try #require(old.host.links[old.profile.id]?.slots[knownID]?.cloudID)
+        let peerKnownSpace = try #require(peer.browser.page(at: knownURL)?.spaceID)
+        old.browser.saveBlocking()
+        // Reproduce the ordinary NULL row written by older releases, before pinning existed in this session.
+        try await old.browser.database.writer.write { db in
+            try db.execute(sql: "UPDATE sessionTab SET spaceID = NULL WHERE id = ?", arguments: [privateID])
+        }
+        old.close()
+
+        var first = StoredWindow(root, window: firstID, cloud: cloud, offline: true)
+        var second = first.addWindow(secondID, in: local.id)
+        defer { second.closeAllTabs(saving: false); first.close() }
+        let loose = try #require(first.browser.tab(id: privateID))
+        try #require(loose.spaceID == nil && !first.host.isEnabled(.pins, for: first.profile))
+        first.browser.pin(loose)
+        first.browser.pin(try #require(first.browser.tab(id: knownID)))
+        let privatePin = try #require(loose.pinID), sharedPin = try #require(first.browser.tab(id: knownID)?.pinID)
+        first.browser.saveBlocking()
+        second.saveBlocking()
+        if restartWhilePinned {
+            if !unpinAtSource {
+                // A pin saved by v4 has no record of its pre-pin Space ownership.
+                try await first.browser.database.writer.write { db in
+                    if try db.columns(in: "profilePin").contains(where: { $0.name == "requiresSpacePlacement" }) {
+                        try db.execute(sql: "ALTER TABLE profilePin DROP COLUMN requiresSpacePlacement")
+                        try db.execute(sql: "ALTER TABLE sessionTab DROP COLUMN requiresSpacePlacement")
+                        try db.execute(sql: "DELETE FROM grdb_migrations WHERE identifier = 'v5-pin-space-placement'")
+                    }
+                }
+            }
+            second.closeAllTabs(saving: false)
+            first.close()
+            first = StoredWindow(root, window: firstID, cloud: cloud, offline: true)
+            second = first.addWindow(secondID, in: local.id)
+        }
+        first.browser.switchSpace(to: shared.id)
+        let original = try #require(first.browser.tab(id: privateID))
+        first.browser.activate(original)
+        original.realizeDeferredSession(byPerson: true)
+        try #require(original.pinID == privatePin && original.isMaterialised && !original.isDeferred)
+        try #require(first.browser.currentSpaceID == shared.id && second.currentSpaceID == local.id)
+        first.browser.saveBlocking()
+        #expect(first.browser.spaceMoveTargets(for: [.tab(original.id)]).isEmpty)
+        let freshURL = try #require(URL(string: "https://fresh-link.example.invalid/"))
+        let fresh = first.browser.newTab(url: freshURL, activate: false, after: original)
+        #expect(fresh.spaceID == shared.id)
+        let unpinner = unpinAtSource ? first.browser : second
+        unpinner.unpin(try #require(unpinner.tabs.first { $0.pinID == privatePin }))
+        unpinner.unpin(try #require(unpinner.tabs.first { $0.pinID == sharedPin }))
+        #expect(first.browser.tab(id: privateID) === original && original.pinID == nil)
+        #expect(original.spaceID == nil && first.browser.isShown(original))
+        first.browser.scheduleSave()
+        if restartWhilePinned || unpinAtSource {
+            first.browser.saveBlocking()
+        }
+        // The remaining case restarts after profilePin changed and before this window saved its demotion.
+        second.saveBlocking()
+        first.engine.offline = false
+        await first.host.refresh()
+        try await peer.sync()
+        #expect(!peer.browser.tabs.contains { $0.urlString == privateURL })
+        let before = try #require(cloud.records(in: SharedCatalogCategory.spaces.zone)).compactMap(SharedSpaceItem.init(record:))
+        #expect(!before.contains { $0.url == privateURL })
+        #expect(first.browser.tab(id: knownID)?.spaceID == other.id)
+        #expect(first.host.links[first.profile.id]?.slots[knownID]?.cloudID == oldCloudID)
+        #expect(peer.browser.page(at: knownURL)?.spaceID == peerKnownSpace)
+
+        second.closeAllTabs(saving: false)
+        first.close()
+        first = StoredWindow(root, window: firstID, cloud: cloud)
+        second = first.addWindow(secondID, in: local.id)
+        let retained = try #require(first.browser.tab(id: privateID))
+        #expect(first.browser.tab(id: knownID)?.spaceID == other.id)
+        #expect(retained.pinID == nil && retained.spaceID == nil && first.browser.isShown(retained))
+        first.browser.move([.tab(privateID)], toSpace: shared.id)
+        await first.host.refresh()
+        try await peer.sync()
+        #expect(peer.browser.tabs.filter { $0.urlString == privateURL }.count == 1)
     }
 
     @Test func aRenameSavedDuringASpaceFileOutageSupersedesTheOlderQueuedRename() async throws {

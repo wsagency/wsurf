@@ -42,6 +42,8 @@ nonisolated struct ProfilePin: Codable, Equatable, FetchableRecord, PersistableR
     var customColor: String?
     /// A folder's own SF Symbol; nil is the plain folder icon.
     var symbol: String?
+    /// Shared between this Mac's windows. Older pins have no evidence of their pre-pin Space.
+    var requiresSpacePlacement: Bool? = false
 
     /// Parents before children, siblings by key. This is the order to insert rows in, because a child
     /// references its parent.

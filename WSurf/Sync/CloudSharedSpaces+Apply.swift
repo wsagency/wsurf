@@ -81,12 +81,6 @@ extension CloudSharedSpaces {
         }
     }
 
-    func originalSpace(of localTab: UUID, in profile: Profile) -> UUID? {
-        guard let link = links[profile.id], let slot = link.slots[localTab], slot.pinID != nil,
-              let membership = slot.last?.spaceID else { return nil }
-        return link.spaces.first { $0.value == membership }?.key
-    }
-
     private func applyPins(_ profile: Profile, models: [BrowserModel]) {
         guard var link = links[profile.id] else { return }
         let store = pins(profile)

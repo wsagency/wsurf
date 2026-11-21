@@ -538,7 +538,7 @@ final class BrowserModel {
 
     func insert(_ tab: BrowserTab, after opener: BrowserTab?) {
         // A page opened from another page stays in that page's space, even when it is not the space on screen.
-        if tab.spaceID == nil, let opener {
+        if tab.spaceID == nil, let opener, !opener.isPinnedForProfile {
             copySpace(from: opener, to: tab)
         }
         let keptRun = keptRunAtTop()

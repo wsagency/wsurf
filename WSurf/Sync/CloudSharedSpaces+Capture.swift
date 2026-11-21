@@ -94,7 +94,7 @@ extension CloudSharedSpaces {
     }
 
     /// A window's existing slot and catalog record can identify an ordinary SQLite row whose Space is missing.
-    func savedSpace(of item: SidebarItem, in browser: BrowserModel) -> UUID? {
+    func savedSpace(of item: SidebarItem, in browser: BrowserModel, pinID: UUID? = nil) -> UUID? {
         let local: UUID, kind: SharedSpaceItem.Kind
         switch item {
         case .tab(let id):
@@ -103,11 +103,15 @@ extension CloudSharedSpaces {
             (local, kind) = (id, .folder)
         }
         guard let link = links[browser.context.profile.id], let slot = link.slots[local], slot.window == browser.windowID,
-              slot.pinID == nil, slot.closedAfterRevision == nil, let last = slot.last, last.id == slot.cloudID,
+              slot.closedAfterRevision == nil, let last = slot.last, last.id == slot.cloudID,
               !last.removed, last.kind == kind, last.profileID == link.profile, let space = last.spaceID,
               let live = catalog.item(slot.cloudID, in: .spaces), live.id == slot.cloudID, !live.removed, live.kind == kind,
               live.profileID == last.profileID, live.spaceID == space, let container = catalog.item(space, in: .spaces),
               !container.removed, container.kind == .space, container.profileID == last.profileID else { return nil }
+        let expectedPin = pinID ?? browser.tab(id: local)?.pinID
+        if let priorPin = slot.pinID, priorPin != expectedPin {
+            guard expectedPin == nil, browser.pinStore.isAvailable, !browser.pinStore.pins.contains(where: { $0.id == priorPin }) else { return nil }
+        }
         return link.spaces.first { $0.value == space && browser.knownSpaceIDs.contains($0.key) }?.key
     }
 
@@ -266,8 +270,8 @@ extension CloudSharedSpaces {
                     }
                     link.slots[local]?.pinID = pinID
                     continue
-                } else if previous.pinID != nil {
-                    if let destination = link.spaces.first(where: { $0.value == previous.last?.spaceID })?.key, destination != tab.spaceID {
+                } else if let pinID = previous.pinID {
+                    if let destination = savedSpace(of: row, in: browser, pinID: pinID), destination != tab.spaceID {
                         tab.spaceID = destination
                         restoredMembership = true
                     }

@@ -45,7 +45,7 @@ struct AppDatabaseMigrationTests {
     private static let columnsAddedSince010: [(table: String, name: String)] = [
         ("historyVisit", "trail"), ("sessionTab", "lastVisit"), ("sessionTab", "visitTrail"), ("sessionTab", "microTabID"),
         ("sessionWindow", "kind"), ("sessionFolder", "customColor"), ("sessionFolder", "symbol"), ("sessionFolder", "tintsIcons"),
-        ("profilePin", "customColor"),
+        ("profilePin", "customColor"), ("profilePin", "requiresSpacePlacement"), ("sessionTab", "requiresSpacePlacement"),
     ]
 
     private static let indexesOfV4 = [
@@ -75,7 +75,7 @@ struct AppDatabaseMigrationTests {
         try #require(!database.isEphemeral)
         let after = try database.writer.write { db throws in
             #expect(try String.fetchSet(db, sql: "SELECT identifier FROM grdb_migrations")
-                == ["v1", "v2-folder-pinning", "v3-profile-pins", "v4-indexes"])
+                == ["v1", "v2-folder-pinning", "v3-profile-pins", "v4-indexes", "v5-pin-space-placement"])
             #expect(try String.fetchAll(db, sql: "PRAGMA integrity_check") == ["ok"])
             #expect(try Row.fetchAll(db, sql: "PRAGMA foreign_key_check").isEmpty)
             #expect(try Set(Self.indexNames(in: db)).isSuperset(of: Self.indexesOfV4))
@@ -237,7 +237,7 @@ struct AppDatabaseMigrationTests {
         let database = AppDatabase.temporary()
         try database.writer.read { db throws in
             #expect(try String.fetchSet(db, sql: "SELECT identifier FROM grdb_migrations")
-                == ["v1", "v2-folder-pinning", "v3-profile-pins", "v4-indexes"])
+                == ["v1", "v2-folder-pinning", "v3-profile-pins", "v4-indexes", "v5-pin-space-placement"])
             #expect(try Set(Self.indexNames(in: db)).isSuperset(of: Self.indexesOfV4))
         }
     }
@@ -295,7 +295,9 @@ struct AppDatabaseMigrationTests {
     /// GRDB's own trigger, as 0.1.14 and every earlier build left it, and no `v4-indexes`.
     private nonisolated static func dropV4(in db: Database) throws {
         try db.execute(sql: """
-            DELETE FROM grdb_migrations WHERE identifier = 'v4-indexes';
+            DELETE FROM grdb_migrations WHERE identifier IN ('v4-indexes', 'v5-pin-space-placement');
+            ALTER TABLE profilePin DROP COLUMN requiresSpacePlacement;
+            ALTER TABLE sessionTab DROP COLUMN requiresSpacePlacement;
             DROP INDEX historyVisit_fromVisit;
             DROP INDEX sessionItem_tabID;
             DROP INDEX sessionItem_folderID;

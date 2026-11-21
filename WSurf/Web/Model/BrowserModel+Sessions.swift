@@ -119,6 +119,7 @@ extension BrowserModel {
         var pinID: UUID?
         var lastActiveAt: Date?
         var spaceID: UUID?
+        var requiresSpacePlacement: Bool?
         /// The last visit the tab recorded and its trail, so a restored tab goes on with them. See `HistoryStore.record`.
         var lastVisit: Int64?
         var visitTrail: Int64?
@@ -326,6 +327,7 @@ extension BrowserModel {
                 pinID: tab.pinID,
                 lastActiveAt: tab.lastActiveAt,
                 spaceID: tab.spaceID,
+                requiresSpacePlacement: unplacedSpaceRows.contains(.tab(tab.id)),
                 lastVisit: lastVisitID[tab.id]?.visit,
                 visitTrail: lastVisitID[tab.id]?.trail,
                 microTabID: tab.microTabID
@@ -427,8 +429,8 @@ extension BrowserModel {
                 sql: """
                     INSERT INTO sessionTab
                         (id, windowID, title, customTitle, url, state, pinnedURL, pinnedTitle,
-                         internalPage, isActive, isFavorite, pinID, lastActiveAt, spaceID, lastVisit, visitTrail, microTabID)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         internalPage, isActive, isFavorite, pinID, lastActiveAt, spaceID, requiresSpacePlacement, lastVisit, visitTrail, microTabID)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(id) DO UPDATE SET
                         windowID = excluded.windowID,
                         title = excluded.title,
@@ -443,6 +445,7 @@ extension BrowserModel {
                         pinID = excluded.pinID,
                         lastActiveAt = excluded.lastActiveAt,
                         spaceID = excluded.spaceID,
+                        requiresSpacePlacement = excluded.requiresSpacePlacement,
                         lastVisit = excluded.lastVisit,
                         visitTrail = excluded.visitTrail,
                         microTabID = excluded.microTabID
@@ -451,7 +454,7 @@ extension BrowserModel {
                     tab.id, tab.windowID, tab.title, tab.customTitle, tab.url, tab.state,
                     tab.pinnedURL, tab.pinnedTitle,
                     tab.internalPage?.rawValue, tab.isActive, tab.isFavorite, tab.pinID, tab.lastActiveAt, tab.spaceID,
-                    tab.lastVisit, tab.visitTrail, tab.microTabID,
+                    tab.requiresSpacePlacement, tab.lastVisit, tab.visitTrail, tab.microTabID,
                 ]
             )
         }
@@ -570,7 +573,8 @@ extension BrowserModel {
         }
         // A page of a pin the profile no longer holds is gone, and so is a second page of one pin.
         let store = pinStore
-        let ordered = Self.pagesOfCurrentPins(inOrder, in: store)
+        let ordered = pagesOfCurrentPins(inOrder, in: store)
+        unplacedSpaceRows.formUnion(ordered.lazy.filter { $0.requiresSpacePlacement == true }.map { .tab($0.id) })
         let byID = Dictionary(ordered.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         let profileHoldsPins = store.isAvailable
 
@@ -690,20 +694,36 @@ extension BrowserModel {
     }
 
     /// The records that are not pins plus the first record of each pin the profile still holds.
-    private static func pagesOfCurrentPins(_ records: [TabRecord], in store: ProfilePinStore) -> [TabRecord] {
+    private func pagesOfCurrentPins(_ records: [TabRecord], in store: ProfilePinStore) -> [TabRecord] {
         guard store.isAvailable else {
             // The stored pins cannot be read, so every page stays as an ordinary tab.
             return records.map { record in
                 var plain = record
+                if record.pinID != nil, requiresSpacePlacementAfterUnpin(record.requiresSpacePlacement) {
+                    plain.requiresSpacePlacement = true
+                }
                 plain.pinID = nil
                 return plain
             }
         }
         let current = Set(store.pins.map(\.id))
         var claimed: Set<UUID> = []
-        return records.filter { record in
-            guard let pinID = record.pinID else { return true }
-            return current.contains(pinID) && claimed.insert(pinID).inserted
+        return records.compactMap { record in
+            guard let pinID = record.pinID else { return record }
+            if current.contains(pinID) {
+                return claimed.insert(pinID).inserted ? record : nil
+            }
+            // The profile can commit an unpin before this window saves the demoted page.
+            let space = sharedSpaceService?.savedSpace(of: .tab(record.id), in: self, pinID: pinID)
+            guard space != nil || requiresSpacePlacementAfterUnpin(record.requiresSpacePlacement) else { return nil }
+            var plain = record
+            plain.pinID = nil
+            plain.pinnedURL = nil
+            plain.pinnedTitle = nil
+            plain.isFavorite = false
+            plain.spaceID = space
+            plain.requiresSpacePlacement = space == nil
+            return plain
         }
     }
 
