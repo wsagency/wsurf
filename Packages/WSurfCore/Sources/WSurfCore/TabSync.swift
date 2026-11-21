@@ -55,7 +55,7 @@ nonisolated public struct RemoteDeviceSession: Identifiable, Equatable, Sendable
 
 /// The platform-neutral core of tab sync: what this device publishes, what it keeps of the others, and how engine events change both.
 @Observable
-public final class TabSync: SyncEngineDelegate {
+public final class TabSync {
     public let installID: String
     public let device: DeviceInfo
     public private(set) var state: TabSyncState
@@ -86,7 +86,7 @@ public final class TabSync: SyncEngineDelegate {
     private final class Enrollment {
         var start = FetchStart()
         var task: Task<Void, Never>?
-        var verifyingRemovalOwner = false
+        var firstAccountLookups = 0
         var complete = false
         var readAgain = false
         var changedDuringRead: Set<SyncRecordID> = []
@@ -102,10 +102,11 @@ public final class TabSync: SyncEngineDelegate {
     @ObservationIgnored private var deferredUploads: Set<String> = []
     @ObservationIgnored private var refreshing = false
     @ObservationIgnored private var signedOut = false
+    @ObservationIgnored private var accountGeneration = 0
 
     /// Whether this device owns anything on the server or wants to: the owner creates the engine only then.
     public var needsEngine: Bool {
-        !desired.isEmpty || !ownedZones.isEmpty
+        !desired.isEmpty || !ownedZones.isEmpty || (accountAvailable == nil && hasParkedWithdrawals)
     }
 
     // ponytail: `persist` rewrites the whole state per mutation and event, KBs typically; move to an actor-owned file if it shows up.
@@ -132,8 +133,8 @@ public final class TabSync: SyncEngineDelegate {
                 clearAccountData()
                 state.accountUser = owner
             }
-            // Old router revisions only settle a removal check. A clear from that format carries no contrary zone evidence.
-            let migrated = migratedLegacyEvidence && saved.pending == nil ? state.zoneObservations : nil
+            // Pre-observation routers only describe the named zones in their pending check.
+            let migrated = migratedLegacyEvidence ? state.zoneObservations?.restoringLegacyEvidence(for: saved.pending) : nil
             state.zoneObservations = saved.observations ?? migrated
             state.removalRevision = saved.revision
             state.removalCheck = saved.pending
@@ -181,6 +182,10 @@ public final class TabSync: SyncEngineDelegate {
         return publication.zones
     }
 
+    private var hasParkedWithdrawals: Bool {
+        state.zoneObservations?.withdrawals?.values.contains { $0.installID == installID && !$0.zones.isEmpty } == true
+    }
+
     private func rememberOwnRow(in zone: String) {
         let owned = ownedZones
         if !owned.contains(zone) {
@@ -210,7 +215,12 @@ public final class TabSync: SyncEngineDelegate {
             renewEnrollment()
         }
         replay()
-        guard let enrollment else { return }
+        guard let enrollment else {
+            if hasParkedWithdrawals {
+                Task { [weak self] in await self?.refresh() }
+            }
+            return
+        }
         Task { [weak self] in
             guard let self, self.enrollment === enrollment else { return }
             let available = await engine.accountIsAvailable()
@@ -301,7 +311,17 @@ public final class TabSync: SyncEngineDelegate {
     }
 
     public func refresh() async {
-        guard let engine, let enrollment, let identity = engine as? any SyncAccountIdentity else { return }
+        guard let engine, let identity = engine as? any SyncAccountIdentity else { return }
+        guard let enrollment else {
+            // The approved account may have returned before its sign-in notification.
+            let generation = accountGeneration
+            if !signedOut, hasParkedWithdrawals, let user = try? await identity.currentAccountUser(), !user.isEmpty,
+               self.engine === engine, self.enrollment == nil, accountGeneration == generation, hasParkedWithdrawals {
+                _ = acceptsUploadAccount(user)
+                accountAvailable = true
+            }
+            return
+        }
         startBaseline()
         await enrollment.task?.value
         guard !refreshing, await verifiedUser(for: enrollment, using: identity) != nil, !refreshing else { return }
@@ -338,9 +358,24 @@ public final class TabSync: SyncEngineDelegate {
         }
     }
 
-    private func verifiedUser(for expected: Enrollment, using identity: any SyncAccountIdentity) async -> String? {
-        guard enrollment === expected, let user = try? await identity.currentAccountUser(), !user.isEmpty,
-              enrollment === expected, acceptsUploadAccount(user) else { return nil }
+    private func verifiedUser(for expected: Enrollment, using identity: any SyncAccountIdentity, identifyingRemoval: Bool = false) async -> String? {
+        guard enrollment === expected else { return nil }
+        // A lookup already authorized by this opt-in may identify a deletion delivered while it was suspended.
+        let first = state.accountUser == nil && (identifyingRemoval || canBindFirstAccount)
+        if first {
+            expected.firstAccountLookups += 1
+        }
+        defer {
+            if first {
+                expected.firstAccountLookups -= 1
+            }
+        }
+        guard let user = try? await identity.currentAccountUser(), !user.isEmpty, enrollment === expected else { return nil }
+        if first, state.accountUser == nil, state.removalCheck != nil {
+            rememberAccount(user, beforeFirstRead: true)
+        } else if !acceptsUploadAccount(user) {
+            return nil
+        }
         accountAvailable = true
         return user
     }
@@ -382,14 +417,10 @@ public final class TabSync: SyncEngineDelegate {
         let selected = zones.filter { wants(zone: $0) }
         guard let active = enrollment, !selected.isEmpty else { return }
         if state.accountUser == nil, start?.enrollment == active.start.enrollment {
-            // Only this live delivery can identify an anonymous stop. A restart or a later login cannot adopt it.
             let canIdentify = canBindFirstAccount
             recordRemovalCheck(selected)
-            guard canIdentify, let identity = engine as? any SyncAccountIdentity else { return }
-            active.verifyingRemovalOwner = true
-            defer { active.verifyingRemovalOwner = false }
-            guard let user = try? await identity.currentAccountUser(), !user.isEmpty, enrollment === active else { return }
-            rememberAccount(user, beforeFirstRead: true)
+            guard canIdentify, let identity = engine as? any SyncAccountIdentity,
+                  await verifiedUser(for: active, using: identity, identifyingRemoval: true) != nil else { return }
         }
         let current = start == active.start
         let check = recheckRemovedZones(selected)
@@ -563,11 +594,13 @@ public final class TabSync: SyncEngineDelegate {
         }
         .sorted { ($0.label, $0.id) < ($1.label, $1.id) }
     }
+}
 
-    // MARK: - SyncEngineDelegate
-
+extension TabSync: SyncEngineDelegate {
     public func acceptsUploadAccount(_ user: String) -> Bool {
-        guard enrollment?.verifyingRemovalOwner != true else { return false }
+        if state.accountUser == nil, !canBindFirstAccount, (enrollment?.firstAccountLookups ?? 0) > 0 {
+            return false
+        }
         guard matchesAccount(user) else {
             applyAccount(.switchAccounts(user: user))
             persist(state)
@@ -850,6 +883,7 @@ public final class TabSync: SyncEngineDelegate {
     }
 
     private func applyAccount(_ change: SyncAccountChange) {
+        accountGeneration += 1
         switch change {
         case .signOut:
             signedOut = true
@@ -868,11 +902,14 @@ public final class TabSync: SyncEngineDelegate {
             replay()
         case .signIn(let user), .switchAccounts(let user):
             // Another Apple Account: nothing of the old one is shown, and nothing is uploaded until the person opts in again.
+            let withdrawals = state.zoneObservations?.switching(to: user, withdrawing: ownedZones.filter { !wants(zone: $0) }, installID: installID)
             signedOut = false
             clearAccountData()
-            state.accountUser = user
             accountAvailable = true
-            endSharing()
+            endSharing(account: user, observations: withdrawals)
+            if !ownedZones.isEmpty {
+                replay()
+            }
         }
     }
 
@@ -899,11 +936,12 @@ public final class TabSync: SyncEngineDelegate {
         }
     }
 
-    private func endSharing() {
+    private func endSharing(account: String? = nil, observations: TabSyncState.ZoneObservations? = nil) {
         outgoing = [:]
         desired = []
         onSharingEnded?(nil)
-        setCheckpoint(nil, observations: nil)
+        state.accountUser = account
+        setCheckpoint(nil, observations: observations)
     }
 
     /// Everything the account's database gave this device, and the marks that say it was written there.

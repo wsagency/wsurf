@@ -6,7 +6,7 @@ import Testing
 import WSurfCore
 
 extension TabSyncTests {
-    enum OldTabFiles: CaseIterable { case shipped, revision, newerRouter, signedOut }
+    enum OldTabFiles: CaseIterable { case shipped, revision, newerRouter, signedOut, pendingDevices, bothPending }
 
     @Test(arguments: OldTabFiles.allCases)
     func upgradingEstablishedPersonalCannotReplayCreationBeforeAnAccountLookup(files: OldTabFiles) async throws {
@@ -17,6 +17,10 @@ extension TabSyncTests {
         let tabsFile = directory.appending(path: "iCloudTabs.json"), routerFile = directory.appending(path: "iCloudSync.json")
         let prior = SyncRouter(state: .init(), persist: { _ in }, tabs: nil, vaults: nil)
         let transport = FakeSyncEngine(cloud: cloud, delegate: prior)
+        if files == .pendingDevices || files == .bothPending {
+            cloud.createZone(zone)
+            cloud.deleteZone(zone, reason: .deleted)
+        }
         transport.add([.saveZone(zone)])
         try await transport.fetchNow()
         let oldQueue = try #require(prior.state.engineState)
@@ -28,10 +32,19 @@ extension TabSyncTests {
         if files != .signedOut {
             tabs["accountUser"] = cloud.user
         }
-        if files == .revision || files == .newerRouter {
+        if files != .shipped && files != .signedOut {
             tabs["removalRevision"] = 4
             router["explicitVaultChanges"] = true
-            router["tabRemoval"] = ["revision": files == .newerRouter ? 5 : 4]
+            var removal: [String: Any] = ["revision": files == .revision ? 4 : 5]
+            if files == .pendingDevices || files == .bothPending {
+                cloud.createZone(SyncZone.devices)
+                let pending: [String: Any] = ["account": cloud.user, "profiles": [profile.uuidString], "zones": [SyncZone.devices]]
+                removal["pending"] = pending
+                if files == .bothPending {
+                    tabs["removalCheck"] = pending
+                }
+            }
+            router["tabRemoval"] = removal
         }
         try JSONSerialization.data(withJSONObject: tabs).write(to: tabsFile, options: .atomic)
         try JSONSerialization.data(withJSONObject: router).write(to: routerFile, options: .atomic)
@@ -42,7 +55,7 @@ extension TabSyncTests {
         air.sync.reconcile(sharing: [profile])
         let routed = SyncRouter(state: checkpoint, persist: { _ in }, tabs: air.sync, vaults: nil)
         let engine = FakeSyncEngine(cloud: cloud, delegate: routed, state: checkpoint.engineState)
-        #expect(engine.pending.contains(.saveZone(zone)) == (files == .revision || files == .newerRouter))
+        #expect(engine.pending.contains(.saveZone(zone)) == (files != .shipped && files != .signedOut))
         engine.available = false
         air.sync.attach(engine)
         #expect(!routed.allowsZoneCreation(zone))
@@ -165,6 +178,124 @@ extension TabSyncTests {
         let writes = cloud.writeCount
         try await engine.sendNow()
         #expect(cloud.record(id) == nil && cloud.writeCount == writes && !reopened.sync.needsEngine)
+    }
+
+    enum FirstAccountReply: CaseIterable { case same, switched, changedAtRecheck }
+
+    @Test(arguments: FirstAccountReply.allCases)
+    func anOriginalIdentityLookupSurvivesATimedOutRemovalLookup(accountChanged: FirstAccountReply) async throws {
+        let cloud = FakeSyncCloud(user: "A"), air = SyncDevice(cloud: cloud, installID: "air")
+        let profile = UUID(), zone = SyncZone.profile(profile)
+        let router = SyncRouter(state: .init(), persist: { _ in }, tabs: air.sync, vaults: nil)
+        air.engine.delegate = router
+        cloud.createZone(zone)
+        cloud.deleteZone(zone, reason: .deleted)
+        var timedOut = false
+        air.engine.duringAccountLookup = {
+            air.engine.duringAccountLookup = {
+                air.engine.duringAccountLookup = nil
+                timedOut = true
+                #expect(!router.allowsZoneCreation(zone))
+                throw URLError(.timedOut)
+            }
+            try await air.engine.fetchNow()
+            #expect(!router.allowsZoneCreation(zone))
+            try await air.engine.sendNow()
+            #expect(cloud.zones[zone] == nil && air.box.ended.isEmpty)
+            if accountChanged == .switched {
+                cloud.switchUser("B")
+                await air.engine.simulateAccount(.switchAccounts(user: "B"))
+            } else if accountChanged == .changedAtRecheck {
+                air.engine.duringAccountLookup = {
+                    air.engine.duringAccountLookup = nil
+                    cloud.switchUser("B")
+                }
+            }
+        }
+        air.start(sharing: [profile])
+        await air.sync.refresh()
+        if accountChanged == .same {
+            #expect(air.engine.fetchAllCount >= 2 && air.sync.state.accountUser == "A")
+        }
+        air.sync.share(SyncSamples.session(tabs: ["https://air.test/"]), profileID: profile, force: true)
+        try await air.engine.sendNow()
+        #expect(timedOut && air.box.ended == (accountChanged == .same ? [] : [nil]))
+        #expect((cloud.record(air.id(in: zone)) != nil) == (accountChanged == .same))
+    }
+
+    enum ReturnToOwner: CaseIterable { case signIn, verifiedLookup, newConsent }
+
+    @Test(arguments: ReturnToOwner.allCases)
+    func aWithdrawalWaitsThroughAnotherAccountAndARestart(reenroll: ReturnToOwner) async throws {
+        let first = FakeSyncCloud(user: "A"), other = FakeSyncCloud(user: "B")
+        let profile = UUID(), zone = SyncZone.profile(profile)
+        let air = SyncDevice(cloud: first, installID: "air"), id = air.id(in: zone)
+        let router = SyncRouter(state: .init(), persist: { _ in }, tabs: air.sync, vaults: nil)
+        air.engine.delegate = router
+        air.start(sharing: [profile])
+        await air.sync.refresh()
+        air.sync.share(SyncSamples.session(tabs: ["https://old.test/"]), profileID: profile, force: true)
+        var receipt: (@MainActor () async -> Void)?
+        air.engine.holdSendReceipt = { receipt = $0 }
+        try await air.engine.sendNow()
+        let late = try #require(receipt)
+        var row = try #require(first.record(id))
+        row.systemFields = nil
+        other.createZone(zone)
+        _ = other.save(row)
+        row.id.name = "studio"
+        _ = first.save(row)
+        let writes = first.writeCount
+        air.sync.reconcile(sharing: [])
+        await air.engine.simulateAccount(.signOut)
+        let visiting = FakeSyncEngine(cloud: other, delegate: router)
+        await visiting.simulateAccount(.signIn(user: "B"))
+        air.sync.attach(visiting)
+        await late()
+        try await visiting.sendNow()
+        #expect(other.record(id) != nil && !router.wantsRecordDeletion(id))
+
+        var tabs = try JSONDecoder().decode(TabSyncState.self, from: JSONEncoder().encode(air.sync.state))
+        if reenroll == .verifiedLookup {
+            // An older tab file from B still has its change tag. The newer router parked an A-only withdrawal.
+            tabs = TabSyncState()
+            tabs.accountUser = other.user
+            tabs.ownSystemFields[zone] = try #require(other.record(id)?.systemFields)
+        }
+        let checkpoint = try JSONDecoder().decode(SyncRouterState.self, from: JSONEncoder().encode(router.state))
+        let reopened = SyncDevice(cloud: first, installID: "air", state: tabs)
+        reopened.sync.reconcile(sharing: [])
+        let resumed = SyncRouter(state: checkpoint, persist: { _ in }, tabs: reopened.sync, vaults: nil)
+        reopened.engine.delegate = resumed
+        try #require(reopened.sync.needsEngine)
+        let inB = FakeSyncEngine(cloud: other, delegate: resumed, state: checkpoint.engineState)
+        reopened.sync.attach(inB)
+        await reopened.sync.refresh()
+        try await inB.sendNow()
+        #expect(!reopened.sync.needsEngine && !resumed.wantsRecordDeletion(id) && other.record(id) != nil)
+        if reenroll != .verifiedLookup {
+            await inB.simulateAccount(.signOut)
+        }
+        reopened.sync.attach(reopened.engine)
+        if reenroll == .verifiedLookup {
+            // The transport is back in A before an account-change notification.
+            await reopened.sync.refresh()
+        } else {
+            await reopened.engine.simulateAccount(.signIn(user: "A"))
+        }
+        if reenroll == .newConsent {
+            reopened.sync.reconcile(sharing: [profile])
+            await reopened.sync.refresh()
+            reopened.sync.share(SyncSamples.session(tabs: ["https://new.test/"]), profileID: profile, force: true)
+        }
+        try await reopened.engine.sendNow()
+        if reenroll == .newConsent {
+            let latest = try #require(first.record(id))
+            #expect(try SessionCodec.decodeSession(latest.payload).windows.first?.nodes.first?.url == "https://new.test/")
+        } else {
+            #expect(first.record(id) == nil && first.writeCount == writes && !reopened.sync.needsEngine)
+        }
+        #expect(first.record(row.id) != nil && other.record(id) != nil && other.writeCount == 1)
     }
 
     enum AfterFirstTabSave: CaseIterable { case restart, signOut, signedOutRestart, newConsent, otherAccount, otherInstallation }

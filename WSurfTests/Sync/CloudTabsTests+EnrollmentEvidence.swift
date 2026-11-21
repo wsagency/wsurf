@@ -36,7 +36,7 @@ extension CloudTabsTests {
         #expect(!tabs.isOptedIn(profile.id) && launch.cloud.zones[zone] == nil && launch.cloud.recordCount == 0)
     }
 
-    enum WithdrawnSession: CaseIterable { case currentFiles, staleTabsFile, signedOut }
+    enum WithdrawnSession: CaseIterable { case currentFiles, staleTabsFile, signedOut, returnedWhileClosed }
 
     @Test(arguments: WithdrawnSession.allCases)
     func anOptedOutLaunchWithdrawsItsFirstUnacknowledgedSessionFromDisk(restart: WithdrawnSession) async throws {
@@ -57,8 +57,14 @@ extension CloudTabsTests {
         launch.cloud.deleteRecord(.init(zone: SyncZone.devices, name: id.name))
         tabs.setOptIn(false, for: profile)
         let writes = launch.cloud.writeCount
-        if restart == .signedOut {
+        if restart == .signedOut || restart == .returnedWhileClosed {
+            launch.engine.available = false
             await launch.engine.simulateAccount(.signOut)
+            if restart == .returnedWhileClosed {
+                await launch.engine.simulateAccount(.signIn(user: "B"))
+                // The process exits in B. The next launch finds A without receiving another account-change event.
+                try before.write(to: file, options: .atomic)
+            }
         } else if restart == .staleTabsFile {
             try before.write(to: file, options: .atomic)
         }
@@ -72,6 +78,8 @@ extension CloudTabsTests {
         engine.available = true
         if restart == .signedOut {
             await engine.simulateAccount(.signIn(user: launch.cloud.user))
+        } else if restart == .returnedWhileClosed {
+            await restored.sync.refresh()
         }
         try await engine.sendNow()
         #expect(launch.cloud.recordCount == 0 && launch.cloud.writeCount == writes)

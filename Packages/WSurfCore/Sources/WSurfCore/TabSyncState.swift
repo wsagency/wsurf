@@ -39,6 +39,28 @@ nonisolated public struct TabSyncState: Codable, Equatable, Sendable {
         var zones: [String: Presence] = [:]
         /// Rows this installation handed to the engine, including a first save whose receipt never arrived.
         var publication: Publication?
+        /// Only unfulfilled deletions survive a visit to another account. Each row also belongs to one installation.
+        var withdrawals: [String: Publication]?
+
+        func restoringLegacyEvidence(for check: RemovalCheck?) -> Self? {
+            guard let check else { return self }
+            guard check.account == account else { return nil }
+            var result = self
+            for zone in check.zones.subtracting(check.zonesRequiringExistence) {
+                result.zones[zone] = nil
+            }
+            return result
+        }
+
+        func switching(to user: String, withdrawing zones: Set<String>, installID: String) -> Self {
+            var waiting = withdrawals ?? [:]
+            if !zones.isEmpty {
+                waiting[account] = Publication(installID: installID, zones: zones)
+            }
+            // An explicit empty publication prevents stale change tags on disk from authorizing a delete in the visiting account.
+            let active = waiting.removeValue(forKey: user) ?? Publication(installID: installID, zones: [])
+            return Self(account: user, publication: active, withdrawals: waiting.isEmpty ? nil : waiting)
+        }
     }
 
     struct Publication: Codable, Equatable, Sendable {
@@ -59,14 +81,15 @@ nonisolated public struct TabSyncState: Codable, Equatable, Sendable {
 
     /// A pre-observation tab file may already have a removal revision (77b5152f). Neither old format records absence.
     mutating func migrateObservedZones() -> Bool {
-        guard zoneObservations == nil, removalCheck == nil, let owner = accountUser else { return false }
+        guard zoneObservations == nil, let owner = accountUser else { return false }
         let owned = Set(ownSystemFields.keys)
         var present = owned.union(sessions.compactMap { $0.value.isEmpty ? nil : $0.key })
         if publishedDevice != nil || !devices.isEmpty {
             present.insert(SyncZone.devices)
         }
-        guard !present.isEmpty else { return false }
-        zoneObservations = ZoneObservations(account: owner, zones: Dictionary(uniqueKeysWithValues: present.map { ($0, .present) }))
+        let inferred = ZoneObservations(account: owner, zones: Dictionary(uniqueKeysWithValues: present.map { ($0, .present) }))
+        guard let compatible = inferred.restoringLegacyEvidence(for: removalCheck), !compatible.zones.isEmpty else { return false }
+        zoneObservations = compatible
         removalRevision = removalRevision ?? 0
         return true
     }
