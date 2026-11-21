@@ -55,7 +55,9 @@ struct VaultAssetTransferTests {
                     }
                     let record = CKRecord(recordType: self.returnedType, recordID: self.returnedID ?? id)
                     if keys?.isEmpty != true {
-                        record["ciphertext"] = CKAsset(fileURL: self.serverFile)
+                        if FileManager.default.fileExists(atPath: self.serverFile.path) {
+                            record["ciphertext"] = CKAsset(fileURL: self.serverFile)
+                        }
                         record["kept"] = "existing field"
                         self.checkedVersion = (record, tag)
                     }
@@ -154,6 +156,20 @@ struct VaultAssetTransferTests {
         #expect(try db.bytes == Data(contentsOf: db.serverFile))
         let copy = try #require(db.repairFile)
         #expect(copy != db.file && !FileManager.default.fileExists(atPath: copy.path))
+    }
+
+    @Test(arguments: [true, false])
+    func repairsAnAssetWhoseCiphertextFieldIsMissing(hadReceipt: Bool) async throws {
+        let db = try Database()
+        let ref = try VaultAssetRef(db.bytes)
+        db.tag = "missing-field"
+        try FileManager.default.removeItem(at: db.serverFile)
+        await #expect(throws: VaultSyncError.malformed) {
+            _ = try await db.requests.download(ref, zone: db.zone, user: db.owner)
+        }
+        let tag = try await db.requests.upload(ref, from: db.file, zone: db.zone, user: db.owner, acknowledged: hadReceipt ? "earlier" : nil)
+        #expect(tag == "repaired")
+        #expect(try await db.requests.download(ref, zone: db.zone, user: db.owner).data == db.bytes)
     }
 
     @Test(arguments: [true, false])

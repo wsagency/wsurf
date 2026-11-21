@@ -139,7 +139,7 @@ struct VaultAssetRequests {
     private func verifyOrRepair(_ ref: VaultAssetRef, id: CKRecord.ID, source: URL, user: String) async throws -> String {
         // Keep all server fields and the actual change tag on the fetched record used for the conditional repair.
         let remote = try version(in: await fields([id], keys: nil, user: user), id: id)
-        if try verifiedBytes(ref, at: assetFile(remote.record)) != nil {
+        if remote.record["ciphertext"] != nil, try verifiedBytes(ref, at: assetFile(remote.record)) != nil {
             return remote.tag
         }
 
