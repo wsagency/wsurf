@@ -31,9 +31,11 @@ struct CloudVaultRow: View {
                 verbatimTitle: String(localized: "Sync with iCloud"),
                 verbatimCaption: Self.caption(status: status, held: held, isUnlocked: model.isUnlocked, tally: tally, unownedHistory: hasHistory)
             ) {
-                SettingsToggle(Binding(get: { isOn }, set: { turn($0, from: status, vaultID: vaultID) }))
-                    .disabled(model.isBusy || needsAccount || status == .removalPending || (!isOn && !model.isUnlocked))
-                    .accessibilityLabel("Sync with iCloud")
+                if status != .enrollmentUnavailable {
+                    SettingsToggle(Binding(get: { isOn }, set: { turn($0, from: status, vaultID: vaultID) }))
+                        .disabled(model.isBusy || needsAccount || status == .removalPending || (!isOn && !model.isUnlocked))
+                        .accessibilityLabel("Sync with iCloud")
+                }
             }
             .confirmationDialog(
                 Text("Upload “\(vaultName)” to iCloud?"), isPresented: $confirmsUpload
@@ -142,7 +144,7 @@ struct CloudVaultRow: View {
     /// On means this Mac syncs the vault, whatever it is doing right now.
     static func isOn(_ status: VaultSyncStatus) -> Bool {
         switch status {
-        case .off, .removed, .removalPending, .removalFailed, .removalUnconfirmed, .accountChanged:
+        case .off, .enrollmentUnavailable, .removed, .removalPending, .removalFailed, .removalUnconfirmed, .accountChanged:
             false
         case .synced, .sending, .waitingForUnlock, .needsReview, .holdingRemovals, .iCloudFull, .signedOut, .needsUpdate, .rolledBack:
             true
@@ -186,6 +188,8 @@ struct CloudVaultRow: View {
 
     static func statusText(_ status: VaultSyncStatus, isUnlocked: Bool, unownedHistory: Bool = false) -> String {
         switch status {
+        case .enrollmentUnavailable:
+            String(localized: "Waiting to read this vault’s saved sync settings.")
         case .off:
             if isUnlocked {
                 String(localized: """

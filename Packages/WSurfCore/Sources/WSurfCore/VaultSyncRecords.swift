@@ -100,6 +100,7 @@ nonisolated public struct VaultSyncAppState: Codable, Equatable, Sendable {
 
 nonisolated public enum VaultSyncStatus: Equatable, Sendable {
     case off
+    case enrollmentUnavailable
     case synced
     /// Changes (entries, or the vault's name and unlock passkeys) waiting to go up.
     case sending(Int)

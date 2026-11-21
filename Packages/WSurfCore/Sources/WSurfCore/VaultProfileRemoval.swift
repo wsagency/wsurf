@@ -56,8 +56,14 @@ nonisolated public struct VaultProfileRemoval: Codable, Hashable, Sendable {
                 guard localVaults.contains(id) else { return nil }
                 let status = try row.decode(String.self, forColumn: "status")
                 guard VaultSyncStatus.Stored(rawValue: status) != nil else { throw CocoaError(.fileReadCorruptFile) }
-                guard try VaultRow.readEnabled(from: row), let owner = try row.decode(String?.self, forColumn: "consentUser"),
-                      !owner.isEmpty, owner != CKCurrentUserDefaultName else { return nil }
+                guard try VaultRow.readEnabled(from: row) else { return nil }
+                guard let owner = try row.decode(String?.self, forColumn: "consentUser"), !owner.isEmpty, owner != CKCurrentUserDefaultName else {
+                    // A migrated enabled row without a verified owner cannot cancel the deletion shown in an open warning.
+                    if requireEnrollmentFile {
+                        throw CocoaError(.fileReadCorruptFile)
+                    }
+                    return nil
+                }
                 return Self(profileID: profileID, vaultID: id, owner: owner)
             })
         }

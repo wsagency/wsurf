@@ -80,6 +80,7 @@ public final class VaultSync: SyncEngineDelegate {
     var catalogUser: String?
     @ObservationIgnored var addingVaults: Set<VaultKey> = []
     var summaries: [VaultKey: VaultSyncSummary] = [:]
+    private var unreadableProfiles: Set<UUID> = []
 
     @ObservationIgnored let host: any VaultSyncHost
     @ObservationIgnored let excluded: Set<UUID>
@@ -285,6 +286,9 @@ public final class VaultSync: SyncEngineDelegate {
     // MARK: - What the interface shows
 
     public func status(profileID: UUID, vaultID: UUID) -> VaultSyncStatus {
+        if unreadableProfiles.contains(profileID) {
+            return .enrollmentUnavailable
+        }
         guard let summary = summaries[VaultKey(profileID: profileID, vaultID: vaultID)] else { return .off }
         guard summary.enabled else {
             switch summary.stored {
@@ -530,6 +534,7 @@ public final class VaultSync: SyncEngineDelegate {
     /// Stop the local writers and close the database. The profile list owns its confirmed zones until CloudKit acknowledges them.
     public func forgetErasedProfile(_ profileID: UUID) {
         guard !excluded.contains(profileID), erased.insert(profileID).inserted else { return }
+        unreadableProfiles.remove(profileID)
         for key in summaries.keys where key.profileID == profileID {
             state.remote[key.zone] = nil
             clearAssets(key)
@@ -559,6 +564,13 @@ public final class VaultSync: SyncEngineDelegate {
     /// The heartbeat: re-add what is still waiting to go up, finish a read that did not, and fetch (once, for every vault).
     public func beat() {
         guard engine != nil else { return }
+        let retrying = unreadableProfiles
+        for profileID in retrying {
+            loadEnrollments(for: profileID)
+        }
+        if retrying != unreadableProfiles {
+            resumeEnrolledVaults()
+        }
         scheduleRemovalChecks()
         let keys = enabledKeys
         for (position, key) in keys.enumerated() {
@@ -686,30 +698,58 @@ public final class VaultSync: SyncEngineDelegate {
         return VaultKey(profileID: profileID, vaultID: vaultID)
     }
 
-    /// The profile's database. It is created only when `create` is set; a database that cannot be opened is no database.
     func database(_ profileID: UUID, create: Bool = false) -> VaultSyncDatabase? {
-        guard !excluded.contains(profileID), !erased.contains(profileID) else { return nil }
-        if let existing = databases[profileID] {
-            return existing
-        }
-        guard let directory = host.syncDirectory(profileID: profileID) else { return nil }
+        guard !unreadableProfiles.contains(profileID) else { return nil }
         do {
-            guard let opened = try VaultSyncDatabase.open(directory: directory, create: create) else { return nil }
-            databases[profileID] = opened
-            return opened
+            return try openDatabase(profileID, create: create)
         } catch {
+            deferEnrollmentRead(profileID)
             SyncLog.logger.error("sync: a vault sync database could not be opened")
             return nil
         }
     }
 
+    private func openDatabase(_ profileID: UUID, create: Bool = false) throws -> VaultSyncDatabase? {
+        guard !excluded.contains(profileID), !erased.contains(profileID) else { return nil }
+        if let existing = databases[profileID] {
+            return existing
+        }
+        guard let directory = host.syncDirectory(profileID: profileID) else { return nil }
+        let opened = try VaultSyncDatabase.open(directory: directory, create: create)
+        databases[profileID] = opened
+        return opened
+    }
+
     func loadDatabases(onlyPendingRemovals: Bool = false) {
         for profileID in host.profileIDs() {
-            guard let database = database(profileID), let rows = try? database.read({ try $0.vaults() }) else { continue }
+            loadEnrollments(for: profileID, onlyPendingRemovals: onlyPendingRemovals)
+        }
+    }
+
+    private func loadEnrollments(for profileID: UUID, onlyPendingRemovals: Bool = false) {
+        do {
+            guard let database = try openDatabase(profileID) else { return }
+            let rows = try database.read { try $0.vaults() }
+            unreadableProfiles.remove(profileID)
             for row in rows where !onlyPendingRemovals || row.status == .removalPending || row.status == .removalFailed || row.canManageCloudCopy {
                 refresh(VaultKey(profileID: profileID, vaultID: row.vaultID))
             }
+        } catch {
+            deferEnrollmentRead(profileID)
         }
+    }
+
+    private func deferEnrollmentRead(_ profileID: UUID) {
+        // A restored checkpoint can replace this file. Reopen it before trusting any cached vault status.
+        databases[profileID] = nil
+        guard unreadableProfiles.insert(profileID).inserted else { return }
+        let previouslyHalted = halted
+        for key in summaries.keys where key.profileID == profileID {
+            forget(key)
+            checkedAtAttach.remove(key)
+            summaries[key] = nil
+        }
+        halted = previouslyHalted
     }
 
     var enabledKeys: [VaultKey] {
@@ -777,11 +817,17 @@ public final class VaultSync: SyncEngineDelegate {
 
     /// Rebuilds the vault's observed summary from its rows.
     func refresh(_ key: VaultKey) {
-        guard let database = database(key.profileID), let loaded = try? database.read({ try $0.summary(key.vaultID) }) else {
+        let loaded: (row: VaultRow, counts: VaultCounts)?
+        do {
+            loaded = try database(key.profileID)?.read { try $0.summary(key.vaultID) }
+        } catch {
+            deferEnrollmentRead(key.profileID)
+            return
+        }
+        guard let (row, counts) = loaded else {
             summaries[key] = nil
             return
         }
-        let (row, counts) = loaded
         let isRemoval = row.status == .removalPending || row.status == .removalFailed || row.status == .removedDeleted
         let owner = isRemoval ? row.removalOwner : row.approvedUser
         let needsCheck = row.status == .removalPending || (row.status == .removalFailed && verifiedRemovals[key] != owner)

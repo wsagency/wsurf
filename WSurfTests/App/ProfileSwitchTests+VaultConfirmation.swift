@@ -53,6 +53,21 @@ extension ProfileSwitchTests {
             SyncZone.vault(profileID: work.id, vaultID: vault.vaultID)
         }
 
+        func element(_ node: AnyObject, role: NSAccessibility.Role, containing name: String) -> AnyObject? {
+            if node.accessibilityRole?() == role {
+                let value: String? = role == .staticText ? node.accessibilityValue?() : nil
+                if [node.accessibilityLabel?(), node.accessibilityTitle?(), value].contains(where: { $0?.contains(name) == true }) {
+                    return node
+                }
+            }
+            for child in node.accessibilityChildren?() ?? [] {
+                if let match = element(child as AnyObject, role: role, containing: name) {
+                    return match
+                }
+            }
+            return nil
+        }
+
         func confirmInSettings(
             names: [String], retryNames: [String]? = nil, recoverAfterError: (() async throws -> Void)? = nil,
             beforePress: () async throws -> Void
@@ -67,21 +82,6 @@ extension ProfileSwitchTests {
             }.environment(\.accessibilityEnabled, true))
             window.contentView = host
             window.orderBack(nil)
-
-            func element(_ node: AnyObject, role: NSAccessibility.Role, containing name: String) -> AnyObject? {
-                if node.accessibilityRole?() == role {
-                    let value: String? = role == .staticText ? node.accessibilityValue?() : nil
-                    if [node.accessibilityLabel?(), node.accessibilityTitle?(), value].contains(where: { $0?.contains(name) == true }) {
-                        return node
-                    }
-                }
-                for child in node.accessibilityChildren?() ?? [] {
-                    if let match = element(child as AnyObject, role: role, containing: name) {
-                        return match
-                    }
-                }
-                return nil
-            }
 
             func press(_ name: String, in view: NSView) async throws {
                 try #require(await waitUntil { element(view, role: .button, containing: name) != nil })
@@ -268,6 +268,95 @@ extension ProfileSwitchTests {
             }
             #expect(f.catalog.vaultRemovals.isEmpty)
             #expect(f.vaults.map { f.cloud.records(in: f.zone($0)) } == copies)
+        }
+    }
+
+    @Test(arguments: [false, true])
+    func migratingAnOldVaultListCannotCancelTheWarning(discoveryBeforeConfirmation: Bool) async throws {
+        try await withVaultConfirmation { f in
+            f.app.setVaultDiscovery(false)
+            let file = f.work.supportDirectory.appending(path: VaultSyncDatabase.fileName)
+            let verified = try Data(contentsOf: file)
+            let shown = try await f.work.vaultRemovals()
+            let copies = f.vaults.map { f.cloud.records(in: f.zone($0)) }
+            try #require(shown.count == 2)
+            try await f.confirmInSettings(names: ["Vault 1", "Vault 2"], recoverAfterError: {
+                if !discoveryBeforeConfirmation {
+                    f.app.setVaultDiscovery(true)
+                }
+                await #expect(throws: Profile.VaultListUnavailable.self) {
+                    try await CredentialErasureNote.warning(for: f.work, rechecking: shown)
+                }
+                #expect(ProfileStore(file: f.file).profiles.contains(f.work) && f.catalog.vaultRemovals.isEmpty)
+                #expect(f.vaults.map { f.cloud.records(in: f.zone($0)) } == copies)
+                f.app.setVaultDiscovery(false)
+                try verified.write(to: file, options: .atomic)
+            }) {
+                let database = try #require(try VaultSyncDatabase.open(directory: f.work.supportDirectory, create: false))
+                try database.write { tx in
+                    try tx.db.execute(sql: """
+                        UPDATE vault SET approvedUser = consentUser;
+                        ALTER TABLE vault DROP COLUMN consentUser;
+                        DELETE FROM grdb_migrations WHERE identifier = 'vaultExplicitConsent';
+                        """)
+                }
+                if discoveryBeforeConfirmation {
+                    f.app.setVaultDiscovery(true)
+                }
+            }
+            try #require(await waitUntil { f.app.beat(); return f.catalog.vaultRemovals.isEmpty })
+            #expect(f.vaults.allSatisfy { f.cloud.zones[f.zone($0)] == nil })
+        }
+    }
+
+    enum DamagedEnrollment: CaseIterable { case emptyFile, realFlag, textFlag }
+
+    @Test(arguments: DamagedEnrollment.allCases)
+    func aRecoveredVaultShowsItsSavedChoiceAndCanBeKept(damage: DamagedEnrollment) async throws {
+        try await withVaultConfirmation { f in
+            let first = f.vaults[0], id = first.vaultID, second = f.vaults[1]
+            let firstCopy = try #require(f.cloud.records(in: f.zone(first)))
+            let file = f.work.supportDirectory.appending(path: VaultSyncDatabase.fileName)
+            f.app.setVaultDiscovery(false)
+            let verified = try Data(contentsOf: file)
+            if damage == .emptyFile {
+                try Data().write(to: file, options: .atomic)
+            } else {
+                let database = try #require(try VaultSyncDatabase.open(directory: f.work.supportDirectory, create: false))
+                let flag = damage == .realFlag ? Double(0.5).databaseValue : "damaged".databaseValue
+                try database.write { try $0.db.execute(sql: "UPDATE vault SET enabled = ?", arguments: [flag]) }
+            }
+            f.app.setVaultDiscovery(true)
+            let sync = try #require(f.app.vaults)
+            try #require(await waitUntil { sync.engine != nil })
+            await sync.settle()
+            let model = CredentialSettingsModel(profile: f.work, manager: first.manager)
+            await model.load()
+            try #require(model.selectedVaultID == id)
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 650, height: 600), styleMask: [.titled], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false
+            defer { window.close() }
+            let view = NSHostingView(rootView: VStack {
+                CloudVaultRow(model: model, run: { action in Task { try await action() } })
+            }.environment(\.accessibilityEnabled, true))
+            window.contentView = view
+            window.orderBack(nil)
+            let label = String(localized: "Sync with iCloud")
+            @MainActor func toggle() -> AnyObject? {
+                f.element(view, role: .checkBox, containing: label) ?? f.element(view, role: .init(rawValue: "AXSwitch"), containing: label)
+            }
+            #expect(toggle() == nil, "An unreadable enrollment has no verified on/off value.")
+            try verified.write(to: file, options: .atomic)
+            try #require(await waitUntil {
+                f.app.beat()
+                let value: Any? = toggle()?.accessibilityValue?()
+                return (value as? NSNumber)?.boolValue == true
+            })
+            _ = toggle()?.accessibilityPerformPress?()
+            try #require(await waitUntil { !CloudVaultRow.isOn(sync.status(profileID: f.work.id, vaultID: id)) })
+            try await f.confirmInSettings(names: ["Vault 2"]) {}
+            try #require(await waitUntil { f.app.beat(); return f.cloud.zones[f.zone(second)] == nil })
+            #expect(f.cloud.records(in: f.zone(first)) == firstCopy)
         }
     }
 

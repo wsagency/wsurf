@@ -7319,6 +7319,17 @@
     "Waiting for iCloud. Local changes are saved." : {
 
     },
+    "Waiting to read this vault’s saved sync settings." : {
+      "comment" : "Shown in vault settings while the saved choice about syncing with iCloud cannot be read.",
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Čeka se učitavanje spremljenih postavki sinkronizacije ovog trezora."
+          }
+        }
+      }
+    },
     "Waiting for iCloud to confirm removal. This Mac keeps its copy." : {
       "comment" : "Credential vault removal has been requested. The zone is checked again after an interruption."
     },
