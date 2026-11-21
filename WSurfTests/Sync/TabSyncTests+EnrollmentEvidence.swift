@@ -223,7 +223,7 @@ extension TabSyncTests {
         #expect((cloud.record(air.id(in: zone)) != nil) == (accountChanged == .same))
     }
 
-    enum ReturnToOwner: CaseIterable { case signIn, verifiedLookup, newConsent }
+    enum ReturnToOwner: CaseIterable { case signIn, verifiedLookup, newConsent, delayedWhileOff, delayedAfterConsent }
 
     @Test(arguments: ReturnToOwner.allCases)
     func aWithdrawalWaitsThroughAnotherAccountAndARestart(reenroll: ReturnToOwner) async throws {
@@ -239,19 +239,24 @@ extension TabSyncTests {
         air.engine.holdSendReceipt = { receipt = $0 }
         try await air.engine.sendNow()
         let late = try #require(receipt)
+        try #require(air.sync.state.ownSystemFields[zone] == nil)
         var row = try #require(first.record(id))
         row.systemFields = nil
         other.createZone(zone)
         _ = other.save(row)
         row.id.name = "studio"
         _ = first.save(row)
+        let peer = try #require(first.record(row.id)), foreign = try #require(other.record(id))
         let writes = first.writeCount
         air.sync.reconcile(sharing: [])
         await air.engine.simulateAccount(.signOut)
         let visiting = FakeSyncEngine(cloud: other, delegate: router)
         await visiting.simulateAccount(.signIn(user: "B"))
         air.sync.attach(visiting)
-        await late()
+        let delayedSwitch = reenroll == .delayedWhileOff || reenroll == .delayedAfterConsent
+        if !delayedSwitch {
+            await late()
+        }
         try await visiting.sendNow()
         #expect(other.record(id) != nil && !router.wantsRecordDeletion(id))
 
@@ -273,29 +278,88 @@ extension TabSyncTests {
         await reopened.sync.refresh()
         try await inB.sendNow()
         #expect(!reopened.sync.needsEngine && !resumed.wantsRecordDeletion(id) && other.record(id) != nil)
-        if reenroll != .verifiedLookup {
+        let returnedByLookup = reenroll == .verifiedLookup || delayedSwitch
+        let optedInAgain = reenroll == .newConsent || reenroll == .delayedAfterConsent
+        if !returnedByLookup {
             await inB.simulateAccount(.signOut)
         }
         reopened.sync.attach(reopened.engine)
-        if reenroll == .verifiedLookup {
+        if returnedByLookup {
             // The transport is back in A before an account-change notification.
             await reopened.sync.refresh()
+            try #require(resumed.wantsRecordDeletion(id) && reopened.engine.pending.contains(.deleteRecord(id)))
         } else {
             await reopened.engine.simulateAccount(.signIn(user: "A"))
         }
-        if reenroll == .newConsent {
+        if optedInAgain {
             reopened.sync.reconcile(sharing: [profile])
             await reopened.sync.refresh()
             reopened.sync.share(SyncSamples.session(tabs: ["https://new.test/"]), profileID: profile, force: true)
         }
+        if delayedSwitch {
+            // The real engine resets its queue when it reports the transition that refresh already handled.
+            let ended = reopened.box.ended
+            var notifications: [SyncAccountChange] = []
+            resumed.accountChanged = { notifications.append($0) }
+            await reopened.engine.simulateAccount(.switchAccounts(user: first.user), from: other.user)
+            #expect(notifications == [.switchAccounts(user: first.user)] && reopened.box.ended == ended)
+            #expect(resumed.wantsRecordDeletion(id) == !optedInAgain)
+        }
         try await reopened.engine.sendNow()
-        if reenroll == .newConsent {
+        if optedInAgain {
             let latest = try #require(first.record(id))
             #expect(try SessionCodec.decodeSession(latest.payload).windows.first?.nodes.first?.url == "https://new.test/")
+            if reenroll == .delayedAfterConsent {
+                // A later real opt-out still belongs to this installation after the duplicate notification.
+                reopened.sync.reconcile(sharing: [])
+                try await reopened.engine.sendNow()
+                #expect(first.record(id) == nil && !reopened.sync.needsEngine)
+            }
         } else {
             #expect(first.record(id) == nil && first.writeCount == writes && !reopened.sync.needsEngine)
         }
-        #expect(first.record(row.id) != nil && other.record(id) != nil && other.writeCount == 1)
+        #expect(first.record(row.id) == peer && other.record(id) == foreign && other.writeCount == 1)
+    }
+
+    enum UnprovenSwitch: CaseIterable { case otherSource, otherDestination, missingSource, alreadyDelivered, signedOut, restoredDestination }
+
+    @Test(arguments: UnprovenSwitch.allCases)
+    func anUnprovenAccountSwitchEndsTheCurrentChoice(evidence: UnprovenSwitch) async throws {
+        let cloud = FakeSyncCloud(user: "A"), profile = UUID()
+        var state = TabSyncState()
+        state.accountUser = evidence == .restoredDestination ? cloud.user : "B"
+        let air = SyncDevice(cloud: cloud, installID: "air", state: state)
+        let router = SyncRouter(state: .init(), persist: { _ in }, tabs: air.sync, vaults: nil)
+        air.engine.delegate = router
+        air.start(sharing: [profile])
+        await air.sync.refresh()
+        try #require(air.sync.state.accountUser == cloud.user)
+        if evidence == .alreadyDelivered {
+            await air.engine.simulateAccount(.switchAccounts(user: cloud.user), from: "B")
+        } else if evidence == .signedOut {
+            await air.engine.simulateAccount(.signOut)
+            await air.engine.simulateAccount(.signIn(user: cloud.user))
+        }
+        air.sync.reconcile(sharing: [profile])
+        await air.sync.refresh()
+        let id = air.id(in: SyncZone.profile(profile))
+        air.sync.share(SyncSamples.session(tabs: ["https://unapproved.test/"]), profileID: profile, force: true)
+        try #require(router.record(for: id) != nil)
+        let ended = air.box.ended
+        let previous: String? = switch evidence {
+        case .otherSource:
+            "C"
+        case .missingSource:
+            nil
+        case .alreadyDelivered, .signedOut, .restoredDestination, .otherDestination:
+            "B"
+        }
+        if evidence == .otherDestination {
+            cloud.switchUser("C")
+        }
+        await air.engine.simulateAccount(.switchAccounts(user: cloud.user), from: previous)
+        try await air.engine.sendNow()
+        #expect(air.box.ended == ended + [nil] && router.record(for: id) == nil && cloud.recordCount == 0)
     }
 
     enum AfterFirstTabSave: CaseIterable { case restart, signOut, signedOutRestart, newConsent, otherAccount, otherInstallation }

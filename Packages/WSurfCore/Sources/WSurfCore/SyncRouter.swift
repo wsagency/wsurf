@@ -31,6 +31,12 @@ nonisolated public struct SyncRouterState: Codable, Equatable, Sendable {
 }
 
 extension TabSync: SyncZoneHandler {
+    public func accountSwitched(from previousUser: String, to user: String) async {
+        let alreadyHandled = verifiedSwitchFrom == previousUser && state.accountUser == user
+        // A confirmed return keeps the person's choices and replays work the engine discarded with its old queue.
+        await handle(.account(alreadyHandled ? .signIn(user: user) : .switchAccounts(user: user)))
+    }
+
     public func owns(zone: String) -> Bool {
         zone == SyncZone.devices || SyncZone.profileID(zone) != nil
     }
@@ -84,6 +90,12 @@ public final class SyncRouter: SyncEngineDelegate {
         }
         return { [weak self, receivers] event in
             await self?.route(event, fetchReceivers: receivers) { tabs, owned in await tabs.receive(owned, from: start) }
+        }
+    }
+
+    public func accountSwitched(from previousUser: String, to user: String) async {
+        await route(.account(.switchAccounts(user: user))) { tabs, _ in
+            await tabs.accountSwitched(from: previousUser, to: user)
         }
     }
 

@@ -142,7 +142,7 @@ private nonisolated final class Bridge: CKSyncEngineDelegate {
             }
             await delegate.handle(.state(data))
         case .accountChange(let change):
-            await delegate.handle(.account(CloudKitMapping.accountChange(change.changeType)))
+            await CloudKitMapping.deliverAccountChange(change.changeType, to: delegate)
         case .willFetchChanges:
             await MainActor.run { fetchCycle.begin(delegate.beginFetch()) }
         case .didFetchChanges:
@@ -283,17 +283,17 @@ nonisolated extension CloudKitMapping {
         return mirroredTabRow || zone.hasPrefix("mac-prefs-") || SharedCatalogCategory.allCases.contains { $0.zone == zone }
     }
 
-    static func accountChange(_ change: CKSyncEngine.Event.AccountChange.ChangeType) -> SyncAccountChange {
+    static func deliverAccountChange(_ change: CKSyncEngine.Event.AccountChange.ChangeType, to delegate: any SyncEngineDelegate) async {
         switch change {
         case .signIn(let user):
-            .signIn(user: user.recordName)
+            await delegate.handle(.account(.signIn(user: user.recordName)))
         case .signOut:
-            .signOut
-        case .switchAccounts(_, let user):
-            .switchAccounts(user: user.recordName)
+            await delegate.handle(.account(.signOut))
+        case .switchAccounts(let previous, let user):
+            await delegate.accountSwitched(from: previous.recordName, to: user.recordName)
         @unknown default:
             // Unknown means ending sharing, which is the safe side.
-            .switchAccounts(user: "")
+            await delegate.handle(.account(.switchAccounts(user: "")))
         }
     }
 

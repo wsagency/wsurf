@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 WSurf Agency
 // SPDX-License-Identifier: BUSL-1.1
 
+import CloudKit
 import Foundation
 import Synchronization
 @testable import WSurfCore
@@ -339,12 +340,19 @@ final class FakeSyncEngine: SyncEngine, SyncAccountIdentity {
     }
 
     /// The account changed under the engine: its queue is gone, and a different account is fetched from the start.
-    func simulateAccount(_ change: SyncAccountChange) async {
+    func simulateAccount(_ change: SyncAccountChange, from previousUser: String? = nil) async {
         queue = [:]
         if change != .signOut {
             fetchedAt = 0
         }
-        await delegate?.handle(.account(change))
+        guard let delegate else { return }
+        if case .switchAccounts(let user) = change, let previousUser {
+            await CloudKitMapping.deliverAccountChange(
+                .switchAccounts(previousUser: .init(recordName: previousUser), currentUser: .init(recordName: user)), to: delegate
+            )
+        } else {
+            await delegate.handle(.account(change))
+        }
     }
 
     private func send(_ batch: [SyncChange]) async -> Bool {

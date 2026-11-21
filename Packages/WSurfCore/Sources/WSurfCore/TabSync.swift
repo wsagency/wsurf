@@ -103,6 +103,8 @@ public final class TabSync {
     @ObservationIgnored private var refreshing = false
     @ObservationIgnored private var signedOut = false
     @ObservationIgnored private var accountGeneration = 0
+    /// Origin of the last switch already applied by an identity lookup on this engine, until its next account event.
+    @ObservationIgnored private(set) var verifiedSwitchFrom: String?
 
     /// Whether this device owns anything on the server or wants to: the owner creates the engine only then.
     public var needsEngine: Bool {
@@ -208,6 +210,7 @@ public final class TabSync {
         let changed = self.engine !== engine
         self.engine = engine
         if changed {
+            verifiedSwitchFrom = nil
             invalidateHandouts()
             // An interrupted partial read still has to verify its zone before a restored creation can go out.
             let unfinished = state.zoneObservations?.zones.compactMap { $0.value == .incomplete ? $0.key : nil } ?? []
@@ -602,7 +605,7 @@ extension TabSync: SyncEngineDelegate {
             return false
         }
         guard matchesAccount(user) else {
-            applyAccount(.switchAccounts(user: user))
+            applyAccount(.switchAccounts(user: user), verifiedSwitchFrom: signedOut ? nil : state.accountUser)
             persist(state)
             return false
         }
@@ -882,7 +885,8 @@ extension TabSync: SyncEngineDelegate {
         retainCheckpoint(for: desired)
     }
 
-    private func applyAccount(_ change: SyncAccountChange) {
+    private func applyAccount(_ change: SyncAccountChange, verifiedSwitchFrom previousUser: String? = nil) {
+        verifiedSwitchFrom = previousUser
         accountGeneration += 1
         switch change {
         case .signOut:

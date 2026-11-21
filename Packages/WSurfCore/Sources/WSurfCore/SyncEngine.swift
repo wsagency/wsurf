@@ -184,6 +184,8 @@ struct SyncFetchCycle {
 /// `Sendable` because the engine's own delegate object holds it and is itself `Sendable`.
 public protocol SyncEngineDelegate: AnyObject, Sendable {
     func handle(_ event: SyncEvent) async
+    /// CloudKit supplies both ends of a switch. Handlers that do not correlate a prior lookup receive the usual account event.
+    func accountSwitched(from previousUser: String, to user: String) async
     func beginFetch() -> SyncFetchDelivery
     /// Database changes can outlive the opt-in that requested them, independently of record batches.
     func allowsZoneCreation(_ zone: String) -> Bool
@@ -198,6 +200,10 @@ public protocol SyncEngineDelegate: AnyObject, Sendable {
 }
 
 extension SyncEngineDelegate {
+    public func accountSwitched(from previousUser: String, to user: String) async {
+        await handle(.account(.switchAccounts(user: user)))
+    }
+
     public func recordForUpload(_ id: SyncRecordID) async -> SyncRecord? {
         record(for: id)
     }
