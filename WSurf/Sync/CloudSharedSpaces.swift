@@ -118,8 +118,7 @@ final class CloudSharedSpaces {
     }
 
     private func isLive(_ id: UUID) -> Bool {
-        guard id != Profile.privateID, let current = liveProfiles() else { return false }
-        return id == Profile.originalID || current.contains { $0.id == id }
+        id == Profile.originalID || (id != Profile.privateID && liveProfiles()?.contains(where: { $0.id == id }) == true)
     }
 
     var needsEngine: Bool {
@@ -224,8 +223,7 @@ final class CloudSharedSpaces {
     /// The last category can be turned off while offline, before an engine exists.
     @discardableResult
     func retryOptOuts() -> Bool {
-        guard storage.hasOptOuts || !storage.readable || !catalog.storageAvailable else { return true }
-        if !storage.readable {
+        if storage.needsReload {
             guard storage.reload() else { return false }
             links = storage.data.links
             catalog.recoverLocalCheckpoint(storage.data.catalog)
@@ -233,7 +231,7 @@ final class CloudSharedSpaces {
             if needsEngine {
                 onNeedsEngine?()
             }
-        } else {
+        } else if storage.hasOptOuts || !catalog.storageAvailable {
             catalog.persistLocalState()
         }
         return catalog.storageAvailable

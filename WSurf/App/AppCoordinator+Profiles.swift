@@ -9,6 +9,23 @@ import os
 extension AppCoordinator {
     // MARK: - Profiles
 
+    func deleteProfile(_ profile: Profile) async -> Result<Void, Error> {
+        await profiles.remove(profile, releaseWindows: {
+            if let application {
+                await application.prepareToRemove(profile: profile)
+            } else {
+                await leaveErasedProfile(profile)
+            }
+        })
+    }
+
+    func leaveErasedProfile(_ profile: Profile) async {
+        await profileSwitches.run { [weak self] in
+            guard let self, !isClosed, context.profile.id == profile.id, let replacement = profiles.profiles.first else { return }
+            await performProfileSwitch(to: replacement, landingIn: nil, rememberOnlyIfFrontmost: true)
+        }
+    }
+
     /// `spaceID` is the space of `profile` to show once the switch is done, as choosing a space of another profile asks.
     func switchProfile(to profile: Profile, landingIn spaceID: UUID? = nil) async {
         guard !isClosed else { return }
@@ -21,9 +38,9 @@ extension AppCoordinator {
         }
     }
 
-    private func performProfileSwitch(to profile: Profile, landingIn spaceID: UUID?) async {
-        guard !isClosed else { return }
-        guard profile.id != profiles.current.id else {
+    private func performProfileSwitch(to requested: Profile, landingIn spaceID: UUID?, rememberOnlyIfFrontmost: Bool = false) async {
+        guard !isClosed, profiles.profiles.contains(where: { $0.id == requested.id }) else { return }
+        guard requested.id != context.profile.id else {
             if let spaceID {
                 browser.switchSpace(to: spaceID)
             }
@@ -33,7 +50,7 @@ extension AppCoordinator {
         // switch. Locked again at adoption: until then that profile's settings are still on screen and can unlock it anew.
         let leaving = context.profile.id
         CredentialManager.lock(profileID: leaving, reason: .profileSwitch)
-        switchingTo = profile
+        switchingTo = requested
         mcpServer.disconnect(browser: browser)
         defer { switchingTo = nil }
 
@@ -51,7 +68,9 @@ extension AppCoordinator {
         closePeekImmediately()
         timing.mark("quiesce")
 
-        browser.markSessionClosed()
+        if oldContext.profile.isPrivate || profiles.verifiedProfiles?.contains(where: { $0.id == leaving }) != false {
+            browser.markSessionClosed()
+        }
         timing.mark("save session")
 
         extensions.unregister(browser: browser)
@@ -71,8 +90,11 @@ extension AppCoordinator {
         }
         timing.mark("close tabs")
 
+        // Another window can erase the destination while the departing tabs finish closing.
+        let profile = profiles.profiles.first { $0.id == requested.id } ?? .original()
         applyProfileStores(profile)
-        profiles.markCurrent(profile)
+        let remember = !rememberOnlyIfFrontmost || application == nil || application?.activeCoordinator === self
+        profiles.markCurrent(profile, remember: remember)
         CredentialManager.lock(profileID: leaving, reason: .profileSwitch)
         application?.configureExtensions(extensions, profile: profile)
         timing.mark("adopt stores")

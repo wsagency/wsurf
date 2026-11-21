@@ -16,13 +16,13 @@ extension CloudSettingsSync {
 
     func allowsZoneCreation(_ zone: String) -> Bool {
         guard loading[zone] != nil, sendingAllowed, let user = trustedUser, user == state.account,
-              let channel = state.channels[zone] else { return false }
+              let channel = state.channels[zone], permitsProfile(channel.localProfileID) else { return false }
         return !channel.needsConfirmation && !channel.fetched && channel.checkingDeletion != true
     }
 
     func queuePending(_ zone: String) {
         guard ready.contains(zone), sendingAllowed, trustedUser != nil, trustedUser == state.account,
-            let channel = state.channels[zone]
+            let channel = state.channels[zone], permitsProfile(channel.localProfileID)
         else { return }
         let edits = channel.records.values.compactMap { record -> SyncChange? in
             guard let payload = record.pending, !record.conflict else { return nil }
@@ -37,7 +37,7 @@ extension CloudSettingsSync {
 
     func record(for id: SyncRecordID) -> SyncRecord? {
         guard ready.contains(id.zone), sendingAllowed, trustedUser != nil, trustedUser == state.account,
-            let key = names[id], var channel = state.channels[id.zone], let record = channel.records[key],
+            let key = names[id], var channel = state.channels[id.zone], permitsProfile(channel.localProfileID), let record = channel.records[key],
             !record.conflict, let pending = record.pending, pending.recordName == id.name,
             let data = try? MacSettingRecord(pending, enrollment: channel.enrollment).encoded(),
             data.count <= 768 * 1024

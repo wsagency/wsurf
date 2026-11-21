@@ -20,6 +20,14 @@ final class SharedCatalogStorage {
         var pausedLinks: [String: [UUID: SharedProfileLinks]]?
         var checkpoint: UUID?
         var appliedAccountReset: UUID?
+
+        var localProfileIDs: Set<UUID> {
+            var owners = catalog.localProfileIDs.union(links.keys)
+            for parked in (pausedLinks ?? [:]).values {
+                owners.formUnion(parked.keys)
+            }
+            return owners
+        }
     }
 
     private struct Journal: Codable {
@@ -31,7 +39,7 @@ final class SharedCatalogStorage {
     }
 
     private let url: URL
-    private let canLoad: () -> Bool
+    private let profilesAvailable: () -> Bool
     private var journalURL: URL {
         url.appendingPathExtension("opt-outs")
     }
@@ -42,6 +50,10 @@ final class SharedCatalogStorage {
     @ObservationIgnored private var written: State?
     @ObservationIgnored var applyingOptOuts = false
     private(set) var readable = false
+    var needsReload: Bool {
+        // Both files can be missing at launch. Pick up a returning checkpoint before the first local change.
+        !readable || (written == nil && data == State() && FileManager.default.fileExists(atPath: url.path))
+    }
     var pending: Set<OptOut> = []
     private(set) var erasingProfiles: Set<UUID> = []
     private var unboundProfiles: Set<UUID> = []
@@ -52,18 +64,14 @@ final class SharedCatalogStorage {
         unreadableJournal || pendingAccountReset != nil || !pending.isEmpty || !erasingProfiles.isEmpty
     }
 
-    init(_ file: URL, canLoad: @escaping () -> Bool) {
+    init(_ file: URL, profilesAvailable: @escaping () -> Bool) {
         url = file
-        self.canLoad = canLoad
+        self.profilesAvailable = profilesAvailable
         _ = reload()
     }
 
     func reconcileProfiles(with liveIDs: Set<UUID>) {
-        var localIDs = data.catalog.localProfileIDs.union(data.links.keys)
-        for parked in (data.pausedLinks ?? [:]).values {
-            localIDs.formUnion(parked.keys)
-        }
-        erasingProfiles.formUnion(localIDs.subtracting(liveIDs))
+        erasingProfiles.formUnion(data.localProfileIDs.subtracting(liveIDs))
     }
 
     func requestProfileRemoval(_ id: UUID) throws {
@@ -78,10 +86,6 @@ final class SharedCatalogStorage {
 
     /// A temporarily unreadable checkpoint may contain other enrollments and links. Wait for it before replacing it.
     func reload() -> Bool {
-        guard canLoad() else {
-            readable = false
-            return false
-        }
         let files = FileManager.default
         let journal: Journal?
         unreadableJournal = false
@@ -107,18 +111,20 @@ final class SharedCatalogStorage {
         unboundProfiles.formUnion(journal?.unboundProfiles ?? [])
         defer { erasingProfiles.formUnion(unboundProfiles) }
         do {
-            data = try JSONDecoder().decode(State.self, from: Data(contentsOf: url))
-            written = data
-        } catch CocoaError.fileReadNoSuchFile {
-            data = State()
-            written = nil
+            let saved = try read(State.self, from: url)
+            // Personal exists on every Mac. Named owners need the profile list before we can reconcile this checkpoint.
+            guard profilesAvailable() || (saved?.localProfileIDs.isSubset(of: [Profile.originalID]) ?? (!hasOptOuts && unboundProfiles.isEmpty)) else {
+                readable = false
+                return false
+            }
+            written = saved
+            data = saved ?? State()
             readable = true
-            return true
+            guard saved != nil else { return true }
         } catch {
             readable = false
             return false
         }
-        readable = true
         if let reset = pendingAccountReset, reset == data.appliedAccountReset {
             pendingAccountReset = nil
             try? files.removeItem(at: accountResetURL)

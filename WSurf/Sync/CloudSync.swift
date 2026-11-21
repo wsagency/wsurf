@@ -82,7 +82,9 @@ final class CloudSync {
         let spaces = offersMacSync ? CloudSharedSpaces(
             stateFile: directory.appending(path: "iCloudSharedSpaces.json"), profiles: profiles, profileStore: profileStore, windows: windows
         ) : nil
-        let settings = offersMacSync ? CloudSettingsSync(stateFile: directory.appending(path: "iCloudMacSettings.json"), profiles: profiles) : nil
+        let settings = offersMacSync ? CloudSettingsSync(
+            stateFile: directory.appending(path: "iCloudMacSettings.json"), profiles: profiles, profileStore: profileStore
+        ) : nil
         // A missing or damaged file starts empty, which fetches everything once.
         let restored = (try? Data(contentsOf: stateFile)).flatMap { try? JSONDecoder().decode(SyncRouterState.self, from: $0) }
             ?? SyncRouterState()
@@ -125,6 +127,10 @@ final class CloudSync {
         settings?.onNeedsEngine = { [weak cloudSync] in cloudSync?.ensureEngine() }
         tabs?.needsEngine = { [weak cloudSync] in cloudSync?.ensureEngine() }
         cloudSync.ensureEngine()
+        if offersMacSync, let profileStore, profileStore.verifiedProfiles == nil {
+            // Saved enrollments can be waiting on the local profile list before any feature can start the engine.
+            cloudSync.startHeartbeat()
+        }
         spaces?.beat()
         settings?.beat()
         return cloudSync

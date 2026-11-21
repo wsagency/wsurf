@@ -60,7 +60,8 @@ final class CloudSettingsSync: SyncZoneHandler {
     private(set) var checkpointUnavailable = false
     @ObservationIgnored private(set) var unreadableFetchStart: FetchStart?
     @ObservationIgnored private var checkpointRetry: Task<Void, Never>?
-    @ObservationIgnored private var profilesForRecovery: Set<UUID>?
+    @ObservationIgnored private var profileStore: ProfileStore?
+    @ObservationIgnored private var profilesForRecovery: (() -> [Profile]?)?
     var notice: String?
     @ObservationIgnored var onAccountVerification: ((CloudSharedSpaces.AccountVerification) -> Void)?
     var onNeedsEngine: (() -> Void)?
@@ -85,22 +86,24 @@ final class CloudSettingsSync: SyncZoneHandler {
     @ObservationIgnored private var observation: Task<Void, Never>?
 
     var needsEngine: Bool {
-        !state.channels.isEmpty
+        state.channels.values.contains { permitsProfile($0.localProfileID) }
     }
 
-    convenience init(stateFile: URL, profiles: [Profile], adapter: MacSettingsSyncAdapter? = nil) {
-        let adapter = adapter ?? MacSettingsSyncAdapter(profiles: profiles)
+    convenience init(stateFile: URL, profiles: [Profile], profileStore: ProfileStore? = nil, adapter: MacSettingsSyncAdapter? = nil) {
+        let adapter = adapter ?? MacSettingsSyncAdapter(profiles: profiles, profileStore: profileStore)
         self.init(
             stateFile: stateFile, snapshot: adapter.snapshot,
             apply: adapter.apply(_:key:for:profileID:),
             discardWebsiteApprovals: adapter.discardWebsiteApprovals(profileID:)
         )
         registerProfile = adapter.register
-        let live = Set(profiles.map(\.id)).subtracting([Profile.privateID])
-        if checkpointUnavailable {
-            profilesForRecovery = live
+        self.profileStore = profileStore
+        if let profileStore {
+            profilesForRecovery = { profileStore.verifiedProfiles }
+        } else {
+            profilesForRecovery = { profiles }
         }
-        pruneChannels(outside: live)
+        reconcileProfilesIfAvailable()
         if hasPendingOptOuts && !checkpointUnavailable {
             do { try save() } catch { reportError() }
         }
@@ -201,6 +204,7 @@ final class CloudSettingsSync: SyncZoneHandler {
             (localProfileID == nil) == (cloudProfileID == nil), category == .providers || localProfileID != nil
         else { throw Issue.unavailable }
         try reloadStateIfNeeded()
+        guard permitsProfile(localProfileID) else { throw Issue.unavailable }
         var proposed = MacSettingChannel(category: category, localProfileID: localProfileID, cloudProfileID: cloudProfileID)
         if let existing = channel(category, localProfileID: localProfileID), existing.zone != proposed.zone {
             throw Issue.duplicateLink
@@ -242,7 +246,7 @@ final class CloudSettingsSync: SyncZoneHandler {
 
     /// A confirmation from Settings belongs to the displayed enrollment, even if the account lookup suspends.
     func confirmEnrollment(_ channel: MacSettingChannel) async throws {
-        guard state.channels[channel.zone]?.enrollment == channel.enrollment else { throw CancellationError() }
+        guard state.channels[channel.zone]?.enrollment == channel.enrollment, permitsProfile(channel.localProfileID) else { throw CancellationError() }
         onNeedsEngine?()
         let started = generation
         let user = try await verifyAccount(started)
@@ -286,7 +290,7 @@ final class CloudSettingsSync: SyncZoneHandler {
     }
 
     private var confirmedChannels: [MacSettingChannel] {
-        state.channels.values.filter { !$0.needsConfirmation }
+        state.channels.values.filter { !$0.needsConfirmation && permitsProfile($0.localProfileID) }
     }
 
     var hasConfirmedChannels: Bool {
@@ -352,7 +356,7 @@ final class CloudSettingsSync: SyncZoneHandler {
 
     /// Fetched records and deletions must see edits made since the last notification.
     func collectLocalChanges(in zone: String) throws {
-        guard var channel = state.channels[zone] else { return }
+        guard var channel = state.channels[zone], permitsProfile(channel.localProfileID) else { return }
         let values = try snapshot(&channel)
         channel.collect(values)
         updateChannel(channel)
@@ -422,7 +426,7 @@ final class CloudSettingsSync: SyncZoneHandler {
     }
 
     func prepare(zone: String, freshConsent: Bool = false) async throws {
-        guard state.channels[zone]?.needsConfirmation == false else { throw Issue.unavailable }
+        guard let channel = state.channels[zone], !channel.needsConfirmation, permitsProfile(channel.localProfileID) else { throw Issue.unavailable }
         guard !ready.contains(zone) else { return }
         if let existing = preparations[zone] {
             try await existing.value
@@ -596,7 +600,10 @@ final class CloudSettingsSync: SyncZoneHandler {
 
     /// Restore the checkpoint and replay any pending revocations before allowing a write.
     func reloadStateIfNeeded() throws {
-        guard checkpointUnavailable else { return }
+        guard checkpointUnavailable else {
+            reconcileProfilesIfAvailable()
+            return
+        }
         let revoked = pendingOptOuts
         do {
             state = try State.read(from: stateFile)
@@ -615,10 +622,7 @@ final class CloudSettingsSync: SyncZoneHandler {
         if FileManager.default.fileExists(atPath: optOutFile.path) {
             readOptOutJournal()
         }
-        if let live = profilesForRecovery {
-            pruneChannels(outside: live)
-            profilesForRecovery = nil
-        }
+        reconcileProfilesIfAvailable()
         optOutsToFinish.formUnion(pendingOptOuts.keys)
         // The first successful read may come from profile erasure instead of the heartbeat.
         if needsEngine && engine == nil {
@@ -626,7 +630,18 @@ final class CloudSettingsSync: SyncZoneHandler {
         }
     }
 
-    private func pruneChannels(outside live: Set<UUID>) {
+    func permitsProfile(_ id: UUID?) -> Bool {
+        guard let id, let profileStore else { return true }
+        return id == Profile.originalID || (id != Profile.privateID && profileStore.verifiedProfiles?.contains(where: { $0.id == id }) == true)
+    }
+
+    private func reconcileProfilesIfAvailable() {
+        guard !checkpointUnavailable, let profiles = profilesForRecovery?() else { return }
+        profilesForRecovery = nil
+        let live = Set(profiles.map(\.id)).subtracting([Profile.privateID])
+        for profile in profiles {
+            registerProfile?(profile)
+        }
         for channel in state.channels.values {
             if let id = channel.localProfileID, !live.contains(id) {
                 forget(zone: channel.zone)

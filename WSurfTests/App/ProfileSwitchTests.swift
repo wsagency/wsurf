@@ -15,12 +15,13 @@ struct ProfileSwitchTests {
     private struct Fixture {
         let app = BrowserApplication()
         let coordinator: AppCoordinator
+        let catalog: ProfileStore
         let work: Profile
         let file: URL
 
         init() {
-            file = FileManager.default.temporaryDirectory.appendingPathComponent("profile-switch-\(UUID()).json")
-            let catalog = ProfileStore(file: file)
+            file = URL.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "profiles.json")
+            catalog = ProfileStore(file: file)
             work = catalog.add(name: "Work")
             let selection = ProfileStore.selection(profile: .original(), catalog: catalog)
             let browser = BrowserModel(context: .shared(for: .original()), windowID: UUID())
@@ -32,7 +33,15 @@ struct ProfileSwitchTests {
         func close() {
             app.windows.forEach { $0.closeWindow() }
             BrowserProfileContext.forget(work.id)
-            try? FileManager.default.removeItem(at: file)
+            try? FileManager.default.removeItem(at: file.deletingLastPathComponent())
+        }
+
+        func open(_ profile: Profile) -> AppCoordinator {
+            let selection = ProfileStore.selection(profile: profile, catalog: catalog)
+            let window = AppCoordinator(browser: BrowserModel(context: .shared(for: profile), windowID: UUID()), profiles: selection)
+            app.register(window)
+            window.prepareBrowser(restoring: false, show: false)
+            return window
         }
     }
 
@@ -59,6 +68,71 @@ struct ProfileSwitchTests {
 
         #expect(coordinator.switchingTo == nil, "the switching state does not outlive the switch")
         #expect(!coordinator.isSwitchingProfile)
+    }
+
+    @Test func choosingPersonalLeavesTheErasedProfileInASecondWindow() async throws {
+        let fixture = Fixture()
+        defer { fixture.close() }
+        let work = fixture.work, first = fixture.coordinator
+        await first.switchProfile(to: work)
+        let second = fixture.open(work), selection = second.profiles
+        let hidden = second.browser.newTab(url: URL(string: "about:blank"))
+        let checkpoint = fixture.file.appendingPathExtension("shared")
+        defer { try? FileManager.default.removeItem(at: checkpoint) }
+        let sharing = CloudSharedSpaces(stateFile: checkpoint, profileStore: fixture.catalog, windows: { [] })
+        try await first.profiles.remove(work, beforeErasing: { await first.switchProfile(to: .original()) },
+                                        settingsSync: nil, sharedSpaces: sharing, eraseData: { _ in }).get()
+        try #require(selection.current.isOriginal && second.context.profile.id == work.id)
+
+        await second.switchProfile(to: .original())
+        #expect(second.context === first.context && second.context.profile.isOriginal)
+        #expect(hidden.isClosed && second.browser.tab(id: hidden.id) == nil)
+        #expect(selection.currentID == Profile.originalID)
+        await second.switchProfile(to: work)
+        #expect(second.context.profile.isOriginal)
+    }
+
+    @Test(arguments: [false, true])
+    func deletingFromSettingsMovesEveryWorkWindowAfterTheProfileListIsSaved(fromWork: Bool) async throws {
+        let fixture = Fixture(), files = FileManager.default
+        let replacement = fixture.catalog.add(name: "Replacement")
+        defer {
+            fixture.close()
+            BrowserProfileContext.forget(replacement.id)
+            ProfileSettingsStore.forget(replacement.id)
+            try? files.removeItem(at: replacement.supportDirectory)
+        }
+        fixture.catalog.move(replacement, to: 0)
+        let work = fixture.work, first = fixture.coordinator
+        await first.switchProfile(to: work)
+        let second = fixture.open(work), personal = fixture.open(.original())
+        let old = first.context, unchanged = personal.context
+        let tabs = [first, second, personal].map { $0.browser.newTab(url: URL(string: "about:blank")) }
+        let owner = fromWork ? first : personal
+        fixture.app.focus(owner)
+        let backup = fixture.file.appendingPathExtension("saved")
+        try files.moveItem(at: fixture.file, to: backup)
+        try files.createDirectory(at: fixture.file, withIntermediateDirectories: false)
+
+        let failed = await owner.deleteProfile(work)
+        #expect(throws: (any Error).self) { try failed.get() }
+        #expect(first.context === old && second.context === old && personal.context === unchanged)
+        #expect(zip([first, second, personal], tabs).allSatisfy { $0.browser.activeTab === $1 && !$1.isClosed })
+        #expect(fixture.app.activeCoordinator === owner && fixture.catalog.profiles.contains(work))
+
+        try files.removeItem(at: fixture.file)
+        try files.moveItem(at: backup, to: fixture.file)
+        try await owner.deleteProfile(work).get()
+
+        for (window, tab) in zip([first, second], tabs) {
+            #expect(window.context.profile.id == replacement.id && window.profiles.currentID == replacement.id)
+            #expect(!window.isClosed && window.browser.activeTab != nil && tab.isClosed && window.browser.tab(id: tab.id) == nil)
+            #expect(!old.isRegistered(window.browser) && window.context.isRegistered(window.browser))
+        }
+        #expect(!personal.isClosed && personal.context === unchanged && personal.browser.activeTab === tabs[2] && !tabs[2].isClosed)
+        let reopened = ProfileStore(file: fixture.file)
+        #expect(fixture.app.activeCoordinator === owner && !reopened.profiles.contains(work))
+        #expect(reopened.currentID == owner.context.profile.id)
     }
 
     @Test func theTabsOfTheProfileYouLeaveDoNotComeWithYou() async {

@@ -436,11 +436,7 @@ private struct ProfileDetailPage: View {
     private func delete(_ profile: Profile) async {
         deleting = false
         deletionError = nil
-        let result = await store.remove(profile, beforeErasing: {
-            if isCurrent, let fallback = store.profiles.first(where: { $0.id != profile.id }) {
-                await coordinator.switchProfile(to: fallback)
-            }
-        })
+        let result = await coordinator.deleteProfile(profile)
         switch result {
         case .success:
             onBack()

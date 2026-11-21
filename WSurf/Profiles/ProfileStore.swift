@@ -13,7 +13,8 @@ final class ProfileStore {
     static let shared = ProfileStore()
 
     @ObservationIgnored private var catalog: ProfileStore?
-    @ObservationIgnored private var needsProfileListRecovery = false
+    private enum ListStatus { case loaded, missing, unreadable }
+    @ObservationIgnored private var listStatus = ListStatus.loaded
     private var storedProfiles: [Profile]
     private(set) var profiles: [Profile] {
         get { catalog?.profiles ?? storedProfiles }
@@ -97,9 +98,10 @@ final class ProfileStore {
             stored = try Self.read(self.file)
         } catch CocoaError.fileReadNoSuchFile {
             stored = nil
+            listStatus = .missing
         } catch {
             stored = nil
-            needsProfileListRecovery = true
+            listStatus = .unreadable
         }
         let loaded = Self.includingPersonal(stored?.profiles ?? [])
         storedProfiles = loaded
@@ -121,20 +123,66 @@ final class ProfileStore {
         if let catalog {
             return catalog.verifiedProfiles
         }
-        if needsProfileListRecovery {
-            guard let saved = try? Self.read(file) else { return nil }
+        if listStatus != .loaded {
+            var saved: Stored
+            do {
+                saved = try Self.read(file)
+            } catch CocoaError.fileReadNoSuchFile {
+                return nil
+            } catch {
+                listStatus = .unreadable
+                return nil
+            }
             let restored = Self.includingPersonal(saved.profiles)
             let ids = Set(restored.map(\.id))
-            storedProfiles = restored + storedProfiles.filter { !ids.contains($0.id) }
-            storedLastUsed = (saved.lastUsed ?? [:]).merging(storedLastUsed) { _, live in live }
-            storedLaunchProfileID = storedLaunchProfileID ?? saved.launchProfileID.flatMap { ids.contains($0) ? $0 : nil }
-            needsProfileListRecovery = false
+            let added = storedProfiles.filter { !ids.contains($0.id) }
+            saved.profiles = restored + added
+            saved.lastUsed = (saved.lastUsed ?? [:]).merging(storedLastUsed) { _, live in live }
+            saved.launchProfileID = storedLaunchProfileID ?? saved.launchProfileID.flatMap { ids.contains($0) ? $0 : nil }
+            // Commit profiles explicitly added during the outage before sync can use their identities.
+            if !added.isEmpty {
+                do {
+                    try JSONFileStore.writeAtomically(saved, to: file, sortedKeys: true)
+                } catch {
+                    return nil
+                }
+            }
+            storedProfiles = saved.profiles
+            storedLastUsed = saved.lastUsed ?? [:]
+            storedLaunchProfileID = saved.launchProfileID
+            listStatus = .loaded
         }
         return storedProfiles
     }
 
     private static func read(_ file: URL) throws -> Stored {
         try JSONDecoder().decode(Stored.self, from: Data(contentsOf: file))
+    }
+
+    /// A new installation can create its first list. Existing local owners require the original list before a window may replace it.
+    private static func hasNamedProfileHistory(beside file: URL) -> Bool {
+        let directory = file.deletingLastPathComponent()
+        func existing<T>(_ name: String, read: (URL) throws -> T) throws -> T? {
+            do {
+                return try read(directory.appending(path: name))
+            } catch CocoaError.fileReadNoSuchFile {
+                return nil
+            }
+        }
+        do {
+            let folders = try existing("Profiles") { try FileManager.default.contentsOfDirectory(atPath: $0.path) }
+            if folders?.contains(where: { UUID(uuidString: $0) != nil }) == true {
+                return true
+            }
+            let settings = try existing("iCloudMacSettings.json", read: CloudSettingsSync.State.read(from:))
+            if settings?.channels.values.compactMap(\.localProfileID).contains(where: { $0 != Profile.originalID }) == true {
+                return true
+            }
+            let catalog = try existing("iCloudSharedSpaces.json") { try JSONDecoder().decode(SharedCatalogStorage.State.self, from: Data(contentsOf: $0)) }
+            return catalog?.localProfileIDs.contains(where: { $0 != Profile.originalID }) == true
+        } catch {
+            return true
+        }
     }
 
     private static func includingPersonal(_ profiles: [Profile]) -> [Profile] {
@@ -211,6 +259,7 @@ final class ProfileStore {
     @discardableResult
     func remove(
         _ profile: Profile, beforeErasing: () async -> Void = {},
+        releaseWindows: () async -> Void = {},
         settingsSync: CloudSettingsSync? = CloudSync.shared?.settingsSync,
         sharedSpaces: CloudSharedSpaces? = CloudSync.shared?.sharedSpaces,
         eraseData: (Profile) async -> Void = Profile.erase
@@ -266,6 +315,8 @@ final class ProfileStore {
                 catalog.lastPersistentID = savedCurrent
             }
         }
+        // A window may leave this profile only after its removal is durable, and before its stores are erased.
+        await releaseWindows()
         // Stops the profile's watches and waits for their last write, so nothing lands in the folder the erase removes.
         await BrowserProfileContext.existing(for: profile.id)?.pageWatches?.close()
         BrowserProfileContext.forget(profile.id)
@@ -275,7 +326,7 @@ final class ProfileStore {
         return .success(())
     }
 
-    func markCurrent(_ profile: Profile) {
+    func markCurrent(_ profile: Profile, remember: Bool = true) {
         if profile.isPrivate {
             currentID = Profile.privateID
             return
@@ -283,8 +334,10 @@ final class ProfileStore {
         guard profiles.contains(where: { $0.id == profile.id }) else { return }
         currentID = profile.id
         lastPersistentID = profile.id
+        // Moving a background window off an erased profile preserves the front window's launch selection.
+        guard remember else { return }
         lastUsed[profile.id] = Date()
-        save()
+        save(creatingList: false)
     }
 
     private func index(of profile: Profile) -> Int? {
@@ -298,21 +351,20 @@ final class ProfileStore {
         var lastUsed: [UUID: Date]?
     }
 
-    private func save() {
-        guard verifiedProfiles != nil else { return }
+    private func save(creatingList: Bool = true) {
         if let catalog {
             if !isPrivate {
                 catalog.currentID = currentID
                 catalog.lastPersistentID = lastPersistentID
             }
-            catalog.save()
+            catalog.save(creatingList: creatingList)
             return
         }
-        JSONFileStore.encodeAndWrite(
-            Stored(profiles: profiles, currentID: currentID, launchProfileID: launchProfileID, lastUsed: lastUsed),
-            to: file,
-            sortedKeys: true
-        )
+        guard verifiedProfiles != nil || (creatingList && listStatus == .missing && !Self.hasNamedProfileHistory(beside: file)) else { return }
+        let saved = Stored(profiles: profiles, currentID: currentID, launchProfileID: launchProfileID, lastUsed: lastUsed)
+        if (try? JSONFileStore.writeAtomically(saved, to: file, sortedKeys: true)) != nil {
+            listStatus = .loaded
+        }
     }
     private static var defaultFile: URL {
         AppDatabase.supportDirectory.appendingPathComponent("profiles.json")

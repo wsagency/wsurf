@@ -51,6 +51,7 @@ final class MacSettingsSyncAdapter {
     }
 
     private var profiles: [UUID: Profile]
+    private let profileStore: ProfileStore?
     private let observedWebSettings = NSHashTable<BrowserSettings>.weakObjects()
     private let catalog: ProviderCatalog
     private let stores: (@MainActor (Profile) -> MacSettingsStores)?
@@ -58,13 +59,14 @@ final class MacSettingsSyncAdapter {
     private let refreshWindows: @MainActor (MacSettingsCategory, UUID?, String) -> Void
 
     init(
-        profiles: [Profile],
+        profiles: [Profile], profileStore: ProfileStore? = nil,
         catalog: ProviderCatalog = .shared,
         stores: (@MainActor (Profile) -> MacSettingsStores)? = nil,
         account: @escaping @MainActor () -> String? = { ProviderKeySharing.shared.accountContext },
         refreshWindows: @escaping @MainActor (MacSettingsCategory, UUID?, String) -> Void = MacSettingsSyncAdapter.refreshWindows
     ) {
         self.profiles = Dictionary(profiles.filter { !$0.isPrivate }.map { ($0.id, $0) }, uniquingKeysWith: { _, latest in latest })
+        self.profileStore = profileStore
         self.catalog = catalog
         self.stores = stores
         self.account = account
@@ -81,7 +83,7 @@ final class MacSettingsSyncAdapter {
         if let stores {
             return stores(profile)
         }
-        guard ProfileStore.shared.profiles.contains(where: { $0.id == id }) else { throw Failure.invalidScope }
+        guard (profileStore ?? .shared).profiles.contains(where: { $0.id == id }) else { throw Failure.invalidScope }
         let context = BrowserProfileContext.shared(for: profile)
         return MacSettingsStores(
             web: context.settings, permissions: context.sitePermissions,
