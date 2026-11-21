@@ -28,13 +28,6 @@ nonisolated public struct VaultProfileRemoval: Codable, Hashable, Sendable {
         return next
     }
 
-    private struct Enrollment: Decodable, FetchableRecord {
-        let vaultID: UUID
-        let enabled: Int
-        let status: String
-        let consentUser: String?
-    }
-
     public static func approved(in directory: URL, profileID: UUID, localVaults: Set<UUID>, requireEnrollmentFile: Bool = false) throws -> Set<Self> {
         let file = directory.appending(path: VaultSyncDatabase.fileName)
         do {
@@ -42,7 +35,7 @@ nonisolated public struct VaultProfileRemoval: Codable, Hashable, Sendable {
         } catch CocoaError.fileReadNoSuchFile where !requireEnrollmentFile {
             return []
         }
-        // This read authorizes erasure. A normal sync open would migrate even a zero-byte file into an empty vault table.
+        // Inspect the consent recorded by this checkpoint without migrating it.
         var config = Configuration()
         config.readonly = true
         let queue = try DatabaseQueue(path: file.path, configuration: config)
@@ -57,12 +50,15 @@ nonisolated public struct VaultProfileRemoval: Codable, Hashable, Sendable {
                 }
                 return []
             }
-            let rows = try Enrollment.fetchAll(db, sql: "SELECT vaultID, enabled, status, consentUser FROM vault")
+            let rows = try Row.fetchAll(db, sql: "SELECT vaultID, enabled, status, consentUser FROM vault")
             return try Set(rows.compactMap { row in
-                guard localVaults.contains(row.vaultID) else { return nil }
-                guard (0...1).contains(row.enabled), VaultSyncStatus.Stored(rawValue: row.status) != nil else { throw CocoaError(.fileReadCorruptFile) }
-                guard row.enabled == 1, let owner = row.consentUser, !owner.isEmpty, owner != CKCurrentUserDefaultName else { return nil }
-                return Self(profileID: profileID, vaultID: row.vaultID, owner: owner)
+                let id = try row.decode(UUID.self, forColumn: "vaultID")
+                guard localVaults.contains(id) else { return nil }
+                let status = try row.decode(String.self, forColumn: "status")
+                guard VaultSyncStatus.Stored(rawValue: status) != nil else { throw CocoaError(.fileReadCorruptFile) }
+                guard try VaultRow.readEnabled(from: row), let owner = try row.decode(String?.self, forColumn: "consentUser"),
+                      !owner.isEmpty, owner != CKCurrentUserDefaultName else { return nil }
+                return Self(profileID: profileID, vaultID: id, owner: owner)
             })
         }
     }

@@ -48,6 +48,13 @@ nonisolated struct VaultRow: Equatable {
         return approvedUser ?? legacyRemovalUser
     }
 
+    /// SQLite's boolean conversion would turn damaged consent into an apparent opt-out.
+    static func readEnabled(from row: Row) throws -> Bool {
+        let cell = try row.decode(DatabaseValue.self, forColumn: "enabled")
+        guard case .int64(let value) = cell.storage, (0...1).contains(value) else { throw CocoaError(.fileReadCorruptFile) }
+        return value == 1
+    }
+
     init(vaultID: UUID, enabled: Bool = true, status: VaultSyncStatus.Stored = .active, needsFetch: Bool = false, approvedUser: String? = nil) {
         self.vaultID = vaultID
         self.enabled = enabled
@@ -149,9 +156,32 @@ nonisolated final class VaultSyncDatabase: Sendable {
     /// The database in `directory`, created when `create` is set. Nil when there is none and none is wanted.
     static func open(directory: URL, create: Bool) throws -> VaultSyncDatabase? {
         let url = directory.appending(path: fileName, directoryHint: .notDirectory)
-        guard create || FileManager.default.fileExists(atPath: url.path) else { return nil }
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let queue = try DatabaseQueue(path: url.path)
+        let files = FileManager.default
+        if !files.fileExists(atPath: url.path) {
+            guard create else { return nil }
+            try files.createDirectory(at: directory, withIntermediateDirectories: true)
+            // Install a complete first checkpoint only if a restored file or another opener has not arrived first.
+            let temporary = directory.appending(path: UUID().uuidString)
+            defer { try? files.removeItem(at: temporary) }
+            let fresh = try DatabaseQueue(path: temporary.path)
+            try migrator.migrate(fresh)
+            try fresh.close()
+            do {
+                try files.linkItem(at: temporary, to: url)
+            } catch CocoaError.fileWriteFileExists {
+                // The file that won is checked below.
+            }
+        }
+        // mode=rw opens only an existing file. Validate that same connection before allowing migrations.
+        let queue = try DatabaseQueue(path: "\(url.absoluteString)?mode=rw")
+        guard try queue.read({ db in try db.tableExists("vault") && migrator.appliedIdentifiers(db).contains("v1") }) else {
+            throw CocoaError(.fileReadCorruptFile)
+        }
+        try migrator.migrate(queue)
+        return VaultSyncDatabase(queue: queue)
+    }
+
+    private static let migrator: DatabaseMigrator = {
         var migrator = DatabaseMigrator()
         migrator.registerMigration("v1") { (db: Database) throws in
             try db.execute(sql: schema)
@@ -216,9 +246,8 @@ nonisolated final class VaultSyncDatabase: Sendable {
                 CREATE INDEX pendingItemAssets ON base(vaultID, accountID) WHERE pendingAssetCheck IS NOT NULL;
                 """)
         }
-        try migrator.migrate(queue)
-        return VaultSyncDatabase(queue: queue)
-    }
+        return migrator
+    }()
 
     func read<T>(_ body: (Transaction) throws -> T) throws -> T {
         try queue.read { (db: Database) throws -> T in
@@ -273,9 +302,9 @@ nonisolated final class VaultSyncDatabase: Sendable {
             try db.execute(sql: "DELETE FROM vault WHERE vaultID = ?", arguments: [id.sqlText])
         }
 
-        private static func vaultRow(_ row: Row) -> VaultRow? {
+        private static func vaultRow(_ row: Row) throws -> VaultRow? {
             guard let id = UUID(uuidString: row["vaultID"]), let status = VaultSyncStatus.Stored(rawValue: row["status"]) else { return nil }
-            var result = VaultRow(vaultID: id, enabled: row["enabled"], status: status)
+            var result = try VaultRow(vaultID: id, enabled: VaultRow.readEnabled(from: row), status: status)
             result.approvedUser = row["consentUser"]
             if !result.enabled, status == .removalPending || status == .removalFailed || status == .removedDeleted {
                 result.legacyRemovalUser = row["approvedUser"]

@@ -177,7 +177,7 @@ extension ProfileSwitchTests {
         }
     }
 
-    enum UnavailableVaultList: CaseIterable { case unreadableStore, missingEnrollment, emptyEnrollment }
+    enum UnavailableVaultList: CaseIterable { case unreadableStore, missingEnrollment, discoveryBeforeConfirmation, discoveryBeforeRetry }
 
     @Test(arguments: UnavailableVaultList.allCases)
     func anUnreadableVaultListAtConfirmationKeepsWorkUntilSettingsRetries(fault: UnavailableVaultList) async throws {
@@ -195,13 +195,20 @@ extension ProfileSwitchTests {
             let store = f.work.supportDirectory.appending(path: fault == .unreadableStore ? "Credentials.store" : VaultSyncDatabase.fileName)
             let saved = f.root.appending(path: "saved-store")
             let optOut = fault == .unreadableStore
+            let empty = fault == .discoveryBeforeConfirmation || fault == .discoveryBeforeRetry
+            if empty {
+                f.app.setVaultDiscovery(false)
+            }
             try await f.confirmInSettings(names: ["Vault 1", "Vault 2"], retryNames: optOut ? ["Vault 2"] : nil, recoverAfterError: {
                 #expect(ProfileStore(file: f.file).profiles.contains(f.work) && f.catalog.vaultRemovals.isEmpty)
                 #expect(settings.isEnabled(.providers, localProfileID: f.work.id))
                 #expect(sharing.links[f.work.id]?.profile == linked && sharing.catalog.state.pending[edit.recordID]?.item == edit)
                 #expect(f.vaults.map { f.cloud.records(in: f.zone($0)) } == copies)
-                if fault == .emptyEnrollment {
-                    #expect(try Data(contentsOf: store).isEmpty, "Reading approvals must not initialize an empty database.")
+                if fault == .discoveryBeforeRetry {
+                    f.app.setVaultDiscovery(true)
+                }
+                if empty {
+                    #expect(try Data(contentsOf: store).isEmpty, "Discovery must preserve a damaged checkpoint through retry.")
                 }
                 if fault != .missingEnrollment {
                     try files.removeItem(at: store)
@@ -216,8 +223,11 @@ extension ProfileSwitchTests {
                 switch fault {
                 case .unreadableStore:
                     try Data("unreadable synthetic store".utf8).write(to: store)
-                case .emptyEnrollment:
+                case .discoveryBeforeConfirmation, .discoveryBeforeRetry:
                     try Data().write(to: store)
+                    if fault == .discoveryBeforeConfirmation {
+                        f.app.setVaultDiscovery(true)
+                    }
                 case .missingEnrollment:
                     break
                 }
@@ -228,6 +238,22 @@ extension ProfileSwitchTests {
             try #require(await waitUntil { f.app.beat(); return f.catalog.vaultRemovals.isEmpty })
             #expect(f.cloud.zones[f.zone(f.vaults[1])] == nil)
             #expect(f.cloud.records(in: f.zone(f.vaults[0])) == (optOut ? copies[0] : nil))
+        }
+    }
+
+    @Test(arguments: [Double(0.5).databaseValue, "damaged".databaseValue])
+    func anInvalidEnrollmentFlagKeepsTheProfileUntilRecovery(flag: DatabaseValue) async throws {
+        try await withVaultConfirmation { f in
+            let database = try #require(try VaultSyncDatabase.open(directory: f.work.supportDirectory, create: false))
+            let copies = try f.vaults.map { try #require(f.cloud.records(in: f.zone($0))) }
+            try await f.confirmInSettings(names: ["Vault 1", "Vault 2"], recoverAfterError: {
+                #expect(f.catalog.vaultRemovals.isEmpty && f.vaults.map { f.cloud.records(in: f.zone($0)) } == copies)
+                #expect(throws: CocoaError.self) { try database.read { try $0.vaults() } }
+                try database.write { try $0.db.execute(sql: "UPDATE vault SET enabled = 1") }
+            }) {
+                try database.write { try $0.db.execute(sql: "UPDATE vault SET enabled = ?", arguments: [flag]) }
+            }
+            try #require(await waitUntil { f.vaults.allSatisfy { f.cloud.zones[f.zone($0)] == nil } })
         }
     }
 
@@ -242,6 +268,21 @@ extension ProfileSwitchTests {
             }
             #expect(f.catalog.vaultRemovals.isEmpty)
             #expect(f.vaults.map { f.cloud.records(in: f.zone($0)) } == copies)
+        }
+    }
+
+    @Test func creatingVaultSyncStatePreservesAnExistingFileWithoutItsSchema() throws {
+        let files = FileManager.default, root = URL.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? files.removeItem(at: root) }
+        let file = root.appending(path: VaultSyncDatabase.fileName)
+        try files.createDirectory(at: root, withIntermediateDirectories: false)
+        let other = try DatabaseQueue(path: file.path)
+        try other.write { try $0.execute(sql: "CREATE TABLE other (value TEXT)") }
+        try other.close()
+        let before = try Data(contentsOf: file)
+        for create in [false, true] {
+            #expect(throws: CocoaError.self) { try VaultSyncDatabase.open(directory: root, create: create) }
+            #expect(try Data(contentsOf: file) == before)
         }
     }
 
