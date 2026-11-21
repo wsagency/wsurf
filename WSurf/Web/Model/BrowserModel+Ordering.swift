@@ -507,6 +507,9 @@ extension BrowserModel {
             (order.firstIndex(of: $0) ?? .max) < (order.firstIndex(of: $1) ?? .max)
         }
         let folder = TabFolder(name: name)
+        if pendingSpaceStore != nil, let topmost {
+            folder.spaceID = spaceID(ofItem: topmost)
+        }
         folders.append(folder)
         if requestingRename {
             folderRenameID = folder.id
@@ -833,10 +836,18 @@ extension BrowserModel {
     }
 
     func sidebarDidChange() {
+        let previousTabs = tabsByID, previousFolders = foldersByID
         tabsByID = Dictionary(tabs.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         foldersByID = Dictionary(folders.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         let tree = reconciledTree()
-        settleSpaces(in: tree)
+        settleSpaces(in: tree) { row in
+            switch row {
+            case .tab(let id):
+                previousTabs[id] == nil
+            case .folder(let id):
+                previousFolders[id] == nil
+            }
+        }
         sidebarTree = currentSpaceID == nil ? tree : tree.keepingRoot(where: isShown)
         splits = splits.reconciled(against: Set(tabsByID.keys))
         reconcileAnchors()

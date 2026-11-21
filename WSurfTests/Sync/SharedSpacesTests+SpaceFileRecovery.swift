@@ -189,6 +189,102 @@ extension SharedSpacesTests {
         await server.stop()
     }
 
+    @Test(arguments: [false, true])
+    func eachNewRowKeepsItsSpaceWhenTheSelectionChangesDuringAnOutage(restarting: Bool) async throws {
+        let root = URL.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let window = UUID(), cloud = FakeSyncCloud()
+        let first = StoredWindow(root, window: window, cloud: cloud)
+        let shared = try #require(first.spaces.spaces.first)
+        let local = first.spaces.add(name: "Device only")
+        first.browser.adoptSpaces(from: first.spaces)
+        let sharedTab = first.browser.addPage("https://shared.example.test/")
+        let sharedFolder = first.browser.createFolder(named: "Shared folder", containing: [sharedTab])
+        let legacyID = first.browser.addPage("file:///older-unassigned-row").id
+        let localTab = first.browser.addPage("https://device-only.example.test/")
+        first.browser.move([.tab(localTab.id)], toSpace: local.id)
+        let pin = first.browser.pinned("https://pinned.example.test/")
+        try await first.host.share(shared, in: first.profile)
+        await first.host.refresh()
+        first.browser.activate(localTab)
+        first.browser.activate(pin)
+        first.browser.saveBlocking()
+        try await first.browser.database.writer.write { db in
+            try db.execute(sql: "UPDATE sessionTab SET spaceID = NULL WHERE id = ?", arguments: [legacyID])
+        }
+        first.close()
+
+        let file = root.appending(path: "Spaces.json"), saved = root.appending(path: "Spaces.saved")
+        try FileManager.default.moveItem(at: file, to: saved)
+        if !restarting {
+            try FileManager.default.createDirectory(at: file, withIntermediateDirectories: false)
+        }
+        var reopened = StoredWindow(root, window: window, cloud: cloud, offline: true)
+        defer { reopened.close() }
+        let opener = try #require(reopened.browser.tab(id: pin.id))
+        try #require(reopened.browser.activeTabID == opener.id)
+        let server = try await HTTPFixtureServer.start(routes: ["/shared": .html("Shared tab")])
+        let localURL = try #require(URL(string: "https://private-note.example.invalid/first")), sharedURL = try server.url("/shared")
+        let privateTab = reopened.browser.newTab(url: localURL, after: opener)
+        let privateFolder = try #require(reopened.browser.importBookmarksFolder(named: "New device-only folder", entries: [
+            .init(url: "https://private-bookmark.example.invalid/", title: "Local bookmark", date: .distantPast),
+        ]))
+        let bookmark = try #require(reopened.browser.tabs(in: privateFolder).first)
+        let sharedRow = try #require(reopened.browser.tab(id: sharedTab.id))
+        // Even in a background Space, a page opened inside a folder still belongs to its opener's folder.
+        let nested = reopened.browser.newTab(url: sharedURL, activate: false, after: sharedRow)
+        #expect(reopened.browser.reconciledTree().parent(of: .tab(nested.id)) == sharedFolder.id)
+        let subfolder = reopened.browser.createFolder(named: "Nested", containing: [nested])
+        #expect(subfolder.spaceID == shared.id)
+        #expect(nested.spaceID == shared.id)
+        #expect(bookmark.spaceID == local.id)
+        #expect(privateTab.spaceID == local.id)
+        #expect(privateFolder.spaceID == local.id)
+        reopened.browser.activate(sharedRow)
+        reopened.browser.activate(opener)
+        let existingLocal = try #require(reopened.browser.tab(id: localTab.id))
+        let localContainer = reopened.browser.createFolder(named: "Wrap a local row", containing: [existingLocal])
+        #expect(localContainer.spaceID == local.id && existingLocal.spaceID == local.id)
+        #expect(reopened.browser.tab(id: legacyID)?.spaceID == nil)
+        // SQLite records millisecond timestamps; make the two distinct user selections deterministic.
+        reopened.browser.noteUse(of: [privateTab.id, localTab.id], at: Date(timeIntervalSinceNow: -30))
+        reopened.browser.saveBlocking()
+        let localID = privateTab.id, folderID = privateFolder.id
+        let stored = try await reopened.browser.database.writer.read { db in
+            try Int.fetchOne(db, sql: """
+                SELECT (SELECT COUNT(*) FROM sessionTab WHERE id = ? AND spaceID = ?)
+                     + (SELECT COUNT(*) FROM sessionFolder WHERE id = ? AND spaceID = ?)
+                """, arguments: [localID, local.id, folderID, local.id])
+        }
+        #expect(stored == 2)
+
+        if restarting {
+            reopened.close()
+        } else {
+            try FileManager.default.removeItem(at: file)
+        }
+        try FileManager.default.moveItem(at: saved, to: file)
+        if restarting {
+            reopened = StoredWindow(root, window: window, cloud: cloud, offline: true)
+        }
+        reopened.browser.sidebarDidChange()
+        let second = reopened.browser.newTab(url: sharedURL, after: try #require(reopened.browser.tab(id: pin.id)))
+        #expect(reopened.browser.tab(id: localID)?.spaceID == local.id)
+        #expect(reopened.browser.folder(id: folderID)?.spaceID == local.id)
+        #expect(reopened.browser.tab(id: pin.id)?.spaceID == nil)
+        #expect(second.spaceID == shared.id)
+        reopened.browser.saveBlocking()
+        reopened.engine.offline = false
+        await reopened.host.refresh()
+        let slots = try #require(reopened.host.links[first.profile.id]?.slots)
+        #expect(slots[localID] == nil && slots[folderID] == nil && slots[bookmark.id] == nil && slots[localContainer.id] == nil)
+        let key = try #require(slots[second.id]?.last?.recordID)
+        #expect(cloud.record(key).flatMap(SharedSpaceItem.init(record:))?.url == sharedURL.absoluteString)
+        let published = try #require(cloud.records(in: SharedCatalogCategory.spaces.zone)).compactMap(SharedSpaceItem.init(record:))
+        #expect(!published.contains { $0.url == localURL.absoluteString || $0.url == "https://private-bookmark.example.invalid/" })
+        await server.stop()
+    }
+
     @Test func aRenameSavedDuringASpaceFileOutageSupersedesTheOlderQueuedRename() async throws {
         let root = URL.temporaryDirectory.appending(path: UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }

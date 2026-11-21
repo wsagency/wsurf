@@ -126,9 +126,12 @@ extension BrowserModel {
 
     // MARK: - Settling
 
-    func settleSpaces(in tree: SidebarTree) {
+    func settleSpaces(in tree: SidebarTree, isNew: (SidebarItem) -> Bool = { _ in false }) {
         if let pending = pendingSpaceStore {
-            guard pending.store.recoverMembership() else { return }
+            guard pending.store.recoverMembership() else {
+                placeNewRows(in: tree, selectedSpace: pending.selection, isNew: isNew)
+                return
+            }
             pendingSpaceStore = nil
             currentSpaceID = pending.selection
             selectOwnedSpaces(pending.store.spaces.map(\.id))
@@ -140,6 +143,25 @@ extension BrowserModel {
             guard case .folder(let id) = item else { continue }
             for held in tree.descendants(ofFolder: id) {
                 assignSpace(space, to: held)
+            }
+        }
+    }
+
+    /// A new root inherits the selection at first placement. Children belong to their root,
+    /// and a pre-existing ordinary row can still have an unknown SQLite membership.
+    private func placeNewRows(in tree: SidebarTree, selectedSpace: UUID?, isNew: (SidebarItem) -> Bool) {
+        guard !isReadingSharedSession, !isApplyingProfilePins else { return }
+        for root in tree.root {
+            let kept = isKept(root)
+            let newRoot = isNew(root)
+            let space = kept ? nil : spaceID(ofItem: root) ?? (newRoot ? selectedSpace : nil)
+            guard kept || space != nil else { continue }
+            if newRoot || kept {
+                assignSpace(space, to: root)
+            }
+            guard case .folder(let id) = root else { continue }
+            for child in tree.descendants(ofFolder: id) where kept || isNew(child) {
+                assignSpace(space, to: child)
             }
         }
     }
