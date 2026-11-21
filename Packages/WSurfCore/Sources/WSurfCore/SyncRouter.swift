@@ -4,21 +4,68 @@
 import Foundation
 import Observation
 
+/// The predecessor of an account switch remains replayable until this engine serializes its new state.
+nonisolated struct TabAccountEvents: Codable, Equatable, Sendable {
+    struct Switch: Codable, Equatable {
+        let from: String
+        let to: String
+        let id: UUID
+        var engineCheckpointed = false
+        var deliveredToTabs = false
+    }
+
+    var checkpointID: UUID?
+    var pending: Switch?
+    var currentID: UUID? {
+        pending?.id ?? checkpointID
+    }
+
+    mutating func receive(from: String, to: String) {
+        if let pending, !pending.engineCheckpointed, pending.from == from, pending.to == to {
+            return
+        }
+        checkpointID = currentID
+        pending = Switch(from: from, to: to, id: UUID())
+    }
+
+    mutating func checkpoint() {
+        pending?.engineCheckpointed = true
+        retireIfComplete()
+    }
+
+    mutating func deliveredToTabs() {
+        pending?.deliveredToTabs = true
+        retireIfComplete()
+    }
+
+    private mutating func retireIfComplete() {
+        guard let pending, pending.engineCheckpointed && pending.deliveredToTabs else { return }
+        checkpointID = pending.id
+        self.pending = nil
+    }
+
+    func isReplaying(_ receipt: TabSyncState.ZoneObservations.VerifiedSwitch, to user: String) -> Bool {
+        pending?.from == receipt.previousUser && pending?.to == user && receipt.accountEventID == checkpointID
+    }
+}
+
 /// What the router keeps between runs, in the app-level `iCloudSync.json`: the engine's own state, and the vault sync's cache of the
 /// account's private database. It holds no key, no entry and nothing from a private window.
 nonisolated public struct SyncRouterState: Codable, Equatable, Sendable {
     public var engineState: Data?
     public var vaults = VaultSyncAppState()
     var tabRemoval: TabRemovalCheckpoint?
+    var tabAccountEvents = TabAccountEvents()
     /// Earlier native checkpoints can contain zone changes without a per-vault owner. The first new engine starts with a clean queue.
     private let explicitVaultChanges = true
 
-    private enum CodingKeys: String, CodingKey { case engineState, vaults, explicitVaultChanges, tabRemoval }
+    private enum CodingKeys: String, CodingKey { case engineState, vaults, explicitVaultChanges, tabRemoval, tabAccountEvents }
 
     public init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         vaults = try values.decode(VaultSyncAppState.self, forKey: .vaults)
         tabRemoval = try values.decodeIfPresent(TabRemovalCheckpoint.self, forKey: .tabRemoval)
+        tabAccountEvents = try values.decodeIfPresent(TabAccountEvents.self, forKey: .tabAccountEvents) ?? .init()
         if try values.decodeIfPresent(Bool.self, forKey: .explicitVaultChanges) == true {
             engineState = try values.decodeIfPresent(Data.self, forKey: .engineState)
         }
@@ -31,10 +78,13 @@ nonisolated public struct SyncRouterState: Codable, Equatable, Sendable {
 }
 
 extension TabSync: SyncZoneHandler {
-    public func accountSwitched(from previousUser: String, to user: String) async {
+    public func accountSwitched(from previousUser: String, to user: String) {
         let alreadyHandled = verifiedSwitchFrom == previousUser && state.accountUser == user
         // A confirmed return keeps the person's choices and replays work the engine discarded with its old queue.
-        await handle(.account(alreadyHandled ? .signIn(user: user) : .switchAccounts(user: user)))
+        if alreadyHandled, accountEvents.pending == nil {
+            discardAccountSwitchEvidence()
+        }
+        applyAccount(alreadyHandled ? .signIn(user: user) : .switchAccounts(user: user))
     }
 
     public func owns(zone: String) -> Bool {
@@ -56,6 +106,7 @@ public final class SyncRouter: SyncEngineDelegate {
     @ObservationIgnored private let persist: (SyncRouterState) -> Void
     @ObservationIgnored private var handlers: [any SyncZoneHandler]
     @ObservationIgnored private var vaultHandler: VaultSync?
+    @ObservationIgnored private var receivedSwitch = false
     @ObservationIgnored public var isLiveVaultProfile: ((UUID) -> Bool)?
     @ObservationIgnored public var accountChanged: ((SyncAccountChange) -> Void)?
 
@@ -99,30 +150,42 @@ public final class SyncRouter: SyncEngineDelegate {
     }
 
     public func accountSwitched(from previousUser: String, to user: String) async {
-        guard tabs != nil else {
-            await handle(.account(.switchAccounts(user: user)))
-            return
-        }
+        state.tabAccountEvents.receive(from: previousUser, to: user)
+        tabs?.accountEvents = state.tabAccountEvents
+        receivedSwitch = true
+        persist(state)
         await route(.account(.switchAccounts(user: user))) { tabs, _ in
-            await tabs.accountSwitched(from: previousUser, to: user)
+            self.deliverSwitch(to: tabs)
         }
+    }
+
+    private func deliverSwitch(to tabs: TabSync) {
+        guard let pending = state.tabAccountEvents.pending else { return }
+        tabs.accountSwitched(from: pending.from, to: pending.to)
+        state.tabAccountEvents.deliveredToTabs()
+        tabs.accountEvents = state.tabAccountEvents
+        persist(state)
     }
 
     public func discardAccountSwitchEvidence() {
-        if let tabs {
-            tabs.discardAccountSwitchEvidence()
-        } else if let consumed = state.tabRemoval?.consumingVerifiedSwitch {
-            state.tabRemoval = consumed
-            persist(state)
-        }
+        receivedSwitch = false
+        state.tabAccountEvents = TabAccountEvents(checkpointID: UUID())
+        tabs?.accountEvents = state.tabAccountEvents
+        tabs?.discardAccountSwitchEvidence()
+        persist(state)
     }
 
     public func handle(_ event: SyncEvent) async {
-        // The shared engine consumes account events even if the installation ID is unavailable at launch.
-        if case .account = event, tabs == nil {
+        if case .account = event {
             discardAccountSwitchEvidence()
         }
         if case .state(let data) = event {
+            // Only a new serialization following delivery in this engine can acknowledge the switch.
+            if receivedSwitch, data != state.engineState {
+                state.tabAccountEvents.checkpoint()
+                tabs?.accountEvents = state.tabAccountEvents
+                receivedSwitch = false
+            }
             state.engineState = data
             persist(state)
             return
@@ -153,10 +216,15 @@ public final class SyncRouter: SyncEngineDelegate {
     public func routeTabs(to tabs: TabSync) {
         handlers.removeAll { $0 is TabSync }
         handlers.append(tabs)
+        tabs.accountEvents = state.tabAccountEvents
         tabs.bindRemovalCheckpoint(state.tabRemoval) { [weak self, weak tabs] checkpoint in
             guard let self, self.tabs === tabs, state.tabRemoval != checkpoint else { return }
             state.tabRemoval = checkpoint
             persist(state)
+        }
+        // Apply the last switch seen by another category before this installation can replay or send.
+        if state.tabAccountEvents.pending?.deliveredToTabs == false {
+            deliverSwitch(to: tabs)
         }
     }
 

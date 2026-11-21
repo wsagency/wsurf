@@ -92,6 +92,87 @@ extension CloudTabsTests {
         let launch = Launch(), other = FakeSyncCloud(user: "B")
         defer { launch.finish() }
         let install = MemoryInstallIDStorage(value: UUID().uuidString), profile = Profile.original()
+        let saved = try await prepareReturn(launch, via: other, install: install, reenroll: reenroll)
+        let id = saved.id, engineStateB = saved.engineState
+
+        let reopened = try #require(launch.start(installIDs: install))
+        let third = try #require(launch.engines.last)
+        try #require(launch.engines.count == 3 && reopened.isOptedIn(profile.id) == reenroll)
+        third.available = false
+        await third.simulateAccount(.switchAccounts(user: launch.cloud.user), from: other.user)
+        #expect(reopened.isOptedIn(profile.id) == reenroll && launch.defaults.bool(forKey: CloudTabs.optInKey) == reenroll)
+        try #require(try JSONDecoder().decode(SyncRouterState.self, from: Data(contentsOf: launch.stateFile)).engineState == engineStateB)
+        let replayed = try #require(launch.start(installIDs: install))
+        let fourth = try #require(launch.engines.last)
+        fourth.available = false
+        await fourth.simulateAccount(.switchAccounts(user: launch.cloud.user), from: other.user)
+        #expect(replayed.isOptedIn(profile.id) == reenroll && launch.defaults.bool(forKey: CloudTabs.optInKey) == reenroll)
+        if reenroll {
+            replayed.setOptIn(false, for: profile)
+        }
+        let writes = launch.cloud.writeCount
+        fourth.available = true
+        try await fourth.sendNow()
+        #expect(launch.cloud.record(id) == nil && launch.cloud.writeCount == writes)
+    }
+
+    @Test func aVaultOnlyAccountRoundTripCannotRestoreAnOlderPersonalConsent() async throws {
+        let launch = Launch(), other = FakeSyncCloud(user: "B")
+        defer { launch.finish() }
+        let install = MemoryInstallIDStorage(value: UUID().uuidString), profile = Profile.original()
+        let saved = try await prepareReturn(launch, via: other, install: install, reenroll: true)
+        let original = try #require(launch.cloud.record(saved.id))
+        let peerID = SyncRecordID(zone: saved.id.zone, name: "studio")
+        other.createZone(saved.id.zone)
+        _ = other.save(SyncRecord(id: saved.id, type: .deviceSession, schema: 1, payload: original.payload))
+        _ = launch.cloud.save(SyncRecord(id: peerID, type: .deviceSession, schema: 1, payload: original.payload))
+        let peer = try #require(launch.cloud.record(peerID)), foreign = try #require(other.record(saved.id))
+        try saved.routerInB.write(to: launch.stateFile, options: .atomic)
+        install.failsReads = true
+        var gate = launch.gate()
+        gate.vaultFlag = true
+        func startWithVault() throws -> (CloudSync, FakeSyncEngine) {
+            var transport: FakeSyncEngine?
+            let sync = CloudSync.start(
+                gate: gate, installIDs: install, stateFile: launch.stateFile, profiles: [profile],
+                host: { FakeVaultHost(root: launch.directory) }, optInDefaults: { _ in launch.defaults },
+                windows: { launch.models }, clock: launch.clock,
+                makeEngine: { delegate, checkpoint in
+                    let engine = FakeSyncEngine(cloud: launch.cloud, delegate: delegate, state: checkpoint)
+                    transport = engine
+                    return engine
+                }
+            )
+            return (try #require(sync), try #require(transport))
+        }
+        let (visiting, vaultEngine) = try startWithVault()
+        defer { visiting.prepareToTerminate() }
+        try #require(visiting.tabs == nil && visiting.vaults != nil)
+        await vaultEngine.simulateAccount(.switchAccounts(user: launch.cloud.user), from: other.user)
+        vaultEngine.cloud = other
+        await vaultEngine.simulateAccount(.switchAccounts(user: other.user), from: launch.cloud.user)
+        try await vaultEngine.fetchNow()
+        try #require(visiting.vaults?.state.accountUser == other.user)
+
+        install.failsReads = false
+        let (returned, engine) = try startWithVault()
+        defer { returned.prepareToTerminate() }
+        let restored = try #require(returned.tabs)
+        restored.sync.share(SyncSamples.session(tabs: ["https://unapproved.test/"]), profileID: profile.id, force: true)
+        await restored.sync.refresh()
+        try await engine.sendNow()
+        #expect(launch.cloud.record(saved.id) == original)
+        await engine.simulateAccount(.switchAccounts(user: launch.cloud.user), from: other.user)
+        await restored.sync.refresh()
+        try await engine.sendNow()
+        #expect(!restored.isOptedIn(profile.id) && !launch.defaults.bool(forKey: CloudTabs.optInKey))
+        #expect(launch.cloud.record(saved.id) == original && launch.cloud.record(peerID) == peer && other.record(saved.id) == foreign)
+    }
+
+    private func prepareReturn(
+        _ launch: Launch, via other: FakeSyncCloud, install: MemoryInstallIDStorage, reenroll: Bool
+    ) async throws -> (id: SyncRecordID, routerInB: Data, engineState: Data) {
+        let profile = Profile.original()
         launch.models = [BrowserModel(database: .temporary())]
         let original = try #require(launch.start(optedIn: true, installIDs: install))
         let id = launch.personalSessionID
@@ -105,10 +186,8 @@ extension CloudTabsTests {
         launch.engine.cloud = other
         await launch.engine.simulateAccount(.signIn(user: other.user))
         try await launch.engine.fetchNow()
-        func storedRouter() throws -> SyncRouterState {
-            try JSONDecoder().decode(SyncRouterState.self, from: Data(contentsOf: launch.stateFile))
-        }
-        let engineStateB = try #require(try storedRouter().engineState)
+        let routerInB = try Data(contentsOf: launch.stateFile)
+        let engineStateB = try #require(try JSONDecoder().decode(SyncRouterState.self, from: routerInB).engineState)
 
         let visiting = try #require(launch.start(installIDs: install))
         let second = try #require(launch.engines.last)
@@ -117,24 +196,13 @@ extension CloudTabsTests {
         second.cloud = launch.cloud
         await visiting.sync.refresh()
         try #require(visiting.sync.wantsRecordDeletion(id))
+        second.available = false
         if reenroll {
             visiting.setOptIn(true, for: profile)
         }
-        try #require(try storedRouter().engineState == engineStateB)
+        try #require(launch.cloudSync?.router.state.engineState == engineStateB)
 
-        let reopened = try #require(launch.start(installIDs: install))
-        let third = try #require(launch.engines.last)
-        try #require(launch.engines.count == 3 && reopened.isOptedIn(profile.id) == reenroll)
-        third.available = false
-        await third.simulateAccount(.switchAccounts(user: launch.cloud.user), from: other.user)
-        #expect(reopened.isOptedIn(profile.id) == reenroll && launch.defaults.bool(forKey: CloudTabs.optInKey) == reenroll)
-        if reenroll {
-            reopened.setOptIn(false, for: profile)
-        }
-        let writes = launch.cloud.writeCount
-        third.available = true
-        try await third.sendNow()
-        #expect(launch.cloud.record(id) == nil && launch.cloud.writeCount == writes)
+        return (id, routerInB, engineStateB)
     }
 
     @Test func nativeRowDeleteErrorsSettleOnlyDefinitivelyAbsentTabRecords() {

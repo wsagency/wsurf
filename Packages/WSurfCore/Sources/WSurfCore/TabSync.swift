@@ -103,6 +103,7 @@ public final class TabSync {
     @ObservationIgnored private var refreshing = false
     @ObservationIgnored private var signedOut = false
     @ObservationIgnored private var accountGeneration = 0
+    @ObservationIgnored var accountEvents = TabAccountEvents()
 
     /// Whether this device owns anything on the server or wants to: the owner creates the engine only then.
     public var needsEngine: Bool {
@@ -609,7 +610,6 @@ extension TabSync: SyncEngineDelegate {
         }
         guard matchesAccount(user) else {
             applyAccount(.switchAccounts(user: user), verifiedSwitchFrom: signedOut ? nil : state.accountUser)
-            persist(state)
             return false
         }
         if state.accountUser == nil, needsEngine {
@@ -705,7 +705,9 @@ extension TabSync: SyncEngineDelegate {
         case .sent(let saved, let deleted, let failed):
             await applySent(saved: saved, deleted: deleted, failed: failed)
         case .account(let change):
+            discardAccountSwitchEvidence()
             applyAccount(change)
+            return
         case .state, .zoneDeletesFailed, .zoneSavesOverQuota:
             return
         }
@@ -888,19 +890,18 @@ extension TabSync: SyncEngineDelegate {
         retainCheckpoint(for: desired)
     }
 
-    private func applyAccount(_ change: SyncAccountChange, verifiedSwitchFrom previousUser: String? = nil) {
+    func applyAccount(_ change: SyncAccountChange, verifiedSwitchFrom previousUser: String? = nil) {
+        defer { persist(state) }
         accountGeneration += 1
         signedOut = change == .signOut
         accountAvailable = !signedOut
         switch change {
         case .signOut:
-            discardAccountSwitchEvidence()
             clearAccountData()
             if state.accountUser == nil, !desired.isEmpty {
                 endSharing()
             }
         case .signIn(let user) where matchesAccount(user):
-            discardAccountSwitchEvidence()
             if enrollment == nil {
                 renewEnrollment()
             }
@@ -909,7 +910,8 @@ extension TabSync: SyncEngineDelegate {
         case .signIn(let user), .switchAccounts(let user):
             // Another Apple Account: nothing of the old one is shown, and nothing is uploaded until the person opts in again.
             let prior = state.zoneObservations ?? previousUser.map { .init(account: $0) }
-            let withdrawals = prior?.switching(to: user, verifiedFrom: previousUser, withdrawing: ownedZones.filter { !wants(zone: $0) }, installID: installID)
+            let withdrawals = prior?.switching(to: user, verifiedFrom: previousUser, after: accountEvents.currentID,
+                                               withdrawing: ownedZones.filter { !wants(zone: $0) }, installID: installID)
             clearAccountData()
             endSharing(account: user, observations: withdrawals)
             if !ownedZones.isEmpty {

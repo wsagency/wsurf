@@ -8,11 +8,12 @@ import WSurfCore
 extension TabSyncTests {
     enum ReturnAfterRestart: CaseIterable {
         case keepSharing, stayOff, withdrawBeforeSend, staleTabs, staleRouter
+        case replaySharing, replayOff, replayThenWithdraw, replayAfterOldState, replaySameState, detachedRoundTrip, detachedRoundTripBeforeCheckpoint, sendBeforeDetachedReturn
         case differentOrigin, differentAccount, unrecorded, alreadyConsumed, deliveredWithoutTabs, freshEngine, unreadableEngine, replacedEngine, signedOut, otherInstallation
 
         var keepsSharing: Bool {
             switch self {
-            case .keepSharing, .staleTabs, .staleRouter:
+            case .keepSharing, .staleTabs, .staleRouter, .replaySharing, .replayAfterOldState, .replaySameState:
                 true
             default:
                 false
@@ -54,7 +55,7 @@ extension TabSyncTests {
             engineStateB = try #require(run.router.state.engineState)
         }
 
-        let optedIn = outcome != .stayOff
+        let optedIn = outcome != .stayOff && outcome != .replayOff
         do {
             let run = try files.open(other)
             await run.tabs.refresh()
@@ -83,30 +84,28 @@ extension TabSyncTests {
                 await run.engine.simulateAccount(.signOut)
             case .staleTabs:
                 try tabsInB.write(to: files.tabsFile, options: .atomic)
-            case .staleRouter:
+            case .replaySharing, .replayOff, .replayThenWithdraw, .replayAfterOldState, .replaySameState:
+                // Delivery completed, but CloudKit has not yet serialized its state for A.
+                await run.engine.simulateAccount(.switchAccounts(user: first.user), from: other.user)
+                if outcome == .replaySameState {
+                    await run.router.handle(.state(engineStateB))
+                }
+                try #require(try files.isSharing() == optedIn && run.router.state.engineState == engineStateB)
+            case .staleRouter, .detachedRoundTrip, .detachedRoundTripBeforeCheckpoint, .sendBeforeDetachedReturn:
                 try routerInB.write(to: files.routerFile, options: .atomic)
             default:
                 break
             }
         }
 
-        if outcome == .deliveredWithoutTabs {
-            // Another category can advance the shared event stream while the installation ID is unavailable.
-            let router = try files.openRouter(tabs: nil)
-            let engine = FakeSyncEngine(cloud: first, delegate: router, state: router.state.engineState)
-            await engine.simulateAccount(.switchAccounts(user: first.user), from: other.user)
-            try await engine.fetchNow()
-        } else if outcome == .freshEngine {
-            try FileManager.default.removeItem(at: files.routerFile)
-        } else if outcome == .unreadableEngine {
-            let router = try files.openRouter(tabs: nil)
-            await router.handle(.state(Data("invalid checkpoint".utf8)))
-        }
+        let engineAdvanced = try await files.advanceWithoutTabs(outcome, first: first, other: other)
         let run = try files.open(first, installID: outcome == .otherInstallation ? "replacement" : "air")
-        if outcome != .alreadyConsumed && outcome != .deliveredWithoutTabs && outcome != .freshEngine && outcome != .unreadableEngine {
+        if !engineAdvanced && outcome != .alreadyConsumed {
             try #require(run.router.state.engineState == engineStateB)
         }
-        try #require(try files.isSharing() == optedIn && run.tabs.state.accountUser == first.user)
+        if outcome != .detachedRoundTrip && outcome != .detachedRoundTripBeforeCheckpoint && outcome != .sendBeforeDetachedReturn {
+            try #require(try files.isSharing() == optedIn && run.tabs.state.accountUser == first.user)
+        }
         var engine = run.engine
         if outcome == .replacedEngine {
             engine = FakeSyncEngine(cloud: first, delegate: run.router)
@@ -116,18 +115,27 @@ extension TabSyncTests {
         engine.available = false
         run.tabs.share(SyncSamples.session(tabs: ["https://fresh.test/"]), profileID: files.profile, force: true)
         let before = first.writeCount
+        if outcome == .sendBeforeDetachedReturn {
+            // B → A can reach the delegate after the recovered installation already had a chance to send.
+            engine.available = true
+            await run.tabs.refresh()
+            try await engine.sendNow()
+            #expect(first.writeCount == before && first.record(id)?.payload != nil && other.record(id) == foreign)
+            engine.available = false
+        }
         if outcome == .differentAccount {
             engine.cloud = other
             await engine.simulateAccount(.switchAccounts(user: other.user), from: first.user)
         } else {
             await engine.simulateAccount(.switchAccounts(user: first.user), from: outcome == .differentOrigin ? "C" : other.user)
         }
-        let keepsChoice = outcome.keepsSharing || outcome == .withdrawBeforeSend
+        let turnOff = outcome == .withdrawBeforeSend || outcome == .replayThenWithdraw
+        let keepsChoice = outcome.keepsSharing || turnOff
         #expect(try files.isSharing() == keepsChoice)
-        if outcome == .withdrawBeforeSend {
+        if turnOff {
             files.choose(false, for: run.tabs)
         }
-        let withdraw = outcome == .stayOff || outcome == .withdrawBeforeSend
+        let withdraw = !optedIn || turnOff
         #expect(run.router.wantsRecordDeletion(id) == withdraw)
         engine.available = true
         if outcome.keepsSharing {
@@ -155,6 +163,37 @@ private struct PersonalAccountFiles {
 
     init() throws {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    }
+
+    /// Another category owns the engine while the installation ID is unreadable. The newer tab file stays on disk.
+    func advanceWithoutTabs(_ outcome: TabSyncTests.ReturnAfterRestart, first: FakeSyncCloud, other: FakeSyncCloud) async throws -> Bool {
+        switch outcome {
+        case .deliveredWithoutTabs, .detachedRoundTrip, .detachedRoundTripBeforeCheckpoint, .sendBeforeDetachedReturn:
+            let router = try openRouter(tabs: nil)
+            let engine = FakeSyncEngine(cloud: first, delegate: router, state: router.state.engineState)
+            await engine.simulateAccount(.switchAccounts(user: first.user), from: other.user)
+            if outcome != .deliveredWithoutTabs {
+                engine.cloud = other
+                await engine.simulateAccount(.switchAccounts(user: other.user), from: first.user)
+            }
+            if outcome == .detachedRoundTripBeforeCheckpoint {
+                return false
+            }
+            try await engine.fetchNow()
+        case .replayAfterOldState:
+            // On restart a change to B's restored queue can serialize before CloudKit redelivers B → A.
+            let router = try openRouter(tabs: nil)
+            let engine = FakeSyncEngine(cloud: other, delegate: router, state: router.state.engineState)
+            try await engine.fetchNow()
+        case .freshEngine:
+            try FileManager.default.removeItem(at: routerFile)
+        case .unreadableEngine:
+            let router = try openRouter(tabs: nil)
+            await router.handle(.state(Data("invalid checkpoint".utf8)))
+        default:
+            return false
+        }
+        return true
     }
 
     func open(_ cloud: FakeSyncCloud, installID: String = "air") throws -> (tabs: TabSync, router: SyncRouter, engine: FakeSyncEngine) {

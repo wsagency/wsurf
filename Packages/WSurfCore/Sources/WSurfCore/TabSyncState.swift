@@ -45,6 +45,7 @@ nonisolated public struct TabSyncState: Codable, Equatable, Sendable {
         struct VerifiedSwitch: Codable, Equatable, Sendable {
             let previousUser: String
             let installID: String
+            let accountEventID: UUID?
         }
 
         var verifiedSwitch: VerifiedSwitch?
@@ -65,14 +66,14 @@ nonisolated public struct TabSyncState: Codable, Equatable, Sendable {
             return result
         }
 
-        func switching(to user: String, verifiedFrom previousUser: String?, withdrawing zones: Set<String>, installID: String) -> Self {
+        func switching(to user: String, verifiedFrom previousUser: String?, after eventID: UUID?, withdrawing zones: Set<String>, installID: String) -> Self {
             var waiting = withdrawals ?? [:]
             if !zones.isEmpty {
                 waiting[account] = Publication(installID: installID, zones: zones)
             }
             // An explicit empty publication prevents stale change tags on disk from authorizing a delete in the visiting account.
             let active = waiting.removeValue(forKey: user) ?? Publication(installID: installID, zones: [])
-            let receipt = previousUser.map { VerifiedSwitch(previousUser: $0, installID: installID) }
+            let receipt = previousUser.map { VerifiedSwitch(previousUser: $0, installID: installID, accountEventID: eventID) }
             return Self(account: user, publication: active, withdrawals: waiting.isEmpty ? nil : waiting, verifiedSwitch: receipt)
         }
     }
@@ -122,7 +123,8 @@ nonisolated public struct TabSyncState: Codable, Equatable, Sendable {
 extension TabSync {
     var verifiedSwitchFrom: String? {
         guard let scope = state.zoneObservations, scope.account == state.accountUser,
-              let receipt = scope.verifiedSwitch, receipt.installID == installID else { return nil }
+              let receipt = scope.verifiedSwitch, receipt.installID == installID,
+              receipt.accountEventID == accountEvents.currentID || accountEvents.isReplaying(receipt, to: scope.account) else { return nil }
         return receipt.previousUser
     }
 }
@@ -132,11 +134,6 @@ nonisolated struct TabRemovalCheckpoint: Codable, Equatable, Sendable {
     let revision: Int
     let pending: TabSyncState.RemovalCheck?
     var observations: TabSyncState.ZoneObservations?
-
-    var consumingVerifiedSwitch: Self? {
-        guard let observations, observations.verifiedSwitch != nil else { return nil }
-        return Self(revision: revision + 1, pending: pending, observations: observations.withoutVerifiedSwitch)
-    }
 }
 
 /// A saved record carries its encrypted payload but no request ID. Count identical handouts until all their replies arrive.
