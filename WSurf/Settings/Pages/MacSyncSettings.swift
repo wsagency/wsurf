@@ -146,6 +146,7 @@ private struct VaultSharingSettings: View {
     let cloud: CloudSync
     @State private var model: CredentialSettingsModel
     @State private var work: Task<Void, Never>?
+    @State private var showsVaultMerge = false
 
     init(coordinator: AppCoordinator, cloud: CloudSync) {
         self.coordinator = coordinator
@@ -169,6 +170,7 @@ private struct VaultSharingSettings: View {
                         ))
                 }
                 CloudVaultRow(model: model, run: run)
+                CredentialVaultMergeRow(model: model) { showsVaultMerge = true }
             }
             ForEach(model.retryableSyncedVaults) { retry in
                 RowSeparator()
@@ -190,6 +192,7 @@ private struct VaultSharingSettings: View {
                 }
             }
         }
+        .modifier(CredentialVaultMergePresentation(model: model, isPresented: $showsVaultMerge))
         .onDisappear { work?.cancel() }
         .task(id: cloud.vaults != nil) {
             if cloud.vaults != nil {

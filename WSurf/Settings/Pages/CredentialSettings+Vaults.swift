@@ -77,6 +77,7 @@ extension CredentialSettings {
                             }
                         }
                         CloudVaultRow(model: model, run: run)
+                        CredentialVaultMergeRow(model: model) { showsVaultMerge = true }
                         RowSeparator()
                         DetailRow(title: "Delete vault", caption: deleteVaultCaption) {
                             Button("Delete Vault…", role: .destructive) { run { await model.requestVaultDeletion() } }

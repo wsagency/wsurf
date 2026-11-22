@@ -399,7 +399,9 @@ waits for a compatible version. Restoring an older local store pauses its sync. 
 owner’s confirmation. A removed item keeps its keyed import trace so another Mac can recognize a later import of
 the same entry. Turning on vault discovery and choosing individual vaults to sync are separate actions.
 Adding a vault from another Mac opens a second local vault with the original vault’s identity and unlock passkey.
-The existing local vault retains its entries. The entry merge command operates within the selected vault.
+With that shared vault selected, **Merge Vaults…** can copy current entries from another vault on this Mac.
+The review skips exact duplicates and asks how to handle conflicts. Confirming writes the chosen entries together.
+The source retains its entries, History and Trash until the owner deletes it separately.
 
 ## Tests
 

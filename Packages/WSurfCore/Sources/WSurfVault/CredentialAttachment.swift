@@ -9,7 +9,7 @@ import Foundation
 /// opens a file, and a file is decrypted only when someone asks for it. Like every other part of a record it is never named in a log
 /// and never reaches the assistant or an MCP client.
 public nonisolated struct CredentialAttachment: Codable, Sendable, Equatable, Identifiable {
-    /// The encrypted file's random name. Two copies of the same document get different ids, so nothing on disk links them.
+    /// Each added file gets a random name. A vault merge keeps the ID that authenticates its existing encrypted chunks.
     public var id: UUID
     public var name: String
     /// The uniform type identifier (`public.jpeg`, `com.adobe.pdf`…), for the icon and the apps that open it.
@@ -27,6 +27,11 @@ public nonisolated struct CredentialAttachment: Codable, Sendable, Equatable, Id
     public static let entryLimit = 64
     static let nameBytes = 1_024
     static let wrappedKeyBytes = 60
+
+    /// Compare the payloads recorded by two vaults, independently of their blob IDs and wrapped keys.
+    public func hasSameFileContents(as other: CredentialAttachment) -> Bool {
+        size == other.size && sha256 == other.sha256
+    }
 
     func validate() throws {
         guard !name.isEmpty, name.utf8.count <= Self.nameBytes, !name.contains("\u{0}"),

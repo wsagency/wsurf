@@ -92,12 +92,9 @@ final class CredentialManager {
         guard let current, current.isAuthorized(at: now()) else { return nil }
         return current.epoch
     }
-    /// Identifies the vault content a read may rely on: `nil` while any write is in flight or no access is current,
-    /// otherwise a value that differs after every write that started or ended since it was read. It says nothing about
-    /// authorization: callers pair it with the `authorizationEpoch` they captured, and it is a plain stored-state read
-    /// so it is safe on the main actor at any time.
+    /// Available while unlocked and idle. Each write advances it on entry and exit. Pair it with the captured authorization epoch.
     var stableGeneration: UInt64? {
-        writesInFlight == 0 && current != nil ? writeGeneration : nil
+        writesInFlight == 0 && current != nil ? contentGeneration : nil
     }
     private(set) var unlockCredentials: [VaultUnlock] = []
     /// A short non-secret check of the key this passkey gave at the last unlock, for comparing two Macs when a synced vault does not
@@ -147,7 +144,10 @@ final class CredentialManager {
     @ObservationIgnored private var isRetired = false
     /// Counts vault writes between their start and their end, and changes whenever one starts or ends.
     @ObservationIgnored private var writesInFlight = 0
-    @ObservationIgnored private var writeGeneration: UInt64 = 0
+    private nonisolated let writeGeneration = Mutex<UInt64>(0)
+    nonisolated var contentGeneration: UInt64 {
+        writeGeneration.withLock { $0 }
+    }
     /// Bumped by every unlock start and every lock: a scratch report is published only by the unlock that still owns it.
     @ObservationIgnored private var unlockGeneration: UInt64 = 0
     @ObservationIgnored var nativeUnlockAttempt: CredentialUnlockAttempt?
@@ -646,14 +646,15 @@ final class CredentialManager {
         }
     }
 
-    /// The per-account write of spec §13.5: only the touched accounts are compared and written, so an unrelated concurrent
-    /// write survives. The lease and epoch rules are `commit`'s: a caller whose decision was made under another lease is refused
-    /// before anything starts. `removing` moves live accounts to Trash in the same write, each bound to its stamp.
+    /// Compares touched entries under the captured lease. Stamped removals go to Trash in the same transaction.
     func commitAccounts(
-        _ writes: [AccountWrite], removing: [UUID: AccountStamp] = [:], authorizedEpoch: UInt64, cause: String? = nil
+        _ writes: [AccountWrite], removing: [UUID: AccountStamp] = [:], authorizedEpoch: UInt64, cause: String? = nil,
+        expectedRevision: UInt64? = nil, validateMerge: (@Sendable (ContinuousClock.Instant) throws -> Void)? = nil
     ) async throws -> VaultCommitReceipt {
         try await authorizedWrite(epoch: authorizedEpoch) { access in
-            try await store.commitAccounts(vaultID: vaultID, writes, removing: removing, cause: cause, using: access)
+            try await store.commitAccounts(
+                vaultID: vaultID, writes, removing: removing, cause: cause, using: access, expectedRevision: expectedRevision, validateMerge: validateMerge
+            )
         }
     }
 
@@ -934,11 +935,11 @@ final class CredentialManager {
     /// Marks a vault write as in flight before its first suspension and clears the mark on success, failure and
     /// cancellation alike: a write that threw or was cancelled may still have landed.
     private func writing<T>(_ operation: () async throws -> T) async rethrows -> T {
-        writeGeneration &+= 1
+        writeGeneration.withLock { $0 &+= 1 }
         writesInFlight += 1
         defer {
             writesInFlight -= 1
-            writeGeneration &+= 1
+            writeGeneration.withLock { $0 &+= 1 }
             CloudSync.shared?.noteVaultWrite(profileID: profile.id, vaultID: vaultID)
         }
         return try await operation()

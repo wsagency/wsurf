@@ -1,6 +1,486 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "A vault was locked or changed. Review its entries again." : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Jedan se trezor zaključao ili promijenio. Ponovno pregledajte njegove zapise."
+          }
+        }
+      }
+    },
+    "Action for %@" : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Radnja za %@"
+          }
+        }
+      }
+    },
+    "All entries were skipped. The shared vault was unchanged." : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Svi su zapisi preskočeni. Dijeljeni trezor ostao je nepromijenjen."
+          }
+        }
+      }
+    },
+    "Another entry in the local vault also matches." : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "U lokalnom trezoru postoji još jedan podudarni zapis."
+          }
+        }
+      }
+    },
+    "Another local entry is an exact duplicate of this shared entry." : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Drugi lokalni zapis točna je kopija ovog zapisa u dijeljenom trezoru."
+          }
+        }
+      }
+    },
+    "Choose a profile and vault. WSurf asks for the unlock passkey of each locked vault before showing its entries." : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Odaberite profil i trezor. Prije prikaza zapisa WSurf će zatražiti pristupni ključ za svaki zaključani trezor."
+          }
+        }
+      }
+    },
+    "Choose a vault on this Mac" : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Odaberite trezor na ovom Macu"
+          }
+        }
+      }
+    },
+    "Choose an action" : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Odaberite radnju"
+          }
+        }
+      }
+    },
+    "Confirm Merge" : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Potvrdi spajanje"
+          }
+        }
+      }
+    },
+    "Conflict" : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nepodudaranje"
+          }
+        }
+      }
+    },
+    "Copy as New Entry" : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kopiraj kao novi zapis"
+          }
+        }
+      }
+    },
+    "Differences in %@" : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Različita polja · %@"
+          }
+        }
+      }
+    },
+    "Each replacement overwrites the entire matching entry in the shared vault." : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Svaka zamjena prepisuje cijeli podudarni zapis u dijeljenom trezoru."
+          }
+        }
+      }
+    },
+    "Entries merged" : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Spojeni zapisi"
+          }
+        }
+      }
+    },
+    "Entries skipped" : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Preskočeni zapisi"
+          }
+        }
+      }
+    },
+    "Entries to copy" : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zapisi za kopiranje"
+          }
+        }
+      }
+    },
+    "Entries to replace" : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zapisi za zamjenu"
+          }
+        }
+      }
+    },
+    "Entries to skip" : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zapisi za preskakanje"
+          }
+        }
+      }
+    },
+    "Exact duplicate" : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Istovjetan zapis"
+          }
+        }
+      }
+    },
+    "Finding vaults…" : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Traženje trezora…"
+          }
+        }
+      }
+    },
+    "Finish Without Changes" : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dovrši bez izmjena"
+          }
+        }
+      }
+    },
+    "Finishing the merge…" : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dovršavanje spajanja…"
+          }
+        }
+      }
+    },
+    "In local vault · %@" : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "U lokalnom trezoru · %@"
+          }
+        }
+      }
+    },
+    "Matches %@" : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Podudarni zapisi · %@"
+          }
+        }
+      }
+    },
+    "Merge Vaults…" : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Spoji trezore…"
+          }
+        }
+      }
+    },
+    "Merge another vault" : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Spoji drugi trezor"
+          }
+        }
+      }
+    },
+    "Merge into Shared Vault" : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Spajanje u dijeljeni trezor"
+          }
+        }
+      }
+    },
+    "Multiple shared entries match." : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "U dijeljenom trezoru više se zapisa podudara s ovim zapisom."
+          }
+        }
+      }
+    },
+    "Name, websites or import details" : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Naziv, web-mjesta ili podaci o uvozu"
+          }
+        }
+      }
+    },
+    "New entries %lld · Duplicates %lld · Conflicts %lld" : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Novi zapisi %1$lld · Duplikati %2$lld · Nepodudaranja %3$lld"
+          }
+        }
+      }
+    },
+    "New entry" : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Novi zapis"
+          }
+        }
+      }
+    },
+    "Only current entries are merged. The source vault keeps its entries, History and Trash." : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Spajaju se samo trenutačni zapisi. Svi zapisi, povijest i smeće ostaju u izvornom trezoru."
+          }
+        }
+      }
+    },
+    "Replace Entire Destination Entry" : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zamijeni cijeli odredišni zapis"
+          }
+        }
+      }
+    },
+    "Replacing this entry would remove a shared passkey." : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zamjenom ovog zapisa uklonio bi se pristupni ključ iz dijeljenog trezora."
+          }
+        }
+      }
+    },
+    "Review Entries" : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pregledaj zapise"
+          }
+        }
+      }
+    },
+    "Review entries from a vault on this Mac and choose which ones to add to this shared vault." : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pregledajte zapise iz trezora na ovom Macu i odaberite koje želite dodati u ovaj dijeljeni trezor."
+          }
+        }
+      }
+    },
+    "Secure items" : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zaštićene stavke"
+          }
+        }
+      }
+    },
+    "Shared destination" : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dijeljeni odredišni trezor"
+          }
+        }
+      }
+    },
+    "Source vault" : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Izvorni trezor"
+          }
+        }
+      }
+    },
+    "Sync keeps existing passkey details and adds new passkeys at the end." : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sinkronizacija zadržava podatke postojećih pristupnih ključeva, a nove ključeve dodaje na kraj popisa."
+          }
+        }
+      }
+    },
+    "The entries could not be safely identified as the same." : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "WSurf ne može pouzdano utvrditi da je riječ o istom zapisu."
+          }
+        }
+      }
+    },
+    "The matching passkeys have different key material." : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pristupni ključevi koji se podudaraju imaju različite kriptografske podatke."
+          }
+        }
+      }
+    },
+    "The shared vault changed or is unavailable. Reopen the merge review and try again." : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dijeljeni se trezor promijenio ili je nedostupan. Ponovno otvorite pregled spajanja i pokušajte ponovno."
+          }
+        }
+      }
+    },
+    "The source vault has no current entries." : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Izvorni trezor nema trenutačnih zapisa."
+          }
+        }
+      }
+    },
+    "There are no other credential vaults on this Mac." : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Na ovom Macu nema drugih trezora s vjerodajnicama."
+          }
+        }
+      }
+    },
+    "These entries can’t be saved together. Skip one of the matching entries and try again." : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ovi se zapisi ne mogu spremiti zajedno. Preskočite jedan od podudarnih zapisa i pokušajte ponovno."
+          }
+        }
+      }
+    },
+    "Two entries would replace the same shared entry. Choose a different action for one of them." : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dva bi zapisa zamijenila isti zapis u dijeljenom trezoru. Za jedan od njih odaberite drugu radnju."
+          }
+        }
+      }
+    },
+    "copy entries into the shared vault" : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "kopirati zapise u dijeljeni trezor"
+          }
+        }
+      }
+    },
     "Pin and Favorite sync is paused on this Mac." : {
       "localizations" : {
         "hr" : {
@@ -2107,7 +2587,15 @@
       "comment" : "Heading of the section of the model pop-up menu listing models the stored API key can reach; the parallel heading for local providers is “Pulled locally”. “Key” means the API key."
     },
     "Back" : {
-      "comment" : "The command that goes back one page in a tab: an item in the History menu, and the tooltip on the back button at the top of the History page. A direction, not the verb “to back”."
+      "comment" : "The command that goes back one page in a tab: an item in the History menu, and the tooltip on the back button at the top of the History page. A direction, not the verb “to back”.",
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Natrag"
+          }
+        }
+      }
     },
     "Back 15 seconds" : {
       "comment" : "Tooltip on the skip-back button in the media player docked at the foot of the sidebar. The player jumps back exactly fifteen seconds; keep the number. “Back” is directional, not the browser's Back command."
@@ -2233,7 +2721,15 @@
       "comment" : "Headline on the error page shown when the server refuses the connection. Curly apostrophe; the explanatory sentence below it is a separate entry."
     },
     "Cancel" : {
-      "comment" : "The standard Cancel button in confirmation sheets and alerts throughout the app. Use the system's own wording for it."
+      "comment" : "The standard Cancel button in confirmation sheets and alerts throughout the app. Use the system's own wording for it.",
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Odustani"
+          }
+        }
+      }
     },
     "Canceled" : {
       "comment" : "Status label on a download the user stopped."
@@ -2747,7 +3243,14 @@
       "comment" : "Row title on a provider page: the model’s context window size."
     },
     "Continue" : {
-
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nastavi"
+          }
+        }
+      }
     },
     "Continue only if you expected this — a development server, or a proxy your organization runs. The exception lasts until you quit." : {
 
@@ -2777,7 +3280,15 @@
       "comment" : "Name of one of the three kinds of data listed with tick boxes on the Privacy settings page. A noun phrase at the head of a row; a separate lowercase variant exists for use inside sentences."
     },
     "Copy" : {
-      "comment" : "Standard macOS Edit menu item. Use the system's own wording. A verb."
+      "comment" : "Standard macOS Edit menu item. Use the system's own wording. A verb.",
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kopiraj"
+          }
+        }
+      }
     },
     "Copy Answer" : {
 
@@ -3067,7 +3578,15 @@
 
     },
     "Done" : {
-      "comment" : "Button that closes something the user has finished with: the Done button on the find bar and the one on the release notes sheet. Use the wording macOS uses on such buttons."
+      "comment" : "Button that closes something the user has finished with: the Done button on the find bar and the one on the release notes sheet. Use the wording macOS uses on such buttons.",
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gotovo"
+          }
+        }
+      }
     },
     "Double-Click" : {
 
@@ -4109,7 +4628,15 @@
       "comment" : "Caption of the Vault on your other devices card when the passkey opened no copy of the vault on this Mac. %@ is the Key check code to compare with the other Mac’s."
     },
     "Login" : {
-      "comment" : "Name of the part of an entry that holds the username and password, in a list of what changed on two devices."
+      "comment" : "Name of the part of an entry that holds the username and password, in a list of what changed on two devices.",
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Prijava"
+          }
+        }
+      }
     },
     "Long" : {
 
@@ -4941,7 +5468,15 @@
       "comment" : "Label for the address bar's warning glyph on a mixed-content page: the page is served over https but pulls some content over http. Sentence case, no final period; keep the curly apostrophe."
     },
     "Password" : {
-      "comment" : "Placeholder text inside the password field of the dialog a website shows when it asks for HTTP authentication."
+      "comment" : "Password field or credential detail.",
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Lozinka"
+          }
+        }
+      }
     },
     "Passwords" : {
 
@@ -6344,7 +6879,14 @@
       "comment" : "Submenu in the context menu of a sidebar folder that makes that one folder's row larger so it stands out: Normal, 1.5×, 2×, 2.5×. Title Case, one word."
     },
     "Skip" : {
-
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Preskoči"
+          }
+        }
+      }
     },
     "Skip Setup" : {
       "comment" : "Secondary button on the onboarding screens; ends onboarding without granting anything. Title Case."
@@ -7182,7 +7724,15 @@
 
     },
     "Try Again" : {
-      "comment" : "Button that retries a failed agent turn or a failed update check."
+      "comment" : "Button that retries a failed agent turn or a failed update check.",
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pokušaj ponovno"
+          }
+        }
+      }
     },
     "Try Again…" : {
       "comment" : "Button on the Vault on your other devices card after the passkey gave a different key. Title Case for a command."
@@ -7853,7 +8403,15 @@
       "comment" : "Error shown when a synced vault is offered to a profile it does not belong to."
     },
     "This vault can’t take this entry on this Mac." : {
-      "comment" : "Row caption in the Review Sync Changes sheet; information only. The vault refused the entry, for example because of a limit."
+      "comment" : "The shared vault cannot accept this entry, for example because of a format or size limit.",
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ovaj trezor na ovom Macu ne može prihvatiti taj zapis."
+          }
+        }
+      }
     },
     "iCloud storage for this vault exists in the current Apple Account." : {
       "comment" : "The selected vault’s storage zone exists. Its contents have not been checked.",
@@ -8054,7 +8612,15 @@
       "comment" : "Placeholder of the search field above the notes on Settings › Assistant › Memory."
     },
     "Notes" : {
-      "comment" : "Title of the section that lists the assistant's notes on Settings › Assistant › Memory. A plural noun."
+      "comment" : "Title of the section that lists the assistant's notes on Settings › Assistant › Memory. A plural noun.",
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bilješke"
+          }
+        }
+      }
     },
     "Notes are written on this Mac. When you use a cloud model, the notes it needs are sent with your request. Forgetting a note stops it being used. Earlier conversations keep what they said." : {
       "comment" : "Footnote under the notes on Settings › Assistant › Memory. A cloud model is a model provider on the internet, as opposed to Apple Intelligence on this Mac."
@@ -8596,7 +9162,15 @@
       "comment" : "Caption under a removed item’s name in the Trash list. First %@ is what was removed, already translated (Credential, Password, Verification code, Passkey, Details, Notes, Cards and other items or Files). %lld is how many earlier versions are kept with it, at least 1, so the singular can occur. The · is a separator."
     },
     "%@ · Vault %lld" : {
-      "comment" : "Name of a vault in the Vault pop-up menus of Settings › Credentials, the page title, the “Which vault?” prompt and the Pick Credential… sheet (when there is more than one vault). Shown for an unlocked vault that has a name of its own. %@ is that name, chosen by the user (do not translate it); %lld is the vault’s number, as in “Vault 1”. The middle dot separates the two."
+      "comment" : "Name of a vault in the Vault pop-up menus of Settings › Credentials, the page title, the “Which vault?” prompt and the Pick Credential… sheet (when there is more than one vault). Shown for an unlocked vault that has a name of its own. %@ is that name, chosen by the user (do not translate it); %lld is the vault’s number, as in “Vault 1”. The middle dot separates the two.",
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@ · Trezor %2$lld"
+          }
+        }
+      }
     },
     "%@, %@" : {
       "comment" : "VoiceOver value of a favorite tile in the sidebar. First %@ is a status such as “New”, second %@ is “Loaded” or “Unloaded”. Joined with a comma. Not shown on screen."
@@ -9290,7 +9864,15 @@
       "comment" : "Settings search description for the “Browser engine” entry in Settings › Websites. WebKit and Chromium are browser engine names, not translated. Imperative."
     },
     "Choose what to do with every conflict first." : {
-      "comment" : "Message on the Credentials page in Settings when the user presses Import in the import review before choosing an action for every conflicting credential. Full sentence; the user must decide on all conflicts first."
+      "comment" : "Message on the Credentials page in Settings when the user presses Import in the import review before choosing an action for every conflicting credential. Full sentence; the user must decide on all conflicts first.",
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Najprije odaberite kako riješiti svako nepodudaranje."
+          }
+        }
+      }
     },
     "Choose what to do." : {
       "comment" : "Last sentence of the status line of an import review row that waits for the user’s decision. An instruction to the user."
@@ -9458,7 +10040,15 @@
       "comment" : "Title of the error alert in the History view when clearing browsing history failed. The message is the system’s error text. Sentence case."
     },
     "Couldn’t find this window to show the passkey prompt. Bring it to the front and try again." : {
-      "comment" : "Error text on the Autofill page when the passkey prompt cannot be shown because the Settings window is not visible. Second sentence is an imperative."
+      "comment" : "Error text on the Autofill page when the passkey prompt cannot be shown because the Settings window is not visible. Second sentence is an imperative.",
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "WSurf ne može pronaći prozor za provjeru pristupnim ključem. Stavite ga u prvi plan i pokušajte ponovno."
+          }
+        }
+      }
     },
     "Couldn’t Generate a Password" : {
       "comment" : "Title of the alert when Generate Password… (a web page field’s context menu) refuses the right-clicked field or finds no vault to save in. Title Case."
@@ -9550,7 +10140,15 @@
       "comment" : "Fragment in a passkey’s detail line in the credential editor, used when the passkey has no creation date. Sentence case."
     },
     "Credential" : {
-      "comment" : "A noun: one entry in the vault. The kind label of a Trash row, and the fallback name shown for a credential with no name, website, username or item title, in rows, removal prompts and the import review."
+      "comment" : "A noun: one entry in the vault. The kind label of a Trash row, and the fallback name shown for a credential with no name, website, username or item title, in rows, removal prompts and the import review.",
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Vjerodajnica"
+          }
+        }
+      }
     },
     "Credential added." : {
       "comment" : "Notice above the Credentials list after the user saved a new credential in the editor; it offers Undo. Counterpart of “Changes saved.”. Full sentence."
@@ -9574,7 +10172,15 @@
       "comment" : "Heading of the card shown on the Vault tab of Settings › Autofill while the vault is locked and its content is hidden. A caption and an Unlock button follow. A state, Sentence case."
     },
     "Credentials are locked." : {
-      "comment" : "Error or status line on the Credentials page in Settings when the credential vault is locked and the action needs it open. Full sentence."
+      "comment" : "Error or status line on the Credentials page in Settings when the credential vault is locked and the action needs it open. Full sentence.",
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Vjerodajnice su zaključane."
+          }
+        }
+      }
     },
     "Credentials are unavailable" : {
       "comment" : "Title of the empty-state card on Settings › Autofill when the profile cannot keep a credential vault. The caption below it is “Private Browsing and removed profiles don’t keep a credential vault.” Sentence case."
@@ -9862,7 +10468,15 @@
       "comment" : "Brief notice above the Credentials list after the user saved a decrypted copy of a file attached to a credential. Title Case, short."
     },
     "Files" : {
-      "comment" : "Section header in the credential editor over the files attached to the credential. Also a section chip on the Vault tab and a row title in the History panel. Plural noun. Also the section header over the Choose Files row in the assistant’s add menu."
+      "comment" : "Section header in the credential editor over the files attached to the credential. Also a section chip on the Vault tab and a row title in the History panel. Plural noun. Also the section header over the Choose Files row in the assistant’s add menu.",
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Datoteke"
+          }
+        }
+      }
     },
     "Files from an earlier vault were found without the store that owns them." : {
       "comment" : "One explanation under the title “Credentials can’t be opened”: files of an earlier vault exist, but the store that should own them is not there. Sentence."
@@ -10693,7 +11307,15 @@
       "comment" : "Title of an alert shown after a passkey was saved to Credential Manager but WSurf could not confirm that the website received it. Sentence case, no final period."
     },
     "Passkeys" : {
-      "comment" : "Section header in the credential editor over the passkeys saved with the credential. Also a section chip on the Vault tab and a line in the vault statistics. Plural noun; passkey is Apple’s term."
+      "comment" : "Section header in the credential editor over the passkeys saved with the credential. Also a section chip on the Vault tab and a line in the vault statistics. Plural noun; passkey is Apple’s term.",
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pristupni ključevi"
+          }
+        }
+      }
     },
     "Passkeys for websites" : {
       "comment" : "Label of a count row in the Delete Vault sheet: how many passkeys for websites the vault holds. Not the passkey that unlocks the vault itself. Sentence case."
@@ -12081,10 +12703,26 @@
       "comment" : "Row label, shown beside the value, of a field of an item in the credential editor of Settings › Credentials. Sentence case. Start date of validity, on Payment card and API key items. Short."
     },
     "Vault" : {
-      "comment" : "A vault is the encrypted store of logins, passkeys and other items. A noun: the Vault tab beside Settings on the Autofill page, the vault picker’s row title and VoiceOver label, and the Settings search result for that page."
+      "comment" : "A vault is the encrypted store of logins, passkeys and other items. A noun: the Vault tab beside Settings on the Autofill page, the vault picker’s row title and VoiceOver label, and the Settings search result for that page.",
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Trezor"
+          }
+        }
+      }
     },
     "Vault %lld" : {
-      "comment" : "Default name of a vault when the user typed none, such as “Vault 1”. %lld is the vault’s number. Also the small grey line under a custom name in the Delete Vault sheet. A noun plus a number."
+      "comment" : "Default name of a vault when the user typed none, such as “Vault 1”. %lld is the vault’s number. Also the small grey line under a custom name in the Delete Vault sheet. A noun plus a number.",
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Trezor %lld"
+          }
+        }
+      }
     },
     "Vault %lld (locked)" : {
       "comment" : "Name of a vault in the Vault pop-up menus of Settings › Credentials, the page title, the “Which vault?” prompt and the Pick Credential… sheet (when there is more than one vault). Shown for a locked vault, whose own name stays hidden until it unlocks, so it is told by its number. %lld is the vault’s number. Keep “(locked)” in parentheses."
@@ -12105,7 +12743,15 @@
       "comment" : "Title of the section on the Settings tab of Settings › Autofill that lists the profile’s vaults and their options: name, lock time, default vault, delete. A vault is an encrypted store of credentials. Plural noun, Sentence case."
     },
     "Verification code" : {
-      "comment" : "Section header in the credential editor over the one-time code settings; also a word in a credential row’s detail line (joined by “ · ”), a label next to a shown code, and a part name in the merge and import lists. Noun, sentence case, not a command."
+      "comment" : "Section header in the credential editor over the one-time code settings; also a word in a credential row’s detail line (joined by “ · ”), a label next to a shown code, and a part name in the merge and import lists. Noun, sentence case, not a command.",
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kod za potvrdu"
+          }
+        }
+      }
     },
     "verification code" : {
       "comment" : "Lowercase fragment in an account’s line in the passkey account chooser, saying the account also holds a one-time verification code. Joined with other fragments such as “password” and “notes” by a middle dot, so keep it short and lowercase. A noun."
@@ -12301,7 +12947,15 @@
       "comment" : "Error on the Credentials page in Settings when the vault files on disk changed while WSurf was reading them. The user is asked to check (read them) again."
     },
     "Your credentials changed elsewhere. Reload and try again." : {
-      "comment" : "Error on the Credentials page in Settings when the vault was changed elsewhere after the page loaded. “Reload” is an instruction to the user to read the vault again."
+      "comment" : "Error on the Credentials page in Settings when the vault was changed elsewhere after the page loaded. “Reload” is an instruction to the user to read the vault again.",
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Vjerodajnice su izmijenjene drugdje. Ponovno ih učitajte i pokušajte ponovno."
+          }
+        }
+      }
     },
     "your credentials changed while it was open" : {
       "comment" : "Reason clause inserted as %@ into “The import ended because %@, and nothing was saved. …”. Lowercase fragment, no period; it must read correctly after “because”. “It” means the import review."

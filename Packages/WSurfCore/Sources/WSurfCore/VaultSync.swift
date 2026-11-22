@@ -78,7 +78,13 @@ public final class VaultSync: SyncEngineDelegate {
 
     public internal(set) var state: VaultSyncAppState
     /// Nil until the engine has answered.
-    public internal(set) var accountAvailable: Bool?
+    public internal(set) var accountAvailable: Bool? {
+        didSet {
+            if oldValue == true, accountAvailable != true {
+                invalidateMergeReviews()
+            }
+        }
+    }
     /// Set only after discovery has checked the Apple account around its catalog read. Never restored from disk.
     var catalogUser: String?
     @ObservationIgnored var addingVaults: Set<VaultKey> = []
@@ -97,7 +103,13 @@ public final class VaultSync: SyncEngineDelegate {
     @ObservationIgnored public var checkInstance: ((UUID, String) async throws -> Void)?
     @ObservationIgnored public var adoptInstance: ((UUID, UUID, String) throws -> Void)?
     @ObservationIgnored var publishingInstances: Set<VaultKey> = []
-    var engine: (any SyncEngine)?
+    var engine: (any SyncEngine)? {
+        didSet {
+            if engine !== oldValue {
+                invalidateMergeReviews()
+            }
+        }
+    }
     @ObservationIgnored var databases: [UUID: VaultSyncDatabase] = [:]
     /// Profiles being erased: their folder is about to go, so their database is never opened again.
     @ObservationIgnored var erased: Set<UUID> = []
@@ -107,9 +119,16 @@ public final class VaultSync: SyncEngineDelegate {
     /// Bumped whenever a vault is enabled, disabled or removed, so a step that waited for the host does not write for a vault that
     /// is no longer the one it started with.
     @ObservationIgnored var sessions: [VaultKey: Int] = [:]
+    @ObservationIgnored var mergeReviews: [VaultKey: MergeAuthorization] = [:]
     @ObservationIgnored var unlocked: Set<VaultKey> = []
     /// Vaults this run stopped syncing because a write of that decision failed, so nothing re-creates what the server removed.
-    @ObservationIgnored var halted: Set<VaultKey> = []
+    @ObservationIgnored var halted: Set<VaultKey> = [] {
+        didSet {
+            for key in halted.subtracting(oldValue) {
+                invalidateMergeReview(key)
+            }
+        }
+    }
     /// Vaults whose last fetched records were not all kept: a full read of the zone is still owed.
     @ObservationIgnored var incomplete: Set<VaultKey> = []
     /// Item records the engine asked for and has not answered: they are never resealed (spec: next version after the `.sent`).
@@ -816,14 +835,16 @@ public final class VaultSync: SyncEngineDelegate {
     /// A new enablement of the vault: steps still running for the old one stop before they write.
     @discardableResult
     func begin(_ key: VaultKey) -> Int {
-        sessions[key, default: 0] += 1
         halted.remove(key)
         checkedAtAttach.insert(key)
+        invalidateMergeReview(key)
+        sessions[key, default: 0] += 1
         return sessions[key] ?? 0
     }
 
     /// Everything in memory for the vault goes, and steps still running for it stop before they write.
     func forget(_ key: VaultKey) {
+        invalidateMergeReview(key)
         sessions[key, default: 0] += 1
         verifiedRemovals[key] = nil
         debounced[key]?.cancel()
@@ -859,6 +880,7 @@ public final class VaultSync: SyncEngineDelegate {
             return
         }
         guard let (row, counts) = loaded else {
+            invalidateMergeReview(key)
             summaries[key] = nil
             return
         }
@@ -877,6 +899,9 @@ public final class VaultSync: SyncEngineDelegate {
             holding: holding[key] ?? 0
         )
         if summaries[key] != next {
+            if !next.readyForMerge {
+                invalidateMergeReview(key)
+            }
             summaries[key] = next
         }
     }

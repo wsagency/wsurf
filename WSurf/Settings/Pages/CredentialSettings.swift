@@ -16,6 +16,7 @@ struct CredentialSettings: View {
     @State var model: CredentialSettingsModel
     @State private var anchor = CredentialWindowAnchor()
     @State var showsCreateWarning = false
+    @State var showsVaultMerge = false
     @State var showsMigrationConfirmation = false
     @State var showsTrash = false
     /// Always the Vault tab when the page opens, unless a Settings search result or a deep link names another place.
@@ -64,12 +65,9 @@ struct CredentialSettings: View {
         // and the weak anchor kept whichever view updated last, which could be one already removed from the window.
         // Without the header it stays on a zero-height view: every `withWindow` action (unlock, passkeys, create or delete a vault,
         // import, export) needs the window, and without the anchor each would only say it cannot find it.
-        if showsHeader {
-            SettingsPageHeader(title: "Autofill", caption: "WSurf stores saved details on this Mac.")
-                .background(CredentialWindowAnchorView(anchor: anchor))
-        } else {
-            Color.clear.frame(height: 0).background(CredentialWindowAnchorView(anchor: anchor))
-        }
+        pageHeader
+            .background(CredentialWindowAnchorView(anchor: anchor))
+            .modifier(CredentialVaultMergePresentation(model: model, isPresented: $showsVaultMerge))
         scratchWarnings
         Group {
             if !model.isAvailable {
@@ -202,6 +200,15 @@ struct CredentialSettings: View {
             } cancel: {
                 showsCreateWarning = false
             }
+        }
+    }
+
+    @ViewBuilder
+    private var pageHeader: some View {
+        if showsHeader {
+            SettingsPageHeader(title: "Autofill", caption: "WSurf stores saved details on this Mac.")
+        } else {
+            Color.clear.frame(height: 0)
         }
     }
 
@@ -890,7 +897,7 @@ private struct CredentialRowMenu: View {
 
 /// The exact window hosting this page, read when a native passkey prompt is requested.
 @MainActor
-private final class CredentialWindowAnchor {
+final class CredentialWindowAnchor {
     weak var view: NSView?
     var window: NSWindow? {
         view?.window
@@ -900,7 +907,7 @@ private final class CredentialWindowAnchor {
 /// Named so a test can find the view the anchor reads the window from.
 final class CredentialWindowAnchorNSView: NSView {}
 
-private struct CredentialWindowAnchorView: NSViewRepresentable {
+struct CredentialWindowAnchorView: NSViewRepresentable {
     let anchor: CredentialWindowAnchor
 
     func makeNSView(context: Context) -> NSView {

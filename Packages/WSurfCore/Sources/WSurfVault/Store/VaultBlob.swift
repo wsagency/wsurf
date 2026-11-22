@@ -245,11 +245,13 @@ nonisolated enum VaultBlob {
         }
     }
 
-    /// Authenticate the complete encrypted file before a synced account can refer to it.
+    /// Authenticate a regular, independent encrypted file before another vault or a synced account can refer to it.
     static func verify(_ attachment: CredentialAttachment, at file: URL, key: SymmetricKey) throws {
-        guard (try file.resourceValues(forKeys: [.fileSizeKey])).fileSize == Int(storedBytes(size: attachment.size)) else {
-            throw VaultFileError.damaged
-        }
+        guard StoreAnchors.exists(file) else { throw VaultFileError.missing }
+        let properties = try file.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey])
+        guard properties.isRegularFile == true, properties.isSymbolicLink == false,
+              properties.fileSize == Int(storedBytes(size: attachment.size))
+        else { throw VaultFileError.damaged }
         let input = try FileHandle(forReadingFrom: file)
         defer { try? input.close() }
         guard try readFully(input, count: magic.count) == magic else { throw VaultFileError.damaged }

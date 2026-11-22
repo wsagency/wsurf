@@ -48,6 +48,7 @@ final class CredentialSettingsModel {
     /// The one vault this page operates on; `nil` until discovery selects one, and while the profile has no vault.
     /// Read by `CredentialSettingsModel+Export`; only this class sets it.
     private(set) var manager: CredentialManager?
+    private(set) var vaultSelectionGeneration: UInt64 = 0
     /// `nil` for private browsing and for a test-injected manager (which owns its own store). Internal for the model's extensions.
     @ObservationIgnored let store: ProfileVaultStore?
     /// Test seam: managers made here use it instead of the system passkey UI, which the shared registry's managers always use.
@@ -302,6 +303,7 @@ final class CredentialSettingsModel {
     /// Forgets everything shown without touching the manager's authorization. The page may come back before the next `load()`
     /// has read the session again, and that gap is not a lock.
     func close() {
+        vaultSelectionGeneration &+= 1
         session = nil
         cancelHealthRead()
         startOpening()
@@ -479,6 +481,9 @@ final class CredentialSettingsModel {
     }
 
     private func bind(_ next: CredentialManager?) {
+        if manager !== next {
+            vaultSelectionGeneration &+= 1
+        }
         if let manager, manager.vaultID != next?.vaultID {
             leave(manager)
         }

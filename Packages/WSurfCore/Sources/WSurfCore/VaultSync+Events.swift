@@ -106,6 +106,7 @@ extension VaultSync {
         } catch {
             // The engine moves on whatever happens here, so records that could not be kept are read again from the zone.
             SyncLog.logger.error("sync: fetched vault records could not be kept; the zone is read again")
+            invalidateMergeReview(key)
             incomplete.insert(key)
             try? database.write { tx in
                 if var current = try tx.vault(key.vaultID) {
@@ -540,6 +541,7 @@ extension VaultSync {
             accountAvailable = true
         case .signIn(let user), .switchAccounts(let user):
             // Another Apple Account: nothing of the old one is kept, and nothing goes up until the person turns sync on again.
+            invalidateMergeReviews()
             catalogUser = nil
             state.accountUser = user
             accountAvailable = true
