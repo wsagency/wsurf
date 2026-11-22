@@ -11,16 +11,21 @@ extension BrowserModel {
     /// `activate` is false: a page that was opened in the background stays there.
     @discardableResult
     func adoptTab(_ tab: BrowserTab, from source: BrowserModel, activate: Bool = true) -> Bool {
+        guard adoptTabInMemory(tab, from: source, activate: activate) else { return false }
+        saveTransferredSession(from: source)
+        return true
+    }
+
+    private func adoptTabInMemory(_ tab: BrowserTab, from source: BrowserModel, activate: Bool, preservingSpace: Bool = false) -> Bool {
         guard canReceive(from: source), canReceive(tab, from: source) else { return false }
         source.onTabWillTransferOut?(tab)
         guard canReceive(from: source), canReceive(tab, from: source), let oldIndex = source.tabs.firstIndex(where: { $0 === tab }) else { return false }
-        transfer(tab, from: source, oldIndex: oldIndex)
+        transfer(tab, from: source, oldIndex: oldIndex, preservingSpace: preservingSpace)
         source.onTabTransferredOut?(tab, oldIndex)
         onTabTransferredIn?(tab, source, oldIndex)
         if activate {
             activeTabID = tab.id
         }
-        saveTransferredSession(from: source)
         return true
     }
 
@@ -34,7 +39,19 @@ extension BrowserModel {
         source.tabsByID[tab.id] === tab && tab.context === context && !tabs.contains(where: { $0.id == tab.id }) && !tab.isClosed
     }
 
-    private func transfer(_ tab: BrowserTab, from source: BrowserModel, oldIndex: Int) {
+    func adoptSharedRoots(_ roots: [SidebarItem], from source: BrowserModel) -> [SidebarItem] {
+        guard canReceive(from: source) else { return [] }
+        return roots.reversed().filter { item in
+            switch item {
+            case .tab(let id):
+                source.tab(id: id).map { adoptTabInMemory($0, from: source, activate: false, preservingSpace: true) } ?? false
+            case .folder(let id):
+                source.folder(id: id).flatMap { adoptSharedFolder($0, from: source, saving: false) } != nil
+            }
+        }
+    }
+
+    private func transfer(_ tab: BrowserTab, from source: BrowserModel, oldIndex: Int, preservingSpace: Bool) {
         // The page leaves as an ordinary tab. Its pin stays in this window and every other one, so the source
         // gets a new unloaded page for it below.
         let wasPin = tab.pinID != nil
@@ -101,15 +118,16 @@ extension BrowserModel {
             page.removeFromSuperview()
         }
         bindCallbacks(to: tab)
-        // The page joins the space this window shows, whatever space it had in the other window.
-        tab.spaceID = nil
+        if !preservingSpace {
+            tab.spaceID = nil
+        }
         insert(tab, after: nil)
         lastVisitID[tab.id] = visitID
         writtenStateGeneration[tab.id] = nil
     }
 
     /// Transfer a sidebar folder and its whole local subtree in one session write, including device-only pages.
-    func adoptSharedFolder(_ folder: TabFolder, from source: BrowserModel) -> Set<UUID>? {
+    func adoptSharedFolder(_ folder: TabFolder, from source: BrowserModel, saving: Bool = true) -> Set<UUID>? {
         let root = SidebarItem.folder(folder.id)
         let members = source.reconciledTree().descendants(ofFolder: folder.id).union([root])
         let pages = source.tabs.filter { members.contains(.tab($0.id)) }
@@ -137,7 +155,7 @@ extension BrowserModel {
             source.activeTabID = source.currentSpaceTabs.first { !pageIDs.contains($0.id) && $0.microTabID == nil }?.id
         }
         for (index, page) in moving.reversed() {
-            transfer(page, from: source, oldIndex: index)
+            transfer(page, from: source, oldIndex: index, preservingSpace: !saving)
         }
         source.sidebarUndoManager.removeAllActions()
         sidebarUndoManager.removeAllActions()
@@ -156,7 +174,9 @@ extension BrowserModel {
             source.onTabTransferredOut?(page, index)
             onTabTransferredIn?(page, source, index)
         }
-        saveTransferredSession(from: source)
+        if saving {
+            saveTransferredSession(from: source)
+        }
         return folderIDs.union(pageIDs)
     }
 }

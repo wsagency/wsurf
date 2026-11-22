@@ -250,7 +250,8 @@ extension BrowserModel {
     }
 
     /// Persist both owners together before a close or a delayed save can race the move.
-    func saveTransferredSession(from source: BrowserModel) {
+    @discardableResult
+    func saveTransferredSession(from source: BrowserModel) -> Bool {
         sharedSpaceService?.capture(self)
         source.cancelPendingSave()
         cancelPendingSave()
@@ -264,10 +265,22 @@ extension BrowserModel {
                 try Self.persist(sourceSnapshot, in: db)
                 try Self.persist(destinationSnapshot, in: db)
             }
+            return true
         } catch {
             Pipeline.log.error("session: tab transfer write failed")
             source.forgetWrittenState(of: sourceSnapshot)
             forgetWrittenState(of: destinationSnapshot)
+            return false
+        }
+    }
+
+    func savedSharedRowOwners(in space: UUID) throws -> [UUID: UUID] {
+        try database.writer.read { db in
+            let rows = try Row.fetchAll(db, sql: """
+                SELECT id, windowID FROM sessionTab WHERE spaceID = ? AND pinID IS NULL AND microTabID IS NULL
+                UNION ALL SELECT id, windowID FROM sessionFolder WHERE spaceID = ? AND pinID IS NULL
+                """, arguments: [space, space])
+            return Dictionary(rows.map { ($0["id"], $0["windowID"]) }, uniquingKeysWith: { first, _ in first })
         }
     }
 

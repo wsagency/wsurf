@@ -15,6 +15,9 @@ extension CloudSharedSpaces {
                !opening.opensPrivately, opening.sessionClosedAt == nil, !models.contains(where: { $0 === opening }) {
                 models.append(opening)
             }
+            if let model = models.first {
+                recoverGatheredWindows(in: model)
+            }
             restoreKeptVersions(in: profile, models: models)
             if isEnabled(.spaces, for: profile), catalog.ready.contains(.spaces), let store = spaces(profile), var link = links[id] {
                 for (local, shared) in link.spaces {

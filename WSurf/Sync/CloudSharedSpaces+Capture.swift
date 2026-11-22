@@ -95,6 +95,7 @@ extension CloudSharedSpaces {
     }
 
     func restoreWindowEdits(in browser: BrowserModel, only records: Set<UUID>? = nil) {
+        recoverGatheredWindows(in: browser)
         let profile = browser.context.profile
         guard !browser.opensPrivately, browser.windowKind == .standard, var link = links[profile.id] else { return }
         let enabled = isEnabled(.spaces, for: profile)
@@ -267,23 +268,26 @@ extension CloudSharedSpaces {
             values[local] = item
             groups[item.parentID ?? space, default: []].append(local)
             let edited = previous?.editedAfterRevision.map { previous?.window == browser.windowID ? $0 : browser.sessionRevision }
-            link.slots[local] = .init(cloudID: cloudID, window: browser.windowID, last: previous?.last, editedAfterRevision: edited)
+            link.slots[local] = .init(cloudID: cloudID, window: browser.windowID, last: previous?.last, editedAfterRevision: edited,
+                                      movingFrom: previous?.movingFrom)
         }
         if restoredMembership {
             browser.sidebarDidChange()
         }
         var edits = leaving + transferredPins
         for ids in groups.values {
-            var lower: String?
+            var previous: SharedSpaceItem?
             for (i, local) in ids.enumerated() {
                 guard var item = values[local] else { continue }
-                if item.order.isEmpty || lower.map({ item.order <= $0 }) == true {
+                let lower = previous?.order
+                let precedesPrevious = previous.map { (item.order, item.id.uuidString) <= ($0.order, $0.id.uuidString) } ?? false
+                if item.order.isEmpty || precedesPrevious {
                     let upper = ids.dropFirst(i + 1).lazy.compactMap { values[$0]?.order }.first { next in
                         !next.isEmpty && lower.map { next > $0 } != false
                     }
                     item.order = OrderKey.between(lower, upper)
                 }
-                lower = item.order
+                previous = item
                 if link.slots[local]?.last != item {
                     edits.append(outgoingRow(item, after: link.slots[local]?.last, window: browser.windowID, link: link))
                     link.slots[local]?.last = item

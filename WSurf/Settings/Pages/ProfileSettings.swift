@@ -47,6 +47,7 @@ struct ProfileSettings: View {
                     ProfileListRow(
                         profile: profile,
                         name: ProfileSummary.displayName(for: profile),
+                        isShared: ProfileSummary.isShared(profile),
                         isCurrent: profile.id == store.current.id,
                         dragging: $dragging,
                         open: { destination = .profile(profile.id) }
@@ -150,6 +151,7 @@ private struct ProfilePageHeading<Trailing: View>: View {
 private struct ProfileListRow: View {
     let profile: Profile
     let name: String
+    let isShared: Bool
     let isCurrent: Bool
     @Binding var dragging: UUID?
     let open: () -> Void
@@ -167,10 +169,17 @@ private struct ProfileListRow: View {
                         .lineLimit(1)
                         .truncationMode(.tail)
 
-                    if isCurrent {
-                        Text("Current profile")
-                            .font(Theme.Font.secondary)
-                            .foregroundStyle(.secondary)
+                    if isShared || isCurrent {
+                        HStack(spacing: 8) {
+                            if isShared {
+                                Label("Shared profile", systemImage: "icloud")
+                            }
+                            if isCurrent {
+                                Text("Current profile")
+                            }
+                        }
+                        .font(Theme.Font.secondary)
+                        .foregroundStyle(.secondary)
                     }
                 }
 

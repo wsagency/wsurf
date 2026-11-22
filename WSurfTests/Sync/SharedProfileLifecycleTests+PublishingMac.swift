@@ -50,6 +50,8 @@ extension SharedProfileLifecycleTests {
         let other = Profile(id: UUID(), name: "Work", symbol: "person", color: .teal)
         let local = Profile(id: UUID(), name: "Local", symbol: "person", color: .gray)
         let studio = mac("Studio", profile: upgraded), air = mac("Air", profile: other), pro = mac("Pro", profile: local)
+        #expect(!ProfileSummary.isShared(upgraded, sharedSpaces: studio))
+        #expect(!ProfileSummary.isShared(local, sharedSpaces: pro))
         let firstID = try await studio.publishProfile(upgraded)
         await studio.refresh()
         let secondID = try await air.publishProfile(other)
@@ -68,6 +70,8 @@ extension SharedProfileLifecycleTests {
         #expect(persisted.publicationSource?.macName == "Studio")
         #expect(ProfileSummary.displayName(for: local, sharedSpaces: pro, vaults: nil) == "Local — Studio")
         #expect(ProfileSummary.displayName(for: upgraded, sharedSpaces: studio, vaults: nil) == "Work — Studio")
+        #expect(ProfileSummary.isShared(local, sharedSpaces: pro))
+        #expect(ProfileSummary.isShared(upgraded, sharedSpaces: studio))
 
         let next = CloudProfileInstance(.shared, id: UUID(), owner: cloud.user)
         try pro.replaceInstance(for: local, with: next)
@@ -117,6 +121,7 @@ extension SharedProfileLifecycleTests {
             let card = try #require(host.profileCard(profileID: profile.id))
             #expect(card.name == "Other name" && card.publicationSource == incoming)
             #expect(saved.name == "Other name")
+            #expect(ProfileSummary.isShared(saved, sharedSpaces: nil))
             let title = ProfileSummary.displayName(for: saved, sharedSpaces: nil, vaults: nil)
             #expect(title == (incoming == nil ? "Other name" : "Other name — Studio"))
         }

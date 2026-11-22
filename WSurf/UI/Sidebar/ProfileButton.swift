@@ -114,6 +114,14 @@ private struct ProfileSwitcherRow: View {
 
                 Spacer(minLength: 6)
 
+                if ProfileSummary.isShared(profile) {
+                    Image(systemName: "icloud")
+                        .font(Theme.Font.badge)
+                        .foregroundStyle(.secondary)
+                        .accessibilityLabel("Shared profile")
+                        .help("Shared profile")
+                }
+
                 if isCurrent {
                     Image(systemName: "checkmark")
                         .font(Theme.Font.badge)

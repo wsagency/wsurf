@@ -21,6 +21,8 @@ nonisolated struct SharedProfileLinks: Codable, Equatable {
         var closedAfterRevision: Int64?
         /// A local edit captured before the window has committed its next SQLite snapshot.
         var editedAfterRevision: Int64?
+        /// A local transfer reserved in the catalog before committing both SQLite windows.
+        var movingFrom: UUID?
     }
 
     var profile: UUID?
