@@ -35,17 +35,16 @@ enum CertificatePanel {
               let window = sheetWindow(for: window ?? tab.liveView?.window)
         else { return }
         let host = URL(string: tab.urlString)?.host()
-        Task { await inspect(trust, host: host, in: window) }
+        Task { _ = await inspect(trust, host: host, in: window) }
     }
 
-    static func inspect(_ trust: SecTrust, host: String?, in window: NSWindow?) async {
+    static func inspect(_ trust: SecTrust, host: String?, in window: NSWindow?) async -> Bool {
         let panel = SFCertificatePanel()
         panel.setPolicies(SecPolicyCreateSSL(true, host as CFString?))
         guard let window else {
-            panel.runModal(for: trust, showGroup: true)
-            return
+            return panel.runModal(for: trust, showGroup: true) == NSApplication.ModalResponse.OK.rawValue
         }
-        await withCheckedContinuation { continuation in
+        return await withCheckedContinuation { continuation in
             let presentation = SheetPresentation(panel: panel, continuation: continuation)
             presentation.begin(on: window, trust: trust)
         }
@@ -54,23 +53,41 @@ enum CertificatePanel {
     @MainActor
     private final class SheetPresentation: NSObject {
         let panel: SFCertificatePanel
-        let continuation: CheckedContinuation<Void, Never>
+        private var continuation: CheckedContinuation<Bool, Never>?
 
-        init(panel: SFCertificatePanel, continuation: CheckedContinuation<Void, Never>) {
+        init(panel: SFCertificatePanel, continuation: CheckedContinuation<Bool, Never>) {
             self.panel = panel
             self.continuation = continuation
         }
 
         func begin(on window: NSWindow, trust: SecTrust) {
+            NotificationCenter.default.addObserver(
+                self, selector: #selector(parentClosed), name: NSWindow.willCloseNotification, object: window
+            )
             panel.beginSheet(
                 for: window, modalDelegate: self, didEnd: #selector(didEnd(_:returnCode:context:)),
                 contextInfo: Unmanaged.passRetained(self).toOpaque(), trust: trust, showGroup: true
             )
         }
 
-        @objc private func didEnd(_: NSWindow, returnCode _: Int, context: UnsafeMutableRawPointer) {
+        @objc private func parentClosed() {
+            finish(inspected: false)
+            panel.sheetParent?.endSheet(panel, returnCode: .abort)
+        }
+
+        @objc private func didEnd(_: NSWindow, returnCode: Int, context: UnsafeMutableRawPointer) {
             let presentation = Unmanaged<SheetPresentation>.fromOpaque(context).takeRetainedValue()
-            presentation.continuation.resume()
+            presentation.finish(inspected: returnCode == NSApplication.ModalResponse.OK.rawValue)
+        }
+
+        private func finish(inspected: Bool) {
+            guard let continuation else { return }
+            self.continuation = nil
+            continuation.resume(returning: inspected)
+        }
+
+        deinit {
+            NotificationCenter.default.removeObserver(self)
         }
     }
 }

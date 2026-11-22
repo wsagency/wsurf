@@ -468,6 +468,9 @@ struct FaviconNavigationTests {
         try #require(await PageSettle.untilIdle(page, timeout: .seconds(30)))
 
         #expect(await loader.load(for: page)?.size.width == 16)
+        if redirects {
+            #expect(site.lastRequestHead(for: "/redirected.png") != nil)
+        }
         #expect(external.lastRequestHead(for: "/external.png") == nil)
         #expect(!FileManager.default.fileExists(atPath: directory.path))
         await page.close()

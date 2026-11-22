@@ -161,19 +161,29 @@ enum CertificateTrust {
             alert.alertStyle = .critical
             alert.messageText = String(localized: "This connection isn’t private")
             alert.informativeText = detail(host: address, trust: trust, fingerprint: fingerprint)
-            alert.addButton(withTitle: String(localized: "Go Back"))
+            let goBack = alert.addButton(withTitle: String(localized: "Go Back"))
+            goBack.keyEquivalent = "\r"
             alert.addButton(withTitle: String(localized: "Visit Website")).hasDestructiveAction = true
             alert.addButton(withTitle: String(localized: "Show Certificate"))
 
             let response: NSApplication.ModalResponse
+            let monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+                guard event.window === alert.window, event.keyCode == 53 else { return event }
+                goBack.performClick(nil)
+                return nil
+            }
             if let window {
                 response = await alert.beginSheetModal(for: window)
             } else {
                 response = alert.runModal()
             }
+            if let monitor {
+                NSEvent.removeMonitor(monitor)
+            }
             guard response == .alertThirdButtonReturn else { return response == .alertSecondButtonReturn }
-            guard generation == exceptionGeneration else { return false }
-            await CertificatePanel.inspect(trust, host: host, in: window)
+            guard generation == exceptionGeneration,
+                  await CertificatePanel.inspect(trust, host: host, in: window)
+            else { return false }
         }
         return false
     }

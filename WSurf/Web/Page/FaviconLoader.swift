@@ -223,6 +223,10 @@ final class FaviconLoader {
 
     private func fetchDeclared(from webView: BrowserPage, pageURL: URL, host: String) async -> NSImage? {
         let beganPrivately = !persistsToDisk
+        let restrictedOrigin = beganPrivately ? IconOrigin(pageURL) : nil
+        if beganPrivately, restrictedOrigin == nil {
+            return nil
+        }
         let beganInGeneration = cacheGeneration
         var candidates: [URL] = []
         var mask: URL?
@@ -280,7 +284,7 @@ final class FaviconLoader {
         if webView.url?.host()?.lowercased() == host,
            let answer = await webView.evaluateJavaScript(script, within: .seconds(5), as: String.self),
            webView.url?.host()?.lowercased() == host,
-           !beganPrivately || Self.answerOrigin(answer) == SitePermissions.webOrigin(for: pageURL),
+           !beganPrivately || Self.answerOrigin(answer) == restrictedOrigin,
            let answered = Self.declaredIconURL(fromAnswer: answer, requestedHost: host, pageURL: pageURL) {
             candidates.append(answered)
             mask = Self.declaredMaskURL(fromAnswer: answer, requestedHost: host, pageURL: pageURL)
@@ -289,7 +293,6 @@ final class FaviconLoader {
             candidates.append(fallback)
         }
 
-        let restrictedOrigin = beganPrivately ? SitePermissions.webOrigin(for: pageURL) : nil
         for candidate in candidates {
             guard let data = await fetch(candidate, restrictedOrigin: restrictedOrigin) else { continue }
             guard beganInGeneration == cacheGeneration, !Task.isCancelled else { return nil }
@@ -307,7 +310,7 @@ final class FaviconLoader {
         return nil
     }
 
-    private func inked(_ data: Data, mask: URL?, restrictedOrigin: String?) async -> Data? {
+    private func inked(_ data: Data, mask: URL?, restrictedOrigin: IconOrigin?) async -> Data? {
         let isDark = scheme == .dark
         guard FaviconInk.needsInk(data, isDark: isDark) else { return nil }
         if let mask,
@@ -318,9 +321,9 @@ final class FaviconLoader {
         return FaviconInk.inked(data, isDark: isDark)
     }
 
-    private func fetch(_ url: URL, restrictedOrigin: String? = nil) async -> Data? {
+    private func fetch(_ url: URL, restrictedOrigin: IconOrigin? = nil) async -> Data? {
         guard Self.isFetchable(url) else { return nil }
-        let origin = restrictedOrigin ?? (persistsToDisk ? nil : SitePermissions.webOrigin(for: url))
+        let origin = restrictedOrigin ?? (persistsToDisk ? nil : IconOrigin(url))
         if let origin, !PrivateIconRedirects.permits(url, origin: origin) {
             return nil
         }
@@ -417,9 +420,9 @@ final class FaviconLoader {
         return image
     }
 
-    private static func answerOrigin(_ answer: String) -> String? {
+    private static func answerOrigin(_ answer: String) -> IconOrigin? {
         let document = (try? JSONSerialization.jsonObject(with: Data(answer.utf8))) as? [String: String]
-        return document?["origin"].map { SitePermissions.webOrigin(for: URL(string: $0)) }
+        return document?["origin"].flatMap(URL.init(string:)).flatMap(IconOrigin.init)
     }
 
     nonisolated static func declaredIconURL(
@@ -488,22 +491,36 @@ final class FaviconLoader {
     }
 }
 
-private nonisolated final class PrivateIconRedirects: NSObject, URLSessionTaskDelegate {
-    let origin: String
+private nonisolated struct IconOrigin: Equatable {
+    let scheme: String
+    let host: String
+    let port: Int
 
-    init(origin: String) {
+    init?(_ url: URL) {
+        guard let scheme = url.scheme?.lowercased(), let host = url.host()?.lowercased() else { return nil }
+        guard scheme == "http" || scheme == "https" else { return nil }
+        self.scheme = scheme
+        self.host = host
+        port = url.port ?? (scheme == "http" ? 80 : 443)
+    }
+}
+
+private nonisolated final class PrivateIconRedirects: NSObject, URLSessionTaskDelegate {
+    let origin: IconOrigin
+
+    init(origin: IconOrigin) {
         self.origin = origin
     }
 
-    static func permits(_ url: URL, origin: String) -> Bool {
-        !origin.isEmpty && SitePermissions.webOrigin(for: url) == origin && url.user() == nil && url.password() == nil
+    static func permits(_ url: URL, origin: IconOrigin) -> Bool {
+        IconOrigin(url) == origin && url.user() == nil && url.password() == nil
     }
 
     func urlSession(
         _ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
-        newRequest request: URLRequest
-    ) async -> URLRequest? {
-        guard let url = request.url, Self.permits(url, origin: origin) else { return nil }
-        return request
+        newRequest request: URLRequest, completionHandler: @escaping @Sendable (URLRequest?) -> Void
+    ) {
+        let allowed = request.url.map { Self.permits($0, origin: origin) } ?? false
+        completionHandler(allowed ? request : nil)
     }
 }
