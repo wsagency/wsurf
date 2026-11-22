@@ -128,6 +128,15 @@ final class BrowserProfileContext {
         }
     }
 
+    /// Withdraw requests made with the previous Space choice before another view can use their answer.
+    func spaceVaultChanged(_ spaceID: UUID) {
+        for browser in browsers.allObjects where browser.context === self {
+            for tab in browser.tabs where (tab.spaceID ?? browser.currentSpaceID) == spaceID {
+                tab.invalidateSpaceVault()
+            }
+        }
+    }
+
     func register(_ browser: BrowserModel) {
         guard !privateSessionEnded, browser.context === self else { return }
         browsers.add(browser)

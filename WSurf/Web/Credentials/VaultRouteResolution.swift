@@ -11,22 +11,30 @@ extension VaultRoute {
     /// prompt suspends, and a lock or sleep while it was open must not be followed by an unlock the user never asked for then).
     /// `nil` when there is no usable vault or the user canceled.
     func resolve(profile: Profile, in anchor: @autoclosure () -> ASPresentationAnchor) async -> CredentialManager? {
+        await resolve(scope: .profile(profile), in: anchor())
+    }
+
+    func resolve(scope: BrowserVaultScope, in anchor: @autoclosure () -> ASPresentationAnchor) async -> CredentialManager? {
+        guard let owner = scope.owner else { return nil }
         let candidates: [VaultListing]
         let reason: VaultChoiceReason
         switch self {
         case .manager(let manager):
-            return manager
+            return scope.contains(manager) ? manager : nil
         case .unavailable:
             return nil
         case .needsUnlock(let listing):
+            if case .selected = scope {
+                return try? scope.manager(for: listing.vaultID)
+            }
             (candidates, reason) = ([listing], .defaultLocked)
         case .needsChoice(let listings, let why):
             (candidates, reason) = (listings, why)
         }
-        guard let vaultID = await VaultChoicePrompt.present(candidates, reason: reason, profileID: profile.id, in: anchor()) else {
+        guard let vaultID = await VaultChoicePrompt.present(candidates, reason: reason, profileID: owner.id, in: anchor()) else {
             return nil
         }
-        return try? CredentialManager.forVault(profile, vaultID: vaultID)
+        return try? scope.manager(for: vaultID)
     }
 }
 
@@ -37,11 +45,13 @@ extension CredentialRouting {
     /// only those. With no unlocked holder and a locked vault that may hold it, the answer is that vault's unlock (alone) or a choice
     /// among all; with nothing locked, the password-origin route decides, and the ceremony then tells the user there is no passkey.
     static func route(profile: Profile, origin: String, passkeyRPID rpID: String, allowed: [Data]) async -> VaultRoute {
-        guard let store = try? CredentialManager.store(for: profile),
-              case .provisional = await store.openState(),
-              let listing = try? await store.listing(), !listing.isEmpty else { return .unavailable }
+        await route(scope: .profile(profile), origin: origin, passkeyRPID: rpID, allowed: allowed)
+    }
+
+    static func route(scope: BrowserVaultScope, origin: String, passkeyRPID rpID: String, allowed: [Data]) async -> VaultRoute {
+        guard let listing = try? await scope.listing(), !listing.isEmpty else { return .unavailable }
         let active = Dictionary(uniqueKeysWithValues: listing.map { ($0.vaultID, $0) })
-        let unlocked = CredentialManager.unlockedManagers(for: profile).filter { active[$0.vaultID] != nil }
+        let unlocked = scope.unlockedManagers.filter { active[$0.vaultID] != nil }
         var holders: [CredentialManager] = []
         for manager in unlocked {
             guard let routes = try? await manager.passkeyRoutes() else { continue }
@@ -62,7 +72,7 @@ extension CredentialRouting {
             break
         }
         guard unlocked.count < listing.count else {
-            return await route(profile: profile, origin: origin, username: nil)
+            return await route(scope: scope, origin: origin, username: nil)
         }
         let ordered = listing.sorted { $0.ordinal < $1.ordinal }
         return ordered.count == 1 ? .needsUnlock(ordered[0]) : .needsChoice(ordered, reason: .noneMatchedLockedExists)

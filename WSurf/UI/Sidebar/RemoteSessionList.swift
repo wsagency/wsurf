@@ -62,6 +62,19 @@ struct RemoteSessionList<TopBar: View, BottomBar: View>: View {
     private func content(now: Date) -> some View {
         let presence = Presence.of(lastSeen: session.lastSeen, running: payload.running, now: now)
         return VStack(spacing: SidebarMetrics.rowVerticalSpacing(settings: coordinator.context.settings)) {
+            if session.kind == .mac, coordinator.browser.sharedSpaceService != nil {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("These tabs open as copies. To open or close tabs on both Macs, share a Space on \(session.label) and join it here.")
+                        .font(Theme.Font.caption)
+                    Button("Shared Spaces…") {
+                        onOpen()
+                        coordinator.openSettings(revealing: "sync.spaces")
+                    }
+                    .buttonStyle(.link)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, SidebarMetrics.rowContentPadding(style: .full))
+            }
             if case .lastSeen(let date) = presence {
                 Text("Last seen \(date.formatted(.relative(presentation: .named)))")
                     .font(Theme.Font.caption)

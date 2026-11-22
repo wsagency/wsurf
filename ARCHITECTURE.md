@@ -398,7 +398,9 @@ commits them through the local store. A pending merge holds back writes to that 
 waits for a compatible version. Restoring an older local store pauses its sync. Large sets of deletions wait for the
 owner’s confirmation. A removed item keeps its keyed import trace so another Mac can recognize a later import of
 the same entry. Turning on vault discovery and choosing individual vaults to sync are separate actions.
-Adding a vault from another Mac opens a second local vault with the original vault’s identity and unlock passkey.
+Adding a vault from another Mac opens a local copy with the original vault’s identity and unlock passkey.
+A Space can use any vault already held on that Mac. Its entry in `Spaces.json` records the owning local profile and vault UUID.
+Website cookies and history follow the Space’s sign-in profile. Each Mac makes its own vault choice when joining a shared Space.
 With that shared vault selected, **Merge Vaults…** can copy current entries from another vault on this Mac.
 The review skips exact duplicates and asks how to handle conflicts. Confirming writes the chosen entries together.
 The source retains its entries, History and Trash until the owner deletes it separately.

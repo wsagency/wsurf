@@ -5,8 +5,7 @@
 
 import AppKit
 
-/// Names a new space or edits one: a name and an icon. The color is chosen for it, as Linen does. A new space also
-/// chooses its sign-ins: those of an existing profile, or its own.
+/// The sign-in profile of a new Space and the credential vault used by a new or existing Space.
 @MainActor
 enum SpaceEditor {
     struct Choice: Equatable {
@@ -14,15 +13,16 @@ enum SpaceEditor {
         var symbol: String
         /// Nil when editing: a space never changes profile.
         var sharing: SpaceSharing?
+        var vault: SpaceVaultReference?
     }
 
     struct SharingOption: Equatable {
         let id: UUID
         let name: String
 
-        init(profile: Profile) {
+        init(profile: Profile, among profiles: [Profile] = []) {
             id = profile.id
-            name = profile.name
+            name = profile.vaultPickerLabel(among: profiles)
         }
 
         var title: String {
@@ -41,10 +41,12 @@ enum SpaceEditor {
     ]
 
     /// Nil when the person cancels or leaves the name empty.
-    static func ask(editing space: Space?, sharing options: [SharingOption] = [], currentProfile: UUID? = nil) async -> Choice? {
+    static func ask(
+        editing space: Space?, sharing options: [SharingOption], currentProfile: UUID, vaults: SpaceVaultPicker.Choices, in window: NSWindow?
+    ) async throws -> Choice? {
         let alert = NSAlert()
         alert.messageText = space == nil ? String(localized: "New Space") : String(localized: "Edit Space")
-        alert.informativeText = String(localized: "A space shows its own tabs and folders. Pins, Favorites, sign-ins, history and passwords stay with the profile.")
+        alert.informativeText = String(localized: "A Space has its own tabs and folders. Its profile keeps its sign-ins and history. Choose a vault for passwords and passkeys.")
         alert.addButton(withTitle: space == nil ? String(localized: "Create Space") : String(localized: "Save"))
         alert.addButton(withTitle: String(localized: "Cancel"))
 
@@ -70,17 +72,28 @@ enum SpaceEditor {
         let row = NSStackView(views: [name, icon])
         row.orientation = .horizontal
         row.spacing = 8
-        let signIns = sharingPicker(options, current: currentProfile)
-        let stack = NSStackView(views: space == nil && !options.isEmpty ? [row, signIns] : [row])
+        let vault = SpaceVaultPicker(vaults, selected: space?.vault)
+        let stack = NSStackView(views: [row])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 10
+        let signIns = sharingPicker(options, current: currentProfile)
+        if space == nil {
+            stack.addArrangedSubview(signIns)
+        }
+        stack.addArrangedSubview(NSTextField(labelWithString: String(localized: "Credential vault")))
+        stack.addArrangedSubview(vault)
+        if vaults.hasUnreadableProfile {
+            let note = NSTextField(wrappingLabelWithString: String(localized: "Some vaults couldn’t be loaded. Reopen the editor to try again."))
+            note.preferredMaxLayoutWidth = 320
+            stack.addArrangedSubview(note)
+        }
         stack.frame.size = stack.fittingSize
         alert.accessoryView = stack
         alert.window.initialFirstResponder = name
 
         let response: NSApplication.ModalResponse
-        if let window = NSApp.keyWindow?.sheetHost {
+        if let window = window ?? NSApp.keyWindow?.sheetHost {
             response = await withCheckedContinuation { continuation in
                 alert.beginSheetModal(for: window) { continuation.resume(returning: $0) }
             }
@@ -88,8 +101,14 @@ enum SpaceEditor {
             response = alert.runModal()
         }
         guard response == .alertFirstButtonReturn else { return nil }
-        let chosen = space == nil && !options.isEmpty ? sharing(signIns.selectedItem?.representedObject) : nil
-        return choice(name: name.stringValue, symbol: icon.selectedItem?.representedObject as? String, sharing: chosen)
+        let chosen: SpaceSharing?
+        if space == nil {
+            guard let selected = signIns.selectedItem else { throw SpaceEditorError.spaceUnavailable }
+            chosen = sharing(selected.representedObject)
+        } else {
+            chosen = nil
+        }
+        return try choice(name: name.stringValue, symbol: icon.selectedItem?.representedObject as? String, sharing: chosen, vault: vault.selectedReference())
     }
 
     /// One entry per profile ("Share sign-ins with …"), then "Separate sign-ins and data". The window's profile is
@@ -104,7 +123,7 @@ enum SpaceEditor {
         }
         picker.menu?.addItem(.separator())
         let separate = NSMenuItem(title: String(localized: "Separate sign-ins and data"), action: nil, keyEquivalent: "")
-        separate.toolTip = String(localized: "A new profile with its own sign-ins, history and passwords.")
+        separate.toolTip = String(localized: "A new profile with its own sign-ins and history.")
         picker.menu?.addItem(separate)
         if let current, let index = options.firstIndex(where: { $0.id == current }) {
             picker.selectItem(at: index)
@@ -119,9 +138,9 @@ enum SpaceEditor {
     }
 
     /// The trimmed name and the icon, or nil for an empty name.
-    static func choice(name: String, symbol: String?, sharing: SpaceSharing? = nil) -> Choice? {
+    static func choice(name: String, symbol: String?, sharing: SpaceSharing? = nil, vault: SpaceVaultReference? = nil) -> Choice? {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
-        return Choice(name: trimmed, symbol: symbol ?? Space.defaultSymbol, sharing: sharing)
+        return Choice(name: trimmed, symbol: symbol ?? Space.defaultSymbol, sharing: sharing, vault: vault)
     }
 }

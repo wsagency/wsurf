@@ -18,6 +18,12 @@ final class AutofillSuggestions {
     final class Request {
         let page: BrowserPage
         let context: BrowserProfileContext
+        let vaultScope: BrowserVaultScope
+        let generation: UInt64
+
+        var matchesPage: Bool {
+            page.context === context && page.vaultScope == vaultScope && page.credentialGeneration == generation
+        }
         let frame: BrowserFrame
         let token: String
         let kind: AutofillSaveKind
@@ -62,8 +68,7 @@ final class AutofillSuggestions {
             case siblings, unlock, passkey, messagesCode
         }
         var actions: [UUID: Action] = [:]
-        /// Every vault of the profile was locked when the lookup ran: the request offers only the unlock row, holds no grant, and
-        /// can fill nothing.
+        /// Every eligible vault was locked when the lookup ran. This request can offer an unlock only.
         var isLocked = false
         /// The interaction is over: its panel was dismissed, or its lookup showed nothing. Another `select` for the same field then
         /// starts a new request instead of being taken for this one (`continues`).
@@ -75,7 +80,9 @@ final class AutofillSuggestions {
              frameURL: URL, topURL: URL, world: WKContentWorld, bridge: String,
              documentID: String, formID: String, fieldID: String,
              field: CredentialAutofillField, enteredUsername: String?, typeToSearch: Bool, isWebAuthnField: Bool) {
-            self.page = page; self.context = context; self.frame = frame; self.token = token; self.kind = kind
+            self.page = page; self.context = context; self.vaultScope = page.vaultScope
+            self.generation = page.credentialGeneration
+            self.frame = frame; self.token = token; self.kind = kind
             self.frameURL = frameURL; self.topURL = topURL
             self.world = world; self.bridge = bridge; self.documentID = documentID
             self.formID = formID; self.fieldID = fieldID
@@ -118,6 +125,12 @@ final class AutofillSuggestions {
 
     func vaultAccessEnded(profileID: UUID) {
         accessGenerations[profileID, default: 0] &+= 1
+        if let page, let request = requests[ObjectIdentifier(page)],
+           request.vaultScope.owner?.id == profileID || request.context.profile.id == profileID {
+            dismiss(in: page)
+        }
+        // Leaving the browsing profile can keep its Space's external vault open.
+        requests = requests.filter { $0.value.context.profile.id != profileID || $0.value.vaultScope.owner?.id == profileID }
     }
 
     /// A vault of the profile was unlocked: a login field still selected on a page that can show a panel now is offered its logins
@@ -126,8 +139,8 @@ final class AutofillSuggestions {
     func vaultUnlocked(profileID: UUID) {
         guard !isFilling else { return }
         for request in requests.values
-        where request.kind == .password && request.isSettled && request.context.profile.id == profileID
-            && request.page.context === request.context && Self.canPresent(in: request.page) {
+        where request.kind == .password && request.isSettled && request.vaultScope.owner?.id == profileID
+            && request.page.vaultScope == request.vaultScope && Self.canPresent(in: request.page) {
             let page = request.page, frame = request.frame, world = request.world, bridge = request.bridge
             Task {
                 _ = try? await page.callAsyncJavaScript(
@@ -190,7 +203,7 @@ final class AutofillSuggestions {
               body["rect"] is [String: Double],
               Self.canPresent(in: page) else { return }
         let rawRect = body["rect"]
-        if let old = requests[key],
+        if let old = requests[key], old.matchesPage,
            Self.continues(token: token, documentID: documentID, open: (token: old.token, documentID: old.documentID), isSettled: old.isSettled) {
             return
         }
@@ -232,6 +245,7 @@ final class AutofillSuggestions {
     /// Reads the rows for `request` and shows them under `presentation`; `false` when nothing was shown.
     func lookUp(_ request: Request, origin: String, presentation id: UUID, in page: BrowserPage) async -> Bool {
         let context = request.context, kind = request.kind, profileID = context.profile.id
+        guard request.matchesPage else { return false }
         let records: [AutofillSuggestion]?
         if kind == .password {
             records = await managerSuggestions(for: request, origin: origin, presentation: id)
@@ -239,7 +253,7 @@ final class AutofillSuggestions {
             // A tab the assistant or a connected app controls is offered no card or address at all.
             guard !Self.isAgentControlled(page) else { return false }
             // The cards and addresses still in the old Keychain lists, until the person confirms their move into the vault.
-            records = try? await Task.detached {
+            records = request.vaultScope.isRestricted ? [] : try? await Task.detached {
                 try AutofillSaveIndex.suggestions(kind: kind, origin: origin, profileID: profileID)
             }.value
         }
@@ -256,7 +270,7 @@ final class AutofillSuggestions {
             request.actions[row.id] = .messagesCode; rows.append(row)
         }
         noteNoRows(rows, kind: kind, in: page, context: context, presentation: id)
-        guard page.context === context, id == presentationID, !rows.isEmpty,
+        guard request.matchesPage, id == presentationID, !rows.isEmpty,
               (try? await validate(request, in: page, requiresFocus: true)) != nil,
               Self.canPresent(in: page) else { return false }
         return show(rows, request: request, in: page)
@@ -270,11 +284,13 @@ final class AutofillSuggestions {
         return AutofillSuggestion(id: UUID(), title: String(localized: "Use a Passkey…"), detail: "", origin: origin)
     }
 
-    /// The manager that may answer for `vaultID`: same profile, and still the unlock the request read it under.
+    /// The vault and lease that supplied the row, while the page still has the same scope.
+}
+
+extension AutofillSuggestions {
     private func manager(for request: Request, vault vaultID: UUID) -> CredentialManager? {
-        let context = request.context
-        guard !context.profile.isPrivate, request.page.context === context, let epoch = request.grants[vaultID]?.epoch else { return nil }
-        return CredentialManager.unlockedManagers(for: context.profile).first { $0.vaultID == vaultID && $0.authorizationEpoch == epoch }
+        guard request.matchesPage, let epoch = request.grants[vaultID]?.epoch else { return nil }
+        return CredentialPicker.manager(in: request.vaultScope, vaultID: vaultID, epoch: epoch)
     }
 
     /// Every vault the request read is still the unlock it was read under.
@@ -282,22 +298,18 @@ final class AutofillSuggestions {
         !request.grants.isEmpty && request.grants.keys.allSatisfy { manager(for: request, vault: $0) != nil }
     }
 
-    /// Account choices for `request`: the union over the profile's unlocked vaults, each read under its own lease. A locked
-    /// vault is never read. With every vault locked, the answer is one row that unlocks through the ordinary unlock
-    /// (`unlock(_:in:)`). Stale or mis-originated requests get no dropdown. The picked-account lookup can invalidate the
-    /// carry-over, so it runs only while this is still the page's current request and presentation. With nothing for the
-    /// exact origin, a password or code field gets one row that lists the logins or codes of sibling websites
-    /// (`CredentialDropdown`); the default list itself never widens. A lookup starts from nothing, so running it again for the same request (after an
-    /// unlock) drops whatever the previous one granted.
+    /// Each lookup starts with fresh grants and reads only unlocked vaults in the request's scope.
+    /// Exact matches lead. Sibling logins or codes open through a separate row. A locked vault offers an unlock.
+    /// The carry-over lookup can invalidate a previous pick, so it runs only after the page and presentation are verified.
     private func managerSuggestions(for request: Request, origin: String, presentation: UUID) async -> [AutofillSuggestion]? {
         let context = request.context
         request.grants = [:]; request.rows = [:]; request.siblingRows = []; request.siblings = []; request.actions = [:]
         request.isLocked = false
-        guard !context.profile.isPrivate, request.page.context === context,
+        guard !context.profile.isPrivate, request.matchesPage,
               CredentialAccountSelection.origin(for: request.frameURL) == origin else { return nil }
         // Vaults in ordinal order; a vault the listing does not know (or a locked one) is never read.
-        let listing = (try? await CredentialManager.store(for: context.profile).listing()) ?? []
-        let unlocked = CredentialManager.unlockedManagers(for: context.profile)
+        let listing = (try? await request.vaultScope.listing()) ?? []
+        let unlocked = request.vaultScope.unlockedManagers
         struct Read {
             let manager: CredentialManager
             let epoch: UInt64
@@ -309,6 +321,7 @@ final class AutofillSuggestions {
         }
         var reads: [Read] = []
         for vault in listing.sorted(by: { $0.ordinal < $1.ordinal }) {
+            guard request.matchesPage else { return nil }
             if let manager = unlocked.first(where: { $0.vaultID == vault.vaultID }), let epoch = manager.authorizationEpoch,
                let candidates = try? await manager.autofillCandidates(), manager.authorizationEpoch == epoch {
                 let uses = try? await manager.importMemoryKey()
@@ -317,12 +330,12 @@ final class AutofillSuggestions {
         }
         guard !reads.isEmpty else {
             // Nothing is read from a locked vault: the one row only offers to unlock.
-            guard await Self.allVaultsLocked(of: context.profile), request.page.context === context,
+            guard await Self.allVaultsLocked(in: request.vaultScope), request.matchesPage,
                   presentation == presentationID, requests[ObjectIdentifier(request.page)] === request else { return nil }
             request.isLocked = true
             return Self.unlockRow(for: request, origin: origin)
         }
-        guard request.page.context === context,
+        guard request.matchesPage,
               presentation == presentationID, requests[ObjectIdentifier(request.page)] === request else { return nil }
         request.grants = Dictionary(
             uniqueKeysWithValues: reads.map { ($0.manager.vaultID, Request.Grant(epoch: $0.epoch, revision: $0.candidates.revision)) })
@@ -381,17 +394,14 @@ final class AutofillSuggestions {
         return anotherIsLocked ? [row] + Self.unlockRow(for: request, origin: origin) : [row]
     }
 
-    /// Cards or addresses of the profile's unlocked vaults, after the ones still in the old Keychain lists: the rows the vault builds
-    /// (a card's network, last four digits, name and expiry; a contact's title and detail), each mapped to its vault, credential and
-    /// item. No card number, security code or other value is read until a row is chosen (`vaultItemFill`). A locked vault is never
-    /// read: while every vault is locked the field gets "Unlock Credentials…", which unlocks through the ordinary unlock and looks the
-    /// field up again. Internal so a test reads the rows without the old Keychain lists `lookUp` reads first.
+    /// Card and address rows map to a vault, credential and item. Only a pick reads values (`vaultItemFill`).
+    /// When every vault in the page's scope is locked, the field offers to unlock and repeat the lookup.
     func vaultItemSuggestions(for request: Request, origin: String, presentation: UUID) async -> [AutofillSuggestion] {
         let context = request.context
         request.grants = [:]; request.itemRows = [:]; request.actions = [:]; request.isLocked = false
-        guard !context.profile.isPrivate, request.page.context === context else { return [] }
-        let allLocked = await Self.allVaultsLocked(of: context.profile)
-        guard request.page.context === context, presentation == presentationID, requests[ObjectIdentifier(request.page)] === request else {
+        guard !context.profile.isPrivate, request.matchesPage else { return [] }
+        let allLocked = await Self.allVaultsLocked(in: request.vaultScope)
+        guard request.matchesPage, presentation == presentationID, requests[ObjectIdentifier(request.page)] === request else {
             return []
         }
         switch Self.vaultItemRows(kind: request.kind, underAssistantControl: Self.isAgentControlled(request.page), allVaultsLocked: allLocked) {
@@ -403,14 +413,15 @@ final class AutofillSuggestions {
         case .items:
             break
         }
-        let listing = (try? await CredentialManager.store(for: context.profile).listing()) ?? []
-        let unlocked = CredentialManager.unlockedManagers(for: context.profile)
+        let listing = (try? await request.vaultScope.listing()) ?? []
+        let unlocked = request.vaultScope.unlockedManagers
         let kind = Self.itemKind(of: request)
         var result: [AutofillSuggestion] = []
         for vault in listing.sorted(by: { $0.ordinal < $1.ordinal }) {
+            guard request.matchesPage else { return [] }
             guard let manager = unlocked.first(where: { $0.vaultID == vault.vaultID }), let epoch = manager.authorizationEpoch,
                   let items = try? await manager.autofillItems(kind: kind), manager.authorizationEpoch == epoch else { continue }
-            guard request.page.context === context, presentation == presentationID,
+            guard request.matchesPage, presentation == presentationID,
                   requests[ObjectIdentifier(request.page)] === request else { return [] }
             request.grants[manager.vaultID] = Request.Grant(epoch: epoch, revision: items.revision)
             func row(accountID: UUID, item: Int, month: Int? = nil, year: Int? = nil) -> UUID {
@@ -693,7 +704,7 @@ final class AutofillSuggestions {
     /// asynchronous checks in `validate`. A request that found every vault locked, or no vault, holds no grant; it can only
     /// offer the unlock row, "Use a Passkey…" or "Code from Messages or Mail…", since a fill needs a grant of its own (`managerAccount`).
     func requireAuthority(_ request: Request, in page: BrowserPage) throws {
-        guard requests[ObjectIdentifier(page)] === request, request.context === page.context,
+        guard requests[ObjectIdentifier(page)] === request, request.matchesPage,
               request.kind != .password || request.isLocked || request.isMessagesCode || managersAreCurrent(for: request)
                 || (request.grants.isEmpty && request.actions.values.contains { $0 == .passkey || $0 == .messagesCode }),
               AutofillSaveCoordinator.shared.isEnabled(request.kind, context: request.context), page.url == request.topURL,
@@ -750,26 +761,27 @@ final class AutofillSuggestions {
         }
     }
 
-    /// Unlocks a locked vault of `profile` through the ordinary unlock: the only locked vault directly, otherwise the one the user picks
-    /// in `VaultChoicePrompt`. `isCurrent` is asked after every suspension, and last right before the unlock starts, so a request that
-    /// ended while the choice was open (another field, a navigation, a lock or profile switch) unlocks nothing. The lease is the
-    /// vault's own: nothing here extends it (`CredentialAutoLock`).
     func unlockVault(of profile: Profile, in window: @autoclosure () -> NSWindow, while isCurrent: () -> Bool) async -> Bool {
+        await unlockVault(in: .profile(profile), window: window(), while: isCurrent)
+    }
+
+    func unlockVault(in scope: BrowserVaultScope, window: @autoclosure () -> NSWindow, while isCurrent: () -> Bool) async -> Bool {
+        // The only locked vault opens directly. A choice among several is rechecked before its unlock begins.
+        guard let profile = scope.owner else { return false }
         let generation = accessGenerations[profile.id]
-        guard !profile.isPrivate, let store = try? CredentialManager.store(for: profile), await store.openState().isProvisional,
-              let listing = try? await store.listing(), !listing.isEmpty,
+        guard let listing = try? await scope.listing(), !listing.isEmpty,
               generation == accessGenerations[profile.id], isCurrent() else { return false }
         // Only a locked vault is a choice: an unlocked one has already answered.
-        let open = Set(CredentialManager.unlockedManagers(for: profile).map(\.vaultID))
+        let open = Set(scope.unlockedManagers.map(\.vaultID))
         let ordered = listing.filter { !open.contains($0.vaultID) }.sorted { $0.ordinal < $1.ordinal }
         guard !ordered.isEmpty else { return false }
         let route: VaultRoute
-        if ordered.count == 1, let only = try? CredentialManager.forVault(profile, vaultID: ordered[0].vaultID) {
+        if ordered.count == 1, let only = try? scope.manager(for: ordered[0].vaultID) {
             route = .manager(only)
         } else {
             route = .needsChoice(ordered, reason: .noneMatchedLockedExists)
         }
-        guard let chosen = await route.resolve(profile: profile, in: window()), chosen.profileID == profile.id,
+        guard let chosen = await route.resolve(scope: scope, in: window()), scope.contains(chosen),
               generation == accessGenerations[profile.id], isCurrent() else { return false }
         if !chosen.isUnlocked {
             do {
@@ -786,14 +798,14 @@ final class AutofillSuggestions {
     private func unlock(_ request: Request, in page: BrowserPage) {
         guard !isFilling, let window = page.window, let origin = SavedPassword.origin(for: request.frameURL) else { return }
         isFilling = true; dismiss()
-        let key = ObjectIdentifier(page), context = request.context
+        let key = ObjectIdentifier(page)
         Task { [weak self, weak page] in
             defer { self?.isFilling = false }
             guard let self, let page, (try? await self.validate(request, in: page)) != nil else { return }
-            let unlocked = await self.unlockVault(of: context.profile, in: window) {
-                self.requests[key] === request && request.context === page.context && page.window === window
+            let unlocked = await self.unlockVault(in: request.vaultScope, window: window) {
+                self.requests[key] === request && request.matchesPage && page.window === window
             }
-            guard unlocked, self.requests[key] === request, request.context === page.context else { return }
+            guard unlocked, self.requests[key] === request, request.matchesPage else { return }
             self.isFilling = false
             self.dismiss()
             request.isSettled = false
@@ -922,6 +934,7 @@ final class AutofillSuggestions {
     /// A card or contact still in the old Keychain lists (until their move into the vault is confirmed), read before `fill`'s final
     /// checks. The card list asks for Touch ID itself.
     private func keychainFields(_ id: UUID, request: Request) async throws -> [String: Any] {
+        guard request.matchesPage, !request.vaultScope.isRestricted else { throw ContactAutofillError.changedPage }
         switch request.kind {
         case .password:
             return [:]

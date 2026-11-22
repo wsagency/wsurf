@@ -472,7 +472,7 @@ final class AppCoordinator {
     var pendingSettingsAnchor: String?
 
     func routeSettings(to category: SettingsCategory) {
-        guard let tab = browser.tabs.first(where: { $0.internalPage == .settings }) else { return }
+        guard let tab = browser.settingsTabInCurrentSpace else { return }
         route(to: category, in: tab)
     }
 

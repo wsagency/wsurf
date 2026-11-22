@@ -222,6 +222,38 @@ final class ProfileStore {
         return profile
     }
 
+    /// The editor can start a genuine first-install list, but must not use Personal as a stand-in for an unreadable list.
+    func profilesForSpaceEditor() throws -> [Profile] {
+        if let catalog {
+            return try catalog.profilesForSpaceEditor()
+        }
+        if let verifiedProfiles {
+            // Ordinary profile edits may remain in memory after a failed catalog write.
+            let saved = Self.includingPersonal(try Self.read(file).profiles)
+            guard Set(saved.map(\.id)) == Set(verifiedProfiles.map(\.id)) else { throw CocoaError(.fileReadUnknown) }
+            return verifiedProfiles.filter { !$0.isPrivate }
+        }
+        guard canWriteCatalog, canCreateList, storedProfiles.map(\.id) == [Profile.originalID] else { throw CocoaError(.fileReadUnknown) }
+        try writeCheckpoint(pendingErasures: pendingErasures)
+        listStatus = .loaded
+        return storedProfiles
+    }
+
+    func addProfile(forFirstSpace space: Space) throws -> Profile {
+        if let catalog {
+            return try catalog.addProfile(forFirstSpace: space)
+        }
+        guard canWriteCatalog else { throw CocoaError(.fileWriteNoPermission) }
+        let existing = try profilesForSpaceEditor()
+        let profile = Profile(id: UUID(), name: space.name, symbol: space.symbol, color: space.color)
+        let next = existing + [profile]
+        try SpaceStore.createFirst(space, for: profile) {
+            try writeCheckpoint(pendingErasures: pendingErasures, profiles: next)
+        }
+        storedProfiles = next
+        return profile
+    }
+
     /// Adds the profile another Mac synced under the same ID so its vaults open here. Built-in, live and pending-erasure IDs
     /// stay reserved. The name is cut to the length the sync record allows, and an unknown symbol becomes the default.
     @discardableResult
@@ -530,10 +562,10 @@ final class ProfileStore {
         storedCloudLedger = next
     }
 
-    private func writeCheckpoint(pendingErasures: [Profile], vaultRemovals: Set<VaultProfileRemoval>? = nil, cloud: ProfileCloudLedger? = nil) throws {
+    private func writeCheckpoint(pendingErasures: [Profile], vaultRemovals: Set<VaultProfileRemoval>? = nil, cloud: ProfileCloudLedger? = nil, profiles next: [Profile]? = nil) throws {
         let withdrawals = vaultRemovals ?? pendingVaultRemovals
         let saved = Stored(
-            profiles: profiles, currentID: isPrivate ? lastPersistentID : currentID, launchProfileID: launchProfileID,
+            profiles: next ?? profiles, currentID: isPrivate ? lastPersistentID : currentID, launchProfileID: launchProfileID,
             lastUsed: lastUsed, pendingErasures: pendingErasures.isEmpty ? nil : pendingErasures, vaultRemovals: withdrawals.isEmpty ? nil : withdrawals, cloud: cloud ?? storedCloudLedger
         )
         try JSONFileStore.writeAtomically(saved, to: file, sortedKeys: true)

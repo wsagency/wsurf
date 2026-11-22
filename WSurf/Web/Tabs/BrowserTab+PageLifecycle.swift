@@ -340,6 +340,10 @@ extension BrowserTab {
         translation.documentChanged()
         liveView = view
         followBackgroundHiding(of: view)
+        view.vaultScopeProvider = { [weak self, weak view] in
+            guard let self, liveView === view, !isClosed else { return .unavailable }
+            return vaultBrowser?.vaultScope(for: self) ?? .profile(context.profile)
+        }
         view.dialogs = dialogs
         dialogs.leaseHolder = { [weak self] in self?.dialogLeaseHolder }
         engine = view.engine

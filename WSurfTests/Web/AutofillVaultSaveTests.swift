@@ -67,6 +67,36 @@ struct AutofillVaultSaveTests {
 
     // MARK: - Save offer
 
+    @Test(.boundedWebViews) func aSpaceSavesOnlyInItsSelectedVaultAndDropsAStaleLockedOffer() async throws {
+        try await withSession { session, _, local in
+            try await VaultManagerFixture.with(vaults: [.unlocked, .unlocked]) { owner, _, vaults in
+                let page = try #require(session.page)
+                let selected = vaults[1]
+                page.vaultScopeProvider = { .selected(owner: owner, vaultID: selected.vaultID) }
+                let login = try SavedPassword(website: Self.page, username: "shared", password: "submitted-password")
+                await session.offer(.password(login), origin: Self.page)
+                let offer = try #require(session.current)
+                await session.save(offer)
+                #expect(try await selected.manager.snapshot().accounts.map(\.password) == [login.password])
+                #expect(try await local[0].manager.snapshot().accounts.isEmpty)
+                #expect(try await vaults[0].manager.snapshot().accounts.isEmpty)
+
+                await session.offer(.contact(contact()), origin: Self.page)
+                let beforeLock = try #require(session.current)
+                selected.manager.lock(reason: .manual)
+                #expect(session.current == nil)
+                await session.save(beforeLock)
+                #expect(!selected.manager.isUnlocked)
+                await session.offer(.contact(contact()), origin: Self.page)
+                let stale = try #require(session.current)
+                page.vaultScopeProvider = { .selected(owner: owner, vaultID: vaults[0].vaultID) }
+                await session.save(stale)
+                #expect(try await vaults[0].manager.snapshot().accounts.isEmpty)
+                #expect(!selected.manager.isUnlocked)
+            }
+        }
+    }
+
     @Test(.boundedWebViews) func aSubmittedCardIsOfferedAndOnlySaveWritesItIntoTheVault() async throws {
         try await withSession { session, _, vaults in
             let manager = vaults[0].manager

@@ -5,8 +5,10 @@ import Foundation
 import WSurfCore
 
 extension CloudSharedSpaces {
-    static func spaceItem(_ space: Space, id: UUID, profile: UUID) -> SharedSpaceItem {
-        .init(id: id, kind: .space, profileID: profile, title: space.name, symbol: space.symbol, color: space.color.rawValue)
+    func spaceItem(_ space: Space, id: UUID, profile: UUID) -> SharedSpaceItem {
+        var item = SharedSpaceItem(id: id, kind: .space, profileID: profile, title: space.name, symbol: space.symbol, color: space.color.rawValue)
+        item.spacePublisher = catalog.item(id, in: .spaces)?.spacePublisher
+        return item
     }
 
     static func pinItem(_ pin: ProfilePin, id: UUID, profile: UUID) -> SharedSpaceItem? {
@@ -21,7 +23,7 @@ extension CloudSharedSpaces {
     func spaceChanged(_ space: Space, in profile: UUID, removed: Bool = false) {
         guard !applying, catalog.enabled(.spaces, for: profile),
               let link = links[profile], let id = link.spaces[space.id], let group = link.profile else { return }
-        let value = Self.spaceItem(space, id: id, profile: group)
+        let value = spaceItem(space, id: id, profile: group)
         catalog.stage(removed ? value.tombstone : value, for: profile)
         if removed {
             for slot in link.slots.values where slot.last?.spaceID == id {

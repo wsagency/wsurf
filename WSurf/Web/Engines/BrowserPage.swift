@@ -12,6 +12,12 @@ final class BrowserPage: NSView {
     let webKit: WKWebView?
     let chromium: ChromiumPage?
     let context: BrowserProfileContext
+    var vaultScopeProvider: (@MainActor () -> BrowserVaultScope)?
+    var vaultScope: BrowserVaultScope {
+        guard !isClosed, !isPrivate else { return .unavailable }
+        return vaultScopeProvider?() ?? .profile(context.profile)
+    }
+
     var profileID: UUID {
         context.profile.id
     }
@@ -655,7 +661,7 @@ final class BrowserPage: NSView {
         guard !isClosed else { throw WebAuthnContextError.closedPage }
         guard !isPrivate else { throw WebAuthnContextError.privateProfile }
         guard context.credentialGeneration == credentialGeneration,
-              context.profileID == profileID, !context.isPrivate,
+              context.profileID == profileID, context.vaultScope == vaultScope, !context.isPrivate,
               context.frame.documentID == context.frameDocumentID,
               context.frame.securityOrigin == context.originEvidence,
               context.frame.hasTrustedSecurityOrigin else {
@@ -693,7 +699,7 @@ final class BrowserPage: NSView {
                 top, feature: context.policyFeature, in: self
             ) == true else { throw WebAuthnContextError.policyDenied }
         }
-        guard !isClosed, credentialGeneration == context.credentialGeneration else {
+        guard !isClosed, credentialGeneration == context.credentialGeneration, context.vaultScope == vaultScope else {
             throw WebAuthnContextError.staleFrame
         }
     }
@@ -702,7 +708,7 @@ final class BrowserPage: NSView {
         guard context.belongs(to: self), !isClosed else { throw WebAuthnContextError.closedPage }
         guard !isPrivate,
               credentialGeneration == context.credentialGeneration,
-              context.profileID == profileID, !context.isPrivate,
+              context.profileID == profileID, context.vaultScope == vaultScope, !context.isPrivate,
               context.frame.documentID == context.frameDocumentID,
               context.frame.securityOrigin == context.originEvidence,
               context.frame.hasTrustedSecurityOrigin else {

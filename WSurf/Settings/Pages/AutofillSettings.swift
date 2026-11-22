@@ -33,13 +33,25 @@ struct AutofillSettings: View {
     var highlight: String?
 
     var body: some View {
+        let scope = coordinator.browser.vaultScope()
         VStack(alignment: .leading, spacing: SettingsMetrics.sectionSpacing) {
-            CredentialSettings(context: coordinator.context, highlight: highlight) { url in
-                // The window this page is in: the same profile, so a private window never opens a normal one.
-                coordinator.browser.newTab(url: url, activate: true, after: coordinator.browser.activeTab, byPerson: true)
+            if scope == .unavailable, !coordinator.context.profile.isPrivate {
+                SettingsSection(title: "Credential vault", symbol: "lock") {
+                    DetailRow(title: "Selected vault unavailable") {
+                        if let space = coordinator.currentSpace {
+                            SettingsButton(title: "Edit Space…") { coordinator.showSpaceEditor(for: space) }
+                        }
+                    }
+                }
+                AutofillOptions(context: coordinator.context)
+            } else {
+                CredentialSettings(context: coordinator.context, highlight: highlight, vaultScope: scope) { url in
+                    coordinator.browser.newTab(url: url, activate: true, after: coordinator.browser.activeTab, byPerson: true)
+                }
             }
         }
         .environment(\.settingsDescriptionLineLimit, 1)
+        .id(scope)
         .id(coordinator.context.contextID)
     }
 }

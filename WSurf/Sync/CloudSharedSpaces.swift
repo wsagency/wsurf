@@ -451,26 +451,37 @@ final class CloudSharedSpaces {
         try await prepareLinkedPinLibrary(in: profile)
         guard isEnabled(.spaces, for: profile), cloudProfileID(for: profile.id) == group else { throw SharedCatalogError.paused }
         guard let current = spaces(profile)?.space(id: space.id) else { throw SharedCatalogError.unavailable }
-        let sharedID = links[profile.id]?.spaces[space.id] ?? UUID()
+        let existing = links[profile.id]?.spaces[space.id]
+        let sharedID = existing ?? UUID()
+        var item = spaceItem(current, id: sharedID, profile: group)
+        if existing == nil {
+            item.spacePublisher = .init(profileID: profile.id, source: .init(macName: computerName()))
+        }
         links[profile.id, default: .init()].spaces[space.id] = sharedID
+        catalog.stage(item, for: profile.id)
         guard persistLinks() else { throw SharedCatalogError.storage }
-        catalog.stage(Self.spaceItem(current, id: sharedID, profile: group), for: profile.id)
         for model in regularWindows(profile) {
             capture(model)
         }
     }
 
-    func join(_ remote: SharedSpaceItem, in profile: Profile) async throws {
+    @discardableResult
+    func join(_ remote: SharedSpaceItem, in profile: Profile, expecting owner: String? = nil) async throws -> Space {
+        guard owner == nil || owner == catalog.trustedUser else { throw SharedCatalogError.accountChanged }
         try await enable(.spaces, for: profile)
-        guard let item = catalog.item(remote.id, in: .spaces), item.kind == .space, !item.removed,
+        guard owner == nil || owner == catalog.trustedUser else { throw SharedCatalogError.accountChanged }
+        guard let item = catalog.item(remote.id, in: .spaces), item.kind == .space, !item.removed, item.profileID == remote.profileID,
               spaces(profile) != nil else { throw SharedCatalogError.unavailable }
         guard linkProfile(profile.id, to: item.profileID) else { throw SharedCatalogError.unavailable }
         try await prepareLinkedPinLibrary(in: profile)
+        guard owner == nil || owner == catalog.trustedUser else { throw SharedCatalogError.accountChanged }
         guard isEnabled(.spaces, for: profile), cloudProfileID(for: profile.id) == item.profileID else { throw SharedCatalogError.paused }
         guard let current = catalog.item(item.id, in: .spaces), !current.removed, current.profileID == item.profileID,
               let store = spaces(profile) else { throw SharedCatalogError.unavailable }
         try materializeJoinedSpace(current, in: profile, store: store)
         applyCatalog()
+        guard let joined = joinedSpace(current, in: profile) else { throw SharedCatalogError.storage }
+        return joined
     }
 
     /// Reserve the local identity before Spaces.json so either write can be retried after a restart.

@@ -6,7 +6,7 @@ import WSurfVault
 
 /// What the dropdown offers from the credentials vault, and after a fill, decided before anything is read.
 extension AutofillSuggestions {
-    /// The action offers the profile's locked vaults without reading them. Already unlocked logins stay available.
+    /// The action offers the Space's locked vaults without reading them. Unlocked logins stay available.
     static func unlockRow(for request: Request, origin: String) -> [AutofillSuggestion] {
         let rowID = UUID()
         request.actions[rowID] = .unlock
@@ -15,9 +15,12 @@ extension AutofillSuggestions {
 
     /// Whether the profile has vaults and every one of them is locked. The dropdown then offers to unlock and reads nothing.
     static func allVaultsLocked(of profile: Profile) async -> Bool {
-        guard !profile.isPrivate, let store = try? CredentialManager.store(for: profile), await store.openState().isProvisional,
-              let listing = try? await store.listing(), !listing.isEmpty else { return false }
-        let unlocked = Set(CredentialManager.unlockedManagers(for: profile).map(\.vaultID))
+        await allVaultsLocked(in: .profile(profile))
+    }
+
+    static func allVaultsLocked(in scope: BrowserVaultScope) async -> Bool {
+        guard let listing = try? await scope.listing(), !listing.isEmpty else { return false }
+        let unlocked = Set(scope.unlockedManagers.map(\.vaultID))
         return !listing.contains { unlocked.contains($0.vaultID) }
     }
 

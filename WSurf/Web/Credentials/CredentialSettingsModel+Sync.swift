@@ -37,7 +37,7 @@ extension CredentialSettingsModel {
 
     /// Vaults other devices synced for this profile that this Mac does not hold yet.
     var addableSyncedVaults: [RemoteVault] {
-        guard let sync = vaultSync else { return [] }
+        guard spaceVaultID == nil, let sync = vaultSync else { return [] }
         let held = Set(vaults.map(\.vaultID))
         return sync.remoteVaults(profileID: profile.id).filter { !held.contains($0.vaultID) }
     }

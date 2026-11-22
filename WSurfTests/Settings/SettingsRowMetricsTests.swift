@@ -75,13 +75,16 @@ struct SettingsRowMetricsTests {
         let shared = height(SharedProfileLinkSection(profile: profile, host: host))
         #expect(abs(legacy - shared) < 0.5, "An older link and a paused library each offer the same pin sharing row.")
 
-        let spaceHeight = height(SharedSpacesSettingsView(profile: profile, host: host))
+        let catalog = ProfileStore(file: directory.appending(path: "profiles.json"))
+        let coordinator = AppCoordinator(browser: BrowserModel(database: .temporary()), profiles: .selection(profile: profile, catalog: catalog))
+        defer { coordinator.browser.closeAllTabs(saving: false) }
+        let spaceHeight = height(SharedSpacesSettingsView(profile: profile, host: host, coordinator: coordinator))
         store.publish((0..<30).map { index in
             ProfilePin(id: UUID(), orderKey: String(index), kind: .tab, url: "https://example.test/\(index)", isFavorite: index.isMultiple(of: 2))
         })
         let reads = pinStoreReads
         #expect(abs(height(SharedProfileLinkSection(profile: profile, host: host)) - shared) < 0.5)
-        #expect(abs(height(SharedSpacesSettingsView(profile: profile, host: host)) - spaceHeight) < 0.5)
+        #expect(abs(height(SharedSpacesSettingsView(profile: profile, host: host, coordinator: coordinator)) - spaceHeight) < 0.5)
         #expect(pinStoreReads == reads)
     }
 

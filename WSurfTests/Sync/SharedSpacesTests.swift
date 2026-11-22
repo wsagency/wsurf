@@ -27,7 +27,7 @@ struct SharedSpacesTests {
         let engine: FakeSyncEngine
         let dir: URL
 
-        init(_ cloud: FakeSyncCloud) {
+        init(_ cloud: FakeSyncCloud, name: String = "Test Mac") {
             dir = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
             let spaceStore = SpaceStore(profile: profile, file: dir.appending(path: "spaces.json"))
             store = spaceStore
@@ -38,7 +38,7 @@ struct SharedSpacesTests {
             let windows = openWindows
             windows.models = [model]
             host = CloudSharedSpaces(
-                stateFile: dir.appending(path: "shared.json"), windows: { windows.models },
+                stateFile: dir.appending(path: "shared.json"), profiles: [profile], windows: { windows.models }, computerName: { name },
                 spaces: { _ in spaceStore }, pins: { _ in model.pinStore }
             )
             model.sharedSpacesHost = host

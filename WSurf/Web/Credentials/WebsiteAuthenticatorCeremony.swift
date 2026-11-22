@@ -432,7 +432,7 @@ extension WebsiteAuthenticator {
     ) async throws -> Bound {
         try Task.checkCancellation()
         try validateDeadline(request)
-        guard !context.isPrivate, context.profileID == manager.profileID,
+        guard !context.isPrivate, context.vaultScope.contains(manager),
               let origin = URL(string: context.origin) else { throw WebsiteAuthenticatorError.invalidContext }
         let resolved: String
         do {
@@ -506,7 +506,7 @@ extension WebsiteAuthenticator {
         try await context.validate()
         try Task.checkCancellation()
         try validateDeadline(request)
-        guard manager.authorizationEpoch == bound.epoch, context.profileID == manager.profileID else {
+        guard manager.authorizationEpoch == bound.epoch, context.vaultScope.contains(manager) else {
             throw WebsiteAuthenticatorError.notAllowed
         }
     }

@@ -846,6 +846,7 @@ final class CredentialManager {
         unlockGeneration &+= 1
         // Ceremonies bound to this vault stop here, synchronously, before any suspension can let one continue.
         WebAuthnAdapter.cancel(manager: self)
+        AutofillSaveCoordinator.shared.selectedVaultLocked(self)
         lastLockReason = reason
         leaseStart = nil
         timer?.cancel()

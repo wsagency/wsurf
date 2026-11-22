@@ -5,9 +5,27 @@ import Foundation
 import WSurfVault
 
 extension CredentialSettingsModel {
+    convenience init(scope: BrowserVaultScope) {
+        switch scope {
+        case .profile(let profile):
+            self.init(profile: profile)
+        case .selected(let owner, let id):
+            self.init(profile: owner, spaceVaultID: id)
+        case .unavailable:
+            self.init(profile: .privateBrowsing())
+        }
+    }
+
     /// The selected manager's own list, never a copy: a non-fatal note that never changes whether the vault opened.
     var scratchCleanupWarnings: [URL] {
         manager?.scratchCleanupWarnings ?? []
+    }
+
+    func visibleListing(in store: ProfileVaultStore) async throws -> [VaultListing] {
+        let listing = try await store.listing()
+        guard let spaceVaultID else { return listing }
+        guard let selected = listing.first(where: { $0.vaultID == spaceVaultID }) else { throw CredentialStoreError.noSuchVault }
+        return [selected]
     }
 
     /// Reads the vault listing again and changes nothing else. A vault's name is sealed in its head and listed only while that
@@ -18,9 +36,25 @@ extension CredentialSettingsModel {
         guard let store else { return }
         let epoch = authorizationEpoch
         let changes = VaultStateChanges.shared.count(for: profile.id)
-        guard let listing = try? await store.listing(), !Task.isCancelled, authorizationEpoch == epoch,
+        guard let listing = try? await visibleListing(in: store), !Task.isCancelled, authorizationEpoch == epoch,
               VaultStateChanges.shared.count(for: profile.id) == changes else { return }
         vaults = listing
+    }
+
+    /// A new passkey needs a first run, or room for another vault and an already unlocked one to approve it.
+    var canCreateWithNewPasskey: Bool {
+        guard spaceVaultID == nil else { return false }
+        return openState?.allowsNewPasskey(
+            vaultCount: vaults.count,
+            hasAuthorizer: CredentialManager.unlockedAuthorizer(in: vaults, selected: manager, profile: profile) != nil
+        ) ?? false
+    }
+
+    var canCreateVault: Bool {
+        guard spaceVaultID == nil else { return false }
+        return openState?.allowsCreate(
+            vaultCount: vaults.count, newPasskey: canCreateWithNewPasskey, hasEnrolledPasskey: !existingPasskeys.isEmpty
+        ) ?? false
     }
 
     /// The name the store gives a new vault when none is typed, so a default-named vault reads the same locked and unlocked.

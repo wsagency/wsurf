@@ -151,6 +151,33 @@ struct AutofillSecretsTests {
 
     // MARK: A1 Focus reads no secret
 
+    @Test func theDropdownReadsOnlyTheSpaceVaultAndRevokesAPreparedAddress() async throws {
+        try await withVault { rig, _, _, browserReads in
+            try await VaultManagerFixture.with(vaults: [.unlocked, .unlocked]) { owner, _, vaults in
+                let selected = vaults[1]
+                let address = SecureItemFixtures.account([SecureItemFixtures.address(street: "2 Selected Lane")], name: "Selected address")
+                try await VaultManagerFixture.save([address], in: selected)
+                try await VaultManagerFixture.save([SecureItemFixtures.account([SecureItemFixtures.address()])], in: vaults[0])
+                rig.page.vaultScopeProvider = { .selected(owner: owner, vaultID: selected.vaultID) }
+                let suggestions = AutofillSuggestions.shared
+                let login = rig.request(.password)
+                _ = await suggestions.lookUp(login, origin: Self.shop, presentation: suggestions.presentationID, in: rig.page)
+                #expect(Set(login.grants.keys) == [selected.vaultID])
+
+                let contact = rig.request(.contact)
+                let rows = await suggestions.vaultItemSuggestions(for: contact, origin: Self.shop, presentation: suggestions.presentationID)
+                #expect(rows.map(\.title) == ["Selected address"])
+                let id = try #require(rows.first?.id)
+                let prepare = try await suggestions.vaultItemFill(id, request: contact, in: rig.page)
+                let addressFields = try #require(try prepare()["fields"] as? [String: String])
+                #expect(addressFields["street-address"] == "2 Selected Lane")
+                rig.page.vaultScopeProvider = { .unavailable }
+                #expect(throws: ContactAutofillError.changedPage) { try prepare() }
+                #expect(browserReads.reads.isEmpty)
+            }
+        }
+    }
+
     @Test(arguments: [CredentialAutofillField.password, .totp])
     func aLoginOrCodeFieldsFocusReadsCandidatesOnly(field: CredentialAutofillField) async throws {
         try await withVault { rig, vault, _, audit in

@@ -5,6 +5,11 @@ This file preserves release notes inherited from the upstream
 describe upstream Linen releases, not releases published by WSurf. New WSurf
 release notes will be added above this provenance record.
 
+## 0.2.2 (build 34) — 2026-11-22
+
+- When creating a Space, choose **Separate sign-ins and data** and select an existing credential vault. Both Spaces can use the same passwords and passkeys while keeping independent website sessions. **Space Settings** lets you change the vault on each Mac.
+- From **On Other Devices**, open **Shared Spaces** to join a published Space and sync its tabs. The publisher’s Mac name distinguishes two Spaces called Work. **Open Space** brings back the window with its shared tabs, even after you close it or switch profiles.
+
 ## 0.2.1 (build 33) — 2026-11-22
 
 - Use **Merge into Shared Vault** to review entries from a local vault, including duplicates and conflicts, before copying them into a shared vault. You can check the result before deleting the source vault yourself.

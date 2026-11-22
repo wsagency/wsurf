@@ -158,12 +158,18 @@ final class BrowserModel {
     var currentSpaceID: UUID? {
         didSet {
             if oldValue != currentSpaceID {
+                if vaultScope(in: oldValue) != vaultScope(in: currentSpaceID) {
+                    for tab in tabs where tab.spaceID == nil {
+                        tab.invalidateSpaceVault()
+                    }
+                }
                 refreshSidebarActive()
             }
         }
     }
     /// The spaces of the window's profile. A tab or folder naming any other space joins the current one.
     var knownSpaceIDs: Set<UUID> = []
+    @ObservationIgnored weak var vaultProfileCatalog: ProfileStore?
     @ObservationIgnored weak var adoptedSpaceStore: SpaceStore?
     /// Restored ordinary rows that SQLite could not place. They remain visible and device-only.
     @ObservationIgnored var unplacedSpaceRows: Set<SidebarItem> = []
@@ -204,6 +210,7 @@ final class BrowserModel {
     }
 
     func bindCallbacks(to tab: BrowserTab) {
+        tab.bindVaultScope(to: self)
         tab.onNavigationStarted = { [weak self, weak tab] url in
             guard let tab else { return }
             self?.heldInPageMove[tab.id] = nil

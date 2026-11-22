@@ -158,6 +158,25 @@ struct InputHistorySettings: View {
     }
 }
 
+/// A Space may borrow a vault for website logins. Its Input History still uses the browsing profile's store.
+struct ProfileInputHistorySettings: View {
+    let context: BrowserProfileContext
+    @State private var listing: [VaultListing] = []
+    @State private var preferred: UUID?
+
+    var body: some View {
+        InputHistorySettings(context: context, vaults: listing, selectedVaultID: preferred)
+            .task(id: VaultStateChanges.shared.count(for: context.profile.id)) {
+                let scope = BrowserVaultScope.profile(context.profile)
+                let vaults = (try? await scope.listing()) ?? []
+                let selected = await scope.defaultVaultID()
+                guard !Task.isCancelled else { return }
+                listing = vaults
+                preferred = vaults.first { $0.vaultID == selected }?.vaultID ?? vaults.first?.vaultID
+            }
+    }
+}
+
 /// "Keep Input History in this vault", for the vault the page's picker shows. Moving needs that vault and the one keeping the entries
 /// now unlocked; the entries themselves are not encrypted again and no Touch ID is asked for.
 private struct InputHistoryVaultRow: View {

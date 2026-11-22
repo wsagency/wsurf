@@ -38,9 +38,10 @@ struct CredentialSettings: View {
     /// `openWebsite` opens an address in a new tab of the window that shows this page.
     init(
         context: BrowserProfileContext, highlight: String?, showsHeader: Bool = true, copyGrace: CopyGrace? = nil,
+        vaultScope: BrowserVaultScope? = nil,
         openWebsite: @escaping @MainActor (URL) -> Void
     ) {
-        let model = CredentialSettingsModel(profile: context.profile)
+        let model = CredentialSettingsModel(scope: vaultScope ?? .profile(context.profile))
         model.websiteOpener = openWebsite
         model.copyGrace = copyGrace
         self.init(model: model, context: context, highlight: highlight, showsHeader: showsHeader)
@@ -98,7 +99,11 @@ struct CredentialSettings: View {
             }
         }
         .task(id: model.authorizationEpoch) { await model.load() }
-        .task { await model.legacy.refresh() }
+        .task {
+            if model.spaceVaultID == nil {
+                await model.legacy.refresh()
+            }
+        }
         // Entries another Mac synced were written to the open vault: read it again, unless an editor or an import review is open.
         .onChange(of: model.manager?.syncWrites) { Task { await model.reloadAfterSync() } }
         .onChange(of: model.draft == nil && model.importReview == nil) { Task { await model.reloadIfSyncWaited() } }
@@ -254,7 +259,7 @@ struct CredentialSettings: View {
         VaultSyncCard(model: model, withWindow: withWindow, showSettings: { open(.settings) })
         // The import of the passwords saved before Credential Manager is on the Settings tab; a locked vault says so in its own card.
         // The cards and addresses saved on this Mac move into the open vault from their own card.
-        if model.presentation == .content, !showsTrash, !list.showsInputHistory {
+        if model.spaceVaultID == nil, model.presentation == .content, !showsTrash, !list.showsInputHistory {
             LegacyPasswordCard(state: model.legacy.state) { open(.settings) }
             if context != nil {
                 AutofillMigrationCard(model: model)
@@ -264,7 +269,11 @@ struct CredentialSettings: View {
             VaultSectionBar(list: list, showsCounts: model.presentation == .content, offersInputHistory: context != nil)
         }
         if list.showsInputHistory, let context {
-            InputHistorySettings(context: context, vaults: model.vaults, selectedVaultID: model.selectedVaultID)
+            if context.profile.id == model.profile.id {
+                InputHistorySettings(context: context, vaults: model.vaults, selectedVaultID: model.selectedVaultID)
+            } else {
+                ProfileInputHistorySettings(context: context)
+            }
         } else {
             vaultContent { credentialsTab } locked: { lockedCredentials }
         }
@@ -574,7 +583,9 @@ struct CredentialSettings: View {
                 Passkeys and verification codes can only be moved with Export… and the system’s credential exchange.
                 """
         ) {
-            legacyImportRows
+            if model.spaceVaultID == nil {
+                legacyImportRows
+            }
             AutofillImportRows(model: model) { showsCreateWarning = true }
             DetailRow(title: "Import passwords from a CSV file") {
                 Button("Choose File…") { importCSV() }

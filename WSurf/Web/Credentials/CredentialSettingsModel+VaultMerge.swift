@@ -76,20 +76,7 @@ extension CredentialSettingsModel {
     var vaultMergeDestinationLabel: String {
         let listing = vaults.first { $0.vaultID == selectedVaultID }
         let label = (isUnlocked ? listing?.label : listing?.numberedName) ?? String(localized: "Vault")
-        return "\(Self.mergeProfileLabel(profile, among: mergeProfiles)) · \(label)"
-    }
-
-    private static func mergeProfileLabel(_ profile: Profile, among profiles: [Profile]) -> String {
-        func name(_ profile: Profile) -> String {
-            if case let .published(source) = profile.publicationOrigin, let mac = source?.macName {
-                return "\(profile.name) · \(mac)"
-            }
-            return profile.name
-        }
-        let label = name(profiles.first { $0.id == profile.id } ?? profile)
-        let peers = profiles.filter { name($0) == label }
-        guard peers.count > 1 else { return label }
-        return "\(label) (\(profile.id.shortestUniquePrefix(in: peers.map(\.id))))"
+        return "\(profile.vaultPickerLabel(among: mergeProfiles)) · \(label)"
     }
 
     func mergeSources() async throws -> [VaultMergeSource] {
@@ -112,7 +99,7 @@ extension CredentialSettingsModel {
             for vault in listing where profile.id != target.manager.profileID || vault.vaultID != target.manager.vaultID {
                 let source = try CredentialManager.forVault(profile, vaultID: vault.vaultID, native: native)
                 sources.append(VaultMergeSource(
-                    id: .init(profileID: profile.id, vaultID: vault.vaultID), profileLabel: Self.mergeProfileLabel(profile, among: profiles),
+                    id: .init(profileID: profile.id, vaultID: vault.vaultID), profileLabel: profile.vaultPickerLabel(among: profiles),
                     listing: vault, source: source, listedEpoch: changes == VaultStateChanges.shared.count(for: profile.id) ? source.authorizationEpoch : nil, target: target
                 ))
             }
@@ -166,7 +153,7 @@ extension CredentialSettingsModel {
         guard let from = listing.first(where: { $0.vaultID == source.id.vaultID }),
               let to = destination.first(where: { $0.vaultID == target.manager.vaultID }) else { throw CredentialVaultError.staleRevision }
         let review = VaultMergeReview(
-            rows: rows, sourceLabel: "\(source.profileLabel) · \(from.label)", destinationLabel: "\(Self.mergeProfileLabel(profile, among: mergeProfiles)) · \(to.label)",
+            rows: rows, sourceLabel: "\(source.profileLabel) · \(from.label)", destinationLabel: "\(profile.vaultPickerLabel(among: mergeProfiles)) · \(to.label)",
             source: source, enrollment: enrollment, sourceEpoch: sourceEpoch, destinationEpoch: destinationEpoch, sourceRevision: incoming.revision, destinationRevision: stored.revision,
             sourceStamps: incoming.stamps, destinationStamps: stored.stamps
         )

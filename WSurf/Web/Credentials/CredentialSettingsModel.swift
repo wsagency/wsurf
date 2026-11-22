@@ -17,6 +17,8 @@ import WSurfVault
 @Observable
 final class CredentialSettingsModel {
     let profile: Profile
+    /// An explicit Space choice stays on that one vault across loads, account changes and a missing file.
+    let spaceVaultID: UUID?
     private(set) var isBusy = false
     /// `nil` until discovered; stays `nil` (with `error` set) when the vault exists but can't be read.
     private(set) var vaultExists: Bool?
@@ -119,6 +121,7 @@ final class CredentialSettingsModel {
     /// default vault (else the lowest-ordinal one) through the shared registry once `load()` has listed the vaults.
     init(
         profile: Profile,
+        spaceVaultID: UUID? = nil,
         pasteboard: NSPasteboard = .general,
         exchange: CredentialExchangeCoordinator = .shared,
         manager: CredentialManager? = nil,
@@ -131,6 +134,7 @@ final class CredentialSettingsModel {
         healthDelay: Duration = .milliseconds(500)
     ) {
         self.profile = profile
+        self.spaceVaultID = spaceVaultID
         self.verifyUser = verifyUser
         self.exchange = exchange
         self.pasteboard = pasteboard
@@ -235,20 +239,6 @@ final class CredentialSettingsModel {
             return storedDefaultVaultID
         }
         return vaults.min { $0.ordinal < $1.ordinal }?.vaultID
-    }
-
-    /// A new passkey needs a first run, or room for another vault and an already unlocked one to approve it.
-    var canCreateWithNewPasskey: Bool {
-        openState?.allowsNewPasskey(
-            vaultCount: vaults.count,
-            hasAuthorizer: CredentialManager.unlockedAuthorizer(in: vaults, selected: manager, profile: profile) != nil
-        ) ?? false
-    }
-
-    var canCreateVault: Bool {
-        openState?.allowsCreate(
-            vaultCount: vaults.count, newPasskey: canCreateWithNewPasskey, hasEnrolledPasskey: !existingPasskeys.isEmpty
-        ) ?? false
     }
 
     // MARK: Trash and editing (state)
@@ -410,6 +400,9 @@ final class CredentialSettingsModel {
             if let store {
                 let state = await store.openState()
                 guard !Task.isCancelled else { return }
+                if spaceVaultID != nil, !state.isProvisional {
+                    throw CredentialStoreError.noSuchVault
+                }
                 switch state {
                 case .failClosed(let closed):
                     openState = state
@@ -429,7 +422,7 @@ final class CredentialSettingsModel {
                 case .provisional:
                     break
                 }
-                let listing = try await store.listing()
+                let listing = try await visibleListing(in: store)
                 let preferred = await store.defaultVaultID()
                 var enrolled: [(vault: VaultListing, unlock: VaultUnlock)] = []
                 if case .provisional = state {
@@ -458,6 +451,11 @@ final class CredentialSettingsModel {
             error = nil
         } catch {
             guard !Task.isCancelled else { return }
+            if spaceVaultID != nil {
+                vaults = []
+                enrolledPasskeys = []
+                bind(nil)
+            }
             vaultExists = nil
             self.error = noteClosed(error) ? nil : Self.message(for: error)
         }
@@ -502,6 +500,7 @@ final class CredentialSettingsModel {
     }
 
     private func vaultManager(_ vaultID: UUID) throws -> CredentialManager {
+        guard spaceVaultID == nil || spaceVaultID == vaultID else { throw CredentialVaultError.unauthorized }
         guard let native, let store else { return try CredentialManager.forVault(profile, vaultID: vaultID) }
         return CredentialManager(profile: profile, vaultID: vaultID, store: store, native: native)
     }
@@ -642,7 +641,7 @@ final class CredentialSettingsModel {
     /// created only from a confirmed first run; a further one is authorized by the selected vault if it is unlocked, else the
     /// lowest-numbered unlocked one. A v1 vault or interrupted migration is listed, so it never offers Create.
     func createVault(name: String, choice: NewVaultChoice, in anchor: @autoclosure () -> ASPresentationAnchor) async {
-        guard let store else { return }
+        guard spaceVaultID == nil, let store else { return }
         var created: UUID?
         let succeeded = await guarded {
             let chosen = try await store.creationChoice(for: choice) {
@@ -698,7 +697,7 @@ final class CredentialSettingsModel {
 
     /// Marks one of the profile's vaults as the one autofill and saving use without asking. Only a listed vault can be chosen.
     func setDefaultVault(_ vaultID: UUID) async {
-        guard let store, vaults.contains(where: { $0.vaultID == vaultID }) else { return }
+        guard spaceVaultID == nil, let store, vaults.contains(where: { $0.vaultID == vaultID }) else { return }
         await store.setDefaultVault(vaultID)
         storedDefaultVaultID = await store.defaultVaultID()
     }
