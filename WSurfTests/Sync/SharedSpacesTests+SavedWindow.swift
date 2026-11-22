@@ -10,14 +10,18 @@ import WSurfCore
 
 extension SharedSpacesTests {
     enum OpenPath: String, Sendable {
-        case closedWindow, switchedWindow, profileAfterRestart, spaceAfterRestart
+        case closedWindow, switchedWindow, profileAfterRestart, spaceAfterRestart, profileWhileOwnerHasAnotherProfile, profileBeforeAccountVerification
+        case spaceWhileLaunching
 
         var restarts: Bool {
-            self == .profileAfterRestart || self == .spaceAfterRestart
+            self == .profileAfterRestart || self == .spaceAfterRestart || self == .profileBeforeAccountVerification
         }
     }
 
-    @Test(arguments: [OpenPath.closedWindow, .switchedWindow, .profileAfterRestart, .spaceAfterRestart])
+    @Test(arguments: [
+        OpenPath.closedWindow, .switchedWindow, .profileAfterRestart, .spaceAfterRestart,
+        .profileWhileOwnerHasAnotherProfile, .profileBeforeAccountVerification, .spaceWhileLaunching,
+    ])
     func openSpaceRestoresTheSharedTabWhenItsWindowClosedOrChangedProfile(path: OpenPath) async throws {
         let catalog = ProfileStore.shared, previous = catalog.current
         let local = catalog.add(name: "Work")
@@ -78,6 +82,27 @@ extension SharedSpacesTests {
         first.browser.switchSpace(to: joined.id, showing: received)
         first.openSettings(.sync)
         let initialCaller = path == .switchedWindow ? first : air.newWindow(profile: local, show: false)
+        if path == .spaceWhileLaunching {
+            air = await restartWindows(air, with: service)
+            let launch = air.beginLaunchRestore(of: [local, adopted], lastWindowID: initialCaller.windowID, launchProfileID: nil, show: false)
+            let lead = try #require(launch.leadWindow)
+            #expect(lead.windowID == initialCaller.windowID)
+            lead.openSharedSpace(SpaceEntry(space: joined, profile: adopted))
+            #expect(air.windows.count == 1)
+            #expect(air.continueLaunchRestore(launch, show: false))
+            let restored = try #require(air.windows.first { $0.windowID == first.windowID })
+            #expect(air.windows.count == 2 && restored.browser.tab(id: received.id) != nil)
+            return
+        }
+        if path == .profileWhileOwnerHasAnotherProfile {
+            await first.switchProfile(to: local)
+            let localPage = first.browser.addPage("https://local.example.test/where-i-was")
+            first.browser.activate(localPage)
+            await initialCaller.switchProfile(to: adopted)
+            #expect(initialCaller.context.profile.id == adopted.id)
+            #expect(first.context.profile.id == local.id && first.browser.activeTab === localPage)
+            return
+        }
         if path == .switchedWindow {
             await first.switchProfile(to: local)
         } else {
@@ -94,11 +119,7 @@ extension SharedSpacesTests {
             small.browser.activate(recent)
             small.browser.scheduleSave()
             await host.refresh()
-            air.prepareToTerminate()
-            await air.closeTabsForTermination()
-            air.windows.forEach { $0.nativeWindow?.close() }
-            air = BrowserApplication()
-            service.cancelTermination()
+            air = await restartWindows(air, with: service)
             air.restoreWindows(of: [local, adopted], show: false)
             let shortSession = try #require(air.windows.first { $0.windowID == small.windowID })
             #expect(shortSession.browser.tab(id: recent.id) != nil && shortSession.browser.tab(id: received.id) == nil)
@@ -106,7 +127,16 @@ extension SharedSpacesTests {
         } else {
             caller = initialCaller
         }
-        if path == .profileAfterRestart {
+        if path == .profileBeforeAccountVerification {
+            let transport = try #require(engine)
+            transport.available = false
+            try #require(await !host.catalog.verifyAccount())
+            #expect(host.isEnabled(.spaces, for: adopted) && host.cloudProfileID(for: adopted.id) == nil)
+            await caller.switchProfile(to: adopted)
+            #expect(caller.context.profile.id == adopted.id)
+            #expect(!air.windows.contains { $0.windowID == first.windowID })
+            return
+        } else if path == .profileAfterRestart {
             await caller.switchProfile(to: adopted)
         } else {
             caller.openSharedSpace(SpaceEntry(space: joined, profile: adopted))
@@ -127,5 +157,14 @@ extension SharedSpacesTests {
         try await engine?.sendNow()
         try await studio.sync()
         #expect(studio.browser.tab(id: source.id) == nil)
+    }
+
+    private func restartWindows(_ app: BrowserApplication, with service: CloudSync) async -> BrowserApplication {
+        app.prepareToTerminate()
+        await app.closeTabsForTermination()
+        app.windows.forEach { $0.nativeWindow?.close() }
+        let restarted = BrowserApplication()
+        service.cancelTermination()
+        return restarted
     }
 }

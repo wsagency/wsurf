@@ -34,7 +34,7 @@ extension AppCoordinator {
             requestNewWindow(isPrivate: true)
             return
         }
-        if spaceID == nil, openSharedProfile(profile) {
+        if spaceID == nil, reopenSharedProfileWindow(profile) {
             return
         }
         await profileSwitches.run { [weak self] in
