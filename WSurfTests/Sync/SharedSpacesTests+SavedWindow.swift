@@ -179,7 +179,6 @@ extension SharedSpacesTests {
 
     private func checkGatheredTab(_ recent: UUID, in application: BrowserApplication, restoring profiles: [Profile], destination: UUID,
                                   space: UUID, studio: Mac, engine: FakeSyncEngine?) async throws {
-        await CloudSync.shared?.sharedSpaces?.refresh()
         application.restoreWindows(of: profiles, show: false)
         let destination = try #require(application.windows.first { $0.windowID == destination })
         #expect(application.windows.filter { $0.browser.tab(id: recent) != nil }.map(\.windowID) == [destination.windowID])
@@ -187,7 +186,8 @@ extension SharedSpacesTests {
         #expect(try destination.browser.savedSharedRowOwners(in: space)[recent] == destination.windowID)
         let host = try #require(destination.browser.sharedSpaceService)
         let slot = try #require(host.links[destination.context.profile.id]?.slots[recent])
-        #expect(slot.movingFrom == nil && slot.editedAfterRevision == nil)
+        #expect(slot.movingFrom == nil && (slot.editedAfterRevision ?? .max) < destination.browser.sessionRevision)
+        await host.refresh()
         let local = try #require(application.windows.first { $0.context.profile.id != destination.context.profile.id })
         let prior = local.context.profile.id
         await local.switchProfile(to: destination.context.profile)

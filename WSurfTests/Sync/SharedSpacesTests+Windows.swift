@@ -110,6 +110,42 @@ extension SharedSpacesTests {
         #expect(other.page(at: page.urlString) == nil)
     }
 
+    @Test func gatheringKeepsTheRemoteParentWhileItsWindowIsClosed() async throws {
+        let cloud = FakeSyncCloud()
+        let studio = Mac(cloud)
+        let air = Mac(cloud)
+        defer { studio.finish(); air.finish() }
+        let space = try #require(air.store.spaces.first)
+        let source = air.addWindow()
+        let sleeping = air.addWindow()
+        let held = source.createFolder(named: "Held")
+        let newParent = sleeping.createFolder(named: "New parent")
+        let page = source.addPage("https://waiting-to-move.example.test/")
+        source.move(page, to: held)
+        let kept = air.browser.addPage("https://stays-put.example.test/")
+        try await air.host.share(space, in: air.profile)
+        try await air.sync()
+        try await studio.host.enable(.spaces, for: studio.profile)
+        try await studio.host.join(try #require(studio.host.availableSpaces(for: studio.profile).first), in: studio.profile)
+        let remote = try #require(studio.browser.page(at: page.urlString))
+        let remoteParent = try #require(studio.browser.folders.first { $0.name == newParent.name })
+        sleeping.markSessionClosed()
+        sleeping.closeAllTabs(saving: false)
+        studio.browser.move(remote, to: remoteParent)
+        try await studio.sync()
+        try await air.sync()
+        #expect(source.folder(containing: page) === held)
+        let entry = SpaceEntry(space: space, profile: air.profile)
+        let originalOrder = air.host.links[air.profile.id]?.slots[kept.id]?.last?.order
+        try air.host.gatherSharedRoots([.folder(held.id)], in: entry, from: source, into: air.browser)
+        #expect(air.browser.folder(containing: page) === held)
+        air.browser.scheduleSave()
+        try await air.sync()
+        try await studio.sync()
+        #expect(air.host.links[air.profile.id]?.slots[kept.id]?.last?.order == originalOrder)
+        #expect(studio.browser.folder(containing: remote) === remoteParent)
+    }
+
     @Test func aRemoteMoveKeepsTheFolderAndItsDeviceOnlyContentsTogether() async throws {
         let cloud = FakeSyncCloud()
         let studio = Mac(cloud)

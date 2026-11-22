@@ -92,6 +92,13 @@ extension CloudSharedSpaces {
             rows[item] = row
             ids[row.id] = id
         }
+        let parents = target.reconciledTree().parents()
+        for (item, row) in rows {
+            guard let parent = row.parentID, ids[parent].flatMap({ rows[.folder($0)] }) == nil, let id = ids[row.id] else { continue }
+            // A remote parent can be waiting in another window. Keep the visible placement until that window opens.
+            rows[item]?.parentID = parents[item].flatMap { link.slots[$0]?.cloudID }
+            rows[item]?.order = link.slots[id]?.last?.order ?? row.order
+        }
         // Order the existing rows without replaying metadata or publishing a change to the other Macs.
         target.applySharedRows([], spaces: [:], ids: ids, anchors: rows)
     }
@@ -103,6 +110,7 @@ extension CloudSharedSpaces {
         guard !recovering.isEmpty else { return }
         let reversedSpaces = Dictionary(uniqueKeysWithValues: link.spaces.map { ($0.value, $0.key) })
         let live = regularWindows(browser.context.profile)
+        var revisions: [UUID: Int64] = [:]
         for shared in Set(recovering.values.compactMap { $0.last?.spaceID }) {
             guard let space = reversedSpaces[shared], let saved = try? browser.savedSharedRowOwners(in: space) else { continue }
             for (id, slot) in recovering where slot.last?.spaceID == shared {
@@ -114,8 +122,12 @@ extension CloudSharedSpaces {
                     continue
                 }
                 link.slots[id]?.window = savedOwner
-                if savedOwner == slot.window {
-                    link.slots[id]?.editedAfterRevision = nil
+                if savedOwner == slot.window, let row = slot.last,
+                   slot.editedAfterRevision != nil || liveLocalEdit(row.recordID, in: profile) != nil {
+                    let revision = revisions[savedOwner] ?? BrowserModel.savedRevision(in: browser.database, windowID: savedOwner)
+                    revisions[savedOwner] = revision
+                    // The paired write already saved the destination's page. Keep the old edit below its revision.
+                    link.slots[id]?.editedAfterRevision = revision - 1
                 }
                 link.slots[id]?.movingFrom = nil
             }
