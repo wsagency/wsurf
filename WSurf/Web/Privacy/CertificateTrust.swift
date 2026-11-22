@@ -162,13 +162,15 @@ enum CertificateTrust {
             alert.messageText = String(localized: "This connection isn’t private")
             alert.informativeText = detail(host: address, trust: trust, fingerprint: fingerprint)
             let goBack = alert.addButton(withTitle: String(localized: "Go Back"))
-            goBack.keyEquivalent = "\r"
             alert.addButton(withTitle: String(localized: "Visit Website")).hasDestructiveAction = true
             alert.addButton(withTitle: String(localized: "Show Certificate"))
 
             let response: NSApplication.ModalResponse
             let monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
-                guard event.window === alert.window, event.keyCode == 53 else { return event }
+                guard event.window === alert.window,
+                      let key = event.charactersIgnoringModifiers,
+                      ["\u{1b}", "\r", "\u{03}"].contains(key)
+                else { return event }
                 goBack.performClick(nil)
                 return nil
             }

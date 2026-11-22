@@ -55,12 +55,12 @@ struct CertificateEvaluationTests {
         let controls = allViews(in: try #require(alert.contentView))
         #expect(controls.compactMap { ($0 as? NSTextField)?.stringValue }.contains { $0.contains("other-port.example:8443") })
         let buttons = controls.compactMap { $0 as? NSButton }
-        #expect(buttons.contains { $0.title == String(localized: "Go Back") && $0.keyEquivalent == "\r" })
+        let goBack = try #require(buttons.first { $0.title == String(localized: "Go Back") })
         #expect(buttons.contains { $0.title == String(localized: "Visit Website") })
         let inspect = try #require(buttons.first { $0.title == String(localized: "Show Certificate") })
         switch path {
         case .goBack:
-            window.endSheet(alert, returnCode: .alertFirstButtonReturn)
+            goBack.performClick(nil)
         case .inspect, .closeWhileInspecting:
             inspect.performClick(nil)
             try #require(await waitUntil { window.attachedSheet.map { $0 !== alert } ?? false })
@@ -68,7 +68,11 @@ struct CertificateEvaluationTests {
             if path == .closeWhileInspecting {
                 window.close()
             } else {
-                window.endSheet(preview, returnCode: .OK)
+                let previewControls = allViews(in: try #require(preview.contentView))
+                let dismiss = try #require(previewControls.compactMap { $0 as? NSButton }.first {
+                    $0.title == String(localized: "OK") || $0.title == String(localized: "Done")
+                })
+                dismiss.performClick(nil)
                 try #require(await waitUntil { window.attachedSheet.map { $0 !== preview } ?? false })
                 window.endSheet(try #require(window.attachedSheet), returnCode: .alertFirstButtonReturn)
             }
