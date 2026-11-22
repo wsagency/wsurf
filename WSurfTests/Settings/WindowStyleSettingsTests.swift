@@ -46,6 +46,13 @@ struct WindowStyleSettingsTests {
         #expect(resting("http://example.test:8080/a", full: true) == .address("example.test", scheme: "http://", rest: ":8080/a"))
     }
 
+    @Test func theCompactAddressShowsNonstandardPorts() {
+        #expect(resting("http://localhost:3000/", full: false) == .address("localhost", rest: ":3000"))
+        #expect(resting("https://www.example.com:443/", full: false) == .address("example.com"))
+        #expect(AskRestingContent.displayAddress(for: "https://bank.test@evil.test:8443/path") == "evil.test:8443")
+        #expect(AskRestingContent.displayAddress(for: "http://[::1]:8080/") == "[::1]:8080")
+    }
+
     @Test func signInDetailsInTheAddressNeverPoseAsTheWebsite() {
         let spoof = "https://bank.com@evil.com/login"
         #expect(resting(spoof, full: true) == .address("evil.com", scheme: "https://", rest: "/login"))

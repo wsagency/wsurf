@@ -1045,3 +1045,15 @@ Compared WSurf 0.1.29 (`b538d5f9`) with Linen's eleven commits after the previou
 | Assistant recovery (`764c2564`, `b636a02e`, `ea794439`) | Candidate for a separate change. WSurf already retries certain OpenAI failures and compacts long conversations. Linen adds provider HTTP error classification for Anthropic, Gemini and compatible servers, plus stored-checkpoint and structured-reply tests for AnyLanguageModel 1.3.0. WSurf presently pins 1.0.0. |
 | Logging dependency (`c47d02fd`) | Linen pins swift-log 1.17.2. WSurf pins 1.17.0. Review with the dependency update. |
 | Release notes (`1c066c48`) | Upstream documentation. The immediate Downloads preview mentioned here was recorded in the previous intake at `c0a66f69`. WSurf already has a recent-downloads preview and still opens it after 350 ms. |
+
+## Linen changes after 0.9.7 for WSurf 0.2.4
+
+Reviewed the nine commits from Linen's v0.9.7 tag through `f985c3a3`. [Upstream comparison](https://github.com/kavoye/linen-browser/compare/v0.9.7...f985c3a31b79f89a5e299957553447a50e0ddace)
+
+| Linen change | WSurf adaptation |
+| --- | --- |
+| Nonstandard port in the address bar (`b31269f9`) | The compact address uses the existing URL renderer for the verified host and a subdued port. The full address keeps its existing format. |
+| Certificate warning (`e9b8fb1b`) | WebKit and Chromium share the native warning and certificate preview. Continuing requires the existing opt-in and an explicit choice. Each exception binds to the host, port and leaf certificate for the current run. |
+| Shorter Settings captions and Acknowledgements (`91f25b60`, `69e7eb5f`) | Shorten matching WSurf Settings captions and search descriptions. The Acknowledgements row keeps its title and destination. |
+| Private favicons and profile-owned icons (`fbac63e7`, `ca532929`) | Private tabs use their context's favicon loader and session-only cache. WSurf already used the profile's loader for unloaded tabs. |
+| Private zoom and closed tabs (`7fbf88dd`, `ad919a1b`, `f985c3a3`) | Site zoom lives in the private context, and closed tabs can reopen in their original private window. The context clears zoom on teardown and the window clears its reopen list when it closes. |

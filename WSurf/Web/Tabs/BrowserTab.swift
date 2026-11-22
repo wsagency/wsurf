@@ -635,7 +635,7 @@ final class BrowserTab: Identifiable {
     }
 
     fileprivate func recordSiteZoom() {
-        guard !isPrivate, !zoomHost.isEmpty else { return }
+        guard !context.privateSessionEnded, !zoomHost.isEmpty, !isPrivate || context.profile.isPrivate else { return }
         context.pageZoom.set(page.pageZoom, for: zoomHost, defaultZoom: context.settings.pageZoom)
     }
 

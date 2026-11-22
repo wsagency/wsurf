@@ -158,6 +158,7 @@ final class BrowserProfileContext {
         actionPolicy.revokeAll()
         await contentBlocker.endPrivateSession()
         favicons.forgetSessionOnlyIcons()
+        pageZoom.forgetSessionLevels()
         await ChromiumRuntime.shared.releaseContext(contextID: contextID)
         await dataStore.removeData(ofTypes: WKWebsiteDataStore.allWebsiteDataTypes(), modifiedSince: .distantPast)
     }

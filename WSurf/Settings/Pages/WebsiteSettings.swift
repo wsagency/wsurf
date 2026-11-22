@@ -296,7 +296,7 @@ private struct SiteDetailPage: View {
 
     private var trackerCaption: AttributedString {
         SettingsIndex.caption(
-            "Block known trackers is off, so trackers are allowed everywhere.",
+            "Block known trackers is off for all websites.",
             naming: "Block known trackers",
             at: "privacy.trackers"
         )
@@ -304,7 +304,7 @@ private struct SiteDetailPage: View {
 
     private var keepAwakeCaption: AttributedString {
         SettingsIndex.caption(
-            "Sleep inactive tabs is off, so every website stays loaded.",
+            "Sleep inactive tabs is off.",
             naming: "Sleep inactive tabs",
             at: "general.sleepTabs"
         )
@@ -319,7 +319,7 @@ private struct SiteDetailPage: View {
 
     private var automaticPictureCaption: AttributedString {
         SettingsIndex.caption(
-            "Automatic Picture in Picture is off, so video stays in its tab everywhere.",
+            "Automatic Picture in Picture is off for all websites.",
             naming: "Automatic Picture in Picture",
             at: "general.automaticPiP"
         )
@@ -480,7 +480,7 @@ private struct SiteDetailPage: View {
         SettingsSection(title: "Media and windows", symbol: "play.rectangle") {
             DetailRow(
                 title: "Autoplay",
-                caption: "Choose whether this website can play video and audio on its own."
+                caption: "Choose whether this website can autoplay media."
             ) {
                 SettingsMenu(
                     options: AutoplayPolicy.allCases.map {
@@ -497,7 +497,7 @@ private struct SiteDetailPage: View {
 
             DetailRow(
                 title: "Pop-up windows",
-                caption: "Choose whether this website can open new windows on its own."
+                caption: "Choose whether this website can open new windows."
             ) {
                 SettingsMenu(
                     options: PopupPolicy.allCases.map {

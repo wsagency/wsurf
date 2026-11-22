@@ -61,7 +61,7 @@ struct AssistantMemoryPage: View {
 
         SettingsPageHeader(
             title: "Memory",
-            caption: "What the assistant remembers about you. It saves your answers and what you ask it to remember. It never saves page content, passwords, or payment details."
+            caption: "Review what the assistant remembers about you. It excludes page content, passwords and payment details."
         )
 
         if let facts {

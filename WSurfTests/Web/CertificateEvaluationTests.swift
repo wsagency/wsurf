@@ -28,6 +28,39 @@ struct CertificateEvaluationTests {
         }
     }
 
+    @Test func theWarningShowsThePortAndOffersToInspectTheCertificate() async throws {
+        let trust = try makeTrust(anchored: false)
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 560, height: 400),
+            styleMask: [.titled], backing: .buffered, defer: false
+        )
+        window.isReleasedWhenClosed = false
+        defer { window.close() }
+        let pending = Task {
+            await CertificateTrust.decideInvalid(host: "other-port.example", port: 8443, trust: trust, allowsExceptions: true, in: window)
+        }
+        let appeared = await waitUntil { window.attachedSheet != nil }
+        #expect(appeared)
+        if let sheet = window.attachedSheet {
+            let views = [sheet.contentView].compactMap { $0 }
+            func nested(_ view: NSView) -> [NSView] {
+                [view] + view.subviews.flatMap(nested)
+            }
+            let content = views.flatMap(nested)
+            #expect(content.compactMap { ($0 as? NSTextField)?.stringValue }.contains { $0.contains("other-port.example:8443") })
+            let choices = Set(content.compactMap { ($0 as? NSButton)?.title })
+            #expect(choices.isSuperset(of: [String(localized: "Go Back"), String(localized: "Visit Website"), String(localized: "Show Certificate")]))
+            window.endSheet(sheet, returnCode: .alertFirstButtonReturn)
+        } else {
+            CertificateTrust.forgetAll()
+            window.close()
+        }
+        guard case .cancel = await pending.value else {
+            Issue.record("Going back from the warning must cancel the certificate decision.")
+            return
+        }
+    }
+
     @Test(arguments: [true, false])
     func evaluationPreservesTrustResult(anchored: Bool) async throws {
         let trust = try makeTrust(anchored: anchored)

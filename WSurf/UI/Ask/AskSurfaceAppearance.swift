@@ -172,6 +172,12 @@ struct AskRestingLine: View {
     let security: PageSecurity
     @Environment(\.windowColorScheme) private var windowColorScheme
 
+    private func compactAddress(host: String, port: String) -> Text {
+        var suffix = AttributedString(port)
+        suffix.foregroundColor = urlInk?.opacity(0.6) ?? .secondary
+        return Text(AttributedString(host) + suffix)
+    }
+
     var body: some View {
         HStack(spacing: 5) {
             switch content {
@@ -251,7 +257,7 @@ struct AskRestingLine: View {
                 }
                 Button(action: model.focusForEditing) {
                     if scheme.isEmpty {
-                        Text(verbatim: host)
+                        compactAddress(host: host, port: rest)
                             .font(.system(size: placement.textSize))
                             .foregroundStyle(hostStyle)
                             .lineLimit(1)

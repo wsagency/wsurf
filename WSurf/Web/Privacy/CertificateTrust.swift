@@ -12,7 +12,17 @@ import Security
 
 @MainActor
 enum CertificateTrust {
-    private static var accepted: [String: String] = [:]
+    private struct Site: Hashable {
+        let host: String
+        let port: Int
+
+        var address: String {
+            let name = host.contains(":") && !host.hasPrefix("[") ? "[\(host)]" : host
+            return port == 443 ? name : "\(name):\(port)"
+        }
+    }
+
+    private static var accepted: [Site: String] = [:]
     private static var exceptionGeneration = 0
 
     enum Decision {
@@ -33,7 +43,7 @@ enum CertificateTrust {
         else { return .useDefaultHandling }
 
         let host = space.host.lowercased()
-        switch await decideInvalid(host: host, trust: trust, allowsExceptions: allowsExceptions, in: window) {
+        switch await decideInvalid(host: host, port: space.port, trust: trust, allowsExceptions: allowsExceptions, in: window) {
         case .proceed:
             return .proceed(URLCredential(trust: trust))
         case .cancel:
@@ -44,15 +54,16 @@ enum CertificateTrust {
     }
 
     /// Shared decision path for WebKit challenges and native CEF certificate
-    /// errors. The accepted map is deliberately keyed by host and leaf
+    /// errors. The accepted map is deliberately keyed by host, port and leaf
     /// fingerprint, never by a host alone.
     static func decideInvalid(
         host: String,
+        port: Int = 443,
         trust: SecTrust,
         allowsExceptions: Bool,
         in window: NSWindow?
     ) async -> Decision {
-        guard allowsExceptions else { return .useDefaultHandling }
+        guard allowsExceptions, !host.isEmpty else { return .useDefaultHandling }
         let generation = exceptionGeneration
         guard let trusted = try? await evaluate(trust),
               generation == exceptionGeneration
@@ -61,13 +72,13 @@ enum CertificateTrust {
             return .useDefaultHandling
         }
         guard let fingerprint = fingerprint(of: trust) else { return .useDefaultHandling }
-        let key = host.lowercased()
-        if accepted[key] == fingerprint {
+        let site = Site(host: host.lowercased(), port: port)
+        if accepted[site] == fingerprint {
             return .proceed(URLCredential(trust: trust))
         }
-        let confirmed = await ask(host: key, trust: trust, fingerprint: fingerprint, in: window)
+        let confirmed = await ask(site: site, trust: trust, fingerprint: fingerprint, generation: generation, in: window)
         guard confirmed, generation == exceptionGeneration else { return .cancel }
-        Self.accepted[key] = fingerprint
+        Self.accepted[site] = fingerprint
         Pipeline.log.notice("certificate exception accepted for a host this session")
         return .proceed(URLCredential(trust: trust))
     }
@@ -145,25 +156,32 @@ enum CertificateTrust {
     // MARK: - Asking
 
     private static func ask(
-        host: String,
+        site: Site,
         trust: SecTrust,
         fingerprint: String,
+        generation: Int,
         in window: NSWindow?
     ) async -> Bool {
-        let alert = NSAlert()
-        alert.alertStyle = .critical
-        alert.messageText = String(localized: "This website’s identity can’t be verified")
-        alert.informativeText = detail(host: host, trust: trust, fingerprint: fingerprint)
-        alert.addButton(withTitle: String(localized: "Cancel"))
-        alert.addButton(withTitle: String(localized: "Continue")).hasDestructiveAction = true
+        while generation == exceptionGeneration {
+            let alert = NSAlert()
+            alert.alertStyle = .critical
+            alert.messageText = String(localized: "This connection isn’t private")
+            alert.informativeText = detail(host: site.address, trust: trust, fingerprint: fingerprint)
+            alert.addButton(withTitle: String(localized: "Go Back"))
+            alert.addButton(withTitle: String(localized: "Visit Website")).hasDestructiveAction = true
+            alert.addButton(withTitle: String(localized: "Show Certificate"))
 
-        guard let window else {
-            return alert.runModal() == .alertSecondButtonReturn
+            let response: NSApplication.ModalResponse
+            if let window {
+                response = await alert.beginSheetModal(for: window)
+            } else {
+                response = alert.runModal()
+            }
+            guard response == .alertThirdButtonReturn else { return response == .alertSecondButtonReturn }
+            guard generation == exceptionGeneration else { return false }
+            CertificatePanel.inspect(trust, host: site.host)
         }
-        let response = await withCheckedContinuation { continuation in
-            alert.beginSheetModal(for: window) { continuation.resume(returning: $0) }
-        }
-        return response == .alertSecondButtonReturn
+        return false
     }
 
     private static func detail(host: String, trust: SecTrust, fingerprint: String) -> String {

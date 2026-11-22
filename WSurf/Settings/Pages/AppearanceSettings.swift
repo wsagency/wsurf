@@ -137,7 +137,7 @@ private struct AppearanceZoomSection: View {
 
     var body: some View {
         SettingsCard {
-            DetailRow(title: "Page zoom", caption: "Set the default zoom for websites. You can also zoom individual tabs.") {
+            DetailRow(title: "Page zoom", caption: "Set the default zoom for websites.") {
                 SettingsMenu(options: Self.sizes.map {
                     .init(value: $0, label: $0.formatted(.percent.precision(.fractionLength(0))))
                 }, selection: $settings.pageZoom)

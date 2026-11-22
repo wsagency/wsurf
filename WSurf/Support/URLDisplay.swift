@@ -28,6 +28,7 @@ nonisolated struct AddressText: Equatable {
     /// `https://`, `file://` or `about:`.
     let scheme: String
     let host: String
+    private let port: Int?
     /// Port, path, query and fragment, percent-encoded so no invisible or reordering character is drawn. The bar
     /// shortens this part, never the host.
     let rest: String
@@ -35,6 +36,7 @@ nonisolated struct AddressText: Equatable {
     init(scheme: String, host: String, rest: String) {
         self.scheme = scheme
         self.host = host
+        port = nil
         self.rest = rest
     }
 
@@ -46,7 +48,8 @@ nonisolated struct AddressText: Equatable {
         guard host.unicodeScalars.allSatisfy({ Self.hostCharacters.contains($0) }) else { return nil }
         self.scheme = scheme + (parts.host == nil ? ":" : "://")
         self.host = host
-        var rest = parts.port.map { ":\($0)" } ?? ""
+        port = parts.port
+        var rest = port.map { ":\($0)" } ?? ""
         rest += parts.percentEncodedPath
         if let query = parts.percentEncodedQuery {
             rest += "?" + query
@@ -65,6 +68,19 @@ nonisolated struct AddressText: Equatable {
     var name: String {
         guard !host.isEmpty else { return text }
         return host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
+    }
+
+    var compactPort: String {
+        let defaultPort: Int? = switch scheme.lowercased() {
+        case "http://", "ws://":
+            80
+        case "https://", "wss://":
+            443
+        default:
+            nil
+        }
+        guard !host.isEmpty, let port, port != defaultPort else { return "" }
+        return ":\(port)"
     }
 
     /// A punycode name, an IPv4 address or a bracketed IPv6 address. Anything else (a percent escape, a space) fails.

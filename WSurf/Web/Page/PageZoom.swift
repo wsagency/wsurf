@@ -58,6 +58,11 @@ final class PageZoomStore {
         }
     }
 
+    func forgetSessionLevels() {
+        guard !persists else { return }
+        levels.removeAll()
+    }
+
     func waitForPendingSave() async {
         await writes.waitForPendingSave()
     }

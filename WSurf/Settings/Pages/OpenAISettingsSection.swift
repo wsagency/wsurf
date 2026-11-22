@@ -139,7 +139,7 @@ private struct OpenAIPrivacySettings: View {
         Text("WSurf saves chat history on this Mac. Your messages are still sent to OpenAI to generate replies.")
             .font(.callout).foregroundStyle(.secondary)
         SettingsCard {
-            DetailRow(title: "Keep replies in my OpenAI account", caption: "Save an extra copy for retrieval through the OpenAI API. You don’t need this for WSurf’s chat history.") {
+            DetailRow(title: "Keep replies in my OpenAI account", caption: "Keep a copy for retrieval through the OpenAI API.") {
                 SettingsToggle($options.store)
             }
             .settingsAnchor("openai.privacy")

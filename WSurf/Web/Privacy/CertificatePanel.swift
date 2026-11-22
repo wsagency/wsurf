@@ -34,10 +34,8 @@ enum CertificatePanel {
         guard let trust = trust(of: tab),
               let window = sheetWindow(for: window ?? tab.liveView?.window)
         else { return }
-        guard let panel = SFCertificatePanel.shared() else { return }
-        if let host = URL(string: tab.urlString)?.host() {
-            panel.setPolicies(SecPolicyCreateSSL(true, host as CFString))
-        }
+        let host = URL(string: tab.urlString)?.host()
+        guard let panel = configuredPanel(host: host) else { return }
         panel.beginSheet(
             for: window,
             modalDelegate: nil,
@@ -46,6 +44,16 @@ enum CertificatePanel {
             trust: trust,
             showGroup: true
         )
+    }
+
+    static func inspect(_ trust: SecTrust, host: String) {
+        configuredPanel(host: host)?.runModal(for: trust, showGroup: true)
+    }
+
+    private static func configuredPanel(host: String?) -> SFCertificatePanel? {
+        guard let panel = SFCertificatePanel.shared() else { return nil }
+        panel.setPolicies(SecPolicyCreateSSL(true, host as CFString?))
+        return panel
     }
 }
 

@@ -335,7 +335,7 @@ extension BrowserModel {
             AutofillSuggestions.shared.dismiss(in: tab.page)
         }
         tab.autofillSave.clear()
-        if recordForReopening, !tab.isPrivate {
+        if recordForReopening, !tab.isPrivate || (opensPrivately && !context.privateSessionEnded) {
             let record = ClosedTab(tab, in: self)
             closedTabs.append(record)
             if closedTabs.count > Self.closedTabMemory {

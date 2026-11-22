@@ -148,7 +148,7 @@ enum AskRestingContent: Equatable {
     case notice(String)
     case status(String)
     case placeholder(String)
-    /// The website name, or with the full address on also its scheme and the rest (port, path, query, fragment).
+    /// The website name and port, or with the full address on also its scheme, path, query and fragment.
     case address(String, scheme: String = "", rest: String = "")
 
     var isCentred: Bool {
@@ -218,12 +218,12 @@ enum AskRestingContent: Equatable {
         guard mirrorsPageURL, !isFocused else { return nil }
         // The tab's address is always a URL's absoluteString; one that does not parse back shows the placeholder.
         guard let address = AddressText(URL(string: currentURL)) else { return .placeholder(placeholder) }
-        return showsFullAddress ? .address(address.host, scheme: address.scheme, rest: address.rest) : .address(address.name)
+        return showsFullAddress ? .address(address.host, scheme: address.scheme, rest: address.rest) : .address(address.name, rest: address.compactPort)
     }
 
-    /// The website name without “www.”, as `AddressText` shows it; nil for an address that does not parse.
+    /// The compact address, including a nonstandard port.
     static func displayAddress(for value: String) -> String? {
-        AddressText(URL(string: value))?.name
+        AddressText(URL(string: value)).map { $0.name + $0.compactPort }
     }
 }
 

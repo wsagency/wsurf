@@ -5,6 +5,13 @@ This file preserves release notes inherited from the upstream
 describe upstream Linen releases, not releases published by WSurf. New WSurf
 release notes will be added above this provenance record.
 
+## 0.2.4 (build 36) — 2026-11-23
+
+- The compact address bar shows nonstandard ports.
+- Private windows show site icons, remember per-site zoom and can reopen closed tabs during the session.
+- Certificate warnings offer a certificate preview before you decide whether to continue.
+- Settings descriptions are shorter, and About shows a simpler Acknowledgements row.
+
 ## 0.2.3 (build 35) — 2026-11-22
 
 - Shared profiles are marked in Profiles and in the profile switcher.
