@@ -116,6 +116,7 @@ struct SharedSpacesSettingsView: View {
                 SettingsButton(title: "Open Space") { coordinator.openSharedSpace(entry) }
                 if Set(host.tabWindows(in: entry, includingPinned: false).values).count > 1 {
                     SettingsButton(title: "Gather Tabs in One Window") { change.run { try coordinator.gatherSharedTabs(in: entry) } }
+                        .disabled(!coordinator.canGatherSharedTabs(in: entry))
                 }
                 SettingsButton(title: "Space Settings…") { coordinator.showSpaceEditor(for: entry) }
                 if canStop {

@@ -42,22 +42,44 @@ extension CloudSharedSpaces {
             throw SharedCatalogError.storage
         }
 
-        let complete = target.adoptSharedRoots(roots, from: source)
-        for id in moving {
-            if target.tab(id: id) == nil && target.folder(id: id) == nil {
-                reserved.slots[id] = original.slots[id]
-            } else if let slot = reserved.slots[id], slot.editedAfterRevision != nil {
-                reserved.slots[id]?.editedAfterRevision = target.sessionRevision
-            }
+        let layouts = [source, target].map { model in
+            (model: model, tree: model.reconciledTree(), active: model.activeTabID, splits: model.splits, recency: model.recentlyActive)
+        }
+        let tabIDs = Set(members.compactMap { item -> UUID? in
+            guard case .tab(let id) = item else { return nil }
+            return id
+        })
+        let splits = source.splits.splits.filter { $0.tabs.allSatisfy(tabIDs.contains) }
+        let moved = target.adoptSharedRoots(roots, from: source)
+        target.splits = TabSplits(target.splits.splits.filter { !splits.contains($0) } + splits)
+        for id in moving where reserved.slots[id]?.editedAfterRevision != nil {
+            reserved.slots[id]?.editedAfterRevision = target.sessionRevision
         }
         links[profile] = reserved
+        let adoptedTree = target.reconciledTree()
         setGatheredOrder(in: target, space: space, link: reserved)
-        guard target.saveTransferredSession(from: source) else { throw SharedCatalogError.storage }
+        guard moved.count == roots.count, target.saveTransferredSession(from: source) else {
+            // A single-window save after a failed move must still contain all its original rows.
+            target.storedTree = adoptedTree
+            _ = source.adoptSharedRoots(moved, from: target)
+            links[profile] = original
+            persistLinks()
+            for layout in layouts {
+                let model = layout.model
+                model.storedTree = layout.tree
+                model.splits = layout.splits
+                model.activeTabID = layout.active
+                model.recentlyActive = layout.recency
+                model.syncTabOrder()
+                model.scheduleSave()
+            }
+            throw SharedCatalogError.storage
+        }
         for id in moving {
             reserved.slots[id]?.movingFrom = nil
         }
         links[profile] = reserved
-        guard persistLinks(), complete else { throw SharedCatalogError.storage }
+        guard persistLinks() else { throw SharedCatalogError.storage }
     }
 
     private func setGatheredOrder(in target: BrowserModel, space: UUID, link: SharedProfileLinks) {
@@ -92,6 +114,9 @@ extension CloudSharedSpaces {
                     continue
                 }
                 link.slots[id]?.window = savedOwner
+                if savedOwner == slot.window {
+                    link.slots[id]?.editedAfterRevision = nil
+                }
                 link.slots[id]?.movingFrom = nil
             }
         }

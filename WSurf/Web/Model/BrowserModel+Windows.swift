@@ -16,11 +16,11 @@ extension BrowserModel {
         return true
     }
 
-    private func adoptTabInMemory(_ tab: BrowserTab, from source: BrowserModel, activate: Bool) -> Bool {
+    private func adoptTabInMemory(_ tab: BrowserTab, from source: BrowserModel, activate: Bool, preservingSpace: Bool = false) -> Bool {
         guard canReceive(from: source), canReceive(tab, from: source) else { return false }
         source.onTabWillTransferOut?(tab)
         guard canReceive(from: source), canReceive(tab, from: source), let oldIndex = source.tabs.firstIndex(where: { $0 === tab }) else { return false }
-        transfer(tab, from: source, oldIndex: oldIndex)
+        transfer(tab, from: source, oldIndex: oldIndex, preservingSpace: preservingSpace)
         source.onTabTransferredOut?(tab, oldIndex)
         onTabTransferredIn?(tab, source, oldIndex)
         if activate {
@@ -39,23 +39,19 @@ extension BrowserModel {
         source.tabsByID[tab.id] === tab && tab.context === context && !tabs.contains(where: { $0.id == tab.id }) && !tab.isClosed
     }
 
-    func adoptSharedRoots(_ roots: [SidebarItem], from source: BrowserModel) -> Bool {
-        guard canReceive(from: source) else { return false }
-        var complete = true
-        for item in roots.reversed() {
+    func adoptSharedRoots(_ roots: [SidebarItem], from source: BrowserModel) -> [SidebarItem] {
+        guard canReceive(from: source) else { return [] }
+        return roots.reversed().filter { item in
             switch item {
             case .tab(let id):
-                let moved = source.tab(id: id).map { adoptTabInMemory($0, from: source, activate: false) } ?? false
-                complete = moved && complete
+                source.tab(id: id).map { adoptTabInMemory($0, from: source, activate: false, preservingSpace: true) } ?? false
             case .folder(let id):
-                let moved = source.folder(id: id).flatMap { adoptSharedFolder($0, from: source, saving: false) }
-                complete = moved != nil && complete
+                source.folder(id: id).flatMap { adoptSharedFolder($0, from: source, saving: false) } != nil
             }
         }
-        return complete
     }
 
-    private func transfer(_ tab: BrowserTab, from source: BrowserModel, oldIndex: Int) {
+    private func transfer(_ tab: BrowserTab, from source: BrowserModel, oldIndex: Int, preservingSpace: Bool) {
         // The page leaves as an ordinary tab. Its pin stays in this window and every other one, so the source
         // gets a new unloaded page for it below.
         let wasPin = tab.pinID != nil
@@ -122,8 +118,9 @@ extension BrowserModel {
             page.removeFromSuperview()
         }
         bindCallbacks(to: tab)
-        // The page joins the space this window shows, whatever space it had in the other window.
-        tab.spaceID = nil
+        if !preservingSpace {
+            tab.spaceID = nil
+        }
         insert(tab, after: nil)
         lastVisitID[tab.id] = visitID
         writtenStateGeneration[tab.id] = nil
@@ -158,7 +155,7 @@ extension BrowserModel {
             source.activeTabID = source.currentSpaceTabs.first { !pageIDs.contains($0.id) && $0.microTabID == nil }?.id
         }
         for (index, page) in moving.reversed() {
-            transfer(page, from: source, oldIndex: index)
+            transfer(page, from: source, oldIndex: index, preservingSpace: !saving)
         }
         source.sidebarUndoManager.removeAllActions()
         sidebarUndoManager.removeAllActions()

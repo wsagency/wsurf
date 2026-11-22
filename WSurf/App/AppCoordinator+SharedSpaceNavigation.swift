@@ -16,11 +16,17 @@ extension AppCoordinator {
     }
 
     /// Consolidate the selected Space without closing tabs or switching any other window's profile.
+    func canGatherSharedTabs(in entry: SpaceEntry) -> Bool {
+        guard let application, !application.isLaunching, !application.isTerminating, application.ownsSession,
+              let host = browser.sharedSpaceService, host.catalog.ready.contains(.spaces), host.isEnabled(.spaces, for: entry.profile) else { return false }
+        let owners = Set(host.tabWindows(in: entry, includingPinned: false).values)
+        let available = Set(regularSpaceWindows.filter { $0.context.profile.id == entry.profile.id }.map(\.windowID))
+        return owners.count > 1 && application.windows.allSatisfy { !owners.contains($0.windowID) || available.contains($0.windowID) }
+    }
+
     func gatherSharedTabs(in entry: SpaceEntry) throws {
-        guard !isClosed, !isSwitchingProfile, let application, application.ownsSession,
-              !application.isLaunching, !application.isTerminating,
-              let host = browser.sharedSpaceService, host.isEnabled(.spaces, for: entry.profile),
-              host.catalog.ready.contains(.spaces) else { throw SharedCatalogError.unavailable }
+        guard !isClosed, !isSwitchingProfile, canGatherSharedTabs(in: entry),
+              let application, let host = browser.sharedSpaceService else { throw SharedCatalogError.unavailable }
         let owners = host.tabWindows(in: entry, includingPinned: false)
         let counts = tabCounts(owners)
         let available = regularSpaceWindows.filter { $0.context.profile.id == entry.profile.id }
@@ -37,6 +43,7 @@ extension AppCoordinator {
         let target = live[destinationID] ?? application.newWindow(profile: entry.profile, windowID: destinationID, restoring: true, show: false)
         showSharedSpace(entry, in: target, owners: owners)
         var restoredSources: [AppCoordinator] = []
+        defer { restoredSources.forEach { $0.closeWindow() } }
         var transfers: [(BrowserModel, [SidebarItem])] = []
         for id in counts.keys.sorted(by: { $0.uuidString < $1.uuidString }) where id != destinationID {
             let window = live[id] ?? application.newWindow(profile: entry.profile, windowID: id, restoring: true, show: false)
@@ -59,7 +66,6 @@ extension AppCoordinator {
         guard owners.keys.allSatisfy({ updated[$0] == destinationID && target.browser.tab(id: $0)?.spaceID == entry.id }) else {
             throw SharedCatalogError.storage
         }
-        restoredSources.forEach { $0.closeWindow() }
     }
 
     /// A profile switch can recover an older shared window while leaving windows in other profiles alone.
@@ -70,16 +76,23 @@ extension AppCoordinator {
               let host = browser.sharedSpaceService, host.isEnabled(.spaces, for: profile),
               let store = host.spaces(profile) else { return false }
         let visible = regularSpaceWindows.filter { $0.context.profile.id == profile.id }
-        let candidates = store.spaces.compactMap { space -> (entry: SpaceEntry, saved: BrowserModel.SavedBrowserWindow, count: Int)? in
+        let candidates = store.spaces.compactMap { space -> (entry: SpaceEntry, windowID: UUID, priority: (Int, Date))? in
             let entry = SpaceEntry(space: space, profile: profile)
             let owners = host.tabWindows(in: entry)
             let counts = tabCounts(owners)
-            let existing = ([self] + visible).map { counts[$0.windowID, default: 0] }.max() ?? 0
-            guard let saved = preferredSavedSharedWindow(of: profile, counts: counts, moreThan: existing, in: application) else { return nil }
-            return (entry, saved, counts[saved.id, default: 0])
+            let callerCount = context.profile.id == profile.id ? counts[windowID, default: 0] : 0
+            let best = visible.filter { $0 !== self && $0.page(in: entry, owners: owners) != nil }
+                .max { counts[$0.windowID, default: 0] < counts[$1.windowID, default: 0] }
+            let liveCount = best.map { counts[$0.windowID, default: 0] } ?? 0
+            if let saved = preferredSavedSharedWindow(of: profile, counts: counts, moreThan: max(callerCount, liveCount), in: application) {
+                return (entry, saved.id, (counts[saved.id, default: 0], saved.lastActiveAt))
+            }
+            guard let best, liveCount > callerCount else { return nil }
+            return (entry, best.windowID, (liveCount, best.browser.activeTab?.lastActiveAt ?? .distantPast))
         }
-        guard let choice = candidates.max(by: { ($0.count, $0.saved.lastActiveAt) < ($1.count, $1.saved.lastActiveAt) }) else { return false }
-        let window = application.newWindow(profile: profile, windowID: choice.saved.id, restoring: true, show: false)
+        guard let choice = candidates.max(by: { $0.priority < $1.priority }) else { return false }
+        let window = visible.first(where: { $0.windowID == choice.windowID })
+            ?? application.newWindow(profile: profile, windowID: choice.windowID, restoring: true, show: false)
         showSharedSpace(choice.entry, in: window, owners: host.tabWindows(in: choice.entry))
         return true
     }
