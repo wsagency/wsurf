@@ -129,6 +129,7 @@ final class PasswordGeneratorFlow {
         case currentPasswordField
         /// No vault to save in, or one that Settings has to set up or repair first.
         case noVault
+        case selectedVaultUnavailable
         /// The vault refused the new login: nothing was filled.
         case notSaved
         /// The login was saved for the website named, but the page changed before the fill, so nothing was filled.
@@ -189,7 +190,7 @@ final class PasswordGeneratorFlow {
     func run(
         _ target: CredentialPicker.Target, in page: BrowserPage, window: NSWindow, allowed: @escaping @MainActor @Sendable () -> Bool
     ) async -> Outcome {
-        let profile = target.context.profile
+        let scope = target.vaultScope
         let isCurrent = CredentialPicker.shared.currentCheck(for: target, in: page, window: window, allowed: allowed)
         guard isCurrent() else { return .nothing }
         let field = await Self.field(of: target, in: page)
@@ -209,14 +210,13 @@ final class PasswordGeneratorFlow {
             }
         }
         // No vault yet, or one Settings has to set up first: a password that cannot be saved is not offered.
-        guard let store = try? CredentialManager.store(for: profile), await store.openState().isProvisional,
-              (try? await store.listing())?.isEmpty == false else {
-            return isCurrent() ? .failed(.noVault) : .nothing
+        guard (try? await scope.listing())?.isEmpty == false else {
+            return isCurrent() ? .failed(scope.isRestricted ? .selectedVaultUnavailable : .noVault) : .nothing
         }
-        var unlocking = await AutofillSuggestions.allVaultsLocked(of: profile)
+        var unlocking = await AutofillSuggestions.allVaultsLocked(in: scope)
         while true {
             if unlocking {
-                guard await AutofillSuggestions.shared.unlockVault(of: profile, in: window, while: isCurrent), isCurrent() else {
+                guard await AutofillSuggestions.shared.unlockVault(in: scope, window: window, while: isCurrent), isCurrent() else {
                     return .nothing
                 }
             }
@@ -247,17 +247,18 @@ final class PasswordGeneratorFlow {
         return Field(answer)
     }
 
-    /// Every unlocked vault of the profile, in ordinal order, each read as candidates under its own unlock (no secret), and the first
+    /// The unlocked vaults in the target's scope, in ordinal order, read as candidates under their own unlocks, and the first
     /// password. A locked vault is never read. Nil when no vault is unlocked.
     private func makeProposal(for target: CredentialPicker.Target, field: Field) async -> Proposal? {
-        let profile = target.context.profile
-        guard !profile.isPrivate, let store = try? CredentialManager.store(for: profile), let host = WebsiteLookalike.displayHost(of: target.origin),
-              let listing = try? await store.listing() else { return nil }
-        let unlocked = CredentialManager.unlockedManagers(for: profile)
+        let scope = target.vaultScope
+        guard !target.context.profile.isPrivate, let host = WebsiteLookalike.displayHost(of: target.origin),
+              let listing = try? await scope.listing() else { return nil }
+        let unlocked = scope.unlockedManagers
         var vaults: [Vault] = []
         var holders: [UUID] = []
         var hasLockedVault = false
         for vault in listing.sorted(by: { $0.ordinal < $1.ordinal }) {
+            guard target.page?.vaultScope == scope else { return nil }
             guard let manager = unlocked.first(where: { $0.vaultID == vault.vaultID }), let epoch = manager.authorizationEpoch,
                   let candidates = try? await manager.autofillCandidates(), manager.authorizationEpoch == epoch else {
                 hasLockedVault = true
@@ -268,7 +269,7 @@ final class PasswordGeneratorFlow {
                 holders.append(vault.vaultID)
             }
         }
-        let defaultID = await store.defaultVaultID()
+        let defaultID = await scope.defaultVaultID()
         guard let vaultID = Self.preferredVault(vaults.map(\.id), holders: holders, defaultID: defaultID) else { return nil }
         let pageOrigin = target.page?.url.flatMap(CredentialAccountSelection.origin(for:))
         let pageHost = pageOrigin.flatMap { $0 == target.origin ? nil : WebsiteLookalike.displayHost(of: $0) }
@@ -334,7 +335,7 @@ final class PasswordGeneratorFlow {
         guard let field, field.kind == .new else { return .failed(.noField) }
         guard field.isSafe else { return .failed(.unsafeForm) }
         guard field == shown else { return .failed(.fieldChanged) }
-        guard let manager = CredentialPicker.manager(of: context, vaultID: vault.id, epoch: vault.epoch),
+        guard let manager = CredentialPicker.manager(in: target.vaultScope, vaultID: vault.id, epoch: vault.epoch),
               let host = WebsiteLookalike.displayHost(of: target.origin) else { return .failed(.noField) }
         let username = field.username.isEmpty ? Self.rememberedUsername(in: page, origin: target.origin, documentID: target.documentID) : field.username
         let login = CredentialAccount(
@@ -358,7 +359,7 @@ final class PasswordGeneratorFlow {
         let vaultID = vault.id, epoch = vault.epoch
         let token = target.token, url = target.frameURL.absoluteString, documentID = target.documentID
         let prepare: @MainActor @Sendable () throws -> [String: Any] = {
-            guard isCurrent(), CredentialPicker.manager(of: context, vaultID: vaultID, epoch: epoch) === manager else {
+            guard isCurrent(), CredentialPicker.manager(in: target.vaultScope, vaultID: vaultID, epoch: epoch) === manager else {
                 throw ContactAutofillError.changedPage
             }
             return ["token": token, "url": url, "documentID": documentID, "password": password.revealed]
@@ -416,6 +417,9 @@ final class PasswordGeneratorFlow {
         case .notSaved:
             alert.messageText = String(localized: "Couldn’t Save the Password")
             alert.informativeText = String(localized: "The vault didn’t save the new password, so nothing was filled. Try again.")
+        case .selectedVaultUnavailable:
+            alert.messageText = String(localized: "Couldn’t Generate a Password")
+            alert.informativeText = String(localized: "Credentials can’t be opened")
         case .noVault:
             alert.messageText = String(localized: "Couldn’t Generate a Password")
             alert.informativeText = String(localized: "WSurf saves a generated password in a vault. Set up a vault in Settings first.")

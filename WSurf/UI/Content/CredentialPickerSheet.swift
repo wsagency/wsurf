@@ -13,6 +13,7 @@ enum CredentialPickerSheet {
     /// sheet and its window.
     private struct Entry {
         let profileID: UUID
+        let vaultOwnerID: UUID?
         weak var page: BrowserPage?
         let sheet: NSWindow
         let window: NSWindow
@@ -23,7 +24,7 @@ enum CredentialPickerSheet {
     /// Ends the sheets of `profileID` (all with nil) as a Cancel: its vault access ended or the autofill policy changed, so the list
     /// of titles, or a generated password, does not stay on screen.
     static func dismiss(profileID: UUID? = nil) {
-        for entry in open where profileID == nil || entry.profileID == profileID {
+        for entry in open where profileID == nil || entry.profileID == profileID || entry.vaultOwnerID == profileID {
             entry.window.endSheet(entry.sheet)
         }
     }
@@ -74,7 +75,7 @@ enum CredentialPickerSheet {
             once.closing = NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: window, queue: .main) { _ in
                 MainActor.assumeIsolated { finish(nil) }
             }
-            open.append(Entry(profileID: profileID, page: page, sheet: sheet, window: window))
+            open.append(Entry(profileID: profileID, vaultOwnerID: page?.vaultScope.owner?.id, page: page, sheet: sheet, window: window))
             window.beginSheet(sheet) { _ in finish(nil) }
         }
     }

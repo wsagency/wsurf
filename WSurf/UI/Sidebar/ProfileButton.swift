@@ -63,6 +63,13 @@ struct ProfileSwitcher: View {
             }
             .disabled(coordinator.isSwitchingProfile)
 
+            if let space = coordinator.currentSpace {
+                ProfileActionRow(title: "Space Settings…", symbol: "gearshape") {
+                    dismiss()
+                    coordinator.showSpaceEditor(for: SpaceEntry(space: space, profile: coordinator.context.profile))
+                }
+                .disabled(coordinator.isSwitchingProfile)
+            }
             if coordinator.spaceStore != nil {
                 ProfileActionRow(title: "New Space…", symbol: "rectangle.stack.badge.plus") {
                     dismiss()

@@ -955,3 +955,38 @@ struct CredentialPickerTests {
         }
     }
 }
+
+extension CredentialPickerTests {
+    @Test(.boundedWebViews) func aSpacePicksAndFillsOnlyFromItsSelectedVault() async throws {
+        try await withFlow { flow, local in
+            try await VaultManagerFixture.save([account("local")], in: local[0])
+            try await VaultManagerFixture.with(vaults: [.unlocked, .unlocked]) { owner, _, vaults in
+                let login = account("shared", password: "selected-password", origins: [Self.other])
+                try await VaultManagerFixture.save([account("other")], in: vaults[0])
+                try await VaultManagerFixture.save([login], in: vaults[1])
+                flow.page.vaultScopeProvider = { .selected(owner: owner, vaultID: vaults[1].vaultID) }
+                try await flow.load(Self.login)
+                let target = try await flow.rightClick("au")
+                let filled = await flow.pick(target) { rows in
+                    #expect(rows.map(\.accountID) == [login.id])
+                    return rows.first.map { .row($0.id) }
+                }
+                #expect(filled == .filled(2))
+                #expect(try await flow.values(["au", "ap"]) == ["shared", "selected-password"])
+                let website = try #require(flow.session.websiteOffer)
+                #expect(website.isManual && website.accountID == login.id)
+                await flow.session.addWebsite(website)
+                #expect(try await vaults[1].manager.snapshot().accounts.first?.origins.contains(Self.site) == true)
+
+                let otherField = try await flow.rightClick("bu")
+                let profile = flow.profile
+                let revoked = await flow.pick(otherField) { rows in
+                    flow.page.vaultScopeProvider = { .profile(profile) }
+                    return rows.first.map { .row($0.id) }
+                }
+                #expect(revoked == .nothing)
+                #expect(try await flow.values(["bu", "bp"]) == ["", ""])
+            }
+        }
+    }
+}

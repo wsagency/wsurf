@@ -6,6 +6,7 @@
 import Foundation
 import GRDB
 import Testing
+import WSurfCore
 
 @testable import WSurf
 
@@ -46,6 +47,79 @@ struct SpaceStoreTests {
         #expect(recipes.name == "Recipes")
         #expect(SpaceStore(profile: work, file: file).spaces.map(\.id) == store.spaces.map(\.id))
         #expect(store.spaces.last == travel)
+    }
+
+    @Test func aJoinedSpaceKeepsItsLocalVaultWhileTheSharedRecordOmitsIt() throws {
+        let file = spacesFile()
+        defer { try? FileManager.default.removeItem(at: file) }
+        let local = UUID(), other = UUID(), owner = UUID(), vault = UUID()
+        let saved: [[String: Any]] = [
+            [
+                "id": local.uuidString, "name": "Reading", "symbol": "book", "color": "blue",
+                "vault": ["profileID": owner.uuidString, "vaultID": vault.uuidString],
+            ],
+            ["id": other.uuidString, "name": "Legacy", "symbol": "house", "color": "gray"],
+        ]
+        try JSONSerialization.data(withJSONObject: saved).write(to: file)
+        let store = SpaceStore(profile: work, file: file)
+        try store.ensureJoinedSpace(id: local, name: "Reading on Mac", symbol: "book.fill", color: .red)
+
+        let restored = SpaceStore(profile: work, file: file)
+        let reading = try #require(restored.space(id: local))
+        let json = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(reading)) as? [String: Any])
+        let binding = try #require(json["vault"] as? [String: String])
+        #expect(binding == ["profileID": owner.uuidString, "vaultID": vault.uuidString])
+        #expect(reading.name == "Reading on Mac")
+        let legacy = try #require(restored.space(id: other))
+        let legacyJSON = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(legacy)) as? [String: Any])
+        #expect(legacyJSON["vault"] == nil)
+
+        let catalogFile = spacesFile()
+        defer { try? FileManager.default.removeItem(at: catalogFile) }
+        let host = CloudSharedSpaces(stateFile: catalogFile, profiles: [work], windows: { [] })
+        let item = host.spaceItem(reading, id: UUID(), profile: UUID())
+        let shared = String(decoding: try #require(item.record(fields: nil)).payload, as: UTF8.self)
+        #expect(!shared.contains(owner.uuidString))
+        #expect(!shared.contains(vault.uuidString))
+    }
+
+    @Test func aFailedVaultEditKeepsThePreviousBindingAndCanBeRetried() throws {
+        let file = spacesFile(), backup = spacesFile()
+        defer { try? FileManager.default.removeItem(at: file); try? FileManager.default.removeItem(at: backup) }
+        let store = SpaceStore(profile: work, file: file)
+        let reference = SpaceVaultReference(profileID: UUID(), vaultID: UUID())
+        let choice = SpaceEditor.Choice(name: "Reading", symbol: "book", vault: reference)
+        let original = try store.saveEditorChoice(choice)
+        let other = try #require(store.spaces.first)
+        let reset = SpaceEditor.Choice(name: "Renamed", symbol: "star")
+        try FileManager.default.moveItem(at: file, to: backup)
+        try FileManager.default.createDirectory(at: file, withIntermediateDirectories: false)
+        #expect(throws: (any Error).self) { try store.saveEditorChoice(reset, editing: original) }
+        #expect(store.space(id: original.id) == original)
+
+        try FileManager.default.removeItem(at: file)
+        try FileManager.default.moveItem(at: backup, to: file)
+        let edited = try store.saveEditorChoice(reset, editing: original)
+        #expect(edited.id == original.id && edited.vault == nil)
+        #expect(throws: (any Error).self) { try store.saveEditorChoice(choice, editing: original) }
+        #expect(SpaceStore(profile: work, file: file).spaces == [other, edited])
+    }
+
+    @Test func aNewProfilesBoundSpaceIsReadyBeforePublicationAndRollsBackOnFailure() throws {
+        let first = Space(id: UUID(), name: "Fresh", symbol: "book", color: .blue, vault: .init(profileID: UUID(), vaultID: UUID()))
+        defer {
+            SpaceStore.forget(work.id)
+            try? FileManager.default.removeItem(at: work.supportDirectory)
+        }
+        #expect(throws: CocoaError.self) {
+            try SpaceStore.createFirst(first, for: work) {
+                #expect(SpaceStore(profile: work, file: work.spacesFile).spaces == [first])
+                throw CocoaError(.fileWriteNoPermission)
+            }
+        }
+        #expect(!FileManager.default.fileExists(atPath: work.supportDirectory.path))
+        try SpaceStore.createFirst(first, for: work) {}
+        #expect(SpaceStore.shared(for: work)?.spaces == [first])
     }
 
     @Test func aNewSpaceWearsAColorNoOtherSpaceWears() {

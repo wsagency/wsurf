@@ -8,7 +8,13 @@ extension CredentialSettings {
     /// Switching vaults only rebinds the page: a locked vault stays locked, shows no content and offers its own Unlock.
     @ViewBuilder
     var vaultsSection: some View {
-        if let first = model.vaults.first {
+        if model.spaceVaultID != nil, let vault = model.vaults.first {
+            SettingsSection(title: "Credential vault", symbol: "lock.rectangle.stack") {
+                DetailRow(verbatimTitle: vault.label, verbatimCaption: ProfileSummary.displayName(for: model.profile)) { EmptyView() }
+                CloudVaultRow(model: model, run: run)
+                CredentialVaultMergeRow(model: model) { showsVaultMerge = true }
+            }
+        } else if let first = model.vaults.first {
             SettingsSection(
                 title: "Vaults",
                 symbol: "lock.rectangle.stack",

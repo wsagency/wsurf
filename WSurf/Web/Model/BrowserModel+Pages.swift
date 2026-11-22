@@ -327,6 +327,17 @@ extension BrowserModel {
 
     // MARK: - The browser's own pages
 
+    /// Settings reads the displayed Space's vault choice. Opening it must keep the current Space selected.
+    var settingsTabInCurrentSpace: BrowserTab? {
+        func belongs(_ tab: BrowserTab) -> Bool {
+            tab.internalPage == .settings && (tab.spaceID == currentSpaceID || tab.isPinnedForProfile)
+        }
+        if let activeTab, belongs(activeTab) {
+            return activeTab
+        }
+        return tabs.first(where: belongs)
+    }
+
     @discardableResult
     func showSettings() -> BrowserTab {
         show(.settings)
@@ -351,7 +362,8 @@ extension BrowserModel {
     private func show(_ page: BrowserTab.InternalPage) -> BrowserTab {
         sidebarSelection.dropMarks()
 
-        if let existing = tabs.first(where: { $0.internalPage == page }) {
+        let opened = page == .settings ? settingsTabInCurrentSpace : tabs.first { $0.internalPage == page }
+        if let existing = opened {
             activeTabID = existing.id
             return existing
         }

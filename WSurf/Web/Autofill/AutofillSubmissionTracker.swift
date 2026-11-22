@@ -42,6 +42,7 @@ final class AutofillSubmissionTracker {
     private struct Attempt {
         let id: UUID
         let context: BrowserProfileContext
+        let vaultScope: BrowserVaultScope
         let documentID: String
         let formID: String
         let origin: String
@@ -124,7 +125,7 @@ final class AutofillSubmissionTracker {
         id: UUID, documentID: String, formID: String, origin: String, loginURL: URL? = nil,
         candidates: [AutofillSaveCandidate], frame: BrowserFrame, source: String
     ) {
-        guard let context = session?.context, !candidates.isEmpty,
+        guard let context = session?.context, let scope = session?.page?.vaultScope, !candidates.isEmpty,
               ["submit", "interaction", "automatic", "pagehide"].contains(source) else { return }
         if source == "pagehide" { guard let date = formDepartures[origin], Date.now.timeIntervalSince(date) < 5 else { return } }
         attempts = attempts.filter { $0.value.documentID != documentID || $0.value.formID != formID }
@@ -138,7 +139,7 @@ final class AutofillSubmissionTracker {
         let pending = source == "submit" ? candidates.filter { $0.kind != .contact } : candidates
         guard !pending.isEmpty else { return }
         attempts[id] = Attempt(
-            id: id, context: context, documentID: documentID, formID: formID, origin: origin, loginURL: loginURL,
+            id: id, context: context, vaultScope: scope, documentID: documentID, formID: formID, origin: origin, loginURL: loginURL,
             candidates: pending, frame: frame, created: now()
         )
         AutofillDiagnostics.note(.submissionPending, kind: candidates[0].kind); startPolling()
@@ -167,7 +168,8 @@ final class AutofillSubmissionTracker {
     /// another origin. The credential still belongs to the origin it was typed on.
     private func finish(_ attempt: Attempt) {
         attempts[attempt.id] = nil
-        guard let session, session.context === attempt.context, session.page?.context === attempt.context else {
+        guard let session, session.context === attempt.context, session.page?.context === attempt.context,
+              session.page?.vaultScope == attempt.vaultScope else {
             AutofillDiagnostics.note(.offerDroppedNotLive, kind: attempt.candidates[0].kind)
             return
         }
@@ -202,7 +204,7 @@ final class AutofillSubmissionTracker {
               !page.isLoading, page.window != nil, !page.isHiddenOrHasHiddenAncestor, page.hasOnlySecureContent,
               let topURL = page.url, SavedPassword.origin(for: topURL) != nil else { return }
         for attempt in Array(attempts.values) {
-            guard attempt.context === page.context, session.context === attempt.context else {
+            guard attempt.context === page.context, session.context === attempt.context, page.vaultScope == attempt.vaultScope else {
                 attempts[attempt.id] = nil
                 continue
             }

@@ -67,7 +67,15 @@ struct SharedProfileLinkSection: View {
 struct SharedSpacesSettingsView: View {
     let profile: Profile
     let host: CloudSharedSpaces
+    let coordinator: AppCoordinator
     @State private var change = SharedCatalogChange()
+
+    private var choices: [SharedSpaceChoice] {
+        let vaults = CloudSync.shared?.vaults
+        let profiles = coordinator.profiles.profiles
+        let adoptable = vaults?.connectedAccount == host.catalog.trustedUser ? vaults?.remoteProfiles().map(\.id) : nil
+        return host.spaceChoices(from: profile, profiles: profiles, adoptableProfiles: Set(adoptable ?? []).subtracting(profiles.map(\.id)))
+    }
 
     var body: some View {
         SettingsSection(title: "Shared Spaces", symbol: "square.grid.2x2") {
@@ -78,27 +86,92 @@ struct SharedSpacesSettingsView: View {
             if host.isEnabled(.spaces, for: profile) {
                 ForEach(host.spaces(profile)?.spaces ?? []) { space in
                     RowSeparator()
-                    DetailRow(verbatimTitle: space.name) {
-                        if host.links[profile.id]?.spaces[space.id] != nil {
-                            SettingsButton(title: "Stop Sharing") { host.stopSharing(space, in: profile) }
-                        } else {
+                    let entry = SpaceEntry(space: space, profile: profile)
+                    if host.links[profile.id]?.spaces[space.id] != nil {
+                        joinedRow(entry, canStop: true)
+                    } else {
+                        DetailRow(verbatimTitle: space.name, verbatimCaption: String(localized: "Only on this Mac")) {
                             SettingsButton(title: "Share This Space") { change.run { try await host.share(space, in: profile) } }
                                 .disabled(change.working)
                         }
                     }
                 }
-                ForEach(host.availableSpaces(for: profile)) { item in
-                    RowSeparator()
-                    DetailRow(verbatimTitle: item.title) {
-                        SettingsButton(title: "Join Shared Space") { change.run { try await host.join(item, in: profile) } }
-                            .disabled(change.working)
-                    }
-                }
+            }
+            ForEach(choices) { choice in
+                discoveredRow(choice)
+            }
+            if host.isEnabled(.spaces, for: profile) {
                 SharedCatalogConflicts(host: host, category: .spaces, profile: profile)
             }
             if let message = change.message {
                 SettingsNotice(symbol: "exclamationmark.triangle", text: message)
             }
+        }
+    }
+
+    private func joinedRow(_ entry: SpaceEntry, canStop: Bool) -> some View {
+        let profileName = ProfileSummary.displayName(for: entry.profile, sharedSpaces: host)
+        return DetailRow(verbatimTitle: host.spaceTitle(for: entry), verbatimCaption: String(localized: "Shared in the \(profileName) profile"), layout: .stacked) {
+            ChipFlow(spacing: 8) {
+                SettingsButton(title: "Open Space") { coordinator.openSharedSpace(entry) }
+                SettingsButton(title: "Space Settings…") { coordinator.showSpaceEditor(for: entry) }
+                if canStop {
+                    SettingsButton(title: "Stop Sharing") { host.stopSharing(entry.space, in: entry.profile) }
+                }
+            }
+        }
+        .disabled(change.working)
+    }
+
+    @ViewBuilder
+    private func discoveredRow(_ choice: SharedSpaceChoice) -> some View {
+        switch choice.destination {
+        case .open(let entry):
+            if entry.profile.id != profile.id || !host.isEnabled(.spaces, for: profile) {
+                RowSeparator()
+                joinedRow(entry, canStop: false)
+            }
+        case .join(let target):
+            RowSeparator()
+            let name = ProfileSummary.displayName(for: target, sharedSpaces: host)
+            DetailRow(verbatimTitle: host.spaceTitle(choice.item), verbatimCaption: String(localized: "Join in the \(name) profile to sync its tabs, pins and Favorites.")) {
+                SettingsButton(title: "Join and Open") { join(choice, in: target) }
+                .disabled(change.working)
+            }
+        case .addProfile:
+            RowSeparator()
+            DetailRow(verbatimTitle: host.spaceTitle(choice.item), verbatimCaption: String(localized: "Add its iCloud profile to this Mac before joining.")) {
+                SettingsButton(title: "Show Profiles…") { coordinator.openSettings(.profiles) }
+            }
+        case .chooseProfile:
+            RowSeparator()
+            let candidates = host.unlinkedProfiles(in: coordinator.profiles.profiles)
+            DetailRow(verbatimTitle: host.spaceTitle(choice.item), verbatimCaption: String(localized: "Choose a profile to join this Space and combine its pins and Favorites.")) {
+                if candidates.isEmpty {
+                    SettingsButton(title: "Show Profiles…") { coordinator.openSettings(.profiles) }
+                } else {
+                    Menu("Join in Profile…") {
+                        ForEach(candidates) { target in
+                            Button(profileLabel(target, among: candidates)) { join(choice, in: target) }
+                        }
+                    }
+                    .disabled(change.working)
+                }
+            }
+        }
+    }
+
+    private func profileLabel(_ target: Profile, among profiles: [Profile]) -> String {
+        let name = ProfileSummary.displayName(for: target, sharedSpaces: host)
+        guard profiles.contains(where: { $0.id != target.id && ProfileSummary.displayName(for: $0, sharedSpaces: host) == name }) else { return name }
+        return String(localized: "\(name) — \(String(target.id.uuidString.prefix(8)))")
+    }
+
+    private func join(_ choice: SharedSpaceChoice, in target: Profile) {
+        change.run {
+            let joined = try await host.join(choice.item, in: target, expecting: choice.owner)
+            guard coordinator.context.profile.id == profile.id else { return }
+            coordinator.openSharedSpace(SpaceEntry(space: joined, profile: target))
         }
     }
 }

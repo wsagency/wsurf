@@ -5,6 +5,7 @@
 
 import AppKit
 import Foundation
+import WSurfVault
 
 /// One dot of the space switcher: a space and the profile it belongs to.
 struct SpaceEntry: Identifiable, Equatable {
@@ -20,6 +21,19 @@ struct SpaceEntry: Identifiable, Equatable {
 enum SpaceSharing: Equatable {
     case profile(UUID)
     case separate
+}
+
+enum SpaceEditorError: LocalizedError, Equatable {
+    case vaultUnavailable, spaceUnavailable
+
+    var errorDescription: String? {
+        switch self {
+        case .vaultUnavailable:
+            String(localized: "The selected vault is unavailable. Reopen the editor to choose a vault.")
+        case .spaceUnavailable:
+            String(localized: "The Space or its profile changed. Reopen the editor and try again.")
+        }
+    }
 }
 
 /// A space of another profile is a full profile switch. The switcher says what that costs once, until the person
@@ -78,15 +92,17 @@ extension AppCoordinator {
     /// A space of this profile is a view change. A space of another profile switches the window to that profile, as
     /// choosing it in the profile menu does: this profile's passwords lock, external apps lose this window, the
     /// assistant stops and the tabs reload.
-    func switchSpace(to entry: SpaceEntry) {
+    func switchSpace(to entry: SpaceEntry, afterOpening: ((AppCoordinator) -> Void)? = nil) {
         guard entry.profile.id != context.profile.id else {
             browser.switchSpace(to: entry.space.id)
+            afterOpening?(self)
             return
         }
         guard !isSwitchingProfile else { return }
         Task { [weak self] in
             guard let self, !isClosed, await confirmProfileSwitch(to: entry), !isClosed else { return }
             await switchProfile(to: entry.profile, landingIn: entry.space.id)
+            afterOpening?(self)
         }
     }
 
@@ -163,27 +179,28 @@ extension AppCoordinator {
     /// is shown by switching the window to it.
     @discardableResult
     func createSpace(name: String, symbol: String, sharing: SpaceSharing? = nil) -> Space? {
-        guard spaceStore != nil else { return nil }
+        guard spaceStore != nil, let choice = SpaceEditor.choice(name: name, symbol: symbol, sharing: sharing) else { return nil }
+        return try? createSpace(choice, among: profiles.profiles, persist: false).space
+    }
+
+    private func createSpace(_ choice: SpaceEditor.Choice, among available: [Profile], persist: Bool) throws -> SpaceEntry {
         let entry: SpaceEntry
-        switch sharing ?? .profile(context.profile.id) {
+        switch choice.sharing ?? .profile(context.profile.id) {
         case .profile(let id):
-            guard let profile = profiles.profiles.first(where: { $0.id == id }),
-                  let store = SpaceStore.shared(for: profile) else { return nil }
-            entry = SpaceEntry(space: store.add(name: name, symbol: symbol), profile: profile)
+            guard let profile = available.first(where: { $0.id == id }),
+                  let store = SpaceStore.shared(for: profile) else { throw SpaceEditorError.spaceUnavailable }
+            let space = persist ? try store.saveEditorChoice(choice) : store.add(name: choice.name, symbol: choice.symbol)
+            entry = SpaceEntry(space: space, profile: profile)
             refreshSpaces(of: profile)
         case .separate:
-            let used = Set(spaceEntries.map(\.space.color))
+            let used = Set(available.map(\.color)).union(spaceStore?.spaces.map(\.color) ?? [])
             let color = TabFolderColor.allCases.first { $0 != .gray && !used.contains($0) } ?? .blue
-            let profile = profiles.add(name: name, symbol: symbol, color: color)
-            guard let space = SpaceStore.shared(for: profile)?.spaces.first else { return nil }
+            let space = Space(id: UUID(), name: choice.name, symbol: choice.symbol, color: color, vault: choice.vault)
+            let profile = try profiles.addProfile(forFirstSpace: space)
             entry = SpaceEntry(space: space, profile: profile)
         }
         switchSpace(to: entry)
-        return entry.space
-    }
-
-    func updateSpace(_ space: Space) {
-        spaceStore?.update(space)
+        return entry
     }
 
     func canDeleteSpace(_ space: Space) -> Bool {
@@ -221,23 +238,77 @@ extension AppCoordinator {
     // MARK: - The editor
 
     func showNewSpaceEditor() {
-        guard spaceStore != nil else { return }
-        let sharing = profiles.profiles.map { SpaceEditor.SharingOption(profile: $0) }
-        Task { [weak self] in
-            guard let self,
-                  let choice = await SpaceEditor.ask(editing: nil, sharing: sharing, currentProfile: context.profile.id)
-            else { return }
-            createSpace(name: choice.name, symbol: choice.symbol, sharing: choice.sharing)
-        }
+        openSpaceEditor(editing: nil)
     }
 
     func showSpaceEditor(for space: Space) {
+        showSpaceEditor(for: SpaceEntry(space: space, profile: context.profile))
+    }
+
+    func showSpaceEditor(for entry: SpaceEntry) {
+        openSpaceEditor(editing: entry)
+    }
+
+    private func openSpaceEditor(editing entry: SpaceEntry?) {
+        guard spaceStore != nil else { return }
+        let windowProfile = context.profile.id
         Task { [weak self] in
-            guard let choice = await SpaceEditor.ask(editing: space) else { return }
-            var edited = space
-            edited.name = choice.name
-            edited.symbol = choice.symbol
-            self?.updateSpace(edited)
+            guard let self else { return }
+            do {
+                let available = try profiles.profilesForSpaceEditor()
+                guard available.contains(where: { $0.id == windowProfile }) else { throw SpaceEditorError.spaceUnavailable }
+                let vaults = await SpaceVaultPicker.Choices.load(from: available)
+                guard !isClosed, context.profile.id == windowProfile else { return }
+                let editing: SpaceEntry?
+                if let entry {
+                    guard let profile = available.first(where: { $0.id == entry.profile.id }),
+                          let live = SpaceStore.shared(for: profile)?.space(id: entry.id) else { throw SpaceEditorError.spaceUnavailable }
+                    editing = SpaceEntry(space: live, profile: profile)
+                } else {
+                    editing = nil
+                }
+                let sharing = available.map { SpaceEditor.SharingOption(profile: $0, among: available) }
+                guard let choice = try await SpaceEditor.ask(
+                    editing: editing?.space, sharing: sharing, currentProfile: windowProfile, vaults: vaults, in: nativeWindow
+                ) else { return }
+                try await saveSpace(choice, editing: editing, openedIn: windowProfile)
+            } catch {
+                guard !isClosed, context.profile.id == windowProfile else { return }
+                let alert = NSAlert()
+                alert.alertStyle = .warning
+                alert.messageText = String(localized: "Couldn’t update Spaces")
+                alert.informativeText = error.localizedDescription
+                if let window = nativeWindow ?? NSApp.keyWindow?.sheetHost {
+                    _ = await alert.beginSheetModal(for: window)
+                } else {
+                    alert.runModal()
+                }
+            }
         }
+    }
+
+    @discardableResult
+    func saveSpace(_ choice: SpaceEditor.Choice, editing entry: SpaceEntry?, openedIn windowProfile: UUID) async throws -> SpaceEntry {
+        guard !isClosed, spaceStore != nil, context.profile.id == windowProfile else { throw SpaceEditorError.spaceUnavailable }
+        if let ref = choice.vault {
+            guard let owner = try profiles.profilesForSpaceEditor().first(where: { $0.id == ref.profileID }) else {
+                throw SpaceEditorError.vaultUnavailable
+            }
+            let listing = try? await BrowserVaultScope.selected(owner: owner, vaultID: ref.vaultID).listing()
+            guard listing?.contains(where: { $0.vaultID == ref.vaultID }) == true else { throw SpaceEditorError.vaultUnavailable }
+        }
+        guard !isClosed, context.profile.id == windowProfile else { throw SpaceEditorError.spaceUnavailable }
+        let available = try profiles.profilesForSpaceEditor()
+        guard available.contains(where: { $0.id == windowProfile }) else { throw SpaceEditorError.spaceUnavailable }
+        if let ref = choice.vault, !available.contains(where: { $0.id == ref.profileID }) {
+            throw SpaceEditorError.vaultUnavailable
+        }
+        if let entry {
+            guard let profile = available.first(where: { $0.id == entry.profile.id }),
+                  let store = SpaceStore.shared(for: profile) else { throw SpaceEditorError.spaceUnavailable }
+            let edited = try store.saveEditorChoice(choice, editing: entry.space)
+            return SpaceEntry(space: edited, profile: profile)
+        }
+        return try createSpace(choice, among: available, persist: true)
     }
 }

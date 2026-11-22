@@ -84,6 +84,7 @@ enum WebAuthnAdapter {
         weak var page: BrowserPage?
         let frame: BrowserFrame
         let profileID: UUID
+        let vaultScope: BrowserVaultScope
         /// The page's document generation when the relay's message arrived: the request belongs to exactly that document.
         let generation: UInt64
         let parsed: WebAuthnWire.Parsed
@@ -99,6 +100,7 @@ enum WebAuthnAdapter {
             self.page = page
             self.frame = frame
             profileID = page.profileID
+            vaultScope = page.vaultScope
             generation = page.credentialGeneration
             self.parsed = parsed
         }
@@ -153,7 +155,7 @@ enum WebAuthnAdapter {
     /// anything can suspend, and live documents learn it as one `NotAllowedError`. A registration whose write already
     /// landed keeps its receipt inside the ceremony.
     static func cancel(profileID: UUID) {
-        for entry in Array(entries.values) where entry.profileID == profileID {
+        for entry in Array(entries.values) where entry.profileID == profileID || entry.vaultScope.owner?.id == profileID {
             refuse(entry, reason: "vault-locked")
         }
     }
@@ -504,7 +506,7 @@ enum WebAuthnAdapter {
             try ensureCurrent(entry)
             guard native.credentialGeneration == entry.generation, page.credentialGeneration == entry.generation,
                   !page.isPrivate, page.window === anchor, let manager = chosen else { throw WebsiteAuthenticatorError.notAllowed }
-            guard manager.profileID == native.profileID else { throw WebsiteAuthenticatorError.notAllowed }
+            guard entry.vaultScope == native.vaultScope, native.vaultScope.contains(manager) else { throw WebsiteAuthenticatorError.notAllowed }
             entry.boundManager = manager
 
             let outcome = try await WebsiteAuthenticator.perform(
@@ -553,12 +555,12 @@ enum WebAuthnAdapter {
     private static func vault(
         for entry: Entry, native: WebAuthnContext, in anchor: ASPresentationAnchor, interaction: some WebAuthnCeremonyInteraction
     ) async throws -> CredentialManager? {
-        guard let profile = entry.page?.context.profile else { throw WebsiteAuthenticatorError.notAllowed }
+        let scope = entry.vaultScope
         let route: VaultRoute
         switch entry.parsed.request.options {
         case .creation:
             // The context's origin is already validated (it may be http://localhost, which a password origin never is).
-            route = await CredentialRouting.route(profile: profile, origin: native.origin, username: nil)
+            route = await CredentialRouting.route(scope: scope, origin: native.origin, username: nil)
         case .assertion(let options):
             // A passkey belongs to its relying party: the same RP ID resolution the ceremony uses decides which vault holds it.
             guard let url = URL(string: native.origin),
@@ -566,7 +568,7 @@ enum WebAuthnAdapter {
                 throw WebsiteAuthenticatorError.invalidRequest
             }
             route = await CredentialRouting.route(
-                profile: profile, origin: native.origin, passkeyRPID: rpID, allowed: options.allowCredentials
+                scope: scope, origin: native.origin, passkeyRPID: rpID, allowed: options.allowCredentials
             )
         }
         // No usable vault: the user is told all the same, in the same words as by a vault with nothing for the request, so a page
@@ -579,9 +581,9 @@ enum WebAuthnAdapter {
             // One vault, locked: nothing to choose. For a modal request the ceremony's own origin-bearing offer comes before its
             // unlock. A conditional one has no offer: the first sheet is the system's, which names no site, after the user's
             // pick of the "Use a Passkey…" row, which ignores input until it has been up long enough to be read.
-            chosen = try? CredentialManager.forVault(profile, vaultID: only.vaultID)
+            chosen = try? scope.manager(for: only.vaultID)
         } else {
-            chosen = await route.resolve(profile: profile, in: anchor)
+            chosen = await route.resolve(scope: scope, in: anchor)
             if chosen == nil {
                 note("vault-choice-cancelled", entry)
             }
@@ -591,7 +593,7 @@ enum WebAuthnAdapter {
 
     private static func ensureCurrent(_ entry: Entry) throws {
         try Task.checkCancellation()
-        guard !entry.cancelled, entries[entry.key] === entry, entry.page?.isClosed == false else { throw CancellationError() }
+        guard !entry.cancelled, entries[entry.key] === entry, entry.page?.isClosed == false, entry.page?.vaultScope == entry.vaultScope else { throw CancellationError() }
     }
 
     private static func finish(_ entry: Entry, page: BrowserPage, context: WebAuthnContext?, error: any Error) async {
@@ -681,7 +683,7 @@ enum WebAuthnAdapter {
                         if let deadline = entry?.parsed.request.deadline, ContinuousClock.now >= deadline {
                             throw WebsiteAuthenticatorError.expired
                         }
-                        guard !page.isPrivate, page.profileID == authority.manager.profileID,
+                        guard !page.isPrivate, page.vaultScope == entry?.vaultScope, page.vaultScope.contains(authority.manager),
                               authority.manager.authorizationEpoch == authority.outcome.epoch else {
                             throw WebsiteAuthenticatorError.notAllowed
                         }

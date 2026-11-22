@@ -25,6 +25,8 @@ final class CredentialPicker {
     struct Target {
         weak var page: BrowserPage?
         let context: BrowserProfileContext
+        let vaultScope: BrowserVaultScope
+        let generation: UInt64
         let frame: BrowserFrame
         let token: String
         let documentID: String
@@ -35,6 +37,10 @@ final class CredentialPicker {
         /// Present on a Google password challenge. An empty value means it displays no unambiguous account.
         var googleUsername: String?
         let received: ContinuousClock.Instant
+
+        func matches(_ page: BrowserPage) -> Bool {
+            self.page === page && page.context === context && page.vaultScope == vaultScope && page.credentialGeneration == generation
+        }
     }
 
     /// What the right-clicked field looks like: only the order of the list depends on it.
@@ -129,6 +135,10 @@ final class CredentialPicker {
 
     private init() {}
 
+    func vaultAccessEnded(profileID: UUID) {
+        targets = targets.filter { $0.value.context.profile.id != profileID && $0.value.vaultScope.owner?.id != profileID }
+    }
+
     // MARK: - Where it is offered
 
     /// Whether a page may offer Pick Credential… now, before anything is read: the tab's own policy (`allowedByTab`: no agent or
@@ -176,7 +186,8 @@ final class CredentialPicker {
             return false
         }
         targets[ObjectIdentifier(page)] = Target(
-            page: page, context: page.context, frame: frame, token: token, documentID: documentID, frameURL: frameURL, origin: origin,
+            page: page, context: page.context, vaultScope: page.vaultScope, generation: page.credentialGeneration, frame: frame, token: token,
+            documentID: documentID, frameURL: frameURL, origin: origin,
             field: field, googleUsername: origin == "https://accounts.google.com" ? body["googleUsername"] as? String : nil, received: .now
         )
         return true
@@ -185,7 +196,7 @@ final class CredentialPicker {
     /// The right-click that belongs to `menu`: the page's latest, reported around the time the menu opened, and in Chromium from the
     /// frame the engine named.
     func target(for page: BrowserPage, menu: Menu) -> Target? {
-        guard let target = targets[ObjectIdentifier(page)], target.page === page, target.context === page.context,
+        guard let target = targets[ObjectIdentifier(page)], target.matches(page),
               target.received >= menu.opened.advanced(by: .seconds(-2)) else { return nil }
         if let frame = menu.chromiumFrame {
             guard target.frame.isMainFrame == frame.isMain, target.frame.chromiumID == frame.id || target.frameURL == frame.url else {
@@ -236,14 +247,15 @@ final class CredentialPicker {
         // starts meanwhile is refused and cannot have its target replaced by `note`. Released in one place, in the same turn that
         // `pick` takes over (it holds the key itself) or the command ends.
         picking.insert(key)
+        let scope = page.vaultScope, generation = page.credentialGeneration
         Task { [weak self, weak page] in
             guard let self else { return }
             var noted = false
-            if let page {
+            if let page, page.vaultScope == scope, page.credentialGeneration == generation {
                 noted = await self.noteFocusedField(in: page)
             }
             self.picking.remove(key)
-            guard noted, let page else {
+            guard noted, let page, page.vaultScope == scope, page.credentialGeneration == generation else {
                 NSSound.beep()
                 return
             }
@@ -297,28 +309,31 @@ final class CredentialPicker {
     func run(
         _ target: Target, in page: BrowserPage, window: NSWindow, allowed: @escaping @MainActor @Sendable () -> Bool
     ) async -> Outcome {
-        let profile = target.context.profile
         let isCurrent = currentCheck(for: target, in: page, window: window, allowed: allowed)
         guard isCurrent(), await field(of: target, in: page) != nil, isCurrent() else { return .nothing }
-        var unlocking = await AutofillSuggestions.allVaultsLocked(of: profile)
+        var unlocking = await AutofillSuggestions.allVaultsLocked(in: target.vaultScope)
         while true {
             if unlocking {
-                guard await AutofillSuggestions.shared.unlockVault(of: profile, in: window, while: isCurrent), isCurrent() else {
+                guard await AutofillSuggestions.shared.unlockVault(in: target.vaultScope, window: window, while: isCurrent), isCurrent() else {
                     return .nothing
                 }
             }
             guard isCurrent(), let reading = await read(for: target), isCurrent() else { return .nothing }
-            switch await choose(reading, target: target, in: window) {
-            case .row(let id)?:
-                guard isCurrent() else { return .nothing }
-                return await fill(id, reading: reading, target: target, in: page, isCurrent: isCurrent)
-            case .unlock?:
-                unlocking = true
-            case .code(let code)?:
-                guard isCurrent() else { return .nothing }
-                return await fill(code: code, target: target, in: page, isCurrent: isCurrent)
-            case nil:
+            guard let answer = await choose(reading, target: target, in: window) else { return .nothing }
+            guard isCurrent() else {
+                // The sheet's original field can disappear during a page navigation.
+                if page.context === target.context, page.vaultScope == target.vaultScope, page.credentialGeneration != target.generation {
+                    return .failed(.noField)
+                }
                 return .nothing
+            }
+            switch answer {
+            case .row(let id):
+                return await fill(id, reading: reading, target: target, in: page, isCurrent: isCurrent)
+            case .unlock:
+                unlocking = true
+            case .code(let code):
+                return await fill(code: code, target: target, in: page, isCurrent: isCurrent)
             }
         }
     }
@@ -328,10 +343,10 @@ final class CredentialPicker {
     func currentCheck(
         for target: Target, in page: BrowserPage, window: NSWindow, allowed: @escaping @MainActor @Sendable () -> Bool
     ) -> @MainActor @Sendable () -> Bool {
-        let context = target.context, key = ObjectIdentifier(page), token = target.token
+        let key = ObjectIdentifier(page), token = target.token
         return { [weak self, weak page, weak window] in
             guard let self, let page, let window else { return false }
-            return page.context === context && self.targets[key]?.token == token && page.window === window
+            return target.matches(page) && self.targets[key]?.token == token && page.window === window
                 && Self.isOffered(in: page, allowedByTab: allowed())
         }
     }
@@ -349,16 +364,17 @@ final class CredentialPicker {
         return (answer as? String).flatMap(Field.init(rawValue:))
     }
 
-    /// Every unlocked vault of the profile, in ordinal order, each under its own unlock, as candidates: no secret is read to list.
+    /// The unlocked vaults in the target's scope, in ordinal order, as candidates: no secret is read to list.
     /// A locked vault is never read. A profile with no vault (or a store that cannot be read) lists nothing, and the sheet says so.
     private func read(for target: Target) async -> Reading? {
         let profile = target.context.profile
         guard !profile.isPrivate else { return nil }
-        let listing = (try? await CredentialManager.store(for: profile).listing()) ?? []
-        let unlocked = CredentialManager.unlockedManagers(for: profile)
+        let listing = (try? await target.vaultScope.listing()) ?? []
+        let unlocked = target.vaultScope.unlockedManagers
         let lastUsed = target.context.autofillLastUsed
         var reading = Reading()
         for vault in listing.sorted(by: { $0.ordinal < $1.ordinal }) {
+            guard target.page?.vaultScope == target.vaultScope else { return nil }
             guard let manager = unlocked.first(where: { $0.vaultID == vault.vaultID }), let epoch = manager.authorizationEpoch,
                   let candidates = try? await manager.autofillCandidates(), manager.authorizationEpoch == epoch else {
                 reading.hasLockedVault = true
@@ -403,9 +419,8 @@ final class CredentialPicker {
     private func fill(
         _ id: UUID, reading: Reading, target: Target, in page: BrowserPage, isCurrent: @escaping @MainActor @Sendable () -> Bool
     ) async -> Outcome {
-        let context = target.context
         guard let row = reading.rows.first(where: { $0.id == id }), let grant = reading.grants[row.vaultID],
-              let manager = Self.manager(of: context, vaultID: row.vaultID, epoch: grant.epoch),
+              let manager = Self.manager(in: target.vaultScope, vaultID: row.vaultID, epoch: grant.epoch),
               let generation = manager.stableGeneration else { return .failed(.noField) }
         let picked: AutofillLogin?
         do {
@@ -428,7 +443,7 @@ final class CredentialPicker {
         let fill = row.fill, vaultID = row.vaultID, epoch = grant.epoch
         let token = target.token, url = target.frameURL.absoluteString, documentID = target.documentID
         let prepare: @MainActor @Sendable () throws -> [String: Any] = {
-            guard isCurrent(), Self.manager(of: context, vaultID: vaultID, epoch: epoch) === manager,
+            guard isCurrent(), Self.manager(in: target.vaultScope, vaultID: vaultID, epoch: epoch) === manager,
                   manager.stableGeneration == generation else { throw ContactAutofillError.changedPage }
             var fields: [String: Any]
             switch fill {
@@ -520,9 +535,8 @@ final class CredentialPicker {
     }
 
     /// The unlocked manager of `vaultID`, only under the unlock `epoch` a list or a sheet was made under.
-    static func manager(of context: BrowserProfileContext, vaultID: UUID, epoch: UInt64) -> CredentialManager? {
-        guard !context.profile.isPrivate else { return nil }
-        return CredentialManager.unlockedManagers(for: context.profile).first { $0.vaultID == vaultID && $0.authorizationEpoch == epoch }
+    static func manager(in scope: BrowserVaultScope, vaultID: UUID, epoch: UInt64) -> CredentialManager? {
+        scope.unlockedManagers.first { $0.vaultID == vaultID && $0.authorizationEpoch == epoch }
     }
 
     private static func report(_ failure: Failure, in window: NSWindow) async {

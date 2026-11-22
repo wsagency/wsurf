@@ -7,13 +7,20 @@ import Foundation
 import GRDB
 import Observation
 
-/// A named set of tabs and folders inside one profile. A space shares the profile's sign-ins, history, passwords and
-/// pins; it only changes which unpinned tabs and folders a window shows.
+/// A device-local choice. A vault is identified by both its owning profile and its ID within that profile.
+nonisolated struct SpaceVaultReference: Codable, Hashable, Sendable {
+    let profileID: UUID
+    let vaultID: UUID
+}
+
+/// A named set of tabs and folders inside one sign-in profile.
 nonisolated struct Space: Identifiable, Codable, Hashable, Sendable {
     let id: UUID
     var name: String
     var symbol: String
     var color: TabFolderColor
+    /// Existing Spaces and new Spaces that use their profile's vault policy have no explicit binding.
+    var vault: SpaceVaultReference?
 
     static let defaultSymbol = "square.grid.2x2"
 }
@@ -43,12 +50,31 @@ final class SpaceStore {
         stores[profileID] = nil
     }
 
+    /// Publish a new profile only after its first Space and its local vault choice are durable.
+    static func createFirst(_ space: Space, for profile: Profile, publish: () throws -> Void) throws {
+        let files = FileManager.default
+        let directory = profile.supportDirectory
+        try files.createDirectory(at: directory.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try files.createDirectory(at: directory, withIntermediateDirectories: false)
+        do {
+            try JSONFileStore.writeAtomically([space], to: profile.spacesFile, sortedKeys: true)
+            let prepared = SpaceStore(profile: profile, file: profile.spacesFile)
+            guard prepared.spaces == [space] else { throw CocoaError(.fileReadUnknown) }
+            try publish()
+            stores[profile.id] = prepared
+        } catch {
+            try? files.removeItem(at: directory)
+            throw error
+        }
+    }
+
     let profileID: UUID
     /// A pre-Spaces profile has no saved list when its first Space is created.
     let hadSavedSpaceList: Bool
     private(set) var spaces: [Space]
     @ObservationIgnored private let file: URL?
     @ObservationIgnored private var unreadableFallback: Space?
+    @ObservationIgnored private var needsInitialWrite = false
     @ObservationIgnored weak var sharedSpacesHost: CloudSharedSpaces?
 
     /// `file` nil keeps the spaces in memory only (tests, or a second copy of the app that owns no session).
@@ -71,6 +97,7 @@ final class SpaceStore {
                 unreadableFallback = home
             } else {
                 spaces = [home]
+                needsInitialWrite = file != nil
                 save()
             }
         }
@@ -123,8 +150,9 @@ final class SpaceStore {
         guard let file else { throw CocoaError(.fileWriteNoPermission) }
         var next = try spacesForWriting(to: file)
         let index = next.firstIndex { $0.id == id }
-        let joined = Self.makeSpace(id: id, name: name, symbol: symbol, color: color ?? .gray, fallbackName: index.map { next[$0].name })
+        var joined = Self.makeSpace(id: id, name: name, symbol: symbol, color: color ?? .gray, fallbackName: index.map { next[$0].name })
         if let index {
+            joined.vault = next[index].vault
             next[index] = joined
         } else {
             next.append(joined)
@@ -143,9 +171,50 @@ final class SpaceStore {
         return TabFolderColor.allCases.first { $0 != .gray && !used.contains($0) } ?? .blue
     }
 
+    /// The sheet commits the whole choice once. A stale sheet cannot overwrite another editor's vault selection.
+    func saveEditorChoice(_ choice: SpaceEditor.Choice, editing original: Space? = nil) throws -> Space {
+        guard let file else { throw CocoaError(.fileWriteNoPermission) }
+        let onDisk: [Space]
+        do {
+            onDisk = try Self.readSpaces(from: file)
+        } catch CocoaError.fileReadNoSuchFile where needsInitialWrite {
+            onDisk = spaces
+        }
+        let recoveringFirstSpace = needsInitialWrite && onDisk.isEmpty
+        guard unreadableFallback != nil || onDisk == spaces || recoveringFirstSpace else { throw SpaceEditorError.spaceUnavailable }
+        var next = unreadableFallback.map { mergingRecovered(onDisk, home: $0) } ?? spaces
+        let saved: Space
+        if let original {
+            guard let index = next.firstIndex(where: { $0.id == original.id }),
+                  next[index] == original else { throw SpaceEditorError.spaceUnavailable }
+            var edited = next[index]
+            edited.name = choice.name
+            edited.symbol = choice.symbol
+            edited.vault = choice.vault
+            next[index] = edited
+            saved = edited
+        } else {
+            let used = Set(next.map(\.color))
+            let color = TabFolderColor.allCases.first { $0 != .gray && !used.contains($0) } ?? .blue
+            saved = Space(id: UUID(), name: choice.name, symbol: choice.symbol, color: color, vault: choice.vault)
+            next.append(saved)
+        }
+        try persist(next, to: file)
+        if let original {
+            if original.vault != saved.vault {
+                BrowserProfileContext.existing(for: profileID)?.spaceVaultChanged(saved.id)
+            }
+            if original.name != saved.name || original.symbol != saved.symbol {
+                (sharedSpacesHost ?? CloudSync.shared?.sharedSpaces)?.spaceChanged(saved, in: profileID)
+            }
+        }
+        return saved
+    }
+
     func update(_ space: Space) {
         guard let index = spaces.firstIndex(where: { $0.id == space.id }) else { return }
         var updated = space
+        updated.vault = spaces[index].vault
         let trimmed = space.name.trimmingCharacters(in: .whitespacesAndNewlines)
         updated.name = trimmed.isEmpty ? spaces[index].name : trimmed
         guard updated != spaces[index] else { return }
@@ -173,6 +242,7 @@ final class SpaceStore {
 
     private func persist(_ next: [Space], to file: URL) throws {
         try JSONFileStore.writeAtomically(next, to: file, sortedKeys: true)
+        needsInitialWrite = false
         unreadableFallback = nil
         if spaces != next {
             spaces = next

@@ -25,6 +25,7 @@ nonisolated enum WebAuthnContextError: Error, Sendable {
 @MainActor
 final class WebAuthnContext {
     let profileID: UUID
+    let vaultScope: BrowserVaultScope
     let isPrivate: Bool
     let origin: String
     let topOrigin: String?
@@ -52,6 +53,7 @@ final class WebAuthnContext {
         self.page = page
         pageIdentity = ObjectIdentifier(page)
         profileID = page.profileID
+        vaultScope = page.vaultScope
         isPrivate = page.isPrivate
         credentialGeneration = page.credentialGeneration
         self.frame = frame

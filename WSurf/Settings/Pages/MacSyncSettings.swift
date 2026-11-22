@@ -25,12 +25,13 @@ struct MacSyncSettings: View {
             if let host = cloud.sharedSpaces {
                 SharedProfileLinkSection(profile: profile, host: host)
                     .settingsAnchor("sync.profiles")
-                SharedSpacesSettingsView(profile: profile, host: host)
+                SharedSpacesSettingsView(profile: profile, host: host, coordinator: coordinator)
                     .settingsAnchor("sync.spaces")
             }
             ProfileICloudTabsSection(profile: profile)
                 .settingsAnchor("sync.otherDevices")
             VaultSharingSettings(coordinator: coordinator, cloud: cloud)
+                .id(coordinator.browser.vaultScope())
                 .settingsAnchor("sync.vaults")
             MacSettingOptions(settings: settings, profile: profile, cloudProfileID: cloud.sharedSpaces?.cloudProfileID(for: profile.id))
             MacWebsiteSyncApprovalSection(profile: profile)
@@ -151,7 +152,7 @@ private struct VaultSharingSettings: View {
     init(coordinator: AppCoordinator, cloud: CloudSync) {
         self.coordinator = coordinator
         self.cloud = cloud
-        _model = State(initialValue: CredentialSettingsModel(profile: coordinator.context.profile))
+        _model = State(initialValue: CredentialSettingsModel(scope: coordinator.browser.vaultScope()))
     }
 
     var body: some View {

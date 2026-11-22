@@ -126,7 +126,7 @@ struct SettingsView: View {
     }
 
     private var address: String {
-        coordinator.browser.tabs.first { $0.internalPage == .settings }?.urlString ?? ""
+        coordinator.browser.settingsTabInCurrentSpace?.urlString ?? ""
     }
 
     private var badges: [SettingsCategory: String] {

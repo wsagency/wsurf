@@ -45,7 +45,13 @@ extension CloudSharedSpaces {
         if catalog.enabled(.profiles, for: profile.id) {
             items.append(.init(id: old, kind: .profile, profileID: old, title: profile.name, publicationSource: source))
         }
-        let copies = items.map { $0.copy(id: fresh($0.id), profile: next.id, map: fresh) }
+        let copies = items.map { item in
+            var copy = item.copy(id: fresh(item.id), profile: next.id, map: fresh)
+            if copy.kind == .space {
+                copy.spacePublisher = .init(profileID: profile.id, source: source)
+            }
+            return copy
+        }
         link.profile = next.id
         link.spaces = link.spaces.mapValues(fresh)
         link.pins = link.pins.mapValues(fresh)

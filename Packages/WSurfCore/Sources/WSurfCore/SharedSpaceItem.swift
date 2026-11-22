@@ -30,6 +30,16 @@ nonisolated public struct SharedSpaceItem: Codable, Equatable, Identifiable, Sen
         case profile, space, folder, tab, pin, pinFolder
     }
 
+    public struct SpacePublisher: Codable, Equatable, Sendable {
+        public let profileID: UUID
+        public let source: ProfilePublicationSource
+
+        public init(profileID: UUID, source: ProfilePublicationSource) {
+            self.profileID = profileID
+            self.source = source
+        }
+    }
+
     public struct PinFolderAppearance: Codable, Equatable, Sendable {
         public var customColor: String?
         public var sizeFactor: Double?
@@ -53,6 +63,8 @@ nonisolated public struct SharedSpaceItem: Codable, Equatable, Identifiable, Sen
     public var order: String
     public var title: String
     public var publicationSource: ProfilePublicationSource?
+    /// Earlier clients accept the profile publicationSource key only on profile records.
+    public var spacePublisher: SpacePublisher?
     public var url: String?
     public var customTitle: String?
     public var symbol: String?
@@ -120,7 +132,8 @@ nonisolated public struct SharedSpaceItem: Codable, Equatable, Identifiable, Sen
     }
 
     private var isValid: Bool {
-        guard parentID != id, spaceID != id, sharedTabID == nil || kind == .pin, publicationSource == nil || kind == .profile, order.utf8.count <= 512,
+        guard parentID != id, spaceID != id, sharedTabID == nil || kind == .pin, publicationSource == nil || kind == .profile,
+              spacePublisher == nil || kind == .space, order.utf8.count <= 512,
               order.utf8.allSatisfy({ (48...57).contains($0) || (65...90).contains($0) || (97...122).contains($0) })
         else { return false }
         switch kind {

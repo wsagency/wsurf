@@ -27,18 +27,24 @@ enum CredentialRouting {
     /// Whether the profile has never made a vault, which is the only state a page may suggest setting one up in. A vault from an
     /// older format that still has to be upgraded, an unreadable store and a private context are not: those are fixed in Settings.
     static func profileNeedsFirstVault(_ profile: Profile) async -> Bool {
-        guard let store = try? CredentialManager.store(for: profile) else { return false }
+        await profileNeedsFirstVault(.profile(profile))
+    }
+
+    static func profileNeedsFirstVault(_ scope: BrowserVaultScope) async -> Bool {
+        guard case .profile(let profile) = scope, let store = try? CredentialManager.store(for: profile) else { return false }
         return await store.openState() == .firstRun
     }
 
     /// `origin` nil routes a new entry that belongs to no website (a card or an address): straight to the default vault. A match is
     /// looked for in each unlocked vault's candidates (`autofillCandidates`): websites and usernames, never a secret.
     static func route(profile: Profile, origin: String?, username: String?) async -> VaultRoute {
-        guard let store = try? CredentialManager.store(for: profile),
-              case .provisional = await store.openState(),
-              let listing = try? await store.listing(), !listing.isEmpty else { return .unavailable }
+        await route(scope: .profile(profile), origin: origin, username: username)
+    }
+
+    static func route(scope: BrowserVaultScope, origin: String?, username: String?) async -> VaultRoute {
+        guard let listing = try? await scope.listing(), !listing.isEmpty else { return .unavailable }
         let active = Dictionary(uniqueKeysWithValues: listing.map { ($0.vaultID, $0) })
-        let unlocked = CredentialManager.unlockedManagers(for: profile).filter { active[$0.vaultID] != nil }
+        let unlocked = scope.unlockedManagers.filter { active[$0.vaultID] != nil }
 
         var holders: [CredentialManager] = []
         for manager in unlocked {
@@ -59,7 +65,7 @@ enum CredentialRouting {
 
         // A new login goes to the default vault: the stored preference, else the first vault.
         let unlockedIDs = Set(unlocked.map(\.vaultID))
-        let preferred = await store.defaultVaultID().flatMap { active[$0] } ?? listing.min { $0.ordinal < $1.ordinal }
+        let preferred = await scope.defaultVaultID().flatMap { active[$0] } ?? listing.min { $0.ordinal < $1.ordinal }
         guard let preferred else { return .unavailable }
         if !unlockedIDs.contains(preferred.vaultID) {
             return unlockedIDs.isEmpty ? .needsUnlock(preferred) : .needsChoice(listing.sorted { $0.ordinal < $1.ordinal }, reason: .defaultLocked)

@@ -8,6 +8,7 @@ extension AutofillSaveSession {
     /// only: no secret is held, and confirming reads the credential again under the unlock the offer was made under.
     nonisolated struct WebsiteOffer: Identifiable, Sendable {
         let id = UUID()
+        let vaultScope: BrowserVaultScope
         /// The website to add: the page's origin.
         let origin: String
         let accountID: UUID

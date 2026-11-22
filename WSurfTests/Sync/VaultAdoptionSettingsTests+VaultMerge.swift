@@ -29,7 +29,7 @@ extension VaultAdoptionSettingsTests {
 
     /// A holds the shared vault; B adopted it and also holds a separately created local profile.
     private func withMergeFixture(
-        scopedInstance: Bool = false,
+        scopedInstance: Bool = false, spaceSelected: Bool = false,
         verify: @escaping @MainActor (String) async throws -> Void = { _ in },
         _ body: (MergeFixture) async throws -> Void
     ) async throws {
@@ -75,7 +75,7 @@ extension VaultAdoptionSettingsTests {
                     app.prepareToTerminate()
                     CloudSync.shared = previous
                 }
-                let model = CredentialSettingsModel(profile: pair.profile, verifyUser: verify)
+                let model = CredentialSettingsModel(profile: pair.profile, spaceVaultID: spaceSelected ? target.vaultID : nil, verifyUser: verify)
                 await model.load()
                 try #require(await waitUntil { model.canMergeIntoSharedVault })
                 let sync = try #require(app.vaults)
@@ -90,7 +90,7 @@ extension VaultAdoptionSettingsTests {
 
     @Test func reviewedCopyPreservesTheSourceAndConvergesWithThePublishingMac() async throws {
         var confirmations = 0
-        try await withMergeFixture(verify: { _ in confirmations += 1 }) { f in
+        try await withMergeFixture(spaceSelected: true, verify: { _ in confirmations += 1 }) { f in
             var fresh = f.pair.account("new")
             let same = f.pair.account("same"), conflict = f.pair.account("work", password: "on-B")
             let input = f.pair.envA.directory.appending(path: "example.txt")

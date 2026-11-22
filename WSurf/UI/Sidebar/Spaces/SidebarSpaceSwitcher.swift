@@ -46,6 +46,7 @@ struct SidebarSpaceSwitcher: View {
             ForEach(Array(entries.enumerated()), id: \.element.id) { index, entry in
                 SpaceDot(
                     entry: entry,
+                    spaceName: coordinator.browser.sharedSpaceService?.spaceTitle(for: entry) ?? entry.space.name,
                     isForeign: entry.profile.id != coordinator.context.profile.id,
                     shortcut: SpaceShortcut.label(at: index),
                     isCurrent: entry.id == coordinator.browser.currentSpaceID,
@@ -63,19 +64,17 @@ struct SidebarSpaceSwitcher: View {
 
     @ViewBuilder
     private func menu(for entry: SpaceEntry) -> some View {
-        if entry.profile.id == coordinator.context.profile.id {
-            Button {
-                coordinator.showSpaceEditor(for: entry.space)
-            } label: {
-                Label("Edit Space…", systemImage: "pencil")
-            }
+        Button {
+            coordinator.showSpaceEditor(for: entry)
+        } label: {
+            Label("Space Settings…", systemImage: "gearshape")
         }
         Button {
             coordinator.showNewSpaceEditor()
         } label: {
             Label("New Space…", systemImage: "plus")
         }
-        if coordinator.canDeleteSpace(entry.space) {
+        if entry.profile.id == coordinator.context.profile.id, coordinator.canDeleteSpace(entry.space) {
             Divider()
             Button(role: .destructive) {
                 Task { await coordinator.confirmDeleteSpace(entry.space) }
@@ -88,6 +87,7 @@ struct SidebarSpaceSwitcher: View {
 
 private struct SpaceDot: View {
     let entry: SpaceEntry
+    let spaceName: String
     /// A space of another profile: choosing it switches the window to that profile.
     let isForeign: Bool
     let shortcut: String?
@@ -96,7 +96,7 @@ private struct SpaceDot: View {
     let action: () -> Void
 
     private var name: String {
-        isForeign ? String(localized: "\(entry.space.name) — \(entry.profile.name) profile") : entry.space.name
+        isForeign ? String(localized: "\(spaceName) — \(entry.profile.name) profile") : spaceName
     }
 
     private var help: String {

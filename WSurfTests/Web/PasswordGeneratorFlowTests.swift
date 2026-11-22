@@ -492,6 +492,26 @@ struct PasswordGeneratorFlowTests {
 
     // MARK: - F7: which vault
 
+    @Test(.boundedWebViews) func aGeneratedPasswordIsSavedOnlyInTheSpaceVault() async throws {
+        try await withFlow { flow, local in
+            try await VaultManagerFixture.with(vaults: [.unlocked, .locked]) { owner, _, vaults in
+                let selected = vaults[0]
+                flow.page.vaultScopeProvider = { .selected(owner: owner, vaultID: selected.vaultID) }
+                try await flow.load(Self.signUp)
+                let target = try await flow.rightClick("sp")
+                let outcome = await flow.generate(target) { proposal in
+                    #expect(proposal.vaults.map(\.id) == [selected.vaultID])
+                    #expect(!proposal.canUnlock)
+                    return self.use(proposal)
+                }
+                #expect(outcome == .filled(2))
+                let saved = try #require(try await selected.manager.snapshot().accounts.first?.password)
+                #expect(try await flow.values(["sp", "sc"]) == [saved, saved])
+                #expect(try await local[0].manager.snapshot().accounts.isEmpty)
+            }
+        }
+    }
+
     /// The vault the sheet offers first: the one unlocked vault that holds this website, else the default vault. A vault the person
     /// chooses gets the login, and Unlock Other Vaults… unlocks before the sheet opens again.
     @Test(.boundedWebViews) func theSheetOffersTheHolderThenTheDefaultAndSavesWhereThePersonChooses() async throws {

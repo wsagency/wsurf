@@ -66,6 +66,7 @@ extension AppCoordinator {
     }
 
     func configureWindowCallbacks() {
+        browser.vaultProfileCatalog = profiles
         let extensionTabClosed = browser.onTabClosed
         browser.onTabClosed = { [weak self] tab in
             extensionTabClosed?(tab)
