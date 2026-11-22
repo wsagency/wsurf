@@ -441,7 +441,7 @@ enum SettingsIndex {
         SettingsEntry("advanced.features", .advanced, "Feature flags",
                       "Experimental WebKit features may break websites.",
                       ["webkit", "flags", "experimental", "features", "develop"]),
-        SettingsEntry("advanced.certificates", .advanced, "Certificate exceptions", "Continue past a certificate macOS rejects. WSurf forgets the exception when you quit.",
+        SettingsEntry("advanced.certificates", .advanced, "Certificate exceptions", "Let websites with invalid certificates ask you whether to continue.",
                       ["certificate", "ssl", "tls", "https", "self-signed", "proxy", "untrusted",
                        "invalid certificate", "exception", "warning",
                        ]),

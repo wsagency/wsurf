@@ -12,17 +12,7 @@ import Security
 
 @MainActor
 enum CertificateTrust {
-    private struct Site: Hashable {
-        let host: String
-        let port: Int
-
-        var address: String {
-            let name = host.contains(":") && !host.hasPrefix("[") ? "[\(host)]" : host
-            return port == 443 ? name : "\(name):\(port)"
-        }
-    }
-
-    private static var accepted: [Site: String] = [:]
+    private static var accepted: [String: String] = [:]
     private static var exceptionGeneration = 0
 
     enum Decision {
@@ -54,8 +44,7 @@ enum CertificateTrust {
     }
 
     /// Shared decision path for WebKit challenges and native CEF certificate
-    /// errors. The accepted map is deliberately keyed by host, port and leaf
-    /// fingerprint, never by a host alone.
+    /// errors. WSurf matches cached approvals by host and leaf fingerprint.
     static func decideInvalid(
         host: String,
         port: Int = 443,
@@ -72,13 +61,15 @@ enum CertificateTrust {
             return .useDefaultHandling
         }
         guard let fingerprint = fingerprint(of: trust) else { return .useDefaultHandling }
-        let site = Site(host: host.lowercased(), port: port)
-        if accepted[site] == fingerprint {
+        let key = host.lowercased()
+        if accepted[key] == fingerprint {
             return .proceed(URLCredential(trust: trust))
         }
-        let confirmed = await ask(site: site, trust: trust, fingerprint: fingerprint, generation: generation, in: window)
+        let confirmed = await ask(
+            host: key, port: port, trust: trust, fingerprint: fingerprint, generation: generation, in: window
+        )
         guard confirmed, generation == exceptionGeneration else { return .cancel }
-        Self.accepted[site] = fingerprint
+        Self.accepted[key] = fingerprint
         Pipeline.log.notice("certificate exception accepted for a host this session")
         return .proceed(URLCredential(trust: trust))
     }
@@ -156,17 +147,20 @@ enum CertificateTrust {
     // MARK: - Asking
 
     private static func ask(
-        site: Site,
+        host: String,
+        port: Int,
         trust: SecTrust,
         fingerprint: String,
         generation: Int,
         in window: NSWindow?
     ) async -> Bool {
+        let name = host.contains(":") && !host.hasPrefix("[") ? "[\(host)]" : host
+        let address = port > 0 && port != 443 ? "\(name):\(port)" : name
         while generation == exceptionGeneration {
             let alert = NSAlert()
             alert.alertStyle = .critical
             alert.messageText = String(localized: "This connection isn’t private")
-            alert.informativeText = detail(host: site.address, trust: trust, fingerprint: fingerprint)
+            alert.informativeText = detail(host: address, trust: trust, fingerprint: fingerprint)
             alert.addButton(withTitle: String(localized: "Go Back"))
             alert.addButton(withTitle: String(localized: "Visit Website")).hasDestructiveAction = true
             alert.addButton(withTitle: String(localized: "Show Certificate"))
@@ -179,7 +173,7 @@ enum CertificateTrust {
             }
             guard response == .alertThirdButtonReturn else { return response == .alertSecondButtonReturn }
             guard generation == exceptionGeneration else { return false }
-            CertificatePanel.inspect(trust, host: site.host)
+            await CertificatePanel.inspect(trust, host: host, in: window)
         }
         return false
     }
@@ -194,7 +188,7 @@ enum CertificateTrust {
         }
         lines.append(String(localized: "SHA-256: \(fingerprint)"))
         lines.append("")
-        lines.append(String(localized: "Continue only if you expected this — a development server, or a proxy your organization runs. The exception lasts until you quit."))
+        lines.append(String(localized: "Continue only if you expected this, such as on a development server or your organization’s proxy."))
         return lines.joined(separator: "\n")
     }
 

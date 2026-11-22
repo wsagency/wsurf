@@ -2972,7 +2972,15 @@
 
     },
     "Automatic Picture in Picture" : {
-      "comment" : "Title of the row that makes video float in its own window on its own: on the General settings page, in Settings search, on a single website’s page under Websites, and in the Site Settings menu in the toolbar. “Picture in Picture” is the macOS name of that window — use the system’s own wording. Title Case."
+      "comment" : "Title of the row that makes video float in its own window on its own: on the General settings page, in Settings search, on a single website’s page under Websites, and in the Site Settings menu in the toolbar. “Picture in Picture” is the macOS name of that window — use the system’s own wording. Title Case.",
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Automatska slika u slici"
+          }
+        }
+      }
     },
     "Automatic Picture in Picture is off while \"Show video in the player\" is on in Experiments." : {
 
@@ -3034,7 +3042,14 @@
       "comment" : "One line in the bulleted list of what an extension will be able to do, in the install confirmation sheet. It completes “It will also be able to:”."
     },
     "Block known trackers" : {
-
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Blokiranje poznatih programa za praćenje"
+          }
+        }
+      }
     },
     "Block known trackers is off, so trackers are allowed everywhere." : {
 
@@ -3652,10 +3667,10 @@
         }
       }
     },
-    "Continue only if you expected this — a development server, or a proxy your organization runs. The exception lasts until you quit." : {
+    "Continue only if you expected this, such as on a development server or your organization’s proxy." : {
 
     },
-    "Continue past a certificate macOS rejects. WSurf forgets the exception when you quit." : {
+    "Let websites with invalid certificates ask you whether to continue." : {
 
     },
     "Control media" : {
@@ -7308,7 +7323,15 @@
       "comment" : "Caption of the Fast transitions setting in Settings › Appearance › Window, and its Settings search summary. Layouts are the Standard and Minimal window styles. Reader is WSurf’s distraction-free reading view and keeps its name."
     },
     "Sleep inactive tabs" : {
-      "comment" : "Title of the switch in Settings > General that lets WSurf release the pages of background tabs when the Mac runs short of memory or, with Sleep after, once they have been idle, and the same row in Settings search. Off by default. Sentence case; “Sleep” is a verb the browser does to the tabs."
+      "comment" : "Title of the switch in Settings > General that lets WSurf release the pages of background tabs when the Mac runs short of memory or, with Sleep after, once they have been idle, and the same row in Settings search. Off by default. Sentence case; “Sleep” is a verb the browser does to the tabs.",
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mirovanje neaktivnih kartica"
+          }
+        }
+      }
     },
     "Sleep inactive tabs is off, so every website stays loaded." : {
 

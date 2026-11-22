@@ -28,7 +28,7 @@ struct CertificateEvaluationTests {
         }
     }
 
-    @Test func theWarningShowsThePortAndOffersToInspectTheCertificate() async throws {
+    @Test(.exclusiveExternalApp) func theWarningShowsThePortAndOffersToInspectTheCertificate() async throws {
         let trust = try makeTrust(anchored: false)
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 560, height: 400),

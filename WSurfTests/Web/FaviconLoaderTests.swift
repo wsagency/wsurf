@@ -444,6 +444,35 @@ struct FaviconNavigationTests {
         return try #require(components.url)
     }
 
+    @Test(arguments: [false, true])
+    func privateIconsStayOnThePageOrigin(redirects: Bool) async throws {
+        let directory = makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let external = try await HTTPFixtureServer.start(routes: [
+            "/external.png": .bytes(try iconData(side: 24), contentType: "image/png"),
+        ])
+        let externalIcon = try external.url("/external.png")
+        let reference = redirects ? "/redirected.png" : externalIcon.absoluteString
+        let site = try await HTTPFixtureServer.start(routes: [
+            "/page": .html(
+                "<link rel=\"icon\" href=\"\(reference)\"><h1>Page</h1>",
+                headers: ["Content-Security-Policy": "img-src 'none'"]
+            ),
+            "/redirected.png": .redirect(to: externalIcon),
+            "/favicon.ico": .bytes(try iconData(side: 16), contentType: "image/png"),
+        ])
+        let loader = FaviconLoader(cacheDirectory: directory)
+        loader.persistsToDisk = false
+        let page = makeWebView()
+        page.load(URLRequest(url: try site.url("/page")))
+        try #require(await PageSettle.untilIdle(page, timeout: .seconds(30)))
+
+        #expect(await loader.load(for: page)?.size.width == 16)
+        #expect(external.lastRequestHead(for: "/external.png") == nil)
+        #expect(!FileManager.default.fileExists(atPath: directory.path))
+        await page.close()
+    }
+
     @Test func initialIconMarkupKeepsTheCachedIconButLaterChangesInvalidateIt() async throws {
         let directory = makeDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }

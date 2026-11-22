@@ -1053,7 +1053,7 @@ Reviewed the nine commits from Linen's v0.9.7 tag through `f985c3a3`. [Upstream 
 | Linen change | WSurf adaptation |
 | --- | --- |
 | Nonstandard port in the address bar (`b31269f9`) | The compact address uses the existing URL renderer for the verified host and a subdued port. The full address keeps its existing format. |
-| Certificate warning (`e9b8fb1b`) | WebKit and Chromium share the native warning and certificate preview. Continuing requires the existing opt-in and an explicit choice. Each exception binds to the host, port and leaf certificate for the current run. |
+| Certificate warning (`e9b8fb1b`) | WebKit and Chromium share the native warning and certificate preview. The warning keeps the existing exception policy and displays a nonstandard port when one is present. Chromium can reuse an engine-cached approval for the host, including across launches with a disk-backed profile. |
 | Shorter Settings captions and Acknowledgements (`91f25b60`, `69e7eb5f`) | Shorten matching WSurf Settings captions and search descriptions. The Acknowledgements row keeps its title and destination. |
-| Private favicons and profile-owned icons (`fbac63e7`, `ca532929`) | Private tabs use their context's favicon loader and session-only cache. WSurf already used the profile's loader for unloaded tabs. |
+| Private favicons and profile-owned icons (`fbac63e7`, `ca532929`) | Private tabs use their context's favicon loader and session-only cache. Private icon requests and redirects stay on the page origin. WSurf already used the profile's loader for unloaded tabs. |
 | Private zoom and closed tabs (`7fbf88dd`, `ad919a1b`, `f985c3a3`) | Site zoom lives in the private context, and closed tabs can reopen in their original private window. The context clears zoom on teardown and the window clears its reopen list when it closes. |
