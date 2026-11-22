@@ -5,6 +5,11 @@ This file preserves release notes inherited from the upstream
 describe upstream Linen releases, not releases published by WSurf. New WSurf
 release notes will be added above this provenance record.
 
+## 0.2.3 (build 35) — 2026-11-22
+
+- Shared profiles are marked in Profiles and in the profile switcher.
+- Opening a shared Space or profile brings back the saved window that holds its tabs when another window displays only a subset after a restart.
+
 ## 0.2.2 (build 34) — 2026-11-22
 
 - When creating a Space, choose **Separate sign-ins and data** and select an existing credential vault. Both Spaces can use the same passwords and passkeys while keeping independent website sessions. **Space Settings** lets you change the vault on each Mac.

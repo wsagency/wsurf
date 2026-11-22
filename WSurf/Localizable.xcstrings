@@ -171,6 +171,16 @@
         }
       }
     },
+    "Shared profile" : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dijeljeni profil"
+          }
+        }
+      }
+    },
     "Show Profiles…" : {
       "localizations" : {
         "hr" : {

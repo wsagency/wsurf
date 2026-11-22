@@ -12,6 +12,13 @@ enum ProfileSummary {
         return String(localized: "\(name) — \(mac)")
     }
 
+    static func isShared(_ profile: Profile, sharedSpaces: CloudSharedSpaces? = CloudSync.shared?.sharedSpaces) -> Bool {
+        if case .published = profile.publicationOrigin {
+            return true
+        }
+        return sharedSpaces?.cloudProfileID(for: profile.id) != nil
+    }
+
     static func displayName(
         for profile: Profile, sharedSpaces: CloudSharedSpaces? = CloudSync.shared?.sharedSpaces, vaults: VaultSync? = CloudSync.shared?.vaults
     ) -> String {
