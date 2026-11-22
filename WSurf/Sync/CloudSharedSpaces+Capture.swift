@@ -36,56 +36,13 @@ extension CloudSharedSpaces {
 
     func pinsChanged(in profile: Profile, store: ProfilePinStore) {
         guard !applying, isEnabled(.pins, for: profile), store.isAvailable,
-              var link = links[profile.id], let group = link.profile else { return }
-        if link.sharesPinLibrary {
-            do {
-                try capturePinLibrary(store.readForPublication(), in: profile, group: group)
-            } catch {
-                pinLibraryFailures.insert(profile.id)
-            }
-            return
+              let link = links[profile.id], let group = link.profile, let library = link.pinLibrary,
+              catalog.ready.contains(.pins) || !library.rows.isEmpty else { return }
+        do {
+            try capturePinLibrary(store.readForPublication(), in: profile, group: group)
+        } catch {
+            pinLibraryFailures.insert(profile.id)
         }
-        guard !link.pins.isEmpty else { return }
-        let edits = selectedPinItems(store.pins, for: group, link: &link)
-        if links[profile.id]?.pinFolders != link.pinFolders {
-            links[profile.id] = link
-        }
-        catalog.stage(edits, for: profile.id)
-        persistLinks()
-    }
-
-    func selectedPinItems(_ pins: [ProfilePin], for group: UUID, link: inout SharedProfileLinks) -> [SharedSpaceItem] {
-        let local = Dictionary(uniqueKeysWithValues: pins.map { ($0.id, $0) })
-        var required: Set<UUID> = []
-        for selected in link.pins.keys {
-            var parent = local[selected]?.parentID
-            while let id = parent, let folder = local[id], folder.kind == .folder, required.insert(id).inserted {
-                parent = folder.parentID
-            }
-        }
-        var folders = link.pinFolders ?? [:]
-        for id in required where folders[id] == nil {
-            folders[id] = catalog.item(id, in: .pins) == nil ? id : UUID()
-        }
-        var edits: [SharedSpaceItem] = []
-        for id in required {
-            guard let pin = local[id], let shared = folders[id] else { continue }
-            edits.append(.init(
-                id: shared, kind: .pinFolder, profileID: group, parentID: pin.parentID.flatMap { folders[$0] },
-                order: pin.orderKey, title: pin.title, symbol: pin.symbol, color: pin.color?.rawValue
-            ))
-        }
-        for (id, shared) in link.pins {
-            if let pin = local[id], var item = Self.pinItem(pin, id: shared, profile: group) {
-                item.sharedTabID = link.slots.values.first { $0.pinID == id }?.cloudID ?? catalog.item(shared, in: .pins)?.sharedTabID
-                item.parentID = pin.parentID.flatMap { folders[$0] }
-                edits.append(item)
-            } else if let prior = catalog.item(shared, in: .pins), !prior.removed {
-                edits.append(prior.tombstone)
-            }
-        }
-        link.pinFolders = folders
-        return edits
     }
 
     /// A row gone from an open window is ambiguous during teardown or transfer. Only an individual close supplies a deletion.

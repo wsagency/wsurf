@@ -25,7 +25,7 @@ struct SidebarProfileControl: View {
     }
 
     private var name: String {
-        profiles.isPrivate ? profiles.privateBrowsing.name : profile.name
+        profiles.isPrivate ? profiles.privateBrowsing.name : ProfileSummary.displayName(for: profile)
     }
 
     var body: some View {

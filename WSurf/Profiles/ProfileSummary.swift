@@ -4,8 +4,34 @@
 // Linen portions: Apache-2.0; WSurf modifications: BUSL-1.1. See NOTICE.
 
 import Foundation
+import WSurfCore
 
 enum ProfileSummary {
+    static func publishedName(_ name: String, source: ProfilePublicationSource?) -> String {
+        guard let mac = source?.macName else { return name }
+        return String(localized: "\(name) — \(mac)")
+    }
+
+    static func displayName(
+        for profile: Profile, sharedSpaces: CloudSharedSpaces? = CloudSync.shared?.sharedSpaces, vaults: VaultSync? = CloudSync.shared?.vaults
+    ) -> String {
+        if let sharedSpaces, let id = sharedSpaces.cloudProfileID(for: profile.id) {
+            if let row = sharedSpaces.catalog.item(id, in: .profiles), !row.removed {
+                return publishedName(profile.name, source: row.publicationSource)
+            }
+            if case .published(let source) = sharedSpaces.links[profile.id]?.publicationOrigin {
+                return publishedName(profile.name, source: source)
+            }
+        }
+        if let source = vaults?.publicationSource(for: profile.id) {
+            return publishedName(profile.name, source: source)
+        }
+        if case .published(let source) = profile.publicationOrigin {
+            return publishedName(profile.name, source: source)
+        }
+        return profile.name
+    }
+
     static func tabs(_ count: Int) -> String {
         guard count > 0 else { return String(localized: "No tabs") }
         return String(localized: "\(count) tabs")

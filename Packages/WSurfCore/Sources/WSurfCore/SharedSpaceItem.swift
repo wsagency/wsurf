@@ -52,6 +52,7 @@ nonisolated public struct SharedSpaceItem: Codable, Equatable, Identifiable, Sen
     public var parentID: UUID?
     public var order: String
     public var title: String
+    public var publicationSource: ProfilePublicationSource?
     public var url: String?
     public var customTitle: String?
     public var symbol: String?
@@ -63,7 +64,7 @@ nonisolated public struct SharedSpaceItem: Codable, Equatable, Identifiable, Sen
     public init(
         id: UUID, kind: Kind, profileID: UUID, spaceID: UUID? = nil, parentID: UUID? = nil, order: String = "",
         title: String = "", url: String? = nil, customTitle: String? = nil, symbol: String? = nil,
-        color: String? = nil, favorite: Bool = false, removed: Bool = false
+        color: String? = nil, favorite: Bool = false, removed: Bool = false, publicationSource: ProfilePublicationSource? = nil
     ) {
         self.id = id
         self.kind = kind
@@ -72,6 +73,7 @@ nonisolated public struct SharedSpaceItem: Codable, Equatable, Identifiable, Sen
         self.parentID = parentID
         self.order = order
         self.title = title
+        self.publicationSource = publicationSource
         self.url = url
         self.customTitle = customTitle
         self.symbol = symbol
@@ -118,7 +120,7 @@ nonisolated public struct SharedSpaceItem: Codable, Equatable, Identifiable, Sen
     }
 
     private var isValid: Bool {
-        guard parentID != id, spaceID != id, sharedTabID == nil || kind == .pin, order.utf8.count <= 512,
+        guard parentID != id, spaceID != id, sharedTabID == nil || kind == .pin, publicationSource == nil || kind == .profile, order.utf8.count <= 512,
               order.utf8.allSatisfy({ (48...57).contains($0) || (65...90).contains($0) || (97...122).contains($0) })
         else { return false }
         switch kind {

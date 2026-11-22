@@ -91,12 +91,12 @@
         }
       }
     },
-    "Share All Pins and Favorites" : {
+    "Shared Pins and Favorites" : {
       "localizations" : {
         "hr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Podijeli sve pinove i favorite"
+            "value" : "Dijeljeni pinovi i favoriti"
           }
         }
       }
@@ -151,26 +151,6 @@
         }
       }
     },
-    "Sync all pins and Favorites" : {
-      "localizations" : {
-        "hr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Sinkroniziraj sve pinove i favorite"
-          }
-        }
-      }
-    },
-    "Sync previously shared pins and Favorites" : {
-      "localizations" : {
-        "hr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Sinkroniziraj prethodno podijeljene pinove i favorite"
-          }
-        }
-      }
-    },
     "This Mac couldn’t update its pins and Favorites. Try again." : {
       "localizations" : {
         "hr" : {
@@ -205,6 +185,12 @@
         "en" : {
           "stringUnit" : {
             "state" : "new",
+            "value" : "%1$@ — %2$@"
+          }
+        },
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
             "value" : "%1$@ — %2$@"
           }
         }

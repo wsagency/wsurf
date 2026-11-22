@@ -6,24 +6,18 @@ import WSurfCore
 
 extension CloudSharedSpaces {
     func applyPins(_ profile: Profile, models: [BrowserModel]) {
-        guard let group = links[profile.id]?.profile else { return }
+        guard links[profile.id]?.sharesPinLibrary == true, let group = links[profile.id]?.profile else { return }
         let store = pins(profile)
         do {
             let local = try store.readForPublication()
-            if links[profile.id]?.sharesPinLibrary == true {
-                try capturePinLibrary(local, in: profile, group: group)
-            }
+            try capturePinLibrary(local, in: profile, group: group)
             guard var link = links[profile.id] else { return }
             var next = Dictionary(uniqueKeysWithValues: local.map { ($0.id, $0) })
             let incoming = catalog.items(.pins).filter { $0.profileID == group && !$0.removed }
-            if link.sharesPinLibrary {
-                try reserveIncomingPins(incoming, link: &link, local: &next, store: store, models: models)
-            }
+            try reserveIncomingPins(incoming, link: &link, local: &next, store: store, models: models)
             let transfers = associatedTabs(incoming, profile: profile, link: &link, local: next, models: models)
             applyLinkedPins(link: &link, local: &next)
-            if link.sharesPinLibrary {
-                removeEmptyDeletedFolders(link: link, local: &next)
-            }
+            removeEmptyDeletedFolders(link: link, local: &next)
             let rows = ProfilePin.depthFirst(Array(next.values))
             // An incoming favorite that already has a Space tab adopts that tab before any window inserts a copy.
             let attach = {
@@ -31,20 +25,10 @@ extension CloudSharedSpaces {
                     tab.pinID = id
                 }
             }
-            if link.sharesPinLibrary {
-                try commitPinLibrary(rows, replacing: local, store: store, profile: profile, link: &link, beforeNotify: attach)
-                pinLibraryFailures.remove(profile.id)
-            } else {
-                if links[profile.id] != link {
-                    links[profile.id] = link
-                    guard persistLinks() else { return }
-                }
-                store.publish(rows, replacing: local, beforeNotify: attach)
-            }
+            try commitPinLibrary(rows, replacing: local, store: store, profile: profile, link: &link, beforeNotify: attach)
+            pinLibraryFailures.remove(profile.id)
         } catch {
-            if links[profile.id]?.sharesPinLibrary == true {
-                pinLibraryFailures.insert(profile.id)
-            }
+            pinLibraryFailures.insert(profile.id)
         }
     }
 
@@ -151,11 +135,9 @@ extension CloudSharedSpaces {
             pin.orderKey = folder.order
             pin.title = folder.title
             pin.color = folder.color.flatMap(TabFolderColor.init(rawValue:))
-            if link.sharesPinLibrary {
-                pin.customColor = folder.pinFolderAppearance?.customColor
-                pin.sizeFactor = folder.pinFolderAppearance?.sizeFactor
-                pin.tintsIcons = folder.pinFolderAppearance?.tintsIcons == true ? true : nil
-            }
+            pin.customColor = folder.pinFolderAppearance?.customColor
+            pin.sizeFactor = folder.pinFolderAppearance?.sizeFactor
+            pin.tintsIcons = folder.pinFolderAppearance?.tintsIcons == true ? true : nil
             pin.symbol = folder.symbol
             pin.isPinned = above == nil
             local[id] = pin

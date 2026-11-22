@@ -166,7 +166,44 @@ extension SharedSpacesTests {
         try await air.sync()
         #expect(second.customTitle == "Studio")
     }
-    @Test func aDormantNamedProfileCanUpgradeItsLegacyLinkAfterRestart() async throws {
+
+    @Test func pausedPinsWaitForTheSameAccountAfterRestartAndSharingAnotherSpace() async throws {
+        let owner = FakeSyncCloud(), other = FakeSyncCloud(user: "other-account")
+        let mac = Mac(owner)
+        defer { mac.finish() }
+        let group = try await mac.host.publishProfile(mac.profile)
+        try await mac.sync()
+        let pin = mac.browser.pinned("https://waiting.example.test/")
+        let id = try #require(pin.pinID)
+        mac.host.pause(.pins, for: mac.profile)
+        let host = CloudSharedSpaces(stateFile: mac.dir.appending(path: "shared.json"), profiles: [mac.profile],
+                                     windows: { [] }, spaces: { _ in mac.store }, pins: { _ in mac.browser.pinStore })
+        let engine = FakeSyncEngine(cloud: owner, delegate: host.catalog)
+        host.attach(engine)
+        await host.refresh()
+        try await host.share(try #require(mac.store.spaces.first), in: mac.profile)
+        await host.refresh()
+        #expect(!host.isEnabled(.pins, for: mac.profile))
+        #expect(owner.names(in: SharedCatalogCategory.pins.zone).isEmpty)
+
+        engine.cloud = other
+        await engine.simulateAccount(.switchAccounts(user: other.user))
+        try await host.enable(.profiles, for: mac.profile)
+        await host.refresh()
+        #expect(host.links[mac.profile.id] == nil && other.names(in: SharedCatalogCategory.pins.zone).isEmpty)
+        engine.cloud = owner
+        await engine.simulateAccount(.switchAccounts(user: owner.user))
+        host.accountVerificationChanged(.resolved(owner.user))
+        await host.refresh()
+        #expect(!host.needsEngine && host.cloudProfileID(for: mac.profile.id) == group)
+        #expect(owner.names(in: SharedCatalogCategory.pins.zone).isEmpty)
+        try await host.enable(.pins, for: mac.profile)
+        await host.refresh()
+        #expect(owner.names(in: SharedCatalogCategory.pins.zone) == [id.uuidString])
+        #expect(other.names(in: SharedCatalogCategory.pins.zone).isEmpty)
+    }
+
+    @Test func aLegacyPinSelectionWaitsForTheWholeLibrarySwitchAfterRestart() async throws {
         let root = URL.temporaryDirectory.appending(path: UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
         let cloud = FakeSyncCloud()
@@ -174,12 +211,14 @@ extension SharedSpacesTests {
         let work = Profile(id: UUID(), name: "Air", symbol: "person", color: .gray)
         let unrelated = Profile(id: UUID(), name: "Other", symbol: "person", color: .gray)
         let serverStore = ProfilePinStore.store(for: .temporary()), airStore = ProfilePinStore.store(for: .temporary())
-        let otherStore = ProfilePinStore.store(for: .temporary())
+        let otherStore = ProfilePinStore.store(for: .temporary()), personalStore = ProfilePinStore.store(for: .temporary())
+        let workSpaces = SpaceStore(profile: work, file: root.appending(path: "work-spaces.json"))
         let first = ProfilePin(id: UUID(), orderKey: "A", kind: .tab, url: "https://server.example.test/")
         let second = ProfilePin(id: UUID(), orderKey: "B", kind: .tab, url: "https://client.example.test/")
+        let favorite = ProfilePin(id: UUID(), orderKey: "C", kind: .tab, url: "https://favorite.example.test/", isFavorite: true)
         let hidden = ProfilePin(id: UUID(), orderKey: "A", kind: .tab, url: "https://unrelated.example.test/")
         serverStore.publish([first])
-        airStore.publish([second])
+        airStore.publish([second, favorite])
         otherStore.publish([hidden])
         let server = CloudSharedSpaces(stateFile: root.appending(path: "server.json"), profiles: [original],
                                        windows: { [] }, spaces: { _ in nil }, pins: { _ in serverStore })
@@ -188,28 +227,76 @@ extension SharedSpacesTests {
         await server.refresh()
         func openAir() -> CloudSharedSpaces {
             let host = CloudSharedSpaces(stateFile: root.appending(path: "air.json"), profiles: [work, unrelated],
-                                         windows: { [] }, spaces: { _ in nil }, pins: { $0.id == work.id ? airStore : otherStore })
+                                         windows: { [] }, spaces: { $0.id == work.id ? workSpaces : nil }, pins: {
+                                             if $0.isOriginal {
+                                                 return personalStore
+                                             }
+                                             return $0.id == work.id ? airStore : otherStore
+                                         })
             host.attach(FakeSyncEngine(cloud: cloud, delegate: host.catalog))
             return host
         }
         let legacy = openAir()
         try await legacy.enable(.profiles, for: work)
-        #expect(legacy.linkProfile(work.id, to: group))
+        // An older build selected one row, assigned it a different cloud ID, and exited with the write pending.
+        let alias = UUID()
+        legacy.links[work.id] = .init(profile: group, pins: [second.id: alias])
+        legacy.catalog.setEnabled(true, .pins, for: work.id)
+        let pending = try #require(CloudSharedSpaces.pinItem(second, id: alias, profile: group))
+        legacy.catalog.stage(pending, for: work.id)
         legacy.pause(.profiles, for: work)
         let air = openAir()
         air.accountVerificationChanged(.resolved(cloud.user))
-        #expect(air.links[work.id]?.sharesPinLibrary == false && !air.needsEngine)
-        #expect(airStore.pins.map(\.id) == [second.id])
-        try await air.sharePinLibrary(in: work)
+        #expect(!air.isEnabled(.pins, for: work) && !air.needsEngine)
+        try await air.enable(.profiles, for: work)
+        await air.refresh()
+        #expect(air.links[work.id]?.pins[second.id] == alias)
+        #expect(air.catalog.state.pending[pending.recordID]?.item == pending)
+        #expect(Set(airStore.pins.map(\.id)) == [second.id, favorite.id])
+        #expect(cloud.names(in: SharedCatalogCategory.pins.zone) == [first.id.uuidString])
+        try await air.share(try #require(workSpaces.spaces.first), in: work)
+        #expect(!air.isEnabled(.pins, for: work))
+        // Personal already uses the same catalog zone. Work still needs its own baseline and consent.
+        _ = try await air.publishProfile(.original())
+        #expect(air.catalog.ready.contains(.pins) && !air.isEnabled(.pins, for: work))
+        await air.refresh()
+        #expect(cloud.names(in: SharedCatalogCategory.pins.zone) == [first.id.uuidString])
+        air.pause(.profiles, for: work)
+        try await air.enable(.pins, for: work)
         await air.refresh()
         await server.refresh()
-        #expect(Set(serverStore.pins.map(\.id)) == [first.id, second.id])
-        #expect(Set(airStore.pins.map(\.id)) == [first.id, second.id])
+        #expect(Set(serverStore.pins.map(\.id)) == [first.id, alias, favorite.id])
+        #expect(Set(airStore.pins.map(\.id)) == [first.id, second.id, favorite.id])
+        #expect(serverStore.pins.first { $0.id == favorite.id }?.isFavorite == true)
+        #expect(air.links[work.id]?.pins[second.id] == alias)
         #expect(otherStore.pins.map(\.id) == [hidden.id])
         #expect(air.links[unrelated.id] == nil && !air.isEnabled(.profiles, for: work))
         #expect(!cloud.names(in: SharedCatalogCategory.pins.zone).contains(hidden.id.uuidString))
-        await #expect(throws: SharedCatalogError.self) { try await air.sharePinLibrary(in: .privateBrowsing()) }
+        await #expect(throws: SharedCatalogError.self) { try await air.enable(.pins, for: .privateBrowsing()) }
     }
+
+    @Test func aSwitchOfferedForAReturningAccountCannotResumeAnotherAccountsLibrary() async throws {
+        let first = FakeSyncCloud(), second = FakeSyncCloud(user: "second-owner")
+        let mac = Mac(first)
+        defer { mac.finish() }
+        let firstGroup = try await mac.host.publishProfile(mac.profile)
+        try await mac.sync()
+        mac.engine.cloud = second
+        await mac.engine.simulateAccount(.switchAccounts(user: second.user))
+        _ = try await mac.host.publishProfile(mac.profile)
+        try await mac.sync()
+        await mac.engine.simulateAccount(.signOut)
+        mac.host.accountVerificationChanged(.resolved(first.user))
+        #expect(mac.host.cloudProfileID(for: mac.profile.id) == firstGroup && !mac.host.needsEngine)
+        _ = mac.browser.pinned("https://waiting-for-first.example.test/")
+
+        // Settings offered the first owner's switch, but the engine now sees the second owner's account.
+        await #expect(throws: SharedCatalogError.self) { try await mac.host.enable(.pins, for: mac.profile) }
+        try await mac.sync()
+        #expect(mac.host.cloudProfileID(for: mac.profile.id) == nil && !mac.host.isEnabled(.pins, for: mac.profile))
+        #expect(second.names(in: SharedCatalogCategory.pins.zone).isEmpty && first.names(in: SharedCatalogCategory.pins.zone).isEmpty)
+    }
+
     @Test func anIncomingPinnedFolderKeepsAnUnrelatedLocalFolderAndItsTabs() async throws {
         let cloud = FakeSyncCloud()
         let studio = Mac(cloud), air = Mac(cloud)

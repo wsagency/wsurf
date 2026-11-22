@@ -16,7 +16,7 @@ extension CloudSharedSpaces {
     }
 
     /// Commit fresh IDs for the same selected local objects and their pending values together.
-    func replaceInstance(for profile: Profile, with next: CloudProfileInstance) throws {
+    func replaceInstance(for profile: Profile, with next: CloudProfileInstance, source: ProfilePublicationSource? = nil) throws {
         guard retryOptOuts(), storageReadable else { throw SharedCatalogError.storage }
         guard var link = links[profile.id], let old = link.profile, catalog.state.user == next.owner else { return }
         if old == next.id {
@@ -37,16 +37,13 @@ extension CloudSharedSpaces {
             let selected = Set(link.spaces.values).union(link.slots.values.map(\.cloudID))
             items = catalog.items(.spaces).filter { $0.profileID == old && selected.contains($0.id) && !$0.removed }
         }
-        if catalog.enabled(.pins, for: profile.id), link.sharesPinLibrary || !link.pins.isEmpty {
-            let local = try pins(profile).readForPublication()
-            if link.sharesPinLibrary {
-                items += libraryItems(local, group: old, link: &link).values
-            } else {
-                items += selectedPinItems(local, for: old, link: &link).filter { !$0.removed }
-            }
+        if catalog.enabled(.pins, for: profile.id), link.sharesPinLibrary {
+            items += try libraryItems(pins(profile).readForPublication(), group: old, link: &link).values
         }
+        let source = source ?? ProfilePublicationSource(macName: computerName())
+        link.publicationOrigin = .published(source)
         if catalog.enabled(.profiles, for: profile.id) {
-            items.append(.init(id: old, kind: .profile, profileID: old, title: profile.name))
+            items.append(.init(id: old, kind: .profile, profileID: old, title: profile.name, publicationSource: source))
         }
         let copies = items.map { $0.copy(id: fresh($0.id), profile: next.id, map: fresh) }
         link.profile = next.id
@@ -76,7 +73,8 @@ extension CloudSharedSpaces {
 private extension SharedSpaceItem {
     func copy(id: UUID, profile: UUID, map: (UUID) -> UUID) -> Self {
         var copy = Self(id: id, kind: kind, profileID: profile, spaceID: spaceID.map(map), parentID: parentID.map(map),
-                        order: order, title: title, url: url, customTitle: customTitle, symbol: symbol, color: color, favorite: favorite, removed: removed)
+                        order: order, title: title, url: url, customTitle: customTitle, symbol: symbol, color: color, favorite: favorite,
+                        removed: removed, publicationSource: publicationSource)
         copy.sharedTabID = sharedTabID.map(map)
         copy.pinFolderAppearance = pinFolderAppearance
         return copy

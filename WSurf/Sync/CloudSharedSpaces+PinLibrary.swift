@@ -5,30 +5,18 @@ import Foundation
 import WSurfCore
 
 extension CloudSharedSpaces {
-    /// Only explicit Settings actions expand an older item-by-item link to the whole profile library.
-    func sharePinLibrary(in profile: Profile) async throws {
-        guard let group = cloudProfileID(for: profile.id), let owner = catalog.state.user else { throw SharedCatalogError.unavailable }
-        try await enable(.pins, for: profile, captureOnResume: links[profile.id]?.sharesPinLibrary == true)
-        guard cloudProfileID(for: profile.id) == group, catalog.trustedUser == owner, var link = links[profile.id] else {
-            throw SharedCatalogError.accountChanged
-        }
-        let store = pins(profile)
-        let rows = try store.readForPublication()
-        if !link.sharesPinLibrary {
-            link.pinLibrary = .init()
-            // A legacy pin can still be awaiting its first successful import into SQLite.
-            // The initial local set establishes the baseline only for rows that actually exist.
-            link.skippedPins = nil
-            links[profile.id] = link
-        }
-        try capturePinLibrary(rows, in: profile, group: group)
-        applyCatalog()
-        guard !pinLibraryFailures.contains(profile.id), catalog.storageAvailable else { throw SharedCatalogError.storage }
+    func choosePinLibrary(for id: UUID) {
+        guard var link = links[id], !link.sharesPinLibrary else { return }
+        // Mapped pins may still await their first import. Only rows actually present establish a local baseline.
+        link.pinLibrary = .init()
+        link.skippedPins = nil
+        links[id] = link
     }
 
-    func includePinLibrary(in profile: Profile) async throws {
-        if links[profile.id]?.sharesPinLibrary != true || (isEnabled(.pins, for: profile) && pinLibraryFailures.contains(profile.id)) {
-            try await sharePinLibrary(in: profile)
+    func prepareLinkedPinLibrary(in profile: Profile) async throws {
+        guard isEnabled(.pins, for: profile), links[profile.id]?.sharesPinLibrary == true else { return }
+        if !catalog.ready.contains(.pins) || pinLibraryFailures.contains(profile.id) {
+            try await enable(.pins, for: profile)
         }
     }
 

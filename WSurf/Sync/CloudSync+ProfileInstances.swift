@@ -23,6 +23,7 @@ extension CloudSync {
         sync?.profileInstance = { id, user in
             store.cloudLedger.active[id]?[user]
         }
+        sync?.instancePublicationSource = { store.cloudLedger.publicationSources?[$0] }
         sync?.adoptInstance = { [weak self] profile, instance, owner in
             guard let self, store.verifiedProfiles?.contains(where: { $0.id == profile && !$0.isOriginal && !$0.isPrivate }) == true,
                   store.cloudLedger.pending[profile] == nil, store.cloudLedger.active[profile]?[owner] == nil,
@@ -162,7 +163,13 @@ extension CloudSync {
         try await verifyDecision(old, profile: profile.id)
         guard let store = profileStore else { throw VaultSyncFailure.unavailable }
         let next = store.cloudLedger.creating[profile.id] ?? CloudProfileInstance(.shared, id: UUID(), owner: old.owner)
-        try store.updateCloudLedger { $0.creating[profile.id] = next }
+        let source = ProfilePublicationSource(macName: sharedSpaces?.computerName() ?? DeviceInfo.computerName)
+        try store.updateCloudLedger {
+            if $0.publicationSources?[next.id] == nil {
+                $0.recordPublisher(source, for: next.id)
+            }
+            $0.creating[profile.id] = next
+        }
         try finishNewInstance(profile: profile, next: next)
         beat()
     }
@@ -170,10 +177,15 @@ extension CloudSync {
     private func finishNewInstance(profile: Profile, next: CloudProfileInstance) throws {
         guard let store = profileStore, store.cloudLedger.creating[profile.id] == next else { return }
         // Each participant commits one local checkpoint. A restart reuses the same new ID and repeats only unfinished work.
-        try sharedSpaces?.replaceInstance(for: profile, with: next)
+        let source = store.cloudLedger.publicationSources?[next.id] ?? ProfilePublicationSource(macName: sharedSpaces?.computerName() ?? DeviceInfo.computerName)
+        try sharedSpaces?.replaceInstance(for: profile, with: next, source: source)
         try settingsSync?.replaceInstance(for: profile.id, with: next)
         try store.updateCloudLedger {
+            if let prior = $0.active[profile.id]?[next.owner], prior != next.id {
+                $0.publicationSources?[prior] = nil
+            }
             $0.active[profile.id, default: [:]][next.owner] = next.id
+            $0.recordPublisher(source, for: next.id)
             $0.creating[profile.id] = nil
             $0.detached[profile.id] = nil
             $0.pending[profile.id] = nil

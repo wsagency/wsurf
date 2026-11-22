@@ -92,6 +92,7 @@ public final class VaultSync: SyncEngineDelegate {
     @ObservationIgnored let persist: (VaultSyncAppState) -> Void
     @ObservationIgnored public var isRetired: ((CloudProfileInstance) -> Bool)?
     @ObservationIgnored public var profileInstance: ((UUID, String) -> UUID?)?
+    @ObservationIgnored public var instancePublicationSource: ((UUID) -> ProfilePublicationSource?)?
     @ObservationIgnored public var permitsProfile: ((UUID) -> Bool)?
     @ObservationIgnored public var checkInstance: ((UUID, String) async throws -> Void)?
     @ObservationIgnored public var adoptInstance: ((UUID, UUID, String) throws -> Void)?
@@ -387,13 +388,29 @@ public final class VaultSync: SyncEngineDelegate {
         }.sorted { $0.vaultID.uuidString < $1.vaultID.uuidString }
     }
 
+    func recordedProfileCard(_ profile: UUID, instance: UUID?) -> VaultProfileCard? {
+        let cards = remoteVaults(profileID: profile).filter { $0.instanceID == instance }.map(\.payload.profile)
+        return cards.first { $0.publicationSource?.macName != nil } ?? cards.first
+    }
+
+    public func publicationSource(for profile: UUID) -> ProfilePublicationSource? {
+        guard let owner = connectedAccount, permitsProfile?(profile) != false else { return nil }
+        let instance = profileInstance?(profile, owner)
+        return instance.flatMap { instancePublicationSource?($0) } ?? recordedProfileCard(profile, instance: instance)?.publicationSource
+    }
+
     /// Profiles that have synced vaults and are not on this Mac.
     public func remoteProfiles() -> [(id: UUID, card: VaultProfileCard)] {
         let here = Set(host.profileIDs())
         var cards: [UUID: VaultProfileCard] = [:]
         for remote in state.remote.values.sorted(by: { $0.vaultID.uuidString < $1.vaultID.uuidString })
         where !here.contains(remote.profileID) && !excluded.contains(remote.profileID) && isAvailable(remote) {
-            cards[remote.profileID] = cards[remote.profileID] ?? remote.payload.profile
+            let card = remote.payload.profile
+            // The first vault can predate Mac names while a newer card knows the publisher.
+            if let existing = cards[remote.profileID], existing.publicationSource?.macName != nil || card.publicationSource?.macName == nil {
+                continue
+            }
+            cards[remote.profileID] = card
         }
         return cards.map { (id: $0.key, card: $0.value) }.sorted { ($0.card.name, $0.id.uuidString) < ($1.card.name, $1.id.uuidString) }
     }

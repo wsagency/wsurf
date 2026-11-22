@@ -16,24 +16,16 @@ struct SharedProfileLinkSection: View {
                 scope: "Publishing or linking combines this profile’s pins and Favorites across your Macs, including any you add later."
             )
             RowSeparator()
-            if let id = host.cloudProfileID(for: profile.id) {
+            let linkedID = host.cloudProfileID(for: profile.id)
+            if let id = linkedID {
                 let published = host.catalog.item(id, in: .profiles)
-                let name = published?.title ?? profile.name
+                let name = published.map { ProfileSummary.publishedName($0.title, source: $0.publicationSource) }
+                    ?? ProfileSummary.displayName(for: profile, sharedSpaces: host)
                 DetailRow(verbatimTitle: profile.name, verbatimCaption: String(localized: "Linked to \(name) in iCloud.")) {
                     if published == nil {
                         publishButton
                     } else {
                         Image(systemName: "link").accessibilityHidden(true)
-                    }
-                }
-                if host.links[profile.id]?.sharesPinLibrary != true {
-                    RowSeparator()
-                    DetailRow(
-                        title: "Pins and Favorites",
-                        caption: "Combine all pins and Favorites from this Mac and iCloud, including any you add later."
-                    ) {
-                        SettingsButton(title: "Share All Pins and Favorites") { change.run { try await host.sharePinLibrary(in: profile) } }
-                            .disabled(change.working || host.hasPendingOptOut(.pins, for: profile))
                     }
                 }
             } else {
@@ -42,7 +34,7 @@ struct SharedProfileLinkSection: View {
                     let linkedHere = host.links.values.contains { $0.profile == item.id }
                     RowSeparator()
                     DetailRow(
-                        verbatimTitle: item.title,
+                        verbatimTitle: ProfileSummary.publishedName(item.title, source: item.publicationSource),
                         verbatimCaption: linkedHere ? String(localized: "This iCloud profile is already linked on this Mac.") : item.id.uuidString
                     ) {
                         SettingsButton(title: "Link to Profile") { change.run { try await host.joinProfile(item, in: profile) } }
@@ -50,13 +42,11 @@ struct SharedProfileLinkSection: View {
                     }
                 }
             }
-            let link = host.links[profile.id]
-            let sharesAll = link?.sharesPinLibrary == true
-            if sharesAll || link?.pins.isEmpty == false || host.isEnabled(.pins, for: profile) || host.hasPendingOptOut(.pins, for: profile) {
+            if linkedID != nil || host.links[profile.id]?.profile != nil || host.hasPendingOptOut(.pins, for: profile) {
                 RowSeparator()
                 SharedCatalogControl(
-                    host: host, category: .pins, title: sharesAll ? "Sync all pins and Favorites" : "Sync previously shared pins and Favorites",
-                    profile: profile, change: change
+                    host: host, category: .pins, title: "Shared Pins and Favorites", profile: profile, change: change,
+                    scope: "Combine all pins and Favorites from this Mac and iCloud, including any you add later."
                 )
                 if host.isEnabled(.pins, for: profile) {
                     SharedCatalogConflicts(host: host, category: .pins, profile: profile)
@@ -165,10 +155,7 @@ private struct SharedCatalogControl: View {
                         change.message = nil
                         host.retryOptOuts()
                     }
-                } else if enabled && libraryFailed {
-                    SettingsButton(title: "Try Again") { change.run { try await host.sharePinLibrary(in: profile) } }
-                        .disabled(change.working)
-                } else if enabled && host.catalog.failed.contains(category) {
+                } else if enabled && (libraryFailed || host.catalog.failed.contains(category)) {
                     SettingsButton(title: "Try Again", action: enable)
                 }
                 SettingsToggle(Binding(get: { enabled }, set: { on in
@@ -185,6 +172,10 @@ private struct SharedCatalogControl: View {
     }
 
     private func enable() {
+        if category == .pins {
+            change.run { try await host.enable(.pins, for: profile) }
+            return
+        }
         change.message = nil
         // The catalog exposes its enrollment and storage errors directly in this row.
         Task { try? await host.enable(category, for: profile) }
@@ -196,7 +187,8 @@ private struct SharedCatalogControl: View {
 
     private var scopeDescription: LocalizedStringResource? {
         guard let scope else { return nil }
-        if host.links[profile.id]?.sharesPinLibrary == true && !host.isEnabled(.pins, for: profile) {
+        if category != .pins, host.cloudProfileID(for: profile.id) != nil || host.links[profile.id]?.profile != nil,
+           !host.isEnabled(.pins, for: profile) {
             return "Pin and Favorite sync is paused on this Mac."
         }
         return scope

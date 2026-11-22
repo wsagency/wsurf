@@ -225,7 +225,7 @@ final class ProfileStore {
     /// Adds the profile another Mac synced under the same ID so its vaults open here. Built-in, live and pending-erasure IDs
     /// stay reserved. The name is cut to the length the sync record allows, and an unknown symbol becomes the default.
     @discardableResult
-    func adopt(id: UUID, name: String, symbol: String, color: TabFolderColor) -> Profile? {
+    func adopt(id: UUID, name: String, symbol: String, color: TabFolderColor, publicationSource: ProfilePublicationSource? = nil) -> Profile? {
         let owner = catalog ?? self
         guard id != Profile.originalID, id != Profile.privateID, verifiedProfiles != nil || owner.canCreateList,
               !profiles.contains(where: { $0.id == id }), !owner.pendingErasures.contains(where: { $0.id == id }),
@@ -236,7 +236,8 @@ final class ProfileStore {
             id: id,
             name: trimmed.isEmpty ? String(localized: "New Profile") : String(trimmed.prefix(64)),
             symbol: known ? symbol : "person",
-            color: color
+            color: color,
+            publicationOrigin: .published(publicationSource)
         )
         profiles.append(profile)
         save()
@@ -382,6 +383,9 @@ final class ProfileStore {
         let pending = owner.pendingErasures + [profile]
         let current = approved.filter { $0.instanceID == ledger.active[profile.id]?[$0.owner] }
         let withdrawals = owner.pendingVaultRemovals.union(current.map { $0.scheduled() })
+        for instance in (ledger.active[profile.id] ?? [:]).values {
+            ledger.publicationSources?[instance] = nil
+        }
         ledger.active[profile.id] = nil
         // The same atomic write that removes the ID records which local data still needs erasing.
         try JSONFileStore.writeAtomically(

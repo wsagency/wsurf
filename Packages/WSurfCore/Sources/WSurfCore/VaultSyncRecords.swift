@@ -14,15 +14,17 @@ nonisolated public struct VaultProfileCard: Codable, Equatable, Sendable {
     public var symbol: String
     /// A tab folder color name; the app reads an unknown one as gray.
     public var color: String
+    public var publicationSource: ProfilePublicationSource?
 
-    public init(name: String, symbol: String, color: String) {
+    public init(name: String, symbol: String, color: String, publicationSource: ProfilePublicationSource? = nil) {
         self.name = name
         self.symbol = symbol
         self.color = color
+        self.publicationSource = publicationSource
     }
 
     private enum CodingKeys: String, CodingKey {
-        case name, symbol, color
+        case name, symbol, color, publicationSource
     }
 
     public init(from decoder: any Decoder) throws {
@@ -30,6 +32,7 @@ nonisolated public struct VaultProfileCard: Codable, Equatable, Sendable {
         name = String(try container.decode(String.self, forKey: .name).prefix(Self.maxCharacters))
         symbol = String(try container.decode(String.self, forKey: .symbol).prefix(Self.maxCharacters))
         color = String(try container.decode(String.self, forKey: .color).prefix(Self.maxCharacters))
+        publicationSource = try container.decodeIfPresent(ProfilePublicationSource.self, forKey: .publicationSource)
     }
 }
 

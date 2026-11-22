@@ -21,16 +21,15 @@ struct RemoteProfilesSection: View {
                             RowSeparator()
                         }
                         DetailRow(
-                            verbatimTitle: remote.card.name,
+                            verbatimTitle: ProfileSummary.publishedName(remote.card.name, source: remote.card.publicationSource),
                             verbatimCaption: String(localized: "Its vaults sync through iCloud. Add it to use them on this Mac.")
                         ) {
-                            Button("Add to This Mac") {
+                            SettingsButton(title: "Add to This Mac") {
                                 store.adopt(
                                     id: remote.id, name: remote.card.name, symbol: remote.card.symbol,
-                                    color: TabFolderColor(rawValue: remote.card.color) ?? .gray
+                                    color: TabFolderColor(rawValue: remote.card.color) ?? .gray, publicationSource: remote.card.publicationSource
                                 )
                             }
-                            .buttonStyle(.bordered)
                         }
                     }
                 }

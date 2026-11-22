@@ -67,13 +67,13 @@ struct SettingsRowMetricsTests {
         )
         host.attach(FakeSyncEngine(cloud: FakeSyncCloud(), delegate: host.catalog))
         try await host.enable(.profiles, for: profile)
-        try #require(host.linkProfile(profile.id, to: UUID()))
-        try await host.enable(.pins, for: profile)
+        host.links[profile.id] = .init(profile: UUID())
         try await host.enable(.spaces, for: profile)
         let legacy = height(SharedProfileLinkSection(profile: profile, host: host))
-        try await host.sharePinLibrary(in: profile)
+        try await host.enable(.pins, for: profile)
+        host.pause(.pins, for: profile)
         let shared = height(SharedProfileLinkSection(profile: profile, host: host))
-        #expect(legacy > shared, "An older profile offers the extra action to share all pins and Favorites.")
+        #expect(abs(legacy - shared) < 0.5, "An older link and a paused library each offer the same pin sharing row.")
 
         let spaceHeight = height(SharedSpacesSettingsView(profile: profile, host: host))
         store.publish((0..<30).map { index in

@@ -377,7 +377,8 @@ secondary app instances with no session lock keep their data local.
 
 `TabSync` publishes the Personal profile’s open tabs, pins and favorites for the sidebar’s device list. Opening a link
 there creates a local copy. Publishing or linking a profile and sharing or joining a Space combine both Macs’ profile pins,
-Favorites and pinned folders. Existing per-pin links keep their scope until the user chooses **Share All Pins and Favorites**.
+Favorites and pinned folders. A profile shared from Studio appears as “Work — Studio” when another Mac looks for it.
+After upgrading an item-by-item link, **Shared Pins and Favorites** lets the owner enable sharing for the whole collection.
 `SharedCatalogSync` tracks edits by stable record ID, so independent pins can share a URL. `CloudSharedSpaces` maps shared
 Space rows to local windows and saves shared closes until session storage catches up.
 Each Mac keeps its own selected Space and focused tab.
@@ -397,6 +398,8 @@ commits them through the local store. A pending merge holds back writes to that 
 waits for a compatible version. Restoring an older local store pauses its sync. Large sets of deletions wait for the
 owner’s confirmation. A removed item keeps its keyed import trace so another Mac can recognize a later import of
 the same entry. Turning on vault discovery and choosing individual vaults to sync are separate actions.
+Adding a vault from another Mac opens a second local vault with the original vault’s identity and unlock passkey.
+The existing local vault retains its entries. The entry merge command operates within the selected vault.
 
 ## Tests
 

@@ -301,10 +301,10 @@ final class FakeVaultHost: VaultSyncHost {
 
     /// A profile on this Mac. Its folder is named by the profile ID, as the app names it.
     @discardableResult
-    func addProfile(_ id: UUID, name: String = "Personal") -> URL {
+    func addProfile(_ id: UUID, name: String = "Personal", source: ProfilePublicationSource? = nil) -> URL {
         let directory = root.appending(path: id.uuidString, directoryHint: .isDirectory)
         directories[id] = directory
-        cards[id] = VaultProfileCard(name: name, symbol: "person", color: "gray")
+        cards[id] = VaultProfileCard(name: name, symbol: "person", color: "gray", publicationSource: source)
         return directory
     }
 
