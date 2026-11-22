@@ -218,6 +218,8 @@
    "CloudVaultEnrollmentTests",
    "ColourChooserDismissalTests",
    "CredentialListLifetimeTests",
+   "CredentialVaultMergePlanTests",
+   "CredentialVaultMergeSheetTests",
    "CrossSiteFramePasskeyTests",
    "ExtensionTabEventTests",
    "FrameAudioTests",

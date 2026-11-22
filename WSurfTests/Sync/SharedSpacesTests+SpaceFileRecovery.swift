@@ -419,6 +419,7 @@ extension SharedSpacesTests {
         for space in peer.host.availableSpaces(for: peer.profile) {
             try await peer.host.join(space, in: peer.profile)
         }
+        old.host.pause(.pins, for: old.profile)
         let oldCloudID = try #require(old.host.links[old.profile.id]?.slots[knownID]?.cloudID)
         let peerKnownSpace = try #require(peer.browser.page(at: knownURL)?.spaceID)
         old.browser.saveBlocking()
@@ -513,6 +514,7 @@ extension SharedSpacesTests {
         seed.browser.move([.tab(originalID)], toSpace: local.id)
         seed.browser.activate(anchor)
         try await seed.host.share(shared, in: seed.profile)
+        seed.host.pause(.pins, for: seed.profile)
         seed.browser.saveBlocking()
         // Older sessions can have an ordinary page with no recorded Space.
         try await seed.browser.database.writer.write { db in

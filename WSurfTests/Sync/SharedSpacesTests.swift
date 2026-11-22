@@ -165,7 +165,7 @@ struct SharedSpacesTests {
         #expect(air.browser.tab(id: other.id) != nil)
     }
 
-    @Test func pausingOrDeselectingRetainsBothCopiesAndSuppressesLaterChanges() async throws {
+    @Test func pausingSpaceAndPinSharingRetainsBothCopiesAndSuppressesLaterChanges() async throws {
         let cloud = FakeSyncCloud()
         let mac = Mac(cloud)
         defer { mac.finish() }
@@ -182,9 +182,8 @@ struct SharedSpacesTests {
 
         let pin = mac.browser.pinned("https://pin.example.test/")
         let id = try #require(pin.pinID)
-        try await mac.host.selectPin(id, in: mac.profile)
         try await mac.sync()
-        mac.host.stopSharingPin(id, in: mac.profile)
+        mac.host.pause(.pins, for: mac.profile)
         mac.browser.addFavorite(pin)
         try await mac.sync()
         #expect(mac.browser.page(for: id)?.isFavorite == true)
@@ -246,7 +245,7 @@ struct SharedSpacesTests {
         #expect(cloud.names(in: SharedCatalogCategory.spaces.zone).contains(focused.id.uuidString) == false)
     }
 
-    @Test func aLinkedProfileCannotAdoptAnUnrelatedProfilesSpaceOrPin() async throws {
+    @Test func aLinkedProfileCannotAdoptAnUnrelatedProfilesSpacesOrPins() async throws {
         let cloud = FakeSyncCloud()
         let a = Mac(cloud)
         let b = Mac(cloud)
@@ -256,16 +255,14 @@ struct SharedSpacesTests {
         }
         try await a.host.share(try #require(a.store.spaces.first), in: a.profile)
         let pin = a.browser.pinned("https://pin.example.test/")
-        try await a.host.selectPin(try #require(pin.pinID), in: a.profile)
         try await a.sync()
         try await b.host.enable(.spaces, for: b.profile)
-        try await b.host.enable(.pins, for: b.profile)
         let space = try #require(b.host.availableSpaces(for: b.profile).first)
-        let otherPin = try #require(b.host.availablePins(for: b.profile).first)
         _ = try await b.host.publishProfile(b.profile)
-        #expect(b.host.availableSpaces(for: b.profile).isEmpty && b.host.availablePins(for: b.profile).isEmpty)
+        #expect(b.host.availableSpaces(for: b.profile).isEmpty)
         await #expect(throws: SharedCatalogError.self) { try await b.host.join(space, in: b.profile) }
-        await #expect(throws: SharedCatalogError.self) { try await b.host.joinPin(otherPin, in: b.profile) }
+        try await b.sync()
+        #expect(b.browser.pinStore.pins.isEmpty && a.browser.pinStore.pins.contains { $0.id == pin.pinID })
     }
 
     @Test func vaultDiscoveryCanStartAfterAnotherCategoryAdvancedTheCheckpoint() async throws {
@@ -344,9 +341,9 @@ struct SharedSpacesTests {
         try await air.host.join(remote, in: air.profile)
         let sameTab = try #require(air.browser.tab(id: page.id))
         let joinedSpace = sameTab.spaceID
-        if sharesPins {
-            try await studio.host.enable(.pins, for: studio.profile)
-            try await air.host.enable(.pins, for: air.profile)
+        if !sharesPins {
+            studio.host.pause(.pins, for: studio.profile)
+            air.host.pause(.pins, for: air.profile)
         }
         studio.browser.addFavorite(page)
         try await studio.sync()
@@ -385,7 +382,7 @@ struct SharedSpacesTests {
         #expect(air.browser.tab(id: page.id) === sameTab && sameTab.pinID == nil && sameTab.spaceID == joinedSpace)
     }
 
-    @Test func sharingANestedPinIncludesItsAncestorsAndKeepsUnselectedSiblingsPrivate() async throws {
+    @Test func sharingAPinnedFolderIncludesItsNestedFoldersAndSiblingPins() async throws {
         let cloud = FakeSyncCloud()
         let studio = Mac(cloud)
         let air = Mac(cloud)
@@ -394,24 +391,21 @@ struct SharedSpacesTests {
             air.finish()
         }
         let chosen = studio.browser.addPage("https://nested.example.test/")
-        let privateSibling = studio.browser.addPage("https://other.example.test/")
-        let inside = studio.browser.createFolder(named: "Inside", containing: [chosen, privateSibling])
+        let sibling = studio.browser.addPage("https://other.example.test/")
+        let inside = studio.browser.createFolder(named: "Inside", containing: [chosen, sibling])
         let outer = studio.browser.createFolder(named: "Outer", containing: [SidebarItem.folder(inside.id)])
         studio.browser.pin(outer)
         let pinID = try #require(chosen.pinID)
-        try await studio.host.selectPin(pinID, in: studio.profile)
+        let siblingID = try #require(sibling.pinID)
+        _ = try await studio.host.publishProfile(studio.profile)
         try await studio.sync()
-        try await air.host.enable(.pins, for: air.profile)
-        let item = try #require(air.host.availablePins(for: air.profile).first)
-        try await air.host.joinPin(item, in: air.profile)
+        try await air.host.enable(.profiles, for: air.profile)
+        try await air.host.joinProfile(try #require(air.host.available(.profiles, for: air.profile).first), in: air.profile)
         let held = air.browser.pinStore.pins
-        #expect(held.map(\.id) == [outer.id, inside.id, pinID])
-        #expect(held.last?.parentID == inside.id)
+        #expect(held.map(\.id) == [outer.id, inside.id, pinID, siblingID])
+        #expect(held.filter { $0.parentID == inside.id }.map(\.id) == [pinID, siblingID])
         #expect(air.browser.folder(containing: try #require(air.browser.page(for: pinID)))?.name == "Inside")
-        #expect(studio.browser.page(at: privateSibling.urlString) != nil && air.browser.page(at: privateSibling.urlString) == nil)
-        let records = try #require(cloud.records(in: SharedCatalogCategory.pins.zone))
-        #expect(records.count == 3)
-        #expect(records.allSatisfy { !String(decoding: $0.payload, as: UTF8.self).contains("other.example.test") })
+        #expect(cloud.names(in: SharedCatalogCategory.pins.zone).count == 4)
     }
 
     @Test func joiningASharedSpaceAfterItsFavoriteReusesThePinAlreadyOpenOnThisMac() async throws {
@@ -422,13 +416,12 @@ struct SharedSpacesTests {
         let home = try #require(studio.store.spaces.first)
         let page = studio.browser.addPage("https://already-open.example.test/")
         try await studio.host.share(home, in: studio.profile)
-        try await studio.host.enable(.pins, for: studio.profile)
+        _ = try await studio.host.publishProfile(studio.profile)
         studio.browser.addFavorite(page)
         try await studio.sync()
 
-        try await air.host.enable(.pins, for: air.profile)
-        let pin = try #require(air.host.availablePins(for: air.profile).first)
-        try await air.host.joinPin(pin, in: air.profile)
+        try await air.host.enable(.profiles, for: air.profile)
+        try await air.host.joinProfile(try #require(air.host.available(.profiles, for: air.profile).first), in: air.profile)
         let existing = try #require(air.browser.page(at: page.urlString))
         try await air.host.enable(.spaces, for: air.profile)
         let shared = try #require(air.host.availableSpaces(for: air.profile).first)
@@ -441,23 +434,23 @@ struct SharedSpacesTests {
         #expect(air.browser.tabs.filter { $0.urlString == page.urlString }.map(\.id) == [existing.id])
     }
 
-    @Test func selectedProfilePinDoesNotPublishOrdinaryTabsOrOtherPins() async throws {
+    @Test func profilePinSharingPublishesAllPinsAndKeepsOrdinaryTabsOnThisMac() async throws {
         let cloud = FakeSyncCloud()
         let studio = Mac(cloud)
         let air = Mac(cloud)
         defer { studio.finish(); air.finish() }
         _ = studio.browser.addPage("https://ordinary.example.test/")
         let chosen = studio.browser.pinned("https://chosen.example.test/")
-        _ = studio.browser.pinned("https://local.example.test/")
+        let second = studio.browser.pinned("https://second.example.test/")
         studio.browser.publishProfilePins()
         let id = try #require(chosen.pinID)
-        try await studio.host.selectPin(id, in: studio.profile)
+        let secondID = try #require(second.pinID)
+        _ = try await studio.host.publishProfile(studio.profile)
         try await studio.sync()
-        try await air.host.enable(.pins, for: air.profile)
-        let remote = try #require(air.host.availablePins(for: air.profile).first)
-        #expect(air.host.availablePins(for: air.profile).count == 1)
-        try await air.host.joinPin(remote, in: air.profile)
-        #expect(air.browser.pinStore.pins.map(\.id) == [id])
+        try await air.host.enable(.profiles, for: air.profile)
+        try await air.host.joinProfile(try #require(air.host.available(.profiles, for: air.profile).first), in: air.profile)
+        #expect(Set(air.browser.pinStore.pins.map(\.id)) == [id, secondID])
+        #expect(air.browser.page(at: "https://ordinary.example.test/") == nil)
         #expect(cloud.names(in: SharedCatalogCategory.spaces.zone).isEmpty)
         #expect(!air.host.isEnabled(.spaces, for: air.profile))
     }

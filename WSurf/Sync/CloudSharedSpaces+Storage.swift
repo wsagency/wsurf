@@ -119,6 +119,11 @@ final class SharedCatalogStorage {
             }
             written = saved
             data = saved ?? State()
+            // A per-item enrollment never authorized the whole library. Keep its mappings and outbox for an explicit opt-in.
+            if let enabled = data.catalog.enabled[.pins] {
+                let links = data.links
+                data.catalog.enabled[.pins] = enabled.filter { links[$0]?.sharesPinLibrary == true }
+            }
             readable = true
             guard saved != nil else { return true }
         } catch {

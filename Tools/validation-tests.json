@@ -69,7 +69,7 @@
       "suites": ["SharedCatalogTests", "VaultSyncAssetTests", "MacSettingsSyncTests"]
     },
     {
-      "paths": ["Packages/WSurfCore/Sources/WSurfCore/Shared*", "WSurf/Sync/CloudSharedSpaces*", "WSurf/Profiles/Space.swift", "WSurf/Profiles/ProfileStore.swift", "WSurf/Settings/Pages/SharedSpacesSettingsView.swift", "WSurf/Web/Model/BrowserModel+SharedSpaces.swift", "WSurf/Sync/CloudSync*.swift"],
+      "paths": ["Packages/WSurfCore/Sources/WSurfCore/Shared*", "Packages/WSurfCore/Sources/WSurfCore/ProfilePublicationSource.swift", "WSurf/Sync/CloudSharedSpaces*", "WSurf/Profiles/Space.swift", "WSurf/Profiles/ProfileStore.swift", "WSurf/Settings/Pages/SharedSpacesSettingsView.swift", "WSurf/Web/Model/BrowserModel+SharedSpaces.swift", "WSurf/Sync/CloudSync*.swift"],
       "suites": ["SharedCatalogTests", "SharedProfileLifecycleTests", "SharedSpacesTests", "CloudSyncGateTests", "NeverSyncTests"]
     },
     {

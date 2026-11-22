@@ -12,16 +12,22 @@ struct MacSyncSettings: View {
 
     var body: some View {
         SettingsPageHeader(title: "Sync", caption: "Choose what this Mac shares through your Apple Account.")
+            .task(id: profile.id) {
+                guard !profile.isPrivate, let settings = CloudSync.shared?.settingsSync else { return }
+                settings.registerProfile?(profile)
+                settings.refreshAccountVerification()
+            }
         if profile.isPrivate {
-            Text("Switch to a regular profile to manage iCloud sync.")
+            SettingsCard {
+                SettingsEmptyState(symbol: "person.crop.circle", title: "Switch to a regular profile to manage iCloud sync.")
+            }
         } else if let cloud = CloudSync.shared, let settings = cloud.settingsSync {
-            SharedProfileLinkSection(profile: profile, cloud: cloud)
-                .task {
-                    settings.registerProfile?(profile)
-                    settings.refreshAccountVerification()
-                }
-            SharedSpacesSettingsView(profile: profile, cloud: cloud)
-                .settingsAnchor("sync.spaces")
+            if let host = cloud.sharedSpaces {
+                SharedProfileLinkSection(profile: profile, host: host)
+                    .settingsAnchor("sync.profiles")
+                SharedSpacesSettingsView(profile: profile, host: host)
+                    .settingsAnchor("sync.spaces")
+            }
             ProfileICloudTabsSection(profile: profile)
                 .settingsAnchor("sync.otherDevices")
             VaultSharingSettings(coordinator: coordinator, cloud: cloud)
@@ -31,8 +37,9 @@ struct MacSyncSettings: View {
             ProviderKeySyncSection(profile: profile)
                 .settingsAnchor("sync.keys")
         } else {
-            Text("This copy of WSurf doesn’t have access to iCloud sync.")
-                .foregroundStyle(.secondary)
+            SettingsCard {
+                SettingsEmptyState(symbol: "icloud", title: "This copy of WSurf doesn’t have access to iCloud sync.")
+            }
         }
     }
 }
@@ -54,19 +61,24 @@ private struct MacSettingOptions: View {
             switchRow("Share model choices for this profile", category: .providers, global: false)
         }
         .settingsAnchor("sync.providers")
-        if settings.hasPendingOptOuts {
-            HStack {
-                Text("Sync is paused for the settings you turned off. Try again to save this choice.").foregroundStyle(.secondary)
-                Button("Try Again") { settings.beat() }
-            }
-        } else if let notice = settings.notice {
-            HStack {
-                Text(verbatim: notice).foregroundStyle(.secondary)
-                if settings.checkpointUnavailable || settings.hasConfirmedChannels {
-                    Button("Try Again") { settings.beat() }
+        if let notice = settings.hasPendingOptOuts ? String(localized: "Sync is paused for the settings you turned off. Try again to save this choice.") : settings.notice {
+            SettingsCard {
+                DetailRow(verbatimTitle: notice) {
+                    if settings.hasPendingOptOuts || settings.checkpointUnavailable || settings.hasConfirmedChannels {
+                        SettingsButton(title: "Try Again") { settings.beat() }
+                    }
                 }
             }
         }
+    }
+
+    private func caption(for channel: MacSettingChannel?, needsProfile: Bool) -> LocalizedStringResource? {
+        if let channel {
+            let pending = channel.records.values.filter { $0.pending != nil && !$0.conflict }.count
+            if pending > 0 { return "\(pending) changes waiting to sync." }
+            if let last = channel.lastSync { return "Last synced \(last.formatted())." }
+        }
+        return needsProfile ? "Choose an iCloud profile above to share these settings." : nil
     }
 
     @ViewBuilder
@@ -74,7 +86,7 @@ private struct MacSettingOptions: View {
         let local = global ? nil : profile.id
         let channel = settings.channel(category, localProfileID: local)
         let turningOff = settings.isTurningOff(category, localProfileID: local)
-        DetailRow(title: title, caption: global || cloudProfileID != nil ? nil : "Choose an iCloud profile above to share these settings.") {
+        DetailRow(title: title, caption: caption(for: channel, needsProfile: !global && cloudProfileID == nil)) {
             SettingsToggle(
                 Binding(
                     get: { channel != nil || turningOff },
@@ -90,25 +102,21 @@ private struct MacSettingOptions: View {
         }
         if let channel {
             if channel.needsConfirmation {
-                HStack {
-                    Text("Confirm to share these settings with your current Apple Account.").foregroundStyle(.secondary)
-                    Button("Confirm Sharing") {
+                RowSeparator()
+                DetailRow(title: "Confirm to share these settings with your current Apple Account.") {
+                    SettingsButton(title: "Confirm Sharing") {
                         enroll { try await settings.confirmEnrollment(channel) }
                     }
                     .disabled(working)
                 }
             }
-            let pending = channel.records.values.filter { $0.pending != nil && !$0.conflict }.count
-            if pending > 0 {
-                Text("\(pending) changes waiting to sync.").foregroundStyle(.secondary)
-            } else if let last = channel.lastSync {
-                Text("Last synced \(last.formatted()).").foregroundStyle(.secondary)
-            }
             ForEach(channel.records.keys.filter { channel.records[$0]?.conflict == true }.sorted(), id: \.self) { key in
                 RowSeparator()
-                DetailRow(verbatimTitle: key, verbatimCaption: String(localized: "This setting differs on this Mac and in iCloud.")) {
-                    Button("Use This Mac") { resolve(key, channel, cloud: false) }
-                    Button("Use iCloud") { resolve(key, channel, cloud: true) }
+                DetailRow(verbatimTitle: key, verbatimCaption: String(localized: "This setting differs on this Mac and in iCloud."), layout: .stacked) {
+                    ChipFlow(spacing: 8) {
+                        SettingsButton(title: "Use This Mac") { resolve(key, channel, cloud: false) }
+                        SettingsButton(title: "Use iCloud") { resolve(key, channel, cloud: true) }
+                    }
                 }
             }
         }
@@ -138,6 +146,7 @@ private struct VaultSharingSettings: View {
     let cloud: CloudSync
     @State private var model: CredentialSettingsModel
     @State private var work: Task<Void, Never>?
+    @State private var showsVaultMerge = false
 
     init(coordinator: AppCoordinator, cloud: CloudSync) {
         self.coordinator = coordinator
@@ -161,6 +170,7 @@ private struct VaultSharingSettings: View {
                         ))
                 }
                 CloudVaultRow(model: model, run: run)
+                CredentialVaultMergeRow(model: model) { showsVaultMerge = true }
             }
             ForEach(model.retryableSyncedVaults) { retry in
                 RowSeparator()
@@ -173,15 +183,16 @@ private struct VaultSharingSettings: View {
                 }
             }
             if let error = model.error {
-                Text(verbatim: error).foregroundStyle(.secondary)
+                SettingsNotice(symbol: "exclamationmark.triangle", text: error)
             }
             if cloud.vaults != nil {
                 RowSeparator()
                 DetailRow(title: "Manage credential vaults", caption: "Unlock a vault, add a vault from another Mac or review changes.") {
-                    Button("Open Vaults…") { coordinator.routeSettings(to: .autofill) }
+                    SettingsButton(title: "Open Vaults…") { coordinator.routeSettings(to: .autofill) }
                 }
             }
         }
+        .modifier(CredentialVaultMergePresentation(model: model, isPresented: $showsVaultMerge))
         .onDisappear { work?.cancel() }
         .task(id: cloud.vaults != nil) {
             if cloud.vaults != nil {

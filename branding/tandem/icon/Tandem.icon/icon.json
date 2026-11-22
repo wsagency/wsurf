@@ -23,6 +23,12 @@
               "value" : {
                 "solid" : "srgb:0.42745,0.33333,1.00000,1.00000"
               }
+            },
+            {
+              "appearance" : "tinted",
+              "value" : {
+                "solid" : "gray:1.00000,1.00000"
+              }
             }
           ],
           "glass" : false,
@@ -41,6 +47,12 @@
               "appearance" : "dark",
               "value" : {
                 "solid" : "srgb:0.18431,0.87843,0.69804,1.00000"
+              }
+            },
+            {
+              "appearance" : "tinted",
+              "value" : {
+                "solid" : "gray:0.80000,1.00000"
               }
             }
           ],

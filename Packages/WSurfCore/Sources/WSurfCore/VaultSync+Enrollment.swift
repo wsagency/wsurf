@@ -65,7 +65,12 @@ extension VaultSync {
             row.uploadedMark = server.joinedMark(previous: previous, name: snapshot.name, wrappers: wrappers, mark: mark, key: syncKey)
             row.localWrappers = wrappers
         } else {
-            guard let card = host.profileCard(profileID: key.profileID) else { throw VaultSyncFailure.unavailable }
+            guard var card = host.profileCard(profileID: key.profileID) else { throw VaultSyncFailure.unavailable }
+            if let source = key.instanceID.flatMap({ instancePublicationSource?($0) }) {
+                card.publicationSource = source
+            } else if let recorded = recordedProfileCard(key.profileID, instance: key.instanceID) {
+                card.publicationSource = recorded.publicationSource
+            }
             row.pendingVault = try VaultSyncHeader.seal(name: snapshot.name, wrappers: wrappers, profile: card, key: syncKey)
             row.pendingMark = mark
             row.pendingLocalWrappers = wrappers

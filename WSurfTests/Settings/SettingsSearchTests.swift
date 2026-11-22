@@ -47,6 +47,13 @@ struct SettingsSearchTests {
         }
     }
 
+    @Test func sharedProfilesSpacesAndPinsLeadToTheirSyncControls() {
+        for (query, anchor) in [("linked profile", "sync.profiles"), ("shared spaces", "sync.spaces"), ("favorites", "sync.profiles")] {
+            let results = SettingsIndex.search(query)
+            #expect(results.contains { $0.category == .sync && $0.targetAnchor == anchor }, "\(query)")
+        }
+    }
+
     @Test func theVoiceRowsLiveOnTheAssistantPage() {
         let voice = SettingsIndex.all.filter { $0.id.hasPrefix("voice.") }
         #expect(voice.count == 2)

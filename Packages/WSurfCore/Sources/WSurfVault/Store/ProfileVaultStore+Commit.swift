@@ -80,7 +80,7 @@ extension ProfileVaultStore {
             let proposed = memory.map { Self.remembering(merging, in: accounts, from: old, memory: $0) } ?? accounts
             return Proposal(accounts: proposed, requires: nil, changing: changing, merging: merging)
         }
-        settleBlobs(in: accounts)
+        settleBlobs(in: accounts, vaultID: vaultID)
         return receipt
     }
 
@@ -104,11 +104,11 @@ extension ProfileVaultStore {
     }
 
     /// The files `accounts` now refer to are no longer an editor's unsaved ones: from here on only a sweep's reference check keeps them.
-    func settleBlobs(in accounts: [CredentialAccount]) {
-        guard !pendingBlobs.isEmpty else { return }
+    private func settleBlobs(in accounts: [CredentialAccount], vaultID: UUID) {
+        guard pendingBlobs[vaultID]?.isEmpty == false else { return }
         for account in accounts {
             for file in account.attachments ?? [] {
-                pendingBlobs.remove(file.id)
+                pendingBlobs[vaultID]?.remove(file.id)
             }
         }
     }

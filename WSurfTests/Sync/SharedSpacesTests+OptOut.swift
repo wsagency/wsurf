@@ -142,7 +142,7 @@ extension SharedSpacesTests {
         } else {
             let pin = ProfilePin(id: UUID(), orderKey: "V", kind: .tab, url: "https://example.test/pin")
             pins.publish([pin])
-            try await host.selectPin(pin.id, in: profile)
+            try await host.enable(.pins, for: profile)
         }
         try await engine.sendNow()
         let id = try #require(host.cloudProfileID(for: profile.id))
@@ -304,7 +304,7 @@ extension SharedSpacesTests {
         #expect(!reopened.hasPendingOptOut(.profiles, for: profile))
     }
 
-    @Test func stoppedPinsDoNotUploadUnusedAncestorFolders() async throws {
+    @Test func anOlderPinRevocationDropsUnusedAncestorWritesBeforeFullLibraryOptIn() async throws {
         let fixture = CatalogFiles()
         defer { fixture.cleanUp() }
         let profile = fixture.profile
@@ -313,12 +313,11 @@ extension SharedSpacesTests {
         let engine = FakeSyncEngine(cloud: cloud, delegate: host.catalog)
         host.attach(engine)
         let root = UUID(), branch = UUID(), kept = UUID(), stopped = UUID()
-        try await host.enable(.pins, for: profile)
         let group = UUID()
-        #expect(host.linkProfile(profile.id, to: group))
         // Persist a nested pin selection and a sibling which still needs the root folder.
-        host.links[profile.id]?.pins = [kept: kept, stopped: stopped]
-        host.links[profile.id]?.pinFolders = [root: root, branch: branch]
+        host.links[profile.id] = .init(profile: group, pins: [kept: kept, stopped: stopped], pinFolders: [root: root, branch: branch])
+        host.catalog.setEnabled(true, .pins, for: profile.id)
+        try await host.catalog.prepare(.pins)
         host.catalog.stage([
             .init(id: root, kind: .pinFolder, profileID: group, title: "Root"),
             .init(id: branch, kind: .pinFolder, profileID: group, parentID: root, title: "Branch"),
@@ -326,12 +325,13 @@ extension SharedSpacesTests {
             .init(id: stopped, kind: .pin, profileID: group, parentID: branch, url: "https://example.test/stopped"),
         ], for: profile.id)
         try fixture.interruptWrites()
-        host.stopSharingPin(stopped, in: profile)
+        host.stopSharingPin(stopped, profileID: profile.id)
         try fixture.restoreFile()
         let reopened = fixture.open()
         let resumed = FakeSyncEngine(cloud: cloud, delegate: reopened.catalog)
         reopened.attach(resumed)
-        try await reopened.catalog.prepare(.pins)
+        #expect(!reopened.isEnabled(.pins, for: profile))
+        try await reopened.enable(.pins, for: profile)
         try await resumed.sendNow()
         #expect(Set(cloud.names(in: SharedCatalogCategory.pins.zone)) == [root.uuidString, kept.uuidString])
     }
@@ -352,13 +352,15 @@ extension SharedSpacesTests {
         host.attach(engine)
         try await host.share(stopped, in: profile)
         try await host.share(kept, in: profile)
-        try await host.selectPin(pin.id, in: profile)
+        // Reopen the per-item checkpoint written by pre-library builds.
         try await engine.sendNow()
         let pinID = try #require(host.links[profile.id]?.pins[pin.id])
+        host.links[profile.id]?.pinLibrary = nil
+        try #require(host.persistLinks())
         let count = cloud.recordCount
         try fixture.interruptWrites()
         host.stopSharing(stopped, in: profile)
-        host.stopSharingPin(pin.id, in: profile)
+        host.stopSharingPin(pin.id, profileID: profile.id)
         try fixture.restoreFile()
         let reopened = fixture.open()
         let link = try #require(reopened.links[profile.id])
@@ -377,6 +379,7 @@ extension SharedSpacesTests {
         host.attach(engine)
         let linked = try await host.publishProfile(fixture.profile)
         host.pause(.profiles, for: fixture.profile)
+        host.pause(.pins, for: fixture.profile)
         var engineStarts = 0
         let app = try fixture.startSettings(cloud: cloud) { engineStarts += 1 }
         defer { app.prepareToTerminate() }

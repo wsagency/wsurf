@@ -15,6 +15,22 @@ nonisolated struct Profile: Identifiable, Codable, Hashable, Sendable {
     var symbol: String
     var color: TabFolderColor
 
+    enum PublicationOrigin: Codable, Hashable {
+        case local, published(ProfilePublicationSource?)
+
+        func source(on macName: String?) -> ProfilePublicationSource? {
+            switch self {
+            case .local:
+                ProfilePublicationSource(macName: macName)
+            case .published(let source):
+                source
+            }
+        }
+    }
+
+    /// Adoption keeps even an unknown publisher so a receiving Mac cannot claim a legacy card.
+    var publicationOrigin: PublicationOrigin?
+
     static let originalID = UUID(uuidString: "0E000000-0000-4000-A000-000000000001")!
     static let privateID = UUID(uuidString: "0E000000-0000-4000-A000-000000000002")!
 

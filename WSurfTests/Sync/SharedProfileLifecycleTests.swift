@@ -31,8 +31,16 @@ struct SharedProfileLifecycleTests {
         }
 
         func open(spaces: SpaceStore? = nil, profileStore: ProfileStore? = nil, pinStore: ProfilePinStore? = nil) -> CloudSharedSpaces {
-            let pins = pinStore ?? .store(for: .temporary())
-            return CloudSharedSpaces(stateFile: catalogFile, profileStore: profileStore ?? profiles, windows: { [] }, spaces: { _ in spaces }, pins: { _ in pins })
+            var stores: [UUID: ProfilePinStore] = [:]
+            stores[kept.id] = pinStore
+            return CloudSharedSpaces(stateFile: catalogFile, profileStore: profileStore ?? profiles, windows: { [] }, spaces: { _ in spaces }, pins: { profile in
+                if let existing = stores[profile.id] {
+                    return existing
+                }
+                let store = ProfilePinStore.store(for: AppDatabase(at: root.appending(path: "\(profile.id).sqlite")))
+                stores[profile.id] = store
+                return store
+            })
         }
 
         func attach(_ host: CloudSharedSpaces) -> FakeSyncEngine {
@@ -57,7 +65,7 @@ struct SharedProfileLifecycleTests {
     }
 
     @Test(arguments: [SharedCatalogCategory.spaces, .pins])
-    func firstSharedSpaceOrPinUsesTheRenewedProfileInstance(category: SharedCatalogCategory) async throws {
+    func firstSharedSpaceOrPinLibraryUsesTheRenewedProfileInstance(category: SharedCatalogCategory) async throws {
         let f = Fixture()
         defer { f.cleanUp() }
         let work = f.kept, renewed = UUID()
@@ -66,21 +74,21 @@ struct SharedProfileLifecycleTests {
         let spaces = SpaceStore(profile: work, file: f.root.appending(path: "Spaces.json"))
         let host = f.open(spaces: spaces, profileStore: restored)
         let engine = f.attach(host)
-        try await host.enable(category, for: work)
-        #expect(host.cloudProfileID(for: work.id) == nil)
         if category == .spaces {
+            try await host.enable(.spaces, for: work)
+            #expect(host.cloudProfileID(for: work.id) == nil)
             try await host.share(spaces.add(name: "Shared work"), in: work)
         } else {
             let pin = ProfilePin(id: UUID(), orderKey: "V", kind: .tab, url: "https://example.invalid/work")
             host.pins(work).publish([pin])
-            try await host.selectPin(pin.id, in: work)
+            try await host.enable(.pins, for: work)
         }
         try await engine.sendNow()
         let rows = try #require(f.cloud.records(in: category.zone)).compactMap(SharedSpaceItem.init(record:))
         #expect(rows.map(\.profileID) == [renewed])
         #expect(f.open().links[work.id]?.profile == renewed)
         for other in SharedCatalogCategory.allCases where other != category {
-            #expect(!host.isEnabled(other, for: work))
+            #expect(host.isEnabled(other, for: work) == (category == .spaces && other == .pins))
             #expect(f.cloud.names(in: other.zone).isEmpty)
         }
         let published = try await host.publishProfile(work)
@@ -108,7 +116,7 @@ struct SharedProfileLifecycleTests {
         #expect(f.cloud.names(in: SharedCatalogCategory.profiles.zone) == [other.uuidString])
     }
 
-    @Test func newInstancePublishesTheLocalPinAndItsCurrentFolder() async throws {
+    @Test func newInstancePublishesTheLocalLibraryAndItsCurrentFolder() async throws {
         let f = Fixture()
         defer { f.cleanUp() }
         let work = f.kept, file = f.root.appending(path: "pins.sqlite")
@@ -117,9 +125,9 @@ struct SharedProfileLifecycleTests {
         let engine = f.attach(first)
         var folder = ProfilePin(id: UUID(), orderKey: "V", kind: .folder, title: "Old folder")
         var chosen = ProfilePin(id: UUID(), parentID: folder.id, orderKey: "V", kind: .tab, url: "https://example.invalid/shared")
-        let sibling = ProfilePin(id: UUID(), parentID: folder.id, orderKey: "W", kind: .tab, url: "https://example.invalid/private")
+        let sibling = ProfilePin(id: UUID(), parentID: folder.id, orderKey: "W", kind: .tab, url: "https://example.invalid/sibling")
         pins.publish([folder, chosen, sibling])
-        try await first.selectPin(chosen.id, in: work)
+        try await first.enable(.pins, for: work)
         try await engine.sendNow()
         let old = try #require(first.links[work.id]?.profile)
         first.permitsSharing = { _ in false }
@@ -143,13 +151,15 @@ struct SharedProfileLifecycleTests {
         let rows = try #require(f.cloud.records(in: SharedCatalogCategory.pins.zone)).compactMap(SharedSpaceItem.init(record:)).filter { $0.profileID == next.id }
         let link = try #require(f.open().links[work.id])
         let pinID = try #require(link.pins[chosen.id]), folderID = try #require(link.pinFolders?[folder.id])
-        #expect(Set(rows.map(\.id)) == [pinID, folderID])
+        let siblingID = try #require(link.pins[sibling.id])
+        #expect(Set(rows.map(\.id)) == [pinID, folderID, siblingID])
         let row = try #require(rows.first { $0.id == pinID })
         #expect(row.customTitle == chosen.customTitle && row.parentID == folderID)
         #expect(rows.first { $0.id == folderID }?.title == folder.title)
         #expect(restored.pins.first { $0.id == chosen.id }?.customTitle == chosen.customTitle)
         #expect(restored.pins.first { $0.id == folder.id }?.title == folder.title)
-        #expect(restored.pins.contains(sibling))
+        #expect(rows.first { $0.id == siblingID }?.parentID == folderID)
+        #expect(restored.pins.first { $0.id == sibling.id }?.url == sibling.url)
     }
 
     @Test(arguments: [false, true])
@@ -216,6 +226,8 @@ struct SharedProfileLifecycleTests {
         #expect(f.cloud.record(local.recordID) == nil && next.saveAttempts[local.id.uuidString] == nil)
         #expect(f.cloud.record(kept.recordID).flatMap(SharedSpaceItem.init(record:)) == kept)
         #expect(f.cloud.record(profileID).flatMap(SharedSpaceItem.init(record:)) == remote)
+        let pins = try #require(f.cloud.records(in: SharedCatalogCategory.pins.zone)).compactMap(SharedSpaceItem.init(record:))
+        #expect(pins == [kept], "The replacement profile has its own local pin store.")
         #expect(f.cloud.writeCount == writes + 1)
     }
 

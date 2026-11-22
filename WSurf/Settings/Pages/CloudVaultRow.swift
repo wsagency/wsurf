@@ -56,7 +56,7 @@ struct CloudVaultRow: View {
             if hasHistory {
                 RowSeparator()
                 DetailRow(title: "iCloud storage for this vault", caption: copyCheckText(vaultID: vaultID, account: account)) {
-                    Button("Check iCloud") {
+                    SettingsButton(title: "Check iCloud") {
                         guard let account else { return }
                         checkedCopy = nil
                         run {
@@ -64,15 +64,13 @@ struct CloudVaultRow: View {
                             checkedCopy = (vaultID, account, exists)
                         }
                     }
-                    .buttonStyle(.bordered)
                     .disabled(model.isBusy || needsAccount)
                 }
             }
             if held > 0 {
                 RowSeparator()
                 DetailRow(title: "Delete on other devices") {
-                    Button("Delete on Other Devices…", role: .destructive) { confirmsDeletion = true }
-                        .buttonStyle(.bordered)
+                    SettingsButton(title: "Delete on Other Devices…", isDestructive: true) { confirmsDeletion = true }
                         .disabled(model.isBusy || !model.isUnlocked)
                 }
                 .confirmationDialog(
@@ -87,12 +85,11 @@ struct CloudVaultRow: View {
             if isOn || status == .removalFailed || hasHistory {
                 RowSeparator()
                 DetailRow(title: "Remove from iCloud") {
-                    let label: LocalizedStringKey = status == .removalFailed ? "Try Again" : "Remove from iCloud…"
-                    Button(label, role: .destructive) {
+                    let label: LocalizedStringResource = status == .removalFailed ? "Try Again" : "Remove from iCloud…"
+                    SettingsButton(title: label, isDestructive: true) {
                         confirmation = (vaultID, sync.state.accountUser)
                         confirmsRemoval = true
                     }
-                    .buttonStyle(.bordered)
                     .disabled(model.isBusy || needsAccount)
                 }
                 .confirmationDialog(

@@ -62,8 +62,10 @@ enum SettingsIndex {
     }
 
     static let all: [SettingsEntry] = [
-        SettingsEntry("sync.spaces", .sync, "Shared Spaces and favorites", "Choose which Spaces, tabs and pins to share with your other Macs.",
-                      ["icloud", "tabs", "shared spaces", "pin", "favorites"]),
+        SettingsEntry("sync.profiles", .sync, "Linked profile", "Combine this profile’s pins and Favorites across your Macs.",
+                      ["icloud", "shared profile", "publish", "pinned tabs", "favorites"]),
+        SettingsEntry("sync.spaces", .sync, "Shared Spaces", "Share or join a Space with its tabs and the profile’s pins and Favorites.",
+                      ["icloud", "tabs", "shared spaces and favorites", "pin", "favorites"]),
         SettingsEntry("sync.otherDevices", .sync, "Tabs on other devices", "Share tabs through iCloud",
                       ["icloud", "personal profile", "sidebar", "open a copy"]),
         SettingsEntry("sync.vaults", .sync, "Credential vaults", "Choose which vaults to share through iCloud.",
@@ -240,7 +242,7 @@ enum SettingsIndex {
                       ]),
         SettingsEntry("appearance.dockIcon", .appearance, "Dock icon",
                       "Choose the icon the Dock shows while WSurf is running.",
-                      ["dock", "icon", "app icon", "light", "dark", "mono", "default", "logo", "tandem"]),
+                      ["dock", "icon", "app icon", "anodized", "steel", "copper", "metal", "light", "dark", "mono", "default", "logo", "tandem"]),
         SettingsEntry("appearance.material", .appearance, "Material",
                       "Choose Plain or Glass. Glass shows your desktop through the window and uses more GPU.",
                       ["loom", "window", "plain", "glass", "liquid glass", "clear", "opacity", "transparency", "transparent",

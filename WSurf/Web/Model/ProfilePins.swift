@@ -64,6 +64,13 @@ nonisolated struct ProfilePin: Codable, Equatable, FetchableRecord, PersistableR
         return walked
     }
 
+    static func readTree(_ db: Database) throws -> [ProfilePin] {
+        let stored = try fetchAll(db)
+        let ordered = depthFirst(stored)
+        guard ordered.count == stored.count else { throw CocoaError(.fileReadCorruptFile) }
+        return ordered
+    }
+
     // ponytail: greedy keep; moving an item to the front rekeys its followers - longest increasing
     // subsequence if sync churn matters.
     /// Gives each pin of `pins`, which are in display order, a key that sorts it among its siblings.
@@ -121,7 +128,7 @@ final class ProfilePinStore {
     private init(database: AppDatabase) {
         self.database = database
         do {
-            pins = ProfilePin.depthFirst(try database.writer.read { try ProfilePin.fetchAll($0) })
+            pins = try database.writer.read { try ProfilePin.readTree($0) }
             isAvailable = true
         } catch {
             Pipeline.log.error("pins: read failed")
@@ -141,11 +148,15 @@ final class ProfilePinStore {
         return store
     }
 
-    /// A replacement publication needs committed rows, including edits made while the previous instance was paused.
+    /// Publication needs committed rows, including edits made while sharing was paused.
     func readForPublication() throws -> [ProfilePin] {
         // The session owner falls back to a temporary database if its on-disk profile cannot open.
-        guard !database.isEphemeral || !AppDatabase.ownsSession else { throw CocoaError(.fileReadUnknown) }
-        return try database.writer.read { try ProfilePin.fetchAll($0) }
+        guard isAvailable, !database.isEphemeral || !AppDatabase.ownsSession else { throw CocoaError(.fileReadUnknown) }
+        return try database.writer.read { try ProfilePin.readTree($0) }
+    }
+
+    func savedFolderIDs() throws -> Set<UUID> {
+        try database.writer.read { db in Set(try UUID.fetchAll(db, sql: "SELECT id FROM sessionFolder")) }
     }
 
     func subscribe(_ model: BrowserModel) {
@@ -159,11 +170,22 @@ final class ProfilePinStore {
     // ponytail: whole-set rewrite per change (a few hundred rows); write only changed rows if it shows up.
     /// Replaces the stored set with `next`, which must be depth first, in one transaction. Every other window
     /// attached to the store shows it before this returns, so no window ever holds a change the others lack.
-    func publish(_ next: [ProfilePin], from source: BrowserModel? = nil) {
+    @discardableResult
+    func publish(
+        _ next: [ProfilePin], from source: BrowserModel? = nil, replacing expected: [ProfilePin]? = nil,
+        beforeNotify: () -> Void = {}
+    ) -> Bool {
         // A window that applies a set re-publishes what it now shows, which is the same set.
-        guard isAvailable, next != pins, !isPublishing else { return }
+        guard isAvailable, !isPublishing else { return false }
+        if next == pins && (expected == nil || expected == next) {
+            beforeNotify()
+            return true
+        }
         do {
             try database.writer.write { db in
+                if let expected, try ProfilePin.readTree(db) != expected {
+                    throw CocoaError(.fileWriteUnknown)
+                }
                 try ProfilePin.deleteAll(db)
                 for pin in next {
                     try pin.insert(db)
@@ -171,9 +193,10 @@ final class ProfilePinStore {
             }
         } catch {
             Pipeline.log.error("pins: write failed")
-            return
+            return false
         }
         pins = next
+        beforeNotify()
         if let source {
             source.sharedSpaceService?.pinsChanged(in: source.context.profile, store: self)
         }
@@ -183,5 +206,6 @@ final class ProfilePinStore {
             model.applyProfilePins(next)
             model.scheduleSave()
         }
+        return true
     }
 }

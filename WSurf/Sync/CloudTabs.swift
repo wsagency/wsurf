@@ -6,6 +6,12 @@ import Observation
 import SystemConfiguration
 import WSurfCore
 
+extension DeviceInfo {
+    static var computerName: String? {
+        SCDynamicStoreCopyComputerName(nil, nil) as String?
+    }
+}
+
 /// Shares each opted-in profile's open tabs with this person's other devices, and lists theirs.
 ///
 /// Reads the in-memory windows and profile pins. CloudSync attaches its engine when the person shares a session.
@@ -57,7 +63,7 @@ final class CloudTabs {
         // A missing or damaged file starts empty, which fetches everything once.
         let restored = (try? Data(contentsOf: stateFile)).flatMap { try? JSONDecoder().decode(TabSyncState.self, from: $0) }
         let device = DeviceInfo(
-            name: SCDynamicStoreCopyComputerName(nil, nil) as String? ?? "",
+            name: DeviceInfo.computerName ?? "",
             kind: .mac,
             appVersion: UpdateFeed.currentVersion
         )

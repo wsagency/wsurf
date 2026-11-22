@@ -23,9 +23,9 @@ public nonisolated struct AccountWrite: Sendable {
 }
 
 extension ProfileVaultStore {
-    /// Spec §13.5: writes only the touched accounts, in one `BEGIN IMMEDIATE` transaction and one attempt, with no caller-supplied
-    /// vault revision. Each write's stamp (or absence) is checked against the live rows inside the transaction (`staleRevision`,
-    /// nothing written); an unrelated concurrent write therefore survives. The complete candidate payload (current live accounts with
+    /// Writes only the touched accounts in one transaction. Each write's stamp (or absence) is checked against the live rows
+    /// inside the transaction. A cross-vault review additionally binds the whole destination revision and the source lease because
+    /// a newly added entry can change which source entry is a duplicate. The complete candidate payload (current live accounts with
     /// the touched ids replaced or added, plus the current head's blocked origins) is validated before any write, and an exchange
     /// item identity (`exchangeAccountID` + `exchangeItemID`, as the codec derives it) that two accounts would share is
     /// `duplicateIdentifier`. Untouched rows and the head's policy are never rewritten; an all-unchanged write changes nothing.
@@ -34,7 +34,8 @@ extension ProfileVaultStore {
     /// account goes with its earlier versions, as an ordinary delete does, and a stamp that no longer holds is `staleRevision` with
     /// nothing written. An account is either written or removed, never both.
     public func commitAccounts(
-        vaultID: UUID, _ writes: [AccountWrite], removing: [UUID: AccountStamp] = [:], cause: String?, using access: VaultAccess
+        vaultID: UUID, _ writes: [AccountWrite], removing: [UUID: AccountStamp] = [:], cause: String?, using access: VaultAccess,
+        expectedRevision: UInt64? = nil, validateMerge: (@Sendable (ContinuousClock.Instant) throws -> Void)? = nil
     ) async throws -> VaultCommitReceipt {
         guard !writes.isEmpty || !removing.isEmpty else { throw CredentialStoreError.malformed }
         var ids = Set<UUID>(minimumCapacity: writes.count)
@@ -43,16 +44,24 @@ extension ProfileVaultStore {
                 throw CredentialStoreError.malformed
             }
         }
-        let intent = CommitIntent(vaultID: vaultID, access: access, expectedRevision: nil, cause: cause, isCommit: true)
+        let intent = CommitIntent(vaultID: vaultID, access: access, expectedRevision: expectedRevision, cause: cause, isCommit: true)
         // The scratch is attached up front (`ledgerOnDemand: false`): a removal inside a write verifies in this one transaction and
         // nothing is ever retried.
         return try await run(intent, ledgerOnDemand: false) { db, request, ledgerAttached in
             let (transaction, snapshot) = try Self.begin(db, request)
             let accounts = try Self.candidates(applying: writes, removing: removing, to: snapshot)
             // Every account but the written ones is the snapshot's own value (`candidates`); a removed one is absent from `accounts`.
-            return try Self.apply(
+            let result = try Self.apply(
                 Proposal(accounts: accounts, requires: nil, changing: ids), snapshot: snapshot, transaction, request, ledgerAttached: ledgerAttached
             )
+            // A source edit, lock or withdrawal while this writer waited must still roll the entire merge back.
+            if let validateMerge {
+                let instant = request.now()
+                try validateMerge(instant)
+                try access.checkAuthorization(at: instant)
+                try Task.checkCancellation()
+            }
+            return result
         }.receipt
     }
 

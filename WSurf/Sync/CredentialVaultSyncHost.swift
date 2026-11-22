@@ -9,6 +9,7 @@ import WSurfVault
 /// it never creates one, never unlocks, never prompts and never touches a lease. The private profile has none of this.
 final class CredentialVaultSyncHost: VaultSyncHost, VaultAttachmentHost {
     private let profiles: @MainActor () -> [Profile]
+    private let computerName: @MainActor () -> String?
     private let manager: @MainActor (Profile, UUID) -> CredentialManager?
     private let store: @MainActor (Profile) throws -> ProfileVaultStore
     private let directory: @MainActor (Profile) -> URL
@@ -16,6 +17,7 @@ final class CredentialVaultSyncHost: VaultSyncHost, VaultAttachmentHost {
     /// The closures are the seam two simulated Macs use in tests: each has its own profiles, managers and folder.
     init(
         profiles: @escaping @MainActor () -> [Profile] = { ProfileStore.shared.profiles },
+        computerName: @escaping @MainActor () -> String? = { DeviceInfo.computerName },
         manager: @escaping @MainActor (Profile, UUID) -> CredentialManager? = { profile, vaultID in
             CredentialManager.unlockedManagers(for: profile).first { $0.vaultID == vaultID }
         },
@@ -23,6 +25,7 @@ final class CredentialVaultSyncHost: VaultSyncHost, VaultAttachmentHost {
         directory: @escaping @MainActor (Profile) -> URL = { $0.supportDirectory }
     ) {
         self.profiles = profiles
+        self.computerName = computerName
         self.manager = manager
         self.store = store
         self.directory = directory
@@ -41,7 +44,9 @@ final class CredentialVaultSyncHost: VaultSyncHost, VaultAttachmentHost {
     }
 
     func profileCard(profileID: UUID) -> VaultProfileCard? {
-        profile(profileID).map { VaultProfileCard(name: $0.name, symbol: $0.symbol, color: $0.color.rawValue) }
+        guard let profile = profile(profileID) else { return nil }
+        let source = (profile.publicationOrigin ?? .local).source(on: computerName())
+        return VaultProfileCard(name: profile.name, symbol: profile.symbol, color: profile.color.rawValue, publicationSource: source)
     }
 
     /// The profile's vaults from its store, which lists them without an unlock. Nil when the store cannot be read.

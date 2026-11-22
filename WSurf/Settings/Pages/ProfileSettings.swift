@@ -46,6 +46,7 @@ struct ProfileSettings: View {
                     }
                     ProfileListRow(
                         profile: profile,
+                        name: ProfileSummary.displayName(for: profile),
                         isCurrent: profile.id == store.current.id,
                         dragging: $dragging,
                         open: { destination = .profile(profile.id) }
@@ -94,7 +95,7 @@ struct ProfileSettings: View {
                     options: [
                         .init(value: nil, label: String(localized: "Last used profile"))
                     ] + store.profiles.map {
-                        .init(value: $0.id, label: $0.name)
+                        .init(value: $0.id, label: ProfileSummary.displayName(for: $0))
                     },
                     selection: Binding(
                         get: { store.launchProfileID },
@@ -148,6 +149,7 @@ private struct ProfilePageHeading<Trailing: View>: View {
 
 private struct ProfileListRow: View {
     let profile: Profile
+    let name: String
     let isCurrent: Bool
     @Binding var dragging: UUID?
     let open: () -> Void
@@ -160,7 +162,7 @@ private struct ProfileListRow: View {
                 ProfileGlyph(profile: profile, size: 26)
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(verbatim: profile.name)
+                    Text(verbatim: name)
                         .font(Theme.Font.rowTitle)
                         .lineLimit(1)
                         .truncationMode(.tail)
@@ -193,7 +195,7 @@ private struct ProfileListRow: View {
         HStack(spacing: 10) {
             ProfileGlyph(profile: profile, size: 26)
 
-            Text(verbatim: profile.name)
+            Text(verbatim: name)
                 .font(Theme.Font.rowTitle)
                 .lineLimit(1)
 
@@ -336,7 +338,7 @@ private struct ProfileDetailPage: View {
     private func heading(_ profile: Profile) -> some View {
         ProfilePageHeading(
             profile: profile,
-            title: Text(verbatim: profile.name),
+            title: Text(verbatim: ProfileSummary.displayName(for: profile)),
             caption: isCurrent ? Text("Current profile") : nil
         ) {
             if !isCurrent {

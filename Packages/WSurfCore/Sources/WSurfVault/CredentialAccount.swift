@@ -466,6 +466,14 @@ public nonisolated struct WebsitePasskey: Codable, Sendable, Identifiable, Equat
         backupEligible && (backupState || source == .imported)
     }
 
+    /// The passkey details a native transfer must keep besides its key material (`CredentialContent.hash(.passkey)`).
+    /// Local record ids, observations and dates do not change the credential.
+    public func hasSameTransferDetails(as other: WebsitePasskey) -> Bool {
+        userName.utf8.elementsEqual(other.userName.utf8) && userDisplayName.utf8.elementsEqual(other.userDisplayName.utf8)
+            && backupEligible == other.backupEligible && backupState == other.backupState && source == other.source
+            && exchangeFIDO2Metadata == other.exchangeFIDO2Metadata
+    }
+
     static let credentialIDLimit = 1_024
     /// The most bytes WSurf keeps in a user handle, the same bound as a credential ID. WebAuthn tells a relying party to keep
     /// the handle to 64 bytes or fewer, and CTAP2 only requires an authenticator to hold that many. Real relying parties send

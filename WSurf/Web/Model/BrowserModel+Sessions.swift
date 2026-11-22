@@ -707,9 +707,18 @@ extension BrowserModel {
             }
         }
         let current = Set(store.pins.map(\.id))
+        let missing = current.subtracting(records.compactMap(\.pinID))
+        let sharedPages = sharedSpaceService?.restoredPinPages(in: self, missing: missing) ?? [:]
         var claimed: Set<UUID> = []
         return records.compactMap { record in
-            guard let pinID = record.pinID else { return record }
+            guard let pinID = record.pinID else {
+                guard let page = sharedPages[record.id], record.requiresSpacePlacement != true, record.microTabID == nil,
+                      record.internalPage == nil, record.pinnedURL == nil, record.spaceID == nil || record.spaceID == page.space,
+                      claimed.insert(page.pin).inserted else { return record }
+                var linked = record
+                linked.pinID = page.pin
+                return linked
+            }
             if current.contains(pinID) {
                 return claimed.insert(pinID).inserted ? record : nil
             }

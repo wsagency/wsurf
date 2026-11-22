@@ -11,8 +11,17 @@ nonisolated struct ProfileCloudLedger: Codable, Equatable {
     var detached: [UUID: Set<CloudProfileInstance>] = [:]
     var pending: [UUID: CloudProfileInstance] = [:]
     var active: [UUID: [String: UUID]] = [:]
+    /// The Mac that started each replacement, keyed by the new cloud instance.
+    var publicationSources: [UUID: ProfilePublicationSource]?
     /// A choice interrupted while the independently durable settings and shared links are being moved.
     var creating: [UUID: CloudProfileInstance] = [:]
+
+    mutating func recordPublisher(_ source: ProfilePublicationSource, for instance: UUID) {
+        if publicationSources == nil {
+            publicationSources = [:]
+        }
+        publicationSources?[instance] = source
+    }
 }
 
 enum ProfileDeletionScope {

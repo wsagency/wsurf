@@ -11,7 +11,7 @@ public nonisolated struct VaultSyncAttachment: Sendable {
     public let encryptedFile: URL
 }
 
-/// Keeps a verified blob alive until the deciding sync pass has committed or released it.
+/// Keeps a verified blob alive until the receiving transaction has committed or released it.
 public nonisolated final class VaultImportedAttachment: Sendable {
     public let descriptor: CredentialAttachment
     private let release: @Sendable () -> Void
@@ -27,16 +27,16 @@ public nonisolated final class VaultImportedAttachment: Sendable {
 }
 
 nonisolated final class VaultImportPins: Sendable {
-    private let files = Mutex<[UUID: UUID]>([:])
+    private let files = Mutex<[UUID: (vault: UUID, blob: UUID)]>([:])
 
-    func pin(_ file: CredentialAttachment) -> VaultImportedAttachment {
+    func pin(_ file: CredentialAttachment, in vaultID: UUID) -> VaultImportedAttachment {
         let token = UUID()
-        files.withLock { $0[token] = file.id }
+        files.withLock { $0[token] = (vaultID, file.id) }
         return VaultImportedAttachment(file) { [self] in files.withLock { $0[token] = nil } }
     }
 
-    var ids: Set<UUID> {
-        files.withLock { Set($0.values) }
+    func ids(in vaultID: UUID) -> Set<UUID> {
+        files.withLock { Set($0.values.compactMap { $0.vault == vaultID ? $0.blob : nil }) }
     }
 }
 
@@ -74,31 +74,53 @@ extension ProfileVaultStore {
         try descriptor.validate()
         let keys = try attachmentKeys(vaultID, access: access)
         let key = try VaultBlob.unwrap(descriptor, under: keys.cloud)
+        return try installAttachment(descriptor, key: key, wrappingKey: keys.local, from: source, vaultID: vaultID) {
+            try access.checkAuthorization(at: now())
+        }
+    }
+
+    /// Sync and local merges install the same sealed blob. Both verify even a previously staged copy.
+    func installAttachment(
+        _ descriptor: CredentialAttachment, key: SymmetricKey, wrappingKey: SymmetricKey, from source: URL?, vaultID: UUID,
+        checkAuthorization: () throws -> Void
+    ) throws -> VaultImportedAttachment {
+        try checkAuthorization()
+        var local = descriptor
+        local.wrappedKey = try VaultBlob.wrap(key, under: wrappingKey, id: descriptor.id, size: descriptor.size, sha256: descriptor.sha256)
         let folder = blobFolder(vaultID)
         let destination = VaultBlob.file(descriptor.id, in: folder)
-        if !StoreAnchors.exists(destination) {
-            guard let source else { throw VaultFileError.missing }
-            let manager = FileManager.default
-            try manager.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-            let temp = VaultBlob.partial(UUID(), in: folder)
-            defer { try? manager.removeItem(at: temp) }
+        if StoreAnchors.exists(destination) {
+            try VaultBlob.verify(descriptor, at: destination, key: key)
+            try checkAuthorization()
+            return importPins.pin(local, in: vaultID)
+        }
+        guard let source else { throw VaultFileError.missing }
+        let manager = FileManager.default
+        try manager.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        let temp = VaultBlob.partial(UUID(), in: folder)
+        defer { try? manager.removeItem(at: temp) }
+        var installed = false
+        do {
             try manager.copyItem(at: source, to: temp)
-            try manager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: temp.path)
             try VaultBlob.verify(descriptor, at: temp, key: key)
-            _ = try authorizedGrant(vaultID, access)
+            try manager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: temp.path)
             try fileOps.fullFsync(temp)
+            try Task.checkCancellation()
+            try checkAuthorization()
             do {
                 try fileOps.renameExclusive(temp, destination)
+                installed = true
             } catch StoreFileError.exists {
                 try VaultBlob.verify(descriptor, at: destination, key: key)
             }
             try fileOps.fsyncDirectory(folder)
-        } else {
-            try VaultBlob.verify(descriptor, at: destination, key: key)
+            try checkAuthorization()
+            return importPins.pin(local, in: vaultID)
+        } catch {
+            if installed {
+                VaultBlob.remove(local.id, in: folder)
+            }
+            throw error
         }
-        _ = try authorizedGrant(vaultID, access)
-        var local = descriptor
-        local.wrappedKey = try VaultBlob.wrap(key, under: keys.local, id: descriptor.id, size: descriptor.size, sha256: descriptor.sha256)
-        return syncImportPins.pin(local)
     }
 }

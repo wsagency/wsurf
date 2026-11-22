@@ -99,7 +99,7 @@ private struct ProfileSwitcherRow: View {
             HStack(spacing: 9) {
                 ProfileGlyph(profile: profile, size: 26)
 
-                Text(verbatim: profile.name)
+                Text(verbatim: ProfileSummary.displayName(for: profile))
                     .font(Theme.Font.rowTitle)
                     .foregroundStyle(.primary)
                     .lineLimit(1)

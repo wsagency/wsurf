@@ -269,6 +269,212 @@ struct VaultAttachmentLifecycleTests {
         }
     }
 
+    @Test func aMergeCopiesSealedBytesBetweenProfilesAndPinsRetriesUntilCommit() async throws {
+        let sourceOwner = VaultFixtures.account()
+        let destinationOwner = VaultFixtures.account()
+        try await VaultStoreFixture.with(accounts: [sourceOwner]) { first in
+            try await VaultStoreFixture.with(accounts: [destinationOwner]) { second in
+                let (sourceStore, sourceAccess) = try await first.unlocked()
+                let (destinationStore, destinationAccess) = try await second.unlocked()
+                let original = try await attach(first, sourceStore, sourceAccess, "scan.pdf", to: sourceOwner.id)
+                let text = try await opened(sourceStore, sourceAccess, first, original)
+                let sealed = try Data(contentsOf: VaultBlob.file(original.id, in: sourceStore.blobFolder(first.vaultID)))
+                var pins: [VaultImportedAttachment] = []
+                for _ in 0..<2 {
+                    let pin = try await destinationStore.copyMergeAttachment(
+                        original, from: sourceStore, sourceVaultID: first.vaultID, sourceAccess: sourceAccess,
+                        vaultID: second.vaultID, using: destinationAccess
+                    )
+                    let copy = pin.descriptor
+                    #expect(copy.id == original.id && copy.name == original.name && copy.contentType == original.contentType)
+                    #expect(copy.size == original.size && copy.addedAt == original.addedAt && copy.sha256 == original.sha256)
+                    #expect(try await opened(destinationStore, destinationAccess, second, copy) == text)
+                    pins.append(pin)
+                }
+                #expect(onDisk(second) == [original.id])
+                #expect(try Data(contentsOf: VaultBlob.file(original.id, in: destinationStore.blobFolder(second.vaultID))) == sealed)
+                await #expect(throws: VaultFileError.damaged) { _ = try await opened(destinationStore, destinationAccess, second, original) }
+                pins.removeFirst()
+                #expect(try await destinationStore.sweepAttachments(vaultID: second.vaultID, using: destinationAccess) == 0)
+                let copy = try #require(pins.first?.descriptor)
+                try await setFiles(second, destinationStore, destinationAccess, owner: destinationOwner.id, [copy])
+                pins.removeAll()
+                #expect(try await destinationStore.sweepAttachments(vaultID: second.vaultID, using: destinationAccess) == 0)
+                #expect(try await live(destinationStore, destinationAccess, second, destinationOwner.id).attachments == [copy])
+                #expect(try await live(sourceStore, sourceAccess, first, sourceOwner.id).attachments == [original])
+                #expect(try await opened(sourceStore, sourceAccess, first, original) == text)
+            }
+        }
+    }
+
+    @Test func aMergeRequiresAnIntactSourceEvenWhenItsCiphertextWasAlreadyCopied() async throws {
+        try await VaultStoreFixture.with { first in
+            try await VaultStoreFixture.with { second in
+                let (sourceStore, sourceAccess) = try await first.unlocked()
+                let (destinationStore, destinationAccess) = try await second.unlocked()
+                let original = try await sourceStore.addAttachment(vaultID: first.vaultID, from: try source(first, "scan.pdf"), using: sourceAccess)
+                func copy(_ descriptor: CredentialAttachment) async throws -> VaultImportedAttachment {
+                    try await destinationStore.copyMergeAttachment(
+                        descriptor, from: sourceStore, sourceVaultID: first.vaultID, sourceAccess: sourceAccess,
+                        vaultID: second.vaultID, using: destinationAccess
+                    )
+                }
+                let imported = try await copy(original)
+                let text = try await opened(destinationStore, destinationAccess, second, imported.descriptor)
+                var otherDigest = original
+                otherDigest.sha256 = VaultStoreFixture.flipped(original.sha256)
+                await #expect(throws: VaultFileError.damaged) { _ = try await copy(otherDigest) }
+                let blob = VaultBlob.file(original.id, in: sourceStore.blobFolder(first.vaultID))
+                let elsewhere = first.directory.appending(path: "elsewhere.wsb")
+                try FileManager.default.moveItem(at: blob, to: elsewhere)
+                try FileManager.default.createSymbolicLink(at: blob, withDestinationURL: elsewhere)
+                await #expect(throws: VaultFileError.damaged) { _ = try await copy(original) }
+                try FileManager.default.removeItem(at: blob)
+                try VaultStoreFixture.flipped(Data(contentsOf: elsewhere)).write(to: blob)
+                await #expect(throws: VaultFileError.damaged) { _ = try await copy(original) }
+                try FileManager.default.removeItem(at: blob)
+                await #expect(throws: VaultFileError.missing) { _ = try await copy(original) }
+                #expect(try await opened(destinationStore, destinationAccess, second, imported.descriptor) == text)
+            }
+        }
+    }
+
+    @MainActor
+    @Test func mergeFileCleanupHonorsTheReviewedEpochAndPreservesPendingEditorsInBothVaults() async throws {
+        try await VaultManagerFixture.with(vaults: [.unlocked, .unlocked]) { profile, _, vaults in
+            let source = vaults[0].manager, destination = vaults[1].manager
+            let oldSourceEpoch = try #require(source.authorizationEpoch)
+            let oldDestinationEpoch = try #require(destination.authorizationEpoch)
+            let input = profile.supportDirectory.appending(path: "synthetic.pdf")
+            try Data("synthetic merge file".utf8).write(to: input)
+            let file = try await source.addAttachment(from: input)
+            let pending = try await destination.addAttachment(from: input)
+            let otherPartial = VaultBlob.partial(UUID(), in: destination.store.blobFolder(destination.vaultID))
+            try Data("another import".utf8).write(to: otherPartial)
+            source.lock(reason: .manual)
+            try await VaultManagerFixture.unlock(vaults[0])
+            let sourceEpoch = try #require(source.authorizationEpoch)
+            await #expect(throws: CredentialVaultError.unauthorized) {
+                _ = try await destination.copyMergeAttachment(file, from: source, sourceEpoch: oldSourceEpoch, destinationEpoch: oldDestinationEpoch)
+            }
+            destination.lock(reason: .manual)
+            try await VaultManagerFixture.unlock(vaults[1])
+            let destinationEpoch = try #require(destination.authorizationEpoch)
+            await #expect(throws: CredentialVaultError.unauthorized) {
+                _ = try await destination.copyMergeAttachment(file, from: source, sourceEpoch: sourceEpoch, destinationEpoch: oldDestinationEpoch)
+            }
+            #expect(!destination.hasAttachment(file))
+            do {
+                let pin = try await destination.copyMergeAttachment(file, from: source, sourceEpoch: sourceEpoch, destinationEpoch: destinationEpoch)
+                try await destination.discardMergeAttachments([file.id, pending.id], destinationEpoch: destinationEpoch)
+                #expect(destination.hasAttachment(pin.descriptor))
+                withExtendedLifetime(pin) {}
+            }
+            try await destination.discardMergeAttachments([file.id, pending.id], destinationEpoch: destinationEpoch)
+            #expect(!destination.hasAttachment(file))
+            #expect(source.hasAttachment(file) && destination.hasAttachment(pending))
+            #expect(try Data(contentsOf: otherPartial) == Data("another import".utf8))
+        }
+    }
+
+    @Test func aMergePreservesAConflictingBlobInAnotherVaultOfTheProfile() async throws {
+        try await VaultStoreFixture.with(secondVault: true) { f in
+            let secondID = try #require(f.secondVaultID)
+            let (store, sourceAccess) = try await f.unlocked()
+            let destinationAccess = f.beginAccess()
+            let proof = f.proof(for: secondID)
+            try await store.unlockInitialized(
+                vaultID: secondID, credentialID: proof.credentialID, prf: proof.prf, access: destinationAccess, verifying: nil, scratchWarning: nil
+            )
+            let original = try await store.addAttachment(vaultID: f.vaultID, from: try source(f, "source.pdf"), using: sourceAccess)
+            let unrelated = try source(f, "destination.pdf")
+            let secondKey = VaultBlob.fileKey(dek: try #require(f.secondDEK), ids: f.ids, vaultID: secondID)
+            let existing = try await VaultBlob.write(
+                from: unrelated, id: original.id, into: store.blobFolder(secondID), fileKey: secondKey, fileOps: .live, now: Date()
+            )
+            let blob = VaultBlob.file(existing.id, in: store.blobFolder(secondID))
+            let before = try Data(contentsOf: blob)
+            await #expect(throws: VaultFileError.damaged) {
+                _ = try await store.copyMergeAttachment(
+                    original, from: store, sourceVaultID: f.vaultID, sourceAccess: sourceAccess, vaultID: secondID, using: destinationAccess
+                )
+            }
+            #expect(try Data(contentsOf: blob) == before)
+            let output = f.directory.appending(path: "saved-copy")
+            try await store.readAttachment(vaultID: secondID, existing, to: output, using: destinationAccess)
+            #expect(try Data(contentsOf: output) == Data(contentsOf: unrelated))
+            #expect(try await opened(store, sourceAccess, f, original).hasPrefix("synthetic source.pdf"))
+        }
+    }
+
+    nonisolated enum FileReference: CaseIterable, Sendable { case live, history, trash }
+
+    @Test(arguments: FileReference.allCases)
+    func mergeCannotInstallAMissingBlobAlreadyReservedByTheDestination(_ reference: FileReference) async throws {
+        let owner = VaultFixtures.account()
+        try await VaultStoreFixture.with(accounts: [owner]) { f in
+            let (store, access) = try await f.unlocked()
+            let file = try await attach(f, store, access, "reserved.pdf", to: owner.id)
+            switch reference {
+            case .live:
+                break
+            case .history:
+                try await setFiles(f, store, access, owner: owner.id, nil)
+            case .trash:
+                try await f.deleteAccount(store, access, owner.id)
+            }
+            let blob = VaultBlob.file(file.id, in: store.blobFolder(f.vaultID))
+            let backup = try Data(contentsOf: blob)
+            try FileManager.default.removeItem(at: blob)
+            await #expect(throws: VaultFileError.missing) {
+                try await store.checkMergeAttachments([file], vaultID: f.vaultID, using: access)
+            }
+            #expect(!store.hasBlob(file, vaultID: f.vaultID))
+            try backup.write(to: blob)
+            try await store.checkMergeAttachments([file], vaultID: f.vaultID, using: access)
+            #expect(try await opened(store, access, f, file).hasPrefix("synthetic reserved.pdf"))
+        }
+    }
+
+    nonisolated enum EndMergeLease: CaseIterable, Sendable { case revokeSource, expireDestination }
+
+    @Test(arguments: EndMergeLease.allCases)
+    func aLeaseEndingDuringTheCopyInstallsNothing(_ end: EndMergeLease) async throws {
+        try await VaultStoreFixture.with { first in
+            try await VaultStoreFixture.with { second in
+                let (sourceStore, sourceAccess) = try await first.unlocked()
+                let original = try await sourceStore.addAttachment(vaultID: first.vaultID, from: try source(first, "scan.pdf"), using: sourceAccess)
+                let destinationAccess = second.beginAccess()
+                var ops = StoreFileOps.live
+                ops.fullFsync = { url in
+                    try StoreFileOps.live.fullFsync(url)
+                    guard url.pathExtension == "partial" else { return }
+                    switch end {
+                    case .revokeSource:
+                        sourceAccess.revoke()
+                    case .expireDestination:
+                        destinationAccess.shorten(to: ContinuousClock().now)
+                    }
+                }
+                let destinationStore = second.makeStore(fileOps: ops)
+                try await destinationStore.unlockInitialized(
+                    vaultID: second.vaultID, credentialID: second.proof.credentialID, prf: second.proof.prf, access: destinationAccess,
+                    verifying: nil, scratchWarning: nil
+                )
+                let expected: CredentialVaultError = end == .revokeSource ? .unauthorized : .expired
+                await #expect(throws: expected) {
+                    _ = try await destinationStore.copyMergeAttachment(
+                        original, from: sourceStore, sourceVaultID: first.vaultID, sourceAccess: sourceAccess,
+                        vaultID: second.vaultID, using: destinationAccess
+                    )
+                }
+                let contents = VaultBlob.contents(of: destinationStore.blobFolder(second.vaultID))
+                #expect(contents.stored.isEmpty && contents.partial.isEmpty)
+                #expect(onDisk(first) == [original.id])
+            }
+        }
+    }
+
     // MARK: - Removal
 
     @Test func aPurgeRemovesExactlyTheFilesNothingElseNames() async throws {
