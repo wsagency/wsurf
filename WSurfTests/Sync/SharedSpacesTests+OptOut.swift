@@ -352,6 +352,8 @@ extension SharedSpacesTests {
         host.attach(engine)
         try await host.share(stopped, in: profile)
         try await host.share(kept, in: profile)
+        // Reopen the per-item checkpoint written by pre-library builds.
+        host.links[profile.id]?.pinLibrary = nil
         try await host.selectPin(pin.id, in: profile)
         try await engine.sendNow()
         let pinID = try #require(host.links[profile.id]?.pins[pin.id])
@@ -377,6 +379,7 @@ extension SharedSpacesTests {
         host.attach(engine)
         let linked = try await host.publishProfile(fixture.profile)
         host.pause(.profiles, for: fixture.profile)
+        host.pause(.pins, for: fixture.profile)
         var engineStarts = 0
         let app = try fixture.startSettings(cloud: cloud) { engineStarts += 1 }
         defer { app.prepareToTerminate() }

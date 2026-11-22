@@ -40,9 +40,12 @@ struct DockIconTests {
         try withDefaults { defaults in
             #expect(make(defaults).dockIcon == .standard, "a fresh install keeps the bundle icon")
 
-            make(defaults).dockIcon = .dark
-            #expect(defaults.string(forKey: "appearance.dockIcon") == "dark")
-            #expect(make(defaults).dockIcon == .dark)
+            for name in ["anodized", "steel", "copper", "light", "dark", "mono"] {
+                let choice = try #require(DockIconChoice(rawValue: name))
+                make(defaults).dockIcon = choice
+                #expect(defaults.string(forKey: "appearance.dockIcon") == name)
+                #expect(make(defaults).dockIcon == choice)
+            }
 
             defaults.set("rainbow", forKey: "appearance.dockIcon")
             #expect(make(defaults).dockIcon == .standard)
@@ -106,11 +109,28 @@ struct DockIconTests {
         var images: [Data] = []
         for choice in DockIconChoice.allCases where choice != .standard {
             let image = try #require(choice.image, "\(choice) is missing from the asset catalog")
-            #expect(image.size.width >= 512 && image.size.height >= 512)
+            #expect(image.representations.contains { $0.pixelsWide >= 1024 && $0.pixelsHigh >= 1024 })
             images.append(try #require(image.tiffRepresentation))
         }
-        #expect(images.count == 3 && Set(images).count == 3, "the three alternates are different pictures")
+        #expect(images.count == 6 && Set(images).count == 6, "each metallic and flat finish has its own picture")
         #expect(DockIconChoice.standard.image == nil, "Default is the bundle icon, not an image of ours")
+    }
+
+    @Test func theBundleIconMatchesTheAnodizedArtwork() throws {
+        let name = try #require(Bundle.main.object(forInfoDictionaryKey: "CFBundleIconName") as? String)
+        let icon = try #require(Bundle.main.image(forResource: name))
+        let retina = try #require(icon.representations.first { $0.pixelsWide == 1024 && $0.pixelsHigh == 1024 })
+        let image = try #require(retina.cgImage(forProposedRect: nil, context: nil, hints: nil))
+        let compiled = NSBitmapImageRep(cgImage: image)
+        let artworkURL = Self.root.appending(path: "WSurf/Assets.xcassets/AppIcon.appiconset/icon_512x512@2x.png")
+        let artwork = try #require(NSBitmapImageRep(data: Data(contentsOf: artworkURL)))
+
+        // Sample the transparent corner, dark tile and both brushed metals at their original positions.
+        for (x, y) in [(0, 0), (160, 160), (500, 300), (320, 670), (900, 730)] {
+            let actual = try #require(compiled.colorAt(x: x, y: y)?.usingColorSpace(.sRGB)?.cgColor.components)
+            let expected = try #require(artwork.colorAt(x: x, y: y)?.usingColorSpace(.sRGB)?.cgColor.components)
+            #expect(zip(actual, expected).allSatisfy { abs($0 - $1) <= 2 / 255 }, "bundle artwork at (\(x), \(y))")
+        }
     }
 
     @Test func theDockIconIsReappliedAtLaunch() throws {

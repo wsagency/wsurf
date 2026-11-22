@@ -18,6 +18,7 @@ extension SharedSpacesTests {
         try await studio.sync()
         try await air.host.enable(.spaces, for: air.profile)
         try await air.host.join(try #require(air.host.availableSpaces(for: air.profile).first), in: air.profile)
+        air.host.pause(.pins, for: air.profile)
         let favorite = try #require(air.browser.page(at: page.urlString))
         air.browser.addFavorite(favorite)
         let pin = try #require(favorite.pinID)

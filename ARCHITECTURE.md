@@ -376,8 +376,10 @@ zone to its handler. Each category records its enrollment against the Apple Acco
 secondary app instances with no session lock keep their data local.
 
 `TabSync` publishes the Personal profile’s open tabs, pins and favorites for the sidebar’s device list. Opening a link
-there creates a local copy. `SharedCatalogSync` tracks edits to explicitly shared Spaces and selected pins using stable
-record IDs. `CloudSharedSpaces` maps those IDs to local windows and saves shared closes until session storage catches up.
+there creates a local copy. Publishing or linking a profile and sharing or joining a Space combine both Macs’ profile pins,
+Favorites and pinned folders. Existing per-pin links keep their scope until the user chooses **Share All Pins and Favorites**.
+`SharedCatalogSync` tracks edits by stable record ID, so independent pins can share a URL. `CloudSharedSpaces` maps shared
+Space rows to local windows and saves shared closes until session storage catches up.
 Each Mac keeps its own selected Space and focused tab.
 
 `CloudSettingsSync` reconciles website settings, custom providers and per-profile model choices. Sensitive website

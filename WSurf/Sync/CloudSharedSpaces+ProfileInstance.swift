@@ -37,9 +37,13 @@ extension CloudSharedSpaces {
             let selected = Set(link.spaces.values).union(link.slots.values.map(\.cloudID))
             items = catalog.items(.spaces).filter { $0.profileID == old && selected.contains($0.id) && !$0.removed }
         }
-        if catalog.enabled(.pins, for: profile.id), !link.pins.isEmpty {
+        if catalog.enabled(.pins, for: profile.id), link.sharesPinLibrary || !link.pins.isEmpty {
             let local = try pins(profile).readForPublication()
-            items += selectedPinItems(local, for: old, link: &link).filter { !$0.removed }
+            if link.sharesPinLibrary {
+                items += libraryItems(local, group: old, link: &link).values
+            } else {
+                items += selectedPinItems(local, for: old, link: &link).filter { !$0.removed }
+            }
         }
         if catalog.enabled(.profiles, for: profile.id) {
             items.append(.init(id: old, kind: .profile, profileID: old, title: profile.name))
@@ -50,6 +54,9 @@ extension CloudSharedSpaces {
         link.pins = link.pins.mapValues(fresh)
         link.pinFolders = link.pinFolders?.mapValues(fresh)
         link.skippedPins = nil
+        if link.sharesPinLibrary {
+            link.pinLibrary = .init(rows: Dictionary(uniqueKeysWithValues: copies.filter { $0.category == .pins }.map { ($0.id, $0) }))
+        }
         link.slots = link.slots.mapValues { slot in
             var copy = slot
             copy.cloudID = fresh(slot.cloudID)
@@ -71,6 +78,7 @@ private extension SharedSpaceItem {
         var copy = Self(id: id, kind: kind, profileID: profile, spaceID: spaceID.map(map), parentID: parentID.map(map),
                         order: order, title: title, url: url, customTitle: customTitle, symbol: symbol, color: color, favorite: favorite, removed: removed)
         copy.sharedTabID = sharedTabID.map(map)
+        copy.pinFolderAppearance = pinFolderAppearance
         return copy
     }
 }

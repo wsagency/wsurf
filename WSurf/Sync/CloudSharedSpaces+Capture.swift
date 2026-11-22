@@ -36,7 +36,16 @@ extension CloudSharedSpaces {
 
     func pinsChanged(in profile: Profile, store: ProfilePinStore) {
         guard !applying, isEnabled(.pins, for: profile), store.isAvailable,
-              var link = links[profile.id], !link.pins.isEmpty, let group = link.profile else { return }
+              var link = links[profile.id], let group = link.profile else { return }
+        if link.sharesPinLibrary {
+            do {
+                try capturePinLibrary(store.readForPublication(), in: profile, group: group)
+            } catch {
+                pinLibraryFailures.insert(profile.id)
+            }
+            return
+        }
+        guard !link.pins.isEmpty else { return }
         let edits = selectedPinItems(store.pins, for: group, link: &link)
         if links[profile.id]?.pinFolders != link.pinFolders {
             links[profile.id] = link

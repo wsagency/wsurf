@@ -577,8 +577,8 @@ custom provider catalog can include existing data from that macOS user.
 1. In **Settings → Sync**, publish a profile on Studio and link Air to it.
    Share a Space on Studio and join it on Air. Open two tabs with the same
    URL, move one between shared Spaces, and close the other. Check the
-   sidebar on both Macs and their device-local Spaces. Enable pin sharing and
-   repeat with a selected Favorite.
+   sidebar on both Macs and their device-local Spaces. Start with a pin on each Mac,
+   confirm both appear on both Macs, then add a Favorite and rename it on the other Mac.
 2. In the Personal profile, turn on **Share tabs through iCloud** on both Macs.
    Open a tab from Studio’s device list on Air. Closing that copy leaves the
    source tab on Studio.

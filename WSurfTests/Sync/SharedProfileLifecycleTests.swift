@@ -80,7 +80,7 @@ struct SharedProfileLifecycleTests {
         #expect(rows.map(\.profileID) == [renewed])
         #expect(f.open().links[work.id]?.profile == renewed)
         for other in SharedCatalogCategory.allCases where other != category {
-            #expect(!host.isEnabled(other, for: work))
+            #expect(host.isEnabled(other, for: work) == (category == .spaces && other == .pins))
             #expect(f.cloud.names(in: other.zone).isEmpty)
         }
         let published = try await host.publishProfile(work)

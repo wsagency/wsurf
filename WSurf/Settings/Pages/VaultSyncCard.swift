@@ -110,8 +110,7 @@ struct VaultAdoptionRetryRow: View {
             verbatimTitle: retry.vault.label,
             verbatimCaption: String(localized: "This vault is on this Mac. Retry to sync it with your other devices.")
         ) {
-            Button("Retry Sync…", action: action)
-                .buttonStyle(.bordered)
+            SettingsButton(title: "Retry Sync…", action: action)
                 .disabled(isBusy)
         }
     }

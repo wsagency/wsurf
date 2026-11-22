@@ -297,7 +297,7 @@ public final class SharedCatalogSync: SyncZoneHandler {
         stage([item], for: profile)
     }
 
-    public func stage(_ items: [SharedSpaceItem], for profile: UUID) {
+    public func stage(_ items: [SharedSpaceItem], for profile: UUID, comparingWith localBase: [UUID: SharedSpaceItem]? = nil) {
         var changed = false
         var send: [SyncChange] = []
         for item in items where enabled(item.category, for: profile) {
@@ -307,6 +307,14 @@ public final class SharedCatalogSync: SyncZoneHandler {
             if let conflict = state.conflicts[id], !item.removed {
                 guard conflict.profile == profile else { continue }
                 state.conflicts[id]?.item = item
+                changed = true
+                continue
+            }
+            // A pin edited while paused can be discovered after a newer server revision is already here.
+            // Keep both versions, including independently edited copies of the same original UUID.
+            if let localBase, !item.removed, state.pending[id] == nil,
+               let remote = state.remote[id]?.item, remote != localBase[item.id] {
+                state.conflicts[id] = .init(profile: profile, base: localBase[item.id], item: item)
                 changed = true
                 continue
             }

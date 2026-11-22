@@ -4,6 +4,7 @@
 import AppKit
 import SwiftUI
 import Testing
+import WSurfCore
 
 @testable import WSurf
 
@@ -48,6 +49,40 @@ struct SettingsRowMetricsTests {
         let notice = Text("A verified Apple Account is required to share saved keys.").font(Theme.Font.label)
         let actual = height(ProviderKeySyncSection(profile: .original()))
         #expect(actual >= height(switchOnly) + height(notice))
+    }
+
+    @Test func sharedPinsHaveOneProfileControlRegardlessOfLibrarySize() async throws {
+        let profile = Profile.original()
+        let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = ProfilePinStore.store(for: .temporary())
+        let spaces = SpaceStore(profile: profile, file: nil)
+        var pinStoreReads = 0
+        let host = CloudSharedSpaces(
+            stateFile: directory.appending(path: "shared.json"), profiles: [profile], windows: { [] }, spaces: { _ in spaces },
+            pins: { _ in
+                pinStoreReads += 1
+                return store
+            }
+        )
+        host.attach(FakeSyncEngine(cloud: FakeSyncCloud(), delegate: host.catalog))
+        try await host.enable(.profiles, for: profile)
+        try #require(host.linkProfile(profile.id, to: UUID()))
+        try await host.enable(.pins, for: profile)
+        try await host.enable(.spaces, for: profile)
+        let legacy = height(SharedProfileLinkSection(profile: profile, host: host))
+        try await host.sharePinLibrary(in: profile)
+        let shared = height(SharedProfileLinkSection(profile: profile, host: host))
+        #expect(legacy > shared, "An older profile offers the extra action to share all pins and Favorites.")
+
+        let spaceHeight = height(SharedSpacesSettingsView(profile: profile, host: host))
+        store.publish((0..<30).map { index in
+            ProfilePin(id: UUID(), orderKey: String(index), kind: .tab, url: "https://example.test/\(index)", isFavorite: index.isMultiple(of: 2))
+        })
+        let reads = pinStoreReads
+        #expect(abs(height(SharedProfileLinkSection(profile: profile, host: host)) - shared) < 0.5)
+        #expect(abs(height(SharedSpacesSettingsView(profile: profile, host: host)) - spaceHeight) < 0.5)
+        #expect(pinStoreReads == reads)
     }
 
     /// The rows of a disclosure group, such as the colors of a theme, sit as close as the rows of any other card.

@@ -30,6 +30,19 @@ nonisolated public struct SharedSpaceItem: Codable, Equatable, Identifiable, Sen
         case profile, space, folder, tab, pin, pinFolder
     }
 
+    public struct PinFolderAppearance: Codable, Equatable, Sendable {
+        public var customColor: String?
+        public var sizeFactor: Double?
+        public var tintsIcons: Bool
+
+        public init?(customColor: String?, sizeFactor: Double?, tintsIcons: Bool) {
+            guard customColor != nil || sizeFactor != nil || tintsIcons else { return nil }
+            self.customColor = customColor
+            self.sizeFactor = sizeFactor
+            self.tintsIcons = tintsIcons
+        }
+    }
+
     public let id: UUID
     public let kind: Kind
     public let profileID: UUID
@@ -43,6 +56,7 @@ nonisolated public struct SharedSpaceItem: Codable, Equatable, Identifiable, Sen
     public var customTitle: String?
     public var symbol: String?
     public var color: String?
+    public var pinFolderAppearance: PinFolderAppearance?
     public var favorite: Bool
     public var removed: Bool
 

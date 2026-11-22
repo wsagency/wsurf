@@ -1,6 +1,196 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Pin and Favorite sync is paused on this Mac." : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sinkronizacija pinova i favorita pauzirana je na ovom Macu."
+          }
+        }
+      }
+    },
+    "Anodized" : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Anodizirani metal"
+          }
+        }
+      }
+    },
+    "Approve Endpoint" : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Odobri adresu pružatelja"
+          }
+        }
+      }
+    },
+    "Combine all pins and Favorites from this Mac and iCloud, including any you add later." : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Objedinite sve pinove i favorite s ovog Maca i iz iClouda, uključujući one koje dodate poslije."
+          }
+        }
+      }
+    },
+    "Combine this profile’s pins and Favorites across your Macs." : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Objedinite pinove i favorite ovog profila na svojim Macovima."
+          }
+        }
+      }
+    },
+    "Copper" : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bakar"
+          }
+        }
+      }
+    },
+    "Pins and Favorites" : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pinovi i favoriti"
+          }
+        }
+      }
+    },
+    "Publishing or linking combines this profile’s pins and Favorites across your Macs, including any you add later." : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kad objavite ili povežete profil, njegovi pinovi i favoriti s oba Maca čine zajedničku zbirku. U nju ulaze i oni koje dodate poslije."
+          }
+        }
+      }
+    },
+    "Remove Shared Copy" : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ukloni dijeljenu kopiju"
+          }
+        }
+      }
+    },
+    "Share All Pins and Favorites" : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Podijeli sve pinove i favorite"
+          }
+        }
+      }
+    },
+    "Share Key" : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Podijeli ključ"
+          }
+        }
+      }
+    },
+    "Share or join a Space with its tabs and the profile’s pins and Favorites." : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Podijelite Space ili mu se pridružite zajedno s njegovim karticama te pinovima i favoritima profila."
+          }
+        }
+      }
+    },
+    "Sharing or joining a Space syncs its tabs and this profile’s pins and Favorites, including any you add later." : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kad podijelite Space ili mu se pridružite, sinkroniziraju se njegove kartice te svi sadašnji i budući pinovi i favoriti tog profila."
+          }
+        }
+      }
+    },
+    "Steel" : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Čelik"
+          }
+        }
+      }
+    },
+    "Sync Spaces on this Mac" : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sinkroniziraj Spaceove na ovom Macu"
+          }
+        }
+      }
+    },
+    "Sync all pins and Favorites" : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sinkroniziraj sve pinove i favorite"
+          }
+        }
+      }
+    },
+    "Sync previously shared pins and Favorites" : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sinkroniziraj prethodno podijeljene pinove i favorite"
+          }
+        }
+      }
+    },
+    "This Mac couldn’t update its pins and Favorites. Try again." : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ovaj Mac nije uspio ažurirati pinove i favorite. Pokušajte ponovno."
+          }
+        }
+      }
+    },
+    "Use Shared Key" : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Upotrijebi dijeljeni ključ"
+          }
+        }
+      }
+    },
     "%@" : {
 
     },

@@ -9,6 +9,9 @@ import Foundation
 enum DockIconChoice: String, CaseIterable {
     /// The icon in the bundle, drawn by the system in the style the Mac is set to.
     case standard
+    case anodized
+    case steel
+    case copper
     case light
     case dark
     case mono
@@ -17,6 +20,12 @@ enum DockIconChoice: String, CaseIterable {
         switch self {
         case .standard:
             return "Default"
+        case .anodized:
+            return "Anodized"
+        case .steel:
+            return "Steel"
+        case .copper:
+            return "Copper"
         case .light:
             return "Light"
         case .dark:
@@ -26,11 +35,17 @@ enum DockIconChoice: String, CaseIterable {
         }
     }
 
-    /// The image set in the asset catalog; nil for the icon in the bundle.
+    /// The catalog artwork for a fixed finish. Default lets macOS style the bundle icon.
     var assetName: String? {
         switch self {
         case .standard:
             return nil
+        case .anodized:
+            return "AppIcon"
+        case .steel:
+            return "AlternateIconSteel"
+        case .copper:
+            return "AlternateIconCopper"
         case .light:
             return "AlternateIconLight"
         case .dark:

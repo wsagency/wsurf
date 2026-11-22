@@ -165,7 +165,7 @@ struct SharedSpacesTests {
         #expect(air.browser.tab(id: other.id) != nil)
     }
 
-    @Test func pausingOrDeselectingRetainsBothCopiesAndSuppressesLaterChanges() async throws {
+    @Test func pausingSpaceAndPinSharingRetainsBothCopiesAndSuppressesLaterChanges() async throws {
         let cloud = FakeSyncCloud()
         let mac = Mac(cloud)
         defer { mac.finish() }
@@ -182,9 +182,8 @@ struct SharedSpacesTests {
 
         let pin = mac.browser.pinned("https://pin.example.test/")
         let id = try #require(pin.pinID)
-        try await mac.host.selectPin(id, in: mac.profile)
         try await mac.sync()
-        mac.host.stopSharingPin(id, in: mac.profile)
+        mac.host.pause(.pins, for: mac.profile)
         mac.browser.addFavorite(pin)
         try await mac.sync()
         #expect(mac.browser.page(for: id)?.isFavorite == true)
@@ -344,9 +343,9 @@ struct SharedSpacesTests {
         try await air.host.join(remote, in: air.profile)
         let sameTab = try #require(air.browser.tab(id: page.id))
         let joinedSpace = sameTab.spaceID
-        if sharesPins {
-            try await studio.host.enable(.pins, for: studio.profile)
-            try await air.host.enable(.pins, for: air.profile)
+        if !sharesPins {
+            studio.host.pause(.pins, for: studio.profile)
+            air.host.pause(.pins, for: air.profile)
         }
         studio.browser.addFavorite(page)
         try await studio.sync()
