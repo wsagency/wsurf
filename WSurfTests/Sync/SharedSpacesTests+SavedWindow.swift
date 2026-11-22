@@ -3,6 +3,7 @@
 
 import AppKit
 import Foundation
+import SwiftUI
 import Testing
 import WSurfCore
 
@@ -11,16 +12,16 @@ import WSurfCore
 extension SharedSpacesTests {
     enum OpenPath: String, Sendable {
         case closedWindow, switchedWindow, profileAfterRestart, spaceAfterRestart, profileWhileOwnerHasAnotherProfile, profileBeforeAccountVerification
-        case spaceWhileLaunching
+        case spaceWhileLaunching, gatherAfterRestart
 
         var restarts: Bool {
-            self == .profileAfterRestart || self == .spaceAfterRestart || self == .profileBeforeAccountVerification
+            self == .profileAfterRestart || self == .spaceAfterRestart || self == .profileBeforeAccountVerification || self == .gatherAfterRestart
         }
     }
 
     @Test(arguments: [
         OpenPath.closedWindow, .switchedWindow, .profileAfterRestart, .spaceAfterRestart,
-        .profileWhileOwnerHasAnotherProfile, .profileBeforeAccountVerification, .spaceWhileLaunching,
+        .profileWhileOwnerHasAnotherProfile, .profileBeforeAccountVerification, .spaceWhileLaunching, .gatherAfterRestart,
     ])
     func openSpaceRestoresTheSharedTabWhenItsWindowClosedOrChangedProfile(path: OpenPath) async throws {
         let catalog = ProfileStore.shared, previous = catalog.current
@@ -50,7 +51,7 @@ extension SharedSpacesTests {
         try await studio.host.share(published, in: studio.profile)
         try await studio.sync()
 
-        var air = BrowserApplication()
+        var air = BrowserApplication(ownsSession: true)
         let gate = CloudSyncGate.Inputs(tabsFlag: false, vaultFlag: false, isRunningTests: false, isStaged: false, ownsSession: true,
                                         entitlement: { CloudTabsTests.Launch.entitlements[$0] }, offersMacSync: true)
         var engine: FakeSyncEngine?
@@ -110,17 +111,18 @@ extension SharedSpacesTests {
         }
         let kept = initialCaller.browser.addPage("https://local.example.test/air")
         initialCaller.browser.activate(kept)
+        var splitTab: (window: UUID, tab: UUID)?
         let caller: AppCoordinator
         if path.restarts {
             // Another Work window got a new shared tab while the older window held the rest.
             let small = air.newWindow(profile: adopted, show: false)
             small.browser.switchSpace(to: joined.id)
             let recent = small.browser.addPage("https://work.example.test/recent")
+            splitTab = (small.windowID, recent.id)
             small.browser.activate(recent)
             small.browser.scheduleSave()
             await host.refresh()
-            air = await restartWindows(air, with: service)
-            air.restoreWindows(of: [local, adopted], show: false)
+            air = await restartWindows(air, with: service, restoring: [local, adopted])
             let shortSession = try #require(air.windows.first { $0.windowID == small.windowID })
             #expect(shortSession.browser.tab(id: recent.id) != nil && shortSession.browser.tab(id: received.id) == nil)
             caller = try #require(air.windows.first { $0.windowID == initialCaller.windowID })
@@ -138,6 +140,8 @@ extension SharedSpacesTests {
             return
         } else if path == .profileAfterRestart {
             await caller.switchProfile(to: adopted)
+        } else if path == .gatherAfterRestart {
+            try await gatherViaSettings(profile: adopted, host: host, caller: caller, split: try #require(splitTab), into: first.windowID)
         } else {
             caller.openSharedSpace(SpaceEntry(space: joined, profile: adopted))
         }
@@ -153,18 +157,72 @@ extension SharedSpacesTests {
             #expect(caller.context.profile.id == local.id && caller.browser.activeTabID == kept.id)
         }
         #expect(reopened.browser.tabs.contains { $0.urlString == second.urlString })
-        reopened.browser.close(try #require(reopened.browser.tab(id: received.id)))
-        try await engine?.sendNow()
-        try await studio.sync()
-        #expect(studio.browser.tab(id: source.id) == nil)
+        if path == .gatherAfterRestart {
+            air = await restartWindows(air, with: service, restoring: [local, adopted])
+            try await checkGatheredTab(splitTab, in: air, destination: reopened.windowID, space: joined.id, studio: studio, engine: engine)
+        }
+        try await checkSharedClose(received.id, in: try #require(air.windows.first { $0.windowID == reopened.windowID }),
+                                   peer: source.id, studio: studio, engine: engine)
     }
 
-    private func restartWindows(_ app: BrowserApplication, with service: CloudSync) async -> BrowserApplication {
+    private func checkGatheredTab(_ split: (window: UUID, tab: UUID)?, in application: BrowserApplication, destination: UUID,
+                                  space: UUID, studio: Mac, engine: FakeSyncEngine?) async throws {
+        let (window, recent) = try #require(split)
+        let source = try #require(application.windows.first { $0.windowID == window })
+        let destination = try #require(application.windows.first { $0.windowID == destination })
+        #expect(source.browser.tab(id: recent) == nil)
+        #expect(destination.browser.tab(id: recent)?.spaceID == space)
+        #expect(try destination.browser.savedSharedRowOwners(in: space)[recent] == destination.windowID)
+        let host = try #require(destination.browser.sharedSpaceService)
+        #expect(host.links[destination.context.profile.id]?.slots[recent]?.movingFrom == nil)
+        let shared = try #require(host.links[destination.context.profile.id]?.slots[recent]?.cloudID)
+        try await engine?.sendNow()
+        try await studio.sync()
+        let peer = try #require(studio.browser.tab(id: shared))
+        try await checkSharedClose(recent, in: destination, peer: peer.id, studio: studio, engine: engine)
+    }
+
+    private func gatherViaSettings(profile: Profile, host: CloudSharedSpaces, caller: AppCoordinator, split: (window: UUID, tab: UUID),
+                                   into destination: UUID) async throws {
+        let source = try #require(caller.application?.windows.first { $0.windowID == split.window })
+        host.links[profile.id]?.slots[split.tab]?.window = destination
+        host.links[profile.id]?.slots[split.tab]?.movingFrom = split.window
+        try #require(host.persistLinks())
+        host.recoverGatheredWindows(in: source.browser)
+        #expect(host.links[profile.id]?.slots[split.tab]?.window == split.window)
+        #expect(host.links[profile.id]?.slots[split.tab]?.movingFrom == nil)
+
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 760, height: 750), styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        defer { window.close() }
+        let view = NSHostingView(rootView: SharedSpacesSettingsView(profile: profile, host: host, coordinator: caller)
+            .environment(\.accessibilityEnabled, true))
+        window.contentView = view
+        window.orderBack(nil)
+        let title = String(localized: "Gather Tabs in One Window")
+        try #require(await waitUntil { self.sharedSpaceButton(title, in: view)?.isAccessibilityEnabled?() == true })
+        _ = sharedSpaceButton(title, in: view)?.accessibilityPerformPress?()
+        try #require(await waitUntil { host.links[profile.id]?.slots[split.tab]?.window == destination })
+        #expect(host.links[profile.id]?.slots[split.tab]?.movingFrom == nil)
+        // The SQLite commit can finish before the checkpoint clears its transfer marker.
+        host.links[profile.id]?.slots[split.tab]?.movingFrom = split.window
+        try #require(host.persistLinks())
+    }
+
+    private func checkSharedClose(_ id: UUID, in window: AppCoordinator, peer: UUID, studio: Mac, engine: FakeSyncEngine?) async throws {
+        window.browser.close(try #require(window.browser.tab(id: id)))
+        try await engine?.sendNow()
+        try await studio.sync()
+        #expect(studio.browser.tab(id: peer) == nil)
+    }
+
+    private func restartWindows(_ app: BrowserApplication, with service: CloudSync, restoring profiles: [Profile] = []) async -> BrowserApplication {
         app.prepareToTerminate()
         await app.closeTabsForTermination()
         app.windows.forEach { $0.nativeWindow?.close() }
-        let restarted = BrowserApplication()
+        let restarted = BrowserApplication(ownsSession: app.ownsSession)
         service.cancelTermination()
+        restarted.restoreWindows(of: profiles, show: false)
         return restarted
     }
 }

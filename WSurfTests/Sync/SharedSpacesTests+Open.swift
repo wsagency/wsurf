@@ -168,17 +168,18 @@ extension SharedSpacesTests {
             .environment(\.accessibilityEnabled, true))
         window.contentView = view
         window.orderBack(nil)
-        func button(_ title: String, in node: AnyObject) -> AnyObject? {
-            if node.accessibilityRole?() == .button, [node.accessibilityTitle?(), node.accessibilityLabel?()].contains(title) {
-                return node
-            }
-            return (node.accessibilityChildren?() ?? []).lazy.compactMap { button(title, in: $0 as AnyObject) }.first
-        }
         let join = String(localized: "Join and Open")
-        try #require(await waitUntil { button(join, in: view)?.isAccessibilityEnabled?() == true })
-        _ = button(join, in: view)?.accessibilityPerformPress?()
+        try #require(await waitUntil { self.sharedSpaceButton(join, in: view)?.isAccessibilityEnabled?() == true })
+        _ = sharedSpaceButton(join, in: view)?.accessibilityPerformPress?()
         let edit = String(localized: "Space Settings…")
-        try #require(await waitUntil { button(edit, in: view)?.isAccessibilityEnabled?() == true })
+        try #require(await waitUntil { self.sharedSpaceButton(edit, in: view)?.isAccessibilityEnabled?() == true })
         return try #require(mac.host.joinedSpace(item, in: mac.profile))
+    }
+
+    func sharedSpaceButton(_ title: String, in node: AnyObject) -> AnyObject? {
+        if node.accessibilityRole?() == .button, [node.accessibilityTitle?(), node.accessibilityLabel?()].contains(title) {
+            return node
+        }
+        return (node.accessibilityChildren?() ?? []).lazy.compactMap { self.sharedSpaceButton(title, in: $0 as AnyObject) }.first
     }
 }

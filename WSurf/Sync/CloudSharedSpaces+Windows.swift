@@ -5,6 +5,102 @@ import Foundation
 import WSurfCore
 
 extension CloudSharedSpaces {
+    func gatherSharedRoots(_ roots: [SidebarItem], in entry: SpaceEntry, from source: BrowserModel, into target: BrowserModel) throws {
+        let profile = entry.profile.id
+        guard !applying, let original = links[profile], let space = original.spaces[entry.id],
+              target.currentSpaceID == entry.id else { throw SharedCatalogError.unavailable }
+        let members = source.reconciledTree().expanded(Set(roots))
+        guard members.allSatisfy({ source.spaceID(ofItem: $0) == entry.id && !source.isKept($0) }) else {
+            throw SharedCatalogError.unavailable
+        }
+        func localID(_ item: SidebarItem) -> UUID {
+            switch item {
+            case .tab(let id), .folder(let id):
+                id
+            }
+        }
+        let moving = Set(members.map(localID).filter { id in
+            guard let slot = original.slots[id], slot.window == source.windowID, slot.pinID == nil,
+                  slot.movingFrom == nil, slot.closedAfterRevision == nil, let row = catalog.item(slot.cloudID, in: .spaces) else { return false }
+            return !row.removed && row.profileID == original.profile && row.spaceID == space
+        })
+        guard !moving.isEmpty, Set(roots.map(localID)).isSubset(of: moving) else { throw SharedCatalogError.unavailable }
+        applying = true
+        defer { applying = false }
+        let saved = try source.savedSharedRowOwners(in: entry.id)
+        if moving.contains(where: { saved[$0] != source.windowID }) {
+            guard target.saveTransferredSession(from: source) else { throw SharedCatalogError.storage }
+        }
+        var reserved = original
+        for id in moving {
+            reserved.slots[id]?.movingFrom = source.windowID
+            reserved.slots[id]?.window = target.windowID
+        }
+        links[profile] = reserved
+        guard persistLinks() else {
+            links[profile] = original
+            throw SharedCatalogError.storage
+        }
+
+        let complete = target.adoptSharedRoots(roots, from: source)
+        for id in moving {
+            if target.tab(id: id) == nil && target.folder(id: id) == nil {
+                reserved.slots[id] = original.slots[id]
+            } else if let slot = reserved.slots[id], slot.editedAfterRevision != nil {
+                reserved.slots[id]?.editedAfterRevision = target.sessionRevision
+            }
+        }
+        links[profile] = reserved
+        setGatheredOrder(in: target, space: space, link: reserved)
+        guard target.saveTransferredSession(from: source) else { throw SharedCatalogError.storage }
+        for id in moving {
+            reserved.slots[id]?.movingFrom = nil
+        }
+        links[profile] = reserved
+        guard persistLinks(), complete else { throw SharedCatalogError.storage }
+    }
+
+    private func setGatheredOrder(in target: BrowserModel, space: UUID, link: SharedProfileLinks) {
+        var rows: [SidebarItem: SharedSpaceItem] = [:]
+        var ids: [UUID: UUID] = [:]
+        for (id, slot) in link.slots where slot.window == target.windowID && slot.pinID == nil && slot.closedAfterRevision == nil {
+            guard let row = catalog.item(slot.cloudID, in: .spaces), !row.removed, row.profileID == link.profile, row.spaceID == space else { continue }
+            let item: SidebarItem = row.kind == .folder ? .folder(id) : .tab(id)
+            guard target.spaceID(ofItem: item) == target.currentSpaceID else { continue }
+            rows[item] = row
+            ids[row.id] = id
+        }
+        // Order the existing rows without replaying metadata or publishing a change to the other Macs.
+        target.applySharedRows([], spaces: [:], ids: ids, anchors: rows)
+    }
+
+    func recoverGatheredWindows(in browser: BrowserModel) {
+        let profile = browser.context.profile.id
+        guard var link = links[profile] else { return }
+        let recovering = link.slots.filter { $0.value.movingFrom != nil }
+        guard !recovering.isEmpty else { return }
+        let reversedSpaces = Dictionary(uniqueKeysWithValues: link.spaces.map { ($0.value, $0.key) })
+        let live = regularWindows(browser.context.profile)
+        for shared in Set(recovering.values.compactMap { $0.last?.spaceID }) {
+            guard let space = reversedSpaces[shared], let saved = try? browser.savedSharedRowOwners(in: space) else { continue }
+            for (id, slot) in recovering where slot.last?.spaceID == shared {
+                guard let source = slot.movingFrom, let savedOwner = saved[id], savedOwner == slot.window || savedOwner == source else { continue }
+                if savedOwner != slot.window, live.contains(where: { model in
+                    model.windowID == slot.window && (model.tab(id: id) != nil || model.folder(id: id) != nil)
+                }) {
+                    // A failed disk write still has the destination row in the running session.
+                    continue
+                }
+                link.slots[id]?.window = savedOwner
+                link.slots[id]?.movingFrom = nil
+            }
+        }
+        if link != links[profile] {
+            links[profile] = link
+            persistLinks()
+        }
+    }
+
     /// A new row can arrive before its parent. Follow its folders to the first window this Mac already knows.
     func folderWindow(for row: SharedSpaceItem, ownerOf: (UUID) -> UUID?) -> UUID? {
         var parent = row.parentID

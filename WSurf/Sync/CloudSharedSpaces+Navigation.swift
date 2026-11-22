@@ -23,12 +23,12 @@ struct SharedSpaceChoice: Identifiable {
 
 extension CloudSharedSpaces {
     /// A shared tab belongs to its saved window even while another profile occupies that window.
-    func tabWindows(in entry: SpaceEntry) -> [UUID: UUID] {
+    func tabWindows(in entry: SpaceEntry, includingPinned: Bool = true) -> [UUID: UUID] {
         guard let group = cloudProfileID(for: entry.profile.id), let link = links[entry.profile.id], link.profile == group,
               let shared = link.spaces[entry.id] else { return [:] }
         var windows: [UUID: UUID] = [:]
         for (id, slot) in link.slots {
-            guard slot.closedAfterRevision == nil, let row = catalog.item(slot.cloudID, in: .spaces),
+            guard slot.closedAfterRevision == nil, includingPinned || slot.pinID == nil, let row = catalog.item(slot.cloudID, in: .spaces),
                   row.kind == .tab, !row.removed, row.profileID == link.profile, row.spaceID == shared else { continue }
             windows[id] = slot.window
         }

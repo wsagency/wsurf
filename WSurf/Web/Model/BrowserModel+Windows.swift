@@ -11,6 +11,12 @@ extension BrowserModel {
     /// `activate` is false: a page that was opened in the background stays there.
     @discardableResult
     func adoptTab(_ tab: BrowserTab, from source: BrowserModel, activate: Bool = true) -> Bool {
+        guard adoptTabInMemory(tab, from: source, activate: activate) else { return false }
+        saveTransferredSession(from: source)
+        return true
+    }
+
+    private func adoptTabInMemory(_ tab: BrowserTab, from source: BrowserModel, activate: Bool) -> Bool {
         guard canReceive(from: source), canReceive(tab, from: source) else { return false }
         source.onTabWillTransferOut?(tab)
         guard canReceive(from: source), canReceive(tab, from: source), let oldIndex = source.tabs.firstIndex(where: { $0 === tab }) else { return false }
@@ -20,7 +26,6 @@ extension BrowserModel {
         if activate {
             activeTabID = tab.id
         }
-        saveTransferredSession(from: source)
         return true
     }
 
@@ -32,6 +37,22 @@ extension BrowserModel {
 
     private func canReceive(_ tab: BrowserTab, from source: BrowserModel) -> Bool {
         source.tabsByID[tab.id] === tab && tab.context === context && !tabs.contains(where: { $0.id == tab.id }) && !tab.isClosed
+    }
+
+    func adoptSharedRoots(_ roots: [SidebarItem], from source: BrowserModel) -> Bool {
+        guard canReceive(from: source) else { return false }
+        var complete = true
+        for item in roots.reversed() {
+            switch item {
+            case .tab(let id):
+                let moved = source.tab(id: id).map { adoptTabInMemory($0, from: source, activate: false) } ?? false
+                complete = moved && complete
+            case .folder(let id):
+                let moved = source.folder(id: id).flatMap { adoptSharedFolder($0, from: source, saving: false) }
+                complete = moved != nil && complete
+            }
+        }
+        return complete
     }
 
     private func transfer(_ tab: BrowserTab, from source: BrowserModel, oldIndex: Int) {
@@ -109,7 +130,7 @@ extension BrowserModel {
     }
 
     /// Transfer a sidebar folder and its whole local subtree in one session write, including device-only pages.
-    func adoptSharedFolder(_ folder: TabFolder, from source: BrowserModel) -> Set<UUID>? {
+    func adoptSharedFolder(_ folder: TabFolder, from source: BrowserModel, saving: Bool = true) -> Set<UUID>? {
         let root = SidebarItem.folder(folder.id)
         let members = source.reconciledTree().descendants(ofFolder: folder.id).union([root])
         let pages = source.tabs.filter { members.contains(.tab($0.id)) }
@@ -156,7 +177,9 @@ extension BrowserModel {
             source.onTabTransferredOut?(page, index)
             onTabTransferredIn?(page, source, index)
         }
-        saveTransferredSession(from: source)
+        if saving {
+            saveTransferredSession(from: source)
+        }
         return folderIDs.union(pageIDs)
     }
 }

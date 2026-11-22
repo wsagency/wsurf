@@ -114,6 +114,9 @@ struct SharedSpacesSettingsView: View {
         return DetailRow(verbatimTitle: host.spaceTitle(for: entry), verbatimCaption: String(localized: "Shared in the \(profileName) profile"), layout: .stacked) {
             ChipFlow(spacing: 8) {
                 SettingsButton(title: "Open Space") { coordinator.openSharedSpace(entry) }
+                if Set(host.tabWindows(in: entry, includingPinned: false).values).count > 1 {
+                    SettingsButton(title: "Gather Tabs in One Window") { change.run { try coordinator.gatherSharedTabs(in: entry) } }
+                }
                 SettingsButton(title: "Space Settings…") { coordinator.showSpaceEditor(for: entry) }
                 if canStop {
                     SettingsButton(title: "Stop Sharing") { host.stopSharing(entry.space, in: entry.profile) }

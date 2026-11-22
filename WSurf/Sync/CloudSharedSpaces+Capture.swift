@@ -95,6 +95,7 @@ extension CloudSharedSpaces {
     }
 
     func restoreWindowEdits(in browser: BrowserModel, only records: Set<UUID>? = nil) {
+        recoverGatheredWindows(in: browser)
         let profile = browser.context.profile
         guard !browser.opensPrivately, browser.windowKind == .standard, var link = links[profile.id] else { return }
         let enabled = isEnabled(.spaces, for: profile)
@@ -267,7 +268,8 @@ extension CloudSharedSpaces {
             values[local] = item
             groups[item.parentID ?? space, default: []].append(local)
             let edited = previous?.editedAfterRevision.map { previous?.window == browser.windowID ? $0 : browser.sessionRevision }
-            link.slots[local] = .init(cloudID: cloudID, window: browser.windowID, last: previous?.last, editedAfterRevision: edited)
+            link.slots[local] = .init(cloudID: cloudID, window: browser.windowID, last: previous?.last, editedAfterRevision: edited,
+                                      movingFrom: previous?.movingFrom)
         }
         if restoredMembership {
             browser.sidebarDidChange()

@@ -121,6 +121,16 @@
         }
       }
     },
+    "Gather Tabs in One Window" : {
+      "localizations" : {
+        "hr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Okupi kartice u jednom prozoru"
+          }
+        }
+      }
+    },
     "Open Space" : {
       "localizations" : {
         "hr" : {

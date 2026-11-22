@@ -15,6 +15,53 @@ extension AppCoordinator {
         showSharedSpace(entry, in: target, owners: owners)
     }
 
+    /// Consolidate the selected Space without closing tabs or switching any other window's profile.
+    func gatherSharedTabs(in entry: SpaceEntry) throws {
+        guard !isClosed, !isSwitchingProfile, let application, application.ownsSession,
+              !application.isLaunching, !application.isTerminating,
+              let host = browser.sharedSpaceService, host.isEnabled(.spaces, for: entry.profile),
+              host.catalog.ready.contains(.spaces) else { throw SharedCatalogError.unavailable }
+        let owners = host.tabWindows(in: entry, includingPinned: false)
+        let counts = tabCounts(owners)
+        let available = regularSpaceWindows.filter { $0.context.profile.id == entry.profile.id }
+        let live = Dictionary(uniqueKeysWithValues: available.map { ($0.windowID, $0) })
+        let database = BrowserProfileContext.shared(for: entry.profile).database
+        let occupied = Set(application.windows.map(\.windowID))
+        let saved = BrowserModel.savedWindows(in: database, includeClosed: true).filter { $0.windowKind == .standard }
+        let restorable = Set(saved.map(\.id)).subtracting(occupied)
+        guard counts.count > 1, !database.isEphemeral || AppDatabase.isRunningTests,
+              Set(counts.keys).isSubset(of: Set(live.keys).union(restorable)),
+              let destinationID = counts.keys.max(by: { (counts[$0, default: 0], $0 == windowID ? 1 : 0, $0.uuidString) <
+                  (counts[$1, default: 0], $1 == windowID ? 1 : 0, $1.uuidString) }) else { throw SharedCatalogError.unavailable }
+
+        let target = live[destinationID] ?? application.newWindow(profile: entry.profile, windowID: destinationID, restoring: true, show: false)
+        showSharedSpace(entry, in: target, owners: owners)
+        var restoredSources: [AppCoordinator] = []
+        var transfers: [(BrowserModel, [SidebarItem])] = []
+        for id in counts.keys.sorted(by: { $0.uuidString < $1.uuidString }) where id != destinationID {
+            let window = live[id] ?? application.newWindow(profile: entry.profile, windowID: id, restoring: true, show: false)
+            if live[id] == nil {
+                restoredSources.append(window)
+            }
+            let model = window.browser
+            let pages = owners.keys.filter { owners[$0] == id }
+            guard pages.allSatisfy({ model.tab(id: $0)?.spaceID == entry.id && model.tab(id: $0)?.pinID == nil }) else {
+                throw SharedCatalogError.unavailable
+            }
+            let roots = Set(pages.map { model.rootItem(containing: .tab($0)) })
+            transfers.append((model, model.reconciledTree().root.filter(roots.contains)))
+        }
+
+        for (source, roots) in transfers {
+            try host.gatherSharedRoots(roots, in: entry, from: source, into: target.browser)
+        }
+        let updated = host.tabWindows(in: entry, includingPinned: false)
+        guard owners.keys.allSatisfy({ updated[$0] == destinationID && target.browser.tab(id: $0)?.spaceID == entry.id }) else {
+            throw SharedCatalogError.storage
+        }
+        restoredSources.forEach { $0.closeWindow() }
+    }
+
     /// A profile switch can recover an older shared window while leaving windows in other profiles alone.
     func reopenSharedProfileWindow(_ profile: Profile) -> Bool {
         guard !isClosed, !isSwitchingProfile, !isMicro, !context.profile.isPrivate,

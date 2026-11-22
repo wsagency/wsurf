@@ -9,6 +9,7 @@ release notes will be added above this provenance record.
 
 - Shared profiles are marked in Profiles and in the profile switcher.
 - Opening a shared Space or profile brings back the saved window that holds its tabs when another window displays only a subset after a restart.
+- In Settings → Sync → Shared Spaces, use **Gather Tabs in One Window** when a shared Space’s tabs are spread across windows on this Mac.
 
 ## 0.2.2 (build 34) — 2026-11-22
 
