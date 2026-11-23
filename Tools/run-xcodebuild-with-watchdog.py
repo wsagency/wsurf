@@ -22,7 +22,6 @@ from pathlib import Path
 
 
 SUITE_SUMMARY = re.compile(r"Test run with \d+ tests? in \d+ suites? (?:passed|failed)")
-TOTAL_LIMIT_SECONDS = int(os.getenv("WSURF_CI_TEST_LIMIT_SECONDS", 20 * 60))
 FINALIZATION_LIMIT_SECONDS = int(os.getenv("WSURF_CI_FINALIZATION_LIMIT_SECONDS", 2 * 60))
 
 
@@ -220,6 +219,13 @@ def main() -> int:
         print("usage: run-xcodebuild-with-watchdog.py -- xcodebuild test ...", file=sys.stderr)
         return 2
 
+    # Cold Xcode builds can take longer than a test command even while Swift is still compiling.
+    building = Path(command[0]).name == "xcodebuild" and command[1:2] == ["build-for-testing"]
+    if building:
+        limit = int(os.getenv("WSURF_CI_BUILD_LIMIT_SECONDS", 30 * 60))
+    else:
+        limit = int(os.getenv("WSURF_CI_TEST_LIMIT_SECONDS", 20 * 60))
+
     raw_path = os.getenv("WSURF_CI_RAW_LOG")
     raw = open(raw_path, "ab", buffering=0) if raw_path else None  # byte for byte, before any filtering; opened first
     console = ConsoleFilter(raw_path) if raw_path and os.getenv("WSURF_CI_VERBOSE") != "1" else None
@@ -265,7 +271,7 @@ def main() -> int:
                 show(shown)
 
     threading.Thread(target=read_output, daemon=True).start()
-    deadline = time.monotonic() + TOTAL_LIMIT_SECONDS
+    deadline = time.monotonic() + limit
     saw_summary = False
     output_closed = False
     while True:
@@ -280,14 +286,14 @@ def main() -> int:
                 show(shown)
         if line:
             text = emit(line)
-            if not saw_summary and SUITE_SUMMARY.search(text):
+            if not building and not saw_summary and SUITE_SUMMARY.search(text):
                 saw_summary = True
                 deadline = min(deadline, time.monotonic() + FINALIZATION_LIMIT_SECONDS)
         if output_closed and process.poll() is not None:
             finish_console()
             return process.wait()
         if time.monotonic() >= deadline:
-            reason = "test result finalization" if saw_summary else "test command"
+            reason = "build-for-testing" if building else ("test result finalization" if saw_summary else "test command")
             if console is not None:
                 for shown in console.flush_started():
                     show(shown)

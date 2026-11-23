@@ -292,6 +292,17 @@ def main() -> None:
                 raise AssertionError("watchdog left its child running")
             assert watchdog(["sh", "-c", "exit 7"], root, env).returncode == 7
             assert watchdog(["true"], root, env).returncode == 0
+            # Exercise the real deadline and exit handling without starting an Xcode build.
+            xcode = bin_dir / "xcodebuild"
+            xcode.write_text('#!/bin/sh\nexec sleep 2\n')
+            xcode.chmod(0o755)
+            limits = {**env, "WSURF_CI_TEST_LIMIT_SECONDS": "1", "WSURF_CI_BUILD_LIMIT_SECONDS": "30"}
+            build = watchdog(["xcodebuild", "build-for-testing"], root, limits)
+            assert build.returncode == 0, build
+            test = watchdog(["xcodebuild", "test-without-building"], root, limits)
+            assert test.returncode == 124, test
+            short_build = watchdog(["xcodebuild", "build-for-testing"], root, {**limits, "WSURF_CI_BUILD_LIMIT_SECONDS": "1"})
+            assert short_build.returncode == 124, short_build
             check_console_filter(root, env)
             if "WSURF_CHECK_WATCHDOG_INNER" not in os.environ:
                 # As ci-local runs it: with WSURF_CI_RAW_LOG (and VERBOSE) in the environment. Must pass, and must leave that
