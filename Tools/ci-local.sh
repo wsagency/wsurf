@@ -223,6 +223,7 @@ step "Check validation selector" python3 -B Tools/check-validation-selection.py
 step "Check development iCloud signing" python3 -B Tools/check-icloud-development-signing-tests.py
 step "Check CloudKit transport probe" python3 -B Tools/CloudKitTransportProbe/build.py self-test
 step "Check test partition" python3 Tools/check-test-partition.py
+step "Check website design kit" python3 -B Tools/update-design-system.py --check
 skip "Cache Swift packages/CEF" "runner cache; build/DD and Packages/CefSwift/.cef persist here"
 gate
 step "Resolve packages" xcodebuild -resolvePackageDependencies \

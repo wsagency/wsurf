@@ -3,24 +3,34 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="WSurf is a source-available macOS browser with a built-in assistant. Organize your tabs, choose your model, and keep control of your browsing.">
+  <meta name="description" content="WSurf is an opinionated, source-available macOS browser you can make yours. Local by default, with Minimal and Micro windows, sleeping tabs, opt-in iCloud Spaces, a built-in assistant, and separately paired MCP clients.">
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; img-src 'self'; media-src 'self'; base-uri 'none'; form-action 'none'">
-  <meta name="color-scheme" content="light">
-  <meta name="theme-color" content="#F5F5F7">
+  <meta name="color-scheme" content="light dark">
+  <meta name="theme-color" content="#F5F5F7" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#1C1C1E" media="(prefers-color-scheme: dark)">
   <link rel="canonical" href="https://wsurf.app/">
   <link rel="icon" href="/favicon.ico" sizes="16x16 32x32 48x48">
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="/apple-touch-icon.png">
-  <link rel="stylesheet" href="/style.css">
-  <link rel="stylesheet" href="/tandem-loader.css">
-  <title>WSurf — A macOS browser with a built-in assistant</title>
+  <link rel="stylesheet" href="/design-system/tokens.css">
+  <link rel="stylesheet" href="/design-system/components/bundle.css">
+  <link rel="stylesheet" href="/home.css">
+  <title>WSurf — Fully private. Fully yours.</title>
 </head>
 <body>
   <a class="skip-link" href="#main">Skip to content</a>
+
   <header class="site-header wrap">
-    <a class="brand" href="/" aria-label="WSurf home"><img src="/brand/lockup-light.svg" width="146" height="32" alt=""></a>
+    <a class="ws-lockup" href="/" aria-label="WSurf home">
+      <picture>
+          <source media="(prefers-color-scheme: dark)" srcset="/design-system/assets/Lockup/lockup-dark.svg">
+          <img src="/design-system/assets/Lockup/lockup-light.svg" width="146" height="32" alt="">
+        </picture>
+    </a>
     <nav class="site-nav" aria-label="Main navigation">
       <a href="#features">Features</a>
+      <a href="#assistant">Assistant</a>
+      <a href="/design-system/">Design system</a>
       <a href="/changelog/">Changelog</a>
       <a href="#build">Build</a>
       <a href="https://github.com/wsagency/wsurf">GitHub <span aria-hidden="true">↗</span></a>
@@ -28,101 +38,396 @@
   </header>
 
   <main id="main">
-    <section class="hero wrap" aria-labelledby="hero-title">
-      <div class="hero-copy">
-        <p class="eyebrow">For macOS 26+ · Apple silicon</p>
-        <h1 id="hero-title">Your browser.<br>Your assistant.<br><span>Your call.</span></h1>
-        <p class="lede">A source-available macOS browser with an assistant built in. Ask it to work with your tabs. Take over whenever you want.</p>
-        <div class="actions">
-          <a class="button button-primary" href="https://github.com/wsagency/wsurf">See the source on GitHub <span aria-hidden="true">↗</span></a>
-          <a class="button button-secondary" href="#build">Build WSurf</a>
+    <section class="hero-section wrap" aria-labelledby="hero-title">
+      <div class="hero-grid">
+        <div class="hero-copy">
+          <p class="ws-eyebrow eyebrow">macOS 26+ · Apple silicon</p>
+          <h1 class="hero-title" id="hero-title">Fully private.<br><span>Fully yours.</span></h1>
+          <p class="section-lede">An opinionated browser for macOS. Bring one workspace to two Macs, hand an assistant a tab, and choose how much of the browser you see.</p>
+          <div class="ws-actions hero-actions">
+            <a class="ws-button ws-button--primary home-btn" href="https://github.com/wsagency/wsurf">See the source on GitHub <span aria-hidden="true">↗</span></a>
+            <a class="ws-button ws-button--secondary home-btn" href="#build">Build WSurf</a>
+          </div>
+          <p class="meta-caption">In development. No verified public signed release yet.</p>
         </div>
-        <p class="caption">In development. No verified public signed release yet.</p>
+
+        <div class="hero-stage">
+          <div class="hero-art hero-art--light">
+            <video class="hero-video" controls muted playsinline preload="none" poster="/media/hero-clay.jpg" width="1080" height="1080" aria-label="Play the clay Tandem orbit">
+              <source src="/media/hero-clay.mp4" type="video/mp4" media="(prefers-color-scheme: light) and (prefers-reduced-motion: no-preference)">
+            </video>
+            <img class="hero-still" src="/media/hero-clay.jpg" width="1080" height="1080" alt="">
+          </div>
+          <div class="hero-art hero-art--dark">
+            <video class="hero-video" controls muted playsinline preload="none" poster="/design-system/assets/Relief/relief-earth-moon-poster.jpg" width="1080" height="1080" aria-label="Play the Earth and Moon Tandem orbit">
+              <source src="/design-system/assets/Relief/relief-earth-moon.mp4" type="video/mp4" media="(prefers-color-scheme: dark) and (prefers-reduced-motion: no-preference)">
+            </video>
+            <img class="hero-still" src="/design-system/assets/Relief/relief-earth-moon-poster.jpg" width="1080" height="1080" alt="">
+          </div>
+          <div class="hero-bar" aria-hidden="true">
+            <span class="hero-bar__site">
+              <span class="hero-bar__engine">WK</span>
+              <span class="hero-bar__url">wsurf.app</span>
+            </span>
+            <span class="hero-bar__right">
+              <span class="ws-assistant-badge app-control" data-state="acting"><span class="ws-assistant-dot"></span>Reading 2 tabs</span>
+              <span class="hero-bar__cue">Click page to stop</span>
+            </span>
+          </div>
+        </div>
       </div>
-      <div class="hero-art">
-        <video class="hero-video" autoplay muted loop playsinline poster="/media/hero-clay.jpg" width="720" height="720" aria-hidden="true">
-          <source src="/media/hero-clay.mp4" type="video/mp4">
-        </video>
-        <img class="hero-still" src="/media/hero-clay.jpg" width="1080" height="1080" alt="">
+
+      <div class="scope-strip" aria-label="Privacy scope">
+        <article class="scope-item">
+          <div class="scope-item__head">
+            <h2 class="scope-item__title">On your Mac by default</h2>
+
+          </div>
+          <p>Browse with local profiles and history. Choose Apple Intelligence or a model running on your Mac to process a prompt locally.</p>
+        </article>
+        <article class="scope-item">
+          <div class="scope-item__head">
+            <h2 class="scope-item__title">Chosen external AI</h2>
+
+          </div>
+          <p>A cloud model receives the prompt and any pages or files you include. A connected agent can send shared page content to its own provider.</p>
+        </article>
+        <article class="scope-item">
+          <div class="scope-item__head">
+            <h2 class="scope-item__title">Opt-in iCloud</h2>
+
+          </div>
+          <p>Choose which Spaces, encrypted vaults or settings to share through iCloud. A linked profile can share its whole collection of pins and Favorites.</p>
+        </article>
       </div>
     </section>
 
-    <section class="section wrap" id="features" aria-labelledby="features-title">
+    <section class="section wrap" id="features" aria-labelledby="windows-title">
       <div class="section-heading">
-        <p class="eyebrow">Made for everyday browsing</p>
-        <h2 id="features-title">Keep your flow.</h2>
-        <p class="lede">Familiar browser tools, with an assistant when you need one. This is what the current source does.</p>
+        <p class="ws-eyebrow eyebrow">Window modes</p>
+        <h2 class="section-title" id="windows-title">Full sidebar, floating bar, or just the page.</h2>
+        <p class="section-lede">Keep a reference page beside your work, then return it to the same tab without a reload.</p>
       </div>
-      <div class="feature-grid">
-        <article class="card">
-          <h3>Tabs and windows</h3>
-          <p>Open separate windows with tabs, folders, pins, Favorites, and split view. Move a live tab to another window of the same profile without reloading it. Windows restore after relaunch.</p>
-          <p>Search your history, resume downloads, and import bookmarks from an HTML export.</p>
+
+      <figure class="film-stage">
+        <div class="film-frame">
+          <video class="demo-video" controls playsinline preload="none" poster="/media/demos/micro.jpg" width="1280" height="800" aria-label="Illustrated walkthrough showing a live tab moved into a Micro window and pinned with Float on Top">
+            <source src="/media/demos/micro.mp4" type="video/mp4">
+          </video>
+        </div>
+        <figcaption class="film-caption">
+          <span class="film-caption__lead"><span class="walkthrough-tag">Illustrated walkthrough</span> Popping a live reference tab into a Micro window and returning it without reloading.</span>
+        </figcaption>
+      </figure>
+
+      <ul class="editorial-strip">
+        <li class="editorial-point">
+          <div class="editorial-point__head">
+            <h3>Minimal window</h3>
+            <kbd>⇧⌘M</kbd>
+          </div>
+          <p>Hides the sidebar and toolbar behind one floating bar at the top or bottom — auto-hide it as you read, detach it anywhere on screen, or pin the sidebar back beside the page.</p>
+        </li>
+        <li class="editorial-point">
+          <div class="editorial-point__head">
+            <h3>Micro window</h3>
+            <kbd>⌥⇧⌘N</kbd>
+          </div>
+          <p>Move a live tab into its own small window. Point at the top edge to reveal its controls. The address stays visible during sign-in prompts.</p>
+        </li>
+        <li class="editorial-point">
+          <div class="editorial-point__head">
+            <h3>Float on Top</h3>
+            <kbd>⌥⌘T</kbd>
+          </div>
+          <p>Keep a Micro window above other apps, across desktops and over full-screen spaces — ideal for a layout spec, docs, or a live preview while you work.</p>
+        </li>
+      </ul>
+    </section>
+
+    <section class="section wrap" id="memory" aria-labelledby="memory-title">
+      <div class="memory-spread">
+        <div class="memory-copy">
+          <div class="section-heading">
+            <p class="ws-eyebrow eyebrow">Quiet memory</p>
+            <h2 class="section-title" id="memory-title">Sleep idle tabs. Keep live work awake.</h2>
+          </div>
+          <p class="body-copy">Turn on <strong>Sleep inactive tabs</strong> to unload eligible pages under memory pressure or after a period of inactivity. Choose <strong>Free Memory</strong> to do it now. A sleeping tab keeps its place and reloads when you select it.</p>
+          <p class="body-copy">Unloaded tabs keep their pins and folders — WebKit restores Back and Forward history, while Chromium restores the address and scroll position. Even with sleeping off, critical memory pressure unloads your oldest background tabs first.</p>
+          <p class="memory-footnote">Sleeping tabs send no website notifications. Open a sleeping tab to resume browsing.</p>
+        </div>
+
+        <aside class="awake-card" aria-labelledby="awake-title">
+          <div class="awake-card__head">
+            <h3 class="card-title" id="awake-title">What stays awake</h3>
+          </div>
+          <ul class="awake-grid">
+            <li>
+              <strong>On-screen tabs</strong>
+              <span>Each window’s active tab and visible split panes.</span>
+            </li>
+            <li>
+              <strong>Favorites &amp; pins</strong>
+              <span>Favorites by default, plus an optional switch for pinned tabs.</span>
+            </li>
+            <li>
+              <strong>Media &amp; Picture in Picture</strong>
+              <span>Playing audio or video, and paused Picture in Picture windows.</span>
+            </li>
+            <li>
+              <strong>Calls &amp; capture</strong>
+              <span>Tabs using the camera, microphone, or screen sharing.</span>
+            </li>
+            <li>
+              <strong>Downloads &amp; forms</strong>
+              <span>Active transfers and pages with unsaved form text.</span>
+            </li>
+            <li>
+              <strong>Private, AI &amp; kept sites</strong>
+              <span>Private tabs, active assistant or MCP tabs, and sites set to stay loaded.</span>
+            </li>
+          </ul>
+        </aside>
+      </div>
+    </section>
+
+    <section class="section wrap" id="make-it-yours" aria-labelledby="craft-title">
+      <div class="section-heading">
+        <p class="ws-eyebrow eyebrow">Make it yours</p>
+        <h2 class="section-title" id="craft-title">Tuned down to the border and the Dock.</h2>
+        <p class="section-lede">Shape the browser to match your Mac — from machined metal and flat Dock icons to eight built-in themes, custom sidebar typography, and per-site engines.</p>
+      </div>
+
+      <div class="craft-stage">
+        <article class="panel">
+          <div class="panel__head">
+            <h3 class="card-title">Flat and metal Dock icons</h3>
+            <a class="ws-link label" href="/design-system/">View full design system</a>
+          </div>
+          <div class="dock-shelf">
+            <div class="dock-item">
+              <div class="dock-item__frame">
+                <img src="/design-system/assets/Dock/metal.png" width="512" height="512" alt="Anodized machined metal WSurf Dock icon" loading="lazy">
+              </div>
+              <span class="dock-item__label">Anodized</span>
+              <span class="dock-item__sub">Default</span>
+            </div>
+            <div class="dock-item">
+              <div class="dock-item__frame">
+                <img src="/design-system/assets/Dock/steel.png" width="512" height="512" alt="Steel machined metal WSurf Dock icon" loading="lazy">
+              </div>
+              <span class="dock-item__label">Steel</span>
+            </div>
+            <div class="dock-item">
+              <div class="dock-item__frame">
+                <img src="/design-system/assets/Dock/copper.png" width="512" height="512" alt="Copper machined metal WSurf Dock icon" loading="lazy">
+              </div>
+              <span class="dock-item__label">Copper</span>
+            </div>
+            <div class="dock-item">
+              <div class="dock-item__frame dock-item__frame--flat">
+                <img src="/design-system/assets/Dock/light.png" width="512" height="512" alt="Flat Light Tandem WSurf Dock icon" loading="lazy">
+              </div>
+              <span class="dock-item__label">Light</span>
+            </div>
+            <div class="dock-item">
+              <div class="dock-item__frame dock-item__frame--flat">
+                <img src="/design-system/assets/Dock/dark.png" width="512" height="512" alt="Flat Dark Tandem WSurf Dock icon" loading="lazy">
+              </div>
+              <span class="dock-item__label">Dark</span>
+            </div>
+            <div class="dock-item">
+              <div class="dock-item__frame dock-item__frame--flat">
+                <img src="/design-system/assets/Dock/mono.png" width="512" height="512" alt="Flat Monochrome Tandem WSurf Dock icon" loading="lazy">
+              </div>
+              <span class="dock-item__label">Mono</span>
+            </div>
+          </div>
+          <p class="body-copy">Anodized metal ships as the default bundle icon. Switch the running Dock icon any time between macOS system styling, machined metal finishes, or clean flat Tandem tiles.</p>
         </article>
-        <article class="card">
-          <h3>Unload, undo, and folders</h3>
-          <p>X removes an unpinned tab and its link. ⌘-click unloads it instead and keeps the link. Unload a whole folder in one click.</p>
-          <p>Undo or ⌘Z brings back deleted folders and removed links. Pin a folder on its own.</p>
+
+        <article class="panel">
+          <div class="panel__head">
+            <h3 class="card-title">Eight themes, Plain or Glass, and your sidebar font</h3>
+          </div>
+          <ul class="theme-swatches" aria-label="Eight built-in light and dark themes">
+            <li class="swatch swatch--wsurf">
+              <div class="swatch__mini" aria-hidden="true"><div class="swatch__side"><span class="swatch__dot"></span><span class="swatch__bar"></span></div></div>
+              <span class="swatch__name">WSurf</span>
+            </li>
+            <li class="swatch swatch--standard">
+              <div class="swatch__mini" aria-hidden="true"><div class="swatch__side"><span class="swatch__dot"></span><span class="swatch__bar"></span></div></div>
+              <span class="swatch__name">Standard</span>
+            </li>
+            <li class="swatch swatch--calm">
+              <div class="swatch__mini" aria-hidden="true"><div class="swatch__side"><span class="swatch__dot"></span><span class="swatch__bar"></span></div></div>
+              <span class="swatch__name">Calm</span>
+            </li>
+            <li class="swatch swatch--cat">
+              <div class="swatch__mini" aria-hidden="true"><div class="swatch__side"><span class="swatch__dot"></span><span class="swatch__bar"></span></div></div>
+              <span class="swatch__name">Catppuccin</span>
+            </li>
+            <li class="swatch swatch--gruv">
+              <div class="swatch__mini" aria-hidden="true"><div class="swatch__side"><span class="swatch__dot"></span><span class="swatch__bar"></span></div></div>
+              <span class="swatch__name">Gruvbox</span>
+            </li>
+            <li class="swatch swatch--rose">
+              <div class="swatch__mini" aria-hidden="true"><div class="swatch__side"><span class="swatch__dot"></span><span class="swatch__bar"></span></div></div>
+              <span class="swatch__name">Rosé Pine</span>
+            </li>
+            <li class="swatch swatch--nord">
+              <div class="swatch__mini" aria-hidden="true"><div class="swatch__side"><span class="swatch__dot"></span><span class="swatch__bar"></span></div></div>
+              <span class="swatch__name">Nord</span>
+            </li>
+            <li class="swatch swatch--drac">
+              <div class="swatch__mini" aria-hidden="true"><div class="swatch__side"><span class="swatch__dot"></span><span class="swatch__bar"></span></div></div>
+              <span class="swatch__name">Dracula</span>
+            </li>
+          </ul>
+          <p class="body-copy">Each built-in theme ships with tuned light and dark variants, Plain or Glass material, live brightness and border controls, and custom sidebar typography — for example, Nord Dark with a tighter mono sidebar and a 1&nbsp;pt accent border. Editing colors saves a copy you can rename or reset.</p>
         </article>
-        <article class="card">
-          <h3>Command palette and previews</h3>
-          <p>Type a site name or domain, then press Tab to search that site. Enter opens the results in a new tab. Option-Enter uses the current tab.</p>
-          <p>Hold Shift over a link for a summary. Shift-click it to open a preview.</p>
-        </article>
-        <article class="card">
-          <h3>The assistant</h3>
-          <p>Ask in the address field, or hold ⌥Space to speak. Use @ to include a tab, and attach files. In the tabs you share, it can search, read, click, type, and scroll. Review each step in Agent Activity. Click the page to stop it.</p>
-          <p>It fills up to 32 non-sensitive fields at a time, without submitting the form. If a provider rate limit pauses it, wait, then choose Continue.</p>
+      </div>
+
+      <ul class="editorial-strip">
+        <li class="editorial-point">
+          <div class="editorial-point__head">
+            <h3>Two engines per site</h3>
+            <span class="engine-inline" aria-hidden="true"><span class="engine-tag engine-tag--accent">WK</span><span class="engine-tag">CR</span></span>
+          </div>
+          <p>WebKit runs by default; click <strong>WK</strong> or <strong>CR</strong> in the address bar to open a tab or save a website on embedded Chromium, with separate cookies and sign-ins.</p>
+        </li>
+        <li class="editorial-point">
+          <div class="editorial-point__head">
+            <h3>Fast navigation &amp; previews</h3>
+            <kbd>Tab</kbd>
+          </div>
+          <p>Type a site name in <kbd>⌘K</kbd> and press <kbd>Tab</kbd> to search that site directly. Hold <kbd>Shift</kbd> over any link for a quick summary, or Shift-click to peek.</p>
+        </li>
+        <li class="editorial-point">
+          <div class="editorial-point__head">
+            <h3>Vaults, profiles &amp; extensions</h3>
+            <kbd>⌥⌘K</kbd>
+          </div>
+          <p>Separate profiles isolate cookies, history, and WebKit extensions from Chrome Web Store and Firefox Add-ons. Credential Manager keeps encrypted per-profile vaults unlocked by passkey.</p>
+        </li>
+      </ul>
+    </section>
+
+    <section class="section wrap" id="sync" aria-labelledby="sync-title">
+      <div class="section-heading">
+        <p class="ws-eyebrow eyebrow">Opt-in iCloud sync</p>
+        <h2 class="section-title" id="sync-title">Shared Spaces across your Macs.</h2>
+        <p class="section-lede">Publish Work on your first Mac and join it on your second. A tab you close on either Mac closes in that shared Space on the other.</p>
+      </div>
+
+      <figure class="film-stage">
+        <div class="film-frame">
+          <video class="demo-video" controls playsinline preload="none" poster="/media/demos/spaces.jpg" width="1280" height="800" aria-label="Illustrated walkthrough showing a Shared Space syncing a new tab between two Macs">
+            <source src="/media/demos/spaces.mp4" type="video/mp4">
+          </video>
+        </div>
+        <figcaption class="film-caption">
+          <span class="film-caption__lead"><span class="walkthrough-tag">Illustrated walkthrough</span> Opening a tab in a Shared Space on a laptop and seeing it appear on a desktop Mac.</span>
+        </figcaption>
+      </figure>
+
+      <ul class="editorial-strip">
+        <li class="editorial-point">
+          <h3>Live Shared Spaces</h3>
+          <p>Publish or join a Space through iCloud so tab opens, moves, and closes stay in sync across Macs — each Mac still keeps its own active tab and local Spaces.</p>
+        </li>
+        <li class="editorial-point">
+          <h3>Shared pins &amp; other devices</h3>
+          <p>Linked profiles and Spaces share pins, Favorites, and pinned folders with a cloud badge. Your Personal sidebar can also open local copies of tabs from your other Macs.</p>
+        </li>
+        <li class="editorial-point">
+          <h3>Encrypted vaults &amp; selective switches</h3>
+          <p>Keep each Space’s website sign-ins separate and select the same encrypted vault on both Macs. Review duplicates before copying entries from another vault. The source stays yours to keep.</p>
+        </li>
+      </ul>
+    </section>
+
+    <section class="section wrap" id="assistant" aria-labelledby="assistant-title">
+      <div class="section-heading">
+        <p class="ws-eyebrow eyebrow">Assistant and MCP</p>
+        <h2 class="section-title" id="assistant-title">Choose which tabs your agents can use.</h2>
+        <p class="section-lede">Give one agent a local preview and another a documentation tab. Each connection has its own permissions. Agent Activity shows which client acted on which tab.</p>
+      </div>
+
+      <div class="assistant-duo">
+        <article class="panel">
+          <h3 class="card-title">Built-in assistant</h3>
+          <p class="body-copy">Ask in the address bar or hold <kbd>⌥Space</kbd> to speak, using Apple Intelligence on your Mac, a local Ollama or LM Studio server, or your own cloud provider key.</p>
+          <p class="body-copy">Use <code class="inline-code">@</code> to include open tabs — for example, compare two docs and fill out a long form. It never fills passwords or cards, asks before sending or purchasing, and stops the moment you click the page.</p>
           <div class="status-line">
-            <span class="tandem-loader tandem-loader--24 status-loader" role="status"><svg viewBox="-672 -672 1344 1344" aria-hidden="true" focusable="false"><defs><clipPath id="tl-clip-full"><circle r="348.3"/></clipPath><clipPath id="tl-clip-small"><circle r="344.44"/></clipPath></defs><g class="tl-full" transform="scale(1.0429)"><g class="tl-orbit tl-back"><circle class="tl-follower" r="167.18"/></g><circle class="tl-lead" r="348.3"/><g class="tl-front"><g clip-path="url(#tl-clip-full)"><g class="tl-orbit"><circle class="tl-ring" r="223.18"/></g></g><g class="tl-orbit"><circle class="tl-follower tl-disc" r="167.18"/></g></g></g><g class="tl-small" transform="scale(1.0825)"><g class="tl-orbit tl-back"><circle class="tl-follower" r="186"/></g><circle class="tl-lead" r="344.44"/><g class="tl-front"><g clip-path="url(#tl-clip-small)"><g class="tl-orbit"><circle class="tl-ring" r="286"/></g></g><g class="tl-orbit"><circle class="tl-follower tl-disc" r="186"/></g></g></g></svg><span class="tandem-loader__label">Loading</span></span>
-            <span>Reading 2 tabs</span>
+            <span class="tandem-loader tandem-loader--24 status-loader" role="status"><svg viewBox="-672 -672 1344 1344" aria-hidden="true" focusable="false"><defs><clipPath id="tl-clip-full"><circle r="348.3"/></clipPath><clipPath id="tl-clip-small"><circle r="344.44"/></clipPath></defs><g class="tl-full" transform="scale(1.0429)"><g class="tl-orbit tl-back"><circle class="tl-follower" r="167.18"/></g><circle class="tl-lead" r="348.3"/><g class="tl-front"><g clip-path="url(#tl-clip-full)"><g class="tl-orbit"><circle class="tl-ring" r="223.18"/></g></g><g class="tl-orbit"><circle class="tl-follower tl-disc" r="167.18"/></g></g></g><g class="tl-small" transform="scale(1.0825)"><g class="tl-orbit tl-back"><circle class="tl-follower" r="186"/></g><circle class="tl-lead" r="344.44"/><g class="tl-front"><g clip-path="url(#tl-clip-small)"><g class="tl-orbit"><circle class="tl-ring" r="286"/></g></g><g class="tl-orbit"><circle class="tl-follower tl-disc" r="186"/></g></g></g></svg><span class="tandem-loader__label">Assistant reading shared tabs</span></span>
+            <span>Reading 2 tabs · Every step logged in Agent Activity</span>
           </div>
         </article>
-        <article class="card">
-          <h3>Choose your model</h3>
-          <p>Use Apple Intelligence on your Mac, add a provider key, or connect a local server such as Ollama or LM Studio. Providers include OpenAI, Anthropic, Gemini, DeepSeek, Groq, Mistral, OpenRouter, and xAI.</p>
-          <p>External assistants can use WSurf's MCP server. They see only the tabs you share.</p>
-        </article>
-        <article class="card">
-          <h3>Two engines</h3>
-          <p>WebKit is the default. For any website, choose embedded Chromium in Website Settings&nbsp;› Browser Engine.</p>
-          <p>Changing the engine reloads the website and resets its Back and Forward history. Cookies, storage, and sign-ins stay separate for each engine.</p>
-        </article>
-        <article class="card">
-          <h3>Themes and sidebar</h3>
-          <p>Pick Auto, Light, Dark, Light Calm, or Dark Calm. Customize a theme and watch it update live.</p>
-          <p>Set the sidebar font, size, weight, row spacing, and folder tint. Colors are saved for each theme.</p>
-        </article>
-        <article class="card">
-          <h3>Passwords and sign-in</h3>
-          <p>Fill passwords with macOS Passwords-compatible autofill. Save cards and contacts in Settings&nbsp;› Autofill. Unlock them with Touch ID or your Mac password. Passkeys use the macOS prompt.</p>
-          <p>You can also opt in to a Credential Manager. It keeps passwords, passkeys, and one-time codes in an encrypted store for each profile.</p>
-          <p class="card-note">In the current source. Not yet verified in a signed build.</p>
-        </article>
-        <article class="card">
-          <h3>Extensions and profiles</h3>
-          <p>Add WebKit extensions from the Chrome Web Store and Firefox Add-ons.</p>
-          <p>Profiles keep cookies, history, tabs, permissions, and extensions apart. Press ⇧⌘N for a private window. Closing it ends only that private session.</p>
+
+        <article class="panel">
+          <h3 class="card-title">Separately paired MCP clients</h3>
+          <p class="body-copy">Pair Claude Code or Codex with WSurf over MCP. An agent with development access can compare a local build in WebKit and Chromium and show you where it renders differently.</p>
+          <p class="body-copy">Each client pairs separately so you can pause or revoke it at any time. The connection stays local to your Mac, though the connected app may send shared page data to its own model.</p>
+          <div class="client-row" aria-label="Supported MCP clients">
+            <span class="client-chip">Claude Code</span>
+            <span class="client-chip">Claude Desktop</span>
+            <span class="client-chip">Codex</span>
+            <span class="client-chip">Cursor</span>
+            <span class="client-chip">omp.sh</span>
+          </div>
         </article>
       </div>
-    </section>
 
-    <section class="section wrap" aria-labelledby="access-title">
-      <div class="access">
-        <div class="access-head">
-          <p class="eyebrow">Know what you share</p>
-          <h2 id="access-title">Browser access.<br>Not a blank check.</h2>
-          <p>The assistant uses AI and can make mistakes. Check important information.</p>
-          <a class="text-link" href="https://github.com/wsagency/wsurf/blob/main/SECURITY.md">Read the security boundaries <span aria-hidden="true">↗</span></a>
+      <div class="access-panel">
+        <div class="access-intro">
+          <p class="ws-eyebrow eyebrow">Scopes, tab grants &amp; takeover</p>
+          <h3>Approve the tabs. Take over in one click.</h3>
+          <p class="body-copy">A connection works in one regular window. You choose which pages it can read or control. Private windows stay outside its scope.</p>
+          <div class="takeover-preview">
+            <span class="ws-assistant-badge app-control" data-state="acting"><span class="ws-assistant-dot" aria-hidden="true"></span>Claude Code · Development</span>
+            <span class="takeover-buttons" aria-hidden="true">
+              <span class="takeover-pill">Take Over</span>
+              <span class="takeover-pill takeover-pill--stop">Stop</span>
+            </span>
+          </div>
+          <p class="body-copy">Choose <strong>Take Over</strong> on any shared tab to reclaim just that tab, or press <kbd>⌥⌘.</kbd> (<strong>Stop</strong>) to revoke every connection in the window at once.</p>
+          <div class="access-links">
+            <a class="ws-link label" href="https://github.com/wsagency/wsurf/blob/main/MCP.md">Protocol &amp; tools in MCP.md <span aria-hidden="true">↗</span></a>
+            <a class="ws-link label" href="https://github.com/wsagency/wsurf/blob/main/SECURITY.md">Security boundaries <span aria-hidden="true">↗</span></a>
+          </div>
         </div>
-        <ul class="access-list">
-          <li><strong class="access-term">Per-site access</strong> Set assistant access for each website, and turn on its tools in Settings&nbsp;› Assistant.</li>
-          <li><strong class="access-term">It asks first</strong> The assistant asks before purchases, sending information, or signing in. It cannot fill passwords or card numbers. Browser autofill does that.</li>
-          <li><strong class="access-term">Your keys</strong> API keys stay in Keychain and go only to their provider. Messages, shared page content, and attachments go to the model you select.</li>
-          <li><strong class="access-term">Voice</strong> On-device voice turns speech into text on your Mac. OpenAI dictation and voice conversations send microphone audio to OpenAI.</li>
-          <li><strong class="access-term">Private windows</strong> Each has its own temporary website storage and permissions. Private browsing does not save history, tabs, or assistant transcripts.</li>
-          <li><strong class="access-term">Trackers</strong> WSurf blocks known third-party trackers by default. WebKit extensions can block more.</li>
-        </ul>
+
+        <ol class="scope-list" aria-label="MCP access levels">
+          <li class="scope-row">
+            <div class="scope-row__head">
+              <span class="scope-row__name">Read Only</span>
+              <span class="scope-row__note">Approved tabs only</span>
+            </div>
+            <p>Read page text, structure, and controls on the tabs you share — no clicks, typing, or navigation.</p>
+          </li>
+          <li class="scope-row">
+            <div class="scope-row__head">
+              <span class="scope-row__name">Allow Control</span>
+              <span class="scope-row__note">Asks on key actions</span>
+            </div>
+            <p>Click, type, scroll, and fill non-sensitive fields; refuses passwords and cards and asks before purchases, sending, or signing in.</p>
+          </li>
+          <li class="scope-row">
+            <div class="scope-row__head">
+              <span class="scope-row__name">Allow Development</span>
+              <span class="scope-row__note">One owner per tab</span>
+            </div>
+            <p>Adds viewport and device emulation, console and network diagnostics, and side-by-side WebKit vs Chromium comparison.</p>
+          </li>
+          <li class="scope-row">
+            <div class="scope-row__head">
+              <span class="scope-row__name">Allow Developer</span>
+              <span class="scope-row__note">Paired · Developer profile · dev sites</span>
+            </div>
+            <p>Scoped to a separate Developer profile on developer sites such as <code class="inline-code">localhost</code> — adds scripts, DOM edits, and test credentials with secrets scrubbed.</p>
+          </li>
+        </ol>
       </div>
     </section>
 
@@ -130,11 +435,11 @@
       <div class="quiet">
         <h2 id="limits-title">Good to know</h2>
         <ul class="quiet-list">
-          <li>There is no separate bookmarks manager. Pins and folders replace it. You can import bookmarks from an HTML export, but not history.</li>
-          <li>Website notifications need WSurf to be running. There is no background web push.</li>
-          <li>Chromium stays loaded until you quit. It does not promise lower RAM or CPU use, or faster websites.</li>
-          <li>Extensions and native Picture in Picture work with WebKit only.</li>
-          <li>Native passkeys are not guaranteed in legacy or private tabs.</li>
+          <li><strong>No separate bookmarks manager.</strong> Pins, Favorites, and folders replace it; import bookmarks from an HTML export (history is not imported).</li>
+          <li><strong>Notifications.</strong> Website notifications require WSurf to be running, and sleeping tabs send no notifications.</li>
+          <li><strong>Embedded Chromium.</strong> Choose Chromium per site or per tab. Extensions and native Picture in Picture use WebKit.</li>
+          <li><strong>Credential Manager &amp; passkeys.</strong> Encrypted vaults have no recovery key or master password fallback. WSurf omits Apple’s managed browser passkey entitlement, so system passkeys are not guaranteed in WebKit tabs.</li>
+          <li><strong>Assistant &amp; release status.</strong> The assistant uses AI and can make mistakes. iCloud sync and passkey unlock require the appropriate Apple signing and entitlements.</li>
         </ul>
       </div>
     </section>
@@ -143,33 +448,49 @@
       <div class="build-layout">
         <div>
           <div class="section-heading">
-            <p class="eyebrow">Source available · Business Source License 1.1</p>
-            <h2 id="build-title">Make it yours.</h2>
-            <p class="lede">Build the current source with macOS 26 or later, Apple silicon, and Xcode 27.0 or later.</p>
+            <p class="ws-eyebrow eyebrow">Source available · Business Source License 1.1</p>
+            <h2 class="section-title" id="build-title">Build it on your Mac.</h2>
+            <p class="section-lede">Build the current source with macOS 26 or later, Apple silicon, and Xcode 27.0 or later.</p>
           </div>
           <div class="build-panel">
-            <pre tabindex="0" aria-label="Clone the repository and open the Xcode project"><code>git clone https://github.com/wsagency/wsurf.git
+            <figure class="ws-codeblock">
+              <pre tabindex="0" aria-label="Clone the repository and open the Xcode project"><code>git clone https://github.com/wsagency/wsurf.git
 cd wsurf
 open WSurf.xcodeproj</code></pre>
-            <p>Select the WSurf target and set your team in Signing &amp; Capabilities. Some system features require additional entitlements and provisioning.</p>
-            <a class="button button-primary" href="https://github.com/wsagency/wsurf#building">Full build instructions <span aria-hidden="true">↗</span></a>
+            </figure>
+            <p class="body-copy">Select the <code class="inline-code">WSurf</code> target and set your team in Signing &amp; Capabilities. Dependencies resolve automatically; some system features require additional entitlements and provisioning.</p>
+            <div class="ws-actions">
+              <a class="ws-button ws-button--primary home-btn" href="https://github.com/wsagency/wsurf#building">Full build instructions <span aria-hidden="true">↗</span></a>
+              <a class="ws-link label" href="/design-system/">Browse the design system</a>
+            </div>
           </div>
         </div>
-        <img class="build-mark" src="/media/mark-3d.png" width="720" height="720" alt="" loading="lazy">
+        <div class="build-media" aria-hidden="true">
+          <img class="build-mark build-mark--light" src="/media/mark-3d.png" width="720" height="720" alt="" loading="lazy">
+          <img class="build-mark build-mark--dark" src="/design-system/assets/3D/mark-hero-dark.png" width="1200" height="1200" alt="" loading="lazy">
+        </div>
       </div>
     </section>
   </main>
 
   <footer class="site-footer wrap">
     <div class="footer-brand">
-      <a class="brand" href="/" aria-label="WSurf home"><img src="/brand/lockup-light.svg" width="109" height="24" alt=""></a>
+      <a class="ws-lockup ws-lockup--footer" href="/" aria-label="WSurf home">
+        <picture>
+          <source media="(prefers-color-scheme: dark)" srcset="/design-system/assets/Lockup/lockup-dark.svg">
+          <img src="/design-system/assets/Lockup/lockup-light.svg" width="109" height="24" alt="">
+        </picture>
+      </a>
       <p>We love open source. Made by <a href="https://lukacin.com">Kristijan Lukacin</a> @ <a href="https://ws.agency">ws.agency</a></p>
     </div>
     <div class="footer-legal">
       <nav aria-label="Project links">
+        <a href="/design-system/">Design system</a>
+        <a href="/changelog/">Changelog</a>
         <a href="https://github.com/wsagency/wsurf/blob/main/LICENSE">License</a>
         <a href="https://github.com/wsagency/wsurf/blob/main/NOTICE">Attributions</a>
-        <a href="/changelog/">Changelog</a>
+        <a href="https://github.com/wsagency/wsurf/blob/main/SECURITY.md">Security</a>
+        <a href="https://github.com/wsagency/wsurf/blob/main/MCP.md">MCP</a>
         <a href="https://github.com/wsagency/wsurf/blob/main/CONTRIBUTING.md">Contribute</a>
       </nav>
       <p>An independent fork of <a href="https://github.com/kavoye/linen-browser">Linen by Kavoye</a>.</p>
